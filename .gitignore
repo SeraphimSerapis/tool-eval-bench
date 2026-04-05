@@ -1,0 +1,19 @@
+.venv/
+activate/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.omx/
+.env
+*.egg-info/
+src/*.egg-info/
+dist/
+build/
+data/
+runs/
+
+# Internal development files (not shipped in OSS release)
+REVIEW.md
+TODOS.md
