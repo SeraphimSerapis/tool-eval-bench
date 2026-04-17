@@ -73,10 +73,11 @@ def _initial_messages(
     *,
     reference_date: str | None = None,
     reference_day: str | None = None,
+    context_pressure_messages: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     ref_date = reference_date or BENCHMARK_REFERENCE_DATE
     ref_day = reference_day or BENCHMARK_REFERENCE_DAY
-    return [
+    msgs: list[dict[str, Any]] = [
         {
             "role": "system",
             "content": (
@@ -85,8 +86,13 @@ def _initial_messages(
                 "Use this date for any relative time request."
             ),
         },
-        {"role": "user", "content": user_message},
     ]
+    # Inject context pressure filler turns (if any) between system prompt
+    # and the real user message to simulate a busy conversation history.
+    if context_pressure_messages:
+        msgs.extend(context_pressure_messages)
+    msgs.append({"role": "user", "content": user_message})
+    return msgs
 
 
 def _assistant_message(result: ChatCompletionResult) -> dict[str, Any]:
@@ -155,6 +161,7 @@ async def run_scenario(
     reference_day: str | None = None,
     error_rate: float = 0.0,
     extra_params: dict[str, Any] | None = None,
+    context_pressure_messages: list[dict[str, Any]] | None = None,
 ) -> ScenarioResult:
     """Run a single scenario through the multi-turn orchestration loop."""
     t0 = time.monotonic()
@@ -163,6 +170,7 @@ async def run_scenario(
         scenario.user_message,
         reference_date=reference_date,
         reference_day=reference_day,
+        context_pressure_messages=context_pressure_messages,
     )
     trace_lines: list[str] = ["assistant=starting"]
 
@@ -361,6 +369,7 @@ async def run_all_scenarios(
     error_rate: float = 0.0,
     alpha: float = 0.7,
     extra_params: dict[str, Any] | None = None,
+    context_pressure_messages: list[dict[str, Any]] | None = None,
 ) -> ModelScoreSummary:
     """Run every scenario and produce an aggregate score summary.
 
@@ -390,6 +399,7 @@ async def run_all_scenarios(
                 reference_day=reference_day,
                 error_rate=error_rate,
                 extra_params=extra_params,
+                context_pressure_messages=context_pressure_messages,
             )
             results.append(result)
             if on_scenario_result:
@@ -430,6 +440,7 @@ async def run_all_scenarios(
                 reference_day=reference_day,
                 error_rate=error_rate,
                 extra_params=extra_params,
+                context_pressure_messages=context_pressure_messages,
             )
             ordered_results[idx] = result
             if on_scenario_result:

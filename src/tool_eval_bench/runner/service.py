@@ -65,6 +65,8 @@ class BenchmarkService:
         error_rate: float = 0.0,
         alpha: float = 0.7,
         extra_params: dict[str, Any] | None = None,
+        context_pressure_messages: list[dict[str, Any]] | None = None,
+        context_pressure_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results."""
         adapter = self._adapter_for(backend)
@@ -122,6 +124,7 @@ class BenchmarkService:
                 error_rate=error_rate,
                 alpha=alpha,
                 extra_params=extra_params,
+                context_pressure_messages=context_pressure_messages,
             )
         finally:
             if hasattr(adapter, "aclose"):
@@ -147,10 +150,15 @@ class BenchmarkService:
             "metadata": metadata,
         }
 
+        # Include context pressure info if active
+        if context_pressure_config:
+            run_data["config"]["context_pressure"] = context_pressure_config
+
         self.repo.upsert_scenario_run(run_data)
         report_path = self.reporter.write_scenario_report(
             run_id, model, summary,
             throughput_samples=throughput_samples or [],
+            context_pressure_config=context_pressure_config,
         )
 
         run_data["report_path"] = str(report_path)

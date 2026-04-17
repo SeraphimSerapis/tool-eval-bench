@@ -105,6 +105,9 @@ tool-eval-bench --seed 42 --perf
 # Reference-grade — statistical rigor with Pass@k / Pass^k metrics
 tool-eval-bench --seed 42 --trials 3 --perf
 
+# Context pressure — test tool-calling with 75% of context pre-filled
+tool-eval-bench --seed 42 --context-pressure 0.75
+
 # Explicit flags (overrides .env)
 tool-eval-bench --model gemma4 --backend vllm --base-url http://localhost:8080
 ```
@@ -128,6 +131,8 @@ tool-eval-bench --model gemma4 --backend vllm --base-url http://localhost:8080
 --short                Run only the core 15 scenarios
 --trials N             Run N trials; generates individual reports + a consolidated summary report with Pass@k, Pass^k, flaky detection
 --error-rate RATE      Inject random tool errors at given rate (0.0–1.0) for robustness testing
+--context-pressure R   Fill context to R (0.0–1.0) before each scenario to test tool-calling under pressure
+--context-size N       Override auto-detected context window size (tokens)
 --alpha WEIGHT         Quality/speed weight for deployability score (0.0–1.0, default: 0.7)
 --reference-date DATE  Override benchmark reference date (YYYY-MM-DD, default: 2026-03-20)
 --seed N               Random seed passed to server (controls logit sampling only — does not guarantee full run-to-run reproducibility; KV-cache and CUDA non-determinism still apply)
@@ -183,6 +188,41 @@ tool-eval-bench --perf --spec-bench --seed 42
 | `--spec-method` | `auto` | Method hint: `auto`, `mtp`, `draft`, `ngram`, `eagle` |
 | `--baseline-tgs` | — | Known baseline tg t/s for speedup calculation |
 | `--spec-prompts` | `filler,code,structured` | Prompt types to test |
+
+### Context pressure
+
+Tests tool-calling quality when the context window is already heavily utilized. This simulates real-world agentic conversations where the model must make accurate tool-call decisions with thousands of tokens of prior conversation history in its context.
+
+```bash
+# Fill 75% of context before each scenario (recommended)
+tool-eval-bench --seed 42 --context-pressure 0.75
+
+# Fill 50% — moderate pressure
+tool-eval-bench --seed 42 --context-pressure 0.50
+
+# Override auto-detected context size (if /v1/models doesn't expose it)
+tool-eval-bench --seed 42 --context-pressure 0.75 --context-size 32768
+
+# Compare baseline vs pressure
+tool-eval-bench --seed 42                           # baseline run
+tool-eval-bench --seed 42 --context-pressure 0.75   # pressure run
+tool-eval-bench --compare <baseline_id> <pressure_id>
+```
+
+| Context Pressure Flag | Default | Purpose |
+|---|---|---|
+| `--context-pressure` | off | Fill ratio (0.0–1.0) of available context |
+| `--context-size` | auto | Override context window size (tokens) |
+
+The context window size is auto-detected from the `/v1/models` endpoint (`max_model_len` on vLLM). If auto-detection fails, use `--context-size` to specify it manually.
+
+The filler is designed to defeat server-side prefix caching (vLLM, llama.cpp):
+- **Diverse content**: 12 distinct paragraph styles (tech docs, meeting notes, code reviews, incident reports, API docs, etc.)
+- **Shuffled order**: paragraph order is randomized per run
+- **Noise injection**: random ticket IDs, timestamps, IP addresses, and version strings are sprinkled throughout the text at sentence boundaries
+- **Unique nonces**: each chunk gets a unique session/chunk identifier prefix
+
+This ensures that every run produces a completely unique token sequence, forcing full KV cache computation rather than hitting cached prefixes.
 
 ## How It Works
 

@@ -598,6 +598,19 @@ def main() -> None:
              "Options: filler, code, structured",
     )
 
+    # Context pressure
+    parser.add_argument(
+        "--context-pressure", type=float, default=None, metavar="RATIO",
+        help="Fill context to RATIO (0.0–1.0) before each scenario to test tool-calling "
+             "under context pressure (e.g. --context-pressure 0.75 fills 75%% of available context). "
+             "Context window size is auto-detected from /v1/models or set via --context-size.",
+    )
+    parser.add_argument(
+        "--context-size", type=int, default=None, metavar="TOKENS",
+        help="Override auto-detected context window size (tokens). "
+             "Required if auto-detection fails (e.g. --context-size 32768).",
+    )
+
     # Comparison and history
     parser.add_argument(
         "--diff", metavar="RUN_ID", default=None,
@@ -703,6 +716,59 @@ def main() -> None:
         if not args.perf and not args.perf_only:
             return
 
+    # -- Context pressure --
+    pressure_messages: list[dict] | None = None
+    pressure_config_dict: dict | None = None
+    if args.context_pressure is not None:
+        from rich.progress import BarColumn, Progress, TextColumn
+
+        from tool_eval_bench.runner.context_pressure import (
+            build_pressure_messages,
+            prepare_context_pressure,
+        )
+
+        ratio = max(0.0, min(1.0, args.context_pressure))
+        try:
+            pressure_cfg = asyncio.run(
+                prepare_context_pressure(
+                    base_url, model, api_key,
+                    ratio=ratio,
+                    context_size_override=args.context_size,
+                )
+            )
+
+            if not args.json and pressure_cfg.fill_tokens > 0:
+                with Progress(
+                    TextColumn("  [bold cyan]⚡ Filling context[/]"),
+                    BarColumn(bar_width=40),
+                    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                    TextColumn("[dim]{task.completed:,}/{task.total:,} tokens[/]"),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task("fill", total=pressure_cfg.fill_tokens)
+                    pressure_messages = build_pressure_messages(
+                        pressure_cfg,
+                        on_chunk=lambda tokens_so_far: progress.update(
+                            task, completed=tokens_so_far,
+                        ),
+                    )
+            else:
+                pressure_messages = build_pressure_messages(pressure_cfg)
+
+            pressure_config_dict = {
+                "ratio": pressure_cfg.ratio,
+                "fill_tokens": pressure_cfg.fill_tokens,
+                "context_size": pressure_cfg.detected_context,
+            }
+            if not args.json:
+                console.print(
+                    f"  [dim]  {pressure_cfg.summary()} — "
+                    f"{len(pressure_messages or [])} filler messages[/]\n"
+                )
+        except ValueError as exc:
+            console.print(f"\n[bold red]Error:[/] {exc}")
+            sys.exit(1)
+
     # -- Tool-call scenarios --
     service = BenchmarkService()
     use_live = not args.json and not args.no_live
@@ -716,14 +782,20 @@ def main() -> None:
             service, console, model, display_name, backend, base_url, api_key, args,
             throughput_samples=throughput_samples,
             extra_params=extra_params or None,
+            context_pressure_messages=pressure_messages,
+            context_pressure_config=pressure_config_dict,
         )
     elif args.json:
         _run_json(service, model, backend, base_url, api_key, args,
-                  extra_params=extra_params or None)
+                  extra_params=extra_params or None,
+                  context_pressure_messages=pressure_messages,
+                  context_pressure_config=pressure_config_dict)
     else:
         _run_plain(service, console, model, display_name, backend, base_url, api_key, args,
                    throughput_samples=throughput_samples,
-                   extra_params=extra_params or None)
+                   extra_params=extra_params or None,
+                   context_pressure_messages=pressure_messages,
+                   context_pressure_config=pressure_config_dict)
 
 # ---------------------------------------------------------------------------
 # Multi-trial aggregation
@@ -919,6 +991,8 @@ def _run_with_live_display(
     *,
     throughput_samples: list | None = None,
     extra_params: dict[str, Any] | None = None,
+    context_pressure_messages: list[dict] | None = None,
+    context_pressure_config: dict | None = None,
 ) -> None:
     """Run with Rich live display — the default visual mode."""
     from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
@@ -961,6 +1035,8 @@ def _run_with_live_display(
             error_rate=args.error_rate,
             alpha=args.alpha,
             extra_params=extra_params,
+            context_pressure_messages=context_pressure_messages,
+            context_pressure_config=context_pressure_config,
             **callbacks,
         )
 
@@ -1059,6 +1135,8 @@ def _run_json(
     args: argparse.Namespace,
     *,
     extra_params: dict[str, Any] | None = None,
+    context_pressure_messages: list[dict] | None = None,
+    context_pressure_config: dict | None = None,
 ) -> None:
     """Run and output raw JSON."""
     from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
@@ -1089,6 +1167,8 @@ def _run_json(
             error_rate=args.error_rate,
             alpha=args.alpha,
             extra_params=extra_params,
+            context_pressure_messages=context_pressure_messages,
+            context_pressure_config=context_pressure_config,
         )
 
     try:
@@ -1143,6 +1223,8 @@ def _run_plain(
     *,
     throughput_samples: list | None = None,
     extra_params: dict[str, Any] | None = None,
+    context_pressure_messages: list[dict] | None = None,
+    context_pressure_config: dict | None = None,
 ) -> None:
     """Run with simple line-by-line output."""
     from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
@@ -1182,6 +1264,8 @@ def _run_plain(
             error_rate=args.error_rate,
             alpha=args.alpha,
             extra_params=extra_params,
+            context_pressure_messages=context_pressure_messages,
+            context_pressure_config=context_pressure_config,
             **callbacks,
         )
 

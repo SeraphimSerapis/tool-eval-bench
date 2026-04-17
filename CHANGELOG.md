@@ -2,6 +2,23 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [1.1.0] — 2026-04-17
+
+### Added
+
+- **Context pressure** (`--context-pressure`) — pre-fill the context window with
+  alternating user/assistant filler turns before each scenario to test tool-calling
+  quality under context pressure. Auto-detects context window size from `/v1/models`
+  (`max_model_len` on vLLM); use `--context-size` to override.
+- **Cache-busting filler** — filler content draws from 12 diverse paragraph styles
+  (tech docs, meeting notes, code reviews, etc.), shuffled per run, with random
+  noise tokens (ticket IDs, timestamps, IPs, versions) injected at sentence
+  boundaries and unique nonce prefixes per chunk. This defeats vLLM/llama.cpp
+  prefix caching for accurate pressure measurement.
+- `--context-size` flag to manually specify context window size when auto-detection
+  is unavailable.
+- Progress bar during context pressure fill.
+
 ## [1.0.0] — 2026-04-17
 
 ### Initial Public Release

@@ -35,6 +35,7 @@ class MarkdownReporter:
         summary: ModelScoreSummary,
         *,
         throughput_samples: list[Any] | None = None,
+        context_pressure_config: dict[str, Any] | None = None,
     ) -> Path:
         """Write a Markdown report for a scenario-based benchmark run."""
         now = datetime.now(timezone.utc)
@@ -88,6 +89,14 @@ class MarkdownReporter:
             ])
 
         md.append("")
+
+        # Context pressure info
+        if context_pressure_config:
+            ratio = context_pressure_config.get("ratio", 0)
+            fill_tokens = context_pressure_config.get("fill_tokens", 0)
+            ctx_size = context_pressure_config.get("context_size", 0)
+            pct = int(ratio * 100)
+            md.insert(-1, f"- **Context Pressure**: {pct}% (~{fill_tokens:,} tokens prefilled of {ctx_size:,} context)")
 
         # Safety warnings
         if summary.safety_warnings:
