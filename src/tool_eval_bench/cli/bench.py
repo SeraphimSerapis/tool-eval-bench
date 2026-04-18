@@ -327,6 +327,202 @@ def _run_throughput(
 
 
 # ---------------------------------------------------------------------------
+# llama-benchy integration (--perf / --perf-only)
+# ---------------------------------------------------------------------------
+
+def _run_llama_benchy(
+    console: Console,
+    model: str,
+    display_name: str,
+    base_url: str,
+    api_key: str | None,
+    *,
+    pp: list[int],
+    tg: list[int],
+    depths: list[int],
+    concurrency_levels: list[int],
+    runs: int = 3,
+    latency_mode: str = "generation",
+    extra_args: list[str] | None = None,
+) -> list:
+    """Run llama-benchy externally and display results.
+
+    Returns a list of ThroughputSample objects for report persistence.
+    """
+    from rich.panel import Panel
+    from rich.table import Table
+
+    from tool_eval_bench.runner.llama_benchy import (
+        LlamaBenchyResult,
+        is_available,
+        run_llama_benchy,
+    )
+
+    if not is_available():
+        console.print(
+            "[bold red]Error:[/] llama-benchy is not available.\n"
+            "Install it with: [bold cyan]pip install llama-benchy[/]\n"
+            "Or ensure [bold cyan]uvx[/] is on PATH for zero-install usage."
+        )
+        sys.exit(1)
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]{display_name}[/]\n"
+            f"[dim]pp={pp}  tg={tg}  depth={depths}  concurrency={concurrency_levels}  "
+            f"runs={runs}  latency={latency_mode}[/]",
+            title="[bold]⚡ llama-benchy Throughput Benchmark[/]",
+            border_style="bright_cyan",
+        )
+    )
+    console.print()
+
+    # Calculate total runs for progress bar
+    import re
+
+    total_test_points = len(pp) * len(tg) * len(depths) * len(concurrency_levels)
+    total_runs = total_test_points * runs
+
+    benchy_result: LlamaBenchyResult | None = None
+
+    async def run() -> None:
+        nonlocal benchy_result
+
+        from rich.progress import (
+            BarColumn,
+            MofNCompleteColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeElapsedColumn,
+        )
+
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold]{task.description}"),
+            BarColumn(bar_width=30),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        )
+
+        with progress:
+            task = progress.add_task("Initializing…", total=total_runs)
+            current_test = ""
+            completed_runs = 0
+
+            def on_output(line: str) -> None:
+                nonlocal current_test, completed_runs
+                stripped = line.strip()
+                if not stripped:
+                    return
+
+                # Parse test and run progress from llama-benchy output
+                if stripped.startswith("Running test:"):
+                    # e.g. "Running test: pp=2048, tg=128, depth=0, concurrency=1"
+                    current_test = stripped.replace("Running test: ", "")
+                    progress.update(task, description=current_test)
+                elif re.match(r"\s*Run \d+/\d+", stripped):
+                    # e.g. "  Run 1/3 (batch size 1)..."
+                    completed_runs += 1
+                    progress.update(task, completed=completed_runs)
+                elif "Warming up" in stripped and "complete" not in stripped.lower():
+                    progress.update(task, description="Warming up…")
+                elif "Measuring latency" in stripped:
+                    progress.update(task, description="Measuring latency…")
+                elif "Average latency" in stripped:
+                    # e.g. "Average latency (generation): 55.78 ms"
+                    progress.update(task, description="Running benchmarks…")
+                # Other informational lines are silently consumed
+
+            benchy_result = await run_llama_benchy(
+                base_url, model,
+                api_key=api_key,
+                tokenizer=display_name,
+                pp=pp, tg=tg,
+                depths=depths,
+                concurrency_levels=concurrency_levels,
+                runs=runs,
+                latency_mode=latency_mode,
+                extra_args=extra_args,
+                on_output=on_output,
+            )
+
+            # Mark complete
+            progress.update(task, completed=total_runs, description="[green]✓ Complete")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        console.print("\n[bold red]Interrupted.[/]")
+        sys.exit(1)
+    except RuntimeError as exc:
+        console.print(f"\n[bold red]llama-benchy error:[/] {exc}")
+        sys.exit(1)
+    except Exception as exc:
+        console.print(f"\n[bold red]Error: {exc}[/]")
+        sys.exit(1)
+
+    if benchy_result is None:
+        console.print("[bold red]No results from llama-benchy.[/]")
+        return []
+
+    # Display version info
+    if benchy_result.version:
+        console.print(f"\n  [dim]llama-benchy {benchy_result.version}[/]")
+    if benchy_result.latency_ms > 0:
+        console.print(f"  [dim]Estimated latency: {benchy_result.latency_ms:.1f} ms[/]")
+
+    # Summary table
+    ok_samples = [s for s in benchy_result.samples if not s.error]
+    if ok_samples:
+        console.print()
+
+        # Pre-compute labels to size the Test column
+        labels: list[str] = []
+        for s in ok_samples:
+            labels.append(f"pp{s.label_pp} tg{s.tg_tokens} @ d{s.label_depth}")
+        test_col_width = max(len(lbl) for lbl in labels)
+
+        table = Table(
+            title="[bold]llama-benchy Results[/]",
+            show_header=True,
+            header_style="bold",
+            border_style="bright_cyan",
+        )
+        table.add_column("Test", min_width=test_col_width, no_wrap=True)
+        table.add_column("c", justify="center", width=4)
+        table.add_column("pp t/s", justify="right", width=9)
+        table.add_column("tg t/s", justify="right", width=9)
+        table.add_column("TTFT (ms)", justify="right", width=10)
+        table.add_column("Total (ms)", justify="right", width=10)
+        table.add_column("Tokens", justify="right", width=10)
+
+        for lbl, s in zip(labels, ok_samples):
+            table.add_row(
+                lbl,
+                f"c{s.concurrency}",
+                f"{s.pp_tps:,.0f}",
+                f"{s.tg_tps:,.1f}",
+                f"{s.ttft_ms:,.0f}",
+                f"{s.total_ms:,.0f}",
+                f"{s.pp_tokens}+{s.tg_tokens}",
+            )
+
+        console.print(table)
+
+    if ok_samples and ok_samples[0].calibration_confidence == "llama-benchy":
+        console.print(
+            "\n  [dim]ℹ Metrics sourced from llama-benchy — see "
+            "[bold]https://github.com/eugr/llama-benchy[/] for methodology.[/]"
+        )
+
+    console.print()
+    return ok_samples
+
+
+# ---------------------------------------------------------------------------
 # Speculative decoding / MTP benchmark
 # ---------------------------------------------------------------------------
 
@@ -569,12 +765,45 @@ def main() -> None:
 
     # Warm-up and throughput
     parser.add_argument("--no-warmup", action="store_true", help="Skip server warm-up request")
-    parser.add_argument("--perf", action="store_true", help="Run throughput benchmark before tool-call scenarios")
-    parser.add_argument("--perf-only", action="store_true", help="Run ONLY throughput benchmark (skip tool-call scenarios)")
+    parser.add_argument(
+        "--perf", action="store_true",
+        help="Run throughput benchmark (via llama-benchy) before tool-call scenarios. "
+             "Requires llama-benchy to be installed (pip install llama-benchy) or uvx on PATH.",
+    )
+    parser.add_argument(
+        "--perf-only", action="store_true",
+        help="Run ONLY throughput benchmark via llama-benchy (skip tool-call scenarios)",
+    )
+    parser.add_argument(
+        "--perf-legacy", action="store_true",
+        help="Run built-in throughput benchmark before tool-call scenarios "
+             "(simpler, no external dependencies)",
+    )
+    parser.add_argument(
+        "--perf-legacy-only", action="store_true",
+        help="Run ONLY built-in throughput benchmark (skip tool-call scenarios)",
+    )
     parser.add_argument("--pp", type=int, default=2048, help="Prompt tokens for throughput benchmark (default: 2048)")
     parser.add_argument("--tg", type=int, default=128, help="Generation tokens for throughput benchmark (default: 128)")
     parser.add_argument("--depth", type=str, default="0,4096,8192", help="Context depths, comma separated (default: '0,4096,8192')")
     parser.add_argument("--concurrency", type=str, default="1,2,4", help="Concurrency levels (default: '1,2,4')")
+
+    # llama-benchy tuning (used by --perf / --perf-only)
+    parser.add_argument(
+        "--benchy-runs", type=int, default=3,
+        help="Number of measurement runs per test for llama-benchy (default: 3)",
+    )
+    parser.add_argument(
+        "--benchy-latency-mode", default="generation",
+        choices=["api", "generation", "none"],
+        help="Latency measurement mode for llama-benchy (default: generation). "
+             "'generation' is most accurate for local servers.",
+    )
+    parser.add_argument(
+        "--benchy-args", type=str, default=None,
+        help="Additional arguments to pass through to llama-benchy (quoted string, "
+             "e.g. --benchy-args='--no-warmup --book-url URL')",
+    )
 
     # Speculative decoding / MTP benchmark
     parser.add_argument(
@@ -680,24 +909,63 @@ def main() -> None:
     if not args.no_warmup:
         _do_warmup(console, base_url, model, api_key)
 
-    # -- Throughput benchmark --
+    # -- Throughput benchmark (llama-benchy, the default) --
     throughput_samples: list = []
     if args.perf or args.perf_only:
         depths = _parse_int_list(args.depth)
         conc_levels = _parse_int_list(args.concurrency)
-        throughput_samples = _run_throughput(
+
+        # Parse extra args if provided
+        benchy_extra: list[str] | None = None
+        if args.benchy_args:
+            import shlex
+            benchy_extra = shlex.split(args.benchy_args)
+
+        throughput_samples = _run_llama_benchy(
             console, model, display_name, base_url, api_key,
-            pp=args.pp, tg=args.tg, depths=depths, concurrency_levels=conc_levels,
+            pp=[args.pp], tg=[args.tg],
+            depths=depths,
+            concurrency_levels=conc_levels,
+            runs=args.benchy_runs,
+            latency_mode=args.benchy_latency_mode,
+            extra_args=benchy_extra,
         )
+
         if args.perf_only:
             # Write standalone throughput report
             from tool_eval_bench.storage.reports import MarkdownReporter
             from tool_eval_bench.utils.ids import build_run_id
 
-            run_config = {"model": model, "backend": backend, "base_url": base_url, "mode": "perf-only"}
+            run_config = {
+                "model": model, "backend": backend,
+                "base_url": base_url, "mode": "perf-only",
+            }
             run_id = build_run_id(run_config)
             reporter = MarkdownReporter()
-            report_path = reporter.write_throughput_report(run_id, display_name, throughput_samples)
+            report_path = reporter.write_throughput_report(
+                run_id, display_name, throughput_samples,
+            )
+            console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
+            return
+
+    # -- Legacy built-in throughput benchmark --
+    if args.perf_legacy or args.perf_legacy_only:
+        depths = _parse_int_list(args.depth)
+        conc_levels = _parse_int_list(args.concurrency)
+        legacy_samples = _run_throughput(
+            console, model, display_name, base_url, api_key,
+            pp=args.pp, tg=args.tg, depths=depths, concurrency_levels=conc_levels,
+        )
+        throughput_samples.extend(legacy_samples)
+
+        if args.perf_legacy_only:
+            from tool_eval_bench.storage.reports import MarkdownReporter
+            from tool_eval_bench.utils.ids import build_run_id
+
+            run_config = {"model": model, "backend": backend, "base_url": base_url, "mode": "perf-legacy-only"}
+            run_id = build_run_id(run_config)
+            reporter = MarkdownReporter()
+            report_path = reporter.write_throughput_report(run_id, display_name, legacy_samples)
             console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
             return
 

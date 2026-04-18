@@ -2,6 +2,49 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [1.2.0] — 2026-04-18
+
+### Added
+
+- **llama-benchy as default throughput benchmark** — `--perf` / `--perf-only` now delegate
+  throughput measurement to [llama-benchy](https://github.com/eugr/llama-benchy),
+  a dedicated llama-bench style benchmarking tool for OpenAI-compatible endpoints.
+  llama-benchy provides more accurate pp/tg measurement using HuggingFace tokenizers,
+  multi-run statistics, proper latency estimation, and cache-busting.
+- `--perf-legacy` / `--perf-legacy-only` — the previous built-in throughput benchmark
+  is still available for environments without external dependencies.
+- `--benchy-runs N` — number of measurement iterations per test point (default: 3).
+- `--benchy-latency-mode` — latency measurement method (`api`, `generation`, `none`).
+- `--benchy-args` — pass-through for arbitrary llama-benchy flags (e.g. `--benchy-args='--no-warmup --book-url URL'`).
+- **`[perf]` optional dependency** — `pip install tool-eval-bench[perf]` bundles llama-benchy,
+  eliminating the need for `uvx` and avoiding first-run download delays.
+- **Rich progress bar** for llama-benchy runs — replaces raw stdout dump with a live
+  progress bar showing warmup → latency → per-run progress with elapsed time.
+- **Real-time streaming** — `PYTHONUNBUFFERED=1` forces subprocess output to stream
+  line-by-line instead of buffering until exit.
+
+### Changed
+
+- **Dynamic table columns** — `Test` column width is computed from data, `Conc` is now
+  a compact standalone `c` column (`c1`, `c2`, `c4`). Handles arbitrarily large depth
+  and concurrency values (262144, 100+) without truncation.
+- **Weakest category display** — the `Weakest:` line is now hidden when all categories
+  score 100%, keeping the panel clean for perfect results.
+- **Noise suppression** — PyTorch and HF Hub warnings from the subprocess are filtered
+  from display output via env vars (`TRANSFORMERS_NO_ADVISORY_WARNINGS`,
+  `HF_HUB_DISABLE_IMPLICIT_TOKEN`) and an output line filter.
+
+### Fixed
+
+- **Tokenizer mismatch** — pass `--tokenizer` with the full HuggingFace model ID when
+  the API model name is a served alias (e.g. `Qwen3.6-35B` vs `Qwen/Qwen3.6-35B-A3B-FP8`),
+  so llama-benchy loads the correct tokenizer instead of falling back to `gpt2`.
+- **Gutenberg book download crash** — default `--skip-coherence` on to avoid llama-benchy
+  crashing when the machine cannot reach `gutenberg.org` (common on air-gapped/firewalled hosts).
+- **Multi-value argument format** — use space-separated values (`--depth 0 4096 8192`)
+  instead of repeated flags (`--depth 0 --depth 4096 --depth 8192`) to match
+  llama-benchy's `nargs='+'` argparse convention. Previously only the last value was used.
+
 ## [1.1.0] — 2026-04-17
 
 ### Added

@@ -310,8 +310,12 @@ def _print_final_panel(
             f"  [dim](α={summary.alpha})[/]"
         )
 
-    # Weakest category (lowest-scoring area)
-    if summary.worst_category is not None and summary.worst_category_percent is not None:
+    # Weakest category (lowest-scoring area) — skip if all at 100%
+    if (
+        summary.worst_category is not None
+        and summary.worst_category_percent is not None
+        and summary.worst_category_percent < 100
+    ):
         floor_color = "green" if summary.worst_category_percent >= 75 else (
             "yellow" if summary.worst_category_percent >= 40 else "red"
         )

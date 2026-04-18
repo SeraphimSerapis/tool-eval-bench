@@ -57,6 +57,9 @@ Each category is scored as a percentage of points earned within it. The **final 
 # Install globally using uv — no venv management needed
 uv tool install git+https://github.com/SeraphimSerapis/tool-eval-bench.git
 
+# With throughput benchmarking (bundles llama-benchy)
+uv tool install 'tool-eval-bench[perf] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'
+
 # Now available system-wide
 tool-eval-bench --help
 ```
@@ -68,7 +71,21 @@ git clone https://github.com/SeraphimSerapis/tool-eval-bench.git
 cd tool-eval-bench
 python -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev]'
+pip install -e '.[dev,perf]'
+```
+
+### Updating
+
+```bash
+# If installed via uv tool
+uv tool upgrade tool-eval-bench
+
+# If installed via pip (global or venv)
+pip install --upgrade git+https://github.com/SeraphimSerapis/tool-eval-bench.git
+
+# Development setup (pull + reinstall)
+git pull
+pip install -e '.[dev,perf]'
 ```
 
 ### Configuration
@@ -147,22 +164,47 @@ tool-eval-bench --model gemma4 --backend vllm --base-url http://localhost:8080
 
 ### Throughput benchmark
 
+Throughput measurement uses [llama-benchy](https://github.com/eugr/llama-benchy) — a dedicated benchmarking tool that provides HuggingFace tokenizer-based prompt sizing, multi-run statistics with mean ± std, proper latency estimation, and cache-busting. Install with `pip install tool-eval-bench[perf]` or ensure `uvx` is on PATH. Progress is shown via a live Rich progress bar.
+
 ```bash
 # Throughput only (skip tool-call scenarios)
 tool-eval-bench --perf-only --pp 2048 --tg 128 --depth "0 4096 8192 16384 32768"
 
 # Throughput + tool-call scenarios
 tool-eval-bench --perf --depth "0 4096" --concurrency "1,2,4"
+
+# Customize measurement runs and latency mode
+tool-eval-bench --perf --benchy-runs 5 --benchy-latency-mode generation
+
+# Pass arbitrary flags to llama-benchy
+tool-eval-bench --perf --benchy-args='--no-warmup --enable-prefix-caching'
 ```
 
-| Throughput Flag | Default | Purpose |
+| Flag | Default | Purpose |
 |---|---|---|
-| `--perf` | off | Run throughput before scenarios |
-| `--perf-only` | off | Run ONLY throughput |
+| `--perf` | off | Run llama-benchy throughput before scenarios |
+| `--perf-only` | off | Run ONLY llama-benchy throughput |
 | `--pp` | 2048 | Prompt tokens |
 | `--tg` | 128 | Generation tokens |
 | `--depth` | `"0,4096,8192"` | Context depths (comma/space separated) |
 | `--concurrency` | `"1,2,4"` | Concurrency levels |
+| `--benchy-runs` | 3 | Measurement iterations per test point |
+| `--benchy-latency-mode` | `generation` | Latency mode: `api`, `generation`, `none` |
+| `--benchy-args` | — | Pass-through for arbitrary llama-benchy flags |
+
+### Legacy built-in throughput
+
+A simpler built-in throughput benchmark with no external dependencies is also available:
+
+```bash
+tool-eval-bench --perf-legacy-only --pp 2048 --tg 128
+tool-eval-bench --perf-legacy --seed 42
+```
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--perf-legacy` | off | Run built-in throughput before scenarios |
+| `--perf-legacy-only` | off | Run ONLY built-in throughput |
 
 ### Speculative decoding / MTP benchmark
 
@@ -264,6 +306,7 @@ src/tool_eval_bench/
     service.py        # Benchmark service (orchestration + persistence)
     throughput.py     # Streaming pp/tg measurement
     speculative.py    # Spec-decode / MTP benchmarking (acceptance rate, effective t/s)
+    llama_benchy.py   # External llama-benchy integration (subprocess + JSON parsing)
   storage/
     db.py             # SQLite persistence
     reports.py        # Markdown report writer
