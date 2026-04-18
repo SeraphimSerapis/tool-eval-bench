@@ -10,7 +10,7 @@ Covers:
 
 from __future__ import annotations
 
-import json
+
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -22,10 +22,8 @@ from tool_eval_bench.runner.context_pressure import (
     compute_fill_budget,
     detect_context_size,
     prepare_context_pressure,
-    _CHARS_PER_TOKEN_ESTIMATE,
     _RESERVED_FOR_OUTPUT,
     _RESERVED_FOR_SCENARIO,
-    _TOKENS_PER_FILLER_CHUNK,
 )
 
 
@@ -391,9 +389,7 @@ class TestRunScenarioWithPressure:
             Category,
             ScenarioDefinition,
             ScenarioEvaluation,
-            ScenarioState,
             ScenarioStatus,
-            ToolCallRecord,
         )
         from tool_eval_bench.runner.orchestrator import run_scenario
 
@@ -406,10 +402,13 @@ class TestRunScenarioWithPressure:
                 self.captured.append(copy.deepcopy(kwargs.get("messages", [])))
                 return ChatCompletionResult(content="It's 22C in Berlin.")
 
-        handler = lambda state, call: {"result": "ok"}
-        evaluator = lambda state: ScenarioEvaluation(
-            status=ScenarioStatus.PASS, points=2, summary="ok"
-        )
+        def handler(state, call):
+            return {"result": "ok"}
+
+        def evaluator(state):
+            return ScenarioEvaluation(
+                status=ScenarioStatus.PASS, points=2, summary="ok"
+            )
 
         scenario = ScenarioDefinition(
             id="CP-01", title="Pressure test", category=Category.A,

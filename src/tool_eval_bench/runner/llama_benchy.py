@@ -91,7 +91,7 @@ def _build_command(
     runs: int = 3,
     latency_mode: str = "generation",
     no_cache: bool = True,
-    skip_coherence: bool = True,
+    skip_coherence: bool = False,
     output_file: str | None = None,
     extra_args: list[str] | None = None,
 ) -> list[str]:
@@ -251,7 +251,7 @@ async def run_llama_benchy(
     runs: int = 3,
     latency_mode: str = "generation",
     no_cache: bool = True,
-    skip_coherence: bool = True,
+    skip_coherence: bool = False,
     extra_args: list[str] | None = None,
     on_output: Any | None = None,
 ) -> LlamaBenchyResult:

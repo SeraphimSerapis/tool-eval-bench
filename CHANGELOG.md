@@ -2,6 +2,21 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [1.2.1] — 2026-04-18
+
+### Changed
+
+- **Coherence check enabled by default** — llama-benchy's coherence check now runs
+  before benchmarking to verify the model is producing sensible output. Previously
+  `--skip-coherence` was the default, which could mask broken models.
+- `--skip-coherence` CLI flag added for environments that cannot reach `gutenberg.org`
+  (air-gapped / firewalled hosts).
+
+### Fixed
+
+- **Ruff lint errors in test suite** — removed 5 unused imports and converted 2 lambda
+  assignments to `def` statements in `tests/test_context_pressure.py`.
+
 ## [1.2.0] — 2026-04-18
 
 ### Added
@@ -39,8 +54,9 @@ All notable changes to `tool-eval-bench` are documented here.
 - **Tokenizer mismatch** — pass `--tokenizer` with the full HuggingFace model ID when
   the API model name is a served alias (e.g. `Qwen3.6-35B` vs `Qwen/Qwen3.6-35B-A3B-FP8`),
   so llama-benchy loads the correct tokenizer instead of falling back to `gpt2`.
-- **Gutenberg book download crash** — default `--skip-coherence` on to avoid llama-benchy
+- **Gutenberg book download crash** — added `--skip-coherence` flag to avoid llama-benchy
   crashing when the machine cannot reach `gutenberg.org` (common on air-gapped/firewalled hosts).
+  *(Note: v1.2.1 re-enabled coherence by default; use `--skip-coherence` to opt out.)*
 - **Multi-value argument format** — use space-separated values (`--depth 0 4096 8192`)
   instead of repeated flags (`--depth 0 --depth 4096 --depth 8192`) to match
   llama-benchy's `nargs='+'` argparse convention. Previously only the last value was used.

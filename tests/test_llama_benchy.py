@@ -178,8 +178,8 @@ class TestBuildCommand:
         assert "--format" in cmd
         assert "json" in cmd
         assert "--no-cache" in cmd
-        # skip-coherence is on by default (avoids Gutenberg book download)
-        assert "--skip-coherence" in cmd
+        # coherence check is enabled by default (skip-coherence NOT in cmd)
+        assert "--skip-coherence" not in cmd
 
     def test_adds_api_key(self, monkeypatch):
         monkeypatch.setattr(
@@ -270,10 +270,9 @@ class TestBuildCommand:
         cmd = _build_command(
             "http://localhost:8888/v1",
             "test-model",
-            extra_args=["--no-warmup", "--skip-coherence"],
+            extra_args=["--no-warmup"],
         )
         assert "--no-warmup" in cmd
-        assert "--skip-coherence" in cmd
 
     def test_url_with_trailing_slash(self, monkeypatch):
         monkeypatch.setattr(
@@ -296,7 +295,8 @@ class TestBuildCommand:
         )
         assert "--no-cache" not in cmd
 
-    def test_skip_coherence_flag(self, monkeypatch):
+    def test_skip_coherence_flag_explicit(self, monkeypatch):
+        """--skip-coherence should only appear when explicitly requested."""
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.shutil.which",
             lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
@@ -306,6 +306,17 @@ class TestBuildCommand:
             skip_coherence=True,
         )
         assert "--skip-coherence" in cmd
+
+    def test_coherence_enabled_by_default(self, monkeypatch):
+        """Coherence check should run by default (--skip-coherence absent)."""
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+        cmd = _build_command(
+            "http://localhost:8888/v1", "test-model",
+        )
+        assert "--skip-coherence" not in cmd
 
     def test_output_file_passed(self, monkeypatch):
         monkeypatch.setattr(
@@ -1027,3 +1038,8 @@ class TestCLIFlags:
         """--perf-benchy should NOT exist (removed in v1.2.0)."""
         help_text = self._get_help_text()
         assert "--perf-benchy" not in help_text
+
+    def test_skip_coherence_flag_registered(self):
+        """--skip-coherence should exist in CLI help."""
+        help_text = self._get_help_text()
+        assert "--skip-coherence" in help_text

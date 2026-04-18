@@ -343,6 +343,7 @@ def _run_llama_benchy(
     concurrency_levels: list[int],
     runs: int = 3,
     latency_mode: str = "generation",
+    skip_coherence: bool = False,
     extra_args: list[str] | None = None,
 ) -> list:
     """Run llama-benchy externally and display results.
@@ -445,6 +446,7 @@ def _run_llama_benchy(
                 concurrency_levels=concurrency_levels,
                 runs=runs,
                 latency_mode=latency_mode,
+                skip_coherence=skip_coherence,
                 extra_args=extra_args,
                 on_output=on_output,
             )
@@ -804,6 +806,11 @@ def main() -> None:
         help="Additional arguments to pass through to llama-benchy (quoted string, "
              "e.g. --benchy-args='--no-warmup --book-url URL')",
     )
+    parser.add_argument(
+        "--skip-coherence", action="store_true",
+        help="Skip llama-benchy coherence check (not recommended — use only on "
+             "air-gapped hosts that cannot reach gutenberg.org)",
+    )
 
     # Speculative decoding / MTP benchmark
     parser.add_argument(
@@ -928,6 +935,7 @@ def main() -> None:
             concurrency_levels=conc_levels,
             runs=args.benchy_runs,
             latency_mode=args.benchy_latency_mode,
+            skip_coherence=args.skip_coherence,
             extra_args=benchy_extra,
         )
 
