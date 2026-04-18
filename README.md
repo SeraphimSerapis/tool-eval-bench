@@ -125,6 +125,12 @@ tool-eval-bench --seed 42 --trials 3 --perf
 # Context pressure — test tool-calling with 75% of context pre-filled
 tool-eval-bench --seed 42 --context-pressure 0.75
 
+# Run specific categories — safety + tool selection only
+tool-eval-bench --categories K A
+
+# Run coding-focused categories with thinking enabled
+tool-eval-bench --categories J G M --backend-kwargs '{"chat_template_kwargs": {"enable_thinking": true}}'
+
 # Explicit flags (overrides .env)
 tool-eval-bench --model gemma4 --backend vllm --base-url http://localhost:8080
 ```
@@ -142,14 +148,17 @@ tool-eval-bench --model gemma4 --backend vllm --base-url http://localhost:8080
 --top-k K              Top-k sampling value (e.g. 40)
 --min-p P              Min-p sampling threshold (e.g. 0.05)
 --repeat-penalty V     Repetition penalty (e.g. 1.1)
+--backend-kwargs JSON  Extra backend params as JSON (e.g. '{"top_p": 0.9}'); deep-merges with other flags
 --timeout FLOAT        Request timeout in seconds (default: 60.0)
 --max-turns INT        Max turns per scenario (default: 8)
 --scenarios IDs        Run specific scenarios (e.g. TC-01 TC-07)
+--categories CAT       Run specific categories (e.g. K A J); letters A–N
 --short                Run only the core 15 scenarios
 --trials N             Run N trials; generates individual reports + a consolidated summary report with Pass@k, Pass^k, flaky detection
 --error-rate RATE      Inject random tool errors at given rate (0.0–1.0) for robustness testing
 --context-pressure R   Fill context to R (0.0–1.0) before each scenario to test tool-calling under pressure
 --context-size N       Override auto-detected context window size (tokens)
+--metrics-url URL      Direct URL to Prometheus /metrics (for LiteLLM proxy setups)
 --alpha WEIGHT         Quality/speed weight for deployability score (0.0–1.0, default: 0.7)
 --reference-date DATE  Override benchmark reference date (YYYY-MM-DD, default: 2026-03-20)
 --seed N               Random seed passed to server (controls logit sampling only — does not guarantee full run-to-run reproducibility; KV-cache and CUDA non-determinism still apply)
@@ -230,6 +239,20 @@ tool-eval-bench --perf --spec-bench --seed 42
 | `--spec-method` | `auto` | Method hint: `auto`, `mtp`, `draft`, `ngram`, `eagle` |
 | `--baseline-tgs` | — | Known baseline tg t/s for speedup calculation |
 | `--spec-prompts` | `filler,code,structured` | Prompt types to test |
+| `--metrics-url` | auto | Direct URL to Prometheus `/metrics` (e.g. `http://vllm:8080/metrics`) |
+
+> **Acceptance rate (optional).** The primary metric is **effective t/s** — output tokens ÷ wall-clock time — which always works. For per-request *acceptance rate* and *acceptance length* breakdowns, the server must expose a `/metrics` endpoint with `spec_decode_*` counters:
+> - **vLLM**: enabled by default at `http://<host>:<port>/metrics` (no extra flags needed)
+> - **llama.cpp**: start the server with `--metrics` to enable the `/metrics` endpoint
+> - **SGLang**: enabled by default at `/metrics`
+>
+> If `/metrics` is unavailable or doesn't contain spec decode counters, `--spec-bench` still runs — you just won't see acceptance rate in the output.
+>
+> **Using a proxy (LiteLLM)?** The API proxy doesn't forward the backend's `/metrics`. Use `--metrics-url` to point directly at the inference server:
+> ```bash
+> # API goes through LiteLLM, but scrape metrics from vLLM directly
+> tool-eval-bench --spec-bench --base-url http://litellm:4000 --metrics-url http://vllm:8080/metrics
+> ```
 
 ### Context pressure
 

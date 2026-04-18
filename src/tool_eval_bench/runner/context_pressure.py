@@ -246,7 +246,10 @@ _ASSISTANT_RESPONSES = [
 
 # Conservative defaults
 _RESERVED_FOR_OUTPUT = 4096     # max_tokens for generation
-_RESERVED_FOR_SCENARIO = 2500  # system prompt + tools + user message + safety margin
+_RESERVED_FOR_SCENARIO = 8000  # tool definitions + system prompt + user message +
+                                # multi-turn conversation growth.  The server counts
+                                # tool schemas against the context window — the
+                                # 52-tool LARGE_TOOLSET alone is ~6000 tokens.
 _CHARS_PER_TOKEN_ESTIMATE = 4.0
 _TOKENS_PER_FILLER_CHUNK = 2048
 

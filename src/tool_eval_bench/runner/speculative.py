@@ -113,13 +113,14 @@ async def scrape_spec_metrics(
     client: httpx.AsyncClient,
     base_url: str,
     api_key: str | None = None,
+    metrics_url: str | None = None,
 ) -> SpecDecodeCounters | None:
     """Scrape speculative decoding counters from /metrics endpoint.
 
     Returns None if the endpoint is unavailable or doesn't contain
     spec decode metrics.
     """
-    url = _metrics_url(base_url)
+    url = metrics_url or _metrics_url(base_url)
     try:
         resp = await client.get(url, headers=_headers(api_key), timeout=5.0)
         if resp.status_code != 200:
@@ -157,6 +158,7 @@ async def detect_spec_decoding(
     base_url: str,
     api_key: str | None = None,
     backend_hint: str = "auto",
+    metrics_url: str | None = None,
 ) -> SpecDecodeInfo:
     """Probe whether speculative decoding is active on the server.
 
@@ -167,7 +169,7 @@ async def detect_spec_decoding(
     info = SpecDecodeInfo()
 
     # Try Prometheus endpoint
-    url = _metrics_url(base_url)
+    url = metrics_url or _metrics_url(base_url)
     try:
         resp = await client.get(url, headers=_headers(api_key), timeout=5.0)
         if resp.status_code == 200 and "spec_decode" in resp.text:
@@ -346,6 +348,7 @@ async def measure_spec_single(
     spec_info: SpecDecodeInfo | None = None,
     baseline_tg_tps: float | None = None,
     prompt_type: str = "filler",
+    metrics_url: str | None = None,
 ) -> SpecDecodeSample:
     """Measure throughput with speculative decoding awareness.
 
@@ -370,7 +373,7 @@ async def measure_spec_single(
     # Scrape counters BEFORE generation
     counters_before: SpecDecodeCounters | None = None
     if spec_info.has_prometheus:
-        counters_before = await scrape_spec_metrics(client, base_url, api_key)
+        counters_before = await scrape_spec_metrics(client, base_url, api_key, metrics_url=metrics_url)
 
     # Run the generation
     sample = await _stream_one(client, base_url, model, messages, tg, api_key)
@@ -389,7 +392,7 @@ async def measure_spec_single(
 
     # Scrape counters AFTER generation and compute deltas
     if spec_info.has_prometheus and counters_before is not None:
-        counters_after = await scrape_spec_metrics(client, base_url, api_key)
+        counters_after = await scrape_spec_metrics(client, base_url, api_key, metrics_url=metrics_url)
         if counters_after is not None:
             spec_sample.draft_tokens_delta = int(
                 counters_after.draft_tokens - counters_before.draft_tokens
@@ -430,6 +433,7 @@ async def run_spec_bench(
     baseline_tg_tps: float | None = None,
     prompt_types: list[str] | None = None,
     on_sample: OnSpecSample | None = None,
+    metrics_url: str | None = None,
 ) -> list[SpecDecodeSample]:
     """Run speculative decoding benchmark sweep.
 
@@ -449,6 +453,9 @@ async def run_spec_bench(
         baseline_tg_tps: Known baseline tg t/s for speedup calculation.
         prompt_types: Prompt types to test (default: [filler, code, structured]).
         on_sample: Progress callback.
+        metrics_url: Optional direct URL to the Prometheus /metrics endpoint.
+            Useful when the API is behind a proxy (e.g. LiteLLM) and /metrics
+            lives on a different host/port.
 
     Returns:
         List of SpecDecodeSample results.
@@ -466,6 +473,7 @@ async def run_spec_bench(
         # Detect spec decode configuration
         spec_info = await detect_spec_decoding(
             client, base_url, api_key, backend_hint=spec_method,
+            metrics_url=metrics_url,
         )
 
         if spec_info.has_prometheus:
@@ -489,6 +497,7 @@ async def run_spec_bench(
                 spec_info=spec_info,
                 baseline_tg_tps=baseline_tg_tps,
                 prompt_type=prompt_type,
+                metrics_url=metrics_url,
             )
             samples.append(spec_sample)
 

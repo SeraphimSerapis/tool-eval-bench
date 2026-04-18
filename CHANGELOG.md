@@ -2,6 +2,37 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [1.2.2] — 2026-04-18
+
+### Added
+
+- **`--backend-kwargs` CLI option** — pass arbitrary JSON-encoded parameters directly
+  to the backend API payload (e.g. `--backend-kwargs '{"temperature": 0.6, "top_p": 0.9}'`).
+  Deep-merges with existing convenience flags (`--no-think`, `--top-p`, etc.); `--backend-kwargs`
+  wins on conflict. Supports any server-specific parameter including `chat_template_kwargs`.
+- **`--categories` CLI option** — run only scenarios from specific categories
+  (e.g. `--categories K A J`). Letters A–N map to the 14 benchmark categories.
+  Enables targeted evaluation for different model profiles (Instruct vs Thinking mode).
+- **Context budget visualization** — when using `--context-pressure`, the CLI now displays
+  a budget breakdown showing fill tokens, tool definition size (with tool count), output
+  reserve, and remaining headroom. Helps diagnose scenarios failing under pressure.
+- **`--metrics-url` CLI option** — direct URL to Prometheus `/metrics` for spec-decode
+  acceptance rate. Required when the API runs behind a proxy (e.g. LiteLLM) that doesn't
+  forward the backend's `/metrics` endpoint
+  (e.g. `--metrics-url http://vllm-host:8080/metrics`).
+- **Improved spec-bench messaging** — the "acceptance rate unavailable" notice is now
+  clearly informational (not an error) and explains how to enable `/metrics` per backend.
+
+### Fixed
+
+- **TC-15 false failure** (Issue #1) — the evaluator required the exact substring
+  `"population of iceland"` in the search query, rejecting valid phrasings like
+  `"Iceland population 2026"`. Now checks for `"population"` and `"iceland"` independently.
+- **Weather scenarios failing under context pressure** (Issue #2) — `_RESERVED_FOR_SCENARIO`
+  was 2,500 tokens, which didn't account for tool definitions counted by the server against
+  the context window. The 52-tool LARGE_TOOLSET alone consumes ~6,000 tokens. Increased to
+  8,000 tokens to prevent context overflow.
+
 ## [1.2.1] — 2026-04-18
 
 ### Changed

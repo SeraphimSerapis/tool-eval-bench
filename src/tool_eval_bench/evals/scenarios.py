@@ -513,7 +513,8 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
     if (
         search
         and calc
-        and _includes_text(search.arguments.get("query"), "population of iceland")
+        and _includes_text(search.arguments.get("query"), "population")
+        and _includes_text(search.arguments.get("query"), "iceland")
         and "372520" in _as_str(calc.arguments.get("expression")).replace(",", "")
     ):
         return _pass("Used the searched population value in the calculator.")

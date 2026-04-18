@@ -26,8 +26,32 @@ from dotenv import load_dotenv
 from rich.console import Console
 
 from tool_eval_bench.cli.display import BenchmarkDisplay
-from tool_eval_bench.domain.scenarios import ScenarioDefinition, ScenarioResult, ScenarioStatus
+from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition, ScenarioResult, ScenarioStatus
 from tool_eval_bench.runner.service import BenchmarkService
+
+
+# Valid category letters for --categories
+_VALID_CATEGORIES = {c.value for c in Category}
+
+
+def _resolve_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
+    """Resolve scenarios from --short, --scenarios, and --categories flags.
+
+    Priority: --scenarios (individual IDs) > --categories > --short > all.
+    """
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
+
+    base = SCENARIOS if args.short else ALL_SCENARIOS
+
+    if args.scenarios:
+        requested = set(args.scenarios)
+        return [s for s in base if s.id in requested]
+
+    if args.categories:
+        cats = {c.upper() for c in args.categories}
+        return [s for s in base if s.category.value in cats]
+
+    return list(base)
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +565,7 @@ def _run_spec_bench(
     spec_method: str = "auto",
     baseline_tg_tps: float | None = None,
     prompt_types: list[str] | None = None,
+    metrics_url: str | None = None,
 ) -> list:
     """Run speculative decoding benchmark and display results.
 
@@ -603,6 +628,7 @@ def _run_spec_bench(
             baseline_tg_tps=baseline_tg_tps,
             prompt_types=prompt_types,
             on_sample=on_sample,
+            metrics_url=metrics_url,
         )
 
     try:
@@ -666,12 +692,19 @@ def _run_spec_bench(
                 )
         else:
             console.print(
-                "\n  [dim]ℹ Acceptance rate unavailable — server doesn't expose "
-                "Prometheus spec_decode metrics.[/]"
+                "\n  [dim]ℹ Acceptance rate: not available (optional).[/]"
             )
             console.print(
-                "  [dim]  Effective t/s still captures MTP/spec-decode benefit "
-                "vs standard autoregressive decoding.[/]"
+                "  [dim]  Effective t/s (shown above) is the primary metric and "
+                "already captures MTP/spec-decode speedup.[/]"
+            )
+            console.print(
+                "  [dim]  For acceptance rate breakdown, ensure your server exposes "
+                "/metrics with spec_decode counters[/]"
+            )
+            console.print(
+                "  [dim]  (vLLM: enabled by default at http://\u003chost\u003e:\u003cport\u003e/metrics; "
+                "llama.cpp: start with --metrics flag).[/]"
             )
 
     # Write report
@@ -732,6 +765,13 @@ def main() -> None:
                         help="Min-p sampling threshold (e.g. 0.05)")
     parser.add_argument("--repeat-penalty", type=float, default=None, metavar="V",
                         help="Repetition penalty (e.g. 1.1)")
+    parser.add_argument(
+        "--backend-kwargs", type=str, default=None, metavar="JSON",
+        help="JSON-encoded dict of extra parameters to pass to the backend "
+             "(e.g. --backend-kwargs '{\"temperature\": 0.6, \"top_p\": 0.9}'). "
+             "These are merged into the API request payload. Overrides any "
+             "conflicting individual flags (--temperature, --top-p, etc.).",
+    )
     parser.add_argument("--timeout", type=float, default=60.0, help="Request timeout (seconds)")
     parser.add_argument("--max-turns", type=int, default=8, help="Max turns per scenario")
     parser.add_argument(
@@ -739,6 +779,17 @@ def main() -> None:
         nargs="*",
         default=None,
         help="Specific scenario IDs to run (e.g. TC-01 TC-07). Default: all.",
+    )
+    parser.add_argument(
+        "--categories",
+        nargs="*",
+        default=None,
+        metavar="CAT",
+        help="Run only scenarios from specific categories (e.g. --categories K A J). "
+             "Letters A–N: A=Tool Selection, B=Parameter Precision, C=Multi-Step, "
+             "D=Restraint, E=Error Recovery, F=Localization, G=Structured Reasoning, "
+             "H=Instruction Following, I=Context & State, J=Code Patterns, "
+             "K=Safety, L=Toolset Scale, M=Autonomous Planning, N=Creative Composition.",
     )
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of rich display")
     parser.add_argument("--no-live", action="store_true", help="Disable live updating display")
@@ -833,6 +884,12 @@ def main() -> None:
         help="Prompt types for spec bench, comma separated (default: 'filler,code,structured'). "
              "Options: filler, code, structured",
     )
+    parser.add_argument(
+        "--metrics-url", type=str, default=None, metavar="URL",
+        help="Direct URL to the Prometheus /metrics endpoint for spec-decode acceptance rate. "
+             "Use when the API runs behind a proxy (e.g. LiteLLM) and /metrics lives on a "
+             "different host/port (e.g. --metrics-url http://vllm-host:8080/metrics).",
+    )
 
     # Context pressure
     parser.add_argument(
@@ -912,6 +969,42 @@ def main() -> None:
     if args.repeat_penalty is not None:
         extra_params["repetition_penalty"] = args.repeat_penalty
 
+    # Merge --backend-kwargs (JSON blob) — wins over individual flags on conflict
+    if args.backend_kwargs:
+        try:
+            bk = json.loads(args.backend_kwargs)
+            if not isinstance(bk, dict):
+                parser.error("--backend-kwargs must be a JSON object (dict), "
+                             f"got {type(bk).__name__}")
+            # Deep-merge: for dict-valued keys, merge nested dicts; else override
+            for k, v in bk.items():
+                if isinstance(v, dict) and isinstance(extra_params.get(k), dict):
+                    extra_params[k].update(v)
+                else:
+                    extra_params[k] = v
+        except json.JSONDecodeError as exc:
+            parser.error(f"--backend-kwargs is not valid JSON: {exc}")
+
+    # -- Validate --categories --
+    if args.categories:
+        invalid = {c.upper() for c in args.categories} - _VALID_CATEGORIES
+        if invalid:
+            parser.error(
+                f"Unknown categories: {', '.join(sorted(invalid))}. "
+                f"Valid: {', '.join(sorted(_VALID_CATEGORIES))}"
+            )
+        cats = [c.upper() for c in args.categories]
+        from tool_eval_bench.domain.scenarios import CATEGORY_LABELS
+        cat_names = ", ".join(
+            f"{c} ({CATEGORY_LABELS[Category(c)]})" for c in cats
+        )
+        resolved_count = len(_resolve_scenarios(args))
+        if not args.json:
+            console.print(
+                f"  [dim]📋 Categories: {cat_names} "
+                f"({resolved_count} scenarios)[/]"
+            )
+
     # -- Warm-up --
     if not args.no_warmup:
         _do_warmup(console, base_url, model, api_key)
@@ -987,6 +1080,7 @@ def main() -> None:
             spec_method=args.spec_method,
             baseline_tg_tps=args.baseline_tgs,
             prompt_types=spec_prompts,
+            metrics_url=args.metrics_url,
         )
         # If --spec-bench is the only mode requested (no --perf, no scenarios)
         if not args.perf and not args.perf_only:
@@ -1037,9 +1131,41 @@ def main() -> None:
                 "context_size": pressure_cfg.detected_context,
             }
             if not args.json:
+                # Compute tool token estimate for selected scenarios
+                from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
+
+                selected_sc = _resolve_scenarios(args)
+
+                max_toolset = UNIVERSAL_TOOLS
+                for s in selected_sc:
+                    if s.tools_override and len(s.tools_override) > len(max_toolset):
+                        max_toolset = s.tools_override
+                tool_tokens_est = len(json.dumps(max_toolset)) // 4
+                num_tools = len(max_toolset)
+
+                from tool_eval_bench.runner.context_pressure import (
+                    _RESERVED_FOR_OUTPUT,
+                )
+
+                headroom = (
+                    pressure_cfg.detected_context
+                    - pressure_cfg.fill_tokens
+                    - _RESERVED_FOR_OUTPUT
+                )
+                fill_k = pressure_cfg.fill_tokens / 1000
+                tool_k = tool_tokens_est / 1000
+                out_k = _RESERVED_FOR_OUTPUT / 1000
+                head_k = headroom / 1000
+
                 console.print(
                     f"  [dim]  {pressure_cfg.summary()} — "
-                    f"{len(pressure_messages or [])} filler messages[/]\n"
+                    f"{len(pressure_messages or [])} filler messages[/]"
+                )
+                console.print(
+                    f"  [dim]  Budget: [bold]{fill_k:.0f}K[/] fill │ "
+                    f"~{tool_k:.0f}K tools ({num_tools} loaded) │ "
+                    f"{out_k:.0f}K output │ "
+                    f"{head_k:.0f}K headroom[/]\n"
                 )
         except ValueError as exc:
             console.print(f"\n[bold red]Error:[/] {exc}")
@@ -1271,17 +1397,9 @@ def _run_with_live_display(
     context_pressure_config: dict | None = None,
 ) -> None:
     """Run with Rich live display — the default visual mode."""
-    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
     from tool_eval_bench.runner.orchestrator import score_results
 
-    base_scenarios = SCENARIOS if args.short else ALL_SCENARIOS
-
-    # Resolve scenarios for display
-    if args.scenarios:
-        requested = set(args.scenarios)
-        scenarios = [s for s in base_scenarios if s.id in requested]
-    else:
-        scenarios = base_scenarios
+    scenarios = _resolve_scenarios(args)
 
     trials = max(1, args.trials)
     all_summaries = []
@@ -1415,17 +1533,8 @@ def _run_json(
     context_pressure_config: dict | None = None,
 ) -> None:
     """Run and output raw JSON."""
-    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
-
     trials = max(1, args.trials)
-
-    # Resolve scenarios: --scenarios > --short > all
-    base_scenarios = SCENARIOS if args.short else ALL_SCENARIOS
-    if args.scenarios:
-        requested = set(args.scenarios)
-        resolved = [s for s in base_scenarios if s.id in requested]
-    else:
-        resolved = base_scenarios
+    resolved = _resolve_scenarios(args)
 
     async def run() -> dict:
         return await service.run_benchmark(
@@ -1462,9 +1571,8 @@ def _run_json(
     else:
         # Aggregate trial data
         from tool_eval_bench.runner.orchestrator import score_results
-        from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
 
-        base_scenarios = SCENARIOS if args.short else ALL_SCENARIOS
+        resolved_sc = _resolve_scenarios(args)
         summaries = []
         for r in results:
             sr_dicts = r.get("scores", {}).get("scenario_results", [])
@@ -1478,7 +1586,7 @@ def _run_json(
                 for d in sr_dicts
             ]
             if trial_sr:
-                summaries.append(score_results(trial_sr, base_scenarios, alpha=args.alpha))
+                summaries.append(score_results(trial_sr, resolved_sc, alpha=args.alpha))
 
         agg = _aggregate_trials(summaries) if summaries else {}
         output = results[-1]  # last run as the primary result
@@ -1503,18 +1611,10 @@ def _run_plain(
     context_pressure_config: dict | None = None,
 ) -> None:
     """Run with simple line-by-line output."""
-    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
-
     console.print(f"\n[bold]Tool-Call Benchmark[/] — {display_name}")
     console.print(f"[dim]  Backend: {backend}  |  Server: {base_url}[/]\n")
 
-    # Resolve scenarios: --scenarios > --short > all
-    base_scenarios = SCENARIOS if args.short else ALL_SCENARIOS
-    if args.scenarios:
-        requested = set(args.scenarios)
-        resolved = [s for s in base_scenarios if s.id in requested]
-    else:
-        resolved = base_scenarios
+    resolved = _resolve_scenarios(args)
 
     trials = max(1, args.trials)
     started = time.time()
