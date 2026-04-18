@@ -41,7 +41,16 @@ The sole interface is the `tool-eval-bench` CLI. There is no web server or TUI.
 Before claiming completion:
 
 1. `ruff check .`
-2. `pytest`
+2. `.venv/bin/python -m pytest tests/ --ignore=tests/test_adapter.py`
+
+**Always use the project venv** (`.venv/bin/python`), not system Python.
+Dev dependencies like `pytest-asyncio` are installed in the venv via `pip install -e '.[dev]'`.
+Running with system Python silently skips all `@pytest.mark.asyncio` tests, giving
+a false sense of coverage.
+
+Tests that require a live inference server (`test_adapter.py`) should be excluded
+from automated runs. `test_llama_benchy.py` may also be excluded if `llama-benchy`
+is not installed (it's in the `[perf]` optional group).
 
 If checks are not possible, explicitly state what was not run and why.
 
