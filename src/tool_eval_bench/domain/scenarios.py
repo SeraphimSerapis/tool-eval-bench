@@ -30,6 +30,7 @@ class Category(str, Enum):
     L = "L"  # Toolset Scale
     M = "M"  # Autonomous Planning
     N = "N"  # Creative Composition
+    O = "O"  # Structured Output  # noqa: E741
 
 
 CATEGORY_LABELS: dict[Category, str] = {
@@ -47,6 +48,7 @@ CATEGORY_LABELS: dict[Category, str] = {
     Category.L: "Toolset Scale",
     Category.M: "Autonomous Planning",
     Category.N: "Creative Composition",
+    Category.O: "Structured Output",
 }
 
 
@@ -130,6 +132,10 @@ class ScenarioDefinition:
     # instead of the default "auto". Valid values: "none", "required",
     # or {"type": "function", "function": {"name": "fn_name"}}.
     tool_choice_override: str | dict[str, Any] | None = None
+    # Optional response_format override — if set, the orchestrator passes this
+    # to the adapter's response_format parameter. Used by structured output
+    # scenarios to request JSON schema enforcement.
+    response_format_override: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +181,8 @@ class ScenarioResult:
     # Token usage (accumulated across all turns)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    # Per-tool-call argument size tracking (for efficiency analysis)
+    tool_call_arg_bytes: int = 0  # Total bytes of serialized tool call arguments
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -196,6 +204,8 @@ class ScenarioResult:
             d["prompt_tokens"] = self.prompt_tokens
             d["completion_tokens"] = self.completion_tokens
             d["total_tokens"] = self.prompt_tokens + self.completion_tokens
+        if self.tool_call_arg_bytes > 0:
+            d["tool_call_arg_bytes"] = self.tool_call_arg_bytes
         return d
 
 

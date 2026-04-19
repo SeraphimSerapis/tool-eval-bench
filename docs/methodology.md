@@ -32,7 +32,7 @@ returns one of three outcomes:
 
 ## Category Scoring
 
-Scenarios are grouped into 14 categories (A–N). Each category's score is
+Scenarios are grouped into 15 categories (A–O). Each category's score is
 computed as:
 
 ```
@@ -59,6 +59,7 @@ Where `max_points = num_scenarios_in_category × 2`.
 | L | Toolset Scale | 4 | Tool selection from a 52-tool namespace |
 | M | Autonomous Planning | 3 | Goal decomposition, open-ended research, conditional workflows |
 | N | Creative Composition | 3 | Cross-tool synthesis, data pipelines, notification workflows |
+| O | Structured Output | 6 | JSON schema compliance, tool→schema chaining, nested schemas, enum constraints, violation resistance |
 
 ---
 

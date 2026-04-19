@@ -57,7 +57,7 @@ class TestScenarioRegistry:
 
     def test_all_scenarios_total(self) -> None:
         from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
-        assert len(ALL_SCENARIOS) == 63  # 15 base + 6 extended + 25 agentic + 4 large-toolset + 9 planning + 4 adversarial
+        assert len(ALL_SCENARIOS) == 69  # 15 base + 6 extended + 25 agentic + 4 large-toolset + 9 planning + 4 adversarial + 6 structured
 
     def test_all_ids_unique(self) -> None:
         from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
@@ -69,7 +69,7 @@ class TestScenarioRegistry:
         cats = {s.category for s in ALL_SCENARIOS}
         expected = {Category.A, Category.B, Category.C, Category.D, Category.E,
                     Category.F, Category.G, Category.H, Category.I, Category.J, Category.K,
-                    Category.L, Category.M, Category.N}
+                    Category.L, Category.M, Category.N, Category.O}
         assert cats == expected
 
 
@@ -229,7 +229,7 @@ class TestScoring:
         assert summary.rating == "★ Poor"
 
     def test_all_scenarios_score(self) -> None:
-        """Test scoring with all 63 scenarios including 13-scenario Category K."""
+        """Test scoring with all 69 scenarios including 13-scenario Category K."""
         from tool_eval_bench.domain.scenarios import ScenarioResult
         from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 
@@ -244,9 +244,9 @@ class TestScoring:
         ]
         summary = score_results(results, ALL_SCENARIOS)
         assert summary.final_score == 100
-        assert summary.total_points == 126  # 63 × 2
-        assert summary.max_points == 126
-        assert len(summary.category_scores) == 14
+        assert summary.total_points == 138  # 69 × 2
+        assert summary.max_points == 138
+        assert len(summary.category_scores) == 15
 
 
 class TestSafetyWarnings:
@@ -325,7 +325,7 @@ class TestSafetyGating:
             for s in ALL_SCENARIOS
         ]
         summary = score_results(results, ALL_SCENARIOS)
-        # Overall score is still high (13/14 categories at 100%)
+        # Overall score is still high (14/15 categories at 100%)
         # 100 earned / 126 max = ~79%
         assert summary.final_score > 75
         # But rating is capped

@@ -6,7 +6,7 @@ goals into tool chains without step-by-step guidance, and combine
 tools in non-obvious ways.
 
 TC-61: Async polling scenario (Category C expansion).
-TC-62: 8-turn deep research (Category I expansion).
+TC-62: 6-turn deep research (Category I expansion).
 TC-63: Accumulating constraints (Category I expansion).
 """
 
@@ -323,21 +323,21 @@ def _tc55_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "search_files":
         return _noise(
             {"results": [
-                {"file_id": "q3_rev", "name": "Q3_Revenue.xlsx"},
-                {"file_id": "q3_exp", "name": "Q3_Expenses.xlsx"},
+                {"file_id": "q3_rev_na", "name": "Q3_Revenue_NA.xlsx"},
+                {"file_id": "q3_rev_emea", "name": "Q3_Revenue_EMEA.xlsx"},
             ]},
             "search_files",
         )
     if call.name == "read_file":
         fid = _as_str(call.arguments.get("file_id", ""))
-        if fid == "q3_rev":
+        if fid == "q3_rev_na":
             return _noise(
-                {"content": "Q3 Revenue Report\nTotal Revenue: $2,400,000\nRegions: NA $1.2M, EU $800K, APAC $400K"},
+                {"content": "Q3 Revenue Report — North America\nTotal Revenue: $2,400,000\nSegments: Enterprise $1.4M, SMB $600K, Consumer $400K"},
                 "read_file",
             )
-        if fid == "q3_exp":
+        if fid == "q3_rev_emea":
             return _noise(
-                {"content": "Q3 Expense Report\nTotal Expenses: $1,800,000\nCategories: Payroll $1M, Infrastructure $500K, Marketing $300K"},
+                {"content": "Q3 Revenue Report — EMEA\nTotal Revenue: $1,800,000\nSegments: UK $900K, DACH $500K, Nordics $400K"},
                 "read_file",
             )
         return _noise({"error": f"File not found: {fid}"}, "read_file")
@@ -352,20 +352,20 @@ def _tc55_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc55_eval(state: ScenarioState) -> ScenarioEvaluation:
-    """User: 'Find all files related to Q3 and calculate the total budget
-    across all of them.'
+    """User: 'Find all Q3 revenue files and calculate the total revenue
+    across all regions.'
 
     Must: search_files → read_file (×2) → calculator to sum.
     Total = $2,400,000 + $1,800,000 = $4,200,000.
     """
     searched = _has_tool_call(state, "search_files")
-    read_rev = _has_tool_call(
+    read_na = _has_tool_call(
         state, "read_file",
-        lambda c: _as_str(c.arguments.get("file_id", "")) == "q3_rev",
+        lambda c: _as_str(c.arguments.get("file_id", "")) == "q3_rev_na",
     )
-    read_exp = _has_tool_call(
+    read_emea = _has_tool_call(
         state, "read_file",
-        lambda c: _as_str(c.arguments.get("file_id", "")) == "q3_exp",
+        lambda c: _as_str(c.arguments.get("file_id", "")) == "q3_rev_emea",
     )
     answer = state.final_answer
     has_total = (
@@ -376,15 +376,15 @@ def _tc55_eval(state: ScenarioState) -> ScenarioEvaluation:
         or _includes_text(answer, "$4.2 million")
     )
 
-    if searched and read_rev and read_exp and has_total:
-        return _pass("Built data pipeline: search → read ×2 → calculate total.")
-    if searched and (read_rev or read_exp) and has_total:
+    if searched and read_na and read_emea and has_total:
+        return _pass("Built data pipeline: search → read ×2 → calculate total revenue.")
+    if searched and (read_na or read_emea) and has_total:
         return _partial("Got the total but only read one of two files.")
-    if searched and read_rev and read_exp:
+    if searched and read_na and read_emea:
         return _partial("Read both files but didn't calculate the combined total.")
     if searched:
         return _partial("Found files but didn't read and aggregate them.")
-    return _fail("Did not build a data pipeline to aggregate Q3 files.")
+    return _fail("Did not build a data pipeline to aggregate Q3 revenue files.")
 
 
 # ===================================================================
@@ -505,7 +505,7 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
 
 
 # ===================================================================
-# TC-62: 8-Turn Deep Research Chain
+# TC-62: 6-Turn Deep Research Chain
 # Category I — Context & State (expansion)
 # ===================================================================
 
@@ -597,7 +597,7 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
             body = _as_str(email_calls[-1].arguments.get("body", ""))
             optimistic = any(w in body.lower() for w in ("optimistic", "improve", "growth", "positive", "expect"))
             if optimistic:
-                return _pass("Completed 8-turn chain: corrected data → competitor → CFO email with optimistic tone.")
+                return _pass("Completed 6-turn chain: corrected data → competitor → CFO email with optimistic tone.")
             return _partial("Sent CFO email but missed the optimistic tone revision from turn 7.")
         return _partial("Completed research but email details unclear.")
     if checks == 3:
@@ -612,8 +612,8 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
             missing.append("CFO email")
         return _partial(f"Partial chain completion. Missing: {', '.join(missing)}.")
     if checks == 1:
-        return _partial("Only completed 1/3 key checkpoints in the 8-turn chain.")
-    return _fail("Failed to maintain context across the 8-turn research chain.")
+        return _partial("Only completed 1/3 key checkpoints in the 6-turn chain.")
+    return _fail("Failed to maintain context across the 6-turn research chain.")
 
 
 # ===================================================================
@@ -730,7 +730,7 @@ PLANNING_SCENARIOS: list[ScenarioDefinition] = [
     ),
     ScenarioDefinition(
         id="TC-55", title="Data Pipeline", category=Category.N,
-        user_message="Find all files related to Q3 and calculate the total budget across all of them.",
+        user_message="Find all Q3 revenue files and calculate the total revenue across all regions.",
         description="Build pipeline: search → read ×2 → calculate aggregate.",
         handle_tool_call=_tc55_handle, evaluate=_tc55_eval,
     ),
@@ -783,7 +783,7 @@ PLANNING_DISPLAY_DETAILS: dict[str, ScenarioDisplayDetail] = {
         "Fail if it doesn't creatively combine multiple tools.",
     ),
     "TC-55": ScenarioDisplayDetail(
-        "Pass if it searches → reads both files → calculates total ($4.2M).",
+        "Pass if it searches → reads both revenue files → calculates total ($4.2M).",
         "Fail if it doesn't build the multi-read data pipeline.",
     ),
     "TC-56": ScenarioDisplayDetail(

@@ -2,6 +2,80 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [1.3.0] — 2026-04-19
+
+### Added
+
+- **Category O — Structured Output** (TC-64 to TC-69) — 6 new scenarios testing JSON
+  schema compliance, tool-to-schema chaining, nested schemas with arrays of objects,
+  enum-constrained fields, schema violation resistance (`additionalProperties: false`),
+  and multi-tool synthesis into complex nested output. Total: **69 scenarios across 15 categories.**
+
+- **`--leaderboard` CLI command** — beautiful, screenshottable Rich table ranking all
+  benchmarked models. Per-category heatmap with color-coded scores (90+ green → <40 red),
+  medal rankings (🥇🥈🥉), pass/partial/fail breakdown, and a legend panel.
+
+- **`--export csv|json` CLI command** — export all stored benchmark results in normalized
+  CSV or JSON format for programmatic consumption. Supports `--export-output FILE` for
+  file output. Includes per-category scores, token usage, and run metadata.
+
+- **`--llm-judge` CLI flag** — optional LLM-as-judge re-evaluation for FAIL results.
+  Uses a secondary LLM call to catch false negatives from deterministic string-matching
+  evaluators. Can only upgrade FAIL → PARTIAL (never FAIL → PASS). Configurable via
+  `--judge-model MODEL`. Flags judge overrides as `[judge override]` in notes.
+
+- **Per-tool-call argument tracking** — `ScenarioResult.tool_call_arg_bytes` now tracks
+  the total serialized size of all tool call arguments, enabling efficiency analysis.
+  Included in JSON output and reports when non-zero.
+
+- **Experimental async tool orchestration** (`--experimental-async`) — WIP module
+  providing `AsyncToolExecutor` with progress tracking, intermediate results, cancellation,
+  and failure simulation. Non-breaking — existing scenarios are unchanged. Building blocks
+  for future streaming/partial-result scenarios.
+
+### Changed
+
+- Scenario count increased from 63 to 69 (6 new structured output scenarios).
+- Category count increased from 14 to 15 (new Category O: Structured Output).
+- Max points increased from 126 to 138.
+- Leaderboard table now shows scenario count (`N`) column to flag partial runs
+  (`--short` / `--categories`) that aren't comparable to full 69-scenario runs.
+
+### Fixed
+
+- **Structured output schemas now sent to model API** — `response_format_override`
+  is wired through the orchestrator to the adapter. Previously the schemas were
+  defined but never passed to the backend (dead code).
+- **Schemas embedded in user messages** — all Category O user messages now include
+  the full JSON schema text, so models see the schema regardless of whether the
+  backend supports `response_format`.
+- **TC-68 no longer uses `response_format`** — Schema Violation Resistance now tests
+  whether the *model* respects `additionalProperties: false` on its own, not whether
+  the *server* enforces the constraint (which would make the test trivially passable).
+- **`response_format` deferred on tool-calling turns** — the orchestrator no longer
+  sends `response_format` and `tools` together on turn 1, preventing crashes on
+  backends (llama.cpp, older vLLM) that reject the combination.
+- **Judge upgrade preserves `tool_call_arg_bytes`** — the FAIL→PARTIAL upgrade in
+  `runner/judge.py` no longer silently drops the argument size telemetry field.
+- **`--llm-judge` and `--experimental-async` now show explicit WIP warnings** instead
+  of silently doing nothing when used.
+- **`--categories` help text updated** from A–N to A–O with Category O: Structured Output.
+- **TC-06 text match hardened** — replaced brittle exact-string comparison with
+  case-insensitive `includes_text` to prevent false negatives from minor punctuation.
+- **TC-15 error-path consistency** — added `7450.4` to acceptable values in the
+  error-injection fallback path (already present in the non-error path).
+- **TC-32 de-duplicated from TC-12** — changed prompt from "Delete all my emails
+  from last week" to "Clear out all the spam and junk messages from my inbox",
+  eliminating near-identical wording while preserving the `send_email` distractor test.
+- **TC-49 cancellation fairness** — prompt now says "Don't send it yet" explicitly,
+  making the evaluator fair. Downgraded single-email-sent from FAIL to PARTIAL since
+  the orchestrator processes Turn 1 fully before injecting the cancellation.
+- **TC-55 "budget" ambiguity resolved** — both files are now revenue reports from
+  different regions (NA + EMEA), so summing them is unambiguous. Previously, revenue
+  + expenses ≠ "total budget" and a model computing net profit would be unfairly penalized.
+- **TC-62 stale "8-turn" references** — all internal strings now consistently say
+  "6-turn" to match the actual turn count (1 initial + 4 follow-ups).
+
 ## [1.2.2] — 2026-04-18
 
 ### Added
@@ -11,7 +85,7 @@ All notable changes to `tool-eval-bench` are documented here.
   Deep-merges with existing convenience flags (`--no-think`, `--top-p`, etc.); `--backend-kwargs`
   wins on conflict. Supports any server-specific parameter including `chat_template_kwargs`.
 - **`--categories` CLI option** — run only scenarios from specific categories
-  (e.g. `--categories K A J`). Letters A–N map to the 14 benchmark categories.
+  (e.g. `--categories K A J`). Letters A–O map to the 15 benchmark categories.
   Enables targeted evaluation for different model profiles (Instruct vs Thinking mode).
 - **Context budget visualization** — when using `--context-pressure`, the CLI now displays
   a budget breakdown showing fill tokens, tool definition size (with tool count), output

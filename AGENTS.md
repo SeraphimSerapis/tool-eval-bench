@@ -7,7 +7,7 @@ This file defines project-local conventions for all files in this repo.
 Build and evolve a local benchmark platform that evaluates **LLM tool-calling quality** for agentic multi-agent systems. The benchmark uses deterministic scenarios with mock tools, multi-turn conversation loops, and 3-tier scoring (pass/partial/fail).
 
 Primary focus:
-1. **Tool-use effectiveness** — 63 scenarios across 14 categories
+1. **Tool-use effectiveness** — 69 scenarios across 15 categories
 2. **Multi-turn orchestration** — chained reasoning, conditional branching, error recovery
 3. **Throughput benchmarking** — llama-bench style pp/tg measurement with depth/concurrency sweeps
 

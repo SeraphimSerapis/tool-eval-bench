@@ -3,8 +3,8 @@
 The 15 base scenarios (TC-01 to TC-15) are defined here, ported from
 ToolCall-15 (MIT License, https://github.com/stevibe/ToolCall-15).
 
-Extended, agentic, and large-toolset scenario packs are imported at the
-bottom to build ALL_SCENARIOS (63 total across 14 categories).
+Extended, agentic, large-toolset, and structured output scenario packs are
+imported at the bottom to build ALL_SCENARIOS (69 total across 15 categories).
 """
 
 from __future__ import annotations
@@ -224,13 +224,13 @@ def _tc06_eval(state: ScenarioState) -> ScenarioEvaluation:
     has_spanish = any(
         _normalize(_as_str(c.arguments.get("source_language"))) == "english"
         and _normalize(_as_str(c.arguments.get("target_language"))) == "spanish"
-        and _as_str(c.arguments.get("text")) == "Where is the nearest hospital?"
+        and _includes_text(c.arguments.get("text"), "where is the nearest hospital")
         for c in calls
     )
     has_japanese = any(
         _normalize(_as_str(c.arguments.get("source_language"))) == "english"
         and _normalize(_as_str(c.arguments.get("target_language"))) == "japanese"
-        and _as_str(c.arguments.get("text")) == "Where is the nearest hospital?"
+        and _includes_text(c.arguments.get("text"), "where is the nearest hospital")
         for c in calls
     )
     invalid_bundled = any(
@@ -502,7 +502,7 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
         # Credit it for attempting the search and providing a reasonable answer.
         answer = state.final_answer.replace(",", "")
         has_reasonable_answer = any(
-            num in answer for num in ("7450", "7500", "7504", "7451")
+            num in answer for num in ("7450", "7450.4", "7500", "7504", "7451")
         )
         if search and has_reasonable_answer:
             return _partial("Search tool failed — used background knowledge as fallback.")
@@ -713,9 +713,14 @@ from tool_eval_bench.evals.scenarios_adversarial import (  # noqa: E402
     ADVERSARIAL_SCENARIOS,
 )
 
+from tool_eval_bench.evals.scenarios_structured import (  # noqa: E402
+    STRUCTURED_DISPLAY_DETAILS,
+    STRUCTURED_SCENARIOS,
+)
+
 ALL_SCENARIOS: list[ScenarioDefinition] = sorted(
     SCENARIOS + EXTENDED_SCENARIOS + AGENTIC_SCENARIOS + LARGE_TOOLSET_SCENARIOS
-    + PLANNING_SCENARIOS + ADVERSARIAL_SCENARIOS,
+    + PLANNING_SCENARIOS + ADVERSARIAL_SCENARIOS + STRUCTURED_SCENARIOS,
     key=lambda s: int(s.id.split("-")[1]),
 )
 
@@ -727,5 +732,6 @@ ALL_DISPLAY_DETAILS: dict[str, ScenarioDisplayDetail] = {
     **LARGE_TOOLSET_DISPLAY_DETAILS,
     **PLANNING_DISPLAY_DETAILS,
     **ADVERSARIAL_DISPLAY_DETAILS,
+    **STRUCTURED_DISPLAY_DETAILS,
 }
 

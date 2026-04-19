@@ -57,6 +57,7 @@ CATEGORY_COLORS = {
     Category.L: "bright_green",
     Category.M: "bright_blue",
     Category.N: "deep_sky_blue1",
+    Category.O: "orchid1",
 }
 
 RATING_COLORS = {

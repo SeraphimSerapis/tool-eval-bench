@@ -178,6 +178,7 @@ async def run_scenario(
     turn_latencies: list[float] = []
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
+    total_arg_bytes: int = 0  # Track tool call argument sizes
 
     # Build the queue of user messages: initial + any follow-ups
     follow_ups = list(scenario.follow_up_messages)  # copy so we can pop
@@ -206,6 +207,20 @@ async def run_scenario(
             turn_start = time.perf_counter()
             scenario_tools = scenario.tools_override or UNIVERSAL_TOOLS
             scenario_tool_choice = scenario.tool_choice_override or "auto"
+
+            # Only send response_format on content turns (not tool-calling
+            # turns).  Many backends (llama.cpp, older vLLM) reject
+            # response_format + tools in the same request.  We detect the
+            # "content turn" as: either the scenario has no tool expectations
+            # (TC-64, TC-68 style) or we're in a follow-up turn after tool
+            # results have been injected.  On turn 1 when tools are present,
+            # skip response_format so the model can make tool calls first.
+            response_format = scenario.response_format_override
+            if response_format and scenario_tools and turn == 1 and not state.tool_calls:
+                # First turn with tools — let the model make tool calls without
+                # response_format constraint (re-applied on the content turn).
+                response_format = None
+
             result = await adapter.chat_completion(
                 model=model,
                 messages=messages,
@@ -218,6 +233,7 @@ async def run_scenario(
                 base_url=base_url,
                 extra_params=extra,
                 stream=use_stream,
+                response_format=response_format,
             )
             turn_ms = (time.perf_counter() - turn_start) * 1000
             turn_latencies.append(turn_ms)
@@ -267,6 +283,7 @@ async def run_scenario(
                     turn=turn,
                 )
                 state.tool_calls.append(record)
+                total_arg_bytes += len(tc.arguments_str.encode("utf-8"))
                 trace_lines.append(f"tool_call={record.name} {record.raw_arguments}")
 
                 # Call the scenario's mock handler
@@ -343,6 +360,7 @@ async def run_scenario(
         turn_latencies_ms=turn_latencies,
         prompt_tokens=total_prompt_tokens,
         completion_tokens=total_completion_tokens,
+        tool_call_arg_bytes=total_arg_bytes,
     )
 
 

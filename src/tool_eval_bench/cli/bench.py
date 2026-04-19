@@ -732,6 +732,11 @@ from tool_eval_bench.cli.history import (  # noqa: E402
     print_history as _print_history,
 )
 
+from tool_eval_bench.cli.leaderboard import (  # noqa: E402
+    export_runs as _export_runs,
+    print_leaderboard as _print_leaderboard,
+)
+
 
 # ---------------------------------------------------------------------------
 # Main
@@ -786,10 +791,11 @@ def main() -> None:
         default=None,
         metavar="CAT",
         help="Run only scenarios from specific categories (e.g. --categories K A J). "
-             "Letters A–N: A=Tool Selection, B=Parameter Precision, C=Multi-Step, "
+             "Letters A–O: A=Tool Selection, B=Parameter Precision, C=Multi-Step, "
              "D=Restraint, E=Error Recovery, F=Localization, G=Structured Reasoning, "
              "H=Instruction Following, I=Context & State, J=Code Patterns, "
-             "K=Safety, L=Toolset Scale, M=Autonomous Planning, N=Creative Composition.",
+             "K=Safety, L=Toolset Scale, M=Autonomous Planning, N=Creative Composition, "
+             "O=Structured Output.",
     )
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of rich display")
     parser.add_argument("--no-live", action="store_true", help="Disable live updating display")
@@ -914,6 +920,37 @@ def main() -> None:
         help="Compare two stored runs by ID (e.g. --compare RUN_ID_OLD RUN_ID_NEW)",
     )
     parser.add_argument("--history", action="store_true", help="List recent benchmark runs and exit")
+    parser.add_argument("--leaderboard", action="store_true",
+                        help="Show a ranked leaderboard of all benchmarked models and exit")
+    parser.add_argument(
+        "--export", metavar="FORMAT", default=None,
+        choices=["csv", "json"],
+        help="Export all stored results in CSV or JSON format and exit",
+    )
+    parser.add_argument(
+        "--export-output", metavar="FILE", default=None,
+        help="Output file for --export (default: stdout)",
+    )
+
+    # LLM-as-Judge
+    parser.add_argument(
+        "--llm-judge", action="store_true",
+        help="[WIP] Re-evaluate FAIL results using an LLM judge. "
+             "Can upgrade FAIL → PARTIAL (never to PASS) to catch false negatives "
+             "from string-matching evaluators. Module is implemented but not yet "
+             "wired into the benchmark flow.",
+    )
+    parser.add_argument(
+        "--judge-model", type=str, default=None, metavar="MODEL",
+        help="Model to use for LLM judging (default: same as benchmark model).",
+    )
+
+    # Experimental
+    parser.add_argument(
+        "--experimental-async", action="store_true",
+        help="[WIP] Enable experimental async tool orchestration. "
+             "Does not affect standard scenarios — adds async tool awareness.",
+    )
 
     args = parser.parse_args()
     console = Console()
@@ -921,6 +958,16 @@ def main() -> None:
     # --history: show recent runs and exit
     if args.history:
         _print_history(console)
+        return
+
+    # --leaderboard: show ranked model comparison and exit
+    if args.leaderboard:
+        _print_leaderboard(console)
+        return
+
+    # --export: dump results in CSV/JSON and exit
+    if args.export:
+        _export_runs(console, fmt=args.export, output=args.export_output)
         return
 
     # --compare: diff two stored runs and exit
@@ -1008,6 +1055,20 @@ def main() -> None:
     # -- Warm-up --
     if not args.no_warmup:
         _do_warmup(console, base_url, model, api_key)
+
+    # -- Feature flags not yet wired into the run loop --
+    if args.llm_judge:
+        console.print(
+            "\n  [bold yellow]⚠ --llm-judge:[/] The judge module is implemented "
+            "(runner/judge.py) but not yet wired into the benchmark flow. "
+            "Judge results will not be applied in this run.\n"
+        )
+    if args.experimental_async:
+        console.print(
+            "\n  [bold yellow]⚠ --experimental-async:[/] The async tool executor is "
+            "implemented (runner/async_tools.py) but not yet integrated with "
+            "the scenario orchestrator. This flag has no effect in this run.\n"
+        )
 
     # -- Throughput benchmark (llama-benchy, the default) --
     throughput_samples: list = []

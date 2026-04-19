@@ -185,12 +185,12 @@ class TestTC55DataPipeline:
     def test_pass_full_pipeline(self) -> None:
         state = _make_state(
             tool_calls=[
-                {"name": "search_files", "arguments": {"query": "Q3"}},
-                {"name": "read_file", "arguments": {"file_id": "q3_rev"}},
-                {"name": "read_file", "arguments": {"file_id": "q3_exp"}},
+                {"name": "search_files", "arguments": {"query": "Q3 revenue"}},
+                {"name": "read_file", "arguments": {"file_id": "q3_rev_na"}},
+                {"name": "read_file", "arguments": {"file_id": "q3_rev_emea"}},
                 {"name": "calculator", "arguments": {"expression": "2400000 + 1800000"}},
             ],
-            final_answer="The total Q3 budget is $4,200,000.",
+            final_answer="The total Q3 revenue across all regions is $4,200,000.",
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
@@ -198,17 +198,17 @@ class TestTC55DataPipeline:
     def test_partial_one_file(self) -> None:
         state = _make_state(
             tool_calls=[
-                {"name": "search_files", "arguments": {"query": "Q3"}},
-                {"name": "read_file", "arguments": {"file_id": "q3_rev"}},
+                {"name": "search_files", "arguments": {"query": "Q3 revenue"}},
+                {"name": "read_file", "arguments": {"file_id": "q3_rev_na"}},
             ],
-            final_answer="Q3 revenue is $2,400,000 which is the total budget of $4.2M.",
+            final_answer="Q3 NA revenue is $2,400,000 and total revenue is $4.2M.",
         )
         result = self.sc.evaluate(state)
         # Partial — only read one file but got the total (somehow)
         assert result.status in (ScenarioStatus.PASS, ScenarioStatus.PARTIAL)
 
     def test_fail_no_search(self) -> None:
-        state = _make_state(final_answer="The Q3 budget was around $4M.")
+        state = _make_state(final_answer="The Q3 revenue was around $4M.")
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
 
@@ -406,7 +406,7 @@ class TestTC61AsyncPolling:
 
 
 # ===================================================================
-# TC-62: 8-Turn Research Chain (Category I)
+# TC-62: 6-Turn Research Chain (Category I)
 # ===================================================================
 
 class TestTC62DeepResearch:

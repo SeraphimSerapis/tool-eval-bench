@@ -1,6 +1,6 @@
 """Universal tool definitions for the agentic tool-call benchmark.
 
-The 63 scenarios across 14 categories draw from this pool of 12 universal tools
+The 69 scenarios across 15 categories draw from this pool of 12 universal tools
 in OpenAI function-calling format. Models receive the full set every time,
 testing their ability to ignore irrelevant options.
 

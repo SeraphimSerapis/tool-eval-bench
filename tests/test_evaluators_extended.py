@@ -682,7 +682,7 @@ class TestTC32:
     sc = _sc("TC-32")
 
     def test_pass(self) -> None:
-        s = _state(final_answer="I can't delete emails — no delete tool is available.")
+        s = _state(final_answer="I can't clear spam from your inbox — no tool is available for that.")
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
 
     def test_fail_misused_send(self) -> None:
@@ -1347,14 +1347,15 @@ class TestTC49:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
 
-    def test_fail_sent_without_acknowledging(self) -> None:
+    def test_partial_sent_without_acknowledging(self) -> None:
+        """Model sent despite 'don't send yet' — partial because of turn ordering."""
         s = _state(
             tool_calls=[
                 {"name": "send_email", "arguments": {"to": "sarah.lee@company.com", "subject": "Deadline", "body": "..."}},
             ],
             final_answer="Email sent to Sarah!",
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
 
     def test_fail_multiple_sends(self) -> None:
         s = _state(

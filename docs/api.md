@@ -44,7 +44,7 @@ result = asyncio.run(service.run_benchmark(
     scenarios=SCENARIOS,  # core 15 only
 ))
 
-# Run all 63 scenarios (default)
+# Run all 69 scenarios (default)
 result = asyncio.run(service.run_benchmark(
     model="my-model",
     backend="vllm",

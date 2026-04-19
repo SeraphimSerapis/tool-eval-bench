@@ -2,13 +2,13 @@
 
 A **tool-calling quality benchmark** for evaluating LLM tool-use in agentic workflows across open-weight model serving stacks (**vLLM**, **LiteLLM**, **llama.cpp**).
 
-Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool runs **63 deterministic scenarios** through OpenAI-compatible `/chat/completions` endpoints, scores each result as **pass**, **partial**, or **fail**, and produces detailed trace reports. Mock tool responses include realistic payload noise (extra metadata, timestamps, nested objects) to test whether models can extract relevant fields from noisy API responses. It also includes an integrated **throughput benchmark** (llama-bench style) for measuring prefill and token generation speed.
+Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool runs **69 deterministic scenarios** through OpenAI-compatible `/chat/completions` endpoints, scores each result as **pass**, **partial**, or **fail**, and produces detailed trace reports. Mock tool responses include realistic payload noise (extra metadata, timestamps, nested objects) to test whether models can extract relevant fields from noisy API responses. It also includes an integrated **throughput benchmark** (llama-bench style) for measuring prefill and token generation speed.
 
 > **Scope.** tool-eval-bench measures *tool-calling quality* — whether a model picks the right tool, passes the right parameters, chains tools correctly, and handles errors and safety boundaries. It is not a full agentic system benchmark (see [Related Work](#related-work) for how it compares to BFCL, PinchBench, and Claw-Eval).
 
 ## What It Measures
 
-### Tool-Call Quality (63 scenarios across 14 categories)
+### Tool-Call Quality (69 scenarios across 15 categories)
 
 | Category | Scenarios | What It Tests |
 |---|---|---|
@@ -26,6 +26,7 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 | **L — Toolset Scale** | TC-37 – TC-40 | Tool selection from 52 tools, multi-step in crowded namespace, restraint under abundance |
 | **M — Autonomous Planning** | TC-51 – TC-53 | Goal decomposition, open-ended research, conditional workflows |
 | **N — Creative Composition** | TC-54 – TC-56 | Cross-tool synthesis, data pipelines, notification workflows |
+| **O — Structured Output** | TC-64 – TC-69 | JSON schema compliance, tool→schema chaining, nested schemas, enum constraints, violation resistance |
 
 ### Throughput Performance (optional)
 
@@ -399,11 +400,11 @@ pytest             # scenario evaluators + storage
 
 | Benchmark | Focus | How tool-eval-bench differs |
 |---|---|---|
-| [BFCL](https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html) | Berkeley Function Calling Leaderboard — large-scale function-calling eval (1,700+ tests) | We focus on *agentic* multi-turn orchestration, not single-turn completion. Our 63 scenarios emphasize chained reasoning, error recovery, and safety boundaries. |
+| [BFCL](https://gorilla.cs.berkeley.edu/blogs/8_berkeley_function_calling_leaderboard.html) | Berkeley Function Calling Leaderboard — large-scale function-calling eval (1,700+ tests) | We focus on *agentic* multi-turn orchestration, not single-turn completion. Our 69 scenarios emphasize chained reasoning, error recovery, and safety boundaries. |
 | [ToolBench](https://github.com/OpenBMB/ToolBench) | API discovery across 16K+ real-world APIs | We use deterministic mock tools with realistic payload noise for reproducible scoring. No external API dependencies. |
 | [NexusRaven](https://nexusflow.ai/blogs/ravenv2) | Function-calling via fine-tuned models | We're model-agnostic — any OpenAI-compatible endpoint works. We also measure throughput (pp/tg) alongside correctness. |
 | [API-Bank](https://github.com/AlibabaResearch/DAMO-ConvAI/tree/main/api-bank) | Multi-turn API usage (73 APIs) | We add safety/boundary testing (Category K with 13 scenarios including prompt injection resistance), large-toolset scale testing (52 tools), and statistical rigor via `--trials`. |
-| [ToolCall-15](https://github.com/stevibe/ToolCall-15) | 15-scenario quick assessment | Our direct ancestor. We extended it to 63 scenarios across 14 categories, added multi-turn orchestration, autonomous planning, creative composition, throughput benchmarking, and production-grade persistence. |
+| [ToolCall-15](https://github.com/stevibe/ToolCall-15) | 15-scenario quick assessment | Our direct ancestor. We extended it to 69 scenarios across 15 categories, added multi-turn orchestration, autonomous planning, creative composition, structured output evaluation, throughput benchmarking, and production-grade persistence. |
 | [PinchBench (OpenClaw)](https://github.com/open-claw/PinchBench) | Agentic task completion in real environments | PinchBench tests end-to-end task completion. We focus on the tool-calling substrate: does the model pick the right tool, pass the right params, and chain correctly? Complementary benchmarks. |
 
 **Key differentiators:** Local-first (no cloud APIs required), deterministic scoring, multi-trial statistics with Pass@k/Pass^k, integrated throughput measurement, token efficiency tracking, and safety-critical failure detection with rating caps.
