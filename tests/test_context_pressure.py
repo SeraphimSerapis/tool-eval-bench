@@ -374,6 +374,73 @@ class TestOrchestratorIntegration:
         assert msgs[4]["content"] == "ack_2"
         assert msgs[5]["content"] == "Real question"
 
+    def test_scenario_nonce_injected_into_first_filler(self) -> None:
+        """When scenario_id is provided, a unique nonce prefix should be
+        injected into the first filler user message to defeat prefix caching.
+        (Regression test for #4.)"""
+        from tool_eval_bench.runner.orchestrator import _initial_messages
+
+        pressure = [
+            {"role": "user", "content": "Background filler text..."},
+            {"role": "assistant", "content": "Understood."},
+        ]
+
+        msgs = _initial_messages(
+            "What's the weather?",
+            context_pressure_messages=pressure,
+            scenario_id="TC-64",
+        )
+
+        assert len(msgs) == 4
+        # The first filler message should contain the scenario nonce
+        assert msgs[1]["content"].startswith("[scenario:TC-64]")
+        assert "Background filler text" in msgs[1]["content"]
+
+    def test_scenario_nonce_does_not_mutate_original(self) -> None:
+        """The original pressure_messages list must not be mutated when a
+        scenario nonce is injected."""
+        from tool_eval_bench.runner.orchestrator import _initial_messages
+
+        pressure = [
+            {"role": "user", "content": "Original filler text"},
+            {"role": "assistant", "content": "Understood."},
+        ]
+
+        _initial_messages(
+            "Question 1",
+            context_pressure_messages=pressure,
+            scenario_id="TC-01",
+        )
+
+        # Original should be unmodified
+        assert pressure[0]["content"] == "Original filler text"
+
+    def test_different_scenarios_get_different_prefixes(self) -> None:
+        """Two scenarios with different IDs should produce different filler
+        message prefixes — ensuring prefix caching can't help either one."""
+        from tool_eval_bench.runner.orchestrator import _initial_messages
+
+        pressure = [
+            {"role": "user", "content": "Shared filler text..."},
+            {"role": "assistant", "content": "OK."},
+        ]
+
+        msgs_a = _initial_messages(
+            "Question A",
+            context_pressure_messages=pressure,
+            scenario_id="TC-61",
+        )
+        msgs_b = _initial_messages(
+            "Question B",
+            context_pressure_messages=pressure,
+            scenario_id="TC-64",
+        )
+
+        # First filler message should differ between scenarios
+        assert msgs_a[1]["content"] != msgs_b[1]["content"]
+        assert "[scenario:TC-61]" in msgs_a[1]["content"]
+        assert "[scenario:TC-64]" in msgs_b[1]["content"]
+
 
 # ---------------------------------------------------------------------------
 # Integration: run_scenario with pressure messages

@@ -655,14 +655,22 @@ class TestVersionConsistency:
 
     def test_init_version(self) -> None:
         from tool_eval_bench import __version__
-        assert __version__ == "1.3.0"
+        # Should be a valid semver-like string
+        parts = __version__.split(".")
+        assert len(parts) == 3, f"Version should be X.Y.Z, got {__version__}"
+        assert all(p.isdigit() for p in parts), f"Version parts should be numeric, got {__version__}"
 
     def test_pyproject_version_matches(self) -> None:
         import tomllib
         from pathlib import Path
 
+        from tool_eval_bench import __version__
+
         pyproject = Path(__file__).parent.parent / "pyproject.toml"
         if pyproject.exists():
             with open(pyproject, "rb") as f:
                 data = tomllib.load(f)
-            assert data["project"]["version"] == "1.3.0"
+            assert data["project"]["version"] == __version__, (
+                f"pyproject.toml version ({data['project']['version']}) "
+                f"doesn't match __init__.py ({__version__})"
+            )

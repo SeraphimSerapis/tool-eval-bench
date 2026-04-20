@@ -8,6 +8,7 @@ Captures full traces for auditability.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import random
@@ -74,6 +75,7 @@ def _initial_messages(
     reference_date: str | None = None,
     reference_day: str | None = None,
     context_pressure_messages: list[dict[str, Any]] | None = None,
+    scenario_id: str | None = None,
 ) -> list[dict[str, Any]]:
     ref_date = reference_date or BENCHMARK_REFERENCE_DATE
     ref_day = reference_day or BENCHMARK_REFERENCE_DAY
@@ -90,7 +92,23 @@ def _initial_messages(
     # Inject context pressure filler turns (if any) between system prompt
     # and the real user message to simulate a busy conversation history.
     if context_pressure_messages:
-        msgs.extend(context_pressure_messages)
+        # Deep-copy and inject a per-scenario nonce into the first user
+        # filler message.  Without this, the server's prefix cache (enabled
+        # by default in vLLM) recognises the identical filler prefix from
+        # an earlier scenario and reuses cached KV entries — giving later
+        # scenarios an unfair performance boost while the first scenario
+        # (which must compute from scratch) consistently fails.  The nonce
+        # makes every scenario's token prefix unique, ensuring consistent
+        # evaluation conditions across all scenarios.  (Fixes #4)
+        if scenario_id:
+            patched = copy.deepcopy(context_pressure_messages)
+            if patched and patched[0]["role"] == "user":
+                patched[0]["content"] = (
+                    f"[scenario:{scenario_id}] " + patched[0]["content"]
+                )
+            msgs.extend(patched)
+        else:
+            msgs.extend(context_pressure_messages)
     msgs.append({"role": "user", "content": user_message})
     return msgs
 
@@ -171,6 +189,7 @@ async def run_scenario(
         reference_date=reference_date,
         reference_day=reference_day,
         context_pressure_messages=context_pressure_messages,
+        scenario_id=scenario.id,
     )
     trace_lines: list[str] = ["assistant=starting"]
 

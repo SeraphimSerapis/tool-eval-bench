@@ -2,6 +2,20 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [1.3.1] — 2026-04-20
+
+### Fixed
+
+- **Context pressure first-scenario failure** (Issue #4) — when `--context-pressure` was
+  used, the first scenario in a run would consistently fail while subsequent scenarios
+  passed.  Root cause: the same filler messages were reused identically across all
+  scenarios, allowing the inference server's prefix cache (enabled by default in vLLM) to
+  give later scenarios a free performance boost.  The first scenario — which had to compute
+  the full filler prefix from scratch — bore the full cost alone.  Fix: inject a unique
+  per-scenario nonce (`[scenario:TC-XX]`) into the first filler message via deep copy,
+  ensuring every scenario presents a unique token prefix and faces identical evaluation
+  conditions.
+
 ## [1.3.0] — 2026-04-19
 
 ### Added
@@ -32,6 +46,11 @@ All notable changes to `tool-eval-bench` are documented here.
   providing `AsyncToolExecutor` with progress tracking, intermediate results, cancellation,
   and failure simulation. Non-breaking — existing scenarios are unchanged. Building blocks
   for future streaming/partial-result scenarios.
+
+- **`--redact-url` CLI flag** — masks the server URL in all display output
+  (e.g. `http://192.168.10.5:8080` → `http://***:8080`). Useful for screenshots,
+  recordings, and demos where you don't want to expose internal IPs. The actual
+  API connection is unaffected.
 
 ### Changed
 
