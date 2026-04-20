@@ -6,11 +6,15 @@ Covers:
   - Context size detection from mock /v1/models responses
   - ContextPressureConfig summary string
   - Integration with the orchestrator (_initial_messages)
+  - Per-scenario nonce injection for prefix cache isolation
+  - Reservation constant (12K headroom for ratio=1.0)
+  - Sweep range parsing and level generation
+  - Sweep runner integration (mocked orchestrator, early stop, redact-url)
 """
 
 from __future__ import annotations
 
-
+import argparse
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -509,3 +513,242 @@ class TestRunScenarioWithPressure:
         assert "Background filler" in msgs[1]["content"]
         # The actual scenario message should be last
         assert msgs[-1]["content"] == "What's the weather?"
+
+
+# ---------------------------------------------------------------------------
+# Reservation constant
+# ---------------------------------------------------------------------------
+
+
+class TestReservationConstant:
+    def test_reservation_at_least_12000(self) -> None:
+        """_RESERVED_FOR_SCENARIO must be >= 12000 to allow ratio=1.0 to
+        succeed with headroom for token estimation error."""
+        assert _RESERVED_FOR_SCENARIO >= 12000
+
+    def test_ratio_1_leaves_enough_headroom(self) -> None:
+        """At ratio=1.0, the fill budget should consume all 'available' space,
+        but the reserved 12K should still cover worst-case scenarios."""
+        fill = compute_fill_budget(32768, 1.0)
+        available = 32768 - _RESERVED_FOR_OUTPUT - _RESERVED_FOR_SCENARIO
+        assert fill == available
+        # Reserved space should be enough for LARGE_TOOLSET (~6K) + margin
+        assert _RESERVED_FOR_SCENARIO >= 12000
+
+
+# ---------------------------------------------------------------------------
+# Sweep range parsing
+# ---------------------------------------------------------------------------
+
+
+class TestSweepRangeParsing:
+    def test_valid_range(self) -> None:
+        from tool_eval_bench.cli.bench import _parse_sweep_range
+
+        start, end = _parse_sweep_range("0.5-1.0")
+        assert start == 0.5
+        assert end == 1.0
+
+    def test_narrow_range(self) -> None:
+        from tool_eval_bench.cli.bench import _parse_sweep_range
+
+        start, end = _parse_sweep_range("0.9-1.0")
+        assert start == 0.9
+        assert end == 1.0
+
+    def test_values_clamped_to_unit_range(self) -> None:
+        from tool_eval_bench.cli.bench import _parse_sweep_range
+
+        # Values > 1.0 should be clamped
+        start, end = _parse_sweep_range("0.5-1.5")
+        assert start == 0.5
+        assert end == 1.0
+
+    def test_invalid_format_raises(self) -> None:
+        from tool_eval_bench.cli.bench import _parse_sweep_range
+
+        with pytest.raises(ValueError, match="Invalid sweep range"):
+            _parse_sweep_range("0.5")
+
+    def test_start_equals_end_raises(self) -> None:
+        from tool_eval_bench.cli.bench import _parse_sweep_range
+
+        with pytest.raises(ValueError, match="must be less than"):
+            _parse_sweep_range("0.5-0.5")
+
+    def test_start_greater_than_end_raises(self) -> None:
+        from tool_eval_bench.cli.bench import _parse_sweep_range
+
+        with pytest.raises(ValueError, match="must be less than"):
+            _parse_sweep_range("0.8-0.5")
+
+    def test_non_numeric_raises(self) -> None:
+        from tool_eval_bench.cli.bench import _parse_sweep_range
+
+        with pytest.raises(ValueError, match="must be numbers"):
+            _parse_sweep_range("abc-def")
+
+    def test_sweep_levels_generation(self) -> None:
+        """Verify that sweep level generation produces correct step count."""
+        from tool_eval_bench.cli.bench import _parse_sweep_range
+
+        start, end = _parse_sweep_range("0.9-1.0")
+        steps = 10
+        levels = [start + i * (end - start) / steps for i in range(steps + 1)]
+        levels = [round(lv, 4) for lv in levels]
+
+        assert len(levels) == 11
+        assert levels[0] == 0.9
+        assert levels[-1] == 1.0
+        # Check step size is ~0.01
+        for i in range(1, len(levels)):
+            assert abs(levels[i] - levels[i - 1] - 0.01) < 0.001
+
+
+# ---------------------------------------------------------------------------
+# Integration: _run_pressure_sweep
+# ---------------------------------------------------------------------------
+
+
+class TestPressureSweepIntegration:
+    """Tests for the sweep runner (mocked orchestrator)."""
+
+    def _make_args(
+        self,
+        sweep: str = "0.5-1.0",
+        steps: int = 2,
+        scenarios: list[str] | None = None,
+        context_size: int = 32768,
+    ) -> argparse.Namespace:
+        import argparse
+
+        return argparse.Namespace(
+            context_pressure_sweep=sweep,
+            sweep_steps=steps,
+            scenarios=scenarios or ["TC-01"],
+            short=False,
+            categories=None,
+            context_size=context_size,
+            redact_url=False,
+        )
+
+    def _make_summary(self, statuses: list[str]) -> Any:
+        """Build a mock ModelScoreSummary with given statuses."""
+        from tool_eval_bench.domain.scenarios import (
+            ModelScoreSummary,
+            ScenarioResult,
+            ScenarioStatus,
+        )
+
+        results = []
+        for i, status_str in enumerate(statuses):
+            s = ScenarioStatus(status_str)
+            results.append(ScenarioResult(
+                scenario_id=f"TC-{i + 1:02d}",
+                status=s,
+                points=2 if s == ScenarioStatus.PASS else (1 if s == ScenarioStatus.PARTIAL else 0),
+                summary="ok",
+            ))
+
+        return ModelScoreSummary(
+            scenario_results=results,
+            total_points=sum(r.points for r in results),
+            max_points=len(results) * 2,
+            final_score=sum(r.points for r in results) / (len(results) * 2) * 100,
+            rating="test",
+            category_scores=[],
+            safety_warnings=[],
+            total_tokens=0,
+        )
+
+    @patch("tool_eval_bench.cli.bench._resolve_scenarios")
+    @patch("tool_eval_bench.cli.bench.asyncio")
+    def test_sweep_runs_all_levels(self, mock_asyncio, mock_resolve) -> None:
+        """Sweep should call run_all_scenarios for each pressure level."""
+        import io
+
+        from rich.console import Console
+
+        from tool_eval_bench.domain.scenarios import (
+            Category,
+            ScenarioDefinition,
+        )
+
+        scenario = ScenarioDefinition(
+            id="TC-01", title="Test", category=Category.A,
+            user_message="test", description="test",
+            handle_tool_call=lambda s, c: {}, evaluate=lambda s: None,
+        )
+        mock_resolve.return_value = [scenario]
+
+        summary = self._make_summary(["pass"])
+        mock_asyncio.run.return_value = summary
+
+        console = Console(file=io.StringIO(), force_terminal=False)
+        args = self._make_args(sweep="0.5-1.0", steps=3, context_size=32768)
+
+        from tool_eval_bench.cli.bench import _run_pressure_sweep
+        _run_pressure_sweep(
+            console, "test-model", "test-model", "vllm",
+            "http://localhost:8080", None, args,
+        )
+
+        # 4 levels (steps=3 → 0.5, 0.667, 0.833, 1.0) + 1 aclose
+        assert mock_asyncio.run.call_count == 5
+
+    @patch("tool_eval_bench.cli.bench._resolve_scenarios")
+    @patch("tool_eval_bench.cli.bench.asyncio")
+    def test_sweep_early_stops_on_consecutive_failures(
+        self, mock_asyncio, mock_resolve,
+    ) -> None:
+        """Sweep should stop after 2 consecutive all-fail levels."""
+        import io
+
+        from rich.console import Console
+
+        from tool_eval_bench.domain.scenarios import (
+            Category,
+            ScenarioDefinition,
+        )
+
+        scenario = ScenarioDefinition(
+            id="TC-01", title="Test", category=Category.A,
+            user_message="test", description="test",
+            handle_tool_call=lambda s, c: {}, evaluate=lambda s: None,
+        )
+        mock_resolve.return_value = [scenario]
+
+        pass_summary = self._make_summary(["pass"])
+        fail_summary = self._make_summary(["fail"])
+
+        # Level 1: pass, Level 2: fail, Level 3: fail → stop
+        mock_asyncio.run.side_effect = [pass_summary, fail_summary, fail_summary]
+
+        console = Console(file=io.StringIO(), force_terminal=False)
+        args = self._make_args(sweep="0.5-1.0", steps=4, context_size=32768)
+
+        from tool_eval_bench.cli.bench import _run_pressure_sweep
+        _run_pressure_sweep(
+            console, "test-model", "test-model", "vllm",
+            "http://localhost:8080", None, args,
+        )
+
+        # Should stop at 3 calls (pass, fail, fail) + 1 aclose, not 5+1
+        assert mock_asyncio.run.call_count == 4
+
+    def test_sweep_uses_display_url_for_redaction(self) -> None:
+        """When --redact-url is used, the sweep header should show the
+        redacted URL, not the real server address."""
+        from tool_eval_bench.cli.bench import _redact_url
+
+        real_url = "http://192.168.10.5:8080"
+        redacted = _redact_url(real_url)
+        assert "192.168" not in redacted
+        assert "***" in redacted
+        assert "8080" in redacted
+
+        # Verify the sweep function signature accepts display_url
+        import inspect
+        from tool_eval_bench.cli.bench import _run_pressure_sweep
+        sig = inspect.signature(_run_pressure_sweep)
+        assert "display_url" in sig.parameters

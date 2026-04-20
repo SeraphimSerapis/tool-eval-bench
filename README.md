@@ -4,6 +4,8 @@ A **tool-calling quality benchmark** for evaluating LLM tool-use in agentic work
 
 Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool runs **69 deterministic scenarios** through OpenAI-compatible `/chat/completions` endpoints, scores each result as **pass**, **partial**, or **fail**, and produces detailed trace reports. Mock tool responses include realistic payload noise (extra metadata, timestamps, nested objects) to test whether models can extract relevant fields from noisy API responses. It also includes an integrated **throughput benchmark** (llama-bench style) for measuring prefill and token generation speed.
 
+![tool-eval-bench benchmark output](docs/images/benchmark-output.png)
+
 > **Scope.** tool-eval-bench measures *tool-calling quality* — whether a model picks the right tool, passes the right parameters, chains tools correctly, and handles errors and safety boundaries. It is not a full agentic system benchmark (see [Related Work](#related-work) for how it compares to BFCL, PinchBench, and Claw-Eval).
 
 ## What It Measures
@@ -114,7 +116,7 @@ tool-eval-bench --scenarios TC-01 TC-02 TC-03 TC-04 TC-05
 # Core 15 — fast quality check
 tool-eval-bench --short --seed 42
 
-# Full 63 — the standard benchmark
+# Full 69 — the standard benchmark
 tool-eval-bench --seed 42
 
 # Full + throughput — quality + speed (recommended)
@@ -153,12 +155,15 @@ tool-eval-bench --model gemma4 --backend vllm --base-url http://localhost:8080
 --timeout FLOAT        Request timeout in seconds (default: 60.0)
 --max-turns INT        Max turns per scenario (default: 8)
 --scenarios IDs        Run specific scenarios (e.g. TC-01 TC-07)
---categories CAT       Run specific categories (e.g. K A J); letters A–N
+--categories CAT       Run specific categories (e.g. K A J); letters A–O
 --short                Run only the core 15 scenarios
 --trials N             Run N trials; generates individual reports + a consolidated summary report with Pass@k, Pass^k, flaky detection
 --error-rate RATE      Inject random tool errors at given rate (0.0–1.0) for robustness testing
 --context-pressure R   Fill context to R (0.0–1.0) before each scenario to test tool-calling under pressure
 --context-size N       Override auto-detected context window size (tokens)
+--context-pressure-sweep START-END
+                       Run scenarios at increasing pressure from START to END and report the breaking point
+--sweep-steps N        Number of intervals for sweep (default: 5, producing N+1 test levels)
 --metrics-url URL      Direct URL to Prometheus /metrics (for LiteLLM proxy setups)
 --alpha WEIGHT         Quality/speed weight for deployability score (0.0–1.0, default: 0.7)
 --reference-date DATE  Override benchmark reference date (YYYY-MM-DD, default: 2026-03-20)
@@ -167,6 +172,7 @@ tool-eval-bench --model gemma4 --backend vllm --base-url http://localhost:8080
 --json                 Output raw JSON
 --no-live              Disable live progress footer
 --no-warmup            Skip server warm-up request
+--redact-url           Mask the server URL in display output (useful for screenshots/recordings)
 --diff RUN_ID          Compare results against a previous run (use 'latest')
 --compare A B          Diff two stored runs by ID
 --history              List recent benchmark runs
@@ -279,6 +285,25 @@ tool-eval-bench --compare <baseline_id> <pressure_id>
 |---|---|---|
 | `--context-pressure` | off | Fill ratio (0.0–1.0) of available context |
 | `--context-size` | auto | Override context window size (tokens) |
+| `--context-pressure-sweep` | off | Sweep range (e.g. `0.5-1.0`) — find the breaking point |
+| `--sweep-steps` | 5 | Number of intervals for sweep (N+1 test levels) |
+
+#### Finding the breaking point
+
+Use `--context-pressure-sweep` to gradually increase pressure and discover exactly where a model starts failing:
+
+```bash
+# Find breaking point between 90%–100% with fine granularity
+tool-eval-bench --context-pressure-sweep 0.9-1.0 --sweep-steps 10 --scenarios TC-61 TC-64
+
+# Broad sweep across the full range
+tool-eval-bench --context-pressure-sweep 0.5-1.0 --scenarios TC-61
+
+# Sweep a specific category
+tool-eval-bench --context-pressure-sweep 0.5-1.0 --categories O
+```
+
+The sweep runs each selected scenario at every pressure level, displays a compact summary panel with pass/fail status per level, and reports the **breaking point** (highest pressure where all scenarios still pass). It early-stops after 2 consecutive all-fail levels.
 
 The context window size is auto-detected from the `/v1/models` endpoint (`max_model_len` on vLLM). If auto-detection fails, use `--context-size` to specify it manually.
 
@@ -287,6 +312,7 @@ The filler is designed to defeat server-side prefix caching (vLLM, llama.cpp):
 - **Shuffled order**: paragraph order is randomized per run
 - **Noise injection**: random ticket IDs, timestamps, IP addresses, and version strings are sprinkled throughout the text at sentence boundaries
 - **Unique nonces**: each chunk gets a unique session/chunk identifier prefix
+- **Per-scenario isolation**: each scenario gets a unique nonce injected into the filler to prevent cross-scenario prefix cache reuse
 
 This ensures that every run produces a completely unique token sequence, forcing full KV cache computation rather than hitting cached prefixes.
 

@@ -4,6 +4,17 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [1.3.1] — 2026-04-20
 
+### Added
+
+- **`--context-pressure-sweep START-END`** — run scenarios at increasing context pressure
+  levels and report the breaking point.  Example:
+  `--context-pressure-sweep 0.9-1.0 --sweep-steps 10 --scenarios TC-61 TC-64`
+  runs 11 levels (90% → 100%) and shows a compact Rich panel with per-scenario
+  pass/fail status, bar chart, and the exact pressure ratio where the model starts
+  failing.  Early-stops after 2 consecutive all-fail levels.
+- **`--sweep-steps N`** — control granularity of the pressure sweep (default: 5
+  intervals = 6 test levels).
+
 ### Fixed
 
 - **Context pressure first-scenario failure** (Issue #4) — when `--context-pressure` was
@@ -15,6 +26,10 @@ All notable changes to `tool-eval-bench` are documented here.
   per-scenario nonce (`[scenario:TC-XX]`) into the first filler message via deep copy,
   ensuring every scenario presents a unique token prefix and faces identical evaluation
   conditions.
+- **Context pressure ratio=1.0 overflow** — increased `_RESERVED_FOR_SCENARIO` from 8,000
+  to 12,000 tokens.  The extra 4K margin absorbs token estimation error (char→token
+  approximation) so that `--context-pressure 1.0` can succeed on multi-turn scenarios
+  instead of silently overflowing the context window.
 
 ## [1.3.0] — 2026-04-19
 

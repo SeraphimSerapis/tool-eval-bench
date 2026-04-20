@@ -63,13 +63,29 @@ def _load_dotenv() -> None:
     load_dotenv(override=False)
 
 
+def _redact_url(url: str) -> str:
+    """Mask the host in a URL for display.  e.g. http://192.168.10.5:8080 → http://***:8080"""
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return url
+    # Replace hostname with ***, keep port if present
+    redacted_netloc = "***"
+    if parsed.port:
+        redacted_netloc = f"***:{parsed.port}"
+    return urlunparse(parsed._replace(netloc=redacted_netloc))
+
 
 
 # ---------------------------------------------------------------------------
 # Model auto-detection
 # ---------------------------------------------------------------------------
 
-def _detect_model(base_url: str, api_key: str | None, console: Console) -> tuple[str, str]:
+def _detect_model(
+    base_url: str, api_key: str | None, console: Console,
+    *, display_url: str | None = None,
+) -> tuple[str, str]:
     """Query /v1/models and auto-select or let the user pick.
 
     Returns (api_id, display_name).
@@ -87,7 +103,12 @@ def _detect_model(base_url: str, api_key: str | None, console: Console) -> tuple
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    console.print(f"[dim]  Querying {models_endpoint} …[/]", end=" ")
+    # Build a display-safe endpoint URL for console output
+    show_url = display_url or base_url
+    show_endpoint = f"{show_url.rstrip('/')}/v1/models"
+    if show_url.rstrip("/").endswith("/v1"):
+        show_endpoint = f"{show_url.rstrip('/')}/models"
+    console.print(f"[dim]  Querying {show_endpoint} …[/]", end=" ")
 
     used_fallback = False
 
@@ -106,7 +127,7 @@ def _detect_model(base_url: str, api_key: str | None, console: Console) -> tuple
         resp.raise_for_status()
     except httpx.ConnectError:
         console.print("[bold red]✗ cannot connect[/]")
-        console.print(f"\n[red]Could not connect to {url}. Is the server running?[/]")
+        console.print(f"\n[red]Could not connect to {show_url}. Is the server running?[/]")
         sys.exit(1)
     except httpx.HTTPStatusError as exc:
         console.print(f"[bold red]✗ HTTP {exc.response.status_code}[/]")
@@ -307,6 +328,7 @@ def _run_throughput(
             show_header=True,
             header_style="bold",
             border_style="bright_cyan",
+            expand=True,
         )
         table.add_column("Test", min_width=20, no_wrap=True)
         table.add_column("pp t/s", justify="right", width=10)
@@ -516,6 +538,7 @@ def _run_llama_benchy(
             show_header=True,
             header_style="bold",
             border_style="bright_cyan",
+            expand=True,
         )
         table.add_column("Test", min_width=test_col_width, no_wrap=True)
         table.add_column("c", justify="center", width=4)
@@ -649,6 +672,7 @@ def _run_spec_bench(
             show_header=True,
             header_style="bold",
             border_style="bright_magenta",
+            expand=True,
         )
         table.add_column("Prompt", min_width=12, no_wrap=True)
         table.add_column("Depth", justify="right", width=6)
@@ -799,6 +823,11 @@ def main() -> None:
     )
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of rich display")
     parser.add_argument("--no-live", action="store_true", help="Disable live updating display")
+    parser.add_argument(
+        "--redact-url", action="store_true",
+        help="Mask the server URL in display output (useful for screenshots/recordings). "
+             "The actual API connection is unaffected.",
+    )
     parser.add_argument("--short", action="store_true", help="Run only the core 15 scenarios (skip extended + agentic)")
     parser.add_argument("--trials", type=int, default=1, help="Number of trial runs for statistical rigor (default: 1)")
     parser.add_argument(
@@ -909,6 +938,19 @@ def main() -> None:
         help="Override auto-detected context window size (tokens). "
              "Required if auto-detection fails (e.g. --context-size 32768).",
     )
+    parser.add_argument(
+        "--context-pressure-sweep", type=str, default=None, metavar="START-END",
+        help="Run scenarios at increasing context pressure from START to END "
+             "(e.g. --context-pressure-sweep 0.5-1.0). Reports pass/fail at each "
+             "level and identifies the breaking point. Use with --sweep-steps to "
+             "control granularity.",
+    )
+    parser.add_argument(
+        "--sweep-steps", type=int, default=5, metavar="N",
+        help="Number of intervals for --context-pressure-sweep (default: 5, "
+             "producing N+1 test levels). E.g. --sweep-steps 10 with range "
+             "0.9-1.0 tests 0.90, 0.91, ..., 1.00.",
+    )
 
     # Comparison and history
     parser.add_argument(
@@ -991,12 +1033,15 @@ def main() -> None:
     if not base_url:
         parser.error("--base-url is required (or set TOOL_EVAL_BASE_URL or TOOL_EVAL_HOST+TOOL_EVAL_PORT in .env)")
 
+    # URL redaction for display (actual API calls use real base_url)
+    display_url = _redact_url(base_url) if args.redact_url else base_url
+
     # Auto-detect model if not provided
     display_name: str | None = None
     if not model:
         console.print("\n[bold]🔧 Tool-Call Benchmark[/]")
-        console.print(f"[dim]  Server: {base_url}[/]")
-        model, display_name = _detect_model(base_url, api_key, console)
+        console.print(f"[dim]  Server: {display_url}[/]")
+        model, display_name = _detect_model(base_url, api_key, console, display_url=display_url)
         console.print()
 
     # display_name is the human-readable model (e.g. "Intel/gemma-4-31B-it-int4-AutoRound")
@@ -1147,6 +1192,15 @@ def main() -> None:
         if not args.perf and not args.perf_only:
             return
 
+    # -- Context pressure sweep --
+    if args.context_pressure_sweep is not None:
+        _run_pressure_sweep(
+            console, model, display_name, backend, base_url, api_key, args,
+            display_url=display_url,
+            extra_params=extra_params or None,
+        )
+        return
+
     # -- Context pressure --
     pressure_messages: list[dict] | None = None
     pressure_config_dict: dict | None = None
@@ -1247,6 +1301,7 @@ def main() -> None:
             extra_params=extra_params or None,
             context_pressure_messages=pressure_messages,
             context_pressure_config=pressure_config_dict,
+            display_url=display_url,
         )
     elif args.json:
         _run_json(service, model, backend, base_url, api_key, args,
@@ -1258,7 +1313,8 @@ def main() -> None:
                    throughput_samples=throughput_samples,
                    extra_params=extra_params or None,
                    context_pressure_messages=pressure_messages,
-                   context_pressure_config=pressure_config_dict)
+                   context_pressure_config=pressure_config_dict,
+                   display_url=display_url)
 
 # ---------------------------------------------------------------------------
 # Multi-trial aggregation
@@ -1442,6 +1498,289 @@ def _print_trials_summary(console: Console, agg: dict) -> None:
     console.print()
 
 
+# ---------------------------------------------------------------------------
+# Context pressure sweep
+# ---------------------------------------------------------------------------
+
+def _parse_sweep_range(sweep_str: str) -> tuple[float, float]:
+    """Parse 'START-END' into (start, end) floats, each clamped to [0, 1]."""
+    parts = sweep_str.split("-", maxsplit=1)
+    if len(parts) != 2:
+        raise ValueError(
+            f"Invalid sweep range '{sweep_str}'. Expected format: START-END "
+            f"(e.g. 0.5-1.0)"
+        )
+    try:
+        start, end = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise ValueError(
+            f"Invalid sweep range '{sweep_str}'. START and END must be numbers "
+            f"(e.g. 0.5-1.0)"
+        )
+    start = max(0.0, min(1.0, start))
+    end = max(0.0, min(1.0, end))
+    if start >= end:
+        raise ValueError(
+            f"Sweep START ({start}) must be less than END ({end})"
+        )
+    return start, end
+
+
+def _run_pressure_sweep(
+    console: Console,
+    model: str,
+    display_name: str,
+    backend: str,
+    base_url: str,
+    api_key: str | None,
+    args: argparse.Namespace,
+    *,
+    display_url: str | None = None,
+    extra_params: dict[str, Any] | None = None,
+) -> None:
+    """Run scenarios at increasing context pressure and report breaking point."""
+    from rich.panel import Panel
+
+    from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
+    from tool_eval_bench.runner.context_pressure import (
+        ContextPressureConfig,
+        build_pressure_messages,
+        compute_fill_budget,
+        detect_context_size,
+    )
+    from tool_eval_bench.runner.orchestrator import run_all_scenarios
+
+    # Parse range
+    try:
+        start, end = _parse_sweep_range(args.context_pressure_sweep)
+    except ValueError as exc:
+        console.print(f"\n[bold red]Error:[/] {exc}")
+        sys.exit(1)
+
+    steps = max(1, args.sweep_steps)
+    levels = [start + i * (end - start) / steps for i in range(steps + 1)]
+    # Ensure clean floating-point values
+    levels = [round(lv, 4) for lv in levels]
+
+    scenarios = _resolve_scenarios(args)
+    if not scenarios:
+        console.print("[bold red]Error:[/] No scenarios matched.")
+        sys.exit(1)
+
+    scenario_ids = [s.id for s in scenarios]
+
+    console.print(f"\n[bold]⚡ Context Pressure Sweep[/] — {display_name}")
+    console.print(
+        f"[dim]  Backend: {backend}  |  Server: {display_url or base_url}[/]"
+    )
+    console.print(
+        f"[dim]  Range: {start:.0%} → {end:.0%}  |  "
+        f"{len(levels)} levels  |  "
+        f"{len(scenarios)} scenario{'s' if len(scenarios) != 1 else ''}[/]\n"
+    )
+
+    # Detect context size once
+    try:
+        context_size: int | None = args.context_size
+        if context_size is None:
+            context_size = asyncio.run(
+                detect_context_size(base_url, model, api_key)
+            )
+        if context_size is None:
+            console.print(
+                "[bold red]Error:[/] Could not auto-detect context size. "
+                "Use --context-size to specify it."
+            )
+            sys.exit(1)
+        console.print(f"  [dim]Context window: {context_size:,} tokens[/]\n")
+    except Exception as exc:
+        console.print(f"\n[bold red]Error:[/] {exc}")
+        sys.exit(1)
+
+    # Status emojis
+    _STATUS_EMOJI = {
+        "pass": "✅",
+        "partial": "⚠️ ",
+        "fail": "❌",
+    }
+
+    # Run sweep
+    adapter = OpenAICompatibleAdapter()
+    level_results: list[dict[str, Any]] = []
+    consecutive_all_fail = 0
+
+    try:
+        for level_idx, ratio in enumerate(levels):
+            # Compute fill budget for this ratio
+            fill_tokens = compute_fill_budget(context_size, ratio)
+            cfg = ContextPressureConfig(
+                ratio=ratio, fill_tokens=fill_tokens,
+                detected_context=context_size,
+            )
+
+            # Build fresh pressure messages (unique per level)
+            pressure_messages = build_pressure_messages(cfg)
+
+            # Progress line
+            pct_done = (level_idx + 1) / len(levels)
+            bar_filled = int(pct_done * 20)
+            bar = "█" * bar_filled + "░" * (20 - bar_filled)
+            console.print(
+                f"  [bold cyan]⚡[/] Sweep {level_idx + 1}/{len(levels)}: "
+                f"[bold]{ratio:.0%}[/] pressure  {bar}  ",
+                end="",
+            )
+
+            # Run scenarios at this pressure level
+            try:
+                summary = asyncio.run(
+                    run_all_scenarios(
+                        adapter,
+                        model=model,
+                        base_url=base_url,
+                        api_key=api_key,
+                        scenarios=scenarios,
+                        temperature=0.0,
+                        extra_params=extra_params,
+                        context_pressure_messages=pressure_messages,
+                    )
+                )
+
+                # Collect per-scenario results
+                results_map: dict[str, str] = {}
+                for sr in summary.scenario_results:
+                    results_map[sr.scenario_id] = sr.status.value
+
+                pass_count = sum(
+                    1 for s in results_map.values() if s == "pass"
+                )
+                total = len(scenarios)
+                score_pct = (pass_count / total * 100) if total else 0
+
+                # Print inline status
+                emoji_str = "  ".join(
+                    _STATUS_EMOJI.get(results_map.get(sid, "fail"), "❌")
+                    for sid in scenario_ids
+                )
+                console.print(f"{emoji_str}  [bold]{score_pct:.0f}%[/]")
+
+                level_results.append({
+                    "ratio": ratio,
+                    "results": results_map,
+                    "score_pct": score_pct,
+                    "pass_count": pass_count,
+                    "fill_tokens": fill_tokens,
+                })
+
+                # Early stop logic
+                if pass_count == 0:
+                    consecutive_all_fail += 1
+                else:
+                    consecutive_all_fail = 0
+
+                if consecutive_all_fail >= 2:
+                    console.print(
+                        "  [dim]··· stopped (2 consecutive all-fail levels)[/]"
+                    )
+                    break
+
+            except Exception as exc:
+                console.print(f"[red]error: {exc}[/]")
+                level_results.append({
+                    "ratio": ratio,
+                    "results": {sid: "fail" for sid in scenario_ids},
+                    "score_pct": 0,
+                    "pass_count": 0,
+                    "fill_tokens": fill_tokens,
+                    "error": str(exc),
+                })
+                consecutive_all_fail += 1
+                if consecutive_all_fail >= 2:
+                    console.print(
+                        "  [dim]··· stopped (2 consecutive all-fail levels)[/]"
+                    )
+                    break
+
+    except KeyboardInterrupt:
+        console.print("\n[bold red]Interrupted.[/]")
+    finally:
+        if hasattr(adapter, "aclose"):
+            try:
+                asyncio.run(adapter.aclose())
+            except Exception:
+                pass
+
+    if not level_results:
+        console.print("\n[bold red]No results collected.[/]")
+        return
+
+    # Summary panel
+    console.print()
+
+    # Build the visual summary
+    lines: list[str] = []
+    breaking_point: float | None = None
+    first_degradation: float | None = None
+
+    for lr in level_results:
+        ratio = lr["ratio"]
+        score = lr["score_pct"]
+        emoji_str = "  ".join(
+            _STATUS_EMOJI.get(lr["results"].get(sid, "fail"), "❌")
+            for sid in scenario_ids
+        )
+        # Bar visualization (20 chars wide)
+        bar_len = int(score / 100 * 20)
+        if score >= 100:
+            bar_color = "green"
+        elif score >= 50:
+            bar_color = "yellow"
+        else:
+            bar_color = "red"
+        bar = f"[{bar_color}]{'█' * bar_len}[/]{'░' * (20 - bar_len)}"
+
+        lines.append(
+            f"  [bold]{ratio:5.0%}[/]  {emoji_str}  {score:4.0f}%  {bar}"
+        )
+
+        # Track breaking point (last level where all pass)
+        all_pass = all(
+            v == "pass" for v in lr["results"].values()
+        )
+        if all_pass:
+            breaking_point = ratio
+        if first_degradation is None and not all_pass:
+            first_degradation = ratio
+
+    lines.append("")
+    if breaking_point is not None:
+        lines.append(
+            f"  [bold green]Breaking point:[/] {breaking_point:.0%} "
+            f"(all scenarios pass)"
+        )
+    else:
+        lines.append(
+            "  [bold red]Breaking point:[/] none "
+            "(no level had all scenarios pass)"
+        )
+    if first_degradation is not None:
+        lines.append(
+            f"  [bold yellow]Degradation:[/]    {first_degradation:.0%} "
+            f"(first partial/fail)"
+        )
+
+    header = "  ".join(f"[dim]{sid}[/]" for sid in scenario_ids)
+    lines.insert(0, f"  [dim]       {header}[/]")
+
+    panel_content = "\n".join(lines)
+    console.print(Panel(
+        panel_content,
+        title="[bold]⚡ Context Pressure Sweep Results[/]",
+        border_style="bright_cyan",
+        padding=(1, 1),
+    ))
+    console.print()
+
 def _run_with_live_display(
     service: BenchmarkService,
     console: Console,
@@ -1456,6 +1795,7 @@ def _run_with_live_display(
     extra_params: dict[str, Any] | None = None,
     context_pressure_messages: list[dict] | None = None,
     context_pressure_config: dict | None = None,
+    display_url: str | None = None,
 ) -> None:
     """Run with Rich live display — the default visual mode."""
     from tool_eval_bench.runner.orchestrator import score_results
@@ -1466,7 +1806,7 @@ def _run_with_live_display(
     all_summaries = []
 
     # --- Trial 1: with live display ---
-    display = BenchmarkDisplay(display_name, backend, base_url, scenarios)
+    display = BenchmarkDisplay(display_name, backend, display_url or base_url, scenarios)
     display.start()
 
     async def run_trial(*, show: bool = False) -> dict:
@@ -1670,10 +2010,11 @@ def _run_plain(
     extra_params: dict[str, Any] | None = None,
     context_pressure_messages: list[dict] | None = None,
     context_pressure_config: dict | None = None,
+    display_url: str | None = None,
 ) -> None:
     """Run with simple line-by-line output."""
     console.print(f"\n[bold]Tool-Call Benchmark[/] — {display_name}")
-    console.print(f"[dim]  Backend: {backend}  |  Server: {base_url}[/]\n")
+    console.print(f"[dim]  Backend: {backend}  |  Server: {display_url or base_url}[/]\n")
 
     resolved = _resolve_scenarios(args)
 

@@ -247,6 +247,7 @@ def _print_category_scores(console: Console, summary: ModelScoreSummary) -> None
         show_header=True,
         header_style="bold",
         border_style="bright_blue",
+        expand=True,
     )
     table.add_column("Category", min_width=22)
     table.add_column("Score", justify="center", width=8)
