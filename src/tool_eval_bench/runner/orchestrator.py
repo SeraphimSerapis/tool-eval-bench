@@ -581,7 +581,7 @@ def score_results(
     deploy, resp, med = compute_deployability(final_score, median_turn_ms, alpha)
 
     # Token usage aggregate
-    total_tokens = sum(r.prompt_tokens + r.completion_tokens for r in results)
+    total_tokens = sum((r.prompt_tokens or 0) + (r.completion_tokens or 0) for r in results)
     token_eff: float | None = None
     if total_tokens > 0:
         token_eff = round(total_points / (total_tokens / 1000), 2)

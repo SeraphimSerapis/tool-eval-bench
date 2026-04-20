@@ -55,6 +55,7 @@ Scenarios are defined across several files in `src/tool_eval_bench/evals/`:
 - `scenarios_large_toolset.py` — Large-toolset scenarios (L)
 - `scenarios_planning.py` — Planning + creative scenarios (M–N)
 - `scenarios_adversarial.py` — Adversarial safety scenarios (K extras)
+- `scenarios_structured.py` — Structured output scenarios (O)
 
 Each scenario is a `ScenarioDefinition` with:
 
@@ -102,7 +103,7 @@ def _my_evaluator(state: ScenarioState) -> ScenarioEvaluation:
 MY_SCENARIO = ScenarioDefinition(
     id="TC-XX",                           # Unique ID (TC-01 through TC-99)
     title="Short descriptive title",
-    category=Category.A,                  # A through N
+    category=Category.A,                  # A through O
     user_message="The prompt the model sees",
     description="What the model should do",
     handle_tool_call=_my_handler,
@@ -169,6 +170,7 @@ def test_my_scenario_pass():
 | L | Toolset Scale — 52-tool namespace, domain confusion |
 | M | Autonomous Planning — goal decomposition, open-ended research, conditional workflows |
 | N | Creative Composition — cross-tool synthesis, data pipelines, notification workflows |
+| O | Structured Output — JSON schema compliance, tool→schema chaining, nested schemas, enum constraints, violation resistance |
 
 ## Scoring
 

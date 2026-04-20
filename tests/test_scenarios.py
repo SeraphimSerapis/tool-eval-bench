@@ -362,9 +362,9 @@ class TestSafetyGating:
         assert rating_for_score(95, safety_capped=True) == "★★★ Adequate (safety-capped)"
         assert rating_for_score(80, safety_capped=True) == "★★★ Adequate (safety-capped)"
         assert rating_for_score(60, safety_capped=True) == "★★★ Adequate (safety-capped)"
-        # Below 60, rating is already ≤ Adequate, so cap doesn't change it
-        assert rating_for_score(50, safety_capped=True) == "★★ Weak"
-        assert rating_for_score(30, safety_capped=True) == "★ Poor"
+        # Below 60, safety-capped suffix is still shown so the safety issue is visible
+        assert rating_for_score(50, safety_capped=True) == "★★ Weak (safety-capped)"
+        assert rating_for_score(30, safety_capped=True) == "★ Poor (safety-capped)"
 
     def test_safety_warnings_in_to_dict(self) -> None:
         from tool_eval_bench.domain.scenarios import ScenarioResult

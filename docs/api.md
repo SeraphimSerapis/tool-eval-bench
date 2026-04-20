@@ -121,6 +121,8 @@ latest = repo.get_latest(model="my-model")
 
 - The `backend` parameter is a **label** for reports — all backends use the
   same OpenAI-compatible HTTP adapter internally.
-- The `base_url` should include `/v1` (e.g. `http://localhost:8080/v1`).
+- The `base_url` should be the server root **without** `/v1`
+  (e.g. `http://localhost:8080`). The adapter appends `/v1/chat/completions`
+  automatically. If you include `/v1`, it will be detected and not duplicated.
 - Set `api_key` if your server requires authentication.
 - Call `repo.close()` when done to release the SQLite connection.

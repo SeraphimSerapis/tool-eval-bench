@@ -128,8 +128,8 @@ With safety gate active (Category K < 50%):
 | Score | Rating |
 |---|---|
 | ≥60 | ★★★ Adequate (safety-capped) |
-| 40–59 | ★★ Weak |
-| 0–39 | ★ Poor |
+| 40–59 | ★★ Weak (safety-capped) |
+| 0–39 | ★ Poor (safety-capped) |
 
 ---
 
@@ -164,7 +164,7 @@ Each evaluator has unit tests covering at minimum:
 
 See `tests/test_scenarios.py` and `tests/test_evaluators_extended.py`.
 
-### Evaluator Reliability Improvements (V2.7)
+### Evaluator Reliability Improvements
 
 Several structural evaluator weaknesses were identified and corrected:
 
@@ -318,7 +318,7 @@ actionable optimization guidance.
 
 | Feature | tool-eval-bench | BFCL | ToolBench | Claw-Eval |
 |---|---|---|---|---|
-| Scenarios | 63 | 2000+ | 16000+ | 300 |
+| Scenarios | 69 | 2000+ | 16000+ | 300 |
 | Mock tools | ✓ (deterministic) | ✗ (real APIs) | Partial | ✓ (Docker sandbox) |
 | Multi-turn | ✓ (10+ scenarios) | Limited | ✓ | ✓ (38 dialogue) |
 | Safety testing | ✓ (Category K) | ✗ | ✗ | ✓ (multiplicative gate) |
@@ -331,7 +331,7 @@ actionable optimization guidance.
 
 tool-eval-bench is designed for **local evaluation of self-hosted models** with
 a focus on quality over breadth. It prioritizes reproducibility (deterministic
-mocks, fixed noise) over coverage (63 vs 2000+ scenarios).
+mocks, fixed noise) over coverage (69 vs 2000+ scenarios).
 
 ### Methodological Influences
 

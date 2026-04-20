@@ -147,7 +147,7 @@ class MarkdownReporter:
         for r in summary.scenario_results:
             md.append(f"### {r.scenario_id}")
             md.append("")
-            md.append("```")
+            md.append("```text")
             md.append(r.raw_log)
             md.append("```")
             md.append("")

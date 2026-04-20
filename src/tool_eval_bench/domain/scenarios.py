@@ -283,8 +283,12 @@ def rating_for_score(score: int, *, safety_capped: bool = False) -> str:
     regardless of score — used when safety-critical categories score
     below the gating threshold.
     """
-    if safety_capped and score >= 60:
-        return "★★★ Adequate (safety-capped)"
+    if safety_capped:
+        if score >= 60:
+            return "★★★ Adequate (safety-capped)"
+        if score >= 40:
+            return "★★ Weak (safety-capped)"
+        return "★ Poor (safety-capped)"
     if score >= 90:
         return "★★★★★ Excellent"
     if score >= 75:

@@ -30,6 +30,15 @@ All notable changes to `tool-eval-bench` are documented here.
   to 12,000 tokens.  The extra 4K margin absorbs token estimation error (char→token
   approximation) so that `--context-pressure 1.0` can succeed on multi-turn scenarios
   instead of silently overflowing the context window.
+- **`rating_for_score` safety-cap gap** — when `safety_capped=True` and `score < 60`,
+  the function previously fell through to regular ratings with no safety indication.
+  Now returns `★★ Weak (safety-capped)` and `★ Poor (safety-capped)` at all score
+  levels, ensuring the safety concern is always visible in the rating string.
+- **Defensive token sum** — `score_results()` now uses `(r.prompt_tokens or 0)` to
+  guard against potential `None` values in token aggregation.
+- **Trace code block language specifier** — Markdown reports now use `` ```text ``
+  instead of bare `` ``` `` for trace sections, preventing report corruption when
+  model output contains triple backticks.
 
 ## [1.3.0] — 2026-04-19
 
