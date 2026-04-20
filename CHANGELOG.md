@@ -2,6 +2,38 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [1.3.2] — Unreleased
+
+### Fixed
+
+- **Test suite hardening** — resolved 6 classes of systemic test bugs that had
+  accumulated across `test_display.py`, `test_history.py`, `test_leaderboard_display.py`,
+  and `test_judge.py`:
+  - Console IO capture: replaced `Console(file=MagicMock())` with
+    `Console(file=StringIO(), width=200, no_color=True)` to get real string output.
+  - Mock paths: corrected 36 `patch()` targets from `cli.*.RunRepository` to
+    `storage.db.RunRepository` (the actual import site).
+  - `sys.exit` mocking: added `side_effect=SystemExit` so execution halts correctly.
+  - Rich markup assertions: handle `[bold]2[/]/2` variant alongside plain `2/2`.
+  - Test data alignment: fixed sort order, computed-vs-fixture fields, stdout
+    capture for CSV export, and MagicMock `.error` attribute truthiness.
+- **Resource leak in export tests** — `open(file).read()` without closing replaced
+  with proper `with open(file) as f:` context managers.
+- **Async teardown warnings** — suppressed `RuntimeWarning: coroutine was never
+  awaited` and `PytestUnraisableExceptionWarning` via `pyproject.toml`
+  `filterwarnings`.  These are garbage-collection artifacts from mocked async
+  adapters and do not indicate real bugs.
+
+### Changed
+
+- **Import standardization** — hoisted ~90 redundant function-level imports to
+  top-level across 4 test files (`test_display.py`, `test_history.py`,
+  `test_leaderboard_display.py`, `test_judge.py`).  Eliminates duplicated
+  `from tool_eval_bench.cli.* import ...` inside every test method.
+- **`test_judge.py` cleanup** — replaced 14 `__import__("tool_eval_bench.runner.judge",
+  fromlist=[...])` hacks with a clean top-level
+  `from tool_eval_bench.runner.judge import judge_failed_scenarios`.
+
 ## [1.3.1] — 2026-04-20
 
 ### Added
