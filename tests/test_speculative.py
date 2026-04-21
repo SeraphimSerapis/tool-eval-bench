@@ -81,6 +81,26 @@ spec_decode_num_drafts 300
         assert counters.draft_tokens == pytest.approx(1200)
         assert counters.num_drafts == pytest.approx(300)
 
+    def test_vllm_labelled_format(self):
+        """Parse vLLM metrics with {engine,model_name} labels (regression)."""
+        text = """\
+# HELP vllm:spec_decode_num_accepted_tokens_total Number of accepted tokens.
+# TYPE vllm:spec_decode_num_accepted_tokens_total counter
+vllm:spec_decode_num_accepted_tokens_total{engine="0",model_name="Qwen3.6-35B"} 6086.0
+# HELP vllm:spec_decode_num_draft_tokens_total Number of draft tokens.
+# TYPE vllm:spec_decode_num_draft_tokens_total counter
+vllm:spec_decode_num_draft_tokens_total{engine="0",model_name="Qwen3.6-35B"} 7216.0
+# HELP vllm:spec_decode_num_drafts_total Number of spec decoding drafts.
+# TYPE vllm:spec_decode_num_drafts_total counter
+vllm:spec_decode_num_drafts_total{engine="0",model_name="Qwen3.6-35B"} 3608.0
+"""
+        counters = parse_prometheus_spec_metrics(text)
+        assert counters.accepted_tokens == pytest.approx(6086.0)
+        assert counters.draft_tokens == pytest.approx(7216.0)
+        assert counters.num_drafts == pytest.approx(3608.0)
+        assert counters.acceptance_rate == pytest.approx(6086.0 / 7216.0)
+        assert counters.acceptance_length == pytest.approx(6086.0 / 3608.0)
+
     def test_with_total_suffix(self):
         """Parse metrics with _total suffix (standard Prometheus convention)."""
         text = """\

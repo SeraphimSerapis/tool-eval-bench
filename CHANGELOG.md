@@ -6,6 +6,16 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **Spec-bench acceptance rate always showing `—`** — Prometheus regex patterns for
+  `spec_decode_*` counters did not account for the `{engine="0",model_name="..."}` label
+  block that vLLM includes between the metric name and value.  All three regexes now
+  accept an optional `{...}` label group, fixing acceptance rate (α), acceptance length
+  (τ), and speedup ratio display for vLLM servers.
+- **Spec-bench table truncated on narrow terminals** — removed `expand=True` (table now
+  auto-sizes to content), dropped redundant Stream t/s column, conditionally hide Speedup
+  column when no `--baseline-tgs` is provided, shortened header labels (`α %`, `τ len`,
+  `TTFT`, `Total ms`), and use compact depth notation (`4K`, `8K`).  Table now fits
+  cleanly at 80 columns.
 - **Test suite hardening** — resolved 6 classes of systemic test bugs that had
   accumulated across `test_display.py`, `test_history.py`, `test_leaderboard_display.py`,
   and `test_judge.py`:

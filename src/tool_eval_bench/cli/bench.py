@@ -665,6 +665,7 @@ def _run_spec_bench(
 
     # Summary table
     ok_samples = [s for s in completed if not s.error]
+    has_speedup = any(s.speedup_ratio is not None for s in ok_samples)
     if ok_samples:
         console.print()
         table = Table(
@@ -672,33 +673,41 @@ def _run_spec_bench(
             show_header=True,
             header_style="bold",
             border_style="bright_magenta",
-            expand=True,
         )
-        table.add_column("Prompt", min_width=12, no_wrap=True)
-        table.add_column("Depth", justify="right", width=6)
-        table.add_column("Eff t/s", justify="right", width=9)
-        table.add_column("Stream t/s", justify="right", width=10)
-        table.add_column("α (accept)", justify="right", width=10)
-        table.add_column("τ (length)", justify="right", width=10)
-        table.add_column("Speedup", justify="right", width=8)
-        table.add_column("TTFT (ms)", justify="right", width=9)
-        table.add_column("Total (ms)", justify="right", width=10)
+        table.add_column("Prompt", no_wrap=True)
+        table.add_column("Depth", justify="right", no_wrap=True)
+        table.add_column("Eff t/s", justify="right", min_width=7, no_wrap=True)
+        table.add_column("α %", justify="right", no_wrap=True)
+        table.add_column("τ len", justify="right", no_wrap=True)
+        if has_speedup:
+            table.add_column("Speed", justify="right", no_wrap=True)
+        table.add_column("TTFT", justify="right", no_wrap=True)
+        table.add_column("Total ms", justify="right", no_wrap=True)
+
+        def _depth_label(d: int) -> str:
+            if d == 0:
+                return "0"
+            if d >= 1024 and d % 1024 == 0:
+                return f"{d // 1024}K"
+            return f"{d:,}"
 
         for s in ok_samples:
             ar_str = f"{s.acceptance_rate * 100:.1f}%" if s.acceptance_rate is not None else "—"
             al_str = f"{s.acceptance_length:.1f}" if s.acceptance_length is not None else "—"
-            sp_str = f"{s.speedup_ratio:.2f}x" if s.speedup_ratio is not None else "—"
-            table.add_row(
+            row: list[str] = [
                 s.prompt_type,
-                str(s.depth),
+                _depth_label(s.depth),
                 f"{s.effective_tg_tps:,.1f}",
-                f"{s.tg_tps:,.1f}",
                 ar_str,
                 al_str,
-                sp_str,
+            ]
+            if has_speedup:
+                row.append(f"{s.speedup_ratio:.2f}x" if s.speedup_ratio is not None else "—")
+            row.extend([
                 f"{s.ttft_ms:,.0f}",
                 f"{s.total_ms:,.0f}",
-            )
+            ])
+            table.add_row(*row)
 
         console.print(table)
 
