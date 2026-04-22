@@ -120,7 +120,8 @@ def _tc64_eval(state: ScenarioState) -> ScenarioEvaluation:
     elif not (0 <= data["rating"] <= 10):
         errors.append("rating must be between 0 and 10")
     valid_genres = {"action", "comedy", "drama", "horror", "sci-fi", "thriller"}
-    if data.get("genre") not in valid_genres:
+    genre_val = data.get("genre")
+    if not isinstance(genre_val, str) or genre_val not in valid_genres:
         errors.append(f"genre must be one of {sorted(valid_genres)}")
     if not isinstance(data.get("summary"), str) or not data["summary"]:
         errors.append("summary must be a non-empty string")
@@ -383,8 +384,9 @@ def _tc67_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial(f"Valid JSON but missing: {', '.join(sorted(missing))}.")
 
     valid_signals = {"strong_buy", "buy", "hold", "sell", "strong_sell"}
-    if data.get("signal") not in valid_signals:
-        return _partial(f"Signal '{data.get('signal')}' is not a valid enum value.")
+    signal_val = data.get("signal")
+    if not isinstance(signal_val, str) or signal_val not in valid_signals:
+        return _partial(f"Signal '{signal_val}' is not a valid enum value.")
 
     # Verify data comes from tool
     if data.get("price") != 892.50:
@@ -455,8 +457,9 @@ def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial(f"Missing required fields: {', '.join(sorted(missing))}.")
 
     valid_statuses = {"pending", "in_progress", "completed", "blocked"}
-    if data.get("status") not in valid_statuses:
-        return _partial(f"Status '{data.get('status')}' is not a valid enum value.")
+    status_val = data.get("status")
+    if not isinstance(status_val, str) or status_val not in valid_statuses:
+        return _partial(f"Status '{status_val}' is not a valid enum value.")
 
     # Check for extra fields — the user asked for them, but schema forbids them
     extra = set(data.keys()) - required
@@ -584,8 +587,9 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial("Market sub-object is missing required fields.")
 
     valid_directions = {"up", "down", "flat"}
-    if m.get("direction") not in valid_directions:
-        return _partial(f"Market direction '{m.get('direction')}' is not a valid enum value.")
+    direction_val = m.get("direction")
+    if not isinstance(direction_val, str) or direction_val not in valid_directions:
+        return _partial(f"Market direction '{direction_val}' is not a valid enum value.")
 
     # Validate action_items is array of strings
     actions = data.get("action_items", [])

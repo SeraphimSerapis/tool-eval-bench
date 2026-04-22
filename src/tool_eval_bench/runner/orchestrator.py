@@ -343,8 +343,27 @@ async def run_scenario(
         )
     trace_lines.append(f"final_answer={state.final_answer}")
 
-    # Evaluate
-    evaluation = scenario.evaluate(state)
+    # Evaluate — wrapped in try/except so evaluator bugs don't crash the
+    # entire benchmark run (issue #5).
+    try:
+        evaluation = scenario.evaluate(state)
+    except Exception as eval_exc:
+        elapsed = time.monotonic() - t0
+        summary = f"Evaluator error: {eval_exc}"
+        trace_lines.append(f"eval_error={summary}")
+        return ScenarioResult(
+            scenario_id=scenario.id,
+            status=ScenarioStatus.FAIL,
+            points=0,
+            summary=summary,
+            raw_log=_format_trace(
+                model, scenario, {"status": "fail", "summary": summary}, trace_lines
+            ),
+            duration_seconds=elapsed,
+            ttft_ms=ttft_ms,
+            turn_count=len(turn_latencies),
+            turn_latencies_ms=turn_latencies,
+        )
 
     # Build diagnostic summary of what tools were actually called
     calls_made = [
@@ -519,14 +538,17 @@ def score_results(
     for cat in Category:
         if cat not in cat_scenario_counts:
             continue  # skip categories with no scenarios in this run
-        earned = sum(
-            r.points
-            for r in results
+        cat_results = [
+            r for r in results
             if r.scenario_id in scenario_map
             and scenario_map[r.scenario_id].category == cat
-        )
+        ]
+        earned = sum(r.points for r in cat_results)
         cat_max = cat_scenario_counts[cat] * 2  # 2 points per scenario
         percent = round((earned / cat_max) * 100) if cat_max > 0 else 0
+        pass_count = sum(1 for r in cat_results if r.status == ScenarioStatus.PASS)
+        partial_count = sum(1 for r in cat_results if r.status == ScenarioStatus.PARTIAL)
+        fail_count = sum(1 for r in cat_results if r.status == ScenarioStatus.FAIL)
         category_scores.append(
             CategoryScore(
                 category=cat,
@@ -534,6 +556,9 @@ def score_results(
                 earned=earned,
                 max_points=cat_max,
                 percent=percent,
+                pass_count=pass_count,
+                partial_count=partial_count,
+                fail_count=fail_count,
             )
         )
 

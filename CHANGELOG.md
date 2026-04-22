@@ -2,9 +2,47 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
-## [1.3.2] — Unreleased
+## [1.4.0] — Unreleased
+
+### Added
+
+- **Interactive TUI mode** (`-i` / `--interactive`) — a full Textual-based terminal
+  UI for configuring and running benchmarks.  Three screens: **Configure** (server
+  connection, model picker, benchmark mode checkboxes, category filter, sampling
+  presets, run control), **Running** (live scenario progress grid with per-row
+  status updates and progress bar), and **Results** (tabbed view with scores,
+  category breakdown, run history, and model leaderboard).  Requires the new
+  `[tui]` optional dependency: `pip install tool-eval-bench[tui]`.
+- **TUI sampling params** — configure screen now exposes Top-P, Top-K, Min-P, and
+  Repeat Penalty in a 2-column grid alongside Temperature.  Values are threaded
+  through to the backend as `extra_params`.
+- **`__main__.py`** — `python -m tool_eval_bench` now works as an alternative to
+  the `tool-eval-bench` console script.
 
 ### Fixed
+
+- **TUI benchmark status stuck on PENDING** — the running screen now correctly
+  updates scenario status, points, and timing as each test completes.  Root cause:
+  `update_cell` was referencing column indices instead of column keys, and the
+  callback structure didn't reliably push updates to the Textual UI thread.
+- **TUI running scenario not highlighted** — the currently executing test is now
+  visually indicated via cursor movement to the active row, and the previous
+  "running" badge is cleared when a new scenario starts.
+- **TUI scrollbar artifacts** — reduced scrollbar width to 1 character globally
+  (`scrollbar-size-vertical: 1`) to eliminate rendering glitches on the vertical
+  scrollbar.
+- **TUI hover color changes** — disabled background color changes on hover for
+  checkboxes and containers, which caused confusing visual artifacts when mousing
+  over the configure screen.
+- **TUI benchmark mode labels cut off** — mode checkboxes (`Tool-Call Scenarios`,
+  `Throughput (llama-benchy)`, `Spec-Decode`) now use `width: 1fr` instead of
+  `width: auto` so labels are never truncated regardless of terminal width.
+- **TUI category grid text truncation** — category checkboxes now use `width: 1fr`
+  per grid cell, and the grid switches from 3 columns to 2 on terminals narrower
+  than 90 columns.
+- **TUI requires too much scrolling** — tightened padding throughout all three
+  screens (reduced top/bottom margins, section spacing, and button bar padding)
+  to fit more content in smaller terminal windows.
 
 - **Spec-bench acceptance rate always showing `—`** — Prometheus regex patterns for
   `spec_decode_*` counters did not account for the `{engine="0",model_name="..."}` label
@@ -16,6 +54,24 @@ All notable changes to `tool-eval-bench` are documented here.
   column when no `--baseline-tgs` is provided, shortened header labels (`α %`, `τ len`,
   `TTFT`, `Total ms`), and use compact depth notation (`4K`, `8K`).  Table now fits
   cleanly at 80 columns.
+- **Legacy throughput table truncated on narrow terminals** — removed `expand=True` from
+  the built-in `--perf-legacy` table for parity with the spec-bench table fix above.
+- **Trial aggregation wrong with `--categories`** — `_run_plain` multi-trial path
+  re-imported `ALL_SCENARIOS`/`SCENARIOS` and scored against the full set instead of
+  respecting the `--categories` / `--short` filter.  Now uses `_resolve_scenarios(args)`
+  consistently.
+- **`python -m tool_eval_bench` failed** — added `__main__.py` so the package can be
+  invoked as `python -m tool_eval_bench` (previously only the `tool-eval-bench` console
+  script worked).
+- **Benchmark crash after TC-63: `unhashable type: 'list'`** (Issue #5) — the
+  structured output evaluators (TC-64 to TC-69) performed set membership checks
+  like `data.get("genre") not in valid_genres`, which raises `TypeError` when a
+  model returns a list value (e.g. `"genre": ["sci-fi"]`) instead of a scalar
+  string.  Fixed by validating the type with `isinstance(val, str)` before the
+  set lookup.  Additionally, the post-loop evaluation call in the orchestrator
+  was outside the existing `try/except` block, so any evaluator exception would
+  crash the entire benchmark run instead of being recorded as a FAIL.  The
+  evaluation phase is now wrapped in its own `try/except` as a safety net.
 - **Test suite hardening** — resolved 6 classes of systemic test bugs that had
   accumulated across `test_display.py`, `test_history.py`, `test_leaderboard_display.py`,
   and `test_judge.py`:
@@ -33,9 +89,22 @@ All notable changes to `tool-eval-bench` are documented here.
   awaited` and `PytestUnraisableExceptionWarning` via `pyproject.toml`
   `filterwarnings`.  These are garbage-collection artifacts from mocked async
   adapters and do not indicate real bugs.
+- **Duplicate `Panel` import in legacy throughput** — removed redundant
+  `from rich.panel import Panel` that was already imported at function scope.
 
 ### Changed
 
+- **CLI flag grouping** — reorganized 45 flat `--help` flags into 10 logical
+  argument groups: connection, sampling, scenario selection, run control, output,
+  throughput benchmark, speculative decoding benchmark, context pressure, and
+  history & comparison.  The `--help` output is now scannable instead of a wall of
+  text.  Zero breaking changes — all flags work identically.
+- **WIP flags hidden** — `--llm-judge`, `--judge-model`, and `--experimental-async`
+  are suppressed from `--help` output since they currently have no effect.  The flags
+  still work (printing a WIP warning) for users who already have them in scripts.
+- **Help text tightened** — most flag descriptions shortened to one line, removing
+  redundant examples and verbose explanations that inflated `--help` from ~130 to
+  ~90 lines.
 - **Import standardization** — hoisted ~90 redundant function-level imports to
   top-level across 4 test files (`test_display.py`, `test_history.py`,
   `test_leaderboard_display.py`, `test_judge.py`).  Eliminates duplicated
@@ -43,6 +112,7 @@ All notable changes to `tool-eval-bench` are documented here.
 - **`test_judge.py` cleanup** — replaced 14 `__import__("tool_eval_bench.runner.judge",
   fromlist=[...])` hacks with a clean top-level
   `from tool_eval_bench.runner.judge import judge_failed_scenarios`.
+
 
 ## [1.3.1] — 2026-04-20
 
