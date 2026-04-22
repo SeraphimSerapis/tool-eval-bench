@@ -159,6 +159,9 @@ class CategoryScore:
     earned: int
     max_points: int = 0
     percent: float = 0.0
+    pass_count: int = 0
+    partial_count: int = 0
+    fail_count: int = 0
 
 
 @dataclass
@@ -250,6 +253,9 @@ class ModelScoreSummary:
                     "earned": cs.earned,
                     "max": cs.max_points,
                     "percent": cs.percent,
+                    "pass_count": cs.pass_count,
+                    "partial_count": cs.partial_count,
+                    "fail_count": cs.fail_count,
                 }
                 for cs in self.category_scores
             ],

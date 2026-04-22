@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tool-eval-bench"
-version = "1.3.2"
+version = "1.4.0"
 description = "Agentic tool-call benchmark for LLM serving stacks (vLLM, LiteLLM, llama.cpp)"
 readme = "README.md"
 license = {text = "MIT"}
@@ -29,6 +29,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tui = [
+  "textual>=4.0.0",
+]
 perf = [
   "llama-benchy>=0.3.5",
 ]

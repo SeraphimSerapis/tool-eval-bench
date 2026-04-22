@@ -328,7 +328,6 @@ def _run_throughput(
             show_header=True,
             header_style="bold",
             border_style="bright_cyan",
-            expand=True,
         )
         table.add_column("Test", min_width=20, no_wrap=True)
         table.add_column("pp t/s", justify="right", width=10)
@@ -352,7 +351,6 @@ def _run_throughput(
         console.print(table)
 
     # Post-run hints
-    from rich.panel import Panel
     matrix_result = matrix_result_holder[0] if matrix_result_holder else None
     if matrix_result is not None and matrix_result.spec_decoding_detected:
         method_label = f" ({matrix_result.spec_decoding_method})" if matrix_result.spec_decoding_method else ""
@@ -783,228 +781,178 @@ def _parse_int_list(value: str) -> list[int]:
 def main() -> None:
     _load_dotenv()
     parser = argparse.ArgumentParser(
-        description="Run tool-eval-bench agentic tool-call benchmark"
+        description="Run tool-eval-bench agentic tool-call benchmark",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--model", default=None, help="Model name/path (auto-detected if omitted)")
-    parser.add_argument("--backend", default=None,
-                        help="Backend label for reports: vllm, litellm, llamacpp "
-                             "(all use the same OpenAI-compatible adapter; default: env/vllm)")
-    parser.add_argument("--base-url", default=None, help="Server base URL (default: from .env)")
-    parser.add_argument("--api-key", default=None, help="API key")
-    parser.add_argument("--temperature", type=float, default=0.0, help="Temperature")
-    parser.add_argument("--no-think", action="store_true",
-                        help="Disable thinking/reasoning for models that support it "
-                             "(sets enable_thinking=false via chat_template_kwargs)")
-    parser.add_argument("--top-p", type=float, default=None, metavar="P",
-                        help="Top-p (nucleus) sampling value (e.g. 0.9)")
-    parser.add_argument("--top-k", type=int, default=None, metavar="K",
-                        help="Top-k sampling value (e.g. 40)")
-    parser.add_argument("--min-p", type=float, default=None, metavar="P",
-                        help="Min-p sampling threshold (e.g. 0.05)")
-    parser.add_argument("--repeat-penalty", type=float, default=None, metavar="V",
-                        help="Repetition penalty (e.g. 1.1)")
-    parser.add_argument(
+
+    # -- Connection --------------------------------------------------------
+    conn = parser.add_argument_group("connection")
+    conn.add_argument("--model", default=None, help="Model name/path (auto-detected if omitted)")
+    conn.add_argument("--backend", default=None,
+                      help="Backend label for reports: vllm, litellm, llamacpp "
+                           "(all use the same OpenAI-compatible adapter; default: env/vllm)")
+    conn.add_argument("--base-url", default=None, help="Server base URL (default: from .env)")
+    conn.add_argument("--api-key", default=None, help="API key")
+
+    # -- Sampling ----------------------------------------------------------
+    sampling = parser.add_argument_group("sampling")
+    sampling.add_argument("--temperature", type=float, default=0.0, help="Temperature (default: 0.0)")
+    sampling.add_argument("--no-think", action="store_true",
+                          help="Disable thinking/reasoning (sets enable_thinking=false)")
+    sampling.add_argument("--top-p", type=float, default=None, metavar="P",
+                          help="Top-p (nucleus) sampling (e.g. 0.9)")
+    sampling.add_argument("--top-k", type=int, default=None, metavar="K",
+                          help="Top-k sampling (e.g. 40)")
+    sampling.add_argument("--min-p", type=float, default=None, metavar="P",
+                          help="Min-p sampling threshold (e.g. 0.05)")
+    sampling.add_argument("--repeat-penalty", type=float, default=None, metavar="V",
+                          help="Repetition penalty (e.g. 1.1)")
+    sampling.add_argument("--seed", type=int, default=None, help="Random seed (passed to server)")
+    sampling.add_argument(
         "--backend-kwargs", type=str, default=None, metavar="JSON",
-        help="JSON-encoded dict of extra parameters to pass to the backend "
-             "(e.g. --backend-kwargs '{\"temperature\": 0.6, \"top_p\": 0.9}'). "
-             "These are merged into the API request payload. Overrides any "
-             "conflicting individual flags (--temperature, --top-p, etc.).",
+        help="JSON dict merged into API payload; overrides individual flags "
+             "(e.g. '{\"temperature\": 0.6, \"top_p\": 0.9}')",
     )
-    parser.add_argument("--timeout", type=float, default=60.0, help="Request timeout (seconds)")
-    parser.add_argument("--max-turns", type=int, default=8, help="Max turns per scenario")
-    parser.add_argument(
-        "--scenarios",
-        nargs="*",
-        default=None,
+
+    # -- Scenario selection ------------------------------------------------
+    select = parser.add_argument_group("scenario selection")
+    select.add_argument(
+        "--scenarios", nargs="*", default=None,
         help="Specific scenario IDs to run (e.g. TC-01 TC-07). Default: all.",
     )
-    parser.add_argument(
-        "--categories",
-        nargs="*",
-        default=None,
-        metavar="CAT",
-        help="Run only scenarios from specific categories (e.g. --categories K A J). "
-             "Letters A–O: A=Tool Selection, B=Parameter Precision, C=Multi-Step, "
-             "D=Restraint, E=Error Recovery, F=Localization, G=Structured Reasoning, "
-             "H=Instruction Following, I=Context & State, J=Code Patterns, "
-             "K=Safety, L=Toolset Scale, M=Autonomous Planning, N=Creative Composition, "
-             "O=Structured Output.",
+    select.add_argument(
+        "--categories", nargs="*", default=None, metavar="CAT",
+        help="Run only specific categories (e.g. --categories K A J). "
+             "Letters A–O map to the 15 benchmark categories.",
     )
-    parser.add_argument("--json", action="store_true", help="Output raw JSON instead of rich display")
-    parser.add_argument("--no-live", action="store_true", help="Disable live updating display")
-    parser.add_argument(
-        "--redact-url", action="store_true",
-        help="Mask the server URL in display output (useful for screenshots/recordings). "
-             "The actual API connection is unaffected.",
-    )
-    parser.add_argument("--short", action="store_true", help="Run only the core 15 scenarios (skip extended + agentic)")
-    parser.add_argument("--trials", type=int, default=1, help="Number of trial runs for statistical rigor (default: 1)")
-    parser.add_argument(
-        "--reference-date", default=None,
-        help="Override benchmark reference date (YYYY-MM-DD). Default: 2026-03-20",
-    )
-    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (passed to server)")
-    parser.add_argument(
+    select.add_argument("--short", action="store_true",
+                        help="Run only the core 15 scenarios (skip extended + agentic)")
+
+    # -- Run control -------------------------------------------------------
+    run_ctrl = parser.add_argument_group("run control")
+    run_ctrl.add_argument("--timeout", type=float, default=60.0, help="Request timeout in seconds (default: 60)")
+    run_ctrl.add_argument("--max-turns", type=int, default=8, help="Max turns per scenario (default: 8)")
+    run_ctrl.add_argument("--trials", type=int, default=1,
+                          help="Number of trial runs for statistical rigor (default: 1)")
+    run_ctrl.add_argument(
         "--parallel", type=int, default=1, metavar="N",
-        help="Run N scenarios concurrently (default: 1 = sequential). "
-             "Values >1 speed up benchmarks but may increase server load.",
+        help="Run N scenarios concurrently (default: 1 = sequential)",
     )
-    parser.add_argument(
+    run_ctrl.add_argument(
         "--error-rate", type=float, default=0.0, metavar="RATE",
-        help="Inject random tool errors at this rate (0.0–1.0) to test robustness. "
-             "Simulates HTTP 429/500/503 errors. Best used with --trials 3+ for Pass@k/Pass^k analysis.",
+        help="Inject random tool errors at this rate (0.0–1.0) for robustness testing",
     )
-    parser.add_argument(
-        "--alpha", type=float, default=0.7, metavar="WEIGHT",
-        help="Quality/speed weight for deployability score (0.0–1.0, default: 0.7). "
-             "Higher values weight quality more; lower values penalize slow models more.",
+    run_ctrl.add_argument("--no-warmup", action="store_true", help="Skip server warm-up request")
+    run_ctrl.add_argument("--reference-date", default=None,
+                          help="Override benchmark reference date (YYYY-MM-DD)")
+
+    # -- Output ------------------------------------------------------------
+    output = parser.add_argument_group("output")
+    output.add_argument("--json", action="store_true", help="Output raw JSON instead of rich display")
+    output.add_argument("--no-live", action="store_true", help="Disable live updating display")
+    output.add_argument("--redact-url", action="store_true",
+                        help="Mask the server URL in display output (for screenshots/recordings)")
+    output.add_argument(
+        "--alpha", type=float, default=0.7, metavar="W",
+        help="Quality/speed weight for deployability score (0–1, default: 0.7)",
     )
 
-    # Warm-up and throughput
-    parser.add_argument("--no-warmup", action="store_true", help="Skip server warm-up request")
-    parser.add_argument(
-        "--perf", action="store_true",
-        help="Run throughput benchmark (via llama-benchy) before tool-call scenarios. "
-             "Requires llama-benchy to be installed (pip install llama-benchy) or uvx on PATH.",
-    )
-    parser.add_argument(
-        "--perf-only", action="store_true",
-        help="Run ONLY throughput benchmark via llama-benchy (skip tool-call scenarios)",
-    )
-    parser.add_argument(
-        "--perf-legacy", action="store_true",
-        help="Run built-in throughput benchmark before tool-call scenarios "
-             "(simpler, no external dependencies)",
-    )
-    parser.add_argument(
-        "--perf-legacy-only", action="store_true",
-        help="Run ONLY built-in throughput benchmark (skip tool-call scenarios)",
-    )
-    parser.add_argument("--pp", type=int, default=2048, help="Prompt tokens for throughput benchmark (default: 2048)")
-    parser.add_argument("--tg", type=int, default=128, help="Generation tokens for throughput benchmark (default: 128)")
-    parser.add_argument("--depth", type=str, default="0,4096,8192", help="Context depths, comma separated (default: '0,4096,8192')")
-    parser.add_argument("--concurrency", type=str, default="1,2,4", help="Concurrency levels (default: '1,2,4')")
+    # -- Throughput (llama-benchy) -----------------------------------------
+    perf_grp = parser.add_argument_group("throughput benchmark (llama-benchy)")
+    perf_grp.add_argument("--perf", action="store_true",
+                          help="Run throughput benchmark before tool-call scenarios")
+    perf_grp.add_argument("--perf-only", action="store_true",
+                          help="Run ONLY throughput benchmark (skip tool-call scenarios)")
+    perf_grp.add_argument("--perf-legacy", action="store_true",
+                          help="Use built-in throughput benchmark (no external deps)")
+    perf_grp.add_argument("--perf-legacy-only", action="store_true",
+                          help="Run ONLY built-in throughput benchmark")
+    perf_grp.add_argument("--pp", type=int, default=2048, help="Prompt tokens (default: 2048)")
+    perf_grp.add_argument("--tg", type=int, default=128, help="Generation tokens (default: 128)")
+    perf_grp.add_argument("--depth", type=str, default="0,4096,8192",
+                          help="Context depths, comma separated (default: '0,4096,8192')")
+    perf_grp.add_argument("--concurrency", type=str, default="1,2,4",
+                          help="Concurrency levels (default: '1,2,4')")
+    perf_grp.add_argument("--benchy-runs", type=int, default=3,
+                          help="Measurement runs per test point (default: 3)")
+    perf_grp.add_argument("--benchy-latency-mode", default="generation",
+                          choices=["api", "generation", "none"],
+                          help="Latency measurement mode (default: generation)")
+    perf_grp.add_argument("--benchy-args", type=str, default=None,
+                          help="Pass-through args for llama-benchy (quoted string)")
+    perf_grp.add_argument("--skip-coherence", action="store_true",
+                          help="Skip coherence check (for air-gapped hosts)")
 
-    # llama-benchy tuning (used by --perf / --perf-only)
-    parser.add_argument(
-        "--benchy-runs", type=int, default=3,
-        help="Number of measurement runs per test for llama-benchy (default: 3)",
-    )
-    parser.add_argument(
-        "--benchy-latency-mode", default="generation",
-        choices=["api", "generation", "none"],
-        help="Latency measurement mode for llama-benchy (default: generation). "
-             "'generation' is most accurate for local servers.",
-    )
-    parser.add_argument(
-        "--benchy-args", type=str, default=None,
-        help="Additional arguments to pass through to llama-benchy (quoted string, "
-             "e.g. --benchy-args='--no-warmup --book-url URL')",
-    )
-    parser.add_argument(
-        "--skip-coherence", action="store_true",
-        help="Skip llama-benchy coherence check (not recommended — use only on "
-             "air-gapped hosts that cannot reach gutenberg.org)",
-    )
+    # -- Speculative decoding benchmark ------------------------------------
+    spec_grp = parser.add_argument_group("speculative decoding benchmark")
+    spec_grp.add_argument("--spec-bench", action="store_true",
+                          help="Run spec-decode / MTP benchmark (effective t/s, acceptance rate)")
+    spec_grp.add_argument("--spec-method", default="auto",
+                          choices=["auto", "mtp", "draft", "ngram", "eagle"],
+                          help="Spec-decode method hint (default: auto-detect)")
+    spec_grp.add_argument("--baseline-tgs", type=float, default=None, metavar="TPS",
+                          help="Baseline tg t/s for speedup ratio calculation")
+    spec_grp.add_argument("--spec-prompts", type=str, default="filler,code,structured",
+                          help="Prompt types, comma separated (default: 'filler,code,structured')")
+    spec_grp.add_argument("--metrics-url", type=str, default=None, metavar="URL",
+                          help="Prometheus /metrics URL for acceptance rate "
+                               "(when API is behind a proxy)")
 
-    # Speculative decoding / MTP benchmark
-    parser.add_argument(
-        "--spec-bench", action="store_true",
-        help="Run speculative decoding / MTP benchmark (measures effective t/s, "
-             "acceptance rate, and speedup vs baseline)",
-    )
-    parser.add_argument(
-        "--spec-method", default="auto",
-        choices=["auto", "mtp", "draft", "ngram", "eagle"],
-        help="Speculative decoding method hint (default: auto-detect)",
-    )
-    parser.add_argument(
-        "--baseline-tgs", type=float, default=None, metavar="TPS",
-        help="Known baseline tg t/s (without spec decode) for speedup calculation. "
-             "If omitted, speedup ratio won't be computed.",
-    )
-    parser.add_argument(
-        "--spec-prompts", type=str, default="filler,code,structured",
-        help="Prompt types for spec bench, comma separated (default: 'filler,code,structured'). "
-             "Options: filler, code, structured",
-    )
-    parser.add_argument(
-        "--metrics-url", type=str, default=None, metavar="URL",
-        help="Direct URL to the Prometheus /metrics endpoint for spec-decode acceptance rate. "
-             "Use when the API runs behind a proxy (e.g. LiteLLM) and /metrics lives on a "
-             "different host/port (e.g. --metrics-url http://vllm-host:8080/metrics).",
-    )
+    # -- Context pressure --------------------------------------------------
+    pressure = parser.add_argument_group("context pressure")
+    pressure.add_argument("--context-pressure", type=float, default=None, metavar="RATIO",
+                          help="Fill context to RATIO (0.0–1.0) before each scenario")
+    pressure.add_argument("--context-size", type=int, default=None, metavar="TOKENS",
+                          help="Override auto-detected context window size (tokens)")
+    pressure.add_argument("--context-pressure-sweep", type=str, default=None, metavar="START-END",
+                          help="Sweep pressure from START to END (e.g. 0.5-1.0)")
+    pressure.add_argument("--sweep-steps", type=int, default=5, metavar="N",
+                          help="Number of sweep intervals (default: 5 → 6 test levels)")
 
-    # Context pressure
-    parser.add_argument(
-        "--context-pressure", type=float, default=None, metavar="RATIO",
-        help="Fill context to RATIO (0.0–1.0) before each scenario to test tool-calling "
-             "under context pressure (e.g. --context-pressure 0.75 fills 75%% of available context). "
-             "Context window size is auto-detected from /v1/models or set via --context-size.",
-    )
-    parser.add_argument(
-        "--context-size", type=int, default=None, metavar="TOKENS",
-        help="Override auto-detected context window size (tokens). "
-             "Required if auto-detection fails (e.g. --context-size 32768).",
-    )
-    parser.add_argument(
-        "--context-pressure-sweep", type=str, default=None, metavar="START-END",
-        help="Run scenarios at increasing context pressure from START to END "
-             "(e.g. --context-pressure-sweep 0.5-1.0). Reports pass/fail at each "
-             "level and identifies the breaking point. Use with --sweep-steps to "
-             "control granularity.",
-    )
-    parser.add_argument(
-        "--sweep-steps", type=int, default=5, metavar="N",
-        help="Number of intervals for --context-pressure-sweep (default: 5, "
-             "producing N+1 test levels). E.g. --sweep-steps 10 with range "
-             "0.9-1.0 tests 0.90, 0.91, ..., 1.00.",
-    )
+    # -- History & comparison ----------------------------------------------
+    hist_grp = parser.add_argument_group("history & comparison")
+    hist_grp.add_argument("--diff", metavar="RUN_ID", default=None,
+                          help="Compare against a previous run (use 'latest' for most recent)")
+    hist_grp.add_argument("--compare", nargs=2, metavar=("RUN_A", "RUN_B"), default=None,
+                          help="Compare two stored runs by ID")
+    hist_grp.add_argument("--history", action="store_true",
+                          help="List recent benchmark runs and exit")
+    hist_grp.add_argument("--leaderboard", action="store_true",
+                          help="Show ranked model leaderboard and exit")
+    hist_grp.add_argument("--export", metavar="FORMAT", default=None,
+                          choices=["csv", "json"],
+                          help="Export all results in CSV or JSON format and exit")
+    hist_grp.add_argument("--export-output", metavar="FILE", default=None,
+                          help="Output file for --export (default: stdout)")
 
-    # Comparison and history
-    parser.add_argument(
-        "--diff", metavar="RUN_ID", default=None,
-        help="Compare results against a previous run ID (use 'latest' for most recent)",
-    )
-    parser.add_argument(
-        "--compare", nargs=2, metavar=("RUN_A", "RUN_B"), default=None,
-        help="Compare two stored runs by ID (e.g. --compare RUN_ID_OLD RUN_ID_NEW)",
-    )
-    parser.add_argument("--history", action="store_true", help="List recent benchmark runs and exit")
-    parser.add_argument("--leaderboard", action="store_true",
-                        help="Show a ranked leaderboard of all benchmarked models and exit")
-    parser.add_argument(
-        "--export", metavar="FORMAT", default=None,
-        choices=["csv", "json"],
-        help="Export all stored results in CSV or JSON format and exit",
-    )
-    parser.add_argument(
-        "--export-output", metavar="FILE", default=None,
-        help="Output file for --export (default: stdout)",
-    )
+    # -- Hidden / WIP (not shown in --help) --------------------------------
+    parser.add_argument("--llm-judge", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--judge-model", type=str, default=None, metavar="MODEL",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--experimental-async", action="store_true",
+                        help=argparse.SUPPRESS)
 
-    # LLM-as-Judge
+    # -- Interactive TUI ---------------------------------------------------
     parser.add_argument(
-        "--llm-judge", action="store_true",
-        help="[WIP] Re-evaluate FAIL results using an LLM judge. "
-             "Can upgrade FAIL → PARTIAL (never to PASS) to catch false negatives "
-             "from string-matching evaluators. Module is implemented but not yet "
-             "wired into the benchmark flow.",
-    )
-    parser.add_argument(
-        "--judge-model", type=str, default=None, metavar="MODEL",
-        help="Model to use for LLM judging (default: same as benchmark model).",
-    )
-
-    # Experimental
-    parser.add_argument(
-        "--experimental-async", action="store_true",
-        help="[WIP] Enable experimental async tool orchestration. "
-             "Does not affect standard scenarios — adds async tool awareness.",
+        "-i", "--interactive", action="store_true",
+        help="Launch interactive TUI mode (requires: pip install tool-eval-bench[tui])",
     )
 
     args = parser.parse_args()
     console = Console()
+
+    # --interactive: launch Textual TUI and exit
+    if args.interactive:
+        try:
+            from tool_eval_bench.tui.app import run_tui
+        except ImportError:
+            console.print(
+                "[bold red]Error:[/] Interactive mode requires the [tui] extra.\n"
+                "Install it with: [bold cyan]pip install tool-eval-bench\\[tui][/]"
+            )
+            sys.exit(1)
+        run_tui()
+        return
 
     # --history: show recent runs and exit
     if args.history:
@@ -2077,9 +2025,8 @@ def _run_plain(
     # Show trial statistics if multiple trials
     if trials > 1:
         from tool_eval_bench.runner.orchestrator import score_results
-        from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
 
-        base = SCENARIOS if args.short else ALL_SCENARIOS
+        resolved_sc = _resolve_scenarios(args)
         summaries = []
         for r in all_results_dicts:
             sr_dicts = r.get("scores", {}).get("scenario_results", [])
@@ -2093,7 +2040,7 @@ def _run_plain(
                 for d in sr_dicts
             ]
             if trial_sr:
-                summaries.append(score_results(trial_sr, base, alpha=args.alpha))
+                summaries.append(score_results(trial_sr, resolved_sc, alpha=args.alpha))
         agg = _aggregate_trials(summaries) if summaries else {}
         _print_trials_summary(console, agg)
 

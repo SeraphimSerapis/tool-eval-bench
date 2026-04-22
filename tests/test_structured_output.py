@@ -361,3 +361,147 @@ class TestTC69MultiToolComplex:
         )
         result = self.scenario.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
+
+
+# ==========================================================================
+# Issue #5 regression: unhashable type 'list' crash
+# ==========================================================================
+# When a model returns a list value for an enum field (e.g. "genre": ["sci-fi"])
+# the evaluators previously crashed with TypeError instead of returning PARTIAL.
+
+class TestIssue5ListValuedEnums:
+    """Verify list-valued enum fields produce PARTIAL, not TypeError."""
+
+    def test_tc64_genre_as_list(self) -> None:
+        """TC-64: 'genre' is a list instead of a string."""
+        data = {
+            "title": "The Matrix", "year": 1999, "rating": 9.0,
+            "genre": ["sci-fi", "action"],  # list, not string
+            "summary": "A classic movie about reality.",
+        }
+        state = _make_state(final_answer=json.dumps(data))
+        result = _get_scenario("TC-64").evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "genre" in result.summary
+
+    def test_tc67_signal_as_list(self) -> None:
+        """TC-67: 'signal' is a list instead of a string."""
+        data = {
+            "ticker": "NVDA", "price": 892.50, "currency": "USD",
+            "signal": ["buy"],  # list, not string
+            "reasoning": "Strong AI demand with record revenue growth.",
+        }
+        state = _make_state(
+            tool_calls=[{"name": "get_stock_price", "arguments": {"ticker": "NVDA"}}],
+            final_answer=json.dumps(data),
+        )
+        result = _get_scenario("TC-67").evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_tc68_status_as_list(self) -> None:
+        """TC-68: 'status' is a list instead of a string."""
+        data = {
+            "task_id": "PROJ-127",
+            "status": ["in_progress"],  # list, not string
+            "assignee": "me",
+        }
+        state = _make_state(final_answer=json.dumps(data))
+        result = _get_scenario("TC-68").evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_tc69_direction_as_list(self) -> None:
+        """TC-69: 'direction' is a list instead of a string."""
+        data = {
+            "date": "2026-04-19",
+            "weather": {"location": "San Francisco", "temperature": 18, "condition": "Foggy"},
+            "market": {"ticker": "AAPL", "price": 192.30, "direction": ["down"]},
+            "action_items": ["Check weather"],
+        }
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "San Francisco"}},
+                {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}},
+            ],
+            final_answer=json.dumps(data),
+        )
+        result = _get_scenario("TC-69").evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_tc64_genre_as_int(self) -> None:
+        """Non-string scalar (int) also handled gracefully."""
+        data = {
+            "title": "The Matrix", "year": 1999, "rating": 9.0,
+            "genre": 42,  # int, not string
+            "summary": "A classic movie.",
+        }
+        state = _make_state(final_answer=json.dumps(data))
+        result = _get_scenario("TC-64").evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+
+class TestOrchestratorEvaluatorSafetyNet:
+    """Verify the orchestrator catches evaluator exceptions (issue #5)."""
+
+    def test_evaluator_crash_returns_fail(self) -> None:
+        """An evaluator that raises should produce a FAIL, not crash the run."""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        from tool_eval_bench.adapters.base import ChatCompletionResult
+        from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
+        from tool_eval_bench.runner.orchestrator import run_scenario
+
+        def exploding_evaluator(state):
+            raise RuntimeError("intentional evaluator crash")
+
+        scenario = ScenarioDefinition(
+            id="TC-TEST", title="Exploding Evaluator", category=Category.A,
+            user_message="test prompt", description="test",
+            handle_tool_call=lambda s, c: {}, evaluate=exploding_evaluator,
+        )
+
+        mock_result = ChatCompletionResult(
+            content="some answer", tool_calls=[], raw_response={}, elapsed_ms=100.0,
+        )
+        adapter = AsyncMock()
+        adapter.chat_completion = AsyncMock(return_value=mock_result)
+
+        result = asyncio.run(run_scenario(
+            adapter, model="m", base_url="http://x", api_key=None, scenario=scenario,
+        ))
+
+        assert result.status == ScenarioStatus.FAIL
+        assert "Evaluator error" in result.summary
+        assert "intentional evaluator crash" in result.summary
+
+    def test_unhashable_evaluator_returns_fail(self) -> None:
+        """The original issue #5 crash path: TypeError in evaluator."""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        from tool_eval_bench.adapters.base import ChatCompletionResult
+        from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
+        from tool_eval_bench.runner.orchestrator import run_scenario
+
+        tc64 = next(s for s in ALL_SCENARIOS if s.id == "TC-64")
+
+        # Model returns genre as list — was crashing the entire run
+        mock_result = ChatCompletionResult(
+            content=json.dumps({
+                "title": "The Matrix", "year": 1999, "rating": 9.0,
+                "genre": ["sci-fi", "action"], "summary": "A classic.",
+            }),
+            tool_calls=[], raw_response={}, elapsed_ms=100.0,
+        )
+        adapter = AsyncMock()
+        adapter.chat_completion = AsyncMock(return_value=mock_result)
+
+        result = asyncio.run(run_scenario(
+            adapter, model="m", base_url="http://x", api_key=None, scenario=tc64,
+        ))
+
+        # Should be PARTIAL (not a crash), because the fix in the evaluator
+        # itself handles list values.  The safety net is a second layer.
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "genre" in result.summary
+
