@@ -12,6 +12,7 @@ import copy
 import json
 import logging
 import random
+import re
 import time
 from typing import Any
 
@@ -113,6 +114,48 @@ def _initial_messages(
     return msgs
 
 
+def _repair_json_str(s: str) -> str:
+    """Best-effort repair of truncated JSON argument strings.
+
+    Some models (especially under constrained generation or aggressive
+    max_tokens) emit tool-call arguments with unterminated strings or
+    missing closing brackets.  vLLM's ``_postprocess_messages`` does
+    ``json.loads()`` on the arguments when they come back in the
+    conversation history and crashes with a 400 if they're malformed.
+
+    This function applies minimal fixes so the arguments survive a
+    round-trip through the server.  If the string is already valid JSON,
+    it is returned unchanged.
+    """
+    if not s or not s.strip():
+        return "{}"
+    try:
+        json.loads(s)
+        return s  # already valid
+    except json.JSONDecodeError:
+        pass
+
+    # Close unterminated strings: count unescaped quotes
+    repaired = s
+    n_quotes = len(re.findall(r'(?<!\\)"', repaired))
+    if n_quotes % 2 != 0:
+        repaired += '"'
+
+    # Close brackets/braces
+    opens = repaired.count("{") - repaired.count("}")
+    repaired += "}" * max(0, opens)
+    opens_arr = repaired.count("[") - repaired.count("]")
+    repaired += "]" * max(0, opens_arr)
+
+    try:
+        json.loads(repaired)
+        return repaired
+    except json.JSONDecodeError:
+        # Last resort: return empty object so the server doesn't crash
+        logger.warning("Could not repair malformed tool-call arguments: %s", s[:120])
+        return "{}"
+
+
 def _assistant_message(result: ChatCompletionResult) -> dict[str, Any]:
     msg: dict[str, Any] = {"role": "assistant", "content": result.content}
     if result.tool_calls:
@@ -120,7 +163,10 @@ def _assistant_message(result: ChatCompletionResult) -> dict[str, Any]:
             {
                 "id": tc.id,
                 "type": "function",
-                "function": {"name": tc.name, "arguments": tc.arguments_str},
+                "function": {
+                    "name": tc.name,
+                    "arguments": _repair_json_str(tc.arguments_str),
+                },
             }
             for tc in result.tool_calls
         ]

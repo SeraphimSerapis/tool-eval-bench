@@ -6,6 +6,40 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Added
 
+- **Run context metadata in reports** (Issue #6) — benchmark reports and SQLite
+  records now include full execution context: tool-eval-bench version, git SHA,
+  CLI parameters (temperature, seed, max_turns, timeout, parallel, error_rate,
+  thinking mode, extra_params), and best-effort inference engine probing (vLLM
+  version, llama.cpp build, LiteLLM version, max_model_len, quantization, GPU
+  count).  Reports render two new tables: **Run Context** (all CLI parameters)
+  and **Inference Engine** (server-side metadata).  Engine probes are best-effort
+  with tight timeouts — failures produce graceful `None` fields, never crashes.
+- **Version stamp in reports and display** — the tool-eval-bench version and git
+  SHA now appear in Markdown report headers and the Rich live display panel.
+- **Engine auto-detection in CLI** — detected engine name, version, quantization,
+  context length, and model root are printed as `🔍` lines before the benchmark
+  starts (suppressed in `--json` mode).
+- **Enriched `--history` output** — the history table now includes a Context column
+  showing tool version, backend, engine, temperature (if non-default), and
+  quantization.  Old runs without metadata show `—` gracefully.
+- **Enriched `--compare` output** — the comparison header panel now shows per-run
+  context details (engine version, model root, quantization, host, etc.) so you
+  can see *what changed* between two runs at a glance.
+- **URL redaction on by default in reports** — server URLs are now automatically
+  redacted (`http://***:8000`) in persisted Markdown reports for privacy.  The
+  `--redact-url` CLI flag continues to control terminal display separately.
+- **`--skip-tool-eval` CLI flag** — skip tool-call scenarios entirely, useful for
+  running only `--spec-bench` or `--perf` without the 69 scenario evaluation.
+  Example: `tool-eval-bench --spec-bench --skip-tool-eval`.
+- **`--no-probe-engine` CLI flag** — disable the HTTP-based engine detection
+  probes (`/version`, `/health`, `/v1/models`) for environments where these
+  endpoints are slow, unavailable, or behind auth.
+- **Metadata in `--export csv|json`** — exported data now includes `tool_version`,
+  `engine_name`, `engine_version`, `quantization`, `max_model_len`, `temperature`,
+  and `server_model_root` from the run metadata.
+- **RunContext in throughput reports** — `--perf-only` and `--perf-legacy-only`
+  reports now include the full Run Context and Inference Engine sections.
+
 - **Interactive TUI mode** (`-i` / `--interactive`) — a full Textual-based terminal
   UI for configuring and running benchmarks.  Three screens: **Configure** (server
   connection, model picker, benchmark mode checkboxes, category filter, sampling
@@ -75,6 +109,15 @@ All notable changes to `tool-eval-bench` are documented here.
 - **Test suite hardening** — resolved 6 classes of systemic test bugs that had
   accumulated across `test_display.py`, `test_history.py`, `test_leaderboard_display.py`,
   and `test_judge.py`:
+- **vLLM 400 crash on malformed tool-call arguments** — when a model (e.g. Gemma 4)
+  emits truncated JSON in tool-call arguments, vLLM's `_postprocess_messages` crashes
+  with `json.JSONDecodeError` on the next turn.  Two-layer fix:
+  1. `_repair_json_str()` in the orchestrator closes unterminated strings and
+     brackets before arguments are sent back in conversation history.
+  2. The adapter catches `httpx.HTTPStatusError` (400/422) and returns a
+     graceful `[server error N]` result instead of crashing the scenario.
+- **`.opencode/` removed from repo and git history** — leaked IDE directory
+  purged with `git filter-branch`, added to `.gitignore`.
   - Console IO capture: replaced `Console(file=MagicMock())` with
     `Console(file=StringIO(), width=200, no_color=True)` to get real string output.
   - Mock paths: corrected 36 `patch()` targets from `cli.*.RunRepository` to
@@ -93,6 +136,11 @@ All notable changes to `tool-eval-bench` are documented here.
   `from rich.panel import Panel` that was already imported at function scope.
 
 ### Changed
+
+- **`redact_url` moved to shared utility** — `_redact_url` was inlined in `cli/bench.py`
+  and had to be imported by `utils/metadata.py`, violating the layered architecture
+  (domain/utils must not import CLI).  Moved to `utils/urls.redact_url()` and the CLI
+  now delegates to it.
 
 - **CLI flag grouping** — reorganized 45 flat `--help` flags into 10 logical
   argument groups: connection, sampling, scenario selection, run control, output,

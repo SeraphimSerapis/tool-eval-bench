@@ -107,11 +107,19 @@ class BenchmarkDisplay:
     def start(self) -> None:
         """Print static header, then start the tiny live progress footer."""
         total = len(self.scenarios)
+
+        # Version stamp
+        try:
+            from tool_eval_bench import __version__
+            version_tag = f"  [dim]v{__version__}[/]"
+        except ImportError:
+            version_tag = ""
+
         self.console.print()
         self.console.print(
             Panel(
                 f"[bold]{self.model}[/]  [dim]via {self.backend} @ {self.base_url}[/]\n"
-                f"[dim]{total} scenarios[/]",
+                f"[dim]{total} scenarios[/]{version_tag}",
                 title="[bold]🔧 Tool-Call Benchmark[/]",
                 border_style="bright_blue",
             )

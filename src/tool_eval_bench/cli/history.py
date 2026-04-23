@@ -10,6 +10,99 @@ import sys
 from rich.console import Console
 
 
+def _extract_context_summary(run: dict) -> str:
+    """Extract a short context summary string from metadata.
+
+    Gracefully handles old runs with sparse or missing metadata.
+    """
+    metadata = run.get("metadata") or {}
+    config = run.get("config") or {}
+    parts: list[str] = []
+
+    # Tool version
+    version = metadata.get("tool_version")
+    if version:
+        parts.append(f"v{version}")
+
+    # Backend
+    backend = metadata.get("backend") or config.get("backend")
+    if backend:
+        parts.append(backend)
+
+    # Engine
+    engine_name = metadata.get("engine_name")
+    engine_version = metadata.get("engine_version")
+    if engine_name:
+        s = engine_name
+        if engine_version:
+            s += f" {engine_version}"
+        parts.append(s)
+
+    # Temperature (only if non-default)
+    temp = metadata.get("temperature")
+    if temp is not None and temp != 0.0:
+        parts.append(f"t={temp}")
+
+    # Quantization
+    quant = metadata.get("quantization")
+    if quant:
+        parts.append(quant)
+
+    return "  ".join(parts) if parts else ""
+
+
+def _extract_context_panel(run: dict) -> list[str]:
+    """Extract context lines for detailed comparison panels.
+
+    Returns list of Rich-formatted strings, or empty list for old runs.
+    """
+    metadata = run.get("metadata") or {}
+    config = run.get("config") or {}
+    lines: list[str] = []
+
+    version = metadata.get("tool_version")
+    if version:
+        git_sha = metadata.get("git_sha", "")
+        sha_str = f" {git_sha}" if git_sha else ""
+        lines.append(f"  [dim]tool-eval-bench:[/] v{version}{sha_str}")
+
+    engine_name = metadata.get("engine_name")
+    if engine_name:
+        engine_version = metadata.get("engine_version", "")
+        lines.append(f"  [dim]Engine:[/] {engine_name} {engine_version}")
+
+    max_model_len = metadata.get("max_model_len")
+    if max_model_len:
+        lines.append(f"  [dim]Context:[/] {max_model_len:,} tokens")
+
+    quant = metadata.get("quantization")
+    if quant:
+        lines.append(f"  [dim]Quantization:[/] {quant}")
+
+    model_root = metadata.get("server_model_root")
+    model_api = metadata.get("model") or config.get("model")
+    if model_root and model_root != model_api:
+        lines.append(f"  [dim]Model root:[/] {model_root}")
+
+    temp = metadata.get("temperature")
+    if temp is not None:
+        lines.append(f"  [dim]Temperature:[/] {temp}")
+
+    seed = metadata.get("seed")
+    if seed is not None:
+        lines.append(f"  [dim]Seed:[/] {seed}")
+
+    thinking = metadata.get("thinking_enabled")
+    if thinking is not None:
+        lines.append(f"  [dim]Thinking:[/] {'enabled' if thinking else 'disabled'}")
+
+    hostname = metadata.get("hostname")
+    if hostname:
+        lines.append(f"  [dim]Host:[/] {hostname}")
+
+    return lines
+
+
 def print_history(console: Console) -> None:
     """List recent benchmark runs from SQLite."""
     from rich.table import Table
@@ -33,6 +126,7 @@ def print_history(console: Console) -> None:
     table.add_column("Model", min_width=20)
     table.add_column("Score", justify="right", width=8)
     table.add_column("Rating", min_width=16)
+    table.add_column("Context", min_width=25, no_wrap=True)
     table.add_column("Date", width=20)
 
     for run in runs:
@@ -40,11 +134,13 @@ def print_history(console: Console) -> None:
         score = scores.get("final_score", "?")
         rating = scores.get("rating", "")
         created = run.get("created_at", "?")[:19]
+        context = _extract_context_summary(run)
         table.add_row(
             f"[dim]{run['run_id']}[/]",
             run.get("model", "?"),
             f"[bold]{score}[/]",
             rating,
+            f"[dim]{context}[/]" if context else "[dim]—[/]",
             f"[dim]{created}[/]",
         )
 
@@ -222,11 +318,22 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
     model_a = run_a.get("config", {}).get("model", "?")
     model_b = run_b.get("config", {}).get("model", "?")
 
-    # Header
+    # Header with run context (issue #6)
+    ctx_lines_a = _extract_context_panel(run_a)
+    ctx_lines_b = _extract_context_panel(run_b)
+
+    header_lines = [
+        f"  [bold]A (baseline):[/] {id_a[:40]}  [dim]model={model_a}[/]",
+    ]
+    if ctx_lines_a:
+        header_lines.extend(ctx_lines_a)
+    header_lines.append(f"  [bold]B (current):[/]  {id_b[:40]}  [dim]model={model_b}[/]")
+    if ctx_lines_b:
+        header_lines.extend(ctx_lines_b)
+
     console.print()
     console.print(Panel(
-        f"  [bold]A (baseline):[/] {id_a[:40]}  [dim]model={model_a}[/]\n"
-        f"  [bold]B (current):[/]  {id_b[:40]}  [dim]model={model_b}[/]",
+        "\n".join(header_lines),
         title="[bold]📊 Run Comparison[/]",
         border_style="bright_cyan",
     ))

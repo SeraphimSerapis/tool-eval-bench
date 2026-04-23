@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.scenarios import ModelScoreSummary, ScenarioStatus
 
 
@@ -36,6 +37,7 @@ class MarkdownReporter:
         *,
         throughput_samples: list[Any] | None = None,
         context_pressure_config: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> Path:
         """Write a Markdown report for a scenario-based benchmark run."""
         now = datetime.now(timezone.utc)
@@ -49,15 +51,32 @@ class MarkdownReporter:
             ScenarioStatus.FAIL: "❌",
         }
 
+        # Version stamp from RunContext or fallback
+        version_str = ""
+        if run_context:
+            version_str = f" (v{run_context.tool_version}"
+            if run_context.git_sha:
+                version_str += f" {run_context.git_sha}"
+            version_str += ")"
+        elif not run_context:
+            try:
+                from tool_eval_bench import __version__
+                version_str = f" (v{__version__})"
+            except ImportError:
+                pass
+
         md = [
             f"# Tool-Call Benchmark — {model}",
             "",
             f"- **Run ID**: `{run_id}`",
             f"- **Date**: `{now.isoformat()}`",
+            f"- **tool-eval-bench**: `{version_str.strip(' ()')}`" if version_str else "",
             f"- **Final Score**: **{summary.final_score}** / 100",
             f"- **Total Points**: {summary.total_points} / {summary.max_points}",
             f"- **Rating**: {summary.rating}",
         ]
+        # Filter empty lines from conditional version stamp
+        md = [line for line in md if line is not None and line != ""] + [""]
 
         # Tool definition token overhead estimate (PERF-03)
         # Use the scenario IDs to determine which toolset was used
@@ -107,6 +126,10 @@ class MarkdownReporter:
             for w in summary.safety_warnings:
                 md.append(f"> - {w}")
             md.append("")
+
+        # Run Context section (issue #6)
+        if run_context:
+            md.extend(_render_run_context(run_context))
 
         md.extend([
             "## Category Scores",
@@ -160,6 +183,8 @@ class MarkdownReporter:
         run_id: str,
         model: str,
         throughput_samples: list[Any],
+        *,
+        run_context: RunContext | None = None,
     ) -> Path:
         """Write a standalone Markdown report for throughput-only runs."""
         now = datetime.now(timezone.utc)
@@ -167,14 +192,27 @@ class MarkdownReporter:
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / f"{run_id}.md"
 
+        # Version stamp
+        version_str = ""
+        if run_context:
+            version_str = f"v{run_context.tool_version}"
+            if run_context.git_sha:
+                version_str += f" {run_context.git_sha}"
+
         md = [
             f"# Throughput Benchmark — {model}",
             "",
             f"- **Run ID**: `{run_id}`",
             f"- **Date**: `{now.isoformat()}`",
             "- **Mode**: throughput-only",
-            "",
         ]
+        if version_str:
+            md.append(f"- **tool-eval-bench**: `{version_str}`")
+        md.append("")
+
+        # Run Context section
+        if run_context:
+            md.extend(_render_run_context(run_context))
 
         ok_samples = [s for s in throughput_samples if not getattr(s, "error", None)]
         if ok_samples:
@@ -211,6 +249,7 @@ class MarkdownReporter:
         *,
         throughput_samples: list[Any] | None = None,
         report_paths: list[str] | None = None,
+        run_context: RunContext | None = None,
     ) -> Path:
         """Write a consolidated cross-trial summary report.
 
@@ -236,14 +275,30 @@ class MarkdownReporter:
             ScenarioStatus.FAIL: "fail",
         }
 
+        # Version stamp
+        version_line = ""
+        if run_context:
+            version_line = f"- **tool-eval-bench**: `v{run_context.tool_version}"
+            if run_context.git_sha:
+                version_line += f" {run_context.git_sha}"
+            version_line += "`"
+
         md = [
             f"# Cross-Trial Summary — {model}",
             "",
             f"- **Run ID**: `{run_id}`",
             f"- **Date**: `{now.isoformat()}`",
+        ]
+        if version_line:
+            md.append(version_line)
+        md.extend([
             f"- **Trials**: {n}",
             "",
-        ]
+        ])
+
+        # Run Context section (issue #6)
+        if run_context:
+            md.extend(_render_run_context(run_context))
 
         # ── Headline numbers ──
         md.extend([
@@ -617,3 +672,83 @@ class MarkdownReporter:
         return path
 
 
+# ---------------------------------------------------------------------------
+# Run context rendering (shared by all report types)
+# ---------------------------------------------------------------------------
+
+def _render_run_context(ctx: RunContext) -> list[str]:
+    """Render RunContext as Markdown tables for embedding in reports."""
+    md: list[str] = []
+
+    # -- Run Context table (Tier 2: CLI parameters) --
+    md.extend([
+        "## Run Context",
+        "",
+        "| Parameter | Value |",
+        "|---|---|",
+        f"| Backend | {ctx.backend} |",
+        f"| Server | `{ctx.base_url}` |",
+        f"| Model (API) | `{ctx.model}` |",
+    ])
+    if ctx.server_model_root and ctx.server_model_root != ctx.model:
+        md.append(f"| Model (Root) | `{ctx.server_model_root}` |")
+    md.extend([
+        f"| Temperature | {ctx.temperature} |",
+        f"| Seed | {ctx.seed if ctx.seed is not None else '—'} |",
+        f"| Max Turns | {ctx.max_turns} |",
+        f"| Timeout | {ctx.timeout_seconds}s |",
+        f"| Scenarios | {ctx.scenario_selector} |",
+        f"| Parallel | {ctx.parallel} {'(sequential)' if ctx.parallel <= 1 else ''} |",
+        f"| Error Rate | {ctx.error_rate} |",
+        f"| Thinking | {'enabled' if ctx.thinking_enabled else 'disabled'} |",
+    ])
+    if ctx.context_pressure is not None:
+        md.append(f"| Context Pressure | {ctx.context_pressure:.0%} |")
+    if ctx.extra_params:
+        import json as _json
+        md.append(f"| Extra Params | `{_json.dumps(ctx.extra_params)}` |")
+    md.append("")
+
+    # -- Inference Engine table (Tier 3: best-effort) --
+    has_engine_info = any([
+        ctx.engine_name, ctx.engine_version, ctx.max_model_len,
+        ctx.quantization, ctx.gpu_count, ctx.spec_decoding,
+    ])
+    if has_engine_info:
+        md.extend([
+            "## Inference Engine",
+            "",
+            "| Property | Value |",
+            "|---|---|",
+        ])
+        if ctx.engine_name:
+            version_str = f" {ctx.engine_version}" if ctx.engine_version else ""
+            md.append(f"| Engine | {ctx.engine_name}{version_str} |")
+        if ctx.max_model_len:
+            md.append(f"| Max Model Length | {ctx.max_model_len:,} |")
+        if ctx.quantization:
+            md.append(f"| Quantization | {ctx.quantization} |")
+        if ctx.gpu_count:
+            md.append(f"| GPU Count | {ctx.gpu_count} |")
+        if ctx.spec_decoding:
+            md.append(f"| Spec Decoding | {ctx.spec_decoding} |")
+        md.extend([
+            f"| Host | `{ctx.hostname}` |",
+            f"| Platform | `{ctx.platform_info}` |",
+            f"| Python | {ctx.python_version} |",
+            "",
+        ])
+    else:
+        # Minimal environment info even without engine probes
+        md.extend([
+            "## Environment",
+            "",
+            "| Property | Value |",
+            "|---|---|",
+            f"| Host | `{ctx.hostname}` |",
+            f"| Platform | `{ctx.platform_info}` |",
+            f"| Python | {ctx.python_version} |",
+            "",
+        ])
+
+    return md

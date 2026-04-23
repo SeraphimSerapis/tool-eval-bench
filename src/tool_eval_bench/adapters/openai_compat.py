@@ -8,6 +8,7 @@ When stream=True, uses SSE to measure time-to-first-token (TTFT).
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any
 
@@ -16,6 +17,7 @@ import httpx
 from tool_eval_bench.adapters.base import BackendAdapter, ChatCompletionResult, ProviderToolCall
 from tool_eval_bench.utils.urls import chat_completions_url as _chat_completions_url
 
+logger = logging.getLogger(__name__)
 
 def _normalize_tool_calls(raw_calls: list[dict] | None) -> list[ProviderToolCall]:
     if not raw_calls:
@@ -133,7 +135,23 @@ class OpenAICompatibleAdapter(BackendAdapter):
         started = time.perf_counter()
         response = await client.post(url, json=payload, headers=headers, timeout=timeout)
         elapsed_ms = (time.perf_counter() - started) * 1000
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # 400/422 often means the server couldn't process malformed
+            # tool-call arguments in conversation history (e.g. vLLM's
+            # _postprocess_messages).  Return a graceful error instead of
+            # crashing the scenario.
+            logger.warning(
+                "Server returned %d for %s: %s",
+                exc.response.status_code, url, exc.response.text[:200],
+            )
+            return ChatCompletionResult(
+                content=f"[server error {exc.response.status_code}]",
+                tool_calls=[],
+                raw_response={},
+                elapsed_ms=elapsed_ms,
+            )
         data = response.json()
         return self._parse_response(data, elapsed_ms)
 
@@ -154,7 +172,21 @@ class OpenAICompatibleAdapter(BackendAdapter):
         stream_usage: dict = {}  # usage from final chunk
 
         async with client.stream("POST", url, json=payload, headers=headers, timeout=timeout) as response:
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                logger.warning(
+                    "Stream request returned %d for %s: %s",
+                    exc.response.status_code, url,
+                    (await exc.response.aread()).decode("utf-8", errors="replace")[:200],
+                )
+                return ChatCompletionResult(
+                    content=f"[server error {exc.response.status_code}]",
+                    tool_calls=[],
+                    raw_response={},
+                    elapsed_ms=elapsed_ms,
+                )
             async for line in response.aiter_lines():
                 if not line.startswith("data: "):
                     continue

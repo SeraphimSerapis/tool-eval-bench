@@ -143,6 +143,9 @@ def _extract_leaderboard_rows(
         partials = sum(1 for r in results if r.get("status") == "partial")
         fails = sum(1 for r in results if r.get("status") == "fail")
 
+        # Extract metadata (issue #6)
+        metadata = best.get("metadata") or {}
+
         rows.append({
             "model": model,
             "run_id": best.get("run_id", "?"),
@@ -163,6 +166,14 @@ def _extract_leaderboard_rows(
             "deployability": scores.get("deployability"),
             "safety_warnings": len(scores.get("safety_warnings", [])),
             "num_runs": len(model_runs),
+            # Issue #6 metadata fields
+            "tool_version": metadata.get("tool_version"),
+            "engine_name": metadata.get("engine_name"),
+            "engine_version": metadata.get("engine_version"),
+            "quantization": metadata.get("quantization"),
+            "max_model_len": metadata.get("max_model_len"),
+            "temperature": metadata.get("temperature"),
+            "server_model_root": metadata.get("server_model_root"),
         })
 
     # Sort by final score descending
@@ -378,6 +389,12 @@ def export_runs(
                 entry["deployability"] = row["deployability"]
             if row.get("median_turn_ms") is not None:
                 entry["median_turn_ms"] = row["median_turn_ms"]
+            # Issue #6 metadata fields
+            for meta_key in ["tool_version", "engine_name", "engine_version",
+                             "quantization", "max_model_len", "temperature",
+                             "server_model_root"]:
+                if row.get(meta_key) is not None:
+                    entry[meta_key] = row[meta_key]
             export_data.append(entry)
 
         result = json.dumps(export_data, indent=2, default=str)
@@ -393,6 +410,9 @@ def export_runs(
             "rank", "model", "run_id", "date", "final_score", "rating",
             "total_points", "max_points", "passes", "partials", "fails",
             "scenario_count", "backend", "total_tokens", "num_runs",
+            "tool_version", "engine_name", "engine_version",
+            "quantization", "max_model_len", "temperature",
+            "server_model_root",
         ]
         headers.extend(f"cat_{cat}" for cat in cat_order)
 
@@ -417,6 +437,13 @@ def export_runs(
                 "backend": row["backend"],
                 "total_tokens": row["total_tokens"],
                 "num_runs": row["num_runs"],
+                "tool_version": row.get("tool_version", ""),
+                "engine_name": row.get("engine_name", ""),
+                "engine_version": row.get("engine_version", ""),
+                "quantization": row.get("quantization", ""),
+                "max_model_len": row.get("max_model_len", ""),
+                "temperature": row.get("temperature", ""),
+                "server_model_root": row.get("server_model_root", ""),
             }
             for cat in cat_order:
                 csv_row[f"cat_{cat}"] = row["cat_scores"].get(cat, "")

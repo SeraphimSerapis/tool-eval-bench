@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
@@ -29,6 +30,7 @@ from tool_eval_bench.cli.display import BenchmarkDisplay
 from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition, ScenarioResult, ScenarioStatus
 from tool_eval_bench.runner.service import BenchmarkService
 
+logger = logging.getLogger(__name__)
 
 # Valid category letters for --categories
 _VALID_CATEGORIES = {c.value for c in Category}
@@ -65,16 +67,8 @@ def _load_dotenv() -> None:
 
 def _redact_url(url: str) -> str:
     """Mask the host in a URL for display.  e.g. http://192.168.10.5:8080 → http://***:8080"""
-    from urllib.parse import urlparse, urlunparse
-
-    parsed = urlparse(url)
-    if not parsed.hostname:
-        return url
-    # Replace hostname with ***, keep port if present
-    redacted_netloc = "***"
-    if parsed.port:
-        redacted_netloc = f"***:{parsed.port}"
-    return urlunparse(parsed._replace(netloc=redacted_netloc))
+    from tool_eval_bench.utils.urls import redact_url
+    return redact_url(url)
 
 
 
@@ -845,6 +839,8 @@ def main() -> None:
     run_ctrl.add_argument("--no-warmup", action="store_true", help="Skip server warm-up request")
     run_ctrl.add_argument("--reference-date", default=None,
                           help="Override benchmark reference date (YYYY-MM-DD)")
+    run_ctrl.add_argument("--skip-tool-eval", action="store_true",
+                          help="Skip tool-call scenarios (use with --perf / --spec-bench)")
 
     # -- Output ------------------------------------------------------------
     output = parser.add_argument_group("output")
@@ -856,6 +852,8 @@ def main() -> None:
         "--alpha", type=float, default=0.7, metavar="W",
         help="Quality/speed weight for deployability score (0–1, default: 0.7)",
     )
+    output.add_argument("--no-probe-engine", action="store_true",
+                        help="Skip inference engine probing (no /version, /health HTTP calls)")
 
     # -- Throughput (llama-benchy) -----------------------------------------
     perf_grp = parser.add_argument_group("throughput benchmark (llama-benchy)")
@@ -1072,6 +1070,58 @@ def main() -> None:
             "the scenario orchestrator. This flag has no effect in this run.\n"
         )
 
+    # -- Build RunContext (issue #6: full execution context metadata) --
+    # Built early so perf-only and spec-bench paths also get engine detection.
+    run_context = None
+    try:
+        from tool_eval_bench.utils.metadata import collect_run_context
+
+        # Determine scenario selector description
+        resolved_sc = _resolve_scenarios(args)
+        if args.scenarios:
+            scenario_sel = ", ".join(args.scenarios)
+        elif args.categories:
+            scenario_sel = f"categories {', '.join(c.upper() for c in args.categories)} ({len(resolved_sc)})"
+        elif args.short:
+            scenario_sel = f"short ({len(resolved_sc)})"
+        else:
+            scenario_sel = f"all ({len(resolved_sc)})"
+
+        trials = max(1, args.trials)
+        run_context = asyncio.run(collect_run_context(
+            model=model,
+            backend=backend,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=args.temperature,
+            max_turns=args.max_turns,
+            timeout_seconds=args.timeout,
+            seed=args.seed,
+            scenario_selector=scenario_sel,
+            trials=trials,
+            parallel=args.parallel,
+            error_rate=args.error_rate,
+            thinking_enabled=not args.no_think,
+            extra_params=extra_params or None,
+            context_pressure=args.context_pressure,
+            probe_engine=not args.no_probe_engine,
+        ))
+        if not args.json:
+            # Show engine info if detected
+            if run_context.engine_name:
+                engine_str = run_context.engine_name
+                if run_context.engine_version:
+                    engine_str += f" {run_context.engine_version}"
+                console.print(f"  [dim]🔍 Engine: {engine_str}[/]")
+            if run_context.quantization:
+                console.print(f"  [dim]🔍 Quantization: {run_context.quantization}[/]")
+            if run_context.max_model_len:
+                console.print(f"  [dim]🔍 Max context: {run_context.max_model_len:,} tokens[/]")
+            if run_context.server_model_root and run_context.server_model_root != model:
+                console.print(f"  [dim]🔍 Model root: {run_context.server_model_root}[/]")
+    except Exception as exc:
+        logger.warning("Failed to build RunContext: %s", exc)
+
     # -- Throughput benchmark (llama-benchy, the default) --
     throughput_samples: list = []
     if args.perf or args.perf_only:
@@ -1108,6 +1158,7 @@ def main() -> None:
             reporter = MarkdownReporter()
             report_path = reporter.write_throughput_report(
                 run_id, display_name, throughput_samples,
+                run_context=run_context,
             )
             console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
             return
@@ -1129,7 +1180,10 @@ def main() -> None:
             run_config = {"model": model, "backend": backend, "base_url": base_url, "mode": "perf-legacy-only"}
             run_id = build_run_id(run_config)
             reporter = MarkdownReporter()
-            report_path = reporter.write_throughput_report(run_id, display_name, legacy_samples)
+            report_path = reporter.write_throughput_report(
+                run_id, display_name, legacy_samples,
+                run_context=run_context,
+            )
             console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
             return
 
@@ -1145,8 +1199,8 @@ def main() -> None:
             prompt_types=spec_prompts,
             metrics_url=args.metrics_url,
         )
-        # If --spec-bench is the only mode requested (no --perf, no scenarios)
-        if not args.perf and not args.perf_only:
+        # If --spec-bench is the only mode, or user explicitly skipped tool-eval
+        if args.skip_tool_eval or (not args.perf and not args.perf_only):
             return
 
     # -- Context pressure sweep --
@@ -1243,6 +1297,15 @@ def main() -> None:
             console.print(f"\n[bold red]Error:[/] {exc}")
             sys.exit(1)
 
+    # -- Skip tool-call scenarios if requested --
+    if args.skip_tool_eval:
+        if not args.perf and not args.perf_only and not args.spec_bench:
+            console.print(
+                "\n  [yellow]⚠ --skip-tool-eval has no effect without "
+                "--perf, --perf-only, or --spec-bench.[/]\n"
+            )
+        return
+
     # -- Tool-call scenarios --
     service = BenchmarkService()
     use_live = not args.json and not args.no_live
@@ -1259,19 +1322,22 @@ def main() -> None:
             context_pressure_messages=pressure_messages,
             context_pressure_config=pressure_config_dict,
             display_url=display_url,
+            run_context=run_context,
         )
     elif args.json:
         _run_json(service, model, backend, base_url, api_key, args,
                   extra_params=extra_params or None,
                   context_pressure_messages=pressure_messages,
-                  context_pressure_config=pressure_config_dict)
+                  context_pressure_config=pressure_config_dict,
+                  run_context=run_context)
     else:
         _run_plain(service, console, model, display_name, backend, base_url, api_key, args,
                    throughput_samples=throughput_samples,
                    extra_params=extra_params or None,
                    context_pressure_messages=pressure_messages,
                    context_pressure_config=pressure_config_dict,
-                   display_url=display_url)
+                   display_url=display_url,
+                   run_context=run_context)
 
 # ---------------------------------------------------------------------------
 # Multi-trial aggregation
@@ -1753,6 +1819,7 @@ def _run_with_live_display(
     context_pressure_messages: list[dict] | None = None,
     context_pressure_config: dict | None = None,
     display_url: str | None = None,
+    run_context: Any | None = None,
 ) -> None:
     """Run with Rich live display — the default visual mode."""
     from tool_eval_bench.runner.orchestrator import score_results
@@ -1789,6 +1856,7 @@ def _run_with_live_display(
             extra_params=extra_params,
             context_pressure_messages=context_pressure_messages,
             context_pressure_config=context_pressure_config,
+            run_context=run_context,
             **callbacks,
         )
 
@@ -1863,6 +1931,7 @@ def _run_with_live_display(
                     agg=agg,
                     throughput_samples=throughput,
                     report_paths=report_paths,
+                    run_context=run_context,
                 )
                 console.print(f"  [dim]📊 Summary report: {summary_path}[/]\n")
 
@@ -1889,6 +1958,7 @@ def _run_json(
     extra_params: dict[str, Any] | None = None,
     context_pressure_messages: list[dict] | None = None,
     context_pressure_config: dict | None = None,
+    run_context: Any | None = None,
 ) -> None:
     """Run and output raw JSON."""
     trials = max(1, args.trials)
@@ -1912,6 +1982,7 @@ def _run_json(
             extra_params=extra_params,
             context_pressure_messages=context_pressure_messages,
             context_pressure_config=context_pressure_config,
+            run_context=run_context,
         )
 
     try:
@@ -1968,6 +2039,7 @@ def _run_plain(
     context_pressure_messages: list[dict] | None = None,
     context_pressure_config: dict | None = None,
     display_url: str | None = None,
+    run_context: Any | None = None,
 ) -> None:
     """Run with simple line-by-line output."""
     console.print(f"\n[bold]Tool-Call Benchmark[/] — {display_name}")
@@ -2001,6 +2073,7 @@ def _run_plain(
             extra_params=extra_params,
             context_pressure_messages=context_pressure_messages,
             context_pressure_config=context_pressure_config,
+            run_context=run_context,
             **callbacks,
         )
 
@@ -2055,6 +2128,7 @@ def _run_plain(
                 summaries=summaries,
                 agg=agg,
                 report_paths=rp_list,
+                run_context=run_context,
             )
             console.print(f"  [dim]📊 Summary report: {summary_path}[/]\n")
 

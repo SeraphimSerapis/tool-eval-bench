@@ -12,6 +12,7 @@ from typing import Any
 
 from tool_eval_bench.adapters.base import BackendAdapter
 from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
+from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.scenarios import (
     OnScenarioResult,
     OnScenarioStart,
@@ -22,7 +23,6 @@ from tool_eval_bench.runner.orchestrator import run_all_scenarios
 from tool_eval_bench.storage.db import RunRepository
 from tool_eval_bench.storage.reports import MarkdownReporter
 from tool_eval_bench.utils.ids import build_run_id
-from tool_eval_bench.utils.metadata import collect_run_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,7 @@ class BenchmarkService:
         extra_params: dict[str, Any] | None = None,
         context_pressure_messages: list[dict[str, Any]] | None = None,
         context_pressure_config: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results."""
         adapter = self._adapter_for(backend)
@@ -102,7 +103,12 @@ class BenchmarkService:
             "scenarios": [s.id for s in resolved],
         }
         run_id = build_run_id(run_config)
-        metadata = await collect_run_metadata_safe(model, backend, base_url, api_key)
+
+        # Build metadata from RunContext (preferred) or legacy probe
+        if run_context:
+            metadata = run_context.to_dict()
+        else:
+            metadata = await _collect_metadata_safe(model, backend, base_url, api_key)
 
         # Run all scenarios (close adapter connection pool when done)
         try:
@@ -159,22 +165,23 @@ class BenchmarkService:
             run_id, model, summary,
             throughput_samples=throughput_samples or [],
             context_pressure_config=context_pressure_config,
+            run_context=run_context,
         )
 
         run_data["report_path"] = str(report_path)
         return run_data
 
 
-async def collect_run_metadata_safe(
+async def _collect_metadata_safe(
     model: str, backend: str, base_url: str, api_key: str | None
 ) -> dict[str, Any]:
-    """Collect run metadata, swallowing errors."""
+    """Collect run metadata (legacy path), swallowing errors."""
     try:
         from tool_eval_bench.domain.models import BenchmarkConfig
+        from tool_eval_bench.utils.metadata import collect_run_metadata
 
         config = BenchmarkConfig(model=model, backend=backend, base_url=base_url, api_key=api_key)
         return await collect_run_metadata(config)
     except Exception as exc:
         logger.warning("Failed to collect metadata: %s", exc)
         return {"error": str(exc)}
-
