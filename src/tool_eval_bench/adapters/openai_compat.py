@@ -138,10 +138,13 @@ class OpenAICompatibleAdapter(BackendAdapter):
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            # 400/422 often means the server couldn't process malformed
-            # tool-call arguments in conversation history (e.g. vLLM's
-            # _postprocess_messages).  Return a graceful error instead of
-            # crashing the scenario.
+            # 4xx errors (400/422) often mean the server couldn't process
+            # malformed tool-call arguments in conversation history (e.g.
+            # vLLM's _postprocess_messages).  Return a graceful error
+            # instead of crashing the scenario.  5xx errors are genuine
+            # server failures and must propagate.
+            if exc.response.status_code >= 500:
+                raise
             logger.warning(
                 "Server returned %d for %s: %s",
                 exc.response.status_code, url, exc.response.text[:200],
@@ -176,6 +179,8 @@ class OpenAICompatibleAdapter(BackendAdapter):
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 elapsed_ms = (time.perf_counter() - started) * 1000
+                if exc.response.status_code >= 500:
+                    raise
                 logger.warning(
                     "Stream request returned %d for %s: %s",
                     exc.response.status_code, url,

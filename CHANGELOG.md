@@ -2,6 +2,61 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [1.4.1] — 2026-04-24
+
+### Fixed
+
+- **HTTP 5xx errors no longer swallowed by adapter** — the `OpenAICompatibleAdapter`
+  previously caught all `httpx.HTTPStatusError` exceptions (including 500 Server Error)
+  and returned a "graceful" `ChatCompletionResult`.  This caused genuine server failures
+  to be silently absorbed, producing false-positive benchmark results.  Now only **4xx
+  errors** (malformed tool-call arguments, common with vLLM) are caught gracefully;
+  **5xx errors** are re-raised so the benchmark correctly fails on server-side issues.
+  Applied to both `_non_stream_request` and `_stream_request` paths.
+
+- **TC-11 / TC-35 eval messages disambiguated** — both scenarios tested "unnecessary
+  calculator use" but their pass/partial/fail messages were nearly identical, making it
+  hard to tell them apart in reports.  TC-11 messages now emphasize **arithmetic
+  restraint** ("mental math was sufficient"), while TC-35 messages emphasize **critical
+  thinking about nonsensical requests** ("K→K is an identity conversion, not a real
+  task").  Display details updated accordingly.
+
+### Added
+
+- **77 new unit tests** (`test_coverage_gaps.py`) closing coverage gaps across 6 modules:
+  - `runner/speculative.py` — `scrape_spec_metrics`, `detect_spec_decoding` (all method
+    inference paths: eagle/ngram/mtp/draft_model), `_metrics_url`, `_get_prompt_for_type`,
+    `SpecDecodeSample` edge cases (zero tokens, zero baseline)
+  - `runner/async_tools.py` — full `AsyncToolExecutor` lifecycle (register, start, poll,
+    cancel, failure simulation), `format_async_status` for all 5 status types, and
+    `create_example_async_specs`
+  - `evals/noise.py` — all 11 enrichment functions + `enrich_payload` dispatcher
+    (known tool, unknown tool, error payload, non-dict passthrough, calculator)
+  - `storage/db.py` — `get_latest`, `get_scenario_results`, model-filtered `list`,
+    upsert-updates-existing, `__del__` safety net
+  - `storage/reports.py` — spec-decode report (with/without acceptance rate),
+    `_render_run_context` (engine info, quantization, context pressure, extra params,
+    server model root), scenario report with `RunContext`/deployability/context pressure,
+    throughput report with `RunContext`
+
+- **12 new adapter tests** (`test_adapter.py`) reaching 100% adapter coverage:
+  - Streaming SSE accumulation (content, tool-calls, reasoning, usage/token counting)
+  - 4xx graceful return vs 5xx propagation (both stream and non-stream)
+  - `response_format` and `extra_params` serialization
+  - Malformed JSON chunks and empty choice segments in SSE streams
+
+### Changed
+
+- **Total test count**: 1054 → **1143** (+89 tests)
+- **Coverage improvements**:
+  - `adapters/openai_compat.py`: 55% → **100%**
+  - `evals/noise.py`: 78% → **100%**
+  - `runner/async_tools.py`: 72% → **100%**
+  - `runner/speculative.py`: 63% → **75%**
+  - `storage/db.py`: 80% → **96%**
+  - `storage/reports.py`: 64% → **88%**
+  - Overall: 54% → **58%**
+
 ## [1.4.0] — 2026-04-22
 
 ### Added

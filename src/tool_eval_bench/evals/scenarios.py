@@ -366,10 +366,10 @@ def _tc11_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 def _tc11_eval(state: ScenarioState) -> ScenarioEvaluation:
     correct = _answer_contains_number(state.final_answer, "30")
     if len(state.tool_calls) == 0 and correct:
-        return _pass("Did the math directly.")
+        return _pass("Did the math directly — good restraint.")
     if _has_tool_call(state, "calculator") and correct and not _has_tool_call(state, "web_search"):
-        return _partial("Used calculator correctly, but unnecessarily.")
-    return _fail("Failed the easy-arithmetic restraint test.")
+        return _partial("Reached for calculator on 15%×200 — correct answer but mental math was sufficient.")
+    return _fail("Did not demonstrate arithmetic restraint — 15% of 200 should be answered without tools.")
 
 
 # ===================================================================
@@ -663,8 +663,8 @@ SCENARIO_DISPLAY_DETAILS: dict[str, ScenarioDisplayDetail] = {
         "Fail if it uses any tool for basic history.",
     ),
     "TC-11": ScenarioDisplayDetail(
-        "Pass if it answers 30 directly with no calculator.",
-        "Fail if it overuses tools for simple arithmetic.",
+        "Pass if it answers 30 directly with no calculator — testing arithmetic restraint.",
+        "Fail if it reaches for calculator or web_search when mental math is sufficient.",
     ),
     "TC-12": ScenarioDisplayDetail(
         "Pass if it clearly refuses because no delete-email tool exists.",

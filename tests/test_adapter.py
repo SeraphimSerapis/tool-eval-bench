@@ -314,3 +314,304 @@ async def test_client_reused() -> None:
     c3 = adapter._get_client()
     assert c3 is not c1
     await adapter.aclose()
+
+
+# ---------------------------------------------------------------------------
+# 4xx graceful error handling
+# ---------------------------------------------------------------------------
+
+
+def _mock_4xx_response(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(422, json={"error": "Unprocessable Entity"})
+
+
+@pytest.mark.asyncio
+async def test_4xx_returns_graceful_result() -> None:
+    """HTTP 4xx should be handled gracefully, returning a ChatCompletionResult."""
+    adapter = OpenAICompatibleAdapter()
+    transport = httpx.MockTransport(_mock_4xx_response)
+    adapter._client = httpx.AsyncClient(transport=transport)
+
+    result = await adapter.chat_completion(
+        model="test-model",
+        messages=[{"role": "user", "content": "hello"}],
+        base_url="http://localhost:8000",
+    )
+
+    assert "[server error 422]" in result.content
+    assert result.tool_calls == []
+    assert result.elapsed_ms > 0
+    await adapter.aclose()
+
+
+# ---------------------------------------------------------------------------
+# response_format and extra_params
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_response_format_included_in_payload() -> None:
+    """When response_format is provided, it must appear in the payload."""
+    def check_format(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert "response_format" in body
+        assert body["response_format"]["type"] == "json_object"
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(check_format))
+
+    await adapter.chat_completion(
+        model="m", messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        response_format={"type": "json_object"},
+    )
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_extra_params_merged_into_payload() -> None:
+    """Extra params should be merged into the request payload."""
+    def check_extra(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["seed"] == 42
+        assert body["top_p"] == 0.9
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(check_extra))
+
+    await adapter.chat_completion(
+        model="m", messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        extra_params={"seed": 42, "top_p": 0.9},
+    )
+    await adapter.aclose()
+
+
+# ---------------------------------------------------------------------------
+# SSE streaming tests
+# ---------------------------------------------------------------------------
+
+
+def _sse_lines(*events: str, done: bool = True) -> str:
+    """Build an SSE response body from a list of JSON-encodable event strings."""
+    lines = []
+    for ev in events:
+        lines.append(f"data: {ev}\n\n")
+    if done:
+        lines.append("data: [DONE]\n\n")
+    return "".join(lines)
+
+
+def _mock_stream_transport(sse_body: str, status: int = 200):
+    """Create a mock transport that returns an SSE stream."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status,
+            content=sse_body.encode(),
+            headers={"content-type": "text/event-stream"},
+        )
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.asyncio
+async def test_stream_basic_content() -> None:
+    """Streaming should accumulate content from multiple chunks."""
+    chunks = [
+        json.dumps({"choices": [{"delta": {"content": "Hello"}}]}),
+        json.dumps({"choices": [{"delta": {"content": " world"}}]}),
+        json.dumps({"choices": [{"delta": {"content": "!"}}]}),
+    ]
+    body = _sse_lines(*chunks)
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m", messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000", stream=True,
+    )
+
+    assert result.content == "Hello world!"
+    assert result.tool_calls == []
+    assert result.elapsed_ms > 0
+    assert result.ttft_ms is not None
+    assert result.ttft_ms > 0
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_tool_calls() -> None:
+    """Streaming should accumulate tool calls from delta chunks."""
+    chunks = [
+        json.dumps({"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "tc_1", "function": {"name": "get_weather", "arguments": '{"loc'}}
+        ]}}]}),
+        json.dumps({"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "function": {"arguments": 'ation": "NYC"}'}}
+        ]}}]}),
+    ]
+    body = _sse_lines(*chunks)
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m", messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000", stream=True,
+    )
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "get_weather"
+    assert result.tool_calls[0].arguments_str == '{"location": "NYC"}'
+    assert result.tool_calls[0].id == "tc_1"
+    assert result.ttft_ms is not None
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_reasoning_content() -> None:
+    """Streaming should capture reasoning_content from deltas."""
+    chunks = [
+        json.dumps({"choices": [{"delta": {"reasoning_content": "Let me think..."}}]}),
+        json.dumps({"choices": [{"delta": {"content": "The answer is 42"}}]}),
+    ]
+    body = _sse_lines(*chunks)
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m", messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000", stream=True,
+    )
+
+    assert result.content == "The answer is 42"
+    assert result.reasoning == "Let me think..."
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_usage_extraction() -> None:
+    """Streaming should extract token usage from the final chunk."""
+    chunks = [
+        json.dumps({"choices": [{"delta": {"content": "ok"}}]}),
+        json.dumps({"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}),
+    ]
+    body = _sse_lines(*chunks)
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m", messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000", stream=True,
+    )
+
+    assert result.prompt_tokens == 10
+    assert result.completion_tokens == 5
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_malformed_json_skipped() -> None:
+    """Malformed JSON chunks in a stream should be silently skipped."""
+    body = _sse_lines(
+        "not valid json",
+        json.dumps({"choices": [{"delta": {"content": "ok"}}]}),
+    )
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m", messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000", stream=True,
+    )
+
+    assert result.content == "ok"
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_empty_choices_skipped() -> None:
+    """Chunks with empty choices should be skipped."""
+    body = _sse_lines(
+        json.dumps({"choices": []}),
+        json.dumps({"choices": [{"delta": {"content": "data"}}]}),
+    )
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m", messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000", stream=True,
+    )
+
+    assert result.content == "data"
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_5xx_raises() -> None:
+    """HTTP 500 on a stream should raise HTTPStatusError."""
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(
+        transport=_mock_stream_transport("", status=500)
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await adapter.chat_completion(
+            model="m", messages=[{"role": "user", "content": "hi"}],
+            base_url="http://localhost:8000", stream=True,
+        )
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_4xx_returns_graceful_result() -> None:
+    """HTTP 4xx on a stream should be handled gracefully."""
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(
+        transport=_mock_stream_transport("", status=422)
+    )
+
+    result = await adapter.chat_completion(
+        model="m", messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000", stream=True,
+    )
+
+    assert "[server error 422]" in result.content
+    assert result.tool_calls == []
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_multiple_tool_calls() -> None:
+    """Streaming should handle multiple concurrent tool calls via index."""
+    chunks = [
+        json.dumps({"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "tc_a", "function": {"name": "func_a", "arguments": "{}"}}
+        ]}}]}),
+        json.dumps({"choices": [{"delta": {"tool_calls": [
+            {"index": 1, "id": "tc_b", "function": {"name": "func_b", "arguments": "{}"}}
+        ]}}]}),
+    ]
+    body = _sse_lines(*chunks)
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m", messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000", stream=True,
+    )
+
+    assert len(result.tool_calls) == 2
+    assert result.tool_calls[0].name == "func_a"
+    assert result.tool_calls[0].id == "tc_a"
+    assert result.tool_calls[1].name == "func_b"
+    assert result.tool_calls[1].id == "tc_b"
+    await adapter.aclose()

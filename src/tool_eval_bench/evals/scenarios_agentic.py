@@ -734,12 +734,12 @@ def _tc35_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
 
     if not calc_calls and no_conversion_needed:
-        return _pass("Correctly recognized no conversion was needed.")
+        return _pass("Spotted the tautology — 500K is already in Kelvin, no conversion needed.")
     if calc_calls and no_conversion_needed:
-        return _partial("Used calculator unnecessarily but arrived at the correct insight.")
+        return _partial("Called calculator on a same-unit identity conversion, but noted the tautology.")
     if not calc_calls:
-        return _partial("Didn't use the calculator but didn't clearly explain why.")
-    return _fail("Blindly executed a calculation without recognizing the trivial case.")
+        return _partial("Avoided the calculator but didn't explain that K→K is a no-op.")
+    return _fail("Obeyed a nonsensical instruction — K→K is an identity conversion, not a real task.")
 
 
 # ===================================================================
