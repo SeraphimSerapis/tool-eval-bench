@@ -31,6 +31,7 @@ class Category(str, Enum):
     M = "M"  # Autonomous Planning
     N = "N"  # Creative Composition
     O = "O"  # Structured Output  # noqa: E741
+    P = "P"  # Hard Mode
 
 
 CATEGORY_LABELS: dict[Category, str] = {
@@ -49,6 +50,7 @@ CATEGORY_LABELS: dict[Category, str] = {
     Category.M: "Autonomous Planning",
     Category.N: "Creative Composition",
     Category.O: "Structured Output",
+    Category.P: "Hard Mode",
 }
 
 

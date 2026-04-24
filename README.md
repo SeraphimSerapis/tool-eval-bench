@@ -155,8 +155,9 @@ tool-eval-bench --model gemma4 --backend vllm --base-url http://localhost:8080
 --timeout FLOAT        Request timeout in seconds (default: 60.0)
 --max-turns INT        Max turns per scenario (default: 8)
 --scenarios IDs        Run specific scenarios (e.g. TC-01 TC-07)
---categories CAT       Run specific categories (e.g. K A J); letters A–O
+--categories CAT       Run specific categories (e.g. K A J); letters A–P
 --short                Run only the core 15 scenarios
+--hardmode             Include Hard Mode scenarios (Category P) for ceiling-breaking difficulty
 --trials N             Run N trials; generates individual reports + a consolidated summary report with Pass@k, Pass^k, flaky detection
 --error-rate RATE      Inject random tool errors at given rate (0.0–1.0) for robustness testing
 --context-pressure R   Fill context to R (0.0–1.0) before each scenario to test tool-calling under pressure
@@ -296,6 +297,33 @@ On exit (Ctrl+C), a session summary panel shows aggregate statistics.
 | `--metrics-url` | auto | Direct URL to Prometheus `/metrics` endpoint |
 
 > **Implementation note.** vLLM updates its Prometheus gauge metrics (gen t/s, prompt t/s, KV cache) on a ~10-second internal interval. `--spec-live` handles this by using cumulative rates for the acceptance gauge (always accurate) and retaining the last non-zero reading for throughput gauges so the dashboard doesn't flicker to zero between updates. Per-position acceptance rates are only available for draft-model speculative decoding — MTP (multi-token prediction) servers typically don't expose them.
+
+### Hard Mode
+
+The standard 69-scenario benchmark covers *breadth* of tool-calling capabilities. Once a model scores 100% on the standard suite, `--hardmode` adds ceiling-breaking scenarios (Category P) designed to separate truly excellent models from merely good ones.
+
+```bash
+# Standard benchmark + Hard Mode scenarios (69 + 5 = 74 scenarios)
+tool-eval-bench --hardmode
+
+# Run only Hard Mode scenarios
+tool-eval-bench --hardmode --categories P
+
+# Combined with context pressure for maximum difficulty
+tool-eval-bench --hardmode --context-pressure 0.75
+```
+
+Hard Mode focuses on five difficulty dimensions:
+
+| Scenario | Focus Area | What it tests |
+|---|---|---|
+| TC-70 | Adversarial tool definitions | Near-duplicate tools with subtle scope differences (Europe-only vs global) |
+| TC-71 | Ambiguous requests | Multiple matching contacts — must ask for clarification, not guess |
+| TC-72 | Cascading error recovery | File read fails → must try alternative file → then complete email chain |
+| TC-73 | Multi-constraint composition | Search + filter by 3 simultaneous constraints + contact lookup + email |
+| TC-74 | Stateful multi-turn corrections | 4 follow-up turns progressively modifying title, date, time, duration, and attendees |
+
+Hard Mode scenarios are scored identically (pass=2, partial=1, fail=0) and appear in the standard report under Category P. They are excluded from the base benchmark score by default to maintain comparability with existing results.
 
 ### Context pressure
 

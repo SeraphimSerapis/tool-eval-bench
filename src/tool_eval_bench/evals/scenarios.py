@@ -718,9 +718,19 @@ from tool_eval_bench.evals.scenarios_structured import (  # noqa: E402
     STRUCTURED_SCENARIOS,
 )
 
+from tool_eval_bench.evals.scenarios_hardmode import (  # noqa: E402
+    HARDMODE_DISPLAY_DETAILS,
+    HARDMODE_SCENARIOS,
+)
+
 ALL_SCENARIOS: list[ScenarioDefinition] = sorted(
     SCENARIOS + EXTENDED_SCENARIOS + AGENTIC_SCENARIOS + LARGE_TOOLSET_SCENARIOS
     + PLANNING_SCENARIOS + ADVERSARIAL_SCENARIOS + STRUCTURED_SCENARIOS,
+    key=lambda s: int(s.id.split("-")[1]),
+)
+
+ALL_SCENARIOS_WITH_HARDMODE: list[ScenarioDefinition] = sorted(
+    ALL_SCENARIOS + HARDMODE_SCENARIOS,
     key=lambda s: int(s.id.split("-")[1]),
 )
 
@@ -733,5 +743,6 @@ ALL_DISPLAY_DETAILS: dict[str, ScenarioDisplayDetail] = {
     **PLANNING_DISPLAY_DETAILS,
     **ADVERSARIAL_DISPLAY_DETAILS,
     **STRUCTURED_DISPLAY_DETAILS,
+    **HARDMODE_DISPLAY_DETAILS,
 }
 

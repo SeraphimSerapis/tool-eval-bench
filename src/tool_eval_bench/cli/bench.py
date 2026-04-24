@@ -37,13 +37,23 @@ _VALID_CATEGORIES = {c.value for c in Category}
 
 
 def _resolve_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
-    """Resolve scenarios from --short, --scenarios, and --categories flags.
+    """Resolve scenarios from --short, --scenarios, --categories, and --hardmode flags.
 
     Priority: --scenarios (individual IDs) > --categories > --short > all.
+    --hardmode adds Category P scenarios to whichever base set is selected.
     """
-    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
+    from tool_eval_bench.evals.scenarios import (
+        ALL_SCENARIOS,
+        ALL_SCENARIOS_WITH_HARDMODE,
+        SCENARIOS,
+    )
 
-    base = SCENARIOS if args.short else ALL_SCENARIOS
+    hardmode = getattr(args, "hardmode", False)
+
+    if hardmode:
+        base = SCENARIOS + [s for s in ALL_SCENARIOS_WITH_HARDMODE if s not in SCENARIOS] if args.short else ALL_SCENARIOS_WITH_HARDMODE
+    else:
+        base = SCENARIOS if args.short else ALL_SCENARIOS
 
     if args.scenarios:
         requested = set(args.scenarios)
@@ -860,6 +870,9 @@ def main() -> None:
     )
     select.add_argument("--short", action="store_true",
                         help="Run only the core 15 scenarios (skip extended + agentic)")
+    select.add_argument("--hardmode", action="store_true",
+                        help="Include Hard Mode scenarios (Category P) — ceiling-breaking difficulty "
+                             "for models that score 100%% on the standard benchmark")
 
     # -- Run control -------------------------------------------------------
     run_ctrl = parser.add_argument_group("run control")

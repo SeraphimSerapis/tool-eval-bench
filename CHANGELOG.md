@@ -6,6 +6,19 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Added
 
+- **`--hardmode` ceiling-breaking scenarios** — 5 new Hard Mode scenarios
+  (Category P, TC-70 to TC-74) that challenge models beyond the standard 69-scenario
+  suite. Designed for models that score 100% on the vanilla benchmark:
+  - **TC-70**: Adversarial near-duplicate tool definitions (Europe-only vs global weather)
+  - **TC-71**: Ambiguous recipient resolution (3 matching contacts → must clarify)
+  - **TC-72**: Cascading error recovery (corrupted file → alternative → email chain)
+  - **TC-73**: Multi-constraint composition (search + 3 filters + contact + email)
+  - **TC-74**: Stateful multi-turn corrections (4 follow-ups modifying event details)
+  - Hard Mode scenarios are opt-in (`--hardmode`) and excluded from the base score
+    to maintain comparability with existing results.
+  - Use `--hardmode --categories P` to run only Hard Mode, or combine with
+    `--context-pressure` for maximum difficulty.
+
 - **Draft efficiency metrics in `--spec-bench`** — three new computed metrics that
   surface actionable tuning signals for speculative decoding:
   - **Waste ratio**: fraction of drafted tokens rejected by the verifier (1 − α).
