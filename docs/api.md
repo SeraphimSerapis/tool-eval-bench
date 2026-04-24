@@ -62,6 +62,29 @@ result = asyncio.run(service.run_benchmark(
 ))
 ```
 
+### Hard Mode (Category P)
+
+```python
+from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
+from tool_eval_bench.evals.scenarios_hardmode import HARDMODE_SCENARIOS
+
+# Run all 74 scenarios (standard + hardmode, equivalent to --hardmode)
+result = asyncio.run(service.run_benchmark(
+    model="my-model",
+    backend="vllm",
+    base_url="http://localhost:8080/v1",
+    scenarios=ALL_SCENARIOS_WITH_HARDMODE,
+))
+
+# Run only Hard Mode scenarios (equivalent to --hardmode --categories P)
+result = asyncio.run(service.run_benchmark(
+    model="my-model",
+    backend="vllm",
+    base_url="http://localhost:8080/v1",
+    scenarios=HARDMODE_SCENARIOS,
+))
+```
+
 ## Callbacks
 
 You can attach async callbacks to monitor progress:

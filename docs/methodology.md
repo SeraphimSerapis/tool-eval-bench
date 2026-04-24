@@ -32,8 +32,9 @@ returns one of three outcomes:
 
 ## Category Scoring
 
-Scenarios are grouped into 15 categories (A–O). Each category's score is
-computed as:
+Scenarios are grouped into 15 categories (A–O) for the standard benchmark,
+plus an optional Category P (Hard Mode) for ceiling-breaking difficulty.
+Each category's score is computed as:
 
 ```
 category_percent = (earned_points / max_points) × 100
@@ -60,6 +61,12 @@ Where `max_points = num_scenarios_in_category × 2`.
 | M | Autonomous Planning | 3 | Goal decomposition, open-ended research, conditional workflows |
 | N | Creative Composition | 3 | Cross-tool synthesis, data pipelines, notification workflows |
 | O | Structured Output | 6 | JSON schema compliance, tool→schema chaining, nested schemas, enum constraints, violation resistance |
+| P | Hard Mode _(opt-in)_ | 5 | Adversarial near-duplicate tools, ambiguous request clarification, cascading error recovery, multi-constraint composition, stateful multi-turn corrections |
+
+> **Hard Mode (Category P)** is excluded from the standard benchmark by default.
+> Enable with `--hardmode` to include these 5 scenarios, raising the total from
+> 69 to 74. Category P scores are tracked separately and do not affect the base
+> score unless explicitly included. This preserves comparability with existing results.
 
 ---
 
@@ -162,7 +169,8 @@ Each evaluator has unit tests covering at minimum:
 - 1 FAIL case (wrong tool or missing answer)
 - Key PARTIAL cases where applicable
 
-See `tests/test_scenarios.py` and `tests/test_evaluators_extended.py`.
+See `tests/test_scenarios.py`, `tests/test_evaluators_extended.py`, and
+`tests/test_hardmode.py` (44 tests covering all 5 Category P scenarios).
 
 ### Evaluator Reliability Improvements
 
@@ -335,7 +343,7 @@ drops below 50%.
 
 | Feature | tool-eval-bench | BFCL | ToolBench | Claw-Eval |
 |---|---|---|---|---|
-| Scenarios | 69 | 2000+ | 16000+ | 300 |
+| Scenarios | 69 (+5 hardmode) | 2000+ | 16000+ | 300 |
 | Mock tools | ✓ (deterministic) | ✗ (real APIs) | Partial | ✓ (Docker sandbox) |
 | Multi-turn | ✓ (10+ scenarios) | Limited | ✓ | ✓ (38 dialogue) |
 | Safety testing | ✓ (Category K) | ✗ | ✗ | ✓ (multiplicative gate) |

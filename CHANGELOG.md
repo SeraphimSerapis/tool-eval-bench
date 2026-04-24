@@ -58,6 +58,14 @@ All notable changes to `tool-eval-bench` are documented here.
   - New modules: `cli/spec_live_display.py` (Rich rendering) and
     `runner/spec_live.py` (Prometheus scraping and delta computation)
 
+### Fixed
+
+- **`--spec-live` sticky gauges** — Gen t/s, Prompt t/s, and KV cache gauges
+  now retain the last non-zero reading between vLLM's ~10-second Prometheus
+  update intervals, eliminating the flicker-to-zero behavior. Per-position
+  acceptance panel shows a helpful note when MTP servers don't expose
+  per-position rates.
+
 ## [1.4.1] — 2026-04-24
 
 ### Fixed
