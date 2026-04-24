@@ -159,7 +159,8 @@ def _tc71_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Did not look up contacts for Jordan.")
 
     # Best outcome: looked up contacts, found ambiguity, asked for clarification
-    if contacts and asks_for_clarification(transcript):
+    # WITHOUT sending any email (sending = guessing, even if also asking)
+    if contacts and len(email_calls) == 0 and asks_for_clarification(transcript):
         # Make sure it mentions the ambiguity (multiple Jordans)
         mentions_multiple = any(
             phrase in transcript.lower()
@@ -192,8 +193,6 @@ def _tc72_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         ]}, "search_files")
     if call.name == "read_file":
         fid = normalize(as_str(call.arguments.get("file_id")))
-        attempts = int(state.meta.get("read_attempts", 0)) + 1
-        state.meta["read_attempts"] = attempts
         if fid == "file_404":
             return _noise({"error": "File is corrupted. Unable to read."}, "read_file")
         if fid == "file_405":
@@ -232,9 +231,9 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
 # ===================================================================
 # TC-73: Multi-Constraint Composition
 # "Find a restaurant in Berlin that's open on Sundays, has vegan
-# options, and is within 2km of Alexanderplatz. Then book a table
-# for 4 at 7pm this Saturday and email the confirmation to Lisa."
-# Model must chain: search → filter → book → contacts → email.
+# options, and is within 2km of Alexanderplatz. Then email the
+# recommendation to Lisa."
+# Model must chain: search → filter → contacts → email.
 # ===================================================================
 
 def _tc73_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -327,7 +326,7 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     # After all follow-ups, the final event should be:
     # Title: Product Review (changed from "Team Sync")
     # Date: 2026-03-25 (Wednesday, changed from Tuesday)
-    # Time: 14:00 (changed from 10:00, then from 15:00)
+    # Time: 14:00 (changed from 10:00)
     # Duration: 45 min (changed from 30)
     # Attendees should include Mark Chen (original) + Sarah Jones (added in follow-up)
     # Email confirmation should go to both
