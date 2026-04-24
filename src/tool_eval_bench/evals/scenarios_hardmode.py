@@ -181,8 +181,8 @@ def _tc71_eval(state: ScenarioState) -> ScenarioEvaluation:
 
 # ===================================================================
 # TC-72: Cascading Error Recovery
-# search → read → email, but read_file fails twice before succeeding
-# on a retry with a different file ID hint.
+# search → read → email, but the first file is always corrupted.
+# Model must try the alternative file and then complete the chain.
 # ===================================================================
 
 def _tc72_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -269,7 +269,15 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
         "green kitchen" in transcript.lower()
         or "veganz" in transcript.lower()
     )
-    mentions_invalid = "mitte brasserie" in transcript.lower() and "closed" not in transcript.lower()
+    mentions_invalid = (
+        "mitte brasserie" in transcript.lower()
+        and not any(
+            kw in transcript.lower()
+            for kw in ("closed", "not vegan", "not open", "exclude", "doesn't meet",
+                       "does not meet", "unsuitable", "ruled out", "doesn't have",
+                       "does not have", "isn't open", "is not open", "skip")
+        )
+    )
 
     email_has_restaurant = emailed and (
         includes_text(emailed.arguments.get("body"), "green kitchen")
@@ -294,7 +302,7 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
 
 
 # ===================================================================
-# TC-74: 6-Turn State Accumulation with Corrections
+# TC-74: Stateful Multi-Turn Corrections
 # Multi-turn: user progressively builds and modifies a calendar event.
 # The model must track all changes across turns.
 # ===================================================================

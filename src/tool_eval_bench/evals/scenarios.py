@@ -5,6 +5,8 @@ ToolCall-15 (MIT License, https://github.com/stevibe/ToolCall-15).
 
 Extended, agentic, large-toolset, and structured output scenario packs are
 imported at the bottom to build ALL_SCENARIOS (69 total across 15 categories).
+Hard Mode scenarios (Category P) are available via ALL_SCENARIOS_WITH_HARDMODE
+(74 total across 16 categories, opt-in with ``--hardmode``).
 """
 
 from __future__ import annotations

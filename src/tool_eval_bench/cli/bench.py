@@ -47,13 +47,17 @@ def _resolve_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
         ALL_SCENARIOS_WITH_HARDMODE,
         SCENARIOS,
     )
+    from tool_eval_bench.evals.scenarios_hardmode import HARDMODE_SCENARIOS
 
-    hardmode = getattr(args, "hardmode", False)
-
-    if hardmode:
-        base = SCENARIOS + [s for s in ALL_SCENARIOS_WITH_HARDMODE if s not in SCENARIOS] if args.short else ALL_SCENARIOS_WITH_HARDMODE
+    # Determine the base scenario pool
+    if args.short:
+        base = list(SCENARIOS)
+        if getattr(args, "hardmode", False):
+            base.extend(HARDMODE_SCENARIOS)
+    elif getattr(args, "hardmode", False):
+        base = list(ALL_SCENARIOS_WITH_HARDMODE)
     else:
-        base = SCENARIOS if args.short else ALL_SCENARIOS
+        base = list(ALL_SCENARIOS)
 
     if args.scenarios:
         requested = set(args.scenarios)
@@ -63,7 +67,7 @@ def _resolve_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
         cats = {c.upper() for c in args.categories}
         return [s for s in base if s.category.value in cats]
 
-    return list(base)
+    return base
 
 
 # ---------------------------------------------------------------------------

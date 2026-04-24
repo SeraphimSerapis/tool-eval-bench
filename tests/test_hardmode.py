@@ -151,7 +151,7 @@ class TestTC70AdversarialTools:
         state = ScenarioState()
         call = _make_call("get_weather", {"location": "Berlin"})
         result = sc.handle_tool_call(state, call)
-        assert "error" not in result or "error" not in str(result).lower()
+        assert "error" not in result  # no error key in the response dict
 
 
 # ===========================================================================
@@ -416,6 +416,32 @@ class TestTC73MultiConstraint:
         result = sc.handle_tool_call(state, call)
         result_str = str(result)
         assert "Green Kitchen" not in result_str
+
+    def test_correctly_rejects_mitte_with_vegan_reasoning(self):
+        """Model mentions Mitte Brasserie but correctly rejects it for not being vegan."""
+        sc = _get_scenario("TC-73")
+        state = ScenarioState()
+        c1 = _make_call("web_search", {"query": "restaurant Berlin vegan Alexanderplatz"}, turn=1)
+        sc.handle_tool_call(state, c1)
+        state.tool_calls.append(c1)
+        state.assistant_messages.append(
+            "I found several options. I excluded Mitte Brasserie because it's not vegan. "
+            "I recommend Green Kitchen Berlin — it's vegan-friendly and open daily."
+        )
+        c2 = _make_call("get_contacts", {"query": "Lisa"}, turn=2)
+        sc.handle_tool_call(state, c2)
+        state.tool_calls.append(c2)
+        c3 = _make_call("send_email", {
+            "to": "lisa.mueller@company.com",
+            "body": "I recommend Green Kitchen Berlin."
+        }, turn=3)
+        sc.handle_tool_call(state, c3)
+        state.tool_calls.append(c3)
+        state.final_answer = "Done — emailed Lisa the Green Kitchen recommendation."
+        state.assistant_messages.append(state.final_answer)
+        result = sc.evaluate(state)
+        # Model correctly filtered — mentioning Mitte with rejection should NOT penalize
+        assert result.status == ScenarioStatus.PASS
 
 
 # ===========================================================================
