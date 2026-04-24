@@ -176,6 +176,8 @@ tool-eval-bench --model gemma4 --backend vllm --base-url http://localhost:8080
 --diff RUN_ID          Compare results against a previous run (use 'latest')
 --compare A B          Diff two stored runs by ID
 --history              List recent benchmark runs
+--spec-live            Start live speculative decoding monitor (Ctrl+C to stop)
+--spec-live-interval S Poll interval for --spec-live in seconds (default: 1.0)
 ```
 
 ### Throughput benchmark
@@ -292,6 +294,8 @@ On exit (Ctrl+C), a session summary panel shows aggregate statistics.
 | `--spec-live` | off | Start live speculative decoding monitor |
 | `--spec-live-interval` | `1.0` | Seconds between metric scrapes |
 | `--metrics-url` | auto | Direct URL to Prometheus `/metrics` endpoint |
+
+> **Implementation note.** vLLM updates its Prometheus gauge metrics (gen t/s, prompt t/s, KV cache) on a ~10-second internal interval. `--spec-live` handles this by using cumulative rates for the acceptance gauge (always accurate) and retaining the last non-zero reading for throughput gauges so the dashboard doesn't flicker to zero between updates. Per-position acceptance rates are only available for draft-model speculative decoding — MTP (multi-token prediction) servers typically don't expose them.
 
 ### Context pressure
 
