@@ -271,7 +271,10 @@ metrics, you can't tell whether your MTP configuration is actually helping.
 |---|---|---|
 | **Effective t/s** | Output tokens ÷ wall-clock generation time | Always available (stream timing) |
 | **Acceptance rate (α)** | Accepted tokens ÷ drafted tokens | Prometheus `/metrics` (vLLM/SGLang) |
+| **Waste ratio** | 1 − α (fraction of drafted tokens rejected) | Computed from α |
 | **Acceptance length (τ)** | Accepted tokens ÷ speculative steps | Prometheus `/metrics` |
+| **Draft window** | Drafted tokens ÷ speculative steps (configured draft size) | Prometheus `/metrics` |
+| **Draft t/s** | Drafted tokens ÷ wall-clock generation time | Prometheus `/metrics` + timing |
 | **Speedup ratio** | Effective t/s ÷ baseline t/s | Requires `--baseline-tgs` |
 | **Goodput** | Only accepted (verified) tokens per second | Prometheus `/metrics` |
 
@@ -311,6 +314,20 @@ Acceptance rates vary significantly by workload:
 The benchmark runs multiple prompt types (filler, code, structured) to
 capture this variation. Results are reported per-prompt-type for
 actionable optimization guidance.
+
+### Draft Efficiency Analysis
+
+When Prometheus counters are available, `--spec-bench` computes window
+utilization metrics that reveal whether the draft configuration is optimal:
+
+- **Draft window** = `draft_tokens ÷ num_drafts` (average tokens drafted per step)
+- **Window utilization** = `τ ÷ draft_window` (fraction of draft positions accepted)
+- **Waste ratio** = `1 − α` (fraction of GPU compute discarded)
+
+For example, a DFlash model with `draft_window=15` but `τ=3.5` has only 23%
+window utilization — positions 4–15 are mostly wasted compute.  The CLI
+automatically suggests reducing `num_speculative_tokens` when utilization
+drops below 50%.
 
 ---
 

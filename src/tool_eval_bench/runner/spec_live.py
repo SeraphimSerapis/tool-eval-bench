@@ -1,0 +1,230 @@
+"""Live speculative decoding monitor.
+
+Polls the Prometheus /metrics endpoint of a vLLM (or compatible) server
+and maintains a rolling window of speculative decoding statistics for
+real-time terminal visualization.
+
+Usage:
+    tool-eval-bench --spec-live
+    tool-eval-bench --spec-live --metrics-url http://host:8000/metrics
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import time
+from dataclasses import dataclass, field
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Prometheus metric patterns (extended from speculative.py)
+# ---------------------------------------------------------------------------
+
+_COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
+    # Spec decode counters
+    "accepted_tokens": re.compile(
+        r"^(?:vllm:)?spec_decode_num_accepted_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    "draft_tokens": re.compile(
+        r"^(?:vllm:)?spec_decode_num_draft_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    "num_drafts": re.compile(
+        r"^(?:vllm:)?spec_decode_num_drafts(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    # Engine throughput gauges
+    "prompt_tps": re.compile(
+        r"^(?:vllm:)?avg_prompt_throughput_toks_per_s(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    "generation_tps": re.compile(
+        r"^(?:vllm:)?avg_generation_throughput_toks_per_s(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    # KV cache
+    "gpu_cache_usage": re.compile(
+        r"^(?:vllm:)?gpu_cache_usage_perc(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    # Requests
+    "running_reqs": re.compile(
+        r"^(?:vllm:)?num_requests_running(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    "waiting_reqs": re.compile(
+        r"^(?:vllm:)?num_requests_waiting(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    # Prefix cache
+    "prefix_cache_hit": re.compile(
+        r"^(?:vllm:)?prefix_cache_hit_rate(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    # Token counts (cumulative)
+    "prompt_tokens_total": re.compile(
+        r"^(?:vllm:)?prompt_tokens_total(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    "generation_tokens_total": re.compile(
+        r"^(?:vllm:)?generation_tokens_total(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+}
+
+# Per-position acceptance rate pattern (vLLM specific)
+_PER_POSITION_PATTERN = re.compile(
+    r"^(?:vllm:)?spec_decode_per_position_acceptance_rate"
+    r'\{[^}]*position="(\d+)"[^}]*\}\s+(\d+(?:\.\d+)?)',
+    re.MULTILINE,
+)
+
+
+@dataclass
+class MetricsSnapshot:
+    """Single point-in-time scrape of server metrics."""
+
+    timestamp: float = 0.0
+
+    # Spec decode counters (cumulative)
+    accepted_tokens: float = 0.0
+    draft_tokens: float = 0.0
+    num_drafts: float = 0.0
+
+    # Engine gauges
+    prompt_tps: float = 0.0
+    generation_tps: float = 0.0
+    gpu_cache_usage: float = 0.0
+    running_reqs: float = 0.0
+    waiting_reqs: float = 0.0
+    prefix_cache_hit: float = 0.0
+    prompt_tokens_total: float = 0.0
+    generation_tokens_total: float = 0.0
+
+    # Per-position acceptance rates (position → rate)
+    per_position_rates: dict[int, float] = field(default_factory=dict)
+
+    @property
+    def has_spec_decode(self) -> bool:
+        return self.draft_tokens > 0 or self.accepted_tokens > 0
+
+
+@dataclass
+class SpecLiveDelta:
+    """Computed delta between two snapshots — the interesting stuff."""
+
+    elapsed_s: float = 0.0
+
+    # Rates computed from counter deltas
+    acceptance_rate: float | None = None  # 0.0–1.0
+    acceptance_length: float | None = None  # avg tokens per draft step
+    draft_window: float | None = None  # avg drafted per step
+    waste_ratio: float | None = None  # 1 - acceptance_rate
+
+    # Throughput from deltas
+    accepted_tps: float = 0.0  # accepted tokens / elapsed
+    drafted_tps: float = 0.0  # drafted tokens / elapsed
+
+    # Engine gauges (instantaneous)
+    prompt_tps: float = 0.0
+    generation_tps: float = 0.0
+    gpu_cache_pct: float = 0.0
+    running_reqs: int = 0
+    waiting_reqs: int = 0
+    prefix_cache_hit_pct: float = 0.0
+
+    # Per-position rates snapshot
+    per_position_rates: dict[int, float] = field(default_factory=dict)
+
+    # Cumulative totals
+    total_accepted: int = 0
+    total_drafted: int = 0
+    total_drafts: int = 0
+
+
+def _parse_snapshot(text: str) -> MetricsSnapshot:
+    """Parse Prometheus text into a MetricsSnapshot."""
+    snap = MetricsSnapshot(timestamp=time.time())
+
+    for name, pattern in _COUNTER_PATTERNS.items():
+        m = pattern.search(text)
+        if m:
+            setattr(snap, name, float(m.group(1)))
+
+    # Per-position acceptance rates
+    for m in _PER_POSITION_PATTERN.finditer(text):
+        pos = int(m.group(1))
+        rate = float(m.group(2))
+        snap.per_position_rates[pos] = rate
+
+    return snap
+
+
+def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta:
+    """Compute a delta between two consecutive snapshots."""
+    dt = curr.timestamp - prev.timestamp
+    if dt <= 0:
+        dt = 1.0  # avoid division by zero
+
+    d_accepted = curr.accepted_tokens - prev.accepted_tokens
+    d_drafted = curr.draft_tokens - prev.draft_tokens
+    d_drafts = curr.num_drafts - prev.num_drafts
+
+    delta = SpecLiveDelta(
+        elapsed_s=dt,
+        prompt_tps=curr.prompt_tps,
+        generation_tps=curr.generation_tps,
+        gpu_cache_pct=curr.gpu_cache_usage * 100,
+        running_reqs=int(curr.running_reqs),
+        waiting_reqs=int(curr.waiting_reqs),
+        prefix_cache_hit_pct=curr.prefix_cache_hit * 100,
+        per_position_rates=dict(curr.per_position_rates),
+        total_accepted=int(curr.accepted_tokens),
+        total_drafted=int(curr.draft_tokens),
+        total_drafts=int(curr.num_drafts),
+    )
+
+    if d_drafted > 0:
+        delta.acceptance_rate = d_accepted / d_drafted
+        delta.waste_ratio = 1.0 - delta.acceptance_rate
+    if d_drafts > 0:
+        delta.acceptance_length = d_accepted / d_drafts
+        delta.draft_window = d_drafted / d_drafts
+    if dt > 0:
+        delta.accepted_tps = d_accepted / dt
+        delta.drafted_tps = d_drafted / dt
+
+    return delta
+
+
+def metrics_url_from_base(base_url: str) -> str:
+    """Build the /metrics URL from a base URL."""
+    b = base_url.rstrip("/")
+    if b.endswith("/v1"):
+        b = b[:-3]
+    return f"{b}/metrics"
+
+
+async def scrape_snapshot(
+    client: httpx.AsyncClient,
+    url: str,
+    api_key: str | None = None,
+) -> MetricsSnapshot | None:
+    """Scrape metrics endpoint and return a snapshot, or None on failure."""
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        resp = await client.get(url, headers=headers, timeout=5.0)
+        if resp.status_code != 200:
+            return None
+        return _parse_snapshot(resp.text)
+    except Exception as exc:
+        logger.debug("Scrape failed: %s", exc)
+        return None

@@ -2,6 +2,49 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **Draft efficiency metrics in `--spec-bench`** — three new computed metrics that
+  surface actionable tuning signals for speculative decoding:
+  - **Waste ratio**: fraction of drafted tokens rejected by the verifier (1 − α).
+    Color-coded in CLI output: green ≤20%, yellow ≤50%, red >50%.
+  - **Draft window**: average tokens drafted per speculative step — reveals the
+    configured `num_speculative_tokens` setting. Compare with τ (acceptance length)
+    to see window utilization.
+  - **Draft t/s**: rate at which draft tokens are generated, regardless of acceptance.
+    Compare with effective t/s to quantify draft overhead.
+  - **Window utilization insight**: CLI prints `τ/window` utilization percentage and
+    automatically suggests reducing `num_speculative_tokens` when utilization drops
+    below 50%.
+  - **Draft Efficiency section in Markdown reports** with utilization table and
+    tuning recommendation.
+  - All metrics derived from existing Prometheus counter deltas — no new server
+    requirements.
+
+- **`--spec-live` live speculative decoding monitor** — a real-time Rich Live
+  terminal dashboard that continuously polls the server's Prometheus `/metrics`
+  endpoint and renders:
+  - **Acceptance rate gauge** with color gradient (red → green)
+  - **Draft efficiency gauge** showing τ/window utilization with auto-tuning hints
+    (suggests optimal `num_speculative_tokens` when utilization drops below 30%)
+  - **Per-position acceptance waterfall** — bar chart showing acceptance rate
+    decay across 8 draft positions
+  - **Throughput sparklines** — rolling 60-second history for accept rate, gen t/s,
+    accepted t/s, and waste ratio with min/max range annotations
+  - **Rolling averages panel** — session-level mean α, gen t/s, and accepted t/s
+    (appears after 5+ data points)
+  - **Engine status** — GPU KV cache usage, prefix cache hit rate, running/waiting
+    requests, prompt t/s
+  - **Session totals** — cumulative accepted/drafted tokens with session-wide α
+  - Activity indicator (pulsing ◉/◎) and uptime/poll counter
+  - Session summary panel printed on exit (Ctrl+C) with mean ± std, peak values
+  - Configurable poll interval via `--spec-live-interval` (default: 1s)
+  - Works with `--metrics-url` for proxied setups (LiteLLM → vLLM)
+  - New modules: `cli/spec_live_display.py` (Rich rendering) and
+    `runner/spec_live.py` (Prometheus scraping and delta computation)
+
 ## [1.4.1] — 2026-04-24
 
 ### Fixed

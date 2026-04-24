@@ -219,6 +219,87 @@ class TestSpecDecodeSample:
         assert spec.acceptance_rate is None
         assert spec.effective_tg_tps > 0
 
+    # -- draft_tps --
+
+    def test_draft_tps_basic(self):
+        """Draft t/s = draft_tokens_delta / gen_time."""
+        s = SpecDecodeSample(
+            tg_tokens=100,
+            total_ms=2000,
+            ttft_ms=500,
+            draft_tokens_delta=300,
+        )
+        # 300 draft tokens / 1.5s gen time = 200 draft t/s
+        assert s.draft_tps == pytest.approx(200.0, rel=0.01)
+
+    def test_draft_tps_none_without_deltas(self):
+        """No draft data → None."""
+        s = SpecDecodeSample(tg_tokens=100, total_ms=2000)
+        assert s.draft_tps is None
+
+    def test_draft_tps_zero_draft_tokens(self):
+        """Zero draft tokens → None."""
+        s = SpecDecodeSample(
+            tg_tokens=100, total_ms=2000, draft_tokens_delta=0,
+        )
+        assert s.draft_tps is None
+
+    # -- waste_ratio --
+
+    def test_waste_ratio_basic(self):
+        """Waste = 1 - acceptance_rate."""
+        s = SpecDecodeSample(acceptance_rate=0.25)
+        assert s.waste_ratio == pytest.approx(0.75)
+
+    def test_waste_ratio_high_acceptance(self):
+        """High acceptance → low waste."""
+        s = SpecDecodeSample(acceptance_rate=0.90)
+        assert s.waste_ratio == pytest.approx(0.10)
+
+    def test_waste_ratio_none_without_acceptance(self):
+        """No acceptance rate → None."""
+        s = SpecDecodeSample()
+        assert s.waste_ratio is None
+
+    # -- draft_window --
+
+    def test_draft_window_basic(self):
+        """Window = draft_tokens / num_drafts."""
+        s = SpecDecodeSample(
+            draft_tokens_delta=315,
+            num_drafts_delta=21,
+        )
+        # 315 / 21 = 15 tokens per draft step
+        assert s.draft_window == pytest.approx(15.0)
+
+    def test_draft_window_none_without_num_drafts(self):
+        """Missing num_drafts → None."""
+        s = SpecDecodeSample(draft_tokens_delta=300)
+        assert s.draft_window is None
+
+    def test_draft_window_zero_num_drafts(self):
+        """Zero draft steps → None (avoid division by zero)."""
+        s = SpecDecodeSample(
+            draft_tokens_delta=300,
+            num_drafts_delta=0,
+        )
+        assert s.draft_window is None
+
+    def test_draft_window_vs_acceptance_length(self):
+        """Window and τ together reveal utilization."""
+        s = SpecDecodeSample(
+            draft_tokens_delta=315,   # 15 tokens drafted per step
+            accepted_tokens_delta=70, # ~3.33 accepted per step
+            num_drafts_delta=21,
+            acceptance_rate=70 / 315,
+            acceptance_length=70 / 21,  # set by measure_spec_single
+        )
+        assert s.draft_window == pytest.approx(15.0)
+        assert s.acceptance_length == pytest.approx(70 / 21, rel=0.01)
+        # Window utilization: τ/window = 3.33/15 = 22% — poor
+        utilization = s.acceptance_length / s.draft_window
+        assert utilization == pytest.approx(0.222, rel=0.01)
+
 
 # ---------------------------------------------------------------------------
 # SpecDecodeInfo

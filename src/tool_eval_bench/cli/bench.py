@@ -624,8 +624,16 @@ def _run_spec_bench(
                 ar_style = "green" if ar_pct >= 60 else "yellow" if ar_pct >= 40 else "red"
                 parts.append(f"  [{ar_style}]α={ar_pct:.1f}%[/{ar_style}]")
 
+            if sample.waste_ratio is not None:
+                wr_pct = sample.waste_ratio * 100
+                wr_style = "green" if wr_pct <= 20 else "yellow" if wr_pct <= 50 else "red"
+                parts.append(f"  [{wr_style}]waste={wr_pct:.0f}%[/{wr_style}]")
+
             if sample.acceptance_length is not None:
                 parts.append(f"  [dim]τ={sample.acceptance_length:.1f}[/]")
+
+            if sample.draft_window is not None:
+                parts.append(f"  [dim]win={sample.draft_window:.0f}[/]")
 
             if sample.speedup_ratio is not None:
                 sp_style = "green" if sample.speedup_ratio >= 1.2 else "yellow" if sample.speedup_ratio >= 1.0 else "red"
@@ -666,11 +674,17 @@ def _run_spec_bench(
             header_style="bold",
             border_style="bright_magenta",
         )
+        has_draft = any(s.draft_tps is not None for s in ok_samples)
+
         table.add_column("Prompt", no_wrap=True)
         table.add_column("Depth", justify="right", no_wrap=True)
         table.add_column("Eff t/s", justify="right", min_width=7, no_wrap=True)
         table.add_column("α %", justify="right", no_wrap=True)
+        table.add_column("Waste", justify="right", no_wrap=True)
         table.add_column("τ len", justify="right", no_wrap=True)
+        if has_draft:
+            table.add_column("Window", justify="right", no_wrap=True)
+            table.add_column("Draft t/s", justify="right", no_wrap=True)
         if has_speedup:
             table.add_column("Speed", justify="right", no_wrap=True)
         table.add_column("TTFT", justify="right", no_wrap=True)
@@ -685,14 +699,19 @@ def _run_spec_bench(
 
         for s in ok_samples:
             ar_str = f"{s.acceptance_rate * 100:.1f}%" if s.acceptance_rate is not None else "—"
+            wr_str = f"{s.waste_ratio * 100:.0f}%" if s.waste_ratio is not None else "—"
             al_str = f"{s.acceptance_length:.1f}" if s.acceptance_length is not None else "—"
             row: list[str] = [
                 s.prompt_type,
                 _depth_label(s.depth),
                 f"{s.effective_tg_tps:,.1f}",
                 ar_str,
+                wr_str,
                 al_str,
             ]
+            if has_draft:
+                row.append(f"{s.draft_window:.0f}" if s.draft_window is not None else "—")
+                row.append(f"{s.draft_tps:,.1f}" if s.draft_tps is not None else "—")
             if has_speedup:
                 row.append(f"{s.speedup_ratio:.2f}x" if s.speedup_ratio is not None else "—")
             row.extend([
@@ -715,6 +734,26 @@ def _run_spec_bench(
                     f"[dim]Lowest:[/] [bold]{worst.prompt_type}[/] "
                     f"({worst.acceptance_rate * 100:.1f}%)"
                 )
+
+            # Draft efficiency insight
+            with_window = [s for s in ok_samples if s.draft_window is not None and s.acceptance_length is not None]
+            if with_window:
+                avg_window = sum(s.draft_window for s in with_window) / len(with_window)  # type: ignore[arg-type]
+                avg_tau = sum(s.acceptance_length for s in with_window) / len(with_window)  # type: ignore[arg-type]
+                utilization = (avg_tau / avg_window * 100) if avg_window > 0 else 0
+                avg_waste = sum(s.waste_ratio for s in with_window if s.waste_ratio is not None) / len(with_window) * 100
+                util_style = "green" if utilization >= 50 else "yellow" if utilization >= 25 else "red"
+                console.print(
+                    f"  [dim]Draft window:[/] [{util_style}]{avg_tau:.1f}/{avg_window:.0f} "
+                    f"positions used ({utilization:.0f}% utilization)[/{util_style}]  "
+                    f"[dim]Avg waste: {avg_waste:.0f}%[/]"
+                )
+                if utilization < 50:
+                    optimal = max(int(avg_tau * 1.5), 2)  # 1.5× avg acceptance for headroom
+                    console.print(
+                        f"  [yellow]💡 Consider reducing num_speculative_tokens to "
+                        f"~{optimal} (currently ~{avg_window:.0f})[/]"
+                    )
         else:
             console.print(
                 "\n  [dim]ℹ Acceptance rate: not available (optional).[/]"
@@ -728,7 +767,7 @@ def _run_spec_bench(
                 "/metrics with spec_decode counters[/]"
             )
             console.print(
-                "  [dim]  (vLLM: enabled by default at http://\u003chost\u003e:\u003cport\u003e/metrics; "
+                "  [dim]  (vLLM: enabled by default at http://<host>:<port>/metrics; "
                 "llama.cpp: start with --metrics flag).[/]"
             )
 
@@ -885,6 +924,11 @@ def main() -> None:
     spec_grp = parser.add_argument_group("speculative decoding benchmark")
     spec_grp.add_argument("--spec-bench", action="store_true",
                           help="Run spec-decode / MTP benchmark (effective t/s, acceptance rate)")
+    spec_grp.add_argument("--spec-live", action="store_true",
+                          help="Live-monitor speculative decoding stats "
+                               "(polls /metrics, runs until Ctrl+C)")
+    spec_grp.add_argument("--spec-live-interval", type=float, default=1.0, metavar="SEC",
+                          help="Poll interval for --spec-live in seconds (default: 1.0)")
     spec_grp.add_argument("--spec-method", default="auto",
                           choices=["auto", "mtp", "draft", "ngram", "eagle"],
                           help="Spec-decode method hint (default: auto-detect)")
@@ -1051,6 +1095,22 @@ def main() -> None:
                 f"  [dim]📋 Categories: {cat_names} "
                 f"({resolved_count} scenarios)[/]"
             )
+
+    # -- spec-live: standalone live monitor (exits after session) --
+    if args.spec_live:
+        from tool_eval_bench.cli.spec_live_display import run_spec_live
+
+        try:
+            asyncio.run(run_spec_live(
+                base_url,
+                api_key=api_key,
+                metrics_url=args.metrics_url,
+                model_name=display_name,
+                poll_interval=args.spec_live_interval,
+            ))
+        except KeyboardInterrupt:
+            pass
+        return
 
     # -- Warm-up --
     if not args.no_warmup:
@@ -1299,7 +1359,7 @@ def main() -> None:
 
     # -- Skip tool-call scenarios if requested --
     if args.skip_tool_eval:
-        if not args.perf and not args.perf_only and not args.spec_bench:
+        if not args.perf and not args.perf_only and not args.spec_bench and not args.spec_live:
             console.print(
                 "\n  [yellow]⚠ --skip-tool-eval has no effect without "
                 "--perf, --perf-only, or --spec-bench.[/]\n"

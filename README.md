@@ -261,6 +261,38 @@ tool-eval-bench --perf --spec-bench --seed 42
 > tool-eval-bench --spec-bench --base-url http://litellm:4000 --metrics-url http://vllm:8080/metrics
 > ```
 
+### Live speculative decoding monitor
+
+Keep a **real-time terminal dashboard** open while working — `--spec-live` continuously polls the server's Prometheus `/metrics` endpoint and renders a Rich Live display with acceptance rate gauges, per-position acceptance waterfall, throughput sparklines, draft efficiency analysis, and engine status.
+
+```bash
+# Start the live monitor (runs until Ctrl+C)
+tool-eval-bench --spec-live
+
+# Custom poll interval (default: 1 second)
+tool-eval-bench --spec-live --spec-live-interval 2
+
+# Point at vLLM metrics directly (when API is behind a proxy)
+tool-eval-bench --spec-live --metrics-url http://vllm:8080/metrics
+```
+
+The dashboard shows:
+- **Acceptance rate gauge** — color-coded 0–100% bar with efficiency rating
+- **Draft efficiency gauge** — τ/window utilization with auto-tuning hints
+- **Per-position acceptance bars** — waterfall chart showing acceptance rate decay across draft positions
+- **Throughput sparklines** — rolling 60-second history of accept rate, gen t/s, accepted t/s, and waste ratio with min/max annotations
+- **Rolling averages** — session-level mean α, gen t/s, and accepted t/s (after 5+ samples)
+- **Engine status** — GPU KV cache, prefix cache hit rate, running/waiting requests, prompt t/s
+- **Session totals** — cumulative accepted/drafted tokens and session-wide acceptance rate
+
+On exit (Ctrl+C), a session summary panel shows aggregate statistics.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--spec-live` | off | Start live speculative decoding monitor |
+| `--spec-live-interval` | `1.0` | Seconds between metric scrapes |
+| `--metrics-url` | auto | Direct URL to Prometheus `/metrics` endpoint |
+
 ### Context pressure
 
 Tests tool-calling quality when the context window is already heavily utilized. This simulates real-world agentic conversations where the model must make accurate tool-call decisions with thousands of tokens of prior conversation history in its context.
@@ -340,6 +372,7 @@ src/tool_eval_bench/
   cli/
     bench.py          # Main CLI entry point (tool-eval-bench)
     display.py        # Zero-flicker streaming display
+    spec_live_display.py  # Live speculative decoding dashboard (Rich Live)
   domain/
     models.py         # BenchmarkConfig
     scenarios.py      # Scenario types, evaluation types, scoring
@@ -356,6 +389,7 @@ src/tool_eval_bench/
     service.py        # Benchmark service (orchestration + persistence)
     throughput.py     # Streaming pp/tg measurement
     speculative.py    # Spec-decode / MTP benchmarking (acceptance rate, effective t/s)
+    spec_live.py      # Live monitor data layer (Prometheus scraping, delta computation)
     llama_benchy.py   # External llama-benchy integration (subprocess + JSON parsing)
   storage/
     db.py             # SQLite persistence

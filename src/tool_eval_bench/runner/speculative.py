@@ -266,6 +266,43 @@ class SpecDecodeSample:
             return self.effective_tg_tps / self.baseline_tg_tps
         return None
 
+    @property
+    def draft_tps(self) -> float | None:
+        """Drafted tokens per second of wall-clock generation time.
+
+        Shows how fast the draft model runs, regardless of acceptance.
+        Compare with goodput to see how much draft compute is wasted.
+        """
+        if self.draft_tokens_delta is not None and self.draft_tokens_delta > 0 and self.total_ms > 0:
+            gen_ms = self.total_ms - self.ttft_ms if self.ttft_ms > 0 else self.total_ms
+            if gen_ms > 0:
+                return self.draft_tokens_delta / (gen_ms / 1000)
+        return None
+
+    @property
+    def waste_ratio(self) -> float | None:
+        """Fraction of drafted tokens rejected by the verifier (0.0–1.0).
+
+        Lower is better. A value of 0.82 means 82% of draft compute is
+        discarded — the draft model is poorly aligned with the target.
+        """
+        if self.acceptance_rate is not None:
+            return 1.0 - self.acceptance_rate
+        return None
+
+    @property
+    def draft_window(self) -> float | None:
+        """Average tokens drafted per speculative step.
+
+        This reveals the configured draft window size. If draft_window=15
+        but acceptance_length=3.5, positions 4–15 are mostly wasted.
+        Compare with acceptance_length (τ) to assess optimal window tuning.
+        """
+        if (self.draft_tokens_delta is not None and self.num_drafts_delta is not None
+                and self.num_drafts_delta > 0):
+            return self.draft_tokens_delta / self.num_drafts_delta
+        return None
+
     @classmethod
     def from_throughput_sample(
         cls,
