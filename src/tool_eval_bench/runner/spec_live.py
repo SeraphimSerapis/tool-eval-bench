@@ -7,6 +7,19 @@ real-time terminal visualization.
 Usage:
     tool-eval-bench --spec-live
     tool-eval-bench --spec-live --metrics-url http://host:8000/metrics
+
+Design note:
+    vLLM's Prometheus counters update every ~10 seconds (its internal log
+    interval), not every second.  If we compute deltas between consecutive
+    1-second polls, 9 out of 10 will be zero — making the dashboard appear
+    dead.  To work around this, we:
+
+    1. Compute a *cumulative* acceptance rate (total accepted / total drafted)
+       which is always meaningful regardless of poll frequency.
+    2. Track the *last interval where counters actually changed* and display
+       those rates as "instantaneous" metrics.
+    3. Only append to sparkline history when there was real activity, so the
+       history charts show actual behavior rather than flat zeros.
 """
 
 from __future__ import annotations
@@ -117,11 +130,22 @@ class MetricsSnapshot:
 
 @dataclass
 class SpecLiveDelta:
-    """Computed delta between two snapshots — the interesting stuff."""
+    """Computed delta between two snapshots — the interesting stuff.
+
+    Fields are split into three categories:
+    - **Cumulative rates**: computed from total counters, always meaningful
+    - **Interval rates**: computed from the *last interval that had activity*
+    - **Instantaneous gauges**: read directly from the current snapshot
+    """
 
     elapsed_s: float = 0.0
 
-    # Rates computed from counter deltas
+    # --- Cumulative rates (always available once counters > 0) ---
+    cumulative_acceptance_rate: float | None = None  # total_accepted / total_drafted
+    cumulative_acceptance_length: float | None = None  # total_accepted / total_drafts
+    cumulative_draft_window: float | None = None  # total_drafted / total_drafts
+
+    # --- Interval rates (from the last interval with counter changes) ---
     acceptance_rate: float | None = None  # 0.0–1.0
     acceptance_length: float | None = None  # avg tokens per draft step
     draft_window: float | None = None  # avg drafted per step
@@ -131,7 +155,10 @@ class SpecLiveDelta:
     accepted_tps: float = 0.0  # accepted tokens / elapsed
     drafted_tps: float = 0.0  # drafted tokens / elapsed
 
-    # Engine gauges (instantaneous)
+    # Whether counters changed in this interval
+    had_activity: bool = False
+
+    # --- Instantaneous gauges (from current snapshot) ---
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
     gpu_cache_pct: float = 0.0
@@ -139,7 +166,7 @@ class SpecLiveDelta:
     waiting_reqs: int = 0
     prefix_cache_hit_pct: float = 0.0
 
-    # Per-position rates snapshot
+    # Per-position rates snapshot (vLLM gauge — already a rolling average)
     per_position_rates: dict[int, float] = field(default_factory=dict)
 
     # Cumulative totals
@@ -176,20 +203,34 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
     d_drafted = curr.draft_tokens - prev.draft_tokens
     d_drafts = curr.num_drafts - prev.num_drafts
 
+    had_activity = d_drafted > 0 or d_accepted > 0
+
     delta = SpecLiveDelta(
         elapsed_s=dt,
+        had_activity=had_activity,
+        # Instantaneous gauges — always from current snapshot
         prompt_tps=curr.prompt_tps,
         generation_tps=curr.generation_tps,
         gpu_cache_pct=curr.gpu_cache_usage * 100,
         running_reqs=int(curr.running_reqs),
         waiting_reqs=int(curr.waiting_reqs),
         prefix_cache_hit_pct=curr.prefix_cache_hit * 100,
+        # Per-position rates are vLLM gauges (rolling averages, always current)
         per_position_rates=dict(curr.per_position_rates),
+        # Cumulative totals
         total_accepted=int(curr.accepted_tokens),
         total_drafted=int(curr.draft_tokens),
         total_drafts=int(curr.num_drafts),
     )
 
+    # --- Cumulative rates (always computed from totals) ---
+    if curr.draft_tokens > 0:
+        delta.cumulative_acceptance_rate = curr.accepted_tokens / curr.draft_tokens
+    if curr.num_drafts > 0:
+        delta.cumulative_acceptance_length = curr.accepted_tokens / curr.num_drafts
+        delta.cumulative_draft_window = curr.draft_tokens / curr.num_drafts
+
+    # --- Interval rates (only when counters actually changed) ---
     if d_drafted > 0:
         delta.acceptance_rate = d_accepted / d_drafted
         delta.waste_ratio = 1.0 - delta.acceptance_rate

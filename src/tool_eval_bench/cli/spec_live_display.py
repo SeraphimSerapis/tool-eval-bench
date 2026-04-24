@@ -174,14 +174,14 @@ def _efficiency_insight(delta: SpecLiveDelta) -> Text:
     """Generate a one-line efficiency insight based on current metrics."""
     text = Text()
 
-    if delta.acceptance_rate is None:
+    ar = delta.cumulative_acceptance_rate
+    if ar is None:
         text.append("  ℹ ", style="dim")
         text.append("awaiting acceptance data from server", style="dim italic")
         return text
 
-    ar = delta.acceptance_rate
-    tau = delta.acceptance_length
-    win = delta.draft_window
+    tau = delta.cumulative_acceptance_length
+    win = delta.cumulative_draft_window
 
     if ar >= 0.6:
         text.append("  ✦ ", style="bright_green")
@@ -265,16 +265,18 @@ def _build_dashboard(
             subtitle="[dim]Ctrl+C to exit[/]",
         )
 
-    # ── Acceptance Rate Gauge (hero metric) ──
-    ar = delta.acceptance_rate if delta.acceptance_rate is not None else 0.0
+    # ── Use CUMULATIVE rates for gauges (always meaningful) ──
+    # vLLM updates Prometheus counters every ~10s, so per-interval
+    # rates are zero most of the time.  Cumulative α is always valid.
+    ar = delta.cumulative_acceptance_rate if delta.cumulative_acceptance_rate is not None else 0.0
 
     gauge_line = Text()
     gauge_line.append("\n  ACCEPTANCE RATE  ", style="bold")
     gauge_line.append_text(_gauge_bar(ar, width=40))
 
-    # ── Draft Efficiency Gauge ──
-    tau = delta.acceptance_length
-    win = delta.draft_window
+    # ── Draft Efficiency Gauge (cumulative) ──
+    tau = delta.cumulative_acceptance_length
+    win = delta.cumulative_draft_window
     utilization = (tau / win) if (tau and win and win > 0) else None
 
     eff_line = Text()
@@ -302,7 +304,8 @@ def _build_dashboard(
 
     tau_str = f"{tau:.2f}" if tau is not None else "—"
     win_str = f"{win:.1f}" if win is not None else "—"
-    waste = delta.waste_ratio
+    # Cumulative waste
+    waste = (1.0 - ar) if ar > 0 else None
     waste_str = f"{waste * 100:.1f}%" if waste is not None else "—"
     waste_color = "bright_green" if waste and waste < 0.3 else "yellow" if waste and waste < 0.6 else "bright_red"
 
@@ -402,10 +405,12 @@ def _build_dashboard(
     left_col = Group(pos_panel, engine_panel)
 
     # ── Right Column: Sparklines + Throughput History ──
-    ar_hist = [d.acceptance_rate for d in history if d.acceptance_rate is not None]
+    # Use cumulative α for sparklines (always available)
+    ar_hist = [d.cumulative_acceptance_rate for d in history if d.cumulative_acceptance_rate is not None]
+    # For throughput, use gen_tps gauge (always updated) and filter accepted to active intervals
     gen_hist = [d.generation_tps for d in history]
-    acc_hist = [d.accepted_tps for d in history]
-    waste_hist = [d.waste_ratio for d in history if d.waste_ratio is not None]
+    acc_hist = [d.accepted_tps for d in history if d.had_activity]
+    waste_hist = [1.0 - d.cumulative_acceptance_rate for d in history if d.cumulative_acceptance_rate is not None]
 
     spark_table = Table.grid(padding=(0, 1))
     spark_table.add_column("label", width=13, no_wrap=True)
@@ -621,7 +626,7 @@ async def run_spec_live(
 
     # Print session summary
     if history:
-        ar_vals = [d.acceptance_rate for d in history if d.acceptance_rate is not None]
+        ar_vals = [d.cumulative_acceptance_rate for d in history if d.cumulative_acceptance_rate is not None]
         gen_vals = [d.generation_tps for d in history]
         if ar_vals:
             from statistics import mean, stdev
