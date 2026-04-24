@@ -134,8 +134,18 @@ def _position_bars(rates: dict[int, float], max_positions: int = 8) -> Table:
     positions = sorted(rates.keys())[:max_positions]
     if not positions:
         table.add_row(
-            Text("—", style="dim"),
-            Text("waiting for data…", style="dim italic"),
+            Text("", style="dim"),
+            Text("not exposed by server", style="dim italic"),
+            Text("", style="dim"),
+        )
+        table.add_row(
+            Text("", style="dim"),
+            Text("(MTP may not report", style="dim italic"),
+            Text("", style="dim"),
+        )
+        table.add_row(
+            Text("", style="dim"),
+            Text(" per-position rates)", style="dim italic"),
             Text("", style="dim"),
         )
         return table
@@ -562,6 +572,14 @@ async def run_spec_live(
     poll_count = 0
     last_delta: SpecLiveDelta | None = None
 
+    # Sticky gauges — vLLM resets gauge metrics to 0 between its ~10s
+    # internal update intervals.  We keep the last non-zero value so the
+    # dashboard doesn't flicker between real values and zero.
+    _sticky_gen_tps: float = 0.0
+    _sticky_prompt_tps: float = 0.0
+    _sticky_gpu_cache_pct: float = 0.0
+    _sticky_prefix_cache_pct: float = 0.0
+
     stop_event = asyncio.Event()
 
     def _handle_signal() -> None:
@@ -599,6 +617,27 @@ async def run_spec_live(
                 if snap is not None and snap.has_spec_decode:
                     if prev_snap is not None:
                         delta = compute_delta(prev_snap, snap)
+
+                        # Update sticky gauges — keep last non-zero value
+                        if delta.generation_tps > 0:
+                            _sticky_gen_tps = delta.generation_tps
+                        if delta.prompt_tps > 0:
+                            _sticky_prompt_tps = delta.prompt_tps
+                        if delta.gpu_cache_pct > 0:
+                            _sticky_gpu_cache_pct = delta.gpu_cache_pct
+                        if delta.prefix_cache_hit_pct > 0:
+                            _sticky_prefix_cache_pct = delta.prefix_cache_hit_pct
+
+                        # Apply sticky values when current reading is zero
+                        if delta.generation_tps == 0:
+                            delta.generation_tps = _sticky_gen_tps
+                        if delta.prompt_tps == 0:
+                            delta.prompt_tps = _sticky_prompt_tps
+                        if delta.gpu_cache_pct == 0:
+                            delta.gpu_cache_pct = _sticky_gpu_cache_pct
+                        if delta.prefix_cache_hit_pct == 0:
+                            delta.prefix_cache_hit_pct = _sticky_prefix_cache_pct
+
                         history.append(delta)
                         last_delta = delta
                     prev_snap = snap
