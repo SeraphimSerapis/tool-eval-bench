@@ -2,7 +2,7 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
-## [Unreleased]
+## [1.4.2] — 2026-04-24
 
 ### Added
 
