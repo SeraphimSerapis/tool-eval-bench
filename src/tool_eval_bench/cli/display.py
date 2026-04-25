@@ -354,8 +354,15 @@ def _print_final_panel(
         )
         content += f"\n  [bold]Weakest:[/] [{floor_color}]{summary.worst_category}[/]"
 
+    # Version stamp
+    try:
+        from tool_eval_bench import __version__
+        version_tag = f"  [dim]│  tool-eval-bench v{__version__}[/]"
+    except ImportError:
+        version_tag = ""
+
     content += (
-        f"\n\n  [dim]Completed in {elapsed:.1f}s[/]"
+        f"\n\n  [dim]Completed in {elapsed:.1f}s[/]{version_tag}"
     )
 
     # Token usage summary (when server reports usage data)

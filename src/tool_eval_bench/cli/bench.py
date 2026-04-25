@@ -799,6 +799,11 @@ def _run_spec_bench(
         report_path = reporter.write_spec_decode_report(run_id, display_name, ok_samples)
         console.print(f"\n  [dim]📄 Report saved to {report_path}[/]")
 
+    try:
+        from tool_eval_bench import __version__
+        console.print(f"  [dim]tool-eval-bench v{__version__}[/]")
+    except ImportError:
+        pass
     console.print()
     return completed
 
