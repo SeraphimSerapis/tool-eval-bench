@@ -2,6 +2,18 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- **Reports and DB created inside `.venv/` instead of project directory** (Issue #9) —
+  `_default_reports_root()` and `_default_db_path()` resolved paths relative to the
+  installed package location (`__file__`), which — when installed via `pip install -e .`
+  or `pip install .` — points inside `.venv/lib/python3.x/site-packages/…`. Walking up
+  four parent directories from there lands in `.venv/`, not the project root. Changed
+  both functions to use `Path.cwd()` so reports go to `./runs/` and the database to
+  `./data/benchmarks.sqlite` relative to wherever the CLI is invoked.
+
 ## [1.4.3] — 2026-04-25
 
 ### Fixed

@@ -15,14 +15,13 @@ from tool_eval_bench.domain.scenarios import ModelScoreSummary, ScenarioStatus
 
 
 def _default_reports_root() -> str:
-    """Resolve default reports root relative to the project root.
+    """Resolve default reports root relative to the current working directory.
 
-    Same pattern as db.py — ensures reports go to the same location
-    regardless of the working directory when invoking the CLI.
+    Reports are written under ``./runs/`` in whichever directory the user
+    invokes the CLI from — not relative to the installed package location
+    (which would land inside ``.venv/``).
     """
-    # Walk up from storage/reports.py → storage → tool_eval_bench → src → project root
-    project_root = Path(__file__).resolve().parent.parent.parent.parent
-    return str(project_root / "runs")
+    return str(Path.cwd() / "runs")
 
 
 class MarkdownReporter:

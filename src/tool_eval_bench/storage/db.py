@@ -10,14 +10,13 @@ from typing import Any
 
 
 def _default_db_path() -> str:
-    """Resolve default DB path relative to the project root.
+    """Resolve default DB path relative to the current working directory.
 
-    This ensures the same database is used regardless of the working
-    directory when invoking the CLI.
+    The database is stored under ``./data/`` in whichever directory the user
+    invokes the CLI from — not relative to the installed package location
+    (which would land inside ``.venv/``).
     """
-    # Walk up from storage/db.py → storage → tool_eval_bench → src → project root
-    project_root = Path(__file__).resolve().parent.parent.parent.parent
-    return str(project_root / "data" / "benchmarks.sqlite")
+    return str(Path.cwd() / "data" / "benchmarks.sqlite")
 
 
 class RunRepository:
