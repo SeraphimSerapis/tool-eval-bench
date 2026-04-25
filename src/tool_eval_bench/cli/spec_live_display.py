@@ -361,7 +361,7 @@ def _build_dashboard(
     engine_table.add_column("label", no_wrap=True, width=15)
     engine_table.add_column("value", no_wrap=True)
 
-    engine_table.add_row(Text("GPU KV Cache", style="dim"), cache_bar)
+    engine_table.add_row(Text("KV Cache Fill", style="dim"), cache_bar)
 
     prefix_pct = delta.prefix_cache_hit_pct
     prefix_color = "bright_green" if prefix_pct > 50 else "cyan" if prefix_pct > 0 else "dim"
@@ -370,10 +370,15 @@ def _build_dashboard(
         Text(f"{prefix_pct:.1f}%", style=f"bold {prefix_color}"),
     )
 
-    req_style = "bold yellow" if delta.running_reqs > 0 else "dim"
+    run_style = "bold yellow" if delta.running_reqs > 0 else "dim"
+    wait_style = "bold red" if delta.waiting_reqs > 0 else "dim"
     engine_table.add_row(
-        Text("Requests", style="dim"),
-        Text(f"{delta.running_reqs} running  {delta.waiting_reqs} waiting", style=req_style),
+        Text("Running", style="dim"),
+        Text(f"{delta.running_reqs}", style=run_style),
+    )
+    engine_table.add_row(
+        Text("Waiting", style="dim"),
+        Text(f"{delta.waiting_reqs}", style=wait_style),
     )
     engine_table.add_row(
         Text("Prompt t/s", style="dim"),

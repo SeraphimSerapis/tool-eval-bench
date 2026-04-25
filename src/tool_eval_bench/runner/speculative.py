@@ -71,18 +71,21 @@ class SpecDecodeCounters:
 # Note: vLLM includes labels like {engine="0",model_name="..."} between the
 # metric name and the value.  The (?:\{[^}]*\})? group handles this optional
 # label block so we match both bare and labelled counter lines.
+# Prometheus numeric value — handles plain and scientific notation (1.378e+06)
+_NUM = r"(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
+
 _PROM_PATTERNS = {
     # vLLM metrics (supports both vllm: and vllm_ prefix variants)
     "accepted_tokens": re.compile(
-        r"^(?:vllm[:_])?spec_decode_num_accepted_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?spec_decode_num_accepted_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "draft_tokens": re.compile(
-        r"^(?:vllm[:_])?spec_decode_num_draft_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?spec_decode_num_draft_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "num_drafts": re.compile(
-        r"^(?:vllm[:_])?spec_decode_num_drafts(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?spec_decode_num_drafts(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
 }

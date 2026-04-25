@@ -38,68 +38,72 @@ logger = logging.getLogger(__name__)
 # Prometheus metric patterns (extended from speculative.py)
 # ---------------------------------------------------------------------------
 
+# Prometheus numeric value pattern — handles plain (523754.0) and scientific
+# notation (1.378852e+06) which vLLM uses for large cumulative counters.
+_NUM = r"(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
+
 _COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
     # Spec decode counters
     "accepted_tokens": re.compile(
-        r"^(?:vllm[:_])?spec_decode_num_accepted_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?spec_decode_num_accepted_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "draft_tokens": re.compile(
-        r"^(?:vllm[:_])?spec_decode_num_draft_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?spec_decode_num_draft_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "num_drafts": re.compile(
-        r"^(?:vllm[:_])?spec_decode_num_drafts(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?spec_decode_num_drafts(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     # Engine throughput gauges (deprecated in vLLM ≥0.8, but still present in
     # older versions — we fall back to counter-derived rates when these are 0)
     "prompt_tps": re.compile(
-        r"^(?:vllm[:_])?avg_prompt_throughput_toks_per_s(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?avg_prompt_throughput_toks_per_s(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "generation_tps": re.compile(
-        r"^(?:vllm[:_])?avg_generation_throughput_toks_per_s(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?avg_generation_throughput_toks_per_s(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     # KV cache — old name (gpu_cache_usage_perc) and new name (kv_cache_usage_perc)
     "gpu_cache_usage": re.compile(
-        r"^(?:vllm[:_])?gpu_cache_usage_perc(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?gpu_cache_usage_perc(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "kv_cache_usage": re.compile(
-        r"^(?:vllm[:_])?kv_cache_usage_perc(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?kv_cache_usage_perc(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     # Requests
     "running_reqs": re.compile(
-        r"^(?:vllm[:_])?num_requests_running(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?num_requests_running(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "waiting_reqs": re.compile(
-        r"^(?:vllm[:_])?num_requests_waiting(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?num_requests_waiting(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     # Prefix cache — old gauge and new counters
     "prefix_cache_hit": re.compile(
-        r"^(?:vllm[:_])?(?:gpu_)?prefix_cache_hit_rate(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?(?:gpu_)?prefix_cache_hit_rate(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "prefix_cache_queries": re.compile(
-        r"^(?:vllm[:_])?prefix_cache_queries(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?prefix_cache_queries(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "prefix_cache_hits": re.compile(
-        r"^(?:vllm[:_])?prefix_cache_hits(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?prefix_cache_hits(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     # Token counts (cumulative) — primary source for throughput in vLLM ≥0.8
     "prompt_tokens_total": re.compile(
-        r"^(?:vllm[:_])?prompt_tokens_total(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?prompt_tokens_total(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "generation_tokens_total": re.compile(
-        r"^(?:vllm[:_])?generation_tokens_total(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        rf"^(?:vllm[:_])?generation_tokens_total(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
 }
@@ -107,7 +111,7 @@ _COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
 # Per-position acceptance rate pattern (vLLM specific)
 _PER_POSITION_PATTERN = re.compile(
     r"^(?:vllm[:_])?spec_decode_per_position_acceptance_rate"
-    r'\{[^}]*position="(\d+)"[^}]*\}\s+(\d+(?:\.\d+)?)',
+    rf'\{{[^}}]*position="(\d+)"[^}}]*\}}\s+{_NUM}',
     re.MULTILINE,
 )
 
