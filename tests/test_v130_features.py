@@ -655,9 +655,9 @@ class TestVersionConsistency:
 
     def test_init_version(self) -> None:
         from tool_eval_bench import __version__
-        # Should be a valid semver-like string
+        # Should be a valid PEP 440 version (X.Y.Z or X.Y.Z.N)
         parts = __version__.split(".")
-        assert len(parts) == 3, f"Version should be X.Y.Z, got {__version__}"
+        assert len(parts) in (3, 4), f"Version should be X.Y.Z or X.Y.Z.N, got {__version__}"
         assert all(p.isdigit() for p in parts), f"Version parts should be numeric, got {__version__}"
 
     def test_pyproject_version_matches(self) -> None:

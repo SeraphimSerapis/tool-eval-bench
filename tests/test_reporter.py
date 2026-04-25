@@ -427,3 +427,34 @@ class TestSummaryReport:
         assert "trial1.md" in content
         assert "trial2.md" in content
 
+
+class TestDefaultPaths:
+    """Regression tests for issue #9 — default paths must use cwd, not __file__."""
+
+    def test_default_reports_root_uses_cwd(self, monkeypatch, tmp_path):
+        from tool_eval_bench.storage.reports import _default_reports_root
+
+        monkeypatch.chdir(tmp_path)
+        root = _default_reports_root()
+        assert root == str(tmp_path / "runs")
+
+    def test_default_db_path_uses_cwd(self, monkeypatch, tmp_path):
+        from tool_eval_bench.storage.db import _default_db_path
+
+        monkeypatch.chdir(tmp_path)
+        db = _default_db_path()
+        assert db == str(tmp_path / "data" / "benchmarks.sqlite")
+
+    def test_default_root_never_contains_venv(self, monkeypatch, tmp_path):
+        """The old bug: walking up from __file__ landed inside .venv/."""
+        from tool_eval_bench.storage.reports import _default_reports_root
+
+        monkeypatch.chdir(tmp_path)
+        root = _default_reports_root()
+        assert ".venv" not in root
+
+    def test_reporter_respects_explicit_root(self, tmp_path):
+        custom = tmp_path / "custom_reports"
+        reporter = MarkdownReporter(root=str(custom))
+        assert reporter.root == custom
+
