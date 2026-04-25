@@ -29,6 +29,7 @@ from rich.console import Console
 from tool_eval_bench.cli.display import BenchmarkDisplay
 from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition, ScenarioResult, ScenarioStatus
 from tool_eval_bench.runner.service import BenchmarkService
+from tool_eval_bench.storage.reports import MarkdownReporter
 
 logger = logging.getLogger(__name__)
 
@@ -596,6 +597,7 @@ def _run_spec_bench(
     baseline_tg_tps: float | None = None,
     prompt_types: list[str] | None = None,
     metrics_url: str | None = None,
+    output_dir: str | None = None,
 ) -> list:
     """Run speculative decoding benchmark and display results.
 
@@ -789,12 +791,11 @@ def _run_spec_bench(
 
     # Write report
     if ok_samples:
-        from tool_eval_bench.storage.reports import MarkdownReporter
         from tool_eval_bench.utils.ids import build_run_id
 
         run_config = {"model": model, "base_url": base_url, "mode": "spec-bench", "method": spec_method}
         run_id = build_run_id(run_config)
-        reporter = MarkdownReporter()
+        reporter = MarkdownReporter(root=output_dir)
         report_path = reporter.write_spec_decode_report(run_id, display_name, ok_samples)
         console.print(f"\n  [dim]📄 Report saved to {report_path}[/]")
 
@@ -917,6 +918,8 @@ def main() -> None:
     )
     output.add_argument("--no-probe-engine", action="store_true",
                         help="Skip inference engine probing (no /version, /health HTTP calls)")
+    output.add_argument("--output-dir", default=None, metavar="DIR",
+                        help="Directory for report files (default: ./runs/)")
 
     # -- Throughput (llama-benchy) -----------------------------------------
     perf_grp = parser.add_argument_group("throughput benchmark (llama-benchy)")
@@ -1223,7 +1226,6 @@ def main() -> None:
 
         if args.perf_only:
             # Write standalone throughput report
-            from tool_eval_bench.storage.reports import MarkdownReporter
             from tool_eval_bench.utils.ids import build_run_id
 
             run_config = {
@@ -1231,7 +1233,7 @@ def main() -> None:
                 "base_url": base_url, "mode": "perf-only",
             }
             run_id = build_run_id(run_config)
-            reporter = MarkdownReporter()
+            reporter = MarkdownReporter(root=args.output_dir)
             report_path = reporter.write_throughput_report(
                 run_id, display_name, throughput_samples,
                 run_context=run_context,
@@ -1250,12 +1252,11 @@ def main() -> None:
         throughput_samples.extend(legacy_samples)
 
         if args.perf_legacy_only:
-            from tool_eval_bench.storage.reports import MarkdownReporter
             from tool_eval_bench.utils.ids import build_run_id
 
             run_config = {"model": model, "backend": backend, "base_url": base_url, "mode": "perf-legacy-only"}
             run_id = build_run_id(run_config)
-            reporter = MarkdownReporter()
+            reporter = MarkdownReporter(root=args.output_dir)
             report_path = reporter.write_throughput_report(
                 run_id, display_name, legacy_samples,
                 run_context=run_context,
@@ -1274,6 +1275,7 @@ def main() -> None:
             baseline_tg_tps=args.baseline_tgs,
             prompt_types=spec_prompts,
             metrics_url=args.metrics_url,
+            output_dir=args.output_dir,
         )
         # If --spec-bench is the only mode, or user explicitly skipped tool-eval
         if args.skip_tool_eval or (not args.perf and not args.perf_only):
@@ -1383,7 +1385,9 @@ def main() -> None:
         return
 
     # -- Tool-call scenarios --
-    service = BenchmarkService()
+    service = BenchmarkService(
+        reporter=MarkdownReporter(root=args.output_dir),
+    )
     use_live = not args.json and not args.no_live
     trials = max(1, args.trials)
 
@@ -1996,8 +2000,7 @@ def _run_with_live_display(
 
             # Write consolidated summary report
             if agg and len(all_summaries) > 1:
-                from tool_eval_bench.storage.reports import MarkdownReporter
-                reporter = MarkdownReporter()
+                reporter = MarkdownReporter(root=args.output_dir)
                 run_id_base = result.get("run_id", "summary")
                 throughput = result.get("throughput_samples")
                 summary_path = reporter.write_summary_report(
@@ -2194,8 +2197,7 @@ def _run_plain(
         _print_trials_summary(console, agg)
 
         if agg and len(summaries) > 1:
-            from tool_eval_bench.storage.reports import MarkdownReporter
-            reporter = MarkdownReporter()
+            reporter = MarkdownReporter(root=args.output_dir)
             run_id_base = all_results_dicts[0].get("run_id", "summary") if all_results_dicts else "summary"
             rp_list = [str(r.get("report_path", "")) for r in all_results_dicts if r.get("report_path")]
             summary_path = reporter.write_summary_report(

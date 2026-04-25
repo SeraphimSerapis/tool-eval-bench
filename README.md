@@ -178,6 +178,7 @@ tool-eval-bench --model gemma4 --backend vllm --base-url http://localhost:8080
 --no-live              Disable live progress footer
 --no-warmup            Skip server warm-up request
 --redact-url           Mask the server URL in display output (useful for screenshots/recordings)
+--output-dir DIR       Directory for report files (default: ./runs/)
 --diff RUN_ID          Compare results against a previous run (use 'latest')
 --compare A B          Diff two stored runs by ID
 --history              List recent benchmark runs

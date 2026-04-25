@@ -14,6 +14,13 @@ All notable changes to `tool-eval-bench` are documented here.
   both functions to use `Path.cwd()` so reports go to `./runs/` and the database to
   `./data/benchmarks.sqlite` relative to wherever the CLI is invoked.
 
+### Added
+
+- **`--output-dir DIR` CLI flag** — specify a custom directory for Markdown report
+  files (scenario, throughput, spec-decode, and cross-trial summary reports). When
+  omitted, reports default to `./runs/` in the current working directory. The tool
+  still generates filenames automatically (`<run_id>.md` under `YYYY/MM/` subfolders).
+
 ## [1.4.3] — 2026-04-25
 
 ### Fixed
