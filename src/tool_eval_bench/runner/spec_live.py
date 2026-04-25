@@ -41,59 +41,60 @@ logger = logging.getLogger(__name__)
 _COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
     # Spec decode counters
     "accepted_tokens": re.compile(
-        r"^(?:vllm:)?spec_decode_num_accepted_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?spec_decode_num_accepted_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     "draft_tokens": re.compile(
-        r"^(?:vllm:)?spec_decode_num_draft_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?spec_decode_num_draft_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     "num_drafts": re.compile(
-        r"^(?:vllm:)?spec_decode_num_drafts(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?spec_decode_num_drafts(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
-    # Engine throughput gauges
+    # Engine throughput gauges (deprecated in vLLM ≥0.8, but still present in
+    # older versions — we fall back to counter-derived rates when these are 0)
     "prompt_tps": re.compile(
-        r"^(?:vllm:)?avg_prompt_throughput_toks_per_s(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?avg_prompt_throughput_toks_per_s(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     "generation_tps": re.compile(
-        r"^(?:vllm:)?avg_generation_throughput_toks_per_s(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?avg_generation_throughput_toks_per_s(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     # KV cache
     "gpu_cache_usage": re.compile(
-        r"^(?:vllm:)?gpu_cache_usage_perc(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?gpu_cache_usage_perc(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     # Requests
     "running_reqs": re.compile(
-        r"^(?:vllm:)?num_requests_running(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?num_requests_running(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     "waiting_reqs": re.compile(
-        r"^(?:vllm:)?num_requests_waiting(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?num_requests_waiting(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     # Prefix cache
     "prefix_cache_hit": re.compile(
-        r"^(?:vllm:)?prefix_cache_hit_rate(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?prefix_cache_hit_rate(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
-    # Token counts (cumulative)
+    # Token counts (cumulative) — primary source for throughput in vLLM ≥0.8
     "prompt_tokens_total": re.compile(
-        r"^(?:vllm:)?prompt_tokens_total(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?prompt_tokens_total(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     "generation_tokens_total": re.compile(
-        r"^(?:vllm:)?generation_tokens_total(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?generation_tokens_total(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
 }
 
 # Per-position acceptance rate pattern (vLLM specific)
 _PER_POSITION_PATTERN = re.compile(
-    r"^(?:vllm:)?spec_decode_per_position_acceptance_rate"
+    r"^(?:vllm[:_])?spec_decode_per_position_acceptance_rate"
     r'\{[^}]*position="(\d+)"[^}]*\}\s+(\d+(?:\.\d+)?)',
     re.MULTILINE,
 )
@@ -205,12 +206,29 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
 
     had_activity = d_drafted > 0 or d_accepted > 0
 
+    # Throughput gauges — prefer the Prometheus gauge values when available,
+    # but fall back to counter-derived rates when they are 0 (deprecated in
+    # vLLM ≥0.8 where avg_*_throughput_toks_per_s gauges were removed).
+    gen_tps = curr.generation_tps
+    prompt_tps_val = curr.prompt_tps
+
+    if gen_tps == 0 and dt > 0:
+        d_gen_tokens = curr.generation_tokens_total - prev.generation_tokens_total
+        if d_gen_tokens > 0:
+            gen_tps = d_gen_tokens / dt
+
+    if prompt_tps_val == 0 and dt > 0:
+        d_prompt_tokens = curr.prompt_tokens_total - prev.prompt_tokens_total
+        if d_prompt_tokens > 0:
+            prompt_tps_val = d_prompt_tokens / dt
+
     delta = SpecLiveDelta(
         elapsed_s=dt,
         had_activity=had_activity,
+        # Throughput (gauge or counter-derived fallback)
+        prompt_tps=prompt_tps_val,
+        generation_tps=gen_tps,
         # Instantaneous gauges — always from current snapshot
-        prompt_tps=curr.prompt_tps,
-        generation_tps=curr.generation_tps,
         gpu_cache_pct=curr.gpu_cache_usage * 100,
         running_reqs=int(curr.running_reqs),
         waiting_reqs=int(curr.waiting_reqs),

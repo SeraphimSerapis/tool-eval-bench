@@ -72,17 +72,17 @@ class SpecDecodeCounters:
 # metric name and the value.  The (?:\{[^}]*\})? group handles this optional
 # label block so we match both bare and labelled counter lines.
 _PROM_PATTERNS = {
-    # vLLM metrics
+    # vLLM metrics (supports both vllm: and vllm_ prefix variants)
     "accepted_tokens": re.compile(
-        r"^(?:vllm:)?spec_decode_num_accepted_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?spec_decode_num_accepted_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     "draft_tokens": re.compile(
-        r"^(?:vllm:)?spec_decode_num_draft_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?spec_decode_num_draft_tokens(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     "num_drafts": re.compile(
-        r"^(?:vllm:)?spec_decode_num_drafts(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?spec_decode_num_drafts(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
 }
