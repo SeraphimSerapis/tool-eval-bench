@@ -230,6 +230,7 @@ def _build_dashboard(
     model_name: str,
     metrics_endpoint: str,
     poll_count: int,
+    baseline_snap: MetricsSnapshot | None = None,
 ) -> Panel:
     """Build the full dashboard layout."""
     now = time.time()
@@ -385,24 +386,31 @@ def _build_dashboard(
         Text(f"{delta.prompt_tps:,.0f}", style="bold cyan"),
     )
 
-    # Session totals
+    # Session totals — show tokens since monitor launch, not server lifetime
     session_table = Table.grid(padding=(0, 2))
     session_table.add_column("label", no_wrap=True, width=15)
     session_table.add_column("value", no_wrap=True)
 
+    if baseline_snap is not None:
+        session_accepted = delta.total_accepted - int(baseline_snap.accepted_tokens)
+        session_drafted = delta.total_drafted - int(baseline_snap.draft_tokens)
+    else:
+        session_accepted = delta.total_accepted
+        session_drafted = delta.total_drafted
+
     session_table.add_row(
         Text("Accepted", style="dim"),
-        Text(f"{delta.total_accepted:,}", style="bold"),
+        Text(f"{session_accepted:,}", style="bold"),
     )
     session_table.add_row(
         Text("Drafted", style="dim"),
-        Text(f"{delta.total_drafted:,}", style="bold"),
+        Text(f"{session_drafted:,}", style="bold"),
     )
-    if delta.total_drafted > 0:
-        cumulative_ar = delta.total_accepted / delta.total_drafted
+    if session_drafted > 0:
+        session_ar = session_accepted / session_drafted
         session_table.add_row(
             Text("Session α", style="dim"),
-            Text(f"{cumulative_ar * 100:.1f}%", style=f"bold {_ar_color(cumulative_ar)}"),
+            Text(f"{session_ar * 100:.1f}%", style=f"bold {_ar_color(session_ar)}"),
         )
 
     engine_panel = Panel(
@@ -568,6 +576,7 @@ async def run_spec_live(
 
     history: deque[SpecLiveDelta] = deque(maxlen=_HISTORY_LEN)
     prev_snap: MetricsSnapshot | None = None
+    baseline_snap: MetricsSnapshot | None = None  # first snapshot — for session-relative counters
     start_time = time.time()
     poll_count = 0
     last_delta: SpecLiveDelta | None = None
@@ -605,7 +614,7 @@ async def run_spec_live(
         limits=httpx.Limits(max_connections=5, max_keepalive_connections=2),
     ) as client:
         with Live(
-            _build_dashboard(None, history, start_time, model_name, url, 0),
+            _build_dashboard(None, history, start_time, model_name, url, 0, baseline_snap),
             console=console,
             refresh_per_second=2,
             transient=False,
@@ -644,11 +653,14 @@ async def run_spec_live(
                 elif snap is not None and prev_snap is None:
                     # First scrape, no spec decode counters yet — store for next
                     prev_snap = snap
+                    if baseline_snap is None:
+                        baseline_snap = snap  # session-relative baseline
 
                 live.update(
                     _build_dashboard(
                         last_delta, history, start_time,
                         model_name, url, poll_count,
+                        baseline_snap,
                     )
                 )
 
@@ -676,6 +688,18 @@ async def run_spec_live(
             max_gen = max(gen_vals) if gen_vals else 0.0
 
             console.print()
+
+            # Session-relative totals for exit summary
+            if last_delta and baseline_snap:
+                sess_accepted = last_delta.total_accepted - int(baseline_snap.accepted_tokens)
+                sess_drafted = last_delta.total_drafted - int(baseline_snap.draft_tokens)
+            elif last_delta:
+                sess_accepted = last_delta.total_accepted
+                sess_drafted = last_delta.total_drafted
+            else:
+                sess_accepted = 0
+                sess_drafted = 0
+
             console.print(
                 Panel(
                     Text.assemble(
@@ -695,10 +719,11 @@ async def run_spec_live(
                         ("peak ", "dim"),
                         (f"{max_gen:.1f}", "bold"),
                         ("\n", ""),
-                        ("  Total accepted:  ", "dim"),
-                        (f"{last_delta.total_accepted:,}" if last_delta else "—", "bold"),
-                        ("  / drafted ", "dim"),
-                        (f"{last_delta.total_drafted:,}" if last_delta else "—", "bold"),
+                        ("  Session tokens:  ", "dim"),
+                        (f"{sess_accepted:,}", "bold"),
+                        (" accepted  / ", "dim"),
+                        (f"{sess_drafted:,}", "bold"),
+                        (" drafted", "dim"),
                     ),
                     title="[bold]Session Summary[/]",
                     border_style="bright_magenta",
