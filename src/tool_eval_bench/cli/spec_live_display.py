@@ -345,18 +345,12 @@ def _build_dashboard(
     bottom.add_column("left", width=40, no_wrap=False)
     bottom.add_column("right", ratio=1, no_wrap=False)
 
-    # ── Left Column: Per-Position + Engine ──
-    pos_panel = Panel(
-        _position_bars(delta.per_position_rates),
-        title="[bold]Per-Position Acceptance[/]",
-        border_style="bright_cyan",
-        padding=(0, 1),
-    )
+    # ── Left Column: Per-Position (if available) + Engine ──
 
     # Engine status block
     cache_pct = delta.gpu_cache_pct
     cache_color = "bright_green" if cache_pct < 50 else "yellow" if cache_pct < 80 else "bright_red"
-    cache_bar_w = 15
+    cache_bar_w = 10
     cache_filled = int(cache_pct / 100 * cache_bar_w)
     cache_bar = Text()
     cache_bar.append("▓" * cache_filled, style=cache_color)
@@ -420,7 +414,17 @@ def _build_dashboard(
         padding=(0, 1),
     )
 
-    left_col = Group(pos_panel, engine_panel)
+    # Only show Per-Position panel if the server exposes per-position rates
+    if delta.per_position_rates:
+        pos_panel = Panel(
+            _position_bars(delta.per_position_rates),
+            title="[bold]Per-Position Acceptance[/]",
+            border_style="bright_cyan",
+            padding=(0, 1),
+        )
+        left_col = Group(pos_panel, engine_panel)
+    else:
+        left_col = engine_panel
 
     # ── Right Column: Sparklines + Throughput History ──
     # Use cumulative α for sparklines (always available)

@@ -158,7 +158,6 @@ class TestComputeDelta:
             num_drafts=0.0,
             prompt_tps=0.0,
             generation_tps=0.0,
-            gpu_cache_usage=0.0,
             running_reqs=0.0,
             waiting_reqs=0.0,
             prefix_cache_hit=0.0,
@@ -435,7 +434,7 @@ class TestBuildDashboard:
         assert "spec decode enabled" in text
 
     def test_renders_without_per_position(self):
-        """MTP models don't have per-position rates."""
+        """MTP models don't have per-position rates — panel is hidden."""
         from tool_eval_bench.cli.spec_live_display import _build_dashboard
 
         delta = self._make_delta(per_position_rates={})
@@ -443,7 +442,9 @@ class TestBuildDashboard:
         panel = _build_dashboard(delta, history, time.time() - 30,
                                  "MTPModel", "http://localhost:8000/metrics", 30)
         text = self._render(panel)
-        assert "not exposed" in text
+        assert "Per-Position" not in text
+        # Engine panel should still be present
+        assert "Engine" in text
 
     def test_renders_with_rolling_averages(self):
         """Rolling averages panel appears after 5+ data points."""
