@@ -54,6 +54,13 @@ is not installed (it's in the `[perf]` optional group).
 
 If checks are not possible, explicitly state what was not run and why.
 
+## Git conventions
+
+- When a commit fixes a GitHub issue, the commit message **MUST** reference it
+  with a `Closes #N` trailer (or `Fixes #N`) so the issue auto-closes on push.
+- Use the issue number in the subject line too, e.g.:
+  `fix: resolve reports path inside .venv (#9)`
+
 ## Documentation requirements
 
 When changing architecture or API behavior, update:
