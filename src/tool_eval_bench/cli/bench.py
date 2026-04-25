@@ -689,23 +689,22 @@ def _run_spec_bench(
             show_header=True,
             header_style="bold",
             border_style="bright_magenta",
-            expand=True,
         )
         has_draft = any(s.draft_tps is not None for s in ok_samples)
 
-        table.add_column("Prompt", no_wrap=True)
+        table.add_column("Prompt", no_wrap=True, min_width=10)
         table.add_column("Depth", justify="right", no_wrap=True)
         table.add_column("Eff t/s", justify="right", min_width=7, no_wrap=True)
-        table.add_column("α %", justify="right", no_wrap=True)
-        table.add_column("Waste", justify="right", no_wrap=True)
-        table.add_column("τ len", justify="right", no_wrap=True)
+        table.add_column("α %", justify="right", min_width=6, no_wrap=True)
+        table.add_column("Waste", justify="right", min_width=5, no_wrap=True)
+        table.add_column("τ len", justify="right", min_width=5, no_wrap=True)
         if has_draft:
-            table.add_column("Window", justify="right", no_wrap=True)
-            table.add_column("Draft t/s", justify="right", no_wrap=True)
+            table.add_column("Win", justify="right", no_wrap=True)
+            table.add_column("Draft t/s", justify="right", min_width=9, no_wrap=True)
         if has_speedup:
             table.add_column("Speed", justify="right", no_wrap=True)
-        table.add_column("TTFT", justify="right", no_wrap=True)
-        table.add_column("Total ms", justify="right", no_wrap=True)
+        table.add_column("TTFT ms", justify="right", min_width=7, no_wrap=True)
+        table.add_column("Total ms", justify="right", min_width=8, no_wrap=True)
 
         def _depth_label(d: int) -> str:
             if d == 0:
