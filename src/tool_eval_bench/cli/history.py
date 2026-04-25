@@ -121,6 +121,7 @@ def print_history(console: Console) -> None:
         show_header=True,
         header_style="bold",
         border_style="bright_blue",
+        expand=True,
     )
     table.add_column("Run ID", min_width=30, no_wrap=True)
     table.add_column("Model", min_width=20)
@@ -189,6 +190,7 @@ def print_diff(
         show_header=True,
         header_style="bold",
         border_style="bright_cyan",
+        expand=True,
     )
     table.add_column("ID", width=6, no_wrap=True)
     table.add_column("Scenario", min_width=20, no_wrap=True)
@@ -352,6 +354,7 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
         show_header=True,
         header_style="bold",
         border_style="bright_cyan",
+        expand=True,
     )
     table.add_column("ID", width=6, no_wrap=True)
     table.add_column("A", justify="center", width=8)

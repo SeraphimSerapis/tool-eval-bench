@@ -219,6 +219,7 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
         title_style="bold bright_white",
         show_lines=True,
         padding=(0, 1),
+        expand=True,
     )
 
     # Rank column
