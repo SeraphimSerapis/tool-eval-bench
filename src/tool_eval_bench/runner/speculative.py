@@ -526,6 +526,7 @@ async def run_spec_bench(
                 "per-request acceptance rate measurements will be inaccurate. "
                 "For clean measurements: use a single-model server with no concurrent load.",
             )
+            print()  # visual separator before results
 
         # Build sweep: depth × prompt_type
         combos = [(d, pt) for d in depths for pt in prompt_types]
