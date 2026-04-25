@@ -1183,19 +1183,11 @@ def main() -> None:
             context_pressure=args.context_pressure,
             probe_engine=not args.no_probe_engine,
         ))
-        if not args.json:
-            # Show engine info if detected
-            if run_context.engine_name:
-                engine_str = run_context.engine_name
-                if run_context.engine_version:
-                    engine_str += f" {run_context.engine_version}"
-                console.print(f"  [dim]🔍 Engine: {engine_str}[/]")
-            if run_context.quantization:
-                console.print(f"  [dim]🔍 Quantization: {run_context.quantization}[/]")
-            if run_context.max_model_len:
-                console.print(f"  [dim]🔍 Max context: {run_context.max_model_len:,} tokens[/]")
-            if run_context.server_model_root and run_context.server_model_root != model:
-                console.print(f"  [dim]🔍 Model root: {run_context.server_model_root}[/]")
+        if not args.json and run_context.engine_name:
+            engine_str = run_context.engine_name
+            if run_context.engine_version:
+                engine_str += f" {run_context.engine_version}"
+            console.print(f"  [dim]🔍 Engine: {engine_str}[/]")
     except Exception as exc:
         logger.warning("Failed to build RunContext: %s", exc)
 
@@ -1907,7 +1899,7 @@ def _run_with_live_display(
     all_summaries = []
 
     # --- Trial 1: with live display ---
-    display = BenchmarkDisplay(display_name, backend, display_url or base_url, scenarios)
+    display = BenchmarkDisplay(display_name, backend, display_url or base_url, scenarios, run_context=run_context)
     display.start()
 
     async def run_trial(*, show: bool = False) -> dict:

@@ -12,6 +12,7 @@ This eliminates flicker because only 1-2 lines are ever rewritten.
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from rich.console import Console
 from rich.live import Live
@@ -88,6 +89,7 @@ class BenchmarkDisplay:
         backend: str,
         base_url: str,
         scenarios: list[ScenarioDefinition] | None = None,
+        run_context: Any | None = None,
     ) -> None:
         from tool_eval_bench.evals.scenarios import SCENARIOS
 
@@ -95,6 +97,7 @@ class BenchmarkDisplay:
         self.backend = backend
         self.base_url = base_url
         self.scenarios = scenarios or SCENARIOS
+        self.run_context = run_context
         self.console = Console()
 
         # State
@@ -180,6 +183,7 @@ class BenchmarkDisplay:
         _print_final_panel(
             self.console, self.model, summary, time.time() - self.started_at,
             throughput_samples=throughput_samples,
+            run_context=self.run_context,
         )
 
     # -- Formatting helpers --
@@ -285,6 +289,7 @@ def _print_final_panel(
     elapsed: float,
     *,
     throughput_samples: list | None = None,
+    run_context: Any | None = None,
 ) -> None:
     """Print the final score panel."""
     score = summary.final_score
@@ -295,10 +300,27 @@ def _print_final_panel(
     partials = sum(1 for r in summary.scenario_results if r.status == ScenarioStatus.PARTIAL)
     fails = sum(1 for r in summary.scenario_results if r.status == ScenarioStatus.FAIL)
 
+    # Build model info lines from run_context (always included when available)
+    model_info_lines = ""
+    if run_context is not None:
+        rc = run_context
+        if rc.engine_name:
+            engine_str = rc.engine_name
+            if rc.engine_version:
+                engine_str += f" {rc.engine_version}"
+            model_info_lines += f"\n  [dim]Engine:       {engine_str}[/]"
+        if rc.quantization:
+            model_info_lines += f"\n  [dim]Quantization: {rc.quantization}[/]"
+        if rc.max_model_len:
+            model_info_lines += f"\n  [dim]Max context:  {rc.max_model_len:,} tokens[/]"
+        if rc.server_model_root and rc.server_model_root != model:
+            model_info_lines += f"\n  [dim]Model root:   {rc.server_model_root}[/]"
+
     content = (
         f"  [bold]Model:[/]  {model}\n"
         f"  [bold]Score:[/]  [{rating_color}]{score} / 100[/]\n"
-        f"  [bold]Rating:[/] [{rating_color}]{rating}[/]\n"
+        f"  [bold]Rating:[/] [{rating_color}]{rating}[/]"
+        f"{model_info_lines}\n"
         f"\n"
         f"  [green]✅ {passes} passed[/]   [yellow]⚠️  {partials} partial[/]   [red]❌ {fails} failed[/]\n"
         f"  [bold]Points:[/] {summary.total_points}/{summary.max_points}"
@@ -413,6 +435,7 @@ def print_final_report(
     elapsed: float,
     *,
     throughput_samples: list | None = None,
+    run_context: Any | None = None,
 ) -> None:
     """Print a detailed static report with per-scenario diagnostics."""
     _print_category_scores(console, summary)
@@ -462,4 +485,4 @@ def print_final_report(
     console.print(detail_table)
     console.print()
 
-    _print_final_panel(console, model, summary, elapsed, throughput_samples=throughput_samples)
+    _print_final_panel(console, model, summary, elapsed, throughput_samples=throughput_samples, run_context=run_context)
