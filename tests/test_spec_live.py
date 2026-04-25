@@ -135,6 +135,50 @@ vllm:spec_decode_num_draft_tokens_total{engine="0"} 500.0
         assert snap.has_spec_decode is False
         assert snap.per_position_rates == {}
 
+    def test_scientific_notation_values(self):
+        r"""vLLM reports large counters in scientific notation (e.g. 1.378e+06).
+
+        Regression: the old regex (\d+(?:\.\d+)?) only captured the mantissa,
+        dropping the exponent and causing wildly wrong calculations.
+        """
+        text = """\
+vllm:spec_decode_num_accepted_tokens_total{engine="0"} 100.0
+vllm:spec_decode_num_draft_tokens_total{engine="0"} 500.0
+vllm:prefix_cache_queries_total{engine="0"} 1.378852e+06
+vllm:prefix_cache_hits_total{engine="0"} 41920.0
+vllm:prompt_tokens_total{engine="0"} 2.5e+05
+vllm:generation_tokens_total{engine="0"} 3.79e+04
+"""
+        snap = _parse_snapshot(text)
+        assert snap.prefix_cache_queries == pytest.approx(1_378_852.0)
+        assert snap.prefix_cache_hits == pytest.approx(41920.0)
+        assert snap.prompt_tokens_total == pytest.approx(250_000.0)
+        assert snap.generation_tokens_total == pytest.approx(37_900.0)
+
+    def test_scientific_notation_negative_exponent(self):
+        """Small values with negative exponents (e.g. cache fractions)."""
+        text = """\
+vllm:kv_cache_usage_perc{engine="0"} 7.643e-03
+"""
+        snap = _parse_snapshot(text)
+        assert snap.kv_cache_usage == pytest.approx(0.007643, rel=1e-3)
+
+    def test_kv_cache_none_when_not_present(self):
+        """KV cache fields default to None when metric is absent."""
+        snap = _parse_snapshot("vllm:num_requests_running 0\n")
+        assert snap.kv_cache_usage is None
+        assert snap.gpu_cache_usage is None
+
+    def test_kv_cache_set_when_present(self):
+        """KV cache fields are float when metric is found."""
+        text = """\
+vllm:kv_cache_usage_perc{engine="0"} 0.0
+vllm:gpu_cache_usage_perc{engine="0"} 0.034
+"""
+        snap = _parse_snapshot(text)
+        assert snap.kv_cache_usage == pytest.approx(0.0)
+        assert snap.gpu_cache_usage == pytest.approx(0.034)
+
     def test_timestamp_set(self):
         before = time.time()
         snap = _parse_snapshot("spec_decode_num_accepted_tokens 100\n")
@@ -252,6 +296,74 @@ class TestComputeDelta:
         curr.per_position_rates = {0: 0.658, 1: 0.447, 2: 0.263}
         delta = compute_delta(prev, curr)
         assert delta.per_position_rates == {0: 0.658, 1: 0.447, 2: 0.263}
+
+    def test_kv_cache_prefers_new_metric_even_if_zero(self):
+        """kv_cache_usage=0.0 (present) should NOT fall back to gpu_cache_usage."""
+        prev = self._make_snap(timestamp=100.0)
+        curr = self._make_snap(timestamp=101.0, accepted_tokens=100, draft_tokens=500)
+        curr.kv_cache_usage = 0.0   # genuinely zero (idle)
+        curr.gpu_cache_usage = None  # not present (old metric)
+        delta = compute_delta(prev, curr)
+        assert delta.gpu_cache_pct == pytest.approx(0.0)
+
+    def test_kv_cache_falls_back_to_gpu_cache(self):
+        """When kv_cache_usage is None, fall back to gpu_cache_usage."""
+        prev = self._make_snap(timestamp=100.0)
+        curr = self._make_snap(timestamp=101.0, accepted_tokens=100, draft_tokens=500)
+        curr.kv_cache_usage = None   # new metric not present
+        curr.gpu_cache_usage = 0.05  # old metric present
+        delta = compute_delta(prev, curr)
+        assert delta.gpu_cache_pct == pytest.approx(5.0)
+
+    def test_kv_cache_both_none(self):
+        """When neither cache metric is present, cache_pct defaults to 0."""
+        prev = self._make_snap(timestamp=100.0)
+        curr = self._make_snap(timestamp=101.0, accepted_tokens=100, draft_tokens=500)
+        curr.kv_cache_usage = None
+        curr.gpu_cache_usage = None
+        delta = compute_delta(prev, curr)
+        assert delta.gpu_cache_pct == pytest.approx(0.0)
+
+    def test_counter_derived_gen_tps(self):
+        """When generation_tps gauge is 0, derive from token counter deltas."""
+        prev = self._make_snap(
+            timestamp=100.0, accepted_tokens=0, draft_tokens=0,
+        )
+        prev.generation_tokens_total = 1000.0
+        curr = self._make_snap(
+            timestamp=110.0, accepted_tokens=100, draft_tokens=500,
+            generation_tps=0.0,  # gauge removed in vLLM ≥0.8
+        )
+        curr.generation_tokens_total = 1500.0  # 500 tokens in 10s
+        delta = compute_delta(prev, curr)
+        assert delta.generation_tps == pytest.approx(50.0)  # 500/10
+
+    def test_counter_derived_prompt_tps(self):
+        """When prompt_tps gauge is 0, derive from prompt_tokens_total deltas."""
+        prev = self._make_snap(
+            timestamp=100.0, accepted_tokens=0, draft_tokens=0,
+        )
+        prev.prompt_tokens_total = 10000.0
+        curr = self._make_snap(
+            timestamp=110.0, accepted_tokens=100, draft_tokens=500,
+            prompt_tps=0.0,  # gauge removed
+        )
+        curr.prompt_tokens_total = 30000.0  # 20000 tokens in 10s
+        delta = compute_delta(prev, curr)
+        assert delta.prompt_tps == pytest.approx(2000.0)  # 20000/10
+
+    def test_prefix_cache_counter_derived_rate(self):
+        """When prefix_cache_hit gauge is 0, derive from hit/query counters."""
+        prev = self._make_snap(timestamp=100.0)
+        curr = self._make_snap(
+            timestamp=101.0, accepted_tokens=100, draft_tokens=500,
+        )
+        curr.prefix_cache_hit = 0.0       # old gauge not present
+        curr.prefix_cache_queries = 10000  # counter
+        curr.prefix_cache_hits = 800       # counter
+        delta = compute_delta(prev, curr)
+        # 800/10000 = 0.08 → 8%
+        assert delta.prefix_cache_hit_pct == pytest.approx(8.0)
 
 
 # ---------------------------------------------------------------------------

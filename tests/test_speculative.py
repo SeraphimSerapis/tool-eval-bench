@@ -136,6 +136,23 @@ vllm:num_requests_running 0
         assert counters.acceptance_rate == pytest.approx(0.5)
         assert counters.acceptance_length is None
 
+    def test_scientific_notation_values(self):
+        """vLLM reports large counters in scientific notation (e.g. 1.378e+06).
+
+        Regression: the old regex only captured the mantissa, dropping the
+        exponent and causing wrong counter values.
+        """
+        text = """\
+vllm:spec_decode_num_accepted_tokens_total{engine="0"} 1.5e+04
+vllm:spec_decode_num_draft_tokens_total{engine="0"} 2.1e+04
+vllm:spec_decode_num_drafts_total{engine="0"} 5.25e+03
+"""
+        counters = parse_prometheus_spec_metrics(text)
+        assert counters.accepted_tokens == pytest.approx(15000.0)
+        assert counters.draft_tokens == pytest.approx(21000.0)
+        assert counters.num_drafts == pytest.approx(5250.0)
+        assert counters.acceptance_rate == pytest.approx(15000 / 21000)
+
 
 # ---------------------------------------------------------------------------
 # SpecDecodeSample
