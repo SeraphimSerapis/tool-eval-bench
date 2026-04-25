@@ -491,6 +491,330 @@ class TestTC63AccumulatingConstraints:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
 
+    def test_partial_single_constraint(self) -> None:
+        """Only 1/4 constraints retained → partial with context drift note."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "web_search", "arguments": {"query": "Italian restaurant"}},
+            ],
+            final_answer="Try this Italian place — great food!",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "1/4" in result.summary
+
+    def test_partial_two_constraints(self) -> None:
+        """2/4 constraints → partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "web_search", "arguments": {"query": "Italian restaurant downtown"}},
+            ],
+            final_answer="Try Luigi's — Italian, downtown location.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+
+# ===================================================================
+# Additional edge-case tests for evaluator branch coverage
+# ===================================================================
+
+
+class TestTC51EdgeCases:
+    sc = _get("TC-51")
+
+    def test_partial_clarification(self) -> None:
+        """Asking for clarification is partial, not fail."""
+        state = _make_state(
+            final_answer="Could you clarify which day you'd prefer for the team lunch?",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "clarification" in result.summary.lower()
+
+    def test_partial_event_only(self) -> None:
+        """Only created event (no contacts, no email) → partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "create_calendar_event", "arguments": {"title": "Team Lunch"}},
+            ],
+            final_answer="Created the event.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_missing_event(self) -> None:
+        """Got contacts + sent email but no event → partial with 'event creation' in missing."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "engineering team"}},
+                {"name": "send_email", "arguments": {"to": "alice@co.com"}},
+            ],
+            final_answer="Notified the team.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "event creation" in result.summary.lower()
+
+
+class TestTC52EdgeCases:
+    sc = _get("TC-52")
+
+    def test_partial_market_only(self) -> None:
+        """Searched market but didn't get AAPL stock price → partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "web_search", "arguments": {"query": "S&P 500 market index"}},
+            ],
+            final_answer="The S&P 500 is up 0.8% this week.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "stock price" in result.summary.lower()
+
+    def test_partial_both_sources_no_synthesis(self) -> None:
+        """Got both data sources but didn't synthesize comparison."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}},
+                {"name": "web_search", "arguments": {"query": "S&P 500 market performance"}},
+            ],
+            final_answer="I found some data for you.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "synthesize" in result.summary.lower()
+
+
+class TestTC53EdgeCases:
+    sc = _get("TC-53")
+
+    def test_pass_email_plus_rain(self) -> None:
+        """Checked weather + sent email + mentions rain → pass (alternative path)."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "London"}},
+                {"name": "send_email", "arguments": {"to": "team@co.com"}},
+            ],
+            final_answer="It's raining in London. I've sent a notification to move indoors.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
+    def test_partial_weather_rain_no_action(self) -> None:
+        """Checked weather, mentioned rain, but no event/email → partial."""
+        state = _make_state(
+            tool_calls=[{"name": "get_weather", "arguments": {"location": "London"}}],
+            final_answer="It's raining in London. You may want to move the meeting.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_weather_action_no_rain(self) -> None:
+        """Checked weather + action but didn't mention rain → partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "London"}},
+                {"name": "create_calendar_event", "arguments": {"title": "Meeting"}},
+            ],
+            final_answer="I've updated the meeting.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_weather_only_no_rain(self) -> None:
+        """Checked weather but no rain mention and no action → partial."""
+        state = _make_state(
+            tool_calls=[{"name": "get_weather", "arguments": {"location": "London"}}],
+            final_answer="The weather in London is not great.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+
+class TestTC54EdgeCases:
+    sc = _get("TC-54")
+
+    def test_partial_exchange_only(self) -> None:
+        """Searched exchange rate but no stock price → partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "web_search", "arguments": {"query": "USD to JPY exchange rate"}},
+            ],
+            final_answer="The exchange rate is 149.50 JPY per USD.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_both_imprecise(self) -> None:
+        """Got both data sources but final answer doesn't have correct number."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_stock_price", "arguments": {"ticker": "MSFT"}},
+                {"name": "web_search", "arguments": {"query": "USD JPY exchange rate"}},
+            ],
+            final_answer="MSFT is around 425 dollars which is some amount of JPY.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+
+class TestTC55EdgeCases:
+    sc = _get("TC-55")
+
+    def test_partial_search_only(self) -> None:
+        """Found files but didn't read them → partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "Q3 revenue"}},
+            ],
+            final_answer="I found two Q3 revenue files.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_read_both_no_total(self) -> None:
+        """Read both files but didn't compute the total → partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "Q3 revenue"}},
+                {"name": "read_file", "arguments": {"file_id": "q3_rev_na"}},
+                {"name": "read_file", "arguments": {"file_id": "q3_rev_emea"}},
+            ],
+            final_answer="NA revenue is $2.4M and EMEA is $1.8M.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+
+class TestTC56EdgeCases:
+    sc = _get("TC-56")
+
+    def test_partial_email_no_cold(self) -> None:
+        """Checked weather + sent email but didn't mention freezing → partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {"name": "send_email", "arguments": {"to": "me@co.com"}},
+            ],
+            final_answer="I checked the weather and sent you an email.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_reminder_instead(self) -> None:
+        """Set reminder instead of email — close but wrong channel."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "New York"}},
+                {"name": "set_reminder", "arguments": {"text": "Dress warmly"}},
+            ],
+            final_answer="NYC is -3°C, below freezing. I've set a reminder to dress warmly.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_weather_no_action(self) -> None:
+        """Checked weather but didn't act on the below-freezing result."""
+        state = _make_state(
+            tool_calls=[{"name": "get_weather", "arguments": {"location": "NYC"}}],
+            final_answer="The weather in NYC is nice.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+
+class TestTC61EdgeCases:
+    sc = _get("TC-61")
+
+    def test_partial_polled_no_result(self) -> None:
+        """Retried but didn't surface the result."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "run_code", "arguments": {"code": "analyze()"}},
+                {"name": "run_code", "arguments": {"code": "check_status()"}},
+            ],
+            final_answer="The job completed successfully.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_fail_single_call_no_pending(self) -> None:
+        """Ran once, didn't even report pending → fail."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "run_code", "arguments": {"code": "analyze()"}},
+            ],
+            final_answer="The analysis has been initiated.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+
+
+class TestTC62EdgeCases:
+    sc = _get("TC-62")
+
+    def test_partial_one_checkpoint(self) -> None:
+        """Only completed 1/3 checkpoints → partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "web_search", "arguments": {"query": "Acme Corp Q3"}},
+            ],
+            assistant_messages=["Acme Corp's Q3 revenue was $3.8M."],
+            final_answer="Acme Corp earned $3.8M in Q3.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_two_checkpoints_no_email(self) -> None:
+        """Used corrected data + searched Acme but no email → partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "read_file", "arguments": {"file_id": "q3_latest"}},
+                {"name": "web_search", "arguments": {"query": "Acme Corp Q3"}},
+            ],
+            assistant_messages=[
+                "The corrected Q3 revenue is $4,150,000.",
+                "Acme Corp's Q3 revenue was $3.8M.",
+            ],
+            final_answer="We outperformed Acme by $350K.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_email_not_to_cfo(self) -> None:
+        """All 3 checkpoints but email not to CFO → partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "read_file", "arguments": {"file_id": "q3_latest"}},
+                {"name": "web_search", "arguments": {"query": "Acme Corp Q3"}},
+                {"name": "send_email", "arguments": {"to": "boss@company.com", "body": "Q3 rev: $4.15M"}},
+            ],
+            assistant_messages=[
+                "The corrected Q3 revenue is $4,150,000.",
+                "Acme Corp's Q3 revenue was $3.8M.",
+                "Sent the analysis.",
+            ],
+            final_answer="Sent the analysis.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+
+class TestTC63EdgeCases:
+    sc = _get("TC-63")
+
+    def test_pass_four_constraints_no_trattoria(self) -> None:
+        """Meets all 4 constraints even without naming Trattoria Bella."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "web_search", "arguments": {"query": "Italian restaurant downtown open late budget"}},
+            ],
+            final_answer="Found a great Italian place downtown, $22/person, open until 11pm.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
 
 # ===================================================================
 # Helpers

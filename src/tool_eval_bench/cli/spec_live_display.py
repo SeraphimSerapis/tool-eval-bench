@@ -285,19 +285,11 @@ def _build_dashboard(
     gauge_line.append("\n  ACCEPTANCE RATE  ", style="bold")
     gauge_line.append_text(_gauge_bar(ar, width=40))
 
-    # ── Draft Efficiency Gauge (cumulative) ──
+    # Annotate with τ/window utilization when draft window data is available
     tau = delta.cumulative_acceptance_length
     win = delta.cumulative_draft_window
-    utilization = (tau / win) if (tau and win and win > 0) else None
-
-    eff_line = Text()
-    eff_line.append("  DRAFT EFFICIENCY ", style="bold")
-    if utilization is not None:
-        eff_line.append_text(_gauge_bar(min(utilization, 1.0), width=40))
-        eff_line.append(f"  τ={tau:.1f}/{win:.0f}", style="dim")
-    else:
-        eff_line.append("╌" * 40, style="dim")
-        eff_line.append("     —  ", style="dim")
+    if tau and win and win > 0:
+        gauge_line.append(f"  τ={tau:.1f}/{win:.0f}", style="dim")
 
     # ── Insight line ──
     insight = _efficiency_insight(delta)
@@ -548,7 +540,6 @@ def _build_dashboard(
         Group(
             header,
             gauge_line,
-            eff_line,
             insight,
             Text(""),
             metrics,
