@@ -336,6 +336,7 @@ def _run_throughput(
             show_header=True,
             header_style="bold",
             border_style="bright_cyan",
+            expand=True,
         )
         table.add_column("Test", min_width=20, no_wrap=True)
         table.add_column("pp t/s", justify="right", width=10)
@@ -617,6 +618,7 @@ def _run_spec_bench(
             border_style="bright_magenta",
         )
     )
+    console.print()
 
     completed: list[SpecDecodeSample] = []
 
@@ -687,6 +689,7 @@ def _run_spec_bench(
             show_header=True,
             header_style="bold",
             border_style="bright_magenta",
+            expand=True,
         )
         has_draft = any(s.draft_tps is not None for s in ok_samples)
 
