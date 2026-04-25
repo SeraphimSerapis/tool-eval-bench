@@ -126,8 +126,8 @@ class MetricsSnapshot:
     # Engine gauges
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
-    gpu_cache_usage: float = 0.0   # legacy: gpu_cache_usage_perc
-    kv_cache_usage: float = 0.0    # current: kv_cache_usage_perc
+    gpu_cache_usage: float | None = None   # legacy: gpu_cache_usage_perc
+    kv_cache_usage: float | None = None    # current: kv_cache_usage_perc
     running_reqs: float = 0.0
     waiting_reqs: float = 0.0
     prefix_cache_hit: float = 0.0  # legacy gauge (0–1)
@@ -237,8 +237,14 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
         if d_prompt_tokens > 0:
             prompt_tps_val = d_prompt_tokens / dt
 
-    # KV cache — prefer new kv_cache_usage_perc, fall back to legacy gpu_cache_usage_perc
-    cache_frac = curr.kv_cache_usage if curr.kv_cache_usage > 0 else curr.gpu_cache_usage
+    # KV cache — prefer new kv_cache_usage_perc when present (even if 0.0,
+    # which is a valid reading when idle), fall back to legacy gpu_cache_usage_perc
+    if curr.kv_cache_usage is not None:
+        cache_frac = curr.kv_cache_usage
+    elif curr.gpu_cache_usage is not None:
+        cache_frac = curr.gpu_cache_usage
+    else:
+        cache_frac = 0.0
 
     # Prefix cache — prefer legacy gauge, fall back to counter-derived rate
     prefix_hit_rate = curr.prefix_cache_hit
