@@ -13,6 +13,12 @@ All notable changes to `tool-eval-bench` are documented here.
   four parent directories from there lands in `.venv/`, not the project root. Changed
   both functions to use `Path.cwd()` so reports go to `./runs/` and the database to
   `./data/benchmarks.sqlite` relative to wherever the CLI is invoked.
+- **`--spec-live` session counters show server-lifetime totals** — the baseline
+  snapshot (used to compute session-relative Accepted/Drafted counts) was only
+  captured when the first scrape had *no* spec-decode counters. When the server
+  already had counters (the normal case — vLLM had processed prior requests), the
+  baseline was never set and the dashboard showed cumulative server-lifetime numbers
+  instead of session-relative ones.
 
 ### Added
 

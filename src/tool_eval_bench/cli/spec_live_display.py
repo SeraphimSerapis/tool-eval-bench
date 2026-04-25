@@ -624,6 +624,10 @@ async def run_spec_live(
                 poll_count += 1
 
                 if snap is not None and snap.has_spec_decode:
+                    # Capture baseline on first successful scrape (session-relative counters)
+                    if baseline_snap is None:
+                        baseline_snap = snap
+
                     if prev_snap is not None:
                         delta = compute_delta(prev_snap, snap)
 
@@ -653,8 +657,6 @@ async def run_spec_live(
                 elif snap is not None and prev_snap is None:
                     # First scrape, no spec decode counters yet — store for next
                     prev_snap = snap
-                    if baseline_snap is None:
-                        baseline_snap = snap  # session-relative baseline
 
                 live.update(
                     _build_dashboard(
