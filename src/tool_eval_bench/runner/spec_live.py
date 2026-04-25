@@ -62,9 +62,13 @@ _COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
         r"^(?:vllm[:_])?avg_generation_throughput_toks_per_s(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
-    # KV cache
+    # KV cache — old name (gpu_cache_usage_perc) and new name (kv_cache_usage_perc)
     "gpu_cache_usage": re.compile(
         r"^(?:vllm[:_])?gpu_cache_usage_perc(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    "kv_cache_usage": re.compile(
+        r"^(?:vllm[:_])?kv_cache_usage_perc(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     # Requests
@@ -76,9 +80,17 @@ _COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
         r"^(?:vllm[:_])?num_requests_waiting(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
-    # Prefix cache
+    # Prefix cache — old gauge and new counters
     "prefix_cache_hit": re.compile(
-        r"^(?:vllm[:_])?prefix_cache_hit_rate(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        r"^(?:vllm[:_])?(?:gpu_)?prefix_cache_hit_rate(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    "prefix_cache_queries": re.compile(
+        r"^(?:vllm[:_])?prefix_cache_queries(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
+        re.MULTILINE,
+    ),
+    "prefix_cache_hits": re.compile(
+        r"^(?:vllm[:_])?prefix_cache_hits(?:_total)?(?:\{[^}]*\})?\s+(\d+(?:\.\d+)?)",
         re.MULTILINE,
     ),
     # Token counts (cumulative) — primary source for throughput in vLLM ≥0.8
@@ -114,10 +126,13 @@ class MetricsSnapshot:
     # Engine gauges
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
-    gpu_cache_usage: float = 0.0
+    gpu_cache_usage: float = 0.0   # legacy: gpu_cache_usage_perc
+    kv_cache_usage: float = 0.0    # current: kv_cache_usage_perc
     running_reqs: float = 0.0
     waiting_reqs: float = 0.0
-    prefix_cache_hit: float = 0.0
+    prefix_cache_hit: float = 0.0  # legacy gauge (0–1)
+    prefix_cache_queries: float = 0.0  # new counter
+    prefix_cache_hits: float = 0.0     # new counter
     prompt_tokens_total: float = 0.0
     generation_tokens_total: float = 0.0
 
@@ -222,6 +237,15 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
         if d_prompt_tokens > 0:
             prompt_tps_val = d_prompt_tokens / dt
 
+    # KV cache — prefer new kv_cache_usage_perc, fall back to legacy gpu_cache_usage_perc
+    cache_frac = curr.kv_cache_usage if curr.kv_cache_usage > 0 else curr.gpu_cache_usage
+
+    # Prefix cache — prefer legacy gauge, fall back to counter-derived rate
+    prefix_hit_rate = curr.prefix_cache_hit
+    if prefix_hit_rate == 0 and curr.prefix_cache_queries > 0:
+        # Compute session hit rate from cumulative counters
+        prefix_hit_rate = curr.prefix_cache_hits / curr.prefix_cache_queries
+
     delta = SpecLiveDelta(
         elapsed_s=dt,
         had_activity=had_activity,
@@ -229,10 +253,10 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
         prompt_tps=prompt_tps_val,
         generation_tps=gen_tps,
         # Instantaneous gauges — always from current snapshot
-        gpu_cache_pct=curr.gpu_cache_usage * 100,
+        gpu_cache_pct=cache_frac * 100,
         running_reqs=int(curr.running_reqs),
         waiting_reqs=int(curr.waiting_reqs),
-        prefix_cache_hit_pct=curr.prefix_cache_hit * 100,
+        prefix_cache_hit_pct=prefix_hit_rate * 100,
         # Per-position rates are vLLM gauges (rolling averages, always current)
         per_position_rates=dict(curr.per_position_rates),
         # Cumulative totals
