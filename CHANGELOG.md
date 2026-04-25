@@ -2,6 +2,48 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [1.4.3] — 2026-04-25
+
+### Fixed
+
+- **Scientific notation breaks Prometheus parsing** — cumulative counters that
+  vLLM reports in scientific notation (e.g. `1.378e+06`) were silently dropped
+  by the regex patterns in both `spec_live.py` and `speculative.py`, causing
+  inflated prefix cache hit rates and zero throughput readings. All `_NUM`
+  capture groups now handle `\d+(?:\.\d+)?(?:[eE][+-]?\d+)?`.
+- **KV cache metric always 0 in `--spec-live`** — the scraper treated `0.0` as
+  "metric not present" and fell back to the sentinel `None`. Changed to an
+  explicit `None` sentinel so a genuine 0% fill is rendered correctly.
+- **KV cache fill stuck at 0 on vLLM ≥0.8** — added fallback to the legacy
+  `gpu_cache_usage_perc` gauge when `kv_cache_usage_perc` is absent.
+- **Spec-bench results table truncated on narrow terminals** — removed
+  `expand=True` (table now auto-sizes to content), added `min_width` to
+  columns that were clipping (`α %`, `Draft t/s`, `TTFT ms`), shortened
+  `Window` → `Win` and clarified `TTFT` → `TTFT ms`.
+- **Prometheus warning runs into first result** — added a blank line after the
+  server-wide aggregates warning in `--spec-bench` output.
+
+### Changed
+
+- **Merged Draft Efficiency gauge into Acceptance Rate** — the `--spec-live`
+  dashboard previously showed two separate gauge bars (Acceptance Rate and
+  Draft Efficiency) that displayed nearly identical percentages with small
+  draft windows (MTP, `num_speculative_tokens=1`). Consolidated into a single
+  `ACCEPTANCE RATE` bar with `τ=X.X/N` annotation, saving vertical space.
+- **Version stamp in benchmark summary** — the final `Benchmark Complete` panel
+  and all Markdown reports now include `tool-eval-bench vX.Y.Z` for
+  reproducibility (Issue #6).
+
+### Added
+
+- **35 new evaluator tests** — edge-case coverage for TC-51 through TC-63
+  (planning, composition, adversarial categories): clarification detection,
+  single-constraint partial scoring, both-sources-no-synthesis, email-not-to-CFO,
+  and more. Total test count: **1,240** (up from 1,205).
+- **Regression tests for Prometheus fixes** — scientific notation parsing,
+  KV cache `None` sentinel fallback (3 branches), counter-derived throughput,
+  and prefix cache hit rate math in both `spec_live.py` and `speculative.py`.
+
 ## [1.4.2] — 2026-04-24
 
 ### Added
