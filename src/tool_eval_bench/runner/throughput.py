@@ -264,6 +264,12 @@ class ThroughputSample:
     # Calibration confidence — propagated from TokenizerConfig so reports can warn
     # when token counts are heuristic estimates rather than exact measurements.
     calibration_confidence: str = "heuristic"  # "tokenize" | "probe" | "heuristic"
+    # Per-token timestamps for accurate peak t/s calculation.
+    # Each entry is the (real or interpolated) perf_counter time a token arrived.
+    # Populated by _stream_one when token_ids are available in SSE chunks.
+    token_timestamps: list[float] = field(default_factory=list)
+    # Whether multi-token chunks were detected (MTP / speculative decoding).
+    mtp_chunks_detected: bool = False
 
     @property
     def effective_tg_tps(self) -> float:
@@ -281,6 +287,32 @@ class ThroughputSample:
             if gen_ms > 0:
                 return self.tg_tokens / (gen_ms / 1000)
         return 0.0
+
+    @property
+    def peak_tg_tps(self) -> float:
+        """Peak token generation t/s over any 1-second sliding window.
+
+        Requires ``token_timestamps`` to be populated.  Returns 0.0 if
+        fewer than 2 timestamps are available.
+        """
+        if len(self.token_timestamps) < 2:
+            return 0.0
+        ts = sorted(self.token_timestamps)
+        total_dur = ts[-1] - ts[0]
+        if total_dur <= 0:
+            return 0.0
+        # If the entire generation fits in < 1 second, use actual duration
+        if total_dur < 1.0:
+            return len(ts) / total_dur
+        max_tokens = 0
+        start_idx = 0
+        for end_idx in range(len(ts)):
+            while start_idx < end_idx and ts[start_idx] <= ts[end_idx] - 1.0:
+                start_idx += 1
+            count = end_idx - start_idx + 1
+            if count > max_tokens:
+                max_tokens = count
+        return float(max_tokens)  # tokens in best 1-second window
 
     @property
     def label_pp(self) -> int:
@@ -381,6 +413,34 @@ async def warmup(
 
 
 # ---------------------------------------------------------------------------
+# MTP-aware token counting helpers
+# ---------------------------------------------------------------------------
+
+_mtp_warned = False
+
+
+def _count_chunk_tokens(
+    choices: list[dict[str, Any]],
+    content: str,
+) -> int:
+    """Count actual tokens in a single SSE chunk.
+
+    Strategy (mirrors llama-benchy's approach):
+    1. If the server includes ``token_ids`` in the choice, use its length
+       for an exact count.  vLLM/SGLang send this when ``return_token_ids``
+       is in the request.
+    2. Fall back to 1 token per chunk (standard autoregressive streaming).
+
+    Returns the number of tokens in this chunk (≥ 1).
+    """
+    if choices:
+        token_ids = choices[0].get("token_ids")
+        if token_ids and isinstance(token_ids, list):
+            return len(token_ids)
+    return 1
+
+
+# ---------------------------------------------------------------------------
 # Single streaming measurement
 # ---------------------------------------------------------------------------
 
@@ -406,10 +466,18 @@ async def _stream_one(
       last data line).  Used as a fallback generation window when all content
       arrives in a single chunk (``first == last``).
 
+    Multi-token prediction (MTP) handling:
+    - Reads ``token_ids`` from each SSE chunk to determine how many tokens
+      arrived per event (1 for standard AR, 2-4+ for MTP/DFlash).
+    - Interpolates per-token timestamps within multi-token chunks so that
+      ``tg_tps`` and ``peak_tg_tps`` reflect the true generation speed.
+
     The generation speed (``tg_tps``) prefers inter-content-chunk timing, then
     falls back to ``end_of_stream - first_byte`` minus TTFT, ensuring a
     non-zero measurement even when the server flushes everything in one burst.
     """
+    global _mtp_warned
+
     payload = {
         "model": model,
         "messages": messages,
@@ -417,6 +485,9 @@ async def _stream_one(
         "temperature": 0.0,
         "stream": True,
         "stream_options": {"include_usage": True},
+        # Request token IDs for accurate MTP counting.  Ignored by servers
+        # that don't support it — harmless extra field.
+        "return_token_ids": True,
     }
 
     sample = ThroughputSample()
@@ -425,9 +496,11 @@ async def _stream_one(
     first_content_time: float | None = None
     last_content_time: float = t0
     end_of_stream_time: float = t0
-    fallback_token_count = 0
+    stream_token_count = 0
     server_completion_tokens = 0
     prompt_tokens = 0
+    token_timestamps: list[float] = []
+    mtp_detected = False
 
     try:
         async with client.stream(
@@ -468,7 +541,27 @@ async def _stream_one(
                     if first_content_time is None:
                         first_content_time = now
                     last_content_time = now
-                    fallback_token_count += 1
+
+                    # Count actual tokens in this chunk (MTP-aware)
+                    chunk_tokens = _count_chunk_tokens(choices, content)
+                    stream_token_count += chunk_tokens
+
+                    if chunk_tokens > 1:
+                        mtp_detected = True
+
+                    # Build per-token timestamps.
+                    # Single-token chunks get the chunk arrival time directly.
+                    # Multi-token chunks (MTP) get interpolated timestamps
+                    # spread evenly across the time window since the last
+                    # recorded timestamp.
+                    if chunk_tokens == 1:
+                        token_timestamps.append(now)
+                    else:
+                        prev_ts = token_timestamps[-1] if token_timestamps else (first_content_time or t0)
+                        time_window = now - prev_ts
+                        for i in range(chunk_tokens):
+                            ts = prev_ts + (time_window * (i + 1) / chunk_tokens)
+                            token_timestamps.append(ts)
 
             # If [DONE] was never received (unusual), use last timestamp
             if end_of_stream_time == t0:
@@ -480,6 +573,14 @@ async def _stream_one(
 
     total_ms = (time.perf_counter() - t0) * 1000
 
+    # Log MTP detection once
+    if mtp_detected and not _mtp_warned:
+        _mtp_warned = True
+        logger.info(
+            "Multi-token prediction (MTP) detected: SSE chunks contain "
+            "multiple token_ids. Token counts and timing are MTP-aware."
+        )
+
     # TTFT: prefer HTTP first-byte (most accurate prefill measurement),
     # fall back to first content chunk timestamp.
     if first_byte_time is not None:
@@ -489,13 +590,17 @@ async def _stream_one(
     else:
         ttft_ms = total_ms
 
-    # Use server-reported count when available, fall back to stream-counted tokens
-    generated_tokens = server_completion_tokens if server_completion_tokens > 0 else fallback_token_count
+    # Use server-reported count when available, fall back to stream-counted
+    # tokens (now MTP-aware — counts actual token_ids per chunk).
+    generated_tokens = server_completion_tokens if server_completion_tokens > 0 else stream_token_count
 
     # Generation time: prefer inter-content-chunk timing (most precise when
-    # the server streams one token per SSE event).
+    # the server streams one token per SSE event).  When MTP is active, we
+    # use the interpolated token timestamps for a more accurate window.
     gen_ms = 0.0
-    if first_content_time is not None and last_content_time > first_content_time:
+    if len(token_timestamps) >= 2:
+        gen_ms = (token_timestamps[-1] - token_timestamps[0]) * 1000
+    elif first_content_time is not None and last_content_time > first_content_time:
         gen_ms = (last_content_time - first_content_time) * 1000
 
     # Fallback: use the window from first-byte (or first-content) to end of
@@ -510,6 +615,8 @@ async def _stream_one(
     sample.ttft_ms = ttft_ms
     sample.total_ms = total_ms
     sample.pp_tps = (prompt_tokens / (ttft_ms / 1000)) if ttft_ms > 0 and prompt_tokens > 0 else 0
+    sample.token_timestamps = token_timestamps
+    sample.mtp_chunks_detected = mtp_detected
 
     # Compute tg_tps from the best available generation timing
     if gen_ms > 0 and generated_tokens > 1:
