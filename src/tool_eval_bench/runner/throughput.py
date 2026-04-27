@@ -391,8 +391,14 @@ async def warmup(
     """Send a trivial completion to prime the server.
 
     Returns elapsed time in milliseconds.
+
+    Thinking/reasoning models (Qwen3.x, QwQ, etc.) may spend significant
+    time in an internal chain-of-thought phase before emitting visible
+    tokens.  Since warm-up only needs to prime the KV cache, we disable
+    thinking via ``chat_template_kwargs`` and ``extra_body`` to keep the
+    request fast and avoid read-timeout failures.
     """
-    payload = {
+    payload: dict[str, Any] = {
         "model": model,
         "messages": [
             {"role": "system", "content": "You are a helpful assistant."},
@@ -400,6 +406,9 @@ async def warmup(
         ],
         "max_tokens": 4,
         "temperature": 0.0,
+        # Disable thinking/reasoning to avoid long chain-of-thought delays.
+        # Supported by vLLM (chat_template_kwargs) and other backends (extra_body).
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     t0 = time.perf_counter()
     async with httpx.AsyncClient(timeout=timeout) as client:

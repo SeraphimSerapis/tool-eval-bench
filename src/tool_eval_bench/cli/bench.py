@@ -250,10 +250,13 @@ def _do_warmup(console: Console, base_url: str, model: str, api_key: str | None)
 
     with console.status("[dim]  Warming up server…[/]", spinner="dots"):
         try:
-            ms = asyncio.run(warmup(base_url, model, api_key, timeout=30.0))
+            ms = asyncio.run(warmup(base_url, model, api_key, timeout=60.0))
             console.print(f"  [bold green]✓[/] Warm-up complete [dim]({ms:.0f} ms)[/]")
         except Exception as exc:
-            console.print(f"  [bold yellow]⚠[/] Warm-up failed [dim]({exc})[/]")
+            # httpx timeout exceptions can have empty str(), so fall back
+            # to the exception class name for a useful diagnostic.
+            err_msg = str(exc) or type(exc).__name__
+            console.print(f"  [bold yellow]⚠[/] Warm-up failed [dim]({err_msg})[/]")
 
 
 # ---------------------------------------------------------------------------
