@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -288,6 +289,96 @@ def _headers(api_key: str | None) -> dict[str, str]:
     return headers
 
 
+def _metrics_url(base_url: str) -> str:
+    """Build the /metrics URL (Prometheus endpoint, NOT under /v1)."""
+    b = base_url.rstrip("/")
+    if b.endswith("/v1"):
+        b = b[:-3]
+    return f"{b}/metrics"
+
+
+# Regex to extract num_gpu_blocks and block_size from vllm:cache_config_info
+_CACHE_CONFIG_RE = re.compile(
+    r'^vllm:cache_config_info\{[^}]*'
+    r'num_gpu_blocks="(\d+)"'
+    r'[^}]*?'
+    r'block_size="(\d+)"'
+    r'[^}]*\}',
+    re.MULTILINE,
+)
+
+# Fallback: try the reverse label order (block_size before num_gpu_blocks)
+_CACHE_CONFIG_RE_ALT = re.compile(
+    r'^vllm:cache_config_info\{[^}]*'
+    r'block_size="(\d+)"'
+    r'[^}]*?'
+    r'num_gpu_blocks="(\d+)"'
+    r'[^}]*\}',
+    re.MULTILINE,
+)
+
+
+async def detect_kv_capacity(
+    base_url: str,
+    api_key: str | None = None,
+    metrics_url: str | None = None,
+) -> int | None:
+    """Detect actual KV cache capacity from vLLM Prometheus /metrics.
+
+    Parses ``vllm:cache_config_info`` to extract ``num_gpu_blocks`` and
+    ``block_size``, then returns their product as the true KV cache
+    capacity in tokens.
+
+    This is critical because ``max_model_len`` (from ``/v1/models``) can be
+    much larger than the actual KV cache the server allocated (which depends
+    on GPU memory, model size, and ``gpu_memory_utilization``).  Without this,
+    ``--context-pressure 0.9`` might target 90% of a 256K context window
+    when the KV cache can only hold 117K tokens.
+
+    Returns the KV capacity in tokens, or None if detection fails
+    (non-vLLM servers, metrics endpoint unavailable, etc.).
+    """
+    url = metrics_url or _metrics_url(base_url)
+    hdrs: dict[str, str] = {}
+    if api_key:
+        hdrs["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=hdrs)
+            if resp.status_code != 200:
+                logger.debug("KV capacity detection: /metrics returned %d", resp.status_code)
+                return None
+            text = resp.text
+    except Exception as exc:
+        logger.debug("KV capacity detection failed: %s", exc)
+        return None
+
+    # Try primary label order, then fallback
+    match = _CACHE_CONFIG_RE.search(text)
+    if match:
+        num_blocks = int(match.group(1))
+        block_size = int(match.group(2))
+    else:
+        match = _CACHE_CONFIG_RE_ALT.search(text)
+        if match:
+            block_size = int(match.group(1))
+            num_blocks = int(match.group(2))
+        else:
+            logger.debug("No vllm:cache_config_info found in /metrics")
+            return None
+
+    if num_blocks <= 0 or block_size <= 0:
+        return None
+
+    capacity = num_blocks * block_size
+    logger.info(
+        "Detected KV cache capacity: %d tokens (%d blocks × %d block_size)",
+        capacity, num_blocks, block_size,
+    )
+    return capacity
+
+
 async def detect_context_size(
     base_url: str,
     model: str,
@@ -336,6 +427,71 @@ async def detect_context_size(
 
     logger.debug("No context size field found in model metadata")
     return None
+
+
+# ---------------------------------------------------------------------------
+# Server-side tokenization (vLLM /tokenize endpoint)
+# ---------------------------------------------------------------------------
+
+def _tokenize_url(base_url: str) -> str:
+    """Build the /tokenize URL."""
+    b = base_url.rstrip("/")
+    if b.endswith("/v1"):
+        b = b[:-3]
+    return f"{b}/tokenize"
+
+
+async def count_tokens(
+    text: str,
+    base_url: str,
+    model: str,
+    api_key: str | None = None,
+) -> int | None:
+    """Count tokens using the server's /tokenize endpoint.
+
+    Uses vLLM's ``/tokenize`` endpoint for exact token counts with the
+    model's actual tokenizer.  Returns None if the endpoint is
+    unavailable (non-vLLM servers), in which case callers should fall
+    back to character-based estimation.
+    """
+    url = _tokenize_url(base_url)
+    hdrs = _headers(api_key)
+    payload = {"model": model, "prompt": text}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload, headers=hdrs)
+            resp.raise_for_status()
+            data = resp.json()
+            count = data.get("count")
+            if isinstance(count, int) and count >= 0:
+                return count
+    except Exception as exc:
+        logger.debug("Token counting via /tokenize failed: %s", exc)
+    return None
+
+
+async def count_messages_tokens(
+    messages: list[dict[str, Any]],
+    base_url: str,
+    model: str,
+    api_key: str | None = None,
+) -> int | None:
+    """Count total tokens in a list of chat messages.
+
+    Concatenates all message content and counts via /tokenize.  Adds a
+    small overhead estimate for chat formatting tokens (role tags, etc.).
+    """
+    if not messages:
+        return 0
+    # Concatenate all content for a single tokenization call
+    all_text = "\n".join(msg.get("content", "") for msg in messages)
+    count = await count_tokens(all_text, base_url, model, api_key)
+    if count is None:
+        return None
+    # Add ~4 tokens per message for chat template overhead (role, delimiters)
+    overhead = len(messages) * 4
+    return count + overhead
 
 
 # ---------------------------------------------------------------------------
@@ -519,10 +675,103 @@ def build_pressure_messages(
             on_chunk(tokens_used)
 
     logger.info(
-        "Built %d pressure messages (~%d tokens in %d turn pairs)",
+        "Built %d pressure messages (~%d estimated tokens in %d turn pairs)",
         len(messages), tokens_used, chunk_idx,
     )
     return messages
+
+
+async def calibrate_pressure_messages(
+    messages: list[dict[str, Any]],
+    target_tokens: int,
+    base_url: str,
+    model: str,
+    api_key: str | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Calibrate filler messages to hit the exact token target.
+
+    Uses the server's ``/tokenize`` endpoint to measure actual token
+    counts, then trims or extends the last user message content to
+    match the target.  Returns ``(calibrated_messages, actual_tokens)``.
+
+    If tokenization is unavailable, returns the messages unchanged with
+    the char-based estimate.
+    """
+    if not messages or target_tokens <= 0:
+        return messages, 0
+
+    actual = await count_messages_tokens(messages, base_url, model, api_key)
+    if actual is None:
+        # Tokenizer unavailable — return char-based estimate
+        est = sum(
+            len(m.get("content", "")) / _CHARS_PER_TOKEN_ESTIMATE
+            for m in messages
+        )
+        logger.debug(
+            "Tokenizer unavailable, using char estimate: ~%d tokens", int(est),
+        )
+        return messages, int(est)
+
+    delta = actual - target_tokens
+    if abs(delta) <= target_tokens * 0.02:
+        # Within 2% — close enough
+        logger.info(
+            "Filler calibration: %d actual tokens vs %d target (%.1f%% off, OK)",
+            actual, target_tokens, abs(delta) / target_tokens * 100,
+        )
+        return messages, actual
+
+    if delta > 0:
+        # Over target — trim characters from the last user message
+        # Find the last user message
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i]["role"] == "user":
+                content = messages[i]["content"]
+                # Estimate chars to remove: delta tokens × chars_per_token
+                # Use measured ratio from this run for better accuracy
+                total_chars = sum(len(m.get("content", "")) for m in messages)
+                measured_cpt = total_chars / actual if actual > 0 else _CHARS_PER_TOKEN_ESTIMATE
+                chars_to_remove = int(delta * measured_cpt * 1.05)  # slight over-trim
+                if chars_to_remove < len(content):
+                    messages[i]["content"] = content[:-chars_to_remove]
+                else:
+                    # Remove this message pair entirely
+                    messages.pop(i)
+                    if i < len(messages) and messages[i]["role"] == "assistant":
+                        messages.pop(i)
+                break
+
+        # Re-measure after trim
+        recounted = await count_messages_tokens(messages, base_url, model, api_key)
+        final = recounted if recounted is not None else actual - delta
+        logger.info(
+            "Filler calibrated: %d → %d tokens (target %d, %.1f%% accuracy)",
+            actual, final, target_tokens,
+            (1 - abs(final - target_tokens) / target_tokens) * 100,
+        )
+        return messages, final
+
+    # Under target — extend the last user message with more filler
+    shortfall = -delta
+    import time
+    rng = random.Random(time.time_ns())
+    extra_text = _build_filler_text(
+        shortfall, chunk_idx=999, rng=rng,
+    )
+    # Find last user message and append
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i]["role"] == "user":
+            messages[i]["content"] += "\n\n" + extra_text
+            break
+
+    recounted = await count_messages_tokens(messages, base_url, model, api_key)
+    final = recounted if recounted is not None else actual + shortfall
+    logger.info(
+        "Filler calibrated: %d → %d tokens (target %d, %.1f%% accuracy)",
+        actual, final, target_tokens,
+        (1 - abs(final - target_tokens) / target_tokens) * 100,
+    )
+    return messages, final
 
 
 # ---------------------------------------------------------------------------
@@ -535,8 +784,18 @@ async def prepare_context_pressure(
     api_key: str | None,
     ratio: float,
     context_size_override: int | None = None,
+    metrics_url: str | None = None,
 ) -> ContextPressureConfig:
     """Detect context size and build the pressure config.
+
+    Uses ``min(max_model_len, kv_cache_capacity)`` as the effective context
+    size so that pressure targets what the server can actually hold in KV
+    cache, not just what the model architecture supports.
+
+    Detection order:
+      1. ``--context-size`` override (used as-is, no KV cap applied)
+      2. ``max_model_len`` from ``/v1/models`` — capped by KV capacity
+         from ``/metrics`` (vLLM) if available
 
     Returns a fully populated ContextPressureConfig. If auto-detection
     fails and no override is provided, raises ValueError.
@@ -552,6 +811,23 @@ async def prepare_context_pressure(
                 "Please provide --context-size explicitly "
                 "(e.g. --context-size 32768)."
             )
+
+        # Cap by actual KV cache capacity (vLLM: num_gpu_blocks × block_size).
+        # max_model_len is the model's architectural limit, but the server
+        # may have allocated far less KV cache depending on GPU memory,
+        # model size, and gpu_memory_utilization.  Without this cap,
+        # --context-pressure 0.9 on a 256K model with 117K KV cache would
+        # try to fill 221K tokens — exceeding what the server can handle.
+        kv_capacity = await detect_kv_capacity(
+            base_url, api_key, metrics_url=metrics_url,
+        )
+        if kv_capacity is not None and kv_capacity < ctx_size:
+            logger.info(
+                "Capping context size from %d (max_model_len) to %d "
+                "(KV cache capacity: %d blocks)",
+                ctx_size, kv_capacity, kv_capacity // 16,
+            )
+            ctx_size = kv_capacity
 
     fill_tokens = compute_fill_budget(ctx_size, ratio)
 

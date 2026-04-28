@@ -2,6 +2,28 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- **Context pressure targets max_model_len instead of KV cache capacity** — when
+  auto-detecting context size, `--context-pressure` used `max_model_len` from
+  `/v1/models` (e.g. 262K for Qwen3.6-35B) even though the server's actual KV
+  cache might be much smaller (e.g. 117K tokens based on available GPU memory).
+  This caused `--context-pressure 0.9` to generate filler that exceeded KV cache
+  capacity, leading to failed requests or ineffective pressure.  Now scrapes
+  `vllm:cache_config_info` from `/metrics` to determine the real KV capacity
+  (`num_gpu_blocks × block_size`) and uses `min(max_model_len, kv_capacity)` as
+  the effective context size.  The cap only applies when context size is
+  auto-detected; explicit `--context-size` overrides are trusted as-is.
+  Non-vLLM servers gracefully fall back to `max_model_len`.
+- **Context pressure sweep times out on large context windows** — the sweep
+  called `run_all_scenarios` with the hardcoded 60-second default timeout,
+  ignoring both `--timeout` and the fact that large fills (100K+ tokens) need
+  30-60+ seconds just for prefill.  Now auto-scales the timeout to
+  `max(--timeout, 60 + 30s per 50K fill tokens)`, so a 123K fill gets ~134s
+  instead of 60s.  Also passes `--timeout` through to the sweep path.
+
 ## [1.4.3.1] — 2026-04-26
 
 ### Fixed

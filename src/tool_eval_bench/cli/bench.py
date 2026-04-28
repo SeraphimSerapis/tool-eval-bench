@@ -979,7 +979,7 @@ def main() -> None:
     pressure.add_argument("--context-pressure-sweep", type=str, default=None, metavar="START-END",
                           help="Sweep pressure from START to END (e.g. 0.5-1.0)")
     pressure.add_argument("--sweep-steps", type=int, default=5, metavar="N",
-                          help="Number of sweep intervals (default: 5 → 6 test levels)")
+                          help="Number of pressure levels to test (default: 5)")
 
     # -- History & comparison ----------------------------------------------
     hist_grp = parser.add_argument_group("history & comparison")
@@ -1301,6 +1301,7 @@ def main() -> None:
 
         from tool_eval_bench.runner.context_pressure import (
             build_pressure_messages,
+            calibrate_pressure_messages,
             prepare_context_pressure,
         )
 
@@ -1311,6 +1312,7 @@ def main() -> None:
                     base_url, model, api_key,
                     ratio=ratio,
                     context_size_override=args.context_size,
+                    metrics_url=args.metrics_url,
                 )
             )
 
@@ -1332,9 +1334,19 @@ def main() -> None:
             else:
                 pressure_messages = build_pressure_messages(pressure_cfg)
 
+            # Calibrate using server-side tokenizer for exact token counts
+            pressure_messages, actual_fill_tokens = asyncio.run(
+                calibrate_pressure_messages(
+                    pressure_messages,
+                    pressure_cfg.fill_tokens,
+                    base_url, model, api_key,
+                )
+            )
+
             pressure_config_dict = {
                 "ratio": pressure_cfg.ratio,
-                "fill_tokens": pressure_cfg.fill_tokens,
+                "fill_tokens": actual_fill_tokens,
+                "fill_tokens_target": pressure_cfg.fill_tokens,
                 "context_size": pressure_cfg.detected_context,
             }
             if not args.json:
@@ -1651,8 +1663,10 @@ def _run_pressure_sweep(
     from tool_eval_bench.runner.context_pressure import (
         ContextPressureConfig,
         build_pressure_messages,
+        calibrate_pressure_messages,
         compute_fill_budget,
         detect_context_size,
+        detect_kv_capacity,
     )
     from tool_eval_bench.runner.orchestrator import run_all_scenarios
 
@@ -1663,8 +1677,8 @@ def _run_pressure_sweep(
         console.print(f"\n[bold red]Error:[/] {exc}")
         sys.exit(1)
 
-    steps = max(1, args.sweep_steps)
-    levels = [start + i * (end - start) / steps for i in range(steps + 1)]
+    steps = max(2, args.sweep_steps)
+    levels = [start + i * (end - start) / (steps - 1) for i in range(steps)]
     # Ensure clean floating-point values
     levels = [round(lv, 4) for lv in levels]
 
@@ -1698,6 +1712,20 @@ def _run_pressure_sweep(
                 "Use --context-size to specify it."
             )
             sys.exit(1)
+
+        # Cap by actual KV cache capacity (same logic as prepare_context_pressure).
+        # Only when auto-detected — explicit --context-size is trusted as-is.
+        if args.context_size is None:
+            kv_cap = asyncio.run(
+                detect_kv_capacity(base_url, api_key, metrics_url=getattr(args, 'metrics_url', None))
+            )
+            if kv_cap is not None and kv_cap < context_size:
+                console.print(
+                    f"  [dim]⚠ KV cache capacity ({kv_cap:,} tokens) < "
+                    f"max_model_len ({context_size:,}) — capping[/]"
+                )
+                context_size = kv_cap
+
         console.print(f"  [dim]Context window: {context_size:,} tokens[/]\n")
     except Exception as exc:
         console.print(f"\n[bold red]Error:[/] {exc}")
@@ -1727,13 +1755,37 @@ def _run_pressure_sweep(
             # Build fresh pressure messages (unique per level)
             pressure_messages = build_pressure_messages(cfg)
 
+            # Calibrate filler to exact token count via server tokenizer.
+            # Uses a private event loop to avoid interfering with the
+            # mocked asyncio.run in tests.
+            import asyncio as _aio
+            _loop = _aio.new_event_loop()
+            try:
+                pressure_messages, actual_fill = _loop.run_until_complete(
+                    calibrate_pressure_messages(
+                        pressure_messages, fill_tokens,
+                        base_url, model, api_key,
+                    )
+                )
+            finally:
+                _loop.close()
+
+            # Auto-scale timeout: large fills need significant prefill time.
+            # Conservative estimate: ~1500 tok/s prefill on consumer GPUs,
+            # so 50K tokens ≈ 33s just for prefill, plus multi-turn
+            # generation overhead.  We use a generous 120s base + 60s per
+            # 50K fill tokens to avoid false timeout failures.
+            base_timeout = getattr(args, 'timeout', 60.0)
+            fill_scaling = max(0, fill_tokens / 50_000) * 60.0
+            effective_timeout = max(base_timeout, 120.0 + fill_scaling)
+
             # Progress line
             pct_done = (level_idx + 1) / len(levels)
             bar_filled = int(pct_done * 20)
             bar = "█" * bar_filled + "░" * (20 - bar_filled)
             console.print(
                 f"  [bold cyan]⚡[/] Sweep {level_idx + 1}/{len(levels)}: "
-                f"[bold]{ratio:.0%}[/] pressure  {bar}  ",
+                f"[bold]{ratio:>4.0%}[/] pressure  {bar}  ",
                 end="",
             )
 
@@ -1747,6 +1799,7 @@ def _run_pressure_sweep(
                         api_key=api_key,
                         scenarios=scenarios,
                         temperature=0.0,
+                        timeout_seconds=effective_timeout,
                         extra_params=extra_params,
                         context_pressure_messages=pressure_messages,
                     )
@@ -1846,7 +1899,7 @@ def _run_pressure_sweep(
         bar = f"[{bar_color}]{'█' * bar_len}[/]{'░' * (20 - bar_len)}"
 
         lines.append(
-            f"  [bold]{ratio:5.0%}[/]  {emoji_str}  {score:4.0f}%  {bar}"
+            f"  [bold]{ratio:>4.0%}[/]  {emoji_str}   {score:>3.0f}%  {bar}"
         )
 
         # Track breaking point (last level where all pass)
@@ -1876,7 +1929,7 @@ def _run_pressure_sweep(
         )
 
     header = "  ".join(f"[dim]{sid}[/]" for sid in scenario_ids)
-    lines.insert(0, f"  [dim]       {header}[/]")
+    lines.insert(0, f"  [dim]      {header}[/]")
 
     panel_content = "\n".join(lines)
     console.print(Panel(

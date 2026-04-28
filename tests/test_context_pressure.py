@@ -4,6 +4,8 @@ Covers:
   - Fill budget calculation with various context sizes and ratios
   - Filler message building (structure, token budget, edge cases)
   - Context size detection from mock /v1/models responses
+  - KV cache capacity detection from mock /metrics responses
+  - KV capacity capping in prepare_context_pressure
   - ContextPressureConfig summary string
   - Integration with the orchestrator (_initial_messages)
   - Per-scenario nonce injection for prefix cache isolation
@@ -25,6 +27,7 @@ from tool_eval_bench.runner.context_pressure import (
     build_pressure_messages,
     compute_fill_budget,
     detect_context_size,
+    detect_kv_capacity,
     prepare_context_pressure,
     _RESERVED_FOR_OUTPUT,
     _RESERVED_FOR_SCENARIO,
@@ -287,6 +290,140 @@ class TestDetectContextSize:
 
 
 # ---------------------------------------------------------------------------
+# detect_kv_capacity (vLLM /metrics scraping)
+# ---------------------------------------------------------------------------
+
+
+class TestDetectKvCapacity:
+    @pytest.mark.asyncio
+    async def test_parses_cache_config_info(self) -> None:
+        """Should extract num_gpu_blocks × block_size from vllm:cache_config_info."""
+        from unittest.mock import MagicMock
+
+        metrics_text = (
+            '# HELP vllm:cache_config_info Information of the LLMEngine CacheConfig\n'
+            '# TYPE vllm:cache_config_info gauge\n'
+            'vllm:cache_config_info{block_size="16",engine="0",'
+            'num_gpu_blocks="7338",num_cpu_blocks="None"} 1.0\n'
+        )
+        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.text = metrics_text
+            instance.get = AsyncMock(return_value=resp)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await detect_kv_capacity("http://localhost:8080")
+            assert result == 7338 * 16  # 117,408
+
+    @pytest.mark.asyncio
+    async def test_handles_reverse_label_order(self) -> None:
+        """Labels may appear in any order in Prometheus format."""
+        from unittest.mock import MagicMock
+
+        # num_gpu_blocks before block_size
+        metrics_text = (
+            'vllm:cache_config_info{num_gpu_blocks="5000",'
+            'block_size="32",engine="0"} 1.0\n'
+        )
+        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.text = metrics_text
+            instance.get = AsyncMock(return_value=resp)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await detect_kv_capacity("http://localhost:8080")
+            assert result == 5000 * 32
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_cache_config(self) -> None:
+        """Non-vLLM servers won't have cache_config_info."""
+        from unittest.mock import MagicMock
+
+        metrics_text = (
+            '# HELP http_requests_total Total requests\n'
+            'http_requests_total{handler="/v1/chat/completions"} 100.0\n'
+        )
+        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.text = metrics_text
+            instance.get = AsyncMock(return_value=resp)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await detect_kv_capacity("http://localhost:8080")
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_connection_error(self) -> None:
+        """Network errors should return None gracefully."""
+        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            instance.get = AsyncMock(side_effect=ConnectionError("refused"))
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await detect_kv_capacity("http://localhost:8080")
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_404(self) -> None:
+        """Servers without /metrics should return None."""
+        from unittest.mock import MagicMock
+
+        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            resp = MagicMock()
+            resp.status_code = 404
+            instance.get = AsyncMock(return_value=resp)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await detect_kv_capacity("http://localhost:8080")
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_uses_custom_metrics_url(self) -> None:
+        """Should use provided metrics_url instead of deriving from base_url."""
+        from unittest.mock import MagicMock
+
+        metrics_text = (
+            'vllm:cache_config_info{block_size="16",'
+            'num_gpu_blocks="4096",engine="0"} 1.0\n'
+        )
+        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+            instance = AsyncMock()
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.text = metrics_text
+            instance.get = AsyncMock(return_value=resp)
+            instance.__aenter__ = AsyncMock(return_value=instance)
+            instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = instance
+
+            result = await detect_kv_capacity(
+                "http://localhost:8080",
+                metrics_url="http://other-host:9090/metrics",
+            )
+            assert result == 4096 * 16
+            # Verify the custom URL was used
+            call_args = instance.get.call_args
+            assert "other-host:9090" in call_args[0][0]
+
+
+# ---------------------------------------------------------------------------
 # prepare_context_pressure
 # ---------------------------------------------------------------------------
 
@@ -315,6 +452,71 @@ class TestPrepareContextPressure:
                     "http://localhost:8080", "test-model", None,
                     ratio=0.75,
                 )
+
+    @pytest.mark.asyncio
+    async def test_kv_capacity_caps_context_size(self) -> None:
+        """When KV cache capacity < max_model_len, context should be capped."""
+        with patch(
+            "tool_eval_bench.runner.context_pressure.detect_context_size",
+            return_value=262144,
+        ), patch(
+            "tool_eval_bench.runner.context_pressure.detect_kv_capacity",
+            return_value=117408,
+        ):
+            cfg = await prepare_context_pressure(
+                "http://localhost:8080", "test-model", None,
+                ratio=0.9,
+            )
+            # Should be capped to KV capacity, not max_model_len
+            assert cfg.detected_context == 117408
+            expected_fill = compute_fill_budget(117408, 0.9)
+            assert cfg.fill_tokens == expected_fill
+
+    @pytest.mark.asyncio
+    async def test_kv_capacity_no_cap_when_smaller_context(self) -> None:
+        """When max_model_len < KV capacity, no capping needed."""
+        with patch(
+            "tool_eval_bench.runner.context_pressure.detect_context_size",
+            return_value=32768,
+        ), patch(
+            "tool_eval_bench.runner.context_pressure.detect_kv_capacity",
+            return_value=117408,
+        ):
+            cfg = await prepare_context_pressure(
+                "http://localhost:8080", "test-model", None,
+                ratio=0.75,
+            )
+            assert cfg.detected_context == 32768
+
+    @pytest.mark.asyncio
+    async def test_kv_detection_failure_uses_max_model_len(self) -> None:
+        """When KV capacity detection fails, fall back to max_model_len."""
+        with patch(
+            "tool_eval_bench.runner.context_pressure.detect_context_size",
+            return_value=262144,
+        ), patch(
+            "tool_eval_bench.runner.context_pressure.detect_kv_capacity",
+            return_value=None,
+        ):
+            cfg = await prepare_context_pressure(
+                "http://localhost:8080", "test-model", None,
+                ratio=0.9,
+            )
+            assert cfg.detected_context == 262144
+
+    @pytest.mark.asyncio
+    async def test_override_skips_kv_capping(self) -> None:
+        """When --context-size is explicitly provided, skip KV capping."""
+        # detect_kv_capacity should NOT be called when override is set
+        with patch(
+            "tool_eval_bench.runner.context_pressure.detect_kv_capacity",
+        ) as mock_kv:
+            cfg = await prepare_context_pressure(
+                "http://localhost:8080", "test-model", None,
+                ratio=0.9, context_size_override=32768,
+            )
+            assert cfg.detected_context == 32768
+            mock_kv.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -693,8 +895,8 @@ class TestPressureSweepIntegration:
             "http://localhost:8080", None, args,
         )
 
-        # 4 levels (steps=3 → 0.5, 0.667, 0.833, 1.0) + 1 aclose
-        assert mock_asyncio.run.call_count == 5
+        # 3 levels (steps=3 → 0.5, 0.75, 1.0) + 1 aclose
+        assert mock_asyncio.run.call_count == 4
 
     @patch("tool_eval_bench.cli.bench._resolve_scenarios")
     @patch("tool_eval_bench.cli.bench.asyncio")
