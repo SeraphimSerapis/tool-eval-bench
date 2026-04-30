@@ -256,12 +256,19 @@ tool-eval-bench --perf --spec-bench --seed 42
 | `--spec-prompts` | `filler,code,structured` | Prompt types to test |
 | `--metrics-url` | auto | Direct URL to Prometheus `/metrics` (e.g. `http://vllm:8080/metrics`) |
 
-> **Acceptance rate (optional).** The primary metric is **effective t/s** — output tokens ÷ wall-clock time — which always works. For per-request *acceptance rate* and *acceptance length* breakdowns, the server must expose a `/metrics` endpoint with `spec_decode_*` counters:
-> - **vLLM**: enabled by default at `http://<host>:<port>/metrics` (no extra flags needed)
-> - **llama.cpp**: start the server with `--metrics` to enable the `/metrics` endpoint
-> - **SGLang**: enabled by default at `/metrics`
+> **Acceptance rate.** The primary metric is **effective t/s** — output tokens ÷ wall-clock time — which always works. Acceptance rate and draft statistics use different extraction methods depending on the backend:
 >
-> If `/metrics` is unavailable or doesn't contain spec decode counters, `--spec-bench` still runs — you just won't see acceptance rate in the output.
+> | Backend | Acceptance Rate Source | What You Get |
+> |---|---|---|
+> | **vLLM** | Prometheus `/metrics` (`spec_decode_*` counters) | α %, acceptance length (τ), draft window, per-position waterfall, waste ratio |
+> | **llama.cpp** | Per-request `timings` JSON (`draft_n` / `draft_n_accepted`) | α %, waste ratio. _No_ acceptance length or draft window (upstream limitation) |
+> | **SGLang** | Prometheus `/metrics` | Same as vLLM |
+>
+> For **llama.cpp**, use `--spec-method=mtp` (or `draft`, `ngram`, `eagle`) to explicitly enable spec decode measurement — the backend is auto-detected from the `llamacpp:` metric prefix, but spec decode activity can't be confirmed from `/metrics` alone:
+> ```bash
+> # llama.cpp with MTP speculative decoding
+> tool-eval-bench --spec-bench --spec-method mtp
+> ```
 >
 > **Using a proxy (LiteLLM)?** The API proxy doesn't forward the backend's `/metrics`. Use `--metrics-url` to point directly at the inference server:
 > ```bash
@@ -302,6 +309,8 @@ On exit (Ctrl+C), a session summary panel shows aggregate statistics.
 | `--metrics-url` | auto | Direct URL to Prometheus `/metrics` endpoint |
 
 > **Implementation note.** vLLM updates its Prometheus gauge metrics (gen t/s, prompt t/s, KV cache) on a ~10-second internal interval. `--spec-live` handles this by using cumulative rates for the acceptance gauge (always accurate) and retaining the last non-zero reading for throughput gauges so the dashboard doesn't flicker to zero between updates. Per-position acceptance rates are only available for draft-model speculative decoding — MTP (multi-token prediction) servers typically don't expose them.
+>
+> **llama.cpp note.** The dashboard auto-detects `llamacpp:` prefixed Prometheus counters and displays throughput (gen t/s, prompt t/s), engine status (running/waiting requests), and KV cache usage. Speculative decoding sparklines (acceptance rate, waste ratio) are **not** available on the `--spec-live` dashboard for llama.cpp because the server doesn't expose draft acceptance counters via Prometheus — use `--spec-bench --spec-method mtp` instead, which extracts per-request stats from the SSE response timings.
 
 ### Hard Mode
 
@@ -484,6 +493,8 @@ tool-eval-bench --compare <run_id_a> <run_id_b>
 | Streaming `usage` stats | ✅ | Varies | ❌ |
 | `tool_choice: "required"` | ✅ | ✅ | ⚠️ Version-dependent |
 | Large toolsets (52 tools) | ✅ | ✅ | ⚠️ May exceed context window |
+| `--spec-bench` acceptance rate | ✅ Prometheus | ✅ via backend | ✅ Per-request timings |
+| `--spec-live` dashboard | ✅ Full | ✅ via backend | ⚠️ Throughput + engine only |
 
 > **Note:** All backends are accessed through a single `OpenAICompatibleAdapter`. If you encounter backend-specific issues, please [open an issue](https://github.com/SeraphimSerapis/tool-eval-bench/issues).
 
