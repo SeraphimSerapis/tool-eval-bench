@@ -270,6 +270,11 @@ class ThroughputSample:
     token_timestamps: list[float] = field(default_factory=list)
     # Whether multi-token chunks were detected (MTP / speculative decoding).
     mtp_chunks_detected: bool = False
+    # Per-request speculative decoding stats from llama.cpp timings object.
+    # llama.cpp doesn't expose spec decode counters in Prometheus /metrics;
+    # instead it embeds draft_n/draft_n_accepted in the response timings.
+    draft_n: int | None = None             # tokens drafted (llama.cpp timings)
+    draft_n_accepted: int | None = None    # tokens accepted (llama.cpp timings)
 
     @property
     def effective_tg_tps(self) -> float:
@@ -538,6 +543,16 @@ async def _stream_one(
                 if usage:
                     prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
                     server_completion_tokens = usage.get("completion_tokens", 0)
+
+                # llama.cpp embeds speculative decoding stats in timings
+                timings = chunk.get("timings")
+                if timings and isinstance(timings, dict):
+                    dn = timings.get("draft_n")
+                    dna = timings.get("draft_n_accepted")
+                    if dn is not None:
+                        sample.draft_n = int(dn)
+                    if dna is not None:
+                        sample.draft_n_accepted = int(dna)
 
                 choices = chunk.get("choices", [])
                 if not choices:
@@ -813,6 +828,14 @@ async def run_throughput_matrix(
                     "Standard tg t/s under-reports real throughput for spec-decode models. "
                     "Run with --spec-bench to measure acceptance rate and effective t/s.",
                     spec_method_name or "auto",
+                )
+            elif spec_info.has_per_request_timings:
+                # llama.cpp detected — spec decode may be active but we can't
+                # confirm from /metrics alone. Hint the user.
+                logger.info(
+                    "llama.cpp backend detected. If speculative decoding is enabled, "
+                    "run with --spec-bench --spec-method=mtp to measure acceptance rate "
+                    "and effective t/s via per-request timings.",
                 )
         except Exception:
             pass  # Detection is best-effort; never fail a throughput run

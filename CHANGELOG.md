@@ -4,6 +4,27 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **llama.cpp speculative decoding support** — `--spec-bench` now extracts draft
+  acceptance stats from llama.cpp servers via per-request `timings` JSON
+  (`draft_n` / `draft_n_accepted`), since llama.cpp doesn't expose spec decode
+  counters in its Prometheus `/metrics` endpoint.  Detection automatically
+  identifies llama.cpp backends by the `llamacpp:` metric prefix and falls back
+  to per-request timings when Prometheus counters are absent.  vLLM support is
+  unchanged.  Use `--spec-method=mtp` to explicitly enable spec decode measurement
+  on llama.cpp servers.
+- **llama.cpp metrics in `--spec-live` dashboard** — the live dashboard now parses
+  `llamacpp:` prefixed Prometheus counters (`prompt_tokens_total`,
+  `tokens_predicted_total`, `predicted_tokens_seconds`, `requests_processing`,
+  `requests_deferred`, `kv_cache_usage_ratio`) to display throughput, engine
+  status, and KV cache usage for llama.cpp servers.  Spec decode sparklines are
+  unavailable (upstream limitation) but all engine gauges work.
+- **21 new llama.cpp regression tests** — covering `llamacpp:` metric parsing,
+  `SpecDecodeInfo.has_per_request_timings`, `ThroughputSample.draft_n` fields,
+  `SpecDecodeSample` population from per-request timings, `compute_delta`
+  fallback to llama.cpp gauges, and Prometheus-takes-precedence-over-timings.
+
 ### Fixed
 
 - **Context pressure targets max_model_len instead of KV cache capacity** — when

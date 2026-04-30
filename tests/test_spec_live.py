@@ -641,3 +641,164 @@ class TestBuildDashboard:
         delta = self._make_delta(cumulative_acceptance_rate=None)
         text = str(_efficiency_insight(delta))
         assert "awaiting" in text
+
+
+# ---------------------------------------------------------------------------
+# llama.cpp metrics support
+# ---------------------------------------------------------------------------
+
+
+class TestLlamaCppSnapshot:
+    """Test parsing of llama.cpp Prometheus metrics."""
+
+    LLAMACPP_METRICS = """\
+# HELP llamacpp:prompt_tokens_total Number of prompt tokens processed.
+# TYPE llamacpp:prompt_tokens_total counter
+llamacpp:prompt_tokens_total 19345
+# HELP llamacpp:tokens_predicted_total Number of generation tokens processed.
+# TYPE llamacpp:tokens_predicted_total counter
+llamacpp:tokens_predicted_total 1157
+# HELP llamacpp:predicted_tokens_seconds Average generation throughput in tokens/s.
+# TYPE llamacpp:predicted_tokens_seconds gauge
+llamacpp:predicted_tokens_seconds 28.3926
+# HELP llamacpp:prompt_tokens_seconds Average prompt throughput in tokens/s.
+# TYPE llamacpp:prompt_tokens_seconds gauge
+llamacpp:prompt_tokens_seconds 1234.5
+# HELP llamacpp:requests_processing Number of requests currently being processed.
+# TYPE llamacpp:requests_processing gauge
+llamacpp:requests_processing 2
+# HELP llamacpp:requests_deferred Number of requests waiting.
+# TYPE llamacpp:requests_deferred gauge
+llamacpp:requests_deferred 1
+"""
+
+    def test_parse_llamacpp_metrics(self):
+        snap = _parse_snapshot(self.LLAMACPP_METRICS)
+        assert snap.llamacpp_prompt_tokens_total == pytest.approx(19345.0)
+        assert snap.llamacpp_predicted_tokens_total == pytest.approx(1157.0)
+        assert snap.llamacpp_predicted_tokens_seconds == pytest.approx(28.3926)
+        assert snap.llamacpp_prompt_tokens_seconds == pytest.approx(1234.5)
+        assert snap.llamacpp_requests_processing == pytest.approx(2.0)
+        assert snap.llamacpp_requests_deferred == pytest.approx(1.0)
+
+    def test_has_spec_decode_false_for_llamacpp(self):
+        """llama.cpp metrics don't have spec_decode counters."""
+        snap = _parse_snapshot(self.LLAMACPP_METRICS)
+        assert snap.has_spec_decode is False
+
+    def test_has_llamacpp_metrics_true(self):
+        """has_llamacpp_metrics should be True when llama.cpp counters are present."""
+        snap = _parse_snapshot(self.LLAMACPP_METRICS)
+        assert snap.has_llamacpp_metrics is True
+
+    def test_has_llamacpp_metrics_false_for_vllm(self):
+        """has_llamacpp_metrics should be False for vLLM metrics."""
+        snap = _parse_snapshot(TestParseSnapshot.FULL_VLLM_METRICS)
+        assert snap.has_llamacpp_metrics is False
+
+    def test_has_llamacpp_metrics_false_for_empty(self):
+        snap = _parse_snapshot("")
+        assert snap.has_llamacpp_metrics is False
+
+    def test_llamacpp_kv_cache_usage_ratio(self):
+        """Parse llama.cpp KV cache usage ratio."""
+        text = """\
+llamacpp:kv_cache_usage_ratio 0.42
+llamacpp:tokens_predicted_total 100
+"""
+        snap = _parse_snapshot(text)
+        assert snap.llamacpp_kv_cache_usage_ratio == pytest.approx(0.42)
+
+
+class TestComputeDeltaLlamaCpp:
+    """Test compute_delta with llama.cpp metrics."""
+
+    def _make_snap(self, **kwargs) -> MetricsSnapshot:
+        defaults = dict(
+            timestamp=time.time(),
+            accepted_tokens=0.0,
+            draft_tokens=0.0,
+            num_drafts=0.0,
+            prompt_tps=0.0,
+            generation_tps=0.0,
+            running_reqs=0.0,
+            waiting_reqs=0.0,
+            prefix_cache_hit=0.0,
+        )
+        defaults.update(kwargs)
+        return MetricsSnapshot(**defaults)
+
+    def test_llamacpp_generation_tps_fallback(self):
+        """When vLLM gauges are zero, use llamacpp:predicted_tokens_seconds."""
+        prev = self._make_snap(timestamp=100.0)
+        curr = self._make_snap(
+            timestamp=110.0,
+            generation_tps=0.0,  # vLLM gauge not present
+        )
+        curr.llamacpp_predicted_tokens_seconds = 28.39
+        delta = compute_delta(prev, curr)
+        assert delta.generation_tps == pytest.approx(28.39)
+
+    def test_llamacpp_prompt_tps_fallback(self):
+        """When vLLM prompt gauge is zero, use llamacpp:prompt_tokens_seconds."""
+        prev = self._make_snap(timestamp=100.0)
+        curr = self._make_snap(
+            timestamp=110.0,
+            prompt_tps=0.0,
+        )
+        curr.llamacpp_prompt_tokens_seconds = 1234.5
+        delta = compute_delta(prev, curr)
+        assert delta.prompt_tps == pytest.approx(1234.5)
+
+    def test_llamacpp_counter_derived_throughput(self):
+        """Derive throughput from llama.cpp cumulative token counters."""
+        prev = self._make_snap(timestamp=100.0)
+        prev.llamacpp_predicted_tokens_total = 1000.0
+        curr = self._make_snap(
+            timestamp=110.0,
+            generation_tps=0.0,
+        )
+        curr.llamacpp_predicted_tokens_total = 1500.0  # 500 in 10s
+        curr.llamacpp_predicted_tokens_seconds = 0.0   # gauge also zero (edge case)
+        delta = compute_delta(prev, curr)
+        assert delta.generation_tps == pytest.approx(50.0)
+
+    def test_llamacpp_running_requests_fallback(self):
+        """Use llamacpp:requests_processing when vLLM running_reqs is 0."""
+        prev = self._make_snap(timestamp=100.0)
+        curr = self._make_snap(timestamp=101.0, running_reqs=0.0)
+        curr.llamacpp_requests_processing = 3.0
+        delta = compute_delta(prev, curr)
+        assert delta.running_reqs == 3
+
+    def test_llamacpp_waiting_requests_fallback(self):
+        """Use llamacpp:requests_deferred when vLLM waiting_reqs is 0."""
+        prev = self._make_snap(timestamp=100.0)
+        curr = self._make_snap(timestamp=101.0, waiting_reqs=0.0)
+        curr.llamacpp_requests_deferred = 2.0
+        delta = compute_delta(prev, curr)
+        assert delta.waiting_reqs == 2
+
+    def test_llamacpp_kv_cache_fallback(self):
+        """Use llamacpp:kv_cache_usage_ratio when vLLM cache metrics are absent."""
+        prev = self._make_snap(timestamp=100.0)
+        curr = self._make_snap(timestamp=101.0)
+        curr.kv_cache_usage = None
+        curr.gpu_cache_usage = None
+        curr.llamacpp_kv_cache_usage_ratio = 0.35
+        delta = compute_delta(prev, curr)
+        assert delta.gpu_cache_pct == pytest.approx(35.0)
+
+    def test_vllm_takes_precedence_over_llamacpp(self):
+        """When vLLM gauges are non-zero, they should win over llama.cpp values."""
+        prev = self._make_snap(timestamp=100.0)
+        curr = self._make_snap(
+            timestamp=110.0,
+            generation_tps=55.0,  # vLLM gauge present
+            running_reqs=2.0,
+        )
+        curr.llamacpp_predicted_tokens_seconds = 28.39  # should be ignored
+        curr.llamacpp_requests_processing = 5.0         # should be ignored
+        delta = compute_delta(prev, curr)
+        assert delta.generation_tps == pytest.approx(55.0)
+        assert delta.running_reqs == 2

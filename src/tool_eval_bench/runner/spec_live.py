@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 _NUM = r"(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
 
 _COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
-    # Spec decode counters
+    # Spec decode counters (vLLM / SGLang)
     "accepted_tokens": re.compile(
         rf"^(?:vllm[:_])?spec_decode_num_accepted_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
@@ -106,6 +106,36 @@ _COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
         rf"^(?:vllm[:_])?generation_tokens_total(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
+    # -- llama.cpp counters (llamacpp: prefix) --
+    # These provide basic throughput stats; spec decode data comes per-request.
+    "llamacpp_prompt_tokens_total": re.compile(
+        rf"^llamacpp:prompt_tokens_total\s+{_NUM}",
+        re.MULTILINE,
+    ),
+    "llamacpp_predicted_tokens_total": re.compile(
+        rf"^llamacpp:tokens_predicted_total\s+{_NUM}",
+        re.MULTILINE,
+    ),
+    "llamacpp_prompt_tokens_seconds": re.compile(
+        rf"^llamacpp:prompt_tokens_seconds\s+{_NUM}",
+        re.MULTILINE,
+    ),
+    "llamacpp_predicted_tokens_seconds": re.compile(
+        rf"^llamacpp:predicted_tokens_seconds\s+{_NUM}",
+        re.MULTILINE,
+    ),
+    "llamacpp_requests_processing": re.compile(
+        rf"^llamacpp:requests_processing\s+{_NUM}",
+        re.MULTILINE,
+    ),
+    "llamacpp_requests_deferred": re.compile(
+        rf"^llamacpp:requests_deferred\s+{_NUM}",
+        re.MULTILINE,
+    ),
+    "llamacpp_kv_cache_usage_ratio": re.compile(
+        rf"^llamacpp:kv_cache_usage_ratio\s+{_NUM}",
+        re.MULTILINE,
+    ),
 }
 
 # Per-position acceptance rate pattern (vLLM specific)
@@ -122,12 +152,12 @@ class MetricsSnapshot:
 
     timestamp: float = 0.0
 
-    # Spec decode counters (cumulative)
+    # Spec decode counters (cumulative) — vLLM / SGLang
     accepted_tokens: float = 0.0
     draft_tokens: float = 0.0
     num_drafts: float = 0.0
 
-    # Engine gauges
+    # Engine gauges (vLLM)
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
     gpu_cache_usage: float | None = None   # legacy: gpu_cache_usage_perc
@@ -143,9 +173,27 @@ class MetricsSnapshot:
     # Per-position acceptance rates (position → rate)
     per_position_rates: dict[int, float] = field(default_factory=dict)
 
+    # -- llama.cpp metrics --
+    llamacpp_prompt_tokens_total: float = 0.0
+    llamacpp_predicted_tokens_total: float = 0.0
+    llamacpp_prompt_tokens_seconds: float = 0.0
+    llamacpp_predicted_tokens_seconds: float = 0.0
+    llamacpp_requests_processing: float = 0.0
+    llamacpp_requests_deferred: float = 0.0
+    llamacpp_kv_cache_usage_ratio: float | None = None
+
     @property
     def has_spec_decode(self) -> bool:
         return self.draft_tokens > 0 or self.accepted_tokens > 0
+
+    @property
+    def has_llamacpp_metrics(self) -> bool:
+        """True if this snapshot contains llama.cpp backend metrics."""
+        return (
+            self.llamacpp_predicted_tokens_seconds > 0
+            or self.llamacpp_prompt_tokens_total > 0
+            or self.llamacpp_predicted_tokens_total > 0
+        )
 
 
 @dataclass
@@ -241,12 +289,39 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
         if d_prompt_tokens > 0:
             prompt_tps_val = d_prompt_tokens / dt
 
+    # llama.cpp fallback: use llamacpp:predicted_tokens_seconds gauge directly
+    if gen_tps == 0 and curr.llamacpp_predicted_tokens_seconds > 0:
+        gen_tps = curr.llamacpp_predicted_tokens_seconds
+    if prompt_tps_val == 0 and curr.llamacpp_prompt_tokens_seconds > 0:
+        prompt_tps_val = curr.llamacpp_prompt_tokens_seconds
+
+    # llama.cpp counter-derived fallback for throughput
+    if gen_tps == 0 and dt > 0:
+        d_lc_gen = curr.llamacpp_predicted_tokens_total - prev.llamacpp_predicted_tokens_total
+        if d_lc_gen > 0:
+            gen_tps = d_lc_gen / dt
+    if prompt_tps_val == 0 and dt > 0:
+        d_lc_prompt = curr.llamacpp_prompt_tokens_total - prev.llamacpp_prompt_tokens_total
+        if d_lc_prompt > 0:
+            prompt_tps_val = d_lc_prompt / dt
+
+    # Running / waiting requests: merge vLLM and llama.cpp
+    running = curr.running_reqs
+    waiting = curr.waiting_reqs
+    if running == 0 and curr.llamacpp_requests_processing > 0:
+        running = curr.llamacpp_requests_processing
+    if waiting == 0 and curr.llamacpp_requests_deferred > 0:
+        waiting = curr.llamacpp_requests_deferred
+
     # KV cache — prefer new kv_cache_usage_perc when present (even if 0.0,
-    # which is a valid reading when idle), fall back to legacy gpu_cache_usage_perc
+    # which is a valid reading when idle), fall back to legacy gpu_cache_usage_perc,
+    # then to llama.cpp kv_cache_usage_ratio
     if curr.kv_cache_usage is not None:
         cache_frac = curr.kv_cache_usage
     elif curr.gpu_cache_usage is not None:
         cache_frac = curr.gpu_cache_usage
+    elif curr.llamacpp_kv_cache_usage_ratio is not None:
+        cache_frac = curr.llamacpp_kv_cache_usage_ratio
     else:
         cache_frac = 0.0
 
@@ -262,10 +337,10 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
         # Throughput (gauge or counter-derived fallback)
         prompt_tps=prompt_tps_val,
         generation_tps=gen_tps,
-        # Instantaneous gauges — always from current snapshot
+        # Instantaneous gauges — always from current snapshot (merged vLLM + llama.cpp)
         gpu_cache_pct=cache_frac * 100,
-        running_reqs=int(curr.running_reqs),
-        waiting_reqs=int(curr.waiting_reqs),
+        running_reqs=int(running),
+        waiting_reqs=int(waiting),
         prefix_cache_hit_pct=prefix_hit_rate * 100,
         # Per-position rates are vLLM gauges (rolling averages, always current)
         per_position_rates=dict(curr.per_position_rates),

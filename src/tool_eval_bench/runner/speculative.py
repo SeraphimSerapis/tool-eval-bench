@@ -156,6 +156,7 @@ class SpecDecodeInfo:
     active: bool = False
     method: str = "unknown"  # mtp, draft_model, ngram, eagle, unknown
     has_prometheus: bool = False
+    has_per_request_timings: bool = False  # llama.cpp: draft_n in response timings
     detail: str = ""
 
 
@@ -170,7 +171,8 @@ async def detect_spec_decoding(
 
     Detection strategy:
     1. Check /metrics for spec_decode counters (vLLM / SGLang)
-    2. Accept user hint via backend_hint
+    2. Check /metrics for llamacpp: prefix (llama.cpp — per-request timings)
+    3. Accept user hint via backend_hint
     """
     info = SpecDecodeInfo()
 
@@ -178,21 +180,34 @@ async def detect_spec_decoding(
     url = metrics_url or _metrics_url(base_url)
     try:
         resp = await client.get(url, headers=_headers(api_key), timeout=5.0)
-        if resp.status_code == 200 and "spec_decode" in resp.text:
-            info.active = True
-            info.has_prometheus = True
-            info.detail = "Detected via Prometheus /metrics (spec_decode counters present)"
-
-            # Try to infer method from metric names
+        if resp.status_code == 200:
             text = resp.text
-            if "eagle" in text.lower():
-                info.method = "eagle"
-            elif "ngram" in text.lower():
-                info.method = "ngram"
-            elif "mtp" in text.lower() or "multi_token" in text.lower():
-                info.method = "mtp"
-            else:
-                info.method = "draft_model"  # generic default for vLLM spec decode
+
+            # vLLM / SGLang: look for spec_decode counters
+            if "spec_decode" in text:
+                info.active = True
+                info.has_prometheus = True
+                info.detail = "Detected via Prometheus /metrics (spec_decode counters present)"
+
+                # Try to infer method from metric names
+                if "eagle" in text.lower():
+                    info.method = "eagle"
+                elif "ngram" in text.lower():
+                    info.method = "ngram"
+                elif "mtp" in text.lower() or "multi_token" in text.lower():
+                    info.method = "mtp"
+                else:
+                    info.method = "draft_model"  # generic default for vLLM spec decode
+
+            # llama.cpp: no spec_decode counters, but we can detect the backend
+            # and know that draft stats will come from per-request timings
+            elif "llamacpp:" in text:
+                info.has_per_request_timings = True
+                info.detail = (
+                    "llama.cpp detected — spec decode metrics available "
+                    "via per-request timings (draft_n/draft_n_accepted)"
+                )
+                # Don't set active=True yet — we'll confirm per-request
     except Exception:
         pass
 
@@ -202,6 +217,14 @@ async def detect_spec_decoding(
             info.method = backend_hint
             if not info.active:
                 info.active = True
+                # Only assume per-request timings if we positively identified
+                # a llama.cpp backend from /metrics.  When /metrics is simply
+                # unreachable (e.g. vLLM behind a proxy), we don't know the
+                # backend and shouldn't claim per-request timings support.
+                if not info.has_per_request_timings:
+                    # Unknown backend — Prometheus may just be unreachable.
+                    # Spec bench will try Prometheus first, then per-request fallback.
+                    pass
                 info.detail = f"Assumed active via --spec-method={backend_hint}"
 
     return info
@@ -456,6 +479,17 @@ async def measure_spec_single(
             if nd and nd > 0 and at is not None:
                 spec_sample.acceptance_length = at / nd
 
+    # Fallback: llama.cpp per-request timings (draft_n / draft_n_accepted)
+    # These are embedded in the SSE response by llama-server and extracted
+    # by _stream_one() into ThroughputSample.draft_n / draft_n_accepted.
+    if spec_sample.draft_tokens_delta is None and sample.draft_n is not None:
+        spec_sample.draft_tokens_delta = sample.draft_n
+        spec_sample.accepted_tokens_delta = sample.draft_n_accepted or 0
+        if sample.draft_n > 0:
+            spec_sample.acceptance_rate = (sample.draft_n_accepted or 0) / sample.draft_n
+        # llama.cpp timings don't expose num_drafts, so acceptance_length
+        # and draft_window remain None
+
     return spec_sample
 
 
@@ -525,6 +559,13 @@ async def run_spec_bench(
                 "If other models are serving concurrent traffic on this endpoint, "
                 "per-request acceptance rate measurements will be inaccurate. "
                 "For clean measurements: use a single-model server with no concurrent load.",
+            )
+            print()  # visual separator before results
+        elif spec_info.has_per_request_timings:
+            logger.info(
+                "llama.cpp backend detected — spec decode metrics will be "
+                "extracted from per-request timings (draft_n/draft_n_accepted). "
+                "Per-request stats are exact for each measurement.",
             )
             print()  # visual separator before results
 

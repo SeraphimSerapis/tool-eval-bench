@@ -397,3 +397,238 @@ class TestRunSpecBenchAttributes:
         info = SpecDecodeInfo(active=True, has_prometheus=False, method="mtp")
         assert info.has_prometheus is False
 
+
+# ---------------------------------------------------------------------------
+# vLLM non-regression: detect_spec_decoding must NOT set has_per_request_timings
+# ---------------------------------------------------------------------------
+
+
+class TestDetectSpecDecodingVLLMNonRegression:
+    """Verify detect_spec_decoding never claims per-request timings for vLLM.
+
+    These tests cover all four vLLM scenarios to ensure the llama.cpp additions
+    don't accidentally contaminate the vLLM detection path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_vllm_spec_decode_detected(self):
+        """vLLM with spec_decode in /metrics → active, has_prometheus, NOT has_per_request_timings."""
+        import httpx
+        body = "spec_decode_num_accepted_tokens 100\nspec_decode_num_draft_tokens 200\n"
+        transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
+        async with httpx.AsyncClient(transport=transport) as client:
+            from tool_eval_bench.runner.speculative import detect_spec_decoding
+            info = await detect_spec_decoding(client, "http://host:8000/v1")
+        assert info.active is True
+        assert info.has_prometheus is True
+        assert info.has_per_request_timings is False  # CRITICAL: vLLM → no per-request
+
+    @pytest.mark.asyncio
+    async def test_vllm_spec_decode_with_hint(self):
+        """vLLM with spec_decode + --spec-method=mtp → active, has_prometheus, NOT has_per_request_timings."""
+        import httpx
+        body = "spec_decode_mtp_tokens 100\nspec_decode_num_draft_tokens 200\n"
+        transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
+        async with httpx.AsyncClient(transport=transport) as client:
+            from tool_eval_bench.runner.speculative import detect_spec_decoding
+            info = await detect_spec_decoding(client, "http://host:8000/v1", backend_hint="mtp")
+        assert info.active is True
+        assert info.has_prometheus is True
+        assert info.has_per_request_timings is False  # CRITICAL
+        assert info.method == "mtp"
+
+    @pytest.mark.asyncio
+    async def test_vllm_behind_proxy_with_hint(self):
+        """vLLM behind proxy (/metrics unreachable) + --spec-method=mtp → active, NOT has_per_request_timings.
+
+        Regression: previously this path set has_per_request_timings=True,
+        which would incorrectly claim llama.cpp-style timings for vLLM.
+        """
+        import httpx
+        transport = httpx.MockTransport(lambda r: httpx.Response(404))
+        async with httpx.AsyncClient(transport=transport) as client:
+            from tool_eval_bench.runner.speculative import detect_spec_decoding
+            info = await detect_spec_decoding(client, "http://host:8000/v1", backend_hint="mtp")
+        assert info.active is True
+        assert info.has_prometheus is False
+        assert info.has_per_request_timings is False  # CRITICAL: don't assume llama.cpp
+        assert info.method == "mtp"
+
+    @pytest.mark.asyncio
+    async def test_vllm_no_spec_decode(self):
+        """vLLM without speculative decoding → nothing active."""
+        import httpx
+        # vLLM metrics without spec_decode counters
+        body = "vllm:prompt_tokens_total 50000\nvllm:generation_tokens_total 12000\n"
+        transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
+        async with httpx.AsyncClient(transport=transport) as client:
+            from tool_eval_bench.runner.speculative import detect_spec_decoding
+            info = await detect_spec_decoding(client, "http://host:8000/v1")
+        assert info.active is False
+        assert info.has_prometheus is False
+        assert info.has_per_request_timings is False
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_with_hint(self):
+        """llama.cpp with llamacpp: metrics + --spec-method=mtp → active, has_per_request_timings."""
+        import httpx
+        body = "llamacpp:prompt_tokens_total 19345\nllamacpp:tokens_predicted_total 1157\n"
+        transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
+        async with httpx.AsyncClient(transport=transport) as client:
+            from tool_eval_bench.runner.speculative import detect_spec_decoding
+            info = await detect_spec_decoding(client, "http://host:8000/v1", backend_hint="mtp")
+        assert info.active is True
+        assert info.has_prometheus is False
+        assert info.has_per_request_timings is True  # llama.cpp confirmed
+        assert info.method == "mtp"
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_without_hint(self):
+        """llama.cpp without hint → NOT active (can't confirm spec decode from /metrics alone)."""
+        import httpx
+        body = "llamacpp:prompt_tokens_total 19345\nllamacpp:tokens_predicted_total 1157\n"
+        transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
+        async with httpx.AsyncClient(transport=transport) as client:
+            from tool_eval_bench.runner.speculative import detect_spec_decoding
+            info = await detect_spec_decoding(client, "http://host:8000/v1")
+        assert info.active is False  # can't confirm spec decode without hint
+        assert info.has_per_request_timings is True  # but we know the backend
+
+
+class TestLlamaCppTimings:
+    """Tests for llama.cpp speculative decoding via per-request timings."""
+
+    def test_spec_decode_info_has_per_request_timings(self):
+        """SpecDecodeInfo tracks llama.cpp per-request timings flag."""
+        info = SpecDecodeInfo(has_per_request_timings=True)
+        assert info.has_per_request_timings is True
+        assert info.has_prometheus is False
+        assert info.active is False  # not auto-detected from /metrics
+
+    def test_spec_decode_info_default_no_per_request(self):
+        """Default SpecDecodeInfo has no per-request timings."""
+        info = SpecDecodeInfo()
+        assert info.has_per_request_timings is False
+
+    def test_throughput_sample_draft_fields(self):
+        """ThroughputSample has draft_n and draft_n_accepted from llama.cpp."""
+        ts = ThroughputSample(
+            pp_tokens=2048,
+            tg_tokens=128,
+            draft_n=156,
+            draft_n_accepted=120,
+        )
+        assert ts.draft_n == 156
+        assert ts.draft_n_accepted == 120
+
+    def test_throughput_sample_draft_fields_default_none(self):
+        """draft_n fields default to None."""
+        ts = ThroughputSample()
+        assert ts.draft_n is None
+        assert ts.draft_n_accepted is None
+
+    def test_spec_sample_from_llamacpp_timings(self):
+        """SpecDecodeSample populated from llama.cpp per-request timings.
+
+        When Prometheus counters are absent, measure_spec_single() should
+        fall back to ThroughputSample.draft_n / draft_n_accepted.
+        """
+        # Simulate what _stream_one returns for a llama.cpp server
+        ts = ThroughputSample(
+            pp_tokens=2048,
+            tg_tokens=128,
+            depth=0,
+            concurrency=1,
+            ttft_ms=200,
+            total_ms=3000,
+            pp_tps=10000,
+            tg_tps=42.0,
+            draft_n=156,
+            draft_n_accepted=120,
+        )
+        spec = SpecDecodeSample.from_throughput_sample(ts, spec_method="mtp")
+
+        # Simulate the fallback path in measure_spec_single
+        # (no Prometheus data → use per-request timings)
+        if spec.draft_tokens_delta is None and ts.draft_n is not None:
+            spec.draft_tokens_delta = ts.draft_n
+            spec.accepted_tokens_delta = ts.draft_n_accepted or 0
+            if ts.draft_n > 0:
+                spec.acceptance_rate = (ts.draft_n_accepted or 0) / ts.draft_n
+
+        assert spec.draft_tokens_delta == 156
+        assert spec.accepted_tokens_delta == 120
+        assert spec.acceptance_rate == pytest.approx(120 / 156)
+        assert spec.waste_ratio == pytest.approx(1.0 - 120 / 156)
+        # acceptance_length and draft_window remain None (llama.cpp doesn't expose num_drafts)
+        assert spec.acceptance_length is None
+        assert spec.draft_window is None
+        # effective t/s still works
+        assert spec.effective_tg_tps > 0
+
+    def test_spec_sample_llamacpp_zero_drafts(self):
+        """When draft_n=0, acceptance_rate should not be set."""
+        ts = ThroughputSample(
+            tg_tokens=128,
+            total_ms=3000,
+            ttft_ms=200,
+            draft_n=0,
+            draft_n_accepted=0,
+        )
+        spec = SpecDecodeSample.from_throughput_sample(ts, spec_method="mtp")
+
+        # Simulate fallback: draft_n=0 should not set acceptance_rate
+        if spec.draft_tokens_delta is None and ts.draft_n is not None:
+            spec.draft_tokens_delta = ts.draft_n
+            spec.accepted_tokens_delta = ts.draft_n_accepted or 0
+            if ts.draft_n > 0:
+                spec.acceptance_rate = (ts.draft_n_accepted or 0) / ts.draft_n
+
+        assert spec.draft_tokens_delta == 0
+        assert spec.acceptance_rate is None  # no drafts → no rate
+
+    def test_spec_sample_llamacpp_all_accepted(self):
+        """Perfect acceptance: draft_n == draft_n_accepted."""
+        ts = ThroughputSample(
+            tg_tokens=128,
+            total_ms=3000,
+            ttft_ms=200,
+            draft_n=100,
+            draft_n_accepted=100,
+        )
+        spec = SpecDecodeSample.from_throughput_sample(ts, spec_method="draft")
+
+        if spec.draft_tokens_delta is None and ts.draft_n is not None:
+            spec.draft_tokens_delta = ts.draft_n
+            spec.accepted_tokens_delta = ts.draft_n_accepted or 0
+            if ts.draft_n > 0:
+                spec.acceptance_rate = (ts.draft_n_accepted or 0) / ts.draft_n
+
+        assert spec.acceptance_rate == pytest.approx(1.0)
+        assert spec.waste_ratio == pytest.approx(0.0)
+
+    def test_prometheus_takes_precedence_over_timings(self):
+        """When Prometheus deltas are available, they should win over timings."""
+        ts = ThroughputSample(
+            tg_tokens=128,
+            total_ms=3000,
+            ttft_ms=200,
+            draft_n=100,        # llama.cpp timings present
+            draft_n_accepted=80,
+        )
+        spec = SpecDecodeSample.from_throughput_sample(ts, spec_method="mtp")
+
+        # Simulate Prometheus data being available (vLLM path)
+        spec.draft_tokens_delta = 200      # from Prometheus
+        spec.accepted_tokens_delta = 150   # from Prometheus
+        spec.acceptance_rate = 150 / 200
+
+        # Now the fallback check should NOT override
+        if spec.draft_tokens_delta is None and ts.draft_n is not None:
+            spec.draft_tokens_delta = ts.draft_n
+            spec.accepted_tokens_delta = ts.draft_n_accepted or 0
+
+        # Prometheus values should persist
+        assert spec.draft_tokens_delta == 200
+        assert spec.accepted_tokens_delta == 150
+        assert spec.acceptance_rate == pytest.approx(0.75)

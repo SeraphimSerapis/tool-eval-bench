@@ -623,7 +623,7 @@ async def run_spec_live(
                 snap = await scrape_snapshot(client, url, api_key)
                 poll_count += 1
 
-                if snap is not None and snap.has_spec_decode:
+                if snap is not None and (snap.has_spec_decode or snap.has_llamacpp_metrics):
                     # Capture baseline on first successful scrape (session-relative counters)
                     if baseline_snap is None:
                         baseline_snap = snap
