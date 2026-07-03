@@ -21,6 +21,51 @@ from tool_eval_bench.utils.urls import chat_completions_url as _chat_completions
 logger = logging.getLogger(__name__)
 
 
+def _repair_streamed_tool_args(s: str) -> str:
+    """Repair truncated JSON from streamed tool-call arguments.
+
+    When a server uses ``--stream-interval > 1``, tool-call argument tokens
+    are batched into larger SSE chunks.  In some cases the server's own
+    tool-call parser may not detect the closing brace within a batch,
+    causing the accumulated arguments string to be missing its final ``}``
+    or have unbalanced quotes.
+
+    This function applies minimal repairs:
+      1. Close unterminated strings (odd number of unescaped quotes).
+      2. Close unbalanced braces and brackets.
+
+    If the string is already valid JSON, it is returned unchanged.
+    """
+    if not s or not s.strip():
+        return "{}"
+    try:
+        json.loads(s)
+        return s  # already valid
+    except json.JSONDecodeError:
+        pass
+
+    import re
+
+    repaired = s
+    # Close unterminated strings
+    n_quotes = len(re.findall(r'(?<!\\)"', repaired))
+    if n_quotes % 2 != 0:
+        repaired += '"'
+
+    # Close unbalanced braces and brackets
+    opens_brace = repaired.count("{") - repaired.count("}")
+    repaired += "}" * max(0, opens_brace)
+    opens_bracket = repaired.count("[") - repaired.count("]")
+    repaired += "]" * max(0, opens_bracket)
+
+    try:
+        json.loads(repaired)
+        return repaired
+    except json.JSONDecodeError:
+        logger.warning("Could not repair streamed tool-call arguments: %.80s", s)
+        return s  # return original; let downstream parsing handle it
+
+
 def _normalize_tool_calls(raw_calls: list[dict] | None) -> list[ProviderToolCall]:
     if not raw_calls:
         return []
@@ -271,11 +316,26 @@ class OpenAICompatibleAdapter(BackendAdapter):
         tool_calls: list[ProviderToolCall] = []
         for idx in sorted(tool_calls_map.keys()):
             tc = tool_calls_map[idx]
+            # Repair truncated JSON arguments.  When the server uses
+            # --stream-interval > 1, tool-call arguments may arrive in
+            # larger batches where the closing brace is split across
+            # chunks or missing entirely (vLLM issue with batched token
+            # streaming).  Apply the same repair logic used for the
+            # round-trip message to ensure arguments are parseable.
+            raw_args = tc["arguments"]
+            repaired_args = _repair_streamed_tool_args(raw_args)
+            if repaired_args != raw_args:
+                logger.debug(
+                    "Repaired streamed tool-call arguments for index %d: %.80s → %.80s",
+                    idx,
+                    raw_args,
+                    repaired_args,
+                )
             tool_calls.append(
                 ProviderToolCall(
                     id=tc["id"],
                     name=tc["name"],
-                    arguments_str=tc["arguments"],
+                    arguments_str=repaired_args,
                 )
             )
 

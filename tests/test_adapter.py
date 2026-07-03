@@ -881,3 +881,128 @@ async def test_stream_null_function_in_tool_call_delta() -> None:
     assert result.tool_calls[0].name == "search"
     assert result.tool_calls[0].id == "tc_1"
     await adapter.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Stream-interval > 1: truncated tool-call arguments (GH-18)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stream_truncated_tool_args_missing_brace() -> None:
+    """Tool-call arguments with missing closing brace should be repaired (GH-18).
+
+    When --stream-interval > 1, vLLM may batch tokens such that the closing
+    brace of a tool-call's JSON arguments is missing from the final stream
+    chunk.  The adapter should repair the truncated JSON.
+    """
+    chunks = [
+        json.dumps(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "tc_1",
+                                    "function": {
+                                        "name": "get_weather",
+                                        "arguments": '{"location": "NYC"',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
+    ]
+    body = _sse_lines(*chunks)
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        stream=True,
+    )
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "get_weather"
+    # The missing closing brace should have been repaired
+    assert result.tool_calls[0].arguments_str == '{"location": "NYC"}'
+    assert result.tool_calls[0].arguments == {"location": "NYC"}
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_truncated_tool_args_unbalanced_quotes() -> None:
+    """Tool-call arguments with unbalanced quotes should be repaired (GH-18)."""
+    chunks = [
+        json.dumps(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "tc_1",
+                                    "function": {
+                                        "name": "search",
+                                        "arguments": '{"query": "test',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
+    ]
+    body = _sse_lines(*chunks)
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        stream=True,
+    )
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "search"
+    # Repair should close the quote and brace
+    parsed = json.loads(result.tool_calls[0].arguments_str)
+    assert parsed == {"query": "test"}
+    await adapter.aclose()
+
+
+def test_repair_streamed_tool_args_valid_json() -> None:
+    """Already-valid JSON should be returned unchanged."""
+    from tool_eval_bench.adapters.openai_compat import _repair_streamed_tool_args
+
+    assert _repair_streamed_tool_args('{"a": 1}') == '{"a": 1}'
+    assert _repair_streamed_tool_args("") == "{}"
+    assert _repair_streamed_tool_args("  ") == "{}"
+
+
+def test_repair_streamed_tool_args_missing_brace() -> None:
+    """Missing closing brace should be repaired."""
+    from tool_eval_bench.adapters.openai_compat import _repair_streamed_tool_args
+
+    result = _repair_streamed_tool_args('{"key": "value"')
+    assert json.loads(result) == {"key": "value"}
+
+
+def test_repair_streamed_tool_args_nested() -> None:
+    """Nested JSON with missing braces should be repaired."""
+    from tool_eval_bench.adapters.openai_compat import _repair_streamed_tool_args
+
+    result = _repair_streamed_tool_args('{"outer": {"inner": 1')
+    assert json.loads(result) == {"outer": {"inner": 1}}

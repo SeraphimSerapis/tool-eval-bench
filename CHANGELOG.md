@@ -16,6 +16,16 @@ All notable changes to `tool-eval-bench` are documented here.
   benchmark aborts with a clear error (exit code 3) instead of running
   84 scenarios against a broken endpoint.  New `MODEL_NOT_AVAILABLE` error
   code added to `domain/errors.py` for structured `--json` output.
+- **Streamed tool-call arguments repair for `--stream-interval > 1` (#18)**
+  — when vLLM is launched with `--stream-interval` set to a value higher
+  than 1, tool-call argument tokens are batched into larger SSE chunks.
+  In some cases the server's own tool-call parser does not detect the
+  closing brace within a batch, causing the accumulated arguments string
+  to be missing its final `}` or have unbalanced quotes.  The streaming
+  adapter now applies a `_repair_streamed_tool_args()` function that
+  closes unterminated strings and unbalanced braces/brackets before
+  building `ProviderToolCall` objects, ensuring arguments are parseable
+  regardless of the server's stream-interval setting.
 
 ### Changed
 
