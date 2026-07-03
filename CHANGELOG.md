@@ -4,6 +4,19 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Pre-flight model availability check (#19)** — when a server lists a model
+  in `/v1/models` but fails to actually serve it (e.g. vLLM returns 400
+  "Model not found" on inference), the benchmark previously produced
+  misleading scores (1 passed, 11 partial, 72 failed) because 4xx responses
+  were treated as "model returned no tool calls" by the adapter.  A new
+  `_preflight_model_check()` sends a trivial 1-token chat completion after
+  model detection and before warm-up.  If the server returns 4xx/5xx, the
+  benchmark aborts with a clear error (exit code 3) instead of running
+  84 scenarios against a broken endpoint.  New `MODEL_NOT_AVAILABLE` error
+  code added to `domain/errors.py` for structured `--json` output.
+
 ### Changed
 
 - **TC-48 evaluator tightened** — models that merge CC correctly but skip

@@ -95,6 +95,7 @@ from tool_eval_bench.domain.errors import (
     DETECTION_FAILED,
     HTTP_ERROR,
     INVALID_RESPONSE,
+    MODEL_NOT_AVAILABLE,
     NO_MODELS,
     NO_SERVER,
 )
@@ -386,6 +387,96 @@ async def _plain_on_result(
 ) -> None:
     style = STATUS_STYLE.get(result.status, "?")
     print(f"{style}  ({result.points}/2) {DIM}{result.summary}{RESET}")
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight model availability check (issue #19)
+# ---------------------------------------------------------------------------
+
+
+def _preflight_model_check(
+    console: Console,
+    base_url: str,
+    model: str,
+    api_key: str | None,
+    *,
+    headless: bool = False,
+) -> None:
+    """Send a trivial chat completion to verify the model is actually usable.
+
+    Some servers (vLLM, LiteLLM) list models in ``/v1/models`` even when they
+    fail to load — returning HTTP 400 "Model not found" on the first real
+    request.  Without this check, the benchmark silently produces misleading
+    pass/partial/fail scores because 4xx responses are treated as "model
+    returned no tool calls" by the adapter.
+
+    This function sends a minimal 1-token completion request.  If the server
+    returns 4xx/5xx, we abort with a clear error before any scenarios run.
+
+    Exits with code 3 (model error) on failure.
+    """
+    import httpx
+
+    from tool_eval_bench.utils.urls import chat_completions_url as _chat_url
+
+    url = _chat_url(base_url)
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Say hello."},
+        ],
+        "max_tokens": 1,
+        "temperature": 0.0,
+    }
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    async def _check() -> httpx.Response:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            return await client.post(url, json=payload, headers=headers)
+
+    try:
+        resp = asyncio.run(_check())
+        if resp.status_code >= 400:
+            body = resp.text[:300].strip()
+            if headless:
+                _headless_error(
+                    MODEL_NOT_AVAILABLE,
+                    f"Model '{model}' is listed in /v1/models but returned "
+                    f"HTTP {resp.status_code} on a test request: {body}",
+                    exit_code=3,
+                )
+            console.print("[bold red]✗ Model not available[/]")
+            console.print(
+                f"[red]Model '{model}' is listed in /v1/models but returned "
+                f"HTTP {resp.status_code} on a test request.[/]"
+            )
+            console.print(f"[dim]  {body}[/]")
+            console.print(
+                "\n[yellow]The server lists this model but cannot serve it. "
+                "Check server logs for model loading errors.[/]"
+            )
+            sys.exit(3)
+    except httpx.ConnectError:
+        if headless:
+            _headless_error(
+                CONNECTION_FAILED,
+                f"Could not connect to {base_url} for pre-flight check.",
+                exit_code=2,
+            )
+        console.print(f"[bold red]✗ Cannot connect to {base_url}[/]")
+        sys.exit(2)
+    except Exception as exc:
+        if headless:
+            _headless_error(
+                MODEL_NOT_AVAILABLE,
+                f"Pre-flight check failed with unexpected error: {exc}",
+                exit_code=3,
+            )
+        console.print(f"[bold red]✗ Pre-flight check failed:[/] {exc}")
+        sys.exit(3)
 
 
 # ---------------------------------------------------------------------------
@@ -2134,6 +2225,11 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
         return
+
+    # -- Pre-flight: verify the model actually works (issue #19) --
+    # Some servers list models in /v1/models but fail on real requests.
+    # Without this check, the benchmark produces misleading scores.
+    _preflight_model_check(console, base_url, model, api_key, headless=args.json)
 
     # -- Warm-up --
     if not args.no_warmup and not args.json:

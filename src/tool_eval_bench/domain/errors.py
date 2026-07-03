@@ -32,6 +32,12 @@ INVALID_RESPONSE = "invalid_response"
 NO_MODELS = "no_models"
 """Server responded but the model list is empty — no models loaded."""
 
+MODEL_NOT_AVAILABLE = "model_not_available"
+"""Model is listed in /v1/models but returns an error (4xx/5xx) when actually
+used for inference.  This catches the case where a model appears loaded but
+fails on real requests — without this check the benchmark silently produces
+misleading pass/partial/fail scores (issue #19)."""
+
 # -- Discovery errors (exit code 1) -----------------------------------------
 NO_SERVER = "no_server"
 """Auto-discovery found no responsive inference server on localhost."""
