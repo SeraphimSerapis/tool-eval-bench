@@ -40,14 +40,20 @@ jobs:
       - name: Ruff format
         run: ruff format --check .
 
+      - name: Mypy
+        run: mypy
+
       - name: Pytest
         run: >
           pytest --tb=short -q
           --ignore=tests/test_llama_benchy.py
           -m "not live"
           --randomly-seed=${{ matrix.random-seed }}
-          --cov=tool_eval_bench --cov-report=term-missing
+          --cov=tool_eval_bench --cov-report=term-missing --cov-report=json
           --cov-fail-under=80
+
+      - name: Critical module coverage
+        run: python scripts/check_module_coverage.py coverage.json
 
   optional-perf-tests:
     runs-on: ubuntu-latest

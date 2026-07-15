@@ -37,6 +37,8 @@ hf = [
   "datasets>=3.0.0",
 ]
 dev = [
+  "mypy>=1.15.0",
+  "types-PyYAML>=6.0.12",
   "pytest>=8.4.0",
   "pytest-asyncio>=0.24.0",
   "pytest-cov>=6.1.0",
@@ -44,6 +46,47 @@ dev = [
   "ruff>=0.12.0",
   "pre-commit>=4.0.0",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/tool_eval_bench"]
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "tool_eval_bench.cli.plugin_runners"
+disable_error_code = ["import-not-found"]
+
+[[tool.mypy.overrides]]
+# Incremental baseline for pre-existing type debt. Keep this list explicit so
+# newly added modules are checked automatically and shrink it as modules are fixed.
+module = [
+  "tool_eval_bench.__main__",
+  "tool_eval_bench.application.service",
+  "tool_eval_bench.cli.dispatch",
+  "tool_eval_bench.cli.history",
+  "tool_eval_bench.cli.pressure",
+  "tool_eval_bench.cli.spec_bench",
+  "tool_eval_bench.cli.spec_live_display",
+  "tool_eval_bench.compare_reports.summary",
+  "tool_eval_bench.compare_reports.tool_eval",
+  "tool_eval_bench.evals.scenarios_adversarial",
+  "tool_eval_bench.evals.scenarios_agentic",
+  "tool_eval_bench.plugins.gsm8k.plugin",
+  "tool_eval_bench.plugins.hf_utils",
+  "tool_eval_bench.plugins.ifeval.plugin",
+  "tool_eval_bench.plugins.mmlu.plugin",
+  "tool_eval_bench.runner.context_pressure",
+  "tool_eval_bench.runner.judge",
+  "tool_eval_bench.runner.orchestrator",
+  "tool_eval_bench.runner.throughput",
+  "tool_eval_bench.storage.db",
+]
+ignore_errors = true
 
 [project.scripts]
 tool-eval-bench = "tool_eval_bench.cli.bench:main"

@@ -6,6 +6,10 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Added
 
+- **Maintainability guardrails** — incremental mypy checking, committed schema-v4
+  and legacy-CLI compatibility snapshots, and per-module coverage floors for
+  critical user-facing modules now complement the aggregate coverage gate.
+
 - **Discoverable CLI subcommands with permanent compatibility** — `run`,
   `probe`, `bench`, `spec-live`, `plugin`, `compare`, `history`, `leaderboard`,
   `export`, and `resume` translate into the established runtime configuration.
@@ -19,6 +23,11 @@ All notable changes to `tool-eval-bench` are documented here.
   measures 83.69% branch coverage.
 
 ### Changed
+
+- **Focused CLI and test ownership** — server-independent legacy commands now
+  live in dedicated handlers, context-pressure Markdown rendering is owned by
+  the shared reporting layer, and the mixed priority-coverage file is split by
+  subsystem.
 
 - **Core ports and composition moved to their owning layers** — provider-neutral
   adapter contracts now live in `domain`, while concrete adapter, storage, and

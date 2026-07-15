@@ -42,22 +42,15 @@ from tool_eval_bench.cli.helpers import (
 from tool_eval_bench.cli.helpers import (
     persist_plugin_run as _persist_plugin_run,
 )
-from tool_eval_bench.cli.history import (
-    compare_runs as _compare_runs,
-)
+from tool_eval_bench.cli.history import compare_runs as _compare_runs
 from tool_eval_bench.cli.history import (
     print_diff as _print_diff,
 )
-from tool_eval_bench.cli.history import (
-    print_history as _print_history,
-)
-from tool_eval_bench.cli.leaderboard import (
-    export_runs as _export_runs,
-)
-from tool_eval_bench.cli.leaderboard import (
-    print_leaderboard as _print_leaderboard,
-)
+from tool_eval_bench.cli.history import print_history as _print_history
+from tool_eval_bench.cli.leaderboard import export_runs as _export_runs
+from tool_eval_bench.cli.leaderboard import print_leaderboard as _print_leaderboard
 from tool_eval_bench.cli.legacy_parser import _make_parser  # noqa: F401
+from tool_eval_bench.cli.local_commands import handle_local_command as _handle_local_command
 from tool_eval_bench.cli.perf import (
     run_llama_benchy as _run_llama_benchy,
 )
@@ -446,80 +439,16 @@ def main() -> None:
     if args.json_file:
         args.json = True
 
-    # --history: show recent runs and exit
-    if args.history:
-        _print_history(console)
+    if _handle_local_command(
+        args,
+        console,
+        resolve_scenarios=_resolve_scenarios,
+        print_history=_print_history,
+        print_leaderboard=_print_leaderboard,
+        export_runs=_export_runs,
+        compare_runs=_compare_runs,
+    ):
         return
-
-    # --leaderboard: show ranked model comparison and exit
-    if args.leaderboard:
-        _print_leaderboard(console)
-        return
-
-    # --export: dump results in CSV/JSON and exit
-    if args.export:
-        _export_runs(console, fmt=args.export, output=args.export_output)
-        return
-
-    # --compare: diff two stored runs and exit
-    if args.compare:
-        _compare_runs(console, args.compare[0], args.compare[1])
-        return
-
-    # --dry-run: show what would run and exit (no server needed)
-    if args.dry_run:
-        scenarios = _resolve_scenarios(args)
-        from tool_eval_bench.domain.scenarios import CATEGORY_LABELS
-
-        if args.json:
-            import json as _json
-
-            cat_counts: dict[str, int] = {}
-            for s in scenarios:
-                cat_counts[s.category.value] = cat_counts.get(s.category.value, 0) + 1
-            out = {
-                "event": "dry_run",
-                "total_scenarios": len(scenarios),
-                "estimated_minutes": round(len(scenarios) * 0.3, 1),
-                "categories": {
-                    cat: {
-                        "label": CATEGORY_LABELS.get(
-                            next(s.category for s in scenarios if s.category.value == cat),
-                            cat,
-                        ),
-                        "count": count,
-                    }
-                    for cat, count in sorted(cat_counts.items())
-                },
-                "scenarios": [
-                    {
-                        "id": s.id,
-                        "title": s.title,
-                        "category": s.category.value,
-                        "difficulty": s.difficulty,
-                    }
-                    for s in scenarios
-                ],
-            }
-            sys.stdout.write(_json.dumps(out, indent=2) + "\n")
-        else:
-            console.print(f"\n[bold]Dry run:[/] {len(scenarios)} scenarios would execute\n")
-            console.print(
-                f"  Estimated time: ~{len(scenarios) * 0.3:.0f} minutes (at ~18s/scenario)\n"
-            )
-            cat_counts = {}
-            for s in scenarios:
-                label = CATEGORY_LABELS.get(s.category, s.category.value)
-                cat_counts[label] = cat_counts.get(label, 0) + 1
-            for label, count in sorted(cat_counts.items()):
-                console.print(f"  {label}: {count} scenarios")
-            console.print()
-            _diff_stars = {1: "★", 2: "★★", 3: "★★★", 4: "★★★★", 5: "★★★★★"}
-            for s in scenarios:
-                d = _diff_stars.get(s.difficulty, "?") if s.difficulty else "?"
-                console.print(f"  [dim]{s.id}[/]  {d:>5s}  {s.title}")
-            console.print()
-        sys.exit(0)
 
     # Cascade: CLI flag → env var → auto-discovery
     model = args.model or os.getenv("TOOL_EVAL_MODEL") or None

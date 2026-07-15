@@ -49,7 +49,8 @@ Before claiming completion:
 
 1. `ruff check .`
 2. `ruff format --check .`
-3. `.venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py -m "not live" --randomly-seed=104729`
+3. `.venv/bin/mypy`
+4. `.venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py -m "not live" --randomly-seed=104729`
 
 CI repeats the required suite with seeds `104729`, `130363`, and `155921`
 across Python 3.11–3.13, and enforces the configured branch-coverage floor.
@@ -59,7 +60,7 @@ across Python 3.11–3.13, and enforces the configured branch-coverage floor.
 ```bash
 pip install -e '.[dev]'       # includes pre-commit
 pre-commit install            # ruff lint on every commit
-pre-commit install --hook-type pre-push  # pytest on every push
+pre-commit install --hook-type pre-push  # mypy + pytest on every push
 ```
 
 **Always use the project venv** (`.venv/bin/python`), not system Python.

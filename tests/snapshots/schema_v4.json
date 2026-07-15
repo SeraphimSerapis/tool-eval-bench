@@ -1,0 +1,603 @@
+{
+  "args": [
+    {
+      "default": false,
+      "description": "Show tool-eval-bench version and exit",
+      "name": "version",
+      "type": "bool"
+    },
+    {
+      "default": null,
+      "description": "Model name/path (auto-detected from /v1/models if omitted)",
+      "name": "model",
+      "type": "string"
+    },
+    {
+      "choices": [
+        "vllm",
+        "litellm",
+        "llamacpp"
+      ],
+      "default": "vllm",
+      "description": "Backend label for reports",
+      "name": "backend",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Server base URL (default: auto-discover on localhost, or from .env)",
+      "name": "base_url",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "API key (optional; can also be set via TOOL_EVAL_API_KEY env var)",
+      "name": "api_key",
+      "type": "string"
+    },
+    {
+      "default": false,
+      "description": "Check server reachability and exit (0 = ready, 1 = not found)",
+      "name": "probe",
+      "type": "bool"
+    },
+    {
+      "default": 0.0,
+      "description": "Sampling temperature (0.0 = greedy)",
+      "name": "temperature",
+      "type": "float"
+    },
+    {
+      "default": false,
+      "description": "Disable thinking/reasoning (sets enable_thinking=false)",
+      "name": "no_think",
+      "type": "bool"
+    },
+    {
+      "default": null,
+      "description": "Top-p (nucleus) sampling",
+      "name": "top_p",
+      "type": "float"
+    },
+    {
+      "default": null,
+      "description": "Top-k sampling",
+      "name": "top_k",
+      "type": "int"
+    },
+    {
+      "default": null,
+      "description": "Min-p sampling threshold",
+      "name": "min_p",
+      "type": "float"
+    },
+    {
+      "default": null,
+      "description": "Repetition penalty",
+      "name": "repeat_penalty",
+      "type": "float"
+    },
+    {
+      "default": null,
+      "description": "Random seed (passed to server)",
+      "name": "seed",
+      "type": "int"
+    },
+    {
+      "default": null,
+      "description": "JSON dict merged into API payload; overrides individual flags",
+      "name": "backend_kwargs",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Specific scenario IDs to run (e.g. TC-01 TC-07)",
+      "name": "scenarios",
+      "type": "list[string]"
+    },
+    {
+      "choices": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "J",
+        "K",
+        "L",
+        "M",
+        "N",
+        "O",
+        "P"
+      ],
+      "default": null,
+      "description": "Run only specific categories (A\u2013P)",
+      "name": "categories",
+      "type": "list[string]"
+    },
+    {
+      "default": false,
+      "description": "Run only the core 15 scenarios",
+      "name": "short",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Include Hard Mode scenarios (Category P)",
+      "name": "hardmode",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run ONLY Hard Mode scenarios (Category P)",
+      "name": "hardmode_only",
+      "type": "bool"
+    },
+    {
+      "default": 60.0,
+      "description": "Request timeout in seconds",
+      "name": "timeout",
+      "type": "float"
+    },
+    {
+      "default": 8,
+      "description": "Max turns per scenario",
+      "name": "max_turns",
+      "type": "int"
+    },
+    {
+      "default": 1,
+      "description": "Number of trial runs for statistical rigor",
+      "name": "trials",
+      "type": "int"
+    },
+    {
+      "default": 1,
+      "description": "Run N scenarios concurrently (1 = sequential)",
+      "name": "parallel",
+      "type": "int"
+    },
+    {
+      "default": 0.0,
+      "description": "Inject random tool errors at this rate for robustness testing",
+      "max": 1.0,
+      "min": 0.0,
+      "name": "error_rate",
+      "type": "float"
+    },
+    {
+      "default": false,
+      "description": "Skip server warm-up request",
+      "name": "no_warmup",
+      "type": "bool"
+    },
+    {
+      "default": null,
+      "description": "Override benchmark reference date (YYYY-MM-DD)",
+      "name": "reference_date",
+      "type": "string"
+    },
+    {
+      "default": false,
+      "description": "Skip tool-call scenarios (use with --perf or --spec-bench)",
+      "name": "skip_tool_eval",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Output raw JSON instead of rich display",
+      "name": "json",
+      "type": "bool"
+    },
+    {
+      "default": null,
+      "description": "Write JSON results to PATH (implies --json; keeps stdout clean)",
+      "name": "json_file",
+      "type": "string"
+    },
+    {
+      "default": false,
+      "description": "Disable live updating display",
+      "name": "no_live",
+      "type": "bool"
+    },
+    {
+      "default": 0.7,
+      "description": "Quality/speed weight for deployability score",
+      "max": 1.0,
+      "min": 0.0,
+      "name": "alpha",
+      "type": "float"
+    },
+    {
+      "default": false,
+      "description": "Skip inference engine probing",
+      "name": "no_probe_engine",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Mask the server URL in reports",
+      "name": "redact_url",
+      "type": "bool"
+    },
+    {
+      "default": null,
+      "description": "Directory for report files (default: ./runs/)",
+      "name": "output_dir",
+      "type": "string"
+    },
+    {
+      "default": false,
+      "description": "Show which scenarios would run, then exit (no server needed)",
+      "name": "dry_run",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run llama-benchy throughput benchmark before tool-call scenarios",
+      "name": "perf",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run ONLY llama-benchy throughput benchmark (skip tool-call scenarios)",
+      "name": "perf_only",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Use built-in throughput benchmark (no external deps)",
+      "name": "perf_legacy",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run ONLY built-in throughput benchmark",
+      "name": "perf_legacy_only",
+      "type": "bool"
+    },
+    {
+      "default": 2048,
+      "description": "Prompt tokens for throughput benchmark",
+      "name": "pp",
+      "type": "int"
+    },
+    {
+      "default": 128,
+      "description": "Generation tokens for throughput benchmark",
+      "name": "tg",
+      "type": "int"
+    },
+    {
+      "default": "0,4096,8192",
+      "description": "Context depths for throughput sweep, comma separated",
+      "name": "depth",
+      "type": "string"
+    },
+    {
+      "default": "1,2,4",
+      "description": "Concurrency levels for throughput sweep",
+      "name": "concurrency",
+      "type": "string"
+    },
+    {
+      "default": 3,
+      "description": "Measurement runs per test point (llama-benchy)",
+      "name": "benchy_runs",
+      "type": "int"
+    },
+    {
+      "choices": [
+        "api",
+        "generation",
+        "none"
+      ],
+      "default": "generation",
+      "description": "Latency measurement mode for llama-benchy",
+      "name": "benchy_latency_mode",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Pass-through args for llama-benchy (quoted string)",
+      "name": "benchy_args",
+      "type": "string"
+    },
+    {
+      "default": true,
+      "description": "Deprecated: llama-benchy coherence check is now always skipped (retained for compatibility)",
+      "name": "skip_coherence",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run spec-decode / MTP benchmark (effective t/s, acceptance rate)",
+      "name": "spec_bench",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Live-monitor speculative decoding stats (polls /metrics, runs until Ctrl+C)",
+      "name": "spec_live",
+      "type": "bool"
+    },
+    {
+      "default": 1.0,
+      "description": "Poll interval for --spec-live in seconds",
+      "name": "spec_live_interval",
+      "type": "float"
+    },
+    {
+      "choices": [
+        "auto",
+        "mtp",
+        "draft",
+        "dflash",
+        "ngram",
+        "eagle"
+      ],
+      "default": "auto",
+      "description": "Spec-decode method hint",
+      "name": "spec_method",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Baseline tg t/s for speedup ratio calculation",
+      "name": "baseline_tgs",
+      "type": "float"
+    },
+    {
+      "default": "filler,code,structured",
+      "description": "Prompt types for spec-bench, comma separated",
+      "name": "spec_prompts",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Prometheus /metrics URL (when API is behind a proxy)",
+      "name": "metrics_url",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Fill context to this ratio before each scenario",
+      "max": 1.0,
+      "min": 0.0,
+      "name": "context_pressure",
+      "type": "float"
+    },
+    {
+      "default": null,
+      "description": "Override auto-detected context window size (tokens)",
+      "name": "context_size",
+      "type": "int"
+    },
+    {
+      "default": null,
+      "description": "Sweep pressure from START to END (e.g. 0.5-1.0)",
+      "name": "context_pressure_sweep",
+      "type": "string"
+    },
+    {
+      "default": 5,
+      "description": "Number of pressure levels to test in a sweep",
+      "name": "sweep_steps",
+      "type": "int"
+    },
+    {
+      "default": false,
+      "description": "Run GSM8K (Grade School Math) benchmark after tool-call scenarios",
+      "name": "gsm8k",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run ONLY the GSM8K benchmark (skip tool-call scenarios)",
+      "name": "gsm8k_only",
+      "type": "bool"
+    },
+    {
+      "default": 8,
+      "description": "Number of few-shot CoT examples for GSM8K (0\u20138)",
+      "name": "gsm8k_shots",
+      "type": "int"
+    },
+    {
+      "default": 200,
+      "description": "Max GSM8K questions to evaluate (0 = all 1319)",
+      "name": "gsm8k_limit",
+      "type": "int"
+    },
+    {
+      "default": false,
+      "description": "Shuffle GSM8K question order",
+      "name": "gsm8k_shuffle",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run MMLU benchmark after tool-call scenarios",
+      "name": "mmlu",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run ONLY the MMLU benchmark (skip tool-call scenarios)",
+      "name": "mmlu_only",
+      "type": "bool"
+    },
+    {
+      "default": 5,
+      "description": "Number of few-shot examples per subject for MMLU (0\u20135)",
+      "name": "mmlu_shots",
+      "type": "int"
+    },
+    {
+      "default": 500,
+      "description": "Max MMLU questions to evaluate (0 = all 14042)",
+      "name": "mmlu_limit",
+      "type": "int"
+    },
+    {
+      "default": null,
+      "description": "Comma-separated subjects or categories for MMLU",
+      "name": "mmlu_subjects",
+      "type": "string"
+    },
+    {
+      "default": false,
+      "description": "Run IFEval benchmark after tool-call scenarios",
+      "name": "ifeval",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run ONLY the IFEval benchmark (skip tool-call scenarios)",
+      "name": "ifeval_only",
+      "type": "bool"
+    },
+    {
+      "default": 0,
+      "description": "Max IFEval prompts to evaluate (0 = all 541)",
+      "name": "ifeval_limit",
+      "type": "int"
+    },
+    {
+      "default": null,
+      "description": "Compare against a previous run (use 'latest' for most recent)",
+      "name": "diff",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Compare two stored runs by ID (provide exactly two run IDs)",
+      "name": "compare",
+      "type": "list[string]"
+    },
+    {
+      "default": false,
+      "description": "List recent benchmark runs and exit",
+      "name": "history",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Show ranked model leaderboard and exit",
+      "name": "leaderboard",
+      "type": "bool"
+    },
+    {
+      "choices": [
+        "csv",
+        "json"
+      ],
+      "default": null,
+      "description": "Export all results in CSV or JSON format and exit",
+      "name": "export",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Output file for --export (default: stdout)",
+      "name": "export_output",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Resume a previous run \u2014 skip scenarios that already passed",
+      "name": "resume",
+      "type": "string"
+    },
+    {
+      "default": false,
+      "description": "Weight scenario scores by difficulty tier (1\u00d7trivial \u2026 5\u00d7very hard)",
+      "name": "weight_by_difficulty",
+      "type": "bool"
+    }
+  ],
+  "commands": {
+    "bench": {
+      "description": "Run throughput, speculative, or pressure benchmarks",
+      "legacy_flags": [
+        "perf",
+        "perf_only",
+        "spec_bench",
+        "context_pressure_sweep"
+      ]
+    },
+    "compare": {
+      "description": "Compare stored runs or Markdown reports",
+      "legacy_flags": [
+        "compare"
+      ],
+      "modes": [
+        "runs",
+        "report"
+      ]
+    },
+    "compare-report": {
+      "alias_for": "compare",
+      "description": "Alias for compare --report"
+    },
+    "export": {
+      "description": "Export stored runs",
+      "legacy_flags": [
+        "export"
+      ]
+    },
+    "history": {
+      "description": "List recent runs",
+      "legacy_flags": [
+        "history"
+      ]
+    },
+    "leaderboard": {
+      "description": "Show the model leaderboard",
+      "legacy_flags": [
+        "leaderboard"
+      ]
+    },
+    "plugin": {
+      "choices": [
+        "gsm8k",
+        "mmlu",
+        "ifeval"
+      ],
+      "description": "Run an external accuracy benchmark",
+      "legacy_flags": [
+        "gsm8k_only",
+        "mmlu_only",
+        "ifeval_only"
+      ]
+    },
+    "probe": {
+      "description": "Check whether an inference server is reachable",
+      "legacy_flags": [
+        "probe"
+      ]
+    },
+    "resume": {
+      "description": "Resume an incomplete run",
+      "legacy_flags": [
+        "resume"
+      ]
+    },
+    "run": {
+      "description": "Run tool-call scenarios",
+      "legacy_flags": []
+    },
+    "spec-live": {
+      "description": "Live-monitor speculative decoding metrics",
+      "legacy_flags": [
+        "spec_live"
+      ]
+    }
+  },
+  "schema_version": "4"
+}

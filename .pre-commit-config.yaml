@@ -13,6 +13,13 @@ repos:
   # ── Pytest: required suite (pre-push only) ───────────────
   - repo: local
     hooks:
+      - id: mypy-check
+        name: mypy (package)
+        entry: .venv/bin/mypy
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
       - id: pytest-check
         name: pytest (required suite)
         entry: .venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py -m "not live" -x -q --tb=line --no-header --randomly-seed=104729

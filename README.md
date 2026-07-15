@@ -694,9 +694,15 @@ tool-eval-bench compare --report runs/.../model_a_summary.md runs/.../model_b_su
 
 ```bash
 ruff check .       # lint
+.venv/bin/mypy     # incremental package type check
 .venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py
-                   # 1,952 tests — scenario evaluators, plugins, storage, CLI, adapter
+                   # scenario evaluators, plugins, storage, CLI, adapter
 ```
+
+Public CLI compatibility is protected by committed schema-v4 and legacy-parser
+snapshots. After an intentional interface change, regenerate them with
+`.venv/bin/python scripts/update_compat_snapshots.py`. CI also enforces targeted
+coverage floors for critical CLI, report-comparison, and benchmark-runner modules.
 
 ## Related Work
 

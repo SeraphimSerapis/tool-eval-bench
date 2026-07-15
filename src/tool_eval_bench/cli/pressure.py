@@ -10,22 +10,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
 logger = logging.getLogger(__name__)
-
-
-def _trace_block(raw_log: str) -> list[str]:
-    """Return a Markdown fence long enough to preserve the complete raw trace."""
-    longest = max((len(match) for match in re.findall(r"`+", raw_log)), default=0)
-    fence = "`" * max(3, longest + 1)
-    return [f"{fence}text", raw_log or "(empty trace)", fence]
 
 
 def _write_pressure_sweep_report(
@@ -40,63 +31,20 @@ def _write_pressure_sweep_report(
     first_degradation: float | None,
     output_dir: str | None,
 ) -> Path:
-    """Write a trace-complete Markdown artifact for a context-pressure sweep."""
+    """Compatibility wrapper around the shared Markdown reporter."""
     from tool_eval_bench.storage.reports import MarkdownReporter
 
     reporter = MarkdownReporter(root=output_dir)
-    now = datetime.now(timezone.utc)
-    folder = reporter.root / f"{now.year:04d}" / f"{now.month:02d}"
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{run_id}.md"
-    markdown = [
-        f"# Context Pressure Sweep — {model}",
-        "",
-        f"- **Run ID**: `{run_id}`",
-        f"- **Date**: `{now.isoformat()}`",
-        "- **Mode**: context-pressure-sweep",
-        f"- **Backend**: {backend}",
-        f"- **Server**: {display_url}",
-        f"- **Context Window**: {context_size:,} tokens",
-        f"- **Executed Levels**: {len(level_results)}",
-        f"- **Breaking Point**: {breaking_point:.0%}"
-        if breaking_point is not None
-        else "- **Breaking Point**: none",
-        f"- **First Degradation**: {first_degradation:.0%}"
-        if first_degradation is not None
-        else "- **First Degradation**: none",
-        "",
-    ]
-    for index, level in enumerate(level_results, start=1):
-        markdown.extend(
-            [
-                f"## Level {index} — {level['ratio']:.0%}",
-                "",
-                f"- **Fill Tokens**: {level['fill_tokens']:,}",
-                f"- **Pass Rate**: {level['score_pct']:.1f}%",
-            ]
-        )
-        if level.get("error"):
-            markdown.append(f"- **Level Error**: {level['error']}")
-        markdown.append("")
-        for scenario in level["scenario_results"]:
-            markdown.extend(
-                [
-                    f"### {scenario['scenario_id']}",
-                    "",
-                    f"- **Status**: {scenario['status']}",
-                    f"- **Points**: {scenario['points']} / 2",
-                    f"- **Summary**: {scenario.get('summary') or ''}",
-                    f"- **Expected**: {scenario.get('expected_behavior') or ''}",
-                    f"- **Tool Calls**: {', '.join(scenario.get('tool_calls_made') or []) or 'none'}",
-                    "",
-                    "#### Full trace",
-                    "",
-                    *_trace_block(scenario.get("raw_log", "")),
-                    "",
-                ]
-            )
-    path.write_text("\n".join(markdown), encoding="utf-8")
-    return path
+    return reporter.write_pressure_sweep_report(
+        run_id=run_id,
+        model=model,
+        backend=backend,
+        display_url=display_url,
+        context_size=context_size,
+        level_results=level_results,
+        breaking_point=breaking_point,
+        first_degradation=first_degradation,
+    )
 
 
 def _report_then_persist_pressure_sweep(

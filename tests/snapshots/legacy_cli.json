@@ -1,0 +1,806 @@
+[
+  {
+    "choices": null,
+    "default": "<SUPPRESS>",
+    "dest": "version",
+    "flags": [
+      "--version"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "model",
+    "flags": [
+      "--model"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "backend",
+    "flags": [
+      "--backend"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "base_url",
+    "flags": [
+      "--base-url"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "api_key",
+    "flags": [
+      "--api-key"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "probe",
+    "flags": [
+      "--probe"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 0.0,
+    "dest": "temperature",
+    "flags": [
+      "--temperature"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "no_think",
+    "flags": [
+      "--no-think"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "top_p",
+    "flags": [
+      "--top-p"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "top_k",
+    "flags": [
+      "--top-k"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "min_p",
+    "flags": [
+      "--min-p"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "repeat_penalty",
+    "flags": [
+      "--repeat-penalty"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "seed",
+    "flags": [
+      "--seed"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "backend_kwargs",
+    "flags": [
+      "--backend-kwargs"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "scenarios",
+    "flags": [
+      "--scenarios"
+    ],
+    "nargs": "*",
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "categories",
+    "flags": [
+      "--categories"
+    ],
+    "nargs": "*",
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "short",
+    "flags": [
+      "--short"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "hardmode",
+    "flags": [
+      "--hardmode"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "hardmode_only",
+    "flags": [
+      "--hardmode-only"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 60.0,
+    "dest": "timeout",
+    "flags": [
+      "--timeout"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 8,
+    "dest": "max_turns",
+    "flags": [
+      "--max-turns"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 1,
+    "dest": "trials",
+    "flags": [
+      "--trials"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 1,
+    "dest": "parallel",
+    "flags": [
+      "--parallel"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 0.0,
+    "dest": "error_rate",
+    "flags": [
+      "--error-rate"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "no_warmup",
+    "flags": [
+      "--no-warmup"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reference_date",
+    "flags": [
+      "--reference-date"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "skip_tool_eval",
+    "flags": [
+      "--skip-tool-eval"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "json",
+    "flags": [
+      "--json"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "json_file",
+    "flags": [
+      "--json-file"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "no_live",
+    "flags": [
+      "--no-live"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "redact_url",
+    "flags": [
+      "--redact-url"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 0.7,
+    "dest": "alpha",
+    "flags": [
+      "--alpha"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "no_probe_engine",
+    "flags": [
+      "--no-probe-engine"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "output_dir",
+    "flags": [
+      "--output-dir"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "dry_run",
+    "flags": [
+      "--dry-run"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "perf",
+    "flags": [
+      "--perf"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "perf_only",
+    "flags": [
+      "--perf-only"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "perf_legacy",
+    "flags": [
+      "--perf-legacy"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "perf_legacy_only",
+    "flags": [
+      "--perf-legacy-only"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 2048,
+    "dest": "pp",
+    "flags": [
+      "--pp"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 128,
+    "dest": "tg",
+    "flags": [
+      "--tg"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": "0,4096,8192",
+    "dest": "depth",
+    "flags": [
+      "--depth"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": "1,2,4",
+    "dest": "concurrency",
+    "flags": [
+      "--concurrency"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 3,
+    "dest": "benchy_runs",
+    "flags": [
+      "--benchy-runs"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": [
+      "api",
+      "generation",
+      "none"
+    ],
+    "default": "generation",
+    "dest": "benchy_latency_mode",
+    "flags": [
+      "--benchy-latency-mode"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "benchy_args",
+    "flags": [
+      "--benchy-args"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "skip_coherence",
+    "flags": [
+      "--skip-coherence"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "gsm8k",
+    "flags": [
+      "--gsm8k"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "gsm8k_only",
+    "flags": [
+      "--gsm8k-only"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 8,
+    "dest": "gsm8k_shots",
+    "flags": [
+      "--gsm8k-shots"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 200,
+    "dest": "gsm8k_limit",
+    "flags": [
+      "--gsm8k-limit"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "gsm8k_shuffle",
+    "flags": [
+      "--gsm8k-shuffle"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "mmlu",
+    "flags": [
+      "--mmlu"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "mmlu_only",
+    "flags": [
+      "--mmlu-only"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 5,
+    "dest": "mmlu_shots",
+    "flags": [
+      "--mmlu-shots"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 500,
+    "dest": "mmlu_limit",
+    "flags": [
+      "--mmlu-limit"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "mmlu_subjects",
+    "flags": [
+      "--mmlu-subjects"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "ifeval",
+    "flags": [
+      "--ifeval"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "ifeval_only",
+    "flags": [
+      "--ifeval-only"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 0,
+    "dest": "ifeval_limit",
+    "flags": [
+      "--ifeval-limit"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "spec_bench",
+    "flags": [
+      "--spec-bench"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "spec_live",
+    "flags": [
+      "--spec-live"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 1.0,
+    "dest": "spec_live_interval",
+    "flags": [
+      "--spec-live-interval"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": [
+      "auto",
+      "mtp",
+      "draft",
+      "dflash",
+      "ngram",
+      "eagle"
+    ],
+    "default": "auto",
+    "dest": "spec_method",
+    "flags": [
+      "--spec-method"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "baseline_tgs",
+    "flags": [
+      "--baseline-tgs"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": "filler,code,structured",
+    "dest": "spec_prompts",
+    "flags": [
+      "--spec-prompts"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "metrics_url",
+    "flags": [
+      "--metrics-url"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "context_pressure",
+    "flags": [
+      "--context-pressure"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "context_size",
+    "flags": [
+      "--context-size"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "context_pressure_sweep",
+    "flags": [
+      "--context-pressure-sweep"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 5,
+    "dest": "sweep_steps",
+    "flags": [
+      "--sweep-steps"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "diff",
+    "flags": [
+      "--diff"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "compare",
+    "flags": [
+      "--compare"
+    ],
+    "nargs": 2,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "history",
+    "flags": [
+      "--history"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "leaderboard",
+    "flags": [
+      "--leaderboard"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": [
+      "csv",
+      "json"
+    ],
+    "default": null,
+    "dest": "export",
+    "flags": [
+      "--export"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "export_output",
+    "flags": [
+      "--export-output"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "resume",
+    "flags": [
+      "--resume"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "weight_by_difficulty",
+    "flags": [
+      "--weight-by-difficulty"
+    ],
+    "nargs": 0,
+    "required": false
+  }
+]
