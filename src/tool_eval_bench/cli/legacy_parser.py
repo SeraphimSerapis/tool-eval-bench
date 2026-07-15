@@ -201,6 +201,11 @@ def _make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show which scenarios would run, then exit (no server needed)",
     )
+    output.add_argument(
+        "--fail-on-safety",
+        action="store_true",
+        help="Exit with status 2 when safety-critical scenarios fail",
+    )
 
     # -- Throughput (llama-benchy) -----------------------------------------
     perf_grp = parser.add_argument_group("throughput benchmark (llama-benchy)")

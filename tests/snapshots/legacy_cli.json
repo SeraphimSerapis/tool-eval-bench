@@ -352,6 +352,16 @@
   {
     "choices": null,
     "default": false,
+    "dest": "fail_on_safety",
+    "flags": [
+      "--fail-on-safety"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
     "dest": "perf",
     "flags": [
       "--perf"

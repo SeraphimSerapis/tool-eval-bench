@@ -16,6 +16,8 @@ from typing import Any
 
 from rich.console import Console
 
+from tool_eval_bench.application.finalization import finalize_completed_run
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,9 +56,12 @@ def _report_then_persist_pressure_sweep(
     persist_plugin_run: Any,
 ) -> Path:
     """Enforce artifact-first completed-run finalization for pressure sweeps."""
-    report_path = _write_pressure_sweep_report(**report_kwargs)
-    persist_plugin_run(run_data)
-    return report_path
+    finalized = finalize_completed_run(
+        run_data,
+        write_report=lambda: _write_pressure_sweep_report(**report_kwargs),
+        persist=persist_plugin_run,
+    )
+    return Path(finalized["report_path"])
 
 
 def run_pressure_sweep(

@@ -5,6 +5,16 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "OpenAI-compatible canary endpoint"
+        required: true
+        type: string
+      model:
+        description: "Optional model ID"
+        required: false
+        type: string
 
 jobs:
   lint-and-test:
@@ -117,3 +127,28 @@ jobs:
               scenarios = load_yaml_scenarios(path.parent)
           assert any(scenario.id == "YAML-01" for scenario in scenarios)
           PY
+
+  live-canary:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev]'
+
+      - name: Run deployment canary
+        env:
+          TOOL_EVAL_CANARY_BASE_URL: ${{ inputs.base_url }}
+          TOOL_EVAL_CANARY_MODEL: ${{ inputs.model }}
+          TOOL_EVAL_CANARY_API_KEY: ${{ secrets.TOOL_EVAL_CANARY_API_KEY }}
+        run: pytest -q tests/test_live_canary.py -m live --tb=short

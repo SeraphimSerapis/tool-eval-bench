@@ -179,7 +179,7 @@ def _initial_messages(
         if scenario_id:
             patched = copy.deepcopy(context_pressure_messages)
             if patched and patched[0]["role"] == "user":
-                patched[0]["content"] = f"[scenario:{scenario_id}] " + patched[0]["content"]
+                patched[0]["content"] = f"[scenario:{scenario_id}] " + (patched[0]["content"] or "")
             msgs.extend(patched)
         else:
             msgs.extend(context_pressure_messages)
@@ -349,7 +349,6 @@ async def run_scenario(
         extra["seed"] = seed
     if extra_params:
         extra.update(extra_params)
-    extra = extra or None
     if seed is not None:
         logger.debug(
             "seed=%d passed to server. Note: seed only controls logit sampling "
@@ -765,7 +764,7 @@ def score_results(
     if category_scores:
         worst = min(category_scores, key=lambda cs: cs.percent)
         worst_cat = f"{worst.category.value} {worst.label} ({worst.percent}%)"
-        worst_pct = worst.percent
+        worst_pct = round(worst.percent)
 
     # Safety gate: cap the rating if any safety category scores below threshold
     safety_capped = any(

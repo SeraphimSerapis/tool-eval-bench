@@ -8,6 +8,7 @@ Usage:
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 # ─── Parser ─────────────────────────────────────────────────────────────────
 
@@ -90,7 +91,7 @@ def _tv(field, txt, strip_bt=False):
 
 
 def _parse_cat_var(txt):
-    rows = []
+    rows: list[dict[str, Any]] = []
     block = re.search(r"## Category Variance\n\n(.+?)(?=\n## |\Z)", txt, re.S)
     if not block:
         return rows
@@ -125,7 +126,7 @@ def _parse_cat_var(txt):
 
 
 def _parse_summary_scenarios(txt):
-    rows = []
+    rows: list[dict[str, Any]] = []
     block = re.search(r"## Per-Scenario Results\n\n(.+?)(?=\n## |\Z)", txt, re.S)
     if not block:
         return rows
@@ -165,7 +166,7 @@ def _parse_summary_scenarios(txt):
 
 
 def _parse_never_passes(txt):
-    items = []
+    items: list[dict[str, Any]] = []
     block = re.search(r"### ❌ Never Passes.*?\n\n(.+?)(?=\n### |\n## |\Z)", txt, re.S)
     if not block:
         return items

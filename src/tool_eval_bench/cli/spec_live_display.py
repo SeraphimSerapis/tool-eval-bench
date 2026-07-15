@@ -20,7 +20,7 @@ import time
 from collections import deque
 
 import httpx
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
@@ -436,6 +436,7 @@ def _build_dashboard(
         )
         # Add compact decay summary on same line
         decay_summary = _per_position_decay_summary(delta.per_position_rates)
+        pos_content: RenderableType
         if decay_summary:
             pos_content = Group(pos_bars_hz, decay_summary)
         else:
@@ -518,10 +519,11 @@ async def _read_keypress(stop_event: asyncio.Event) -> str | None:
 
         loop.add_reader(fd, _on_readable)
         try:
+            stop_task = asyncio.create_task(stop_event.wait())
             done, _ = await asyncio.wait(
-                [asyncio.ensure_future(future), asyncio.ensure_future(stop_event.wait())],
+                [future, stop_task],
                 return_when=asyncio.FIRST_COMPLETED,
-            )
+            )  # type: ignore[type-var]
             if future.done():
                 return future.result()
             return None
@@ -590,12 +592,12 @@ async def run_spec_live(
         if tty_restore is not None:
             try:
                 tty_restore()
-            except Exception:
+            except (OSError, ValueError):
                 logger.debug("Failed to restore terminal settings before force exit")
         try:
             sys.stdout.write("\033[?1049l")  # rmcup — leave alt screen
             sys.stdout.flush()
-        except Exception:  # noqa: S110
+        except (OSError, ValueError):
             # Last-resort cleanup before os._exit: a closed/dead stdout can
             # raise ValueError or OSError — never block the force exit.
             pass
@@ -616,7 +618,7 @@ async def run_spec_live(
             poll_task.cancel()
 
     loop = asyncio.get_event_loop()
-    signals = (signal.SIGINT, signal.SIGTERM)
+    signals: tuple[signal.Signals, ...] = (signal.SIGINT, signal.SIGTERM)
     if hasattr(signal, "SIGHUP"):
         signals = (*signals, signal.SIGHUP)
     for sig in signals:
@@ -812,7 +814,7 @@ async def run_spec_live(
                                 await asyncio.wait(
                                     {fut, stop_task, timeout_task},
                                     return_when=asyncio.FIRST_COMPLETED,
-                                )
+                                )  # type: ignore[type-var]
                             finally:
                                 stop_task.cancel()
                                 timeout_task.cancel()
@@ -822,12 +824,12 @@ async def run_spec_live(
                                     await timeout_task
                                 try:
                                     _loop.remove_reader(fd)
-                                except Exception:
+                                except (OSError, ValueError):
                                     logger.debug("Failed to remove stdin reader")
                         finally:
                             try:
                                 _restore_tty()
-                            except Exception:
+                            except (OSError, ValueError):
                                 logger.debug("Failed to restore terminal settings")
                             tty_restore = None
 

@@ -156,6 +156,45 @@ def test_dispatch_json_and_plain_execution_paths(monkeypatch: pytest.MonkeyPatch
     assert "Weighted Score" in console.export_text()
 
 
+def test_dispatch_json_safety_gate_returns_status_two(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tool_eval_bench.cli import dispatch
+    from tool_eval_bench.domain.scenarios import (
+        Category,
+        ScenarioDefinition,
+        ScenarioEvaluation,
+        ScenarioStatus,
+    )
+
+    scenario = ScenarioDefinition(
+        id="TC-K",
+        title="safety",
+        category=Category.K,
+        user_message="x",
+        description="x",
+        handle_tool_call=lambda s, c: {},
+        evaluate=lambda s: ScenarioEvaluation(ScenarioStatus.PASS, 2, "ok"),
+    )
+
+    class Service:
+        async def run_benchmark(self, **kwargs):
+            return {
+                "run_id": "safety",
+                "scores": {
+                    "safety_warnings": ["TC-K warning"],
+                    "scenario_results": [],
+                },
+            }
+
+    monkeypatch.setattr(dispatch, "_resolve_scenarios", lambda args: [scenario])
+    monkeypatch.setattr(dispatch, "_emit_json_output", lambda *args, **kwargs: None)
+    args = _dispatch_args(fail_on_safety=True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        dispatch._run_json(Service(), "m", "vllm", "url", None, args)
+
+    assert exc_info.value.code == 2
+
+
 def test_dispatch_trial_summary_all_variance_branches() -> None:
     from tool_eval_bench.cli import dispatch
 

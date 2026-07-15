@@ -7,7 +7,9 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, List
+
+_SCHEMA_VERSION = 2
 
 
 def _default_db_path() -> str:
@@ -50,7 +52,7 @@ class RunRepository:
     def __del__(self) -> None:  # safety net
         try:
             self.close()
-        except Exception:
+        except (sqlite3.Error, AttributeError):
             logging.getLogger(__name__).debug("Error closing DB connection in __del__")
 
     def _init_db(self) -> None:
@@ -65,17 +67,27 @@ class RunRepository:
                   config_json TEXT NOT NULL,
                   scores_json TEXT,
                   metadata_json TEXT,
-                  run_type TEXT NOT NULL DEFAULT 'tool_eval'
+                  run_type TEXT NOT NULL DEFAULT 'tool_eval',
+                  report_path TEXT
                 )
                 """
             )
-            # Migration: add run_type column if upgrading from an older schema
-            try:
-                conn.execute(
-                    "ALTER TABLE scenario_runs ADD COLUMN run_type TEXT NOT NULL DEFAULT 'tool_eval'"
-                )
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+            version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(scenario_runs)").fetchall()
+            }
+            if version < 1:
+                if "run_type" not in columns:
+                    conn.execute(
+                        "ALTER TABLE scenario_runs ADD COLUMN run_type TEXT NOT NULL DEFAULT 'tool_eval'"
+                    )
+                version = 1
+            if version < 2:
+                if "report_path" not in columns:
+                    conn.execute("ALTER TABLE scenario_runs ADD COLUMN report_path TEXT")
+                version = 2
+            if version != int(conn.execute("PRAGMA user_version").fetchone()[0]):
+                conn.execute(f"PRAGMA user_version = {version}")
 
     def upsert_scenario_run(self, run_data: dict[str, Any]) -> None:
         """Persist a scenario-based benchmark run.
@@ -90,9 +102,9 @@ class RunRepository:
                 """
                 INSERT INTO scenario_runs(
                     run_id, created_at, status, model, config_json,
-                    scores_json, metadata_json, run_type
+                    scores_json, metadata_json, run_type, report_path
                 )
-                VALUES(?,?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(run_id) DO UPDATE SET
                   created_at=excluded.created_at,
                   status=excluded.status,
@@ -100,7 +112,8 @@ class RunRepository:
                   config_json=excluded.config_json,
                   scores_json=excluded.scores_json,
                   metadata_json=excluded.metadata_json,
-                  run_type=excluded.run_type
+                  run_type=excluded.run_type,
+                  report_path=excluded.report_path
                 """,
                 (
                     run_data["run_id"],
@@ -111,6 +124,7 @@ class RunRepository:
                     json.dumps(run_data.get("scores", {})),
                     json.dumps(run_data.get("metadata", {})),
                     run_data.get("run_type", "tool_eval"),
+                    run_data.get("report_path"),
                 ),
             )
 
@@ -119,7 +133,7 @@ class RunRepository:
         with self._conn as conn:
             row = conn.execute(
                 "SELECT run_id, created_at, status, model, config_json, "
-                "scores_json, metadata_json, run_type "
+                "scores_json, metadata_json, run_type, report_path "
                 "FROM scenario_runs WHERE run_id=?",
                 (run_id,),
             ).fetchone()
@@ -134,13 +148,14 @@ class RunRepository:
             "scores": json.loads(row[5]) if row[5] else None,
             "metadata": json.loads(row[6]) if row[6] else {},
             "run_type": row[7] if len(row) > 7 else "tool_eval",
+            "report_path": row[8] if len(row) > 8 else None,
         }
 
-    def list(self, limit: int = 20, model: str | None = None) -> list[dict]:
+    def list(self, limit: int = 20, model: str | None = None) -> List[dict[str, Any]]:
         """List recent runs, optionally filtered by model."""
         query = (
             "SELECT run_id, created_at, status, model, config_json, "
-            "scores_json, metadata_json, run_type "
+            "scores_json, metadata_json, run_type, report_path "
             "FROM scenario_runs"
         )
         params: list[str | int] = []
@@ -162,6 +177,7 @@ class RunRepository:
                 "scores": json.loads(r[5]) if r[5] else None,
                 "metadata": json.loads(r[6]) if r[6] else {},
                 "run_type": r[7] if len(r) > 7 else "tool_eval",
+                "report_path": r[8] if len(r) > 8 else None,
             }
             for r in rows
         ]
@@ -171,7 +187,7 @@ class RunRepository:
         runs = self.list(limit=1, model=model)
         return runs[0] if runs else None
 
-    def get_scenario_results(self, run_id: str) -> list[dict] | None:
+    def get_scenario_results(self, run_id: str) -> List[dict[str, Any]] | None:
         """Extract per-scenario results from a stored run."""
         run = self.get(run_id)
         if not run or not run.get("scores"):

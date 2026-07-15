@@ -7,6 +7,8 @@ a step-by-step solution ending with ``#### N``.
 
 from __future__ import annotations
 
+from tool_eval_bench.domain.models import ChatMessage
+
 SYSTEM_PROMPT = (
     "You are a helpful assistant that solves grade-school math word problems. "
     "Show your work step-by-step, then give the final numeric answer on its "
@@ -110,7 +112,7 @@ def build_messages(
     question: str,
     *,
     n_shots: int = 8,
-) -> list[dict[str, str]]:
+) -> list[ChatMessage]:
     """Build the message list for a GSM8K question.
 
     Parameters
@@ -120,7 +122,7 @@ def build_messages(
     n_shots : int
         Number of few-shot examples (0 = zero-shot, max 8).
     """
-    messages: list[dict[str, str]] = [
+    messages: list[ChatMessage] = [
         {"role": "system", "content": SYSTEM_PROMPT},
     ]
 

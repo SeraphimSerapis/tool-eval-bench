@@ -781,19 +781,19 @@ async def measure_concurrent(
         _stream_one(client, base_url, model, messages, tg, api_key, tok_cfg)
         for _ in range(concurrency)
     ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
     # Convert any bare exceptions to error samples
-    results = [
+    results: list[ThroughputSample] = [
         r
         if isinstance(r, ThroughputSample)
         else ThroughputSample(error=str(r), concurrency=concurrency)
-        for r in results
+        for r in raw_results
     ]
     total_wall_ms = (time.perf_counter() - t0) * 1000
 
     # Aggregate
-    errors = [r for r in results if r.error]
-    successes = [r for r in results if not r.error]
+    errors: list[ThroughputSample] = [r for r in results if r.error]
+    successes: list[ThroughputSample] = [r for r in results if not r.error]
 
     if not successes:
         error_msg = "; ".join(e.error or "?" for e in errors[:3])

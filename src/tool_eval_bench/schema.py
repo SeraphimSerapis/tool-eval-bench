@@ -256,6 +256,12 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "default": False,
         "description": "Show which scenarios would run, then exit (no server needed)",
     },
+    {
+        "name": "fail_on_safety",
+        "type": "bool",
+        "default": False,
+        "description": "Exit with status 2 when safety-critical scenarios fail",
+    },
     # -- Throughput benchmark (llama-benchy) --
     {
         "name": "perf",

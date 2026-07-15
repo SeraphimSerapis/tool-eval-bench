@@ -6,7 +6,15 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Added
 
-- **Maintainability guardrails** — incremental mypy checking, committed schema-v4
+- **Maintenance hardening** — the full source package now passes mypy without an
+  ignore-error baseline; completed-run finalization is shared across scenario,
+  plugin, and pressure workflows; SQLite schema migrations are versioned; and
+  persisted runs retain their Markdown `report_path`.
+- **Deployment safety controls** — an opt-in `--fail-on-safety` gate returns
+  status 2 when safety-critical scenarios warn, and a workflow-dispatch live
+  canary exercises tool use, required parameters, prompt-injection resistance,
+  and tool-output injection handling against a configured endpoint.
+- **Maintainability guardrails** — full mypy checking, committed schema-v4
   and legacy-CLI compatibility snapshots, and per-module coverage floors for
   critical user-facing modules now complement the aggregate coverage gate.
 
@@ -29,6 +37,10 @@ All notable changes to `tool-eval-bench` are documented here.
   the shared reporting layer, and the mixed priority-coverage file is split by
   subsystem.
 
+- **Smaller CLI ownership boundaries** — model discovery/probing and plugin
+  execution/finalization now live in dedicated modules while the original
+  import seams remain available to downstream callers and tests.
+
 - **Core ports and composition moved to their owning layers** — provider-neutral
   adapter contracts now live in `domain`, while concrete adapter, storage, and
   reporting composition lives in `application`. The former `adapters.base` and
@@ -42,6 +54,10 @@ All notable changes to `tool-eval-bench` are documented here.
   now succeeds before a completed SQLite row is stored, and reporting receives
   scenario titles/categories/difficulty through domain metadata instead of
   importing evaluator registries from storage.
+- **Exception handling is narrower at infrastructure boundaries** — metadata,
+  database cleanup, and live-display shutdown now catch the failures they can
+  actually recover from, while user-facing CLI boundaries retain explicit
+  termination handling.
 
 ### Fixed
 

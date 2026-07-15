@@ -239,6 +239,12 @@
     },
     {
       "default": false,
+      "description": "Exit with status 2 when safety-critical scenarios fail",
+      "name": "fail_on_safety",
+      "type": "bool"
+    },
+    {
+      "default": false,
       "description": "Run llama-benchy throughput benchmark before tool-call scenarios",
       "name": "perf",
       "type": "bool"

@@ -16,6 +16,7 @@ import time
 from typing import Any
 
 from tool_eval_bench.domain.adapters import BackendAdapter
+from tool_eval_bench.domain.models import ChatMessage
 from tool_eval_bench.domain.plugin import BenchmarkPlugin, BenchmarkResult, OnPluginProgress
 from tool_eval_bench.plugins.gsm8k.dataset import GSM8KItem, load_dataset
 from tool_eval_bench.plugins.gsm8k.evaluator import evaluate_answer
@@ -221,7 +222,7 @@ class GSM8KPlugin(BenchmarkPlugin):
         extra_params: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Evaluate a single GSM8K question."""
-        messages = build_messages(item.question, n_shots=n_shots)
+        messages: list[ChatMessage] = build_messages(item.question, n_shots=n_shots)
 
         try:
             result = await adapter.chat_completion(

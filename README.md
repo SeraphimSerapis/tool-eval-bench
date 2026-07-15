@@ -164,6 +164,9 @@ tool-eval-bench run --seed 42 --context-pressure 0.75
 # Run specific categories — safety + tool selection only
 tool-eval-bench run --categories K A
 
+# Make safety-critical failures fail a CI job (exit status 2)
+tool-eval-bench run --fail-on-safety
+
 # Run coding-focused categories with thinking enabled
 tool-eval-bench run --categories J G M --backend-kwargs '{"chat_template_kwargs": {"enable_thinking": true}}'
 
@@ -694,10 +697,19 @@ tool-eval-bench compare --report runs/.../model_a_summary.md runs/.../model_b_su
 
 ```bash
 ruff check .       # lint
-.venv/bin/mypy     # incremental package type check
+.venv/bin/mypy --no-incremental  # full package type check
 .venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py
                    # scenario evaluators, plugins, storage, CLI, adapter
 ```
+
+### Optional live canary
+
+The repository includes a deployment-relevant live canary covering ordinary
+tool use, required-parameter enforcement, sleeper-injection resistance, and
+tool-output injection handling. Run it locally with
+`TOOL_EVAL_CANARY_BASE_URL=http://host:port/v1 pytest -m live tests/test_live_canary.py`.
+GitHub Actions exposes the same check through **Run workflow** inputs; set the
+optional `TOOL_EVAL_CANARY_API_KEY` secret when the endpoint requires auth.
 
 Public CLI compatibility is protected by committed schema-v4 and legacy-parser
 snapshots. After an intentional interface change, regenerate them with

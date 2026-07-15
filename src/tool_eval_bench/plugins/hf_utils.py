@@ -100,6 +100,7 @@ def _fetch_with_retry(
                 backoff = min(backoff * 2, _MAX_BACKOFF_S)
                 continue
             raise
+    raise RuntimeError(f"Failed to fetch {url} after {max_retries} attempts")
 
 
 def get_dataset_info(
@@ -235,7 +236,7 @@ def load_via_datasets_lib(
     Install with: ``pip install tool-eval-bench[hf]``
     """
     try:
-        from datasets import load_dataset  # type: ignore[import-untyped]
+        from datasets import load_dataset  # type: ignore[import-not-found]
     except ImportError:
         return None
 

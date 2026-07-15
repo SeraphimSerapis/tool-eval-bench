@@ -422,6 +422,8 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
             )
             continue
 
+        if ra is None or rb is None:
+            continue
         pts_a, pts_b = ra.get("points", 0), rb.get("points", 0)
         st_a, st_b = ra.get("status", "fail"), rb.get("status", "fail")
         dur_a, dur_b = ra.get("duration_seconds", 0.0), rb.get("duration_seconds", 0.0)

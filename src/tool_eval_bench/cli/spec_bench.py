@@ -205,8 +205,12 @@ def run_spec_bench(
                 if s.draft_window is not None and s.acceptance_length is not None
             ]
             if with_window:
-                avg_window = sum(s.draft_window for s in with_window) / len(with_window)  # type: ignore[arg-type]
-                avg_tau = sum(s.acceptance_length for s in with_window) / len(with_window)  # type: ignore[arg-type]
+                draft_windows = [s.draft_window for s in with_window if s.draft_window is not None]
+                acceptance_lengths = [
+                    s.acceptance_length for s in with_window if s.acceptance_length is not None
+                ]
+                avg_window = sum(draft_windows) / len(draft_windows)
+                avg_tau = sum(acceptance_lengths) / len(acceptance_lengths)
                 utilization = (avg_tau / avg_window * 100) if avg_window > 0 else 0
                 avg_waste = (
                     sum(s.waste_ratio for s in with_window if s.waste_ratio is not None)

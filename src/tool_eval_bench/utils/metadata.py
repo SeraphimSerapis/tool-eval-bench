@@ -37,7 +37,7 @@ def _git_sha() -> str | None:
             ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
         )
         return out.decode().strip()
-    except Exception:
+    except (OSError, subprocess.CalledProcessError):
         logger.debug("git rev-parse failed (not in a git repo?)")
         return None
 
@@ -76,7 +76,7 @@ async def _probe_models(
                     # vLLM exposes max_model_len in model metadata
                     if "max_model_len" in first:
                         probe["max_model_len"] = first["max_model_len"]
-    except Exception as exc:
+    except (httpx.HTTPError, OSError, ValueError) as exc:
         logger.debug("models probe failed: %s", exc)
     return probe
 
@@ -97,7 +97,7 @@ async def _probe_vllm_version(base_url: str, api_key: str | None) -> dict[str, A
                         "engine_name": "vLLM",
                         "engine_version": body["version"],
                     }
-    except Exception as exc:
+    except (httpx.HTTPError, OSError, ValueError) as exc:
         logger.debug("vLLM /version probe failed: %s", exc)
     return {}
 
@@ -120,7 +120,7 @@ async def _probe_llamacpp(base_url: str) -> dict[str, Any]:
                         if "total_slots" in body:
                             result["gpu_count"] = body.get("total_slots")
                         return result
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, ValueError) as exc:
             logger.debug("llama.cpp %s probe failed: %s", path, exc)
     return {}
 
@@ -146,7 +146,7 @@ async def _probe_litellm(base_url: str, api_key: str | None) -> dict[str, Any]:
                         "engine_name": "LiteLLM",
                         "engine_version": body["litellm_version"],
                     }
-    except Exception as exc:
+    except (httpx.HTTPError, OSError, ValueError) as exc:
         logger.debug("LiteLLM /health probe failed: %s", exc)
     return {}
 

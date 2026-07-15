@@ -8,6 +8,7 @@ Usage:
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 # ─── Parser ─────────────────────────────────────────────────────────────────
 
@@ -82,7 +83,7 @@ def _tv(field, txt, strip_bt=False):
 
 
 def _parse_cats(txt):
-    rows = []
+    rows: list[dict[str, Any]] = []
     block = re.search(r"## Category Scores\n\n(.+?)(?=\n## |\Z)", txt, re.S)
     if not block:
         return rows
@@ -104,7 +105,7 @@ def _parse_cats(txt):
 
 
 def _parse_scenarios(txt):
-    rows = []
+    rows: list[dict[str, Any]] = []
     block = re.search(r"## Scenario Results\n\n(.+?)(?=\n## |\Z)", txt, re.S)
     if not block:
         return rows
@@ -139,7 +140,7 @@ def _parse_scenarios(txt):
 
 
 def _parse_diffs(txt):
-    rows = []
+    rows: list[dict[str, Any]] = []
     block = re.search(r"## Performance by Difficulty\n\n(.+?)(?=\n## |\Z)", txt, re.S)
     if not block:
         return rows

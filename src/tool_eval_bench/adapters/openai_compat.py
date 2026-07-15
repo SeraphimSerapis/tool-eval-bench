@@ -126,7 +126,7 @@ class OpenAICompatibleAdapter(BackendAdapter):
         model: str,
         messages: list[ChatMessage],
         tools: list[dict[str, Any]] | None = None,
-        tool_choice: str = "auto",
+        tool_choice: str | dict[str, Any] | None = "auto",
         temperature: float = 0.0,
         max_tokens: int = 4096,
         timeout_seconds: float = 60.0,

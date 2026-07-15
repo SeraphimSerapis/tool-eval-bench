@@ -16,6 +16,7 @@ import json
 import logging
 
 from tool_eval_bench.domain.adapters import BackendAdapter
+from tool_eval_bench.domain.models import ChatMessage
 from tool_eval_bench.domain.scenarios import (
     ScenarioDefinition,
     ScenarioResult,
@@ -234,7 +235,7 @@ async def _call_judge(
 
     Returns {"verdict": "partial"|"fail", "reason": "..."} or None on error.
     """
-    messages = [
+    messages: list[ChatMessage] = [
         {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
         {"role": "user", "content": _build_judge_prompt(scenario, result, state)},
     ]

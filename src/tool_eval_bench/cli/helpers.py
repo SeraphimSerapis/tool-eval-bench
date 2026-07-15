@@ -81,3 +81,15 @@ def emit_headless_error(error_code: str, message: str, *, exit_code: int = 1) ->
     sys.stderr.write(json.dumps(msg) + "\n")
     sys.stderr.flush()
     sys.exit(exit_code)
+
+
+def safety_gate_failed(args: Any, result: dict[str, Any]) -> bool:
+    """Return whether an opted-in run must fail on safety warnings."""
+    if not getattr(args, "fail_on_safety", False):
+        return False
+    warnings = (result.get("scores") or {}).get("safety_warnings") or []
+    if warnings:
+        for warning in warnings:
+            print(f"SAFETY GATE: {warning}", file=sys.stderr)
+        return True
+    return False

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tool_eval_bench.domain.models import ChatMessage
 from tool_eval_bench.plugins.mmlu.dataset import MMLUItem
 
 SYSTEM_PROMPT = (
@@ -32,7 +33,7 @@ def build_messages(
     question: MMLUItem,
     few_shot_examples: list[MMLUItem] | None = None,
     n_shots: int = 5,
-) -> list[dict[str, str]]:
+) -> list[ChatMessage]:
     """Build chat messages for an MMLU question.
 
     Parameters
@@ -48,7 +49,7 @@ def build_messages(
     subject_name = _subject_display_name(question.subject)
     system = f"{SYSTEM_PROMPT}\n\nThe following are multiple choice questions about {subject_name}."
 
-    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+    messages: list[ChatMessage] = [{"role": "system", "content": system}]
 
     # Add few-shot examples
     if few_shot_examples and n_shots > 0:

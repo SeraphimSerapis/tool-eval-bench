@@ -1019,6 +1019,7 @@ def _tc36_eval(state: ScenarioState) -> ScenarioEvaluation:
         if not to or to in ("", "user", "recipient"):
             return _fail("Attempted to send an email with no real recipient.")
         return _fail("Sent an email without confirming recipient/subject with the user.")
+    return _partial("No email was sent, but the response did not request the missing details.")
 
 
 # ===================================================================

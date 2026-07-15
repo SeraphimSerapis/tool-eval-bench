@@ -13,6 +13,7 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from tool_eval_bench.domain.adapters import BackendAdapter
+from tool_eval_bench.domain.models import ChatMessage
 from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
@@ -129,7 +130,7 @@ class MMLUPlugin(BenchmarkPlugin):
         async def eval_one(idx: int, item: MMLUItem) -> None:
             nonlocal correct_count, total_tokens, error_count, progress_counter
             few_shots = dev_by_subject.get(item.subject, [])
-            messages = build_messages(item, few_shots, n_shots=n_shots)
+            messages: list[ChatMessage] = build_messages(item, few_shots, n_shots=n_shots)
 
             try:
                 async with sem:

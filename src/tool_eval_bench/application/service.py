@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
+
+import httpx
 
 from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
+from tool_eval_bench.application.finalization import finalize_completed_run
 from tool_eval_bench.domain.adapters import BackendAdapter
-from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.domain.models import ChatMessage, RunContext
 from tool_eval_bench.domain.scenarios import (
     OnScenarioResult,
     OnScenarioStart,
@@ -37,15 +40,19 @@ class BenchmarkService:
 
     def __init__(
         self,
-        repo: RunRepository | None = _SENTINEL,  # type: ignore[assignment]
-        reporter: MarkdownReporter | None = _SENTINEL,  # type: ignore[assignment]
+        repo: RunRepository | None | object = _SENTINEL,
+        reporter: MarkdownReporter | None | object = _SENTINEL,
     ) -> None:
         # Distinguish "not provided" (create defaults) from "explicitly None"
         # (skip persistence).  The previous ``repo or RunRepository()`` pattern
         # silently defeated ``persist=False`` by replacing None with a default.
-        self.repo: RunRepository | None = RunRepository() if repo is self._SENTINEL else repo
+        self.repo: RunRepository | None = (
+            RunRepository() if repo is self._SENTINEL else cast(RunRepository | None, repo)
+        )
         self.reporter: MarkdownReporter | None = (
-            MarkdownReporter() if reporter is self._SENTINEL else reporter
+            MarkdownReporter()
+            if reporter is self._SENTINEL
+            else cast(MarkdownReporter | None, reporter)
         )
 
     def _adapter_for(self, backend: str) -> BackendAdapter:
@@ -75,7 +82,7 @@ class BenchmarkService:
         error_rate: float = 0.0,
         alpha: float = 0.7,
         extra_params: dict[str, Any] | None = None,
-        context_pressure_messages: list[dict[str, Any]] | None = None,
+        context_pressure_messages: list[ChatMessage] | None = None,
         context_pressure_config: dict[str, Any] | None = None,
         run_context: RunContext | None = None,
         weight_by_difficulty: bool = False,
@@ -229,9 +236,15 @@ class BenchmarkService:
             "config": run_config,
             "scores": summary.to_dict(),
             "metadata": metadata,
+            "safety_gate": {
+                "passed": not summary.safety_warnings,
+                "warnings": summary.safety_warnings,
+            },
         }
 
+        report_writer = None
         if self.reporter is not None:
+            reporter = self.reporter
             scenario_metadata = {
                 scenario.id: ScenarioReportMetadata(
                     title=scenario.title,
@@ -240,18 +253,24 @@ class BenchmarkService:
                 )
                 for scenario in report_scenarios
             }
-            report_path = self.reporter.write_scenario_report(
-                run_id,
-                model,
-                summary,
-                throughput_samples=throughput_samples or [],
-                context_pressure_config=context_pressure_config,
-                run_context=run_context,
-                scenario_metadata=scenario_metadata,
-            )
-            run_data["report_path"] = str(report_path)
-        if self.repo is not None:
-            self.repo.upsert_scenario_run(run_data)
+
+            def write_scenario_report() -> Any:
+                return reporter.write_scenario_report(
+                    run_id,
+                    model,
+                    summary,
+                    throughput_samples=throughput_samples or [],
+                    context_pressure_config=context_pressure_config,
+                    run_context=run_context,
+                    scenario_metadata=scenario_metadata,
+                )
+
+            report_writer = write_scenario_report
+        finalize_completed_run(
+            run_data,
+            write_report=report_writer,
+            persist=self.repo.upsert_scenario_run if self.repo is not None else None,
+        )
 
         return run_data
 
@@ -331,6 +350,6 @@ async def _collect_metadata_safe(
 
         config = BenchmarkConfig(model=model, backend=backend, base_url=base_url, api_key=api_key)
         return await collect_run_metadata(config)
-    except Exception as exc:
+    except (httpx.HTTPError, OSError, ValueError, RuntimeError) as exc:
         logger.warning("Failed to collect metadata: %s", exc)
         return {"error": str(exc)}

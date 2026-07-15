@@ -13,6 +13,7 @@ from collections import defaultdict
 from typing import Any
 
 from tool_eval_bench.domain.adapters import BackendAdapter
+from tool_eval_bench.domain.models import ChatMessage
 from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
@@ -104,7 +105,7 @@ class IFEvalPlugin(BenchmarkPlugin):
             nonlocal prompts_passed, instructions_passed, instructions_total
             nonlocal total_tokens, error_count, progress_counter
 
-            messages = [
+            messages: list[ChatMessage] = [
                 {"role": "user", "content": item.prompt},
             ]
 

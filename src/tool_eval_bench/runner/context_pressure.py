@@ -24,10 +24,10 @@ import random
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 import httpx
 
+from tool_eval_bench.domain.models import ChatMessage
 from tool_eval_bench.utils.urls import models_url as _models_url
 
 logger = logging.getLogger(__name__)
@@ -541,7 +541,7 @@ async def count_tokens(
 
 
 async def count_messages_tokens(
-    messages: list[dict[str, Any]],
+    messages: list[ChatMessage],
     base_url: str,
     model: str,
     api_key: str | None = None,
@@ -554,7 +554,7 @@ async def count_messages_tokens(
     if not messages:
         return 0
     # Concatenate all content for a single tokenization call
-    all_text = "\n".join(msg.get("content", "") for msg in messages)
+    all_text = "\n".join(msg.get("content") or "" for msg in messages)
     count = await count_tokens(all_text, base_url, model, api_key)
     if count is None:
         return None
@@ -682,7 +682,7 @@ def build_pressure_messages(
     *,
     on_chunk: Callable[[int], None] | None = None,
     seed: int | None = None,
-) -> list[dict[str, Any]]:
+) -> list[ChatMessage]:
     """Build alternating user/assistant filler messages.
 
     Returns a list of messages to prepend before the real scenario messages.
@@ -733,7 +733,7 @@ def build_pressure_messages(
     else:
         session_nonce = f"{time.time_ns():x}"
 
-    messages: list[dict[str, Any]] = []
+    messages: list[ChatMessage] = []
     tokens_used = 0
     chunk_idx = 0
 
@@ -788,14 +788,14 @@ def build_pressure_messages(
 
 
 async def calibrate_pressure_messages(
-    messages: list[dict[str, Any]],
+    messages: list[ChatMessage],
     target_tokens: int,
     base_url: str,
     model: str,
     api_key: str | None = None,
     *,
     seed: int | None = None,
-) -> tuple[list[dict[str, Any]], int]:
+) -> tuple[list[ChatMessage], int]:
     """Calibrate filler messages to hit the exact token target.
 
     Uses the server's ``/tokenize`` endpoint to measure actual token
@@ -811,7 +811,7 @@ async def calibrate_pressure_messages(
     actual = await count_messages_tokens(messages, base_url, model, api_key)
     if actual is None:
         # Tokenizer unavailable — return char-based estimate
-        est = sum(len(m.get("content", "")) / _CHARS_PER_TOKEN_ESTIMATE for m in messages)
+        est = sum(len(m.get("content") or "") / _CHARS_PER_TOKEN_ESTIMATE for m in messages)
         logger.debug(
             "Tokenizer unavailable, using char estimate: ~%d tokens",
             int(est),
@@ -834,10 +834,10 @@ async def calibrate_pressure_messages(
         # Find the last user message
         for i in range(len(messages) - 1, -1, -1):
             if messages[i]["role"] == "user":
-                content = messages[i]["content"]
+                content = messages[i].get("content") or ""
                 # Estimate chars to remove: delta tokens × chars_per_token
                 # Use measured ratio from this run for better accuracy
-                total_chars = sum(len(m.get("content", "")) for m in messages)
+                total_chars = sum(len(m.get("content") or "") for m in messages)
                 measured_cpt = total_chars / actual if actual > 0 else _CHARS_PER_TOKEN_ESTIMATE
                 chars_to_remove = int(delta * measured_cpt * 1.05)  # slight over-trim
                 if chars_to_remove < len(content) - 100:
@@ -879,7 +879,7 @@ async def calibrate_pressure_messages(
     # Find last user message and append
     for i in range(len(messages) - 1, -1, -1):
         if messages[i]["role"] == "user":
-            messages[i]["content"] += "\n\n" + extra_text
+            messages[i]["content"] = (messages[i].get("content") or "") + "\n\n" + extra_text
             break
 
     recounted = await count_messages_tokens(messages, base_url, model, api_key)
@@ -922,11 +922,11 @@ async def prepare_context_pressure(
     fails and no override is provided, raises ValueError.
     """
     if context_size_override and context_size_override > 0:
-        ctx_size = context_size_override
+        ctx_size: int = context_size_override
         logger.info("Using user-provided context size: %d", ctx_size)
     else:
-        ctx_size = await detect_context_size(base_url, model, api_key)
-        if ctx_size is None:
+        detected_context = await detect_context_size(base_url, model, api_key)
+        if detected_context is None:
             raise ValueError(
                 "Could not auto-detect context window size from /v1/models. "
                 "Please provide --context-size explicitly "
@@ -947,6 +947,7 @@ async def prepare_context_pressure(
         # (only a subset of layers need standard Transformer KV cache).
         # If the server starts and advertises max_model_len=X, it has
         # validated it can serve X tokens.  Trust it.
+        ctx_size = detected_context
         kv_info = await detect_kv_capacity(
             base_url,
             api_key,
