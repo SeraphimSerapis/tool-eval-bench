@@ -62,14 +62,19 @@ def _make_handler(
 
 
 def _make_evaluator(
-    scenario_id: str,
     expected_tool_calls: list[dict[str, Any]],
 ) -> Any:
     """Build an evaluator that checks expected tool calls and arguments."""
 
     def evaluate(state: ScenarioState) -> ScenarioEvaluation:
         if not expected_tool_calls:
-            # No tool calls expected — always pass (restraint scenario).
+            if state.tool_calls:
+                called = ", ".join(call.name for call in state.tool_calls)
+                return ScenarioEvaluation(
+                    status=ScenarioStatus.FAIL,
+                    points=0,
+                    summary=f"No tools expected, but called: {called}.",
+                )
             return ScenarioEvaluation(
                 status=ScenarioStatus.PASS,
                 points=2,
@@ -118,6 +123,16 @@ def _make_evaluator(
     return evaluate
 
 
+def _required_string(data: dict[str, Any], field: str, path: Path) -> str:
+    """Read a required non-empty string field with path-aware errors."""
+    if field not in data:
+        raise ValueError(f"Missing required field {field!r} in {path}")
+    value = data[field]
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Required field {field!r} must be a non-empty string in {path}")
+    return value
+
+
 def _load_yaml_file(path: Path) -> ScenarioDefinition:
     """Load a single YAML scenario file into a ScenarioDefinition."""
     raw = path.read_text(encoding="utf-8")
@@ -128,11 +143,12 @@ def _load_yaml_file(path: Path) -> ScenarioDefinition:
     if not isinstance(data, dict):
         raise ValueError(f"Scenario YAML must be a mapping: {path}")
 
+    scenario_id = _required_string(data, "id", path)
+    title = _required_string(data, "title", path)
+    category_value = _required_string(data, "category", path)
+    user_message = _required_string(data, "user_message", path)
     try:
-        scenario_id = data["id"]
-        category = Category(data["category"])
-    except KeyError as exc:
-        raise ValueError(f"Missing required field {exc.args[0]!r} in {path}") from exc
+        category = Category(category_value)
     except ValueError as exc:
         raise ValueError(f"Invalid category in {path}: {exc}") from exc
 
@@ -141,12 +157,12 @@ def _load_yaml_file(path: Path) -> ScenarioDefinition:
 
     return ScenarioDefinition(
         id=scenario_id,
-        title=data["title"],
+        title=title,
         category=category,
-        user_message=data["user_message"],
+        user_message=user_message,
         description=data.get("description", ""),
         handle_tool_call=_make_handler(tool_responses),
-        evaluate=_make_evaluator(scenario_id, expected_tool_calls),
+        evaluate=_make_evaluator(expected_tool_calls),
         difficulty=data.get("difficulty"),
     )
 

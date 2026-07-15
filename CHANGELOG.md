@@ -2,6 +2,50 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **Discoverable CLI subcommands with permanent compatibility** — `run`,
+  `probe`, `bench`, `spec-live`, `plugin`, `compare`, `history`, `leaderboard`,
+  `export`, and `resume` translate into the established runtime configuration.
+  Existing flat invocations continue to work silently, and `compare-report`
+  remains an alias for `compare --report`.
+- **Layer and release guardrails** — static import-boundary tests protect the
+  domain/evals/runner/plugin dependency rules. CI now runs three recorded
+  `pytest-randomly` seeds across Python 3.11–3.13, tests the optional
+  llama-benchy integration separately, smoke-tests an isolated wheel, and
+  enforces 80% branch coverage. The completed suite has 2,098 tests and
+  measures 83.69% branch coverage.
+
+### Changed
+
+- **Core ports and composition moved to their owning layers** — provider-neutral
+  adapter contracts now live in `domain`, while concrete adapter, storage, and
+  reporting composition lives in `application`. The former `adapters.base` and
+  `runner.service` imports remain compatibility re-exports.
+- **CLI argument schema v4** now describes the subcommand mapping while keeping
+  the flat `ARGS_SCHEMA` contract for existing integrations.
+- **Wheel metadata uses an SPDX license expression** with a declared
+  `setuptools>=77` build minimum and no longer emits the deprecated setuptools
+  license-table/classifier warnings.
+- **Completed-run finalization is artifact-first** — Markdown report creation
+  now succeeds before a completed SQLite row is stored, and reporting receives
+  scenario titles/categories/difficulty through domain metadata instead of
+  importing evaluator registries from storage.
+
+### Fixed
+
+- **Context-pressure sweep artifacts are trace-complete and artifact-first** —
+  one Markdown sweep report now captures every executed level, including each
+  scenario's full raw trace or level-error detail, before the completed sweep
+  is persisted to SQLite.
+- **Declarative YAML restraint scoring and packaging** — a restraint scenario
+  now fails if any tool was called, required fields produce path-aware errors,
+  and bundled YAML scenarios are included in installed wheels.
+- **Scenario-count documentation** now consistently describes 69 standard
+  scenarios plus 15 opt-in Hard Mode scenarios (84 combined).
+
 ## [2.1.0] — 2026-07-06
 
 ### Added

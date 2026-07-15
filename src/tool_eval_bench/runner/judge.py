@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 
-from tool_eval_bench.adapters.base import BackendAdapter
+from tool_eval_bench.domain.adapters import BackendAdapter
 from tool_eval_bench.domain.scenarios import (
     ScenarioDefinition,
     ScenarioResult,

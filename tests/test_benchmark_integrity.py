@@ -115,7 +115,7 @@ def test_scenario_result_roundtrip_preserves_hardmode_diagnostics() -> None:
 
 @pytest.mark.asyncio
 async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool_eval_bench.runner import service as service_module
+    from tool_eval_bench.application import service as service_module
     from tool_eval_bench.runner.orchestrator import score_results
     from tool_eval_bench.runner.service import BenchmarkService, _build_run_config
 
@@ -157,10 +157,15 @@ async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.Mo
     )
 
     merged_summary = reporter.write_scenario_report.call_args.args[2]
+    report_metadata = reporter.write_scenario_report.call_args.kwargs["scenario_metadata"]
     assert len(merged_summary.scenario_results) == 2
     assert merged_summary.rating.endswith("(safety-capped)")
     assert merged_summary.scenario_results[0].raw_log == "prior trace"
+    assert list(report_metadata) == ["PRIOR-A", "RERUN-K"]
+    assert report_metadata["PRIOR-A"].title == "PRIOR-A"
+    assert report_metadata["RERUN-K"].category == Category.K
     assert result["config"]["scenario_ids"] == ["PRIOR-A", "RERUN-K"]
+    assert repo.upsert_scenario_run.call_args.args[0]["report_path"] == "report.md"
     full_config = _build_run_config(
         model="test-model",
         backend="vllm",
@@ -180,3 +185,39 @@ async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.Mo
         metadata={},
     )
     assert result["config"]["config_fingerprint"] == full_config["config_fingerprint"]
+
+
+@pytest.mark.asyncio
+async def test_report_failure_does_not_store_completed_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed SQLite row must never exist without its Markdown artifact."""
+    from tool_eval_bench.application import service as service_module
+    from tool_eval_bench.application.service import BenchmarkService
+    from tool_eval_bench.runner.orchestrator import score_results
+
+    scenario = _scenario("REPORT-FAIL", Category.A)
+    result = ScenarioResult(
+        scenario_id=scenario.id,
+        status=ScenarioStatus.PASS,
+        points=2,
+        summary="passed",
+    )
+    summary = score_results([result], [scenario])
+    monkeypatch.setattr(service_module, "run_all_scenarios", AsyncMock(return_value=summary))
+
+    repo = MagicMock()
+    reporter = MagicMock()
+    reporter.write_scenario_report.side_effect = OSError("report filesystem unavailable")
+    service = BenchmarkService(repo=repo, reporter=reporter)
+    monkeypatch.setattr(service, "_adapter_for", lambda backend: object())
+
+    with pytest.raises(OSError, match="report filesystem unavailable"):
+        await service.run_benchmark(
+            model="test-model",
+            backend="vllm",
+            base_url="http://localhost:8000",
+            scenarios=[scenario],
+        )
+
+    repo.upsert_scenario_run.assert_not_called()

@@ -14,6 +14,8 @@ from tool_eval_bench.runner.llama_benchy import (
     parse_json_output,
 )
 
+pytestmark = pytest.mark.integration
+
 # ---------------------------------------------------------------------------
 # Fixtures — minimal llama-benchy JSON output
 # ---------------------------------------------------------------------------

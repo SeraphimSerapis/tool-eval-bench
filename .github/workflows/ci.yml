@@ -10,8 +10,15 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ['3.11', '3.12', '3.13']
+        include:
+          - python-version: '3.11'
+            random-seed: '104729'
+          - python-version: '3.12'
+            random-seed: '130363'
+          - python-version: '3.13'
+            random-seed: '155921'
 
     steps:
       - name: Checkout
@@ -37,5 +44,70 @@ jobs:
         run: >
           pytest --tb=short -q
           --ignore=tests/test_llama_benchy.py
+          -m "not live"
+          --randomly-seed=${{ matrix.random-seed }}
           --cov=tool_eval_bench --cov-report=term-missing
-          --cov-fail-under=55
+          --cov-fail-under=80
+
+  optional-perf-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install with optional performance dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[dev,perf]'
+
+      - name: Test llama-benchy integration
+        run: pytest --tb=short -q tests/test_llama_benchy.py -m "not live" --randomly-seed=181081
+
+  wheel-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Build isolated wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Install wheel in a clean environment
+        run: |
+          python -m venv /tmp/tool-eval-wheel-smoke
+          /tmp/tool-eval-wheel-smoke/bin/python -m pip install --upgrade pip
+          /tmp/tool-eval-wheel-smoke/bin/python -m pip install dist/*.whl
+          /tmp/tool-eval-wheel-smoke/bin/python -m pip check
+
+      - name: Smoke-test installed CLI and package data
+        run: |
+          /tmp/tool-eval-wheel-smoke/bin/tool-eval-bench --version
+          /tmp/tool-eval-wheel-smoke/bin/tool-eval-bench --help
+          for command in run probe bench spec-live plugin compare history leaderboard export resume; do
+            /tmp/tool-eval-wheel-smoke/bin/tool-eval-bench "$command" --help >/dev/null
+          done
+          /tmp/tool-eval-wheel-smoke/bin/python - <<'PY'
+          from importlib.resources import as_file, files
+
+          from tool_eval_bench.evals.yaml_loader import load_yaml_scenarios
+
+          resource = files("tool_eval_bench.evals.yaml_scenarios").joinpath("weather.yaml")
+          assert resource.is_file(), "bundled weather.yaml is missing"
+          with as_file(resource) as path:
+              scenarios = load_yaml_scenarios(path.parent)
+          assert any(scenario.id == "YAML-01" for scenario in scenarios)
+          PY

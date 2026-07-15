@@ -575,7 +575,6 @@ class TestBuildFooter:
     """Tests for the BenchmarkDisplay._build_footer method."""
 
     def test_initial_state_shows_waiting(self) -> None:
-
         display = BenchmarkDisplay(
             model="test-model",
             backend="vllm",
@@ -591,7 +590,6 @@ class TestBuildFooter:
         assert "Waiting" in text
 
     def test_complete_shows_checkmark(self) -> None:
-
         display = BenchmarkDisplay(
             model="test-model",
             backend="vllm",
@@ -614,7 +612,6 @@ class TestBuildFooter:
         display.scenarios = original_scenarios
 
     def test_active_scenario_shows_scenario_name(self) -> None:
-
         display = BenchmarkDisplay(
             model="test-model",
             backend="vllm",
@@ -630,7 +627,6 @@ class TestBuildFooter:
         assert "TC-05" in text
 
     def test_progress_bar_shows_count(self) -> None:
-
         display = BenchmarkDisplay(
             model="test-model",
             backend="vllm",

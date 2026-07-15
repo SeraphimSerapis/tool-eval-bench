@@ -25,13 +25,13 @@ import logging
 from typing import Any
 
 from tool_eval_bench import __version__
+from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.domain.scenarios import (
     OnScenarioResult,
     OnScenarioStart,
     ScenarioDefinition,
 )
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
-from tool_eval_bench.runner.service import BenchmarkService
 from tool_eval_bench.schema import ARGS_SCHEMA  # noqa: F401 — public re-export
 from tool_eval_bench.storage.db import RunRepository
 from tool_eval_bench.storage.reports import MarkdownReporter

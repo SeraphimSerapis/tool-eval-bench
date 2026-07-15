@@ -10,12 +10,105 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import re
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
 logger = logging.getLogger(__name__)
+
+
+def _trace_block(raw_log: str) -> list[str]:
+    """Return a Markdown fence long enough to preserve the complete raw trace."""
+    longest = max((len(match) for match in re.findall(r"`+", raw_log)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return [f"{fence}text", raw_log or "(empty trace)", fence]
+
+
+def _write_pressure_sweep_report(
+    *,
+    run_id: str,
+    model: str,
+    backend: str,
+    display_url: str,
+    context_size: int,
+    level_results: list[dict[str, Any]],
+    breaking_point: float | None,
+    first_degradation: float | None,
+    output_dir: str | None,
+) -> Path:
+    """Write a trace-complete Markdown artifact for a context-pressure sweep."""
+    from tool_eval_bench.storage.reports import MarkdownReporter
+
+    reporter = MarkdownReporter(root=output_dir)
+    now = datetime.now(timezone.utc)
+    folder = reporter.root / f"{now.year:04d}" / f"{now.month:02d}"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{run_id}.md"
+    markdown = [
+        f"# Context Pressure Sweep — {model}",
+        "",
+        f"- **Run ID**: `{run_id}`",
+        f"- **Date**: `{now.isoformat()}`",
+        "- **Mode**: context-pressure-sweep",
+        f"- **Backend**: {backend}",
+        f"- **Server**: {display_url}",
+        f"- **Context Window**: {context_size:,} tokens",
+        f"- **Executed Levels**: {len(level_results)}",
+        f"- **Breaking Point**: {breaking_point:.0%}"
+        if breaking_point is not None
+        else "- **Breaking Point**: none",
+        f"- **First Degradation**: {first_degradation:.0%}"
+        if first_degradation is not None
+        else "- **First Degradation**: none",
+        "",
+    ]
+    for index, level in enumerate(level_results, start=1):
+        markdown.extend(
+            [
+                f"## Level {index} — {level['ratio']:.0%}",
+                "",
+                f"- **Fill Tokens**: {level['fill_tokens']:,}",
+                f"- **Pass Rate**: {level['score_pct']:.1f}%",
+            ]
+        )
+        if level.get("error"):
+            markdown.append(f"- **Level Error**: {level['error']}")
+        markdown.append("")
+        for scenario in level["scenario_results"]:
+            markdown.extend(
+                [
+                    f"### {scenario['scenario_id']}",
+                    "",
+                    f"- **Status**: {scenario['status']}",
+                    f"- **Points**: {scenario['points']} / 2",
+                    f"- **Summary**: {scenario.get('summary') or ''}",
+                    f"- **Expected**: {scenario.get('expected_behavior') or ''}",
+                    f"- **Tool Calls**: {', '.join(scenario.get('tool_calls_made') or []) or 'none'}",
+                    "",
+                    "#### Full trace",
+                    "",
+                    *_trace_block(scenario.get("raw_log", "")),
+                    "",
+                ]
+            )
+    path.write_text("\n".join(markdown), encoding="utf-8")
+    return path
+
+
+def _report_then_persist_pressure_sweep(
+    *,
+    report_kwargs: dict[str, Any],
+    run_data: dict[str, Any],
+    persist_plugin_run: Any,
+) -> Path:
+    """Enforce artifact-first completed-run finalization for pressure sweeps."""
+    report_path = _write_pressure_sweep_report(**report_kwargs)
+    persist_plugin_run(run_data)
+    return report_path
 
 
 def run_pressure_sweep(
@@ -212,6 +305,9 @@ def run_pressure_sweep(
                     {
                         "ratio": ratio,
                         "results": results_map,
+                        "scenario_results": [
+                            result.to_dict() for result in summary.scenario_results
+                        ],
                         "score_pct": score_pct,
                         "pass_count": pass_count,
                         "fill_tokens": fill_tokens,
@@ -233,6 +329,21 @@ def run_pressure_sweep(
                     {
                         "ratio": ratio,
                         "results": {sid: "fail" for sid in scenario_ids},
+                        "scenario_results": [
+                            {
+                                "scenario_id": sid,
+                                "status": "fail",
+                                "points": 0,
+                                "summary": f"Sweep level failed: {exc}",
+                                "note": None,
+                                "tool_calls_made": [],
+                                "expected_behavior": "",
+                                "duration_seconds": 0.0,
+                                "turn_count": 0,
+                                "raw_log": str(exc),
+                            }
+                            for sid in scenario_ids
+                        ],
                         "score_pct": 0,
                         "pass_count": 0,
                         "fill_tokens": fill_tokens,
@@ -318,18 +429,32 @@ def run_pressure_sweep(
         }
     )
     sweep_run_id = build_run_id(sweep_config)
-    persist_plugin_run(
-        {
+    run_data = {
+        "run_id": sweep_run_id,
+        "run_type": "context-pressure",
+        "status": "completed",
+        "config": sweep_config,
+        "scores": {
+            "levels": len(level_results),
+            "breaking_point": breaking_point,
+            "first_degradation": first_degradation,
+            "level_results": level_results,
+        },
+        "metadata": metadata_for_storage(None),
+    }
+    report_path = _report_then_persist_pressure_sweep(
+        report_kwargs={
             "run_id": sweep_run_id,
-            "run_type": "context-pressure",
-            "status": "completed",
-            "config": sweep_config,
-            "scores": {
-                "levels": len(level_results),
-                "breaking_point": breaking_point,
-                "first_degradation": first_degradation,
-                "level_results": level_results,
-            },
-            "metadata": metadata_for_storage(None),
-        }
+            "model": display_name,
+            "backend": backend,
+            "display_url": display_url or base_url,
+            "context_size": context_size,
+            "level_results": level_results,
+            "breaking_point": breaking_point,
+            "first_degradation": first_degradation,
+            "output_dir": getattr(args, "output_dir", None),
+        },
+        run_data=run_data,
+        persist_plugin_run=persist_plugin_run,
     )
+    console.print(f"  [dim]Report saved to {report_path}[/]\n")

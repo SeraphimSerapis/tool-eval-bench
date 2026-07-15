@@ -8,10 +8,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from tool_eval_bench.domain.models import RunContext
-from tool_eval_bench.domain.scenarios import Category, ModelScoreSummary, ScenarioStatus
+from tool_eval_bench.domain.scenarios import (
+    Category,
+    ModelScoreSummary,
+    ScenarioReportMetadata,
+    ScenarioStatus,
+)
 
 
 def _default_reports_root() -> str:
@@ -37,6 +42,7 @@ class MarkdownReporter:
         throughput_samples: list[Any] | None = None,
         context_pressure_config: dict[str, Any] | None = None,
         run_context: RunContext | None = None,
+        scenario_metadata: Mapping[str, ScenarioReportMetadata] | None = None,
     ) -> Path:
         """Write a Markdown report for a scenario-based benchmark run."""
         now = datetime.now(timezone.utc)
@@ -85,13 +91,11 @@ class MarkdownReporter:
         # Tool definition token overhead estimate (PERF-03)
         # Check if any category-L (Toolset Scale) scenarios were included —
         # those use the large toolset instead of UNIVERSAL_TOOLS.
-        from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
-
-        _scenario_cat = {s.id: s.category for s in ALL_SCENARIOS_WITH_HARDMODE}
-        _scenario_diff = {s.id: s.difficulty for s in ALL_SCENARIOS_WITH_HARDMODE}
-        _scenario_title = {s.id: s.title for s in ALL_SCENARIOS_WITH_HARDMODE}
+        scenario_metadata = scenario_metadata or {}
         has_large_toolset = any(
-            _scenario_cat.get(r.scenario_id) == Category.L for r in summary.scenario_results
+            scenario_metadata.get(r.scenario_id)
+            and scenario_metadata[r.scenario_id].category == Category.L
+            for r in summary.scenario_results
         )
         if has_large_toolset:
             import json as _json
@@ -175,9 +179,10 @@ class MarkdownReporter:
         for r in summary.scenario_results:
             emoji = status_emoji.get(r.status, "?")
             note = f" ({r.note})" if r.note else ""
-            diff = _scenario_diff.get(r.scenario_id)
+            metadata = scenario_metadata.get(r.scenario_id)
+            diff = metadata.difficulty if metadata else None
             diff_str = _diff_labels.get(diff, "?") if diff else "?"
-            title = _scenario_title.get(r.scenario_id, r.scenario_id)
+            title = metadata.title if metadata else r.scenario_id
             failure = r.failure_kind or "—"
             md.append(
                 f"| {r.scenario_id} | {title} | {diff_str} | {emoji} {r.status.value} | {r.points}/2 | {failure} | {r.summary}{note} |"
@@ -189,7 +194,8 @@ class MarkdownReporter:
         diff_pass: Counter[int] = Counter()
         diff_total: Counter[int] = Counter()
         for r in summary.scenario_results:
-            d = _scenario_diff.get(r.scenario_id)
+            metadata = scenario_metadata.get(r.scenario_id)
+            d = metadata.difficulty if metadata else None
             if d:
                 diff_total[d] += 1
                 if r.status == ScenarioStatus.PASS:

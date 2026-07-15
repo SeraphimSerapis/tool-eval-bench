@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,7 @@ name = "tool-eval-bench"
 version = "2.1.0"
 description = "Agentic tool-call benchmark for LLM serving stacks (vLLM, LiteLLM, llama.cpp)"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.11"
 authors = [{ name = "SeraphimSerapis" }]
 keywords = ["llm", "benchmark", "tool-calling", "vllm", "evaluation", "agentic"]
@@ -15,7 +15,6 @@ classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -41,6 +40,7 @@ dev = [
   "pytest>=8.4.0",
   "pytest-asyncio>=0.24.0",
   "pytest-cov>=6.1.0",
+  "pytest-randomly>=3.16.0",
   "ruff>=0.12.0",
   "pre-commit>=4.0.0",
 ]
@@ -56,6 +56,9 @@ Issues = "https://github.com/SeraphimSerapis/tool-eval-bench/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+tool_eval_bench = ["evals/yaml_scenarios/*.yaml", "py.typed"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -81,6 +84,11 @@ ignore = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+markers = [
+  "live: requires a live external service or inference endpoint",
+  "slow: takes materially longer than the default unit-test suite",
+  "integration: exercises multiple project layers together",
+]
 filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
     "ignore:unclosed event loop:ResourceWarning",

@@ -191,6 +191,15 @@ class ScenarioDisplayDetail:
     failure_case: str
 
 
+@dataclass(frozen=True)
+class ScenarioReportMetadata:
+    """Presentation metadata passed to storage without importing evaluators."""
+
+    title: str
+    category: Category
+    difficulty: int | None = None
+
+
 # ---------------------------------------------------------------------------
 # Aggregate scoring types
 # ---------------------------------------------------------------------------

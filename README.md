@@ -110,7 +110,7 @@ no configuration is needed:
 ```bash
 # Just run it — auto-discovers vLLM (:8000), llama.cpp (:8080), SGLang (:30000),
 # LiteLLM (:4000), Ollama (:11434), or TGI (:5000)
-tool-eval-bench --short
+tool-eval-bench run --short
 ```
 
 For remote servers or non-standard ports, create a `.env` file (or set environment variables):
@@ -135,101 +135,76 @@ TOOL_EVAL_API_KEY=       # optional
 
 ```bash
 # Zero-config — auto-discovers server and model on localhost
-tool-eval-bench --short
+tool-eval-bench run --short
 
 # Check server readiness first (useful in CI/sparkrun recipes)
-tool-eval-bench --probe
+tool-eval-bench probe
 
 # Smoke test — quick validation with 5 scenarios
-tool-eval-bench --scenarios TC-01 TC-02 TC-03 TC-04 TC-05
+tool-eval-bench run --scenarios TC-01 TC-02 TC-03 TC-04 TC-05
 
 # Core 15 — fast quality check
-tool-eval-bench --short --seed 42
+tool-eval-bench run --short --seed 42
 
 # Full 69 — the standard benchmark
-tool-eval-bench --seed 42
+tool-eval-bench run --seed 42
 
 # Full + Hard Mode — 84 scenarios for top-performing models
-tool-eval-bench --seed 42 --hardmode
+tool-eval-bench run --seed 42 --hardmode
 
 # Full + throughput — quality + speed (recommended)
-tool-eval-bench --seed 42 --perf
+tool-eval-bench bench --seed 42 --perf
 
 # Reference-grade — statistical rigor with Pass@k / Pass^k metrics
-tool-eval-bench --seed 42 --trials 3 --perf
+tool-eval-bench bench --seed 42 --trials 3 --perf
 
 # Context pressure — test tool-calling with 75% of context pre-filled
-tool-eval-bench --seed 42 --context-pressure 0.75
+tool-eval-bench run --seed 42 --context-pressure 0.75
 
 # Run specific categories — safety + tool selection only
-tool-eval-bench --categories K A
+tool-eval-bench run --categories K A
 
 # Run coding-focused categories with thinking enabled
-tool-eval-bench --categories J G M --backend-kwargs '{"chat_template_kwargs": {"enable_thinking": true}}'
+tool-eval-bench run --categories J G M --backend-kwargs '{"chat_template_kwargs": {"enable_thinking": true}}'
 
 # Explicit flags (overrides .env)
-tool-eval-bench --model gemma4 --backend vllm --base-url http://localhost:8080
+tool-eval-bench run --model gemma4 --backend vllm --base-url http://localhost:8080
 ```
 
-### Options
+### CLI commands and common workflows
 
-```
---model MODEL          Model name (auto-detected if omitted)
---backend BACKEND      Backend: vllm, litellm, llamacpp (default: from .env or vllm)
---base-url URL         Server base URL (default: from .env)
---api-key KEY          API key (optional)
---version              Show tool-eval-bench version and exit
---probe                Check server reachability and exit (0 = ready, 1 = not found)
---temperature FLOAT    Temperature (default: 0.0)
---no-think             Disable thinking/reasoning (sets enable_thinking=false via chat_template_kwargs)
---top-p P              Top-p (nucleus) sampling value (e.g. 0.9)
---top-k K              Top-k sampling value (e.g. 40)
---min-p P              Min-p sampling threshold (e.g. 0.05)
---repeat-penalty V     Repetition penalty (e.g. 1.1)
---backend-kwargs JSON  Extra backend params as JSON (e.g. '{"top_p": 0.9}'); deep-merges with other flags
---timeout FLOAT        Request timeout in seconds (default: 60.0)
---max-turns INT        Max turns per scenario (default: 8)
---scenarios IDs        Run specific scenarios (e.g. TC-01 TC-07)
---categories CAT       Run specific categories (e.g. K A J); letters A–P
---short                Run only the core 15 scenarios
---hardmode             Include Hard Mode scenarios (Category P) for ceiling-breaking difficulty
---hardmode-only        Run ONLY Hard Mode scenarios (equivalent to --hardmode --categories P)
---trials N             Run N trials; generates individual reports + a consolidated summary report with Pass@k, Pass^k, flaky detection
---error-rate RATE      Inject random tool errors at given rate (0.0–1.0) for robustness testing
---context-pressure R   Fill context to R (0.0–1.0) before each scenario to test tool-calling under pressure
---context-size N       Override auto-detected context window size (tokens)
---context-pressure-sweep START-END
-                       Run scenarios at increasing pressure from START to END and report the breaking point
---sweep-steps N        Number of intervals for sweep (default: 5, producing N+1 test levels)
---metrics-url URL      Direct URL to Prometheus /metrics (for LiteLLM proxy setups)
---alpha WEIGHT         Quality/speed weight for deployability score (0.0–1.0, default: 0.7)
---reference-date DATE  Override benchmark reference date (YYYY-MM-DD, default: 2026-03-20)
---seed N               Random seed passed to server (controls logit sampling only — does not guarantee full run-to-run reproducibility; KV-cache and CUDA non-determinism still apply)
---parallel N           Run N scenarios/questions concurrently (default: 1). Applies to tool-call scenarios and plugin benchmarks (GSM8K, MMLU, IFEval). Values >1 may cause server-load timeouts recorded as FAIL — use --parallel 1 for reliable quality scores
---json                 Output raw JSON
---json-file PATH       Write JSON to PATH instead of stdout (implies --json)
---dry-run              List scenarios that would run, then exit (no server needed)
---no-live              Disable live progress footer
---no-warmup            Skip server warm-up request
---no-probe-engine      Skip engine probing (/version, /health HTTP calls)
---skip-tool-eval       Skip tool-call scenarios (use with --perf or --spec-bench)
---skip-coherence       Deprecated: llama-benchy coherence check is now always skipped
---redact-url           Mask the server URL in display output (useful for screenshots/recordings)
---output-dir DIR       Directory for report files (default: ./runs/)
---diff RUN_ID          Compare results against a previous run (use 'latest')
---compare A B          Diff two stored runs by ID
-compare-report A B -o OUT.html
-                       Generate a browser HTML comparison from two Markdown reports
---history              List recent benchmark runs
---leaderboard          Show ranked model leaderboard
---export FORMAT        Export all results as csv or json
---export-output FILE   Output file for --export (default: stdout)
---resume RUN_ID        Resume a previous run (skip already-passed scenarios)
---weight-by-difficulty Weight scores by difficulty tier (1× trivial … 5× very hard)
+| Command | Purpose |
+|---|---|
+| `run` | Run tool-call scenarios |
+| `probe` | Check inference-server reachability |
+| `bench` | Run throughput, speculative-decoding, or context-pressure benchmarks |
+| `spec-live` | Monitor speculative-decoding metrics |
+| `plugin` | Run GSM8K, MMLU, or IFEval |
+| `compare` | Compare stored runs or Markdown reports |
+| `history`, `leaderboard`, `export` | Inspect or export persisted results |
+| `resume` | Continue an incomplete run |
 
---spec-live            Start live speculative decoding monitor (Ctrl+R to reset, Ctrl+C to stop)
---spec-live-interval S Poll interval for --spec-live in seconds (default: 1.0)
+```bash
+# Accuracy plugin
+tool-eval-bench plugin gsm8k --limit 50 --shots 8
+
+# Throughput only
+tool-eval-bench bench --perf-only --pp 2048 --tg 128
+
+# Compare two persisted runs in the terminal
+tool-eval-bench compare RUN_A RUN_B
+
+# Generate an HTML comparison from two Markdown reports
+tool-eval-bench compare --report a.md b.md -o comparison.html
+
+# Resume a prior tool-call run
+tool-eval-bench resume RUN_ID
 ```
+
+Use `tool-eval-bench COMMAND --help` for command-specific options. Existing
+flat invocations such as `tool-eval-bench --short`, `--history`, and
+`compare-report A.md B.md -o out.html` remain supported silently for permanent
+backward compatibility.
 
 ### Accuracy benchmarks (GSM8K, MMLU, IFEval)
 
@@ -245,21 +220,21 @@ Without it, the tool falls back to the HuggingFace REST API (which has rate limi
 
 ```bash
 # GSM8K — math reasoning
-tool-eval-bench --gsm8k-only                        # 200 questions, 8-shot
-tool-eval-bench --gsm8k-only --gsm8k-limit 50        # quick test
+tool-eval-bench plugin gsm8k                         # 200 questions, 8-shot
+tool-eval-bench plugin gsm8k --limit 50              # quick test
 
 # MMLU — multitask knowledge
-tool-eval-bench --mmlu-only                          # 500 questions, 5-shot
-tool-eval-bench --mmlu-only --mmlu-limit 50           # quick test
-tool-eval-bench --mmlu-only --mmlu-subjects STEM      # only STEM subjects
-tool-eval-bench --mmlu-only --mmlu-shots 0            # zero-shot
+tool-eval-bench plugin mmlu                          # 500 questions, 5-shot
+tool-eval-bench plugin mmlu --limit 50               # quick test
+tool-eval-bench plugin mmlu --subjects STEM          # only STEM subjects
+tool-eval-bench plugin mmlu --shots 0                # zero-shot
 
 # IFEval — instruction following
-tool-eval-bench --ifeval-only                        # all 541 prompts
-tool-eval-bench --ifeval-only --ifeval-limit 20       # quick test
+tool-eval-bench plugin ifeval                        # all 541 prompts
+tool-eval-bench plugin ifeval --limit 20             # quick test
 
 # Combined with tool-eval
-tool-eval-bench --mmlu --ifeval --gsm8k              # all three after tool-eval
+tool-eval-bench bench --mmlu --ifeval --gsm8k        # all three after tool-eval
 ```
 
 | Flag | Default | Purpose |
@@ -281,16 +256,16 @@ Throughput measurement uses [llama-benchy](https://github.com/eugr/llama-benchy)
 
 ```bash
 # Throughput only (skip tool-call scenarios)
-tool-eval-bench --perf-only --pp 2048 --tg 128 --depth "0 4096 8192 16384 32768"
+tool-eval-bench bench --perf-only --pp 2048 --tg 128 --depth "0 4096 8192 16384 32768"
 
 # Throughput + tool-call scenarios
-tool-eval-bench --perf --depth "0 4096" --concurrency "1,2,4"
+tool-eval-bench bench --perf --depth "0 4096" --concurrency "1,2,4"
 
 # Customize measurement runs and latency mode
-tool-eval-bench --perf --benchy-runs 5 --benchy-latency-mode generation
+tool-eval-bench bench --perf --benchy-runs 5 --benchy-latency-mode generation
 
 # Pass arbitrary flags to llama-benchy
-tool-eval-bench --perf --benchy-args='--no-warmup --enable-prefix-caching'
+tool-eval-bench bench --perf --benchy-args='--no-warmup --enable-prefix-caching'
 ```
 
 | Flag | Default | Purpose |
@@ -310,8 +285,8 @@ tool-eval-bench --perf --benchy-args='--no-warmup --enable-prefix-caching'
 A simpler built-in throughput benchmark with no external dependencies is also available:
 
 ```bash
-tool-eval-bench --perf-legacy-only --pp 2048 --tg 128
-tool-eval-bench --perf-legacy --seed 42
+tool-eval-bench bench --perf-legacy-only --pp 2048 --tg 128
+tool-eval-bench bench --perf-legacy --seed 42
 ```
 
 | Flag | Default | Purpose |
@@ -325,16 +300,16 @@ Measures the **real-world effectiveness** of multi-token prediction (MTP), draft
 
 ```bash
 # Quick spec-decode benchmark (auto-detect method)
-tool-eval-bench --spec-bench
+tool-eval-bench bench --spec-bench
 
 # Specify method + compare against known baseline
-tool-eval-bench --spec-bench --spec-method mtp --baseline-tgs 30.0
+tool-eval-bench bench --spec-bench --spec-method mtp --baseline-tgs 30.0
 
 # Custom prompt types and depths
-tool-eval-bench --spec-bench --spec-prompts "code,structured" --depth "0,4096"
+tool-eval-bench bench --spec-bench --spec-prompts "code,structured" --depth "0,4096"
 
 # Combined: throughput + spec-decode + tool-call quality
-tool-eval-bench --perf --spec-bench --seed 42
+tool-eval-bench bench --perf --spec-bench --seed 42
 ```
 
 | Spec-Decode Flag | Default | Purpose |
@@ -373,16 +348,16 @@ The dashboard runs in the terminal's **alternate screen buffer** (like htop or v
 
 ```bash
 # Start the live monitor (runs until Ctrl+C)
-tool-eval-bench --spec-live
+tool-eval-bench spec-live
 
 # Custom poll interval (default: 1 second)
-tool-eval-bench --spec-live --spec-live-interval 2
+tool-eval-bench spec-live --spec-live-interval 2
 
 # Tell the dashboard which spec method you're running
-tool-eval-bench --spec-live --spec-method dflash
+tool-eval-bench spec-live --spec-method dflash
 
 # Point at vLLM metrics directly (when API is behind a proxy)
-tool-eval-bench --spec-live --metrics-url http://vllm:8080/metrics
+tool-eval-bench spec-live --metrics-url http://vllm:8080/metrics
 ```
 
 The dashboard shows:
@@ -417,14 +392,14 @@ The standard 69-scenario benchmark covers *breadth* of tool-calling capabilities
 
 ```bash
 # Standard benchmark + Hard Mode scenarios (69 + 15 = 84 scenarios)
-tool-eval-bench --hardmode
+tool-eval-bench run --hardmode
 
 # Run only Hard Mode scenarios
-tool-eval-bench --hardmode-only
-tool-eval-bench --hardmode --categories P  # equivalent
+tool-eval-bench run --hardmode-only
+tool-eval-bench run --hardmode --categories P  # equivalent
 
 # Combined with context pressure for maximum difficulty
-tool-eval-bench --hardmode --context-pressure 0.75
+tool-eval-bench run --hardmode --context-pressure 0.75
 ```
 
 Hard Mode focuses on fifteen ceiling-breaking scenarios:
@@ -457,18 +432,18 @@ Tests tool-calling quality when the context window is already heavily utilized. 
 
 ```bash
 # Fill 75% of context before each scenario (recommended)
-tool-eval-bench --seed 42 --context-pressure 0.75
+tool-eval-bench run --seed 42 --context-pressure 0.75
 
 # Fill 50% — moderate pressure
-tool-eval-bench --seed 42 --context-pressure 0.50
+tool-eval-bench run --seed 42 --context-pressure 0.50
 
 # Override auto-detected context size (if /v1/models doesn't expose it)
-tool-eval-bench --seed 42 --context-pressure 0.75 --context-size 32768
+tool-eval-bench run --seed 42 --context-pressure 0.75 --context-size 32768
 
 # Compare baseline vs pressure
-tool-eval-bench --seed 42                           # baseline run
-tool-eval-bench --seed 42 --context-pressure 0.75   # pressure run
-tool-eval-bench --compare <baseline_id> <pressure_id>
+tool-eval-bench run --seed 42                           # baseline run
+tool-eval-bench run --seed 42 --context-pressure 0.75   # pressure run
+tool-eval-bench compare <baseline_id> <pressure_id>
 ```
 
 | Context Pressure Flag | Default | Purpose |
@@ -484,13 +459,13 @@ Use `--context-pressure-sweep` to gradually increase pressure and discover exact
 
 ```bash
 # Find breaking point between 90%–100% with fine granularity
-tool-eval-bench --context-pressure-sweep 0.9-1.0 --sweep-steps 10 --scenarios TC-61 TC-64
+tool-eval-bench bench --context-pressure-sweep 0.9-1.0 --sweep-steps 10 --scenarios TC-61 TC-64
 
 # Broad sweep across the full range
-tool-eval-bench --context-pressure-sweep 0.5-1.0 --scenarios TC-61
+tool-eval-bench bench --context-pressure-sweep 0.5-1.0 --scenarios TC-61
 
 # Sweep a specific category
-tool-eval-bench --context-pressure-sweep 0.5-1.0 --categories O
+tool-eval-bench bench --context-pressure-sweep 0.5-1.0 --categories O
 ```
 
 The sweep runs each selected scenario at every pressure level, displays a compact summary panel with pass/fail status per level, and reports the **breaking point** (highest pressure where all scenarios still pass). It early-stops after 2 consecutive all-fail levels.
@@ -549,9 +524,12 @@ External tools can validate benchmark configuration against the published schema
 ```python
 from tool_eval_bench.schema import get_schema
 
-schema = get_schema()  # {"schema_version": "1", "args": [...]}
+schema = get_schema()  # {"schema_version": "4", "args": [...], "commands": {...}}
 for arg in schema["args"]:
     print(f"{arg['name']}: {arg['type']} = {arg['default']}")
+
+for command, metadata in schema["commands"].items():
+    print(f"{command}: {metadata['description']}")
 ```
 
 ### Subprocess mode
@@ -559,7 +537,7 @@ for arg in schema["args"]:
 For subprocess-based integration, use `--json-file` to write results to a file and parse JSONL progress events from stderr:
 
 ```bash
-tool-eval-bench --json-file /tmp/result.json --base-url http://localhost:8000 2>progress.jsonl
+tool-eval-bench run --json-file /tmp/result.json --base-url http://localhost:8000 2>progress.jsonl
 ```
 
 Progress events on stderr:
@@ -687,13 +665,13 @@ LiteLLM (and similar routers) expose multiple models behind a single endpoint. t
 
 ```bash
 # Benchmark model A
-tool-eval-bench --model gpt-4o --base-url http://litellm:4000
+tool-eval-bench run --model gpt-4o --base-url http://litellm:4000
 # Benchmark model B
-tool-eval-bench --model claude-3.5-sonnet --base-url http://litellm:4000
-# Compare the two runs
-tool-eval-bench --compare <run_id_a> <run_id_b>
+tool-eval-bench run --model claude-3.5-sonnet --base-url http://litellm:4000
+# Compare the two persisted runs
+tool-eval-bench compare <run_id_a> <run_id_b>
 # Generate a browser report from two Markdown artifacts
-tool-eval-bench compare-report runs/.../model_a_summary.md runs/.../model_b_summary.md -o comparison.html
+tool-eval-bench compare --report runs/.../model_a_summary.md runs/.../model_b_summary.md -o comparison.html
 ```
 
 > **Tip:** Set `TOOL_EVAL_BACKEND=litellm` in `.env` so reports are labeled correctly.

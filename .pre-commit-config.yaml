@@ -10,12 +10,12 @@ repos:
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
-  # ── Pytest: fast smoke test (pre-push only) ─────────────────
+  # ── Pytest: required suite (pre-push only) ───────────────
   - repo: local
     hooks:
       - id: pytest-check
-        name: pytest (quick)
-        entry: .venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py -x -q --tb=line --no-header
+        name: pytest (required suite)
+        entry: .venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py -m "not live" -x -q --tb=line --no-header --randomly-seed=104729
         language: system
         pass_filenames: false
         always_run: true

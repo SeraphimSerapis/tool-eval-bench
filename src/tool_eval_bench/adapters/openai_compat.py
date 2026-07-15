@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 
-from tool_eval_bench.adapters.base import BackendAdapter, ChatCompletionResult, ProviderToolCall
+from tool_eval_bench.domain.adapters import BackendAdapter, ChatCompletionResult, ProviderToolCall
 from tool_eval_bench.domain.models import ChatMessage
 from tool_eval_bench.utils.urls import chat_completions_url as _chat_completions_url
 

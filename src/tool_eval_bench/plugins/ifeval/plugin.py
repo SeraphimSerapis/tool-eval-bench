@@ -12,7 +12,7 @@ import time
 from collections import defaultdict
 from typing import Any
 
-from tool_eval_bench.adapters.base import BackendAdapter
+from tool_eval_bench.domain.adapters import BackendAdapter
 from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,

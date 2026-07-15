@@ -19,16 +19,20 @@ Every *public* parser argument (i.e. not decorated with
 enforces this automatically — add new flags here when you add them to
 ``cli/bench.py``.
 
-Intentionally hidden/experimental args are listed in
-``cli/bench._HIDDEN_ARGS`` and are excluded from this schema.
+Parser-internal destinations are listed in ``cli/bench._HIDDEN_ARGS`` and are
+excluded from this schema.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from tool_eval_bench.cli.command_registry import commands_schema
+
 # Argument schema version — bump when adding/removing/renaming args.
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
+
+COMMANDS_SCHEMA: dict[str, dict[str, Any]] = commands_schema()
 
 ARGS_SCHEMA: list[dict[str, Any]] = [
     {
@@ -537,4 +541,5 @@ def get_schema() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "args": ARGS_SCHEMA,
+        "commands": COMMANDS_SCHEMA,
     }

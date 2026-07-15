@@ -86,6 +86,33 @@ class TestYamlLoader:
         assert evaluation.status == ScenarioStatus.FAIL
         assert "Extra" in evaluation.summary
 
+    def test_restraint_evaluator_passes_when_no_tool_is_called(self, tmp_path: Path) -> None:
+        path = tmp_path / "restraint.yaml"
+        path.write_text(
+            "id: YAML-R\ntitle: Restraint\ncategory: A\nuser_message: Answer directly\n"
+            "expected_tool_calls: []\n"
+        )
+
+        evaluation = _load_yaml_file(path).evaluate(ScenarioState())
+
+        assert evaluation.status == ScenarioStatus.PASS
+        assert evaluation.points == 2
+
+    def test_restraint_evaluator_fails_when_any_tool_is_called(self, tmp_path: Path) -> None:
+        path = tmp_path / "restraint.yaml"
+        path.write_text(
+            "id: YAML-R\ntitle: Restraint\ncategory: A\nuser_message: Answer directly\n"
+            "expected_tool_calls: []\n"
+        )
+        state = ScenarioState()
+        state.tool_calls.append(_record("get_weather", {"location": "Berlin"}))
+
+        evaluation = _load_yaml_file(path).evaluate(state)
+
+        assert evaluation.status == ScenarioStatus.FAIL
+        assert evaluation.points == 0
+        assert "get_weather" in evaluation.summary
+
     def test_loads_multiple_files_sorted(self) -> None:
         yaml_a = """
 id: YAML-A
@@ -132,6 +159,33 @@ tool_responses: {}
             path.write_text("id: X\ntitle: No Cat\nuser_message: hi\n")
             with pytest.raises(ValueError, match="'category'"):
                 _load_yaml_file(path)
+
+    @pytest.mark.parametrize("field", ["title", "user_message"])
+    def test_other_missing_required_fields_raise_with_path(
+        self, tmp_path: Path, field: str
+    ) -> None:
+        values = {
+            "id": "X",
+            "title": "Required fields",
+            "category": "A",
+            "user_message": "hi",
+        }
+        values.pop(field)
+        path = tmp_path / "missing.yaml"
+        path.write_text("\n".join(f"{key}: {value}" for key, value in values.items()))
+
+        with pytest.raises(ValueError, match=rf"{field!r}.*{path}"):
+            _load_yaml_file(path)
+
+    @pytest.mark.parametrize("field", ["id", "title", "category", "user_message"])
+    def test_required_fields_must_be_non_empty_strings(self, tmp_path: Path, field: str) -> None:
+        path = tmp_path / "invalid.yaml"
+        path.write_text(
+            "id: X\ntitle: Required fields\ncategory: A\nuser_message: hi\n" + f"{field}: []\n"
+        )
+
+        with pytest.raises(ValueError, match=rf"{field!r}.*non-empty string.*{path}"):
+            _load_yaml_file(path)
 
     def test_invalid_category_raises_with_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

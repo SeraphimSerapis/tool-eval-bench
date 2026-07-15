@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from tool_eval_bench.adapters.base import BackendAdapter
+from tool_eval_bench.domain.adapters import BackendAdapter
 
 # ---------------------------------------------------------------------------
 # Universal result container

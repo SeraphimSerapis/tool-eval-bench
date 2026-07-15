@@ -20,7 +20,7 @@ from typing import Any
 
 import httpx
 
-from tool_eval_bench.adapters.base import BackendAdapter, ChatCompletionResult
+from tool_eval_bench.domain.adapters import BackendAdapter, ChatCompletionResult
 from tool_eval_bench.domain.models import ChatMessage
 from tool_eval_bench.domain.scenarios import (
     CATEGORY_LABELS,

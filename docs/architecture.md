@@ -11,6 +11,7 @@ For adding new scenarios, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 ```mermaid
 graph TD
     CLI["cli/ — Delivery Layer"]
+    Application["application/ — Composition"]
     Runner["runner/ — Orchestration"]
     Evals["evals/ — Scenarios & Evaluators"]
     Plugins["plugins/ — Pluggable Benchmarks"]
@@ -19,30 +20,36 @@ graph TD
     Adapters["adapters/ — HTTP Clients"]
     Utils["utils/ — Shared Helpers"]
 
+    CLI --> Application
     CLI --> Runner
-    CLI --> Storage
     CLI --> Plugins
+    Application --> Runner
+    Application --> Storage
+    Application --> Adapters
+    Application --> Evals
+    Application --> Utils
     Runner --> Evals
-    Runner --> Adapters
     Runner --> Domain
+    Runner --> Utils
     Plugins --> Domain
-    Plugins --> Adapters
     Evals --> Domain
     Storage --> Domain
-    Utils -.-> CLI
-    Utils -.-> Runner
-    Utils -.-> Storage
+    Adapters --> Domain
+    Adapters --> Utils
+    Utils --> Domain
 ```
 
 ### Dependency Rules
 
 | Layer | May Import | Must NOT Import |
 |---|---|---|
-| `domain/` | stdlib only | storage, adapters, runner, cli, evals |
+| `domain/` | stdlib and other domain modules | storage, concrete adapters, application, runner, cli, evals |
 | `evals/` | domain | storage, adapters, runner, cli |
-| `runner/` | domain, evals, adapters (via interfaces) | storage, cli |
-| `plugins/` | domain, adapters (via interfaces) | storage, cli, runner, evals |
+| `runner/` | domain ports, evals, utils | storage, concrete adapters, application, cli |
+| `plugins/` | domain ports | storage, concrete adapters, application, cli, runner, evals |
 | `storage/` | domain | adapters, runner, cli, evals |
+| `application/` | domain, evals, runner, adapters, storage, utils | cli |
+| `adapters/` | domain ports, utils | storage, application, runner, cli, evals |
 | `cli/` | everything (delivery layer) | — |
 | `utils/` | stdlib, domain | storage, adapters, runner, cli, evals |
 
@@ -57,6 +64,7 @@ external dependencies.
 
 | Module | Purpose |
 |---|---|
+| `adapters.py` | Backend adapter port and provider-neutral chat result/tool-call types |
 | `scenarios.py` | `ScenarioDefinition`, `ScenarioEvaluation`, `ScenarioState`, `Category` enum, scoring functions, safety gating |
 | `models.py` | `BenchmarkConfig` dataclass |
 | `plugin.py` | `BenchmarkPlugin` ABC + `BenchmarkResult` dataclass for pluggable benchmarks |
@@ -101,12 +109,10 @@ canonical source for now.
 
 ### `runner/` — Orchestration
 
-### `runner/` — Orchestration
-
 | Module | Purpose |
 |---|---|
 | `orchestrator.py` | Multi-turn tool-call loop (up to 8 turns per scenario) |
-| `service.py` | `BenchmarkService` — coordinates orchestrator + storage + reporting |
+| `service.py` | Compatibility re-export of the application-owned `BenchmarkService` |
 | `throughput.py` | Built-in streaming pp/tg measurement |
 | `speculative.py` | Spec-decode / MTP benchmarking (acceptance rate, effective t/s) |
 | `spec_live.py` | Live monitor data layer (Prometheus scraping, delta computation) |
@@ -119,7 +125,7 @@ canonical source for now.
 
 | Module | Purpose |
 |---|---|
-| `base.py` | `ModelAdapter` ABC |
+| `base.py` | Compatibility re-export of the domain-owned `BackendAdapter` port and result types |
 | `openai_compat.py` | `OpenAICompatibleAdapter` — single adapter for vLLM, LiteLLM, llama.cpp, SGLang |
 
 All backends use the same adapter; the `--backend` flag is a label for reports.
@@ -139,6 +145,12 @@ Shared infrastructure:
 - `hf_utils.py` — HuggingFace downloader (retry, resume, throttle, `datasets` library fast-path)
 - `registry.py` — `get_plugin()` / `available_plugins()` lookup
 
+### `application/` — Composition
+
+| Module | Purpose |
+|---|---|
+| `service.py` | `BenchmarkService` — composes concrete adapters, scenario orchestration, SQLite persistence, and Markdown reporting |
+
 ### `storage/` — Persistence
 
 | Module | Purpose |
@@ -150,8 +162,15 @@ Shared infrastructure:
 
 | Module | Purpose |
 |---|---|
-| `bench.py` | Main CLI entry point (`tool-eval-bench` command). After the 2026 refactor, this is dispatch-only — argument parsing, the `main()` routine, and the plugin benchmark runners. |
+| `bench.py` | Thin CLI entry point and compatibility re-export shell |
+| `parser.py` | Subcommand discovery and translation into the legacy runtime namespace |
+| `legacy_parser.py` | Permanent flat-flag parser used by legacy invocations and translated subcommands |
+| `dispatch.py` | Runtime command routing and tool-call benchmark flow |
+| `plugin_runners.py` | Shared persistence/progress lifecycle and plugin-specific execution |
+| `probe.py` | Model/server detection, preflight checks, and warmup |
 | `commands.py` | Scenario resolution (`resolve_scenarios`, `resolve_all_scenarios_for_ids`) |
+| `resolve.py` | Compatibility exports for scenario/sweep resolution helpers |
+| `run_io.py` | Trial aggregation and JSON/progress output helpers |
 | `helpers.py` | Small CLI helpers: dotenv loading, URL redaction, JSON output, sweep/int parsing, plugin-run persistence, headless errors |
 | `server.py` | Server discovery and backend detection from response headers (`discover_server`, `detect_backend_from_response`) |
 | `perf.py` | Throughput runners: `run_throughput` (built-in), `run_llama_benchy` (external) |
@@ -178,14 +197,14 @@ Shared infrastructure:
 ### Tool-Call Benchmark
 
 ```
-CLI (bench.py)
+CLI
   │
   ├─ parse args → BenchmarkConfig
-  ├─ create OpenAICompatibleAdapter
-  ├─ create BenchmarkService(repo, reporter)
+  ├─ create application.BenchmarkService(repo, reporter)
   │
   └─ service.run_benchmark()
        │
+       ├─ create OpenAICompatibleAdapter
        ├─ for each scenario in resolved list:
        │    │
        │    ├─ orchestrator.run_scenario(scenario, adapter, config)
@@ -204,14 +223,15 @@ CLI (bench.py)
        ├─ compute scores (scenario-count-weighted)
        ├─ apply safety gate (Category K < 50% → cap rating)
        │
-       ├─ repo.save(run)           # SQLite
-       └─ reporter.write(run)      # Markdown
+       ├─ pass scenario metadata to reporter through domain types
+       ├─ reporter.write(run)      # Markdown must succeed first
+       └─ repo.save(run)           # then store completed SQLite row
 ```
 
 ### Plugin Benchmark (GSM8K/MMLU/IFEval)
 
 ```
-CLI (bench.py)
+CLI
   │
   ├─ registry.get_plugin("gsm8k")
   ├─ plugin.run(adapter, config)
@@ -237,7 +257,7 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-new-scenario).
 
 ### Adding a New Plugin Benchmark
 1. Create `plugins/<name>/` with `dataset.py`, `evaluator.py`, `plugin.py`
-2. Implement `BenchmarkPlugin` ABC from `domain/plugin.py`
+2. Implement `BenchmarkPlugin` from `domain/plugin.py` using the backend port in `domain/adapters.py`
 3. Register in `plugins/registry.py`
 4. Add CLI flags in `cli/bench.py`
 
@@ -263,4 +283,5 @@ All backends use `OpenAICompatibleAdapter`. To support a new backend:
 | API | `test_api.py`, `test_plugin_interface.py` | Programmatic API, schema drift |
 | Adapter | `test_adapter.py` | SSE streaming, normalize, parse, error handling (httpx mocks) |
 
-**Total: 1,706 tests, 64% line coverage, 1.9s runtime.**
+The authoritative test count and branch-coverage result come from the current
+CI run; avoid copying those fast-changing values into architecture docs.

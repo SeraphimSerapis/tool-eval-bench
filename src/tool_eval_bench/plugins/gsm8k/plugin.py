@@ -15,7 +15,7 @@ import random
 import time
 from typing import Any
 
-from tool_eval_bench.adapters.base import BackendAdapter
+from tool_eval_bench.domain.adapters import BackendAdapter
 from tool_eval_bench.domain.plugin import BenchmarkPlugin, BenchmarkResult, OnPluginProgress
 from tool_eval_bench.plugins.gsm8k.dataset import GSM8KItem, load_dataset
 from tool_eval_bench.plugins.gsm8k.evaluator import evaluate_answer

@@ -10,6 +10,7 @@ from tool_eval_bench.domain.scenarios import (
     Category,
     CategoryScore,
     ModelScoreSummary,
+    ScenarioReportMetadata,
     ScenarioResult,
     ScenarioStatus,
 )
@@ -138,6 +139,32 @@ class TestMarkdownReporter:
         assert "Tool Definition Overhead" in content
         assert "tokens" in content
 
+    def test_scenario_metadata_selects_large_toolset_and_renders_details(self, tmp_path):
+        from tool_eval_bench.domain.tools_large import LARGE_TOOLSET
+
+        reporter = MarkdownReporter(root=str(tmp_path))
+        summary = _make_summary(num_results=1)
+        summary.scenario_results[0].scenario_id = "TC-37"
+        metadata = {
+            "TC-37": ScenarioReportMetadata(
+                title="Large Toolset Selection",
+                category=Category.L,
+                difficulty=4,
+            )
+        }
+
+        path = reporter.write_scenario_report(
+            "run_large",
+            "large-model",
+            summary,
+            scenario_metadata=metadata,
+        )
+        content = path.read_text()
+
+        assert f"({len(LARGE_TOOLSET)} tools" in content
+        assert "| TC-37 | Large Toolset Selection | ★★★★ |" in content
+        assert "| Hard (4) | 1 | 1 | 100% |" in content
+
     def test_report_path_follows_date_convention(self, tmp_path):
         reporter = MarkdownReporter(root=str(tmp_path))
         summary = _make_summary()
@@ -190,13 +217,22 @@ class TestMarkdownReporter:
         title from ScenarioDefinition, not the first sentence of the summary."""
         reporter = MarkdownReporter(root=str(tmp_path))
         summary = _make_summary(num_results=3)
-        path = reporter.write_scenario_report("run_title", "model-t", summary)
-        content = path.read_text()
 
         # The real scenario titles from ScenarioDefinition
         from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
 
         title_map = {s.id: s.title for s in ALL_SCENARIOS_WITH_HARDMODE}
+        scenario_metadata = {
+            s.id: ScenarioReportMetadata(s.title, s.category, s.difficulty)
+            for s in ALL_SCENARIOS_WITH_HARDMODE
+        }
+        path = reporter.write_scenario_report(
+            "run_title",
+            "model-t",
+            summary,
+            scenario_metadata=scenario_metadata,
+        )
+        content = path.read_text()
 
         # Extract just the Scenario Results table lines
         lines = content.split("\n")
