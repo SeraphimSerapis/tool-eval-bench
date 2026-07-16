@@ -34,6 +34,18 @@ from tool_eval_bench.runner.context_pressure import (
     prepare_context_pressure,
 )
 
+
+class _ImmediateEventLoop:
+    """Return calibration results without entering CPython's event loop."""
+
+    def run_until_complete(self, coroutine: Any) -> tuple[list[dict[str, Any]], int]:
+        coroutine.close()
+        return [], 0
+
+    def close(self) -> None:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # compute_fill_budget
 # ---------------------------------------------------------------------------
@@ -1302,20 +1314,21 @@ class TestPressureSweepIntegration:
             with_config_fingerprint,
         )
 
-        _run_pressure_sweep(
-            console,
-            "test-model",
-            "test-model",
-            "vllm",
-            "http://localhost:8080",
-            None,
-            args,
-            parse_sweep_range=parse_sweep_range,
-            resolve_scenarios=resolve_scenarios,
-            with_config_fingerprint=with_config_fingerprint,
-            persist_plugin_run=persist_plugin_run,
-            metadata_for_storage=metadata_for_storage,
-        )
+        with patch("asyncio.new_event_loop", return_value=_ImmediateEventLoop()):
+            _run_pressure_sweep(
+                console,
+                "test-model",
+                "test-model",
+                "vllm",
+                "http://localhost:8080",
+                None,
+                args,
+                parse_sweep_range=parse_sweep_range,
+                resolve_scenarios=resolve_scenarios,
+                with_config_fingerprint=with_config_fingerprint,
+                persist_plugin_run=persist_plugin_run,
+                metadata_for_storage=metadata_for_storage,
+            )
 
         # 3 levels (steps=3 → 0.5, 0.75, 1.0) — one asyncio.run per level
         assert mock_asyncio.run.call_count == 3
@@ -1366,20 +1379,21 @@ class TestPressureSweepIntegration:
             with_config_fingerprint,
         )
 
-        _run_pressure_sweep(
-            console,
-            "test-model",
-            "test-model",
-            "vllm",
-            "http://localhost:8080",
-            None,
-            args,
-            parse_sweep_range=parse_sweep_range,
-            resolve_scenarios=resolve_scenarios,
-            with_config_fingerprint=with_config_fingerprint,
-            persist_plugin_run=persist_plugin_run,
-            metadata_for_storage=metadata_for_storage,
-        )
+        with patch("asyncio.new_event_loop", return_value=_ImmediateEventLoop()):
+            _run_pressure_sweep(
+                console,
+                "test-model",
+                "test-model",
+                "vllm",
+                "http://localhost:8080",
+                None,
+                args,
+                parse_sweep_range=parse_sweep_range,
+                resolve_scenarios=resolve_scenarios,
+                with_config_fingerprint=with_config_fingerprint,
+                persist_plugin_run=persist_plugin_run,
+                metadata_for_storage=metadata_for_storage,
+            )
 
         # Should stop at 3 calls (pass, fail, fail), not run all 4 levels
         assert mock_asyncio.run.call_count == 3
