@@ -2,6 +2,20 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **Docker support** — a `Dockerfile` and `docker-compose.yaml` for running
+  the benchmark in a container against a remote OpenAI-compatible endpoint,
+  useful when testing a server by IP/port without a local Python setup.
+  Reuses the existing `.env.example` / `TOOL_EVAL_*` config surface unchanged
+  — no separate Docker-specific env schema. `docker-compose.yaml` mounts
+  `./runs` directly (the CLI's own default report path, see `AGENTS.md`), so
+  `--output-dir` never needs to be passed and results survive `--rm`
+  cleaning up the container. CI now builds the image on every push/PR to
+  catch breakage. See the "Run with Docker" section in the README.
+
 ## [2.1.0] — 2026-07-06
 
 ### Added

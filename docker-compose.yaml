@@ -1,0 +1,22 @@
+services:
+  tool-eval-bench:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tool-eval-bench:local
+    container_name: tool-eval-bench
+    # Copy .env.example to .env and set TOOL_EVAL_HOST/TOOL_EVAL_PORT (or
+    # TOOL_EVAL_BASE_URL) and TOOL_EVAL_API_KEY to the target endpoint's
+    # IP/port and access token.
+    env_file:
+      - .env
+    # tool-eval-bench's own default report location is ./runs (relative to
+    # its CWD, which is /app here per WORKDIR) — mount that path directly so
+    # reports land on the host even if a run overrides the command without
+    # passing --output-dir.
+    volumes:
+      - ./runs:/app/runs
+    # Default: verify the endpoint is reachable and exit (0 = ready, 1 = not found).
+    # Override with `docker compose run --rm tool-eval-bench <args>` for a real benchmark run, e.g.:
+    #   docker compose run --rm tool-eval-bench --short --seed 42
+    command: ["--probe"]

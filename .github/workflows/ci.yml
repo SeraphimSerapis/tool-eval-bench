@@ -39,3 +39,15 @@ jobs:
           --ignore=tests/test_llama_benchy.py
           --cov=tool_eval_bench --cov-report=term-missing
           --cov-fail-under=55
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t tool-eval-bench:ci .
+
+      - name: Smoke test — CLI entrypoint
+        run: docker run --rm tool-eval-bench:ci --help
