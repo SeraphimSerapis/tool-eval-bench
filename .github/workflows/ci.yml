@@ -65,9 +65,21 @@ jobs:
       - name: Critical module coverage
         run: python scripts/check_module_coverage.py coverage.json
 
-  optional-perf-tests:
+  docker-build:
     runs-on: ubuntu-latest
 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t tool-eval-bench:ci .
+
+      - name: Smoke test — CLI entrypoint
+        run: docker run --rm tool-eval-bench:ci --help
+
+  optional-perf-tests:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
