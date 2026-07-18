@@ -2,7 +2,7 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
-## [Unreleased]
+## [2.2.0] — 2026-07-18
 
 ### Added
 
@@ -27,8 +27,14 @@ All notable changes to `tool-eval-bench` are documented here.
   domain/evals/runner/plugin dependency rules. CI now runs three recorded
   `pytest-randomly` seeds across Python 3.11–3.13, tests the optional
   llama-benchy integration separately, smoke-tests an isolated wheel, and
-  enforces 80% branch coverage. The completed suite has 2,098 tests and
-  measures 83.69% branch coverage.
+  enforces 80% branch coverage. Each supported-Python matrix job passes 2,107
+  tests and measures 83.59–83.62% branch coverage.
+
+- **Docker support** — a `Dockerfile` and `docker-compose.yaml` run the benchmark
+  against a remote OpenAI-compatible endpoint without a local Python setup.
+  The image reuses the existing `.env.example` / `TOOL_EVAL_*` configuration,
+  while Compose mounts `./runs` so Markdown artifacts persist after `--rm`.
+  CI builds and smoke-tests the image on every push and pull request.
 
 ### Changed
 
@@ -71,15 +77,10 @@ All notable changes to `tool-eval-bench` are documented here.
 - **Scenario-count documentation** now consistently describes 69 standard
   scenarios plus 15 opt-in Hard Mode scenarios (84 combined).
 
-- **Docker support** — a `Dockerfile` and `docker-compose.yaml` for running
-  the benchmark in a container against a remote OpenAI-compatible endpoint,
-  useful when testing a server by IP/port without a local Python setup.
-  Reuses the existing `.env.example` / `TOOL_EVAL_*` config surface unchanged
-  — no separate Docker-specific env schema. `docker-compose.yaml` mounts
-  `./runs` directly (the CLI's own default report path, see `AGENTS.md`), so
-  `--output-dir` never needs to be passed and results survive `--rm`
-  cleaning up the container. CI now builds the image on every push/PR to
-  catch breakage. See the "Run with Docker" section in the README.
+- **Deterministic CI collection and pressure-sweep coverage** — `tests` and
+  `scripts` are explicit packages on the configured pytest import path, and
+  pressure-sweep tests isolate calibration-loop behavior so results no longer
+  depend on package import order or CPython event-loop cleanup timing.
 
 ## [2.1.0] — 2026-07-06
 

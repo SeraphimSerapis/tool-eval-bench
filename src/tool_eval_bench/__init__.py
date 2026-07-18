@@ -1,7 +1,7 @@
 """tool_eval_bench package."""
 
 __all__ = ["__version__", "run_benchmark"]
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 
 async def run_benchmark(**kwargs):
