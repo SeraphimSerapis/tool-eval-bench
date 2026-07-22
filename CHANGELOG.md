@@ -2,6 +2,17 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- **llama-benchy dependency bumped to `>=0.4.0`** — the `[perf]` optional
+  dependency now requires llama-benchy 0.4.0+, which replaces the heavy
+  `transformers`-based tokenizer with a lightweight `tokenizers`-based
+  fallback (fixing the subprocess OOM risk from #14) and fixes the context
+  prefill probe for vLLM's Rust frontend. The JSON output schema and all CLI
+  flags consumed by the integration are unchanged.
+
 ## [2.2.0] — 2026-07-18
 
 ### Added
