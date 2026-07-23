@@ -92,3 +92,37 @@ When changing architecture or API behavior, update:
 - `CHANGELOG.md`
 
 Keep `CHANGELOG.md` up to date with notable changes.
+
+## Cursor Cloud specific instructions
+
+The VM comes with the project venv at `.venv` (created by the startup update
+script, which runs `pip install -e '.[dev,perf]'`). Always use `.venv/bin/...`
+as documented in the Quality bar section. Lint/type/test/run commands are
+unchanged from the Quality bar and `SKILL.md`; the notes below only cover
+non-obvious environment caveats.
+
+- **`pytest` needs `FORCE_COLOR` unset.** This VM's shell exports
+  `FORCE_COLOR=0` and `TERM=dumb`. `rich` treats the *presence* of
+  `FORCE_COLOR` (even `0`) as "force terminal", so its `StringIO`-based
+  rendering tests emit ANSI codes and hardcode width 80, breaking ~6 tests in
+  `tests/test_history.py`, `tests/test_leaderboard_display.py`, and
+  `tests/test_spec_live.py`. Run the suite with `FORCE_COLOR` removed, e.g.
+  `env -u FORCE_COLOR .venv/bin/python -m pytest ...`. `ruff` and `mypy` are
+  unaffected. This is purely an env quirk (not a `rich` version issue) — the
+  tests pass in CI where `FORCE_COLOR` is unset.
+- **Do NOT install the `[hf]` extra for the quality bar.** Installing
+  `datasets` (via `.[hf]`) makes `mypy` fail with 3 `import-untyped` errors in
+  `plugins/hf_utils.py` and `cli/plugin_runners.py` (the code's
+  `type: ignore[import-not-found]` comments only match when `datasets` is
+  absent, as in CI). Only add `[hf]` when actively working on GSM8K/MMLU/IFEval
+  plugins, and expect that mypy noise while it is installed.
+- **No live LLM server runs in this environment.** Commands that hit the model
+  (`run`, `probe`, `plugin`, `resume`, `bench` with scenarios/perf/spec) need a
+  reachable OpenAI-compatible `/v1/chat/completions` endpoint. Without one, use
+  `tool-eval-bench run --dry-run` (no server) or point `--base-url` at a local
+  mock server that implements `GET /v1/models` and `POST /v1/chat/completions`
+  (the first turn is streamed, so a mock MUST support `stream: true` SSE or the
+  adapter parses zero tool calls).
+- **Run artifacts are gitignored:** `data/benchmarks.sqlite` (SQLite) and
+  `runs/YYYY/MM/*.md` (Markdown reports) are written on every completed run and
+  read back by `history`/`leaderboard`/`compare`/`export`.
