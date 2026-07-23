@@ -33,7 +33,7 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 
 ### Throughput Performance (optional)
 
-llama-bench style prefill (pp) and token generation (tg) measurement via streaming, with configurable context depth and concurrency sweeps.
+llama-bench-style prefill (pp) and token generation (tg) measurement via streaming, with configurable context depth and concurrency sweeps.
 
 ### Pluggable Accuracy Benchmarks
 
