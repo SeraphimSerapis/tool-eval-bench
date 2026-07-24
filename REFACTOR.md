@@ -1,4 +1,4 @@
-# REFACTOR.md — CLI monolith breakdown & subcommand restructure
+# REFACTOR.md — CLI Monolith Breakdown & Subcommand Restructure
 
 This document is the authoritative plan for refactoring `tool_eval_bench`'s
 command surface. It tracks the work that resolves the issues raised in the
