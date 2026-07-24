@@ -7,7 +7,7 @@ user-specified LLM endpoints. It does not expose any network services itself.
 
 The primary security considerations are:
 
-- **API keys** stored in `.env` files (never committed to git)
+- **API keys** stored in `.env` files (never committed to Git)
 - **Dataset downloads** — benchmark plugins (GSM8K, MMLU, IFEval) download
   datasets from HuggingFace on first use.  Two download methods are supported:
   - **`datasets` library** (`pip install tool-eval-bench[hf]`): downloads
@@ -17,7 +17,7 @@ The primary security considerations are:
     `datasets-server.huggingface.co`.  No authentication tokens are sent.
   Downloaded data is cached locally under `data/` as JSONL files.
 - **Prompt injection scenarios** (Category K) — these are intentionally
-  adversarial test cases, not vulnerabilities
+  adversarial test cases, not vulnerabilities.
 
 ## Reporting a Vulnerability
 
