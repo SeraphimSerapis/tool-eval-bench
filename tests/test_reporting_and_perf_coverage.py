@@ -239,16 +239,20 @@ def test_llama_benchy_cli_success_and_unavailable(monkeypatch: pytest.MonkeyPatc
     ok = _sample(calibration_confidence="llama-benchy")
     failed = _sample(error="failed")
 
-    async def fake_run(*args: object, on_output=None, **kwargs: object):
-        for line in (
-            "",
-            "Running test: pp100",
-            "Run 1/1",
-            "Warming up",
-            "Measuring latency",
-            "Average latency 2ms",
-        ):
-            on_output(line)
+    async def fake_run(*args: object, on_progress=None, **kwargs: object):
+        if on_progress is not None:
+            on_progress(
+                {
+                    "type": "request_start",
+                    "prompt_size": 100,
+                    "response_size": 20,
+                    "context_size": 0,
+                    "concurrency": 1,
+                    "run_index": 1,
+                }
+            )
+            on_progress({"type": "request_end"})
+            on_progress({"type": "bench_complete"})
         return benchy.LlamaBenchyResult(version="1.2.3", latency_ms=2.0, samples=[ok, failed])
 
     monkeypatch.setattr(benchy, "is_available", lambda: True)

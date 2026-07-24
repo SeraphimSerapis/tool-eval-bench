@@ -162,6 +162,12 @@ def _build_command(
     if output_file:
         cmd.extend(["--save-result", output_file])
 
+    # Structured progress events (JSONL on stdout).  Requires llama-benchy >=0.4.0,
+    # which is the current minimum.  If the user already specified --emit-progress
+    # in extra_args, respect their choice.
+    if not (extra_args and "--emit-progress" in extra_args):
+        cmd.extend(["--emit-progress", "-"])
+
     # Pass-through extra args
     if extra_args:
         cmd.extend(extra_args)
@@ -272,14 +278,20 @@ async def run_llama_benchy(
     skip_warmup: bool = False,
     extra_args: list[str] | None = None,
     on_output: Callable[[str], None] | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> LlamaBenchyResult:
     """Run llama-benchy as a subprocess and parse the results.
 
     Parameters
     ----------
     on_output : callable, optional
-        Called with each line of stdout for real-time progress display.
-        Signature: ``(line: str) -> None``
+        Called with each line of stderr (regular llama-benchy output) for
+        real-time display.  Signature: ``(line: str) -> None``
+    on_progress : callable, optional
+        Called with each structured progress event (JSONL) from llama-benchy's
+        ``--emit-progress`` stream.  Each event is a dict with a ``"type"`` key
+        (e.g. ``"request_start"``, ``"request_end"``, ``"bench_complete"``).
+        Signature: ``(event: dict[str, Any]) -> None``
 
     Returns
     -------
@@ -293,8 +305,8 @@ async def run_llama_benchy(
     FileNotFoundError
         If llama-benchy is not installed and uvx is not available.
     """
-    # Write JSON output to a temp file for reliable parsing
-    # (stdout may contain progress/debug output mixed with JSON)
+    # Write JSON results to a temp file.  Progress JSONL goes to stdout when
+    # --emit-progress - is set; human-readable logs go to stderr.
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
         output_file = f.name
 
@@ -346,11 +358,13 @@ async def run_llama_benchy(
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            stderr=asyncio.subprocess.PIPE,
             env=env,
         )
 
-        # Stream stdout for real-time display
+        # With --emit-progress -, llama-benchy writes JSONL progress events to
+        # stdout and regular output to stderr.  Read both concurrently to avoid
+        # pipe-buffer deadlock.
         output_lines: list[str] = []
         # Known noisy lines from transformers/HF Hub we suppress from display
         _SUPPRESS = (
@@ -358,13 +372,29 @@ async def run_llama_benchy(
             "Models won't be available",
             "unauthenticated requests to the HF Hub",
         )
-        if proc.stdout is None:
-            raise RuntimeError("Subprocess stdout unexpectedly None")
-        async for raw_line in proc.stdout:
-            line = raw_line.decode("utf-8", errors="replace").rstrip()
-            output_lines.append(line)
-            if on_output and not any(s in line for s in _SUPPRESS):
-                on_output(line)
+
+        async def _read_stderr() -> None:
+            if proc.stderr is None:
+                return
+            async for raw_line in proc.stderr:
+                line = raw_line.decode("utf-8", errors="replace").rstrip()
+                output_lines.append(line)
+                if on_output and not any(s in line for s in _SUPPRESS):
+                    on_output(line)
+
+        async def _read_stdout() -> None:
+            if proc.stdout is None:
+                return
+            async for raw_line in proc.stdout:
+                line = raw_line.decode("utf-8", errors="replace").rstrip()
+                if on_progress:
+                    try:
+                        event = json.loads(line)
+                        on_progress(event)
+                    except json.JSONDecodeError:
+                        pass  # Non-JSON line on stdout, skip
+
+        await asyncio.gather(_read_stderr(), _read_stdout())
 
         returncode = await proc.wait()
 

@@ -10,7 +10,6 @@ display conventions.
 from __future__ import annotations
 
 import asyncio
-import re
 import sys
 from typing import Any
 
@@ -224,24 +223,22 @@ def run_llama_benchy(
             current_test = ""
             completed_runs = 0
 
-            def on_output(line: str) -> None:
+            def on_progress(event: dict[str, Any]) -> None:
                 nonlocal current_test, completed_runs
-                stripped = line.strip()
-                if not stripped:
-                    return
-
-                if stripped.startswith("Running test:"):
-                    current_test = stripped.replace("Running test: ", "")
+                event_type = event.get("type", "")
+                if event_type == "request_start":
+                    pp = event.get("prompt_size", "?")
+                    tg = event.get("response_size", "?")
+                    depth = event.get("context_size", 0)
+                    conc = event.get("concurrency", 1)
+                    run_idx = event.get("run_index", 0)
+                    current_test = f"pp{pp} tg{tg} @ d{depth} c{conc} run {run_idx}"
                     progress.update(task, description=current_test)
-                elif re.match(r"\s*Run \d+/\d+", stripped):
+                elif event_type == "request_end":
                     completed_runs += 1
                     progress.update(task, completed=completed_runs)
-                elif "Warming up" in stripped and "complete" not in stripped.lower():
-                    progress.update(task, description="Warming up…")
-                elif "Measuring latency" in stripped:
-                    progress.update(task, description="Measuring latency…")
-                elif "Average latency" in stripped:
-                    progress.update(task, description="Running benchmarks…")
+                elif event_type == "bench_complete":
+                    progress.update(task, completed=total_runs, description="[green]✓ Complete")
 
             benchy_result = await run_llama_benchy(
                 base_url,
@@ -256,7 +253,7 @@ def run_llama_benchy(
                 skip_coherence=skip_coherence,
                 skip_warmup=skip_warmup,
                 extra_args=extra_args,
-                on_output=on_output,
+                on_progress=on_progress,
             )
 
             progress.update(task, completed=total_runs, description="[green]✓ Complete")
