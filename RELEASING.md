@@ -1,4 +1,4 @@
-# Releasing tool-eval-bench
+# Releasing `tool-eval-bench`
 
 Checklist for publishing a new release.
 
@@ -67,7 +67,7 @@ git push origin main --tags
 
 ## Post-release
 
-- Add a new `## [Unreleased]` section at the top of `CHANGELOG.md`
+- Add a new `## [Unreleased]` section at the top of `CHANGELOG.md`.
 
 ## Live Certification (required before major releases)
 
