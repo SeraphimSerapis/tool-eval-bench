@@ -184,6 +184,9 @@ class TestBuildCommand:
         assert "--skip-coherence" not in cmd
         # adapt-prompt is always disabled (tool-eval-bench does its own calibration)
         assert "--no-adapt-prompt" in cmd
+        # Structured progress events on stdout (llama-benchy >=0.4.0)
+        assert "--emit-progress" in cmd
+        assert cmd[cmd.index("--emit-progress") + 1] == "-"
 
     def test_api_key_not_on_command_line(self, monkeypatch):
         """API key must NOT appear on the command line (security: visible in ps aux).
@@ -282,6 +285,20 @@ class TestBuildCommand:
             extra_args=["--no-warmup"],
         )
         assert "--no-warmup" in cmd
+
+    def test_emit_progress_not_duplicated_when_in_extra_args(self, monkeypatch):
+        """Respect a user-supplied --emit-progress instead of adding a second one."""
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+        cmd = _build_command(
+            "http://localhost:8888/v1",
+            "test-model",
+            extra_args=["--emit-progress", "/tmp/progress.jsonl"],
+        )
+        assert cmd.count("--emit-progress") == 1
+        assert cmd[cmd.index("--emit-progress") + 1] == "/tmp/progress.jsonl"
 
     def test_url_with_trailing_slash(self, monkeypatch):
         monkeypatch.setattr(
@@ -524,64 +541,85 @@ class TestParserEdgeCases:
         assert result.latency_ms == 0.0
 
 
+class _MockStream:
+    """Async iterable standing in for subprocess stdout/stderr pipes."""
+
+    def __init__(self, lines: list[str | bytes] | None = None) -> None:
+        self._lines: list[str | bytes] = list(lines or [])
+        self._idx = 0
+
+    def __aiter__(self) -> _MockStream:
+        return self
+
+    async def __anext__(self) -> bytes:
+        if self._idx >= len(self._lines):
+            raise StopAsyncIteration
+        line = self._lines[self._idx]
+        self._idx += 1
+        return line if isinstance(line, bytes) else line.encode("utf-8")
+
+
+class _MockProcess:
+    """Minimal asyncio subprocess mock with separate stdout/stderr streams."""
+
+    def __init__(
+        self,
+        *,
+        stderr_lines: list[str | bytes] | None = None,
+        stdout_lines: list[str | bytes] | None = None,
+        returncode: int = 0,
+        output_file: str | None = None,
+        write_json: dict | None = None,
+    ) -> None:
+        self.stdout = _MockStream(stdout_lines)
+        self.stderr = _MockStream(stderr_lines)
+        self._returncode = returncode
+        self._output_file = output_file
+        self._write_json = write_json
+
+    async def wait(self) -> int:
+        if self._write_json is not None and self._output_file:
+            Path(self._output_file).write_text(json.dumps(self._write_json), encoding="utf-8")
+        return self._returncode
+
+
+def _capture_output_file(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Wrap ``_build_command`` so tests can learn the temp ``--save-result`` path."""
+    output_file_ref: list[str] = []
+    original_build = _build_command
+
+    def mock_build(*args: object, **kwargs: object) -> list[str]:
+        cmd = original_build(*args, **kwargs)
+        if "--save-result" in cmd:
+            output_file_ref.append(cmd[cmd.index("--save-result") + 1])
+        return cmd
+
+    monkeypatch.setattr("tool_eval_bench.runner.llama_benchy._build_command", mock_build)
+    return output_file_ref
+
+
 class TestRunLlamaBenchy:
     """Tests for the async subprocess runner using mocked subprocess."""
 
-    async def test_happy_path(self, tmp_path, monkeypatch):
+    async def test_happy_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Successful run should parse JSON output and return results."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
 
-        # Mock shutil.which to find llama-benchy
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.shutil.which",
             lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
         )
 
         captured_lines: list[str] = []
+        output_file_ref = _capture_output_file(monkeypatch)
 
-        # Mock asyncio.create_subprocess_exec
-        class MockStdout:
-            def __init__(self, lines):
-                self._lines = lines
-                self._idx = 0
-
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                if self._idx >= len(self._lines):
-                    raise StopAsyncIteration
-                line = self._lines[self._idx]
-                self._idx += 1
-                return line.encode("utf-8")
-
-        class MockProcess:
-            def __init__(self, output_file):
-                self.stdout = MockStdout(["Running benchmark...\n", "Done\n"])
-                self._output_file = output_file
-
-            async def wait(self):
-                # Write valid JSON to the output file
-                Path(self._output_file).write_text(json.dumps(SAMPLE_JSON_OUTPUT), encoding="utf-8")
-                return 0
-
-        output_file_ref: list[str] = []
-
-        original_build = _build_command
-
-        def mock_build(*args, **kwargs):
-            cmd = original_build(*args, **kwargs)
-            # Capture the output file from the command
-            if "--save-result" in cmd:
-                idx = cmd.index("--save-result") + 1
-                output_file_ref.append(cmd[idx])
-            return cmd
-
-        monkeypatch.setattr("tool_eval_bench.runner.llama_benchy._build_command", mock_build)
-
-        async def mock_create_subprocess_exec(*args, **kwargs):
+        async def mock_create_subprocess_exec(*args: object, **kwargs: object) -> _MockProcess:
             assert output_file_ref, "output file should be set by _build_command"
-            return MockProcess(output_file_ref[0])
+            return _MockProcess(
+                stderr_lines=["Running benchmark...\n", "Done\n"],
+                output_file=output_file_ref[0],
+                write_json=SAMPLE_JSON_OUTPUT,
+            )
 
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
@@ -600,7 +638,7 @@ class TestRunLlamaBenchy:
         assert len(captured_lines) == 2
         assert "Running benchmark..." in captured_lines[0]
 
-    async def test_nonzero_exit_raises(self, monkeypatch):
+    async def test_nonzero_exit_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Non-zero exit code should raise RuntimeError."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
 
@@ -609,21 +647,8 @@ class TestRunLlamaBenchy:
             lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
         )
 
-        class MockStdout:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                raise StopAsyncIteration
-
-        class MockProcess:
-            stdout = MockStdout()
-
-            async def wait(self):
-                return 1
-
-        async def mock_create(*args, **kwargs):
-            return MockProcess()
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(returncode=1)
 
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
@@ -633,7 +658,7 @@ class TestRunLlamaBenchy:
         with pytest.raises(RuntimeError, match="exited with code 1"):
             await run_llama_benchy("http://localhost:8888/v1", "test-model")
 
-    async def test_empty_output_file_raises(self, monkeypatch):
+    async def test_empty_output_file_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Empty output file should raise RuntimeError."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
 
@@ -642,22 +667,8 @@ class TestRunLlamaBenchy:
             lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
         )
 
-        class MockStdout:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                raise StopAsyncIteration
-
-        class MockProcess:
-            stdout = MockStdout()
-
-            async def wait(self):
-                # Don't write anything to the output file
-                return 0
-
-        async def mock_create(*args, **kwargs):
-            return MockProcess()
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(returncode=0)
 
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
@@ -667,8 +678,8 @@ class TestRunLlamaBenchy:
         with pytest.raises(RuntimeError, match="did not produce JSON output"):
             await run_llama_benchy("http://localhost:8888/v1", "test-model")
 
-    async def test_on_output_receives_all_lines(self, monkeypatch):
-        """on_output callback should receive every stdout line."""
+    async def test_on_output_receives_stderr_lines(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """on_output callback should receive every stderr line."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
 
         monkeypatch.setattr(
@@ -682,45 +693,14 @@ class TestRunLlamaBenchy:
             "pp2048 tg32 @ d4096 c2: 1968 pp/s, 99 tg/s\n",
             "Complete!\n",
         ]
+        output_file_ref = _capture_output_file(monkeypatch)
 
-        class MockStdout:
-            def __init__(self):
-                self._idx = 0
-
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                if self._idx >= len(expected_lines):
-                    raise StopAsyncIteration
-                line = expected_lines[self._idx]
-                self._idx += 1
-                return line.encode("utf-8")
-
-        output_file_ref: list[str] = []
-        original_build = _build_command
-
-        def mock_build(*args, **kwargs):
-            cmd = original_build(*args, **kwargs)
-            if "--save-result" in cmd:
-                idx = cmd.index("--save-result") + 1
-                output_file_ref.append(cmd[idx])
-            return cmd
-
-        monkeypatch.setattr("tool_eval_bench.runner.llama_benchy._build_command", mock_build)
-
-        class MockProcess:
-            def __init__(self):
-                self.stdout = MockStdout()
-
-            async def wait(self):
-                Path(output_file_ref[0]).write_text(
-                    json.dumps(SAMPLE_JSON_OUTPUT), encoding="utf-8"
-                )
-                return 0
-
-        async def mock_create(*args, **kwargs):
-            return MockProcess()
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(
+                stderr_lines=expected_lines,
+                output_file=output_file_ref[0],
+                write_json=SAMPLE_JSON_OUTPUT,
+            )
 
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
@@ -738,7 +718,61 @@ class TestRunLlamaBenchy:
         assert "Warming up" in captured[0]
         assert "Complete" in captured[3]
 
-    async def test_noisy_lines_suppressed(self, monkeypatch):
+    async def test_on_progress_receives_jsonl_events(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """on_progress should parse JSONL events from stdout."""
+        from tool_eval_bench.runner.llama_benchy import run_llama_benchy
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+
+        progress_lines = [
+            json.dumps(
+                {
+                    "type": "request_start",
+                    "prompt_size": 2048,
+                    "response_size": 32,
+                    "context_size": 0,
+                    "concurrency": 1,
+                    "run_index": 1,
+                }
+            )
+            + "\n",
+            "not-json\n",
+            json.dumps({"type": "request_end"}) + "\n",
+            json.dumps({"type": "bench_complete"}) + "\n",
+        ]
+        output_file_ref = _capture_output_file(monkeypatch)
+
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(
+                stdout_lines=progress_lines,
+                stderr_lines=["status\n"],
+                output_file=output_file_ref[0],
+                write_json=SAMPLE_JSON_OUTPUT,
+            )
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
+            mock_create,
+        )
+
+        events: list[dict] = []
+        await run_llama_benchy(
+            "http://localhost:8888/v1",
+            "test-model",
+            on_progress=lambda event: events.append(event),
+        )
+
+        assert [e["type"] for e in events] == [
+            "request_start",
+            "request_end",
+            "bench_complete",
+        ]
+        assert events[0]["prompt_size"] == 2048
+
+    async def test_noisy_lines_suppressed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """PyTorch/HF Hub warnings should be filtered from on_output."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
 
@@ -754,45 +788,14 @@ class TestRunLlamaBenchy:
             "Running test: pp=2048, tg=128\n",
             "Done\n",
         ]
+        output_file_ref = _capture_output_file(monkeypatch)
 
-        class MockStdout:
-            def __init__(self):
-                self._idx = 0
-
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                if self._idx >= len(noisy_lines):
-                    raise StopAsyncIteration
-                line = noisy_lines[self._idx]
-                self._idx += 1
-                return line.encode("utf-8")
-
-        output_file_ref: list[str] = []
-        original_build = _build_command
-
-        def mock_build(*args, **kwargs):
-            cmd = original_build(*args, **kwargs)
-            if "--save-result" in cmd:
-                idx = cmd.index("--save-result") + 1
-                output_file_ref.append(cmd[idx])
-            return cmd
-
-        monkeypatch.setattr("tool_eval_bench.runner.llama_benchy._build_command", mock_build)
-
-        class MockProcess:
-            def __init__(self):
-                self.stdout = MockStdout()
-
-            async def wait(self):
-                Path(output_file_ref[0]).write_text(
-                    json.dumps(SAMPLE_JSON_OUTPUT), encoding="utf-8"
-                )
-                return 0
-
-        async def mock_create(*args, **kwargs):
-            return MockProcess()
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(
+                stderr_lines=noisy_lines,
+                output_file=output_file_ref[0],
+                write_json=SAMPLE_JSON_OUTPUT,
+            )
 
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
@@ -806,15 +809,16 @@ class TestRunLlamaBenchy:
             on_output=lambda line: captured.append(line),
         )
 
-        # 3 of 5 lines are noisy — only 2 should pass through
+        # 2 of 5 lines are noisy — 3 should pass through
         assert len(captured) == 3
         assert any("llama-benchy" in c for c in captured)
         assert any("Running test" in c for c in captured)
-        # Noisy lines must not appear
         assert not any("PyTorch" in c for c in captured)
         assert not any("unauthenticated" in c for c in captured)
 
-    async def test_subprocess_env_suppresses_warnings(self, monkeypatch):
+    async def test_subprocess_env_suppresses_warnings(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Subprocess should receive env vars that suppress HF warnings."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
 
@@ -825,23 +829,9 @@ class TestRunLlamaBenchy:
 
         captured_env: dict[str, str] = {}
 
-        class MockStdout:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                raise StopAsyncIteration
-
-        class MockProcess:
-            stdout = MockStdout()
-
-            async def wait(self):
-                return 1  # Will raise RuntimeError, that's fine
-
-        async def mock_create(*args, **kwargs):
-            # Capture the env passed to the subprocess
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
             captured_env.update(kwargs.get("env", {}))
-            return MockProcess()
+            return _MockProcess(returncode=1)
 
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
@@ -857,7 +847,7 @@ class TestRunLlamaBenchy:
         assert captured_env.get("HF_HUB_OFFLINE") == "1"
         assert captured_env.get("TRANSFORMERS_OFFLINE") == "1"
 
-    async def test_oom_detected_sigkill(self, monkeypatch):
+    async def test_oom_detected_sigkill(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """SIGKILL (-9) should be detected as OOM with a clear message."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
 
@@ -866,21 +856,8 @@ class TestRunLlamaBenchy:
             lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
         )
 
-        class MockStdout:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                raise StopAsyncIteration
-
-        class MockProcess:
-            stdout = MockStdout()
-
-            async def wait(self):
-                return -9  # SIGKILL
-
-        async def mock_create(*args, **kwargs):
-            return MockProcess()
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(returncode=-9)
 
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
@@ -890,7 +867,7 @@ class TestRunLlamaBenchy:
         with pytest.raises(RuntimeError, match="out of memory"):
             await run_llama_benchy("http://localhost:8888/v1", "test-model")
 
-    async def test_oom_detected_exit_137(self, monkeypatch):
+    async def test_oom_detected_exit_137(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Exit code 137 (128 + SIGKILL) should also be detected as OOM."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
 
@@ -899,21 +876,8 @@ class TestRunLlamaBenchy:
             lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
         )
 
-        class MockStdout:
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                raise StopAsyncIteration
-
-        class MockProcess:
-            stdout = MockStdout()
-
-            async def wait(self):
-                return 137  # 128 + SIGKILL
-
-        async def mock_create(*args, **kwargs):
-            return MockProcess()
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(returncode=137)
 
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
@@ -923,8 +887,10 @@ class TestRunLlamaBenchy:
         with pytest.raises(RuntimeError, match="out of memory"):
             await run_llama_benchy("http://localhost:8888/v1", "test-model")
 
-    async def test_oom_detected_memory_error_in_output(self, monkeypatch):
-        """MemoryError in subprocess output should be detected as OOM."""
+    async def test_oom_detected_memory_error_in_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """MemoryError in subprocess stderr should be detected as OOM."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
 
         monkeypatch.setattr(
@@ -932,33 +898,14 @@ class TestRunLlamaBenchy:
             lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
         )
 
-        class MockStdout:
-            def __init__(self):
-                self._lines = [
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(
+                stderr_lines=[
                     b"Traceback (most recent call last):\n",
                     b"MemoryError\n",
-                ]
-                self._idx = 0
-
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                if self._idx >= len(self._lines):
-                    raise StopAsyncIteration
-                line = self._lines[self._idx]
-                self._idx += 1
-                return line
-
-        class MockProcess:
-            def __init__(self):
-                self.stdout = MockStdout()
-
-            async def wait(self):
-                return 1  # generic failure
-
-        async def mock_create(*args, **kwargs):
-            return MockProcess()
+                ],
+                returncode=1,
+            )
 
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
@@ -968,7 +915,9 @@ class TestRunLlamaBenchy:
         with pytest.raises(RuntimeError, match="out of memory"):
             await run_llama_benchy("http://localhost:8888/v1", "test-model")
 
-    async def test_non_oom_exit_preserves_original_error(self, monkeypatch):
+    async def test_non_oom_exit_preserves_original_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Non-OOM failures should still report the exit code and output."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
 
@@ -977,30 +926,8 @@ class TestRunLlamaBenchy:
             lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
         )
 
-        class MockStdout:
-            def __init__(self):
-                self._lines = [b"Some error occurred\n"]
-                self._idx = 0
-
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                if self._idx >= len(self._lines):
-                    raise StopAsyncIteration
-                line = self._lines[self._idx]
-                self._idx += 1
-                return line
-
-        class MockProcess:
-            def __init__(self):
-                self.stdout = MockStdout()
-
-            async def wait(self):
-                return 2
-
-        async def mock_create(*args, **kwargs):
-            return MockProcess()
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(stderr_lines=[b"Some error occurred\n"], returncode=2)
 
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
@@ -1010,8 +937,8 @@ class TestRunLlamaBenchy:
         with pytest.raises(RuntimeError, match="exited with code 2"):
             await run_llama_benchy("http://localhost:8888/v1", "test-model")
 
-    async def test_oom_detected_cannot_allocate(self, monkeypatch):
-        """'Cannot allocate memory' in output should be detected as OOM."""
+    async def test_oom_detected_cannot_allocate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """'Cannot allocate memory' in stderr should be detected as OOM."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
 
         monkeypatch.setattr(
@@ -1019,32 +946,11 @@ class TestRunLlamaBenchy:
             lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
         )
 
-        class MockStdout:
-            def __init__(self):
-                self._lines = [
-                    b"OSError: [Errno 12] Cannot allocate memory\n",
-                ]
-                self._idx = 0
-
-            def __aiter__(self):
-                return self
-
-            async def __anext__(self):
-                if self._idx >= len(self._lines):
-                    raise StopAsyncIteration
-                line = self._lines[self._idx]
-                self._idx += 1
-                return line
-
-        class MockProcess:
-            def __init__(self):
-                self.stdout = MockStdout()
-
-            async def wait(self):
-                return 1
-
-        async def mock_create(*args, **kwargs):
-            return MockProcess()
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(
+                stderr_lines=[b"OSError: [Errno 12] Cannot allocate memory\n"],
+                returncode=1,
+            )
 
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",

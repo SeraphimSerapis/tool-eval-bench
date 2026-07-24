@@ -31,7 +31,7 @@ dependencies = [
 
 [project.optional-dependencies]
 perf = [
-  "llama-benchy>=0.3.5",
+  "llama-benchy>=0.4.0",
 ]
 hf = [
   "datasets>=3.0.0",
@@ -83,6 +83,10 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Ruff 0.16+ formats Python fenced blocks in Markdown by default. Keep docs
+# examples human-edited (aligned comments, intentional layout) and avoid CI
+# breakage when the unbound `ruff>=0.12` pin floats across major formatter changes.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "B", "S"]

@@ -2,6 +2,30 @@
 
 All notable changes to `tool-eval-bench` are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- **CI format check under Ruff 0.16** — Ruff 0.16 formats Python fenced code
+  blocks in Markdown by default. Exclude `*.md` from Ruff so docs examples keep
+  intentional layout and CI no longer fails when the unbound `ruff>=0.12` pin
+  floats to a new major formatter release.
+
+### Changed
+
+- **llama-benchy progress via `--emit-progress`** — the perf CLI drives its
+  progress bar from structured JSONL events (`request_start` / `request_end` /
+  `bench_complete`) instead of scraping human-readable log lines. The runner
+  always passes `--emit-progress -`, reads progress from stdout and logs from
+  stderr concurrently, and still accepts a caller-supplied `--emit-progress` in
+  `extra_args`.
+- **llama-benchy dependency bumped to `>=0.4.0`** — the `[perf]` optional
+  dependency now requires llama-benchy 0.4.0+, which replaces the heavy
+  `transformers`-based tokenizer with a lightweight `tokenizers`-based
+  fallback (fixing the subprocess OOM risk from #14) and fixes the context
+  prefill probe for vLLM's Rust frontend. The JSON output schema and all CLI
+  flags consumed by the integration are unchanged.
+
 ## [2.2.0] — 2026-07-18
 
 ### Added
