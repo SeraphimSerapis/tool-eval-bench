@@ -4,6 +4,8 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-07-25
+
 ### Added
 
 - **Held-out scenario packs (`--scenario-pack DIR`, `--pack-only`)** — every
