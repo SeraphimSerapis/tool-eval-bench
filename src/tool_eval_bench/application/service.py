@@ -414,11 +414,15 @@ def _build_run_config(
     fingerprint_config = {**config, "scenario_ids": sorted(config["scenario_ids"])}
     from tool_eval_bench import __version__
 
+    # The fingerprint answers "are these two runs comparable?".  The scenarios and
+    # evaluators are code, so two runs from different commits are not comparable
+    # even when every CLI flag matches — include the code identity.
     config["config_fingerprint"] = build_config_fingerprint(
         {
             "config": fingerprint_config,
             "deployment": comparison_context,
             "tool_version": __version__,
+            "git_sha": metadata.get("git_sha"),
         }
     )
     return config

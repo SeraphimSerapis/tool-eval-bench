@@ -682,7 +682,15 @@ src/tool_eval_bench/
 Each benchmark execution gets a unique ID:
 `YYYY-MM-DDTHH-MM-SS.ffffffZ_<short_hash>`. Stored tool-evaluation configs also
 include a deterministic `config_fingerprint` so leaderboard entries only group
-comparable runs.
+comparable runs. The fingerprint covers the code identity (version and git SHA)
+as well as the CLI flags, because the scenarios and evaluators are code — two
+runs from different commits are not comparable even when every flag matches.
+
+The version is derived from git by setuptools-scm, so a build installed straight
+from a commit reports which commit it came from (`2.2.1.dev11+g528272d`) rather
+than claiming to be the last tagged release. `git_sha` is resolved against the
+installed package's own checkout, is `None` for wheel installs, and gains a
+`-dirty` suffix when the working tree has uncommitted changes.
 
 Artifacts:
 - SQLite record (`data/benchmarks.sqlite`)

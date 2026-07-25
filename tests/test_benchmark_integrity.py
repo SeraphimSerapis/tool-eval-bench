@@ -183,7 +183,7 @@ async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.Mo
         extra_params=None,
         context_pressure_config=None,
         weight_by_difficulty=False,
-        metadata={},
+        metadata=result["metadata"],
     )
     assert result["config"]["config_fingerprint"] == full_config["config_fingerprint"]
 

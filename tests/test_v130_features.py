@@ -709,29 +709,36 @@ class TestCategoryORegistration:
 
 
 class TestVersionConsistency:
-    """Ensure version strings are consistent across the project."""
+    """The reported version must identify the code that produced a run."""
 
-    def test_init_version(self) -> None:
+    def test_init_version_is_pep440(self) -> None:
+        import re
+
         from tool_eval_bench import __version__
 
-        # Should be a valid PEP 440 version (X.Y.Z or X.Y.Z.N)
-        parts = __version__.split(".")
-        assert len(parts) in (3, 4), f"Version should be X.Y.Z or X.Y.Z.N, got {__version__}"
-        assert all(p.isdigit() for p in parts), (
-            f"Version parts should be numeric, got {__version__}"
+        # Release builds look like 2.2.0; builds from a commit look like
+        # 2.2.1.dev11+g528272d — both must parse, neither may be empty.
+        assert re.fullmatch(r"\d+\.\d+\.\d+(\.[a-z0-9]+)*(\+[a-zA-Z0-9.]+)?", __version__), (
+            f"Not a PEP 440 version: {__version__}"
         )
 
-    def test_pyproject_version_matches(self) -> None:
+    def test_version_is_derived_from_git_not_hardcoded(self) -> None:
+        """A hardcoded version makes every dev build claim to be the last release."""
         import tomllib
         from pathlib import Path
 
+        pyproject = Path(__file__).parent.parent / "pyproject.toml"
+        if not pyproject.exists():
+            pytest.skip("running from an installed distribution")
+        with open(pyproject, "rb") as f:
+            data = tomllib.load(f)
+        assert "version" in data["project"]["dynamic"]
+        assert "version" not in data["project"]
+        assert "setuptools_scm" in data["tool"]
+
+    def test_non_release_builds_carry_their_commit(self) -> None:
         from tool_eval_bench import __version__
 
-        pyproject = Path(__file__).parent.parent / "pyproject.toml"
-        if pyproject.exists():
-            with open(pyproject, "rb") as f:
-                data = tomllib.load(f)
-            assert data["project"]["version"] == __version__, (
-                f"pyproject.toml version ({data['project']['version']}) "
-                f"doesn't match __init__.py ({__version__})"
-            )
+        if ".dev" not in __version__:
+            pytest.skip("this is a tagged release build")
+        assert "+g" in __version__, f"Dev build must identify its commit, got {__version__}"

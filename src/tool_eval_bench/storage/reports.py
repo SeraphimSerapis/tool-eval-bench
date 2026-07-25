@@ -136,20 +136,21 @@ class MarkdownReporter:
             ScenarioStatus.FAIL: "❌",
         }
 
-        # Version stamp from RunContext or fallback
+        # Version stamp from RunContext or fallback.  Reports are the artifact
+        # people compare across machines, so the code identity has to travel with
+        # them — a score is meaningless without knowing which evaluators produced
+        # it.  The version string is derived from git, so it identifies the commit
+        # even when no RunContext (and therefore no explicit SHA) is available.
         version_str = ""
         if run_context:
             version_str = f" (v{run_context.tool_version}"
             if run_context.git_sha:
                 version_str += f" {run_context.git_sha}"
             version_str += ")"
-        elif not run_context:
-            try:
-                from tool_eval_bench import __version__
+        else:
+            from tool_eval_bench import __version__
 
-                version_str = f" (v{__version__})"
-            except ImportError:
-                pass
+            version_str = f" (v{__version__})"
 
         md = [
             f"# Tool-Call Benchmark — {model}",

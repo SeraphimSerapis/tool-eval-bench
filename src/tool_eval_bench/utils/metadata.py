@@ -14,6 +14,7 @@ import platform
 import re
 import socket
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -36,14 +37,39 @@ _PROBE_TIMEOUT = 5  # seconds — tight timeout for engine probes
 
 
 def _git_sha() -> str | None:
-    try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
-        )
+    """Return the commit of *this package's* checkout, or None.
+
+    Deliberately anchored to the installed package directory rather than the
+    current working directory.  Running ``git rev-parse`` in the CWD reported the
+    SHA of whatever unrelated repository the user happened to be standing in,
+    which is worse than reporting nothing: the run claimed a provenance it never
+    had.  Installed wheels have no git metadata, so they legitimately return None
+    and rely on the setuptools-scm version string instead.
+
+    A ``-dirty`` suffix is included when the working tree has uncommitted
+    changes, because such a run is not reproducible from the SHA alone.
+    """
+    package_root = Path(__file__).resolve().parent.parent
+
+    def _git(*args: str) -> str | None:
+        try:
+            out = subprocess.check_output(  # noqa: S603 — args are module constants
+                ["git", "-C", str(package_root), *args],
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            return None
         return out.decode().strip()
-    except (OSError, subprocess.CalledProcessError):
-        logger.debug("git rev-parse failed (not in a git repo?)")
+
+    if _git("rev-parse", "--is-inside-work-tree") != "true":
+        logger.debug("Package at %s is not a git checkout", package_root)
         return None
+    sha = _git("rev-parse", "--short", "HEAD")
+    if not sha:
+        return None
+    if _git("status", "--porcelain"):
+        return f"{sha}-dirty"
+    return sha
 
 
 def _tool_version() -> str:

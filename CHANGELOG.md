@@ -6,6 +6,19 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **Runs can no longer misreport which code produced them** — three separate
+  provenance holes are closed. (1) The version was hardcoded in two places, so
+  every build between releases claimed to be the last release — exactly how a
+  machine can silently benchmark stale code after `uv tool install git+…`. It is
+  now derived from git via setuptools-scm, e.g. `2.2.1.dev11+g528272d`.
+  (2) `git_sha` was resolved by running `git rev-parse` in the *current working
+  directory*, so a run started from an unrelated repository was stamped with
+  that repository's commit. It is now anchored to the installed package's own
+  directory, returns `None` when there is no checkout, and appends `-dirty` for
+  uncommitted trees. (3) `config_fingerprint` ignored the code identity, so two
+  runs from different commits looked comparable despite the scenarios and
+  evaluators themselves being code; the SHA is now part of the fingerprint.
+  CI checks out with `fetch-depth: 0` so builds there are attributable too.
 - **An interrupted run no longer loses all its work** — a Ctrl-C, dropped
   connection, or crashed report write at scenario 61 of 69 used to discard every
   finished scenario, because nothing was persisted until the run completed. Each
