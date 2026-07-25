@@ -41,15 +41,15 @@ from tool_eval_bench.runner.async_tools import (
 from tool_eval_bench.runner.speculative import (
     SpecDecodeSample,
     _get_prompt_for_type,
-    _metrics_url,
     detect_spec_decoding,
     scrape_spec_metrics,
 )
 from tool_eval_bench.storage.db import RunRepository
 from tool_eval_bench.storage.reports import MarkdownReporter, _render_run_context
+from tool_eval_bench.utils.urls import metrics_url as _metrics_url
 
 # ---------------------------------------------------------------------------
-# speculative: _metrics_url
+# speculative: /metrics URL derivation (now shared in utils.urls)
 # ---------------------------------------------------------------------------
 
 

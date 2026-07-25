@@ -5,6 +5,7 @@ Usage:
     python compare_tool_eval.py <model_a.md> <model_b.md> <output.html>
 """
 
+import html
 import re
 import sys
 from pathlib import Path
@@ -186,7 +187,13 @@ def dname(d: dict) -> str:
 
 
 def esc(s: str) -> str:
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    """Escape a value for HTML text or double-quoted attribute context.
+
+    Every string that originates in a parsed Markdown report must pass through
+    here: the reports are shared between people, so an attacker-authored report
+    must not be able to inject markup into the comparison page.
+    """
+    return html.escape(str(s), quote=True)
 
 
 def sign(v: int) -> str:
@@ -262,7 +269,12 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     wdn, rdn = dname(w), dname(r)
 
     dates = sorted(set(d["date_short"] for d in (da, db) if d["date_short"]))
-    date_str = dates[0] if len(dates) == 1 else f"{dates[0]} \u2014 {dates[-1]}"
+    if not dates:
+        date_str = ""
+    elif len(dates) == 1:
+        date_str = dates[0]
+    else:
+        date_str = f"{dates[0]} \u2014 {dates[-1]}"
     vs = sorted(set(d["tool_eval_version"] for d in (da, db) if d["tool_eval_version"]))
     ver = " / ".join(vs) if len(vs) > 1 else (vs[0] if vs else "")
 
@@ -667,12 +679,12 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     if w_fails:
         for f in w_fails[:6]:
             lines.append(
-                f"""            <li class="flex gap-x-2"><span class="text-rose-500 mt-px">\u2715</span> <span><strong>{f["id"]}</strong> {esc(f["summary"])}</span></li>"""
+                f"""            <li class="flex gap-x-2"><span class="text-rose-500 mt-px">\u2715</span> <span><strong>{esc(f["id"])}</strong> {esc(f["summary"])}</span></li>"""
             )
     elif not w_parts:
         lines.append("""            <li class="text-slate-500">No failures detected.</li>""")
     if w_parts:
-        pid = ", ".join(p["id"] for p in w_parts[:5])
+        pid = ", ".join(esc(p["id"]) for p in w_parts[:5])
         como = f" ({len(w_parts)} total)" if len(w_parts) > 5 else ""
         lines.append(
             f"""            <li class="text-xs text-slate-600 mt-2 pl-5">Partials on {pid}{como}</li>"""
@@ -693,15 +705,15 @@ def generate_html(da: dict, db: dict, out: str) -> None:
         for f in r_fails:
             if f["id"] in safe_ids:
                 lines.append(
-                    f"""            <li class="flex gap-x-2"><span class="text-rose-500 mt-px">\u2715</span> <span><strong>{f["id"]}</strong> {esc(f["summary"])} <span class="font-semibold text-rose-600">(safety-critical)</span></span></li>"""
+                    f"""            <li class="flex gap-x-2"><span class="text-rose-500 mt-px">\u2715</span> <span><strong>{esc(f["id"])}</strong> {esc(f["summary"])} <span class="font-semibold text-rose-600">(safety-critical)</span></span></li>"""
                 )
     other_fails = [f for f in r_fails if f["id"] not in safe_ids]
     for f in other_fails[:4]:
         lines.append(
-            f"""            <li class="flex gap-x-2"><span class="text-rose-500 mt-px">\u2715</span> <span><strong>{f["id"]}</strong> {esc(f["summary"])}</span></li>"""
+            f"""            <li class="flex gap-x-2"><span class="text-rose-500 mt-px">\u2715</span> <span><strong>{esc(f["id"])}</strong> {esc(f["summary"])}</span></li>"""
         )
     if r_parts:
-        pid = ", ".join(p["id"] for p in r_parts[:4])
+        pid = ", ".join(esc(p["id"]) for p in r_parts[:4])
         lines.append(
             f"""            <li class="text-xs text-slate-600 mt-2 pl-5">Partials on {pid}</li>"""
         )

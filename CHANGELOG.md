@@ -4,6 +4,26 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+### Security
+
+- **The API key no longer follows `--metrics-url` to another host** — the flag
+  exists because the Prometheus endpoint may live on a proxy or sidecar, so it
+  can point anywhere; the inference endpoint's bearer token was attached
+  regardless, handing the credential to whatever host was named. The token is now
+  sent only when the metrics target is same-origin with `--base-url`, and
+  non-`http(s)` or hostless values are rejected outright.
+- **The endpoint URL is no longer persisted unredacted** — the legacy metadata
+  path stored `base_url` verbatim in `metadata_json`, so internal hostnames and
+  any credentials embedded in the URL's userinfo were written to SQLite and
+  carried into exports. It is redacted like every other stored URL.
+- **HTML comparisons escape everything that comes out of a Markdown report** —
+  scenario IDs and a few other parsed fields were interpolated raw, so a
+  hand-authored report shared between people could inject markup into the
+  generated comparison page. Escaping now uses `html.escape(..., quote=True)`
+  (covering `'` as well) and is applied at every interpolation site, verified by
+  a test that feeds a `<script>` payload through both generators. A report with
+  no `Date` line no longer crashes the generator either.
+
 ### Fixed
 
 - **Runs can no longer misreport which code produced them** — three separate

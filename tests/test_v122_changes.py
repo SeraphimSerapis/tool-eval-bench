@@ -315,14 +315,14 @@ class TestBackendKwargsParsing:
 class TestMetricsUrlOverride:
     def test_metrics_url_auto(self) -> None:
         """Without override, _metrics_url derives from base_url."""
-        from tool_eval_bench.runner.speculative import _metrics_url
+        from tool_eval_bench.utils.urls import metrics_url as _metrics_url
 
         assert _metrics_url("http://localhost:8080/v1") == "http://localhost:8080/metrics"
         assert _metrics_url("http://host:4000") == "http://host:4000/metrics"
 
     def test_metrics_url_strips_v1(self) -> None:
         """Should strip /v1 before appending /metrics."""
-        from tool_eval_bench.runner.speculative import _metrics_url
+        from tool_eval_bench.utils.urls import metrics_url as _metrics_url
 
         assert _metrics_url("http://host:8080/v1/") == "http://host:8080/metrics"
 

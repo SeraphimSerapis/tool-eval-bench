@@ -32,10 +32,10 @@ from tool_eval_bench.runner.throughput import (
     ThroughputSample,
     TokenizerConfig,
     _build_messages,
-    _headers,
     _stream_one,
     calibrate,
 )
+from tool_eval_bench.utils.urls import metrics_request_target
 
 logger = logging.getLogger(__name__)
 
@@ -93,14 +93,6 @@ _PROM_PATTERNS = {
 }
 
 
-def _metrics_url(base_url: str) -> str:
-    """Build the /metrics URL (Prometheus endpoint, NOT under /v1)."""
-    b = base_url.rstrip("/")
-    if b.endswith("/v1"):
-        b = b[:-3]
-    return f"{b}/metrics"
-
-
 def parse_prometheus_spec_metrics(text: str) -> SpecDecodeCounters:
     """Parse speculative decoding counters from Prometheus text format.
 
@@ -128,9 +120,9 @@ async def scrape_spec_metrics(
     Returns None if the endpoint is unavailable or doesn't contain
     spec decode metrics.
     """
-    url = metrics_url or _metrics_url(base_url)
+    url, headers = metrics_request_target(base_url, metrics_url, api_key)
     try:
-        resp = await client.get(url, headers=_headers(api_key), timeout=5.0)
+        resp = await client.get(url, headers=headers, timeout=5.0)
         if resp.status_code != 200:
             return None
         counters = parse_prometheus_spec_metrics(resp.text)
@@ -181,9 +173,9 @@ async def detect_spec_decoding(
     info = SpecDecodeInfo()
 
     # Try Prometheus endpoint
-    url = metrics_url or _metrics_url(base_url)
+    url, headers = metrics_request_target(base_url, metrics_url, api_key)
     try:
-        resp = await client.get(url, headers=_headers(api_key), timeout=5.0)
+        resp = await client.get(url, headers=headers, timeout=5.0)
         if resp.status_code == 200:
             text = resp.text
 

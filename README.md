@@ -382,6 +382,11 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > # API goes through LiteLLM, but scrape metrics from vLLM directly
 > tool-eval-bench --spec-bench --base-url http://litellm:4000 --metrics-url http://vllm:8080/metrics
 > ```
+>
+> Because `--metrics-url` can name a different host, `--api-key` is only sent to
+> it when its scheme, host, and port match `--base-url`. If your metrics endpoint
+> needs the same credential and lives elsewhere, expose it without auth or put it
+> behind the same origin.
 
 ### Live speculative decoding monitor
 

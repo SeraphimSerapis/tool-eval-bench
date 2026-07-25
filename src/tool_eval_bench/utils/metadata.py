@@ -344,6 +344,8 @@ async def collect_run_metadata(config: BenchmarkConfig) -> dict[str, Any]:
 
     New code should use collect_run_context() instead.
     """
+    from tool_eval_bench.utils.urls import redact_url as _redact
+
     return {
         "git_sha": _git_sha(),
         "host": socket.gethostname(),
@@ -353,7 +355,9 @@ async def collect_run_metadata(config: BenchmarkConfig) -> dict[str, Any]:
         "config": {
             "model": config.model,
             "backend": config.backend,
-            "base_url": config.base_url,
+            # Persisted and exported, so it must not carry the endpoint host or
+            # any credentials embedded in the URL's userinfo.
+            "base_url": _redact(config.base_url),
         },
         "backend_probe": await _probe_models(config.base_url, config.api_key),
     }

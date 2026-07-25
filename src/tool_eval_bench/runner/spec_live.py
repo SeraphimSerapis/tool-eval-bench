@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from tool_eval_bench.utils.urls import metrics_url as _metrics_url_from_base
+
 logger = logging.getLogger(__name__)
 
 
@@ -464,10 +466,7 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
 
 def metrics_url_from_base(base_url: str) -> str:
     """Build the /metrics URL from a base URL."""
-    b = base_url.rstrip("/")
-    if b.endswith("/v1"):
-        b = b[:-3]
-    return f"{b}/metrics"
+    return _metrics_url_from_base(base_url)
 
 
 async def scrape_snapshot(

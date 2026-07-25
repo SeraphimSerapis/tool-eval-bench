@@ -44,10 +44,10 @@ from tool_eval_bench.runner.spec_live import (
     ServerSpecInfo,
     SpecLiveDelta,
     compute_delta,
-    metrics_url_from_base,
     probe_server_spec_info,
     scrape_snapshot,
 )
+from tool_eval_bench.utils.urls import metrics_request_target
 
 logger = logging.getLogger(__name__)
 
@@ -552,7 +552,10 @@ async def run_spec_live(
     """
     import sys
 
-    url = metrics_url or metrics_url_from_base(base_url)
+    # An explicit --metrics-url may live on a different host than the inference
+    # API, so the bearer token only travels when the origins match.
+    url, metrics_headers = metrics_request_target(base_url, metrics_url, api_key)
+    metrics_api_key = api_key if metrics_headers else None
 
     # ── Probe server for spec decode config (draft model, method, k) ──
     server_spec_info: ServerSpecInfo | None = None
@@ -658,7 +661,7 @@ async def run_spec_live(
                 screen=False,  # we manage the screen ourselves
             ) as live:
                 while not stop_event.is_set():
-                    poll_task = asyncio.create_task(scrape_snapshot(client, url, api_key))
+                    poll_task = asyncio.create_task(scrape_snapshot(client, url, metrics_api_key))
                     try:
                         snap = await poll_task
                     except asyncio.CancelledError:

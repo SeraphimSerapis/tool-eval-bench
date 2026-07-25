@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import httpx
 
 from tool_eval_bench.domain.models import ChatMessage
+from tool_eval_bench.utils.urls import metrics_request_target
 from tool_eval_bench.utils.urls import models_url as _models_url
 
 logger = logging.getLogger(__name__)
@@ -307,14 +308,6 @@ def _headers(api_key: str | None) -> dict[str, str]:
     return headers
 
 
-def _metrics_url(base_url: str) -> str:
-    """Build the /metrics URL (Prometheus endpoint, NOT under /v1)."""
-    b = base_url.rstrip("/")
-    if b.endswith("/v1"):
-        b = b[:-3]
-    return f"{b}/metrics"
-
-
 # Regex to extract num_gpu_blocks and block_size from vllm:cache_config_info
 _CACHE_CONFIG_RE = re.compile(
     r"^vllm:cache_config_info\{[^}]*"
@@ -384,10 +377,7 @@ async def detect_kv_capacity(
     Returns a :class:`KvCapacityInfo`, or ``None`` if detection fails
     (non-vLLM servers, metrics endpoint unavailable, etc.).
     """
-    url = metrics_url or _metrics_url(base_url)
-    hdrs: dict[str, str] = {}
-    if api_key:
-        hdrs["Authorization"] = f"Bearer {api_key}"
+    url, hdrs = metrics_request_target(base_url, metrics_url, api_key)
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
