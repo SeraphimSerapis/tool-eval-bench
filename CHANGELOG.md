@@ -6,6 +6,11 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **Perf progress bar overshoot past N/N** — the llama-benchy progress bar
+  counted every HTTP `request_end`. At concurrency > 1 each measurement run
+  emits multiple ends, so the default sweep climbed past `27/27` (often to
+  ~63) before snapping back at completion. Progress now advances once per
+  measurement run.
 - **CI format check under Ruff 0.16** — Ruff 0.16 formats Python fenced code
   blocks in Markdown by default. Exclude `*.md` from Ruff so docs examples keep
   intentional layout and CI no longer fails when the unbound `ruff>=0.12` pin

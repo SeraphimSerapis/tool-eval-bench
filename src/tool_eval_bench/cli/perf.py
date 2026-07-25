@@ -16,6 +16,73 @@ from typing import Any
 from rich.console import Console
 
 
+def _measurement_run_key(event: dict[str, Any]) -> tuple[Any, ...]:
+    """Stable key for one llama-benchy measurement run (not one HTTP request)."""
+    return (
+        event.get("prompt_size"),
+        event.get("response_size"),
+        event.get("context_size"),
+        event.get("concurrency"),
+        event.get("run_index"),
+    )
+
+
+class _BenchyProgressTracker:
+    """Map per-request llama-benchy events onto measurement-run progress.
+
+    llama-benchy emits ``request_start`` / ``request_end`` once per HTTP
+    request.  At concurrency > 1 that means multiple ends for a single
+    measurement run.  Counting raw ``request_end`` events makes the Rich
+    bar climb past ``total_runs`` (e.g. 63/27 for the default sweep).
+    """
+
+    def __init__(self) -> None:
+        self.current_test = ""
+        self.completed_runs = 0
+        self._req_to_run: dict[int, tuple[Any, ...]] = {}
+        self._ends_remaining: dict[tuple[Any, ...], int] = {}
+        self._completed_keys: set[tuple[Any, ...]] = set()
+
+    def handle(self, event: dict[str, Any]) -> None:
+        event_type = event.get("type", "")
+        if event_type == "request_start":
+            pp = event.get("prompt_size", "?")
+            tg = event.get("response_size", "?")
+            depth = event.get("context_size", 0)
+            conc = event.get("concurrency", 1)
+            run_idx = event.get("run_index", 0)
+            self.current_test = f"pp{pp} tg{tg} @ d{depth} c{conc} run {run_idx}"
+            request_id = event.get("request_id")
+            if request_id is not None:
+                run_key = _measurement_run_key(event)
+                self._req_to_run[int(request_id)] = run_key
+                expected = int(conc) if isinstance(conc, int) and conc > 0 else 1
+                self._ends_remaining.setdefault(run_key, expected)
+            return
+
+        if event_type != "request_end":
+            return
+
+        request_id = event.get("request_id")
+        matched_run: tuple[Any, ...] | None = None
+        if request_id is not None:
+            rid = int(request_id)
+            if rid in self._req_to_run:
+                matched_run = self._req_to_run.pop(rid)
+
+        if matched_run is None:
+            # Synthetic / legacy events without request correlation: one end
+            # still means one completed measurement run.
+            self.completed_runs += 1
+            return
+
+        remaining = self._ends_remaining.get(matched_run, 1) - 1
+        self._ends_remaining[matched_run] = remaining
+        if remaining <= 0 and matched_run not in self._completed_keys:
+            self._completed_keys.add(matched_run)
+            self.completed_runs = len(self._completed_keys)
+
+
 def run_throughput(
     console: Console,
     model: str,
@@ -220,25 +287,18 @@ def run_llama_benchy(
 
         with progress:
             task = progress.add_task("Initializing…", total=total_runs)
-            current_test = ""
-            completed_runs = 0
+            tracker = _BenchyProgressTracker()
 
             def on_progress(event: dict[str, Any]) -> None:
-                nonlocal current_test, completed_runs
                 event_type = event.get("type", "")
-                if event_type == "request_start":
-                    pp = event.get("prompt_size", "?")
-                    tg = event.get("response_size", "?")
-                    depth = event.get("context_size", 0)
-                    conc = event.get("concurrency", 1)
-                    run_idx = event.get("run_index", 0)
-                    current_test = f"pp{pp} tg{tg} @ d{depth} c{conc} run {run_idx}"
-                    progress.update(task, description=current_test)
-                elif event_type == "request_end":
-                    completed_runs += 1
-                    progress.update(task, completed=completed_runs)
-                elif event_type == "bench_complete":
+                if event_type == "bench_complete":
                     progress.update(task, completed=total_runs, description="[green]✓ Complete")
+                    return
+                tracker.handle(event)
+                if event_type == "request_start":
+                    progress.update(task, description=tracker.current_test)
+                elif event_type == "request_end":
+                    progress.update(task, completed=min(tracker.completed_runs, total_runs))
 
             benchy_result = await run_llama_benchy(
                 base_url,

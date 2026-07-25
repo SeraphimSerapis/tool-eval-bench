@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from tool_eval_bench.cli.perf import run_llama_benchy, run_throughput
+from tool_eval_bench.cli.perf import (
+    _BenchyProgressTracker,
+    run_llama_benchy,
+    run_throughput,
+)
 from tool_eval_bench.cli.spec_bench import run_spec_bench as run_spec_bench_cli
 from tool_eval_bench.compare_reports import summary, tool_eval
 from tool_eval_bench.runner.speculative import SpecDecodeSample
@@ -244,6 +248,7 @@ def test_llama_benchy_cli_success_and_unavailable(monkeypatch: pytest.MonkeyPatc
             on_progress(
                 {
                     "type": "request_start",
+                    "request_id": 1,
                     "prompt_size": 100,
                     "response_size": 20,
                     "context_size": 0,
@@ -251,7 +256,7 @@ def test_llama_benchy_cli_success_and_unavailable(monkeypatch: pytest.MonkeyPatc
                     "run_index": 1,
                 }
             )
-            on_progress({"type": "request_end"})
+            on_progress({"type": "request_end", "request_id": 1})
             on_progress({"type": "bench_complete"})
         return benchy.LlamaBenchyResult(version="1.2.3", latency_ms=2.0, samples=[ok, failed])
 
@@ -347,3 +352,75 @@ def test_spec_bench_cli_renders_metrics_and_persists(
     assert "Consider reducing" in output
     assert "failed" in output
     assert persisted[0]["config"]["config_fingerprint"] == "fp"
+
+
+def test_benchy_progress_tracker_counts_measurement_runs_not_http_requests() -> None:
+    """Concurrency>1 emits one request_end per HTTP request; progress is per run."""
+    tracker = _BenchyProgressTracker()
+
+    # One c4 measurement run → 4 request_end events, still one completed run.
+    for rid in (10, 11, 12, 13):
+        tracker.handle(
+            {
+                "type": "request_start",
+                "request_id": rid,
+                "prompt_size": 2048,
+                "response_size": 128,
+                "context_size": 0,
+                "concurrency": 4,
+                "run_index": 0,
+            }
+        )
+        assert tracker.completed_runs == 0
+        tracker.handle({"type": "request_end", "request_id": rid})
+
+    assert tracker.completed_runs == 1
+    assert "c4" in tracker.current_test
+
+    # Second run at c2 → two more ends → completed_runs == 2 (not 6).
+    for rid in (20, 21):
+        tracker.handle(
+            {
+                "type": "request_start",
+                "request_id": rid,
+                "prompt_size": 2048,
+                "response_size": 128,
+                "context_size": 4096,
+                "concurrency": 2,
+                "run_index": 1,
+            }
+        )
+        tracker.handle({"type": "request_end", "request_id": rid})
+
+    assert tracker.completed_runs == 2
+
+    # Default sweep shape: 3 depths × 3 conc × 3 runs, with conc in {1,2,4}.
+    # Raw request_ends would be 63; measurement runs stay at 27.
+    big = _BenchyProgressTracker()
+    rid = 0
+    for depth in (0, 4096, 8192):
+        for conc in (1, 2, 4):
+            for run_idx in (0, 1, 2):
+                for _ in range(conc):
+                    rid += 1
+                    big.handle(
+                        {
+                            "type": "request_start",
+                            "request_id": rid,
+                            "prompt_size": 2048,
+                            "response_size": 128,
+                            "context_size": depth,
+                            "concurrency": conc,
+                            "run_index": run_idx,
+                        }
+                    )
+                    big.handle({"type": "request_end", "request_id": rid})
+    assert big.completed_runs == 27
+    assert rid == 63
+
+
+def test_benchy_progress_tracker_legacy_request_end_without_id() -> None:
+    tracker = _BenchyProgressTracker()
+    tracker.handle({"type": "request_end"})
+    tracker.handle({"type": "request_end"})
+    assert tracker.completed_runs == 2
