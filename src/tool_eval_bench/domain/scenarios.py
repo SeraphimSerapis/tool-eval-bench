@@ -191,6 +191,10 @@ class ScenarioDefinition:
     # Optional observation hook invoked after each executed tool call.
     # Used by scenarios that need to detect unsafe intermediate states.
     checkpoint: Checkpoint | None = None
+    # Held-out scenarios come from a private pack rather than this repository.
+    # Their prompts and traces are withheld from generated reports so that
+    # publishing a score does not publish (and thereby burn) the scenario.
+    held_out: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +215,7 @@ class ScenarioReportMetadata:
     title: str
     category: Category
     difficulty: int | None = None
+    held_out: bool = False
 
 
 # ---------------------------------------------------------------------------

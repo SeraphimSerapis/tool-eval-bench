@@ -138,6 +138,18 @@
       "type": "bool"
     },
     {
+      "default": null,
+      "description": "Add a held-out YAML scenario pack directory (repeatable)",
+      "name": "scenario_pack",
+      "type": "list[string]"
+    },
+    {
+      "default": false,
+      "description": "Run ONLY scenarios from --scenario-pack",
+      "name": "pack_only",
+      "type": "bool"
+    },
+    {
       "default": 120.0,
       "description": "Request timeout in seconds",
       "name": "timeout",

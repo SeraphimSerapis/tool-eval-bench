@@ -28,6 +28,7 @@ Supported YAML format::
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -164,13 +165,24 @@ def _load_yaml_file(path: Path) -> ScenarioDefinition:
         handle_tool_call=_make_handler(tool_responses),
         evaluate=_make_evaluator(expected_tool_calls),
         difficulty=data.get("difficulty"),
+        held_out=bool(data.get("held_out", False)),
     )
 
 
-def load_yaml_scenarios(directory: str | Path) -> list[ScenarioDefinition]:
-    """Load all ``*.yaml`` scenario files from *directory* in sorted order."""
+def load_yaml_scenarios(
+    directory: str | Path, *, held_out: bool = False
+) -> list[ScenarioDefinition]:
+    """Load all ``*.yaml`` scenario files from *directory* in sorted order.
+
+    When ``held_out`` is set, every scenario in the directory is marked held-out
+    regardless of its own flag, so a whole private pack can be protected without
+    annotating each file.
+    """
     root = Path(directory)
     scenarios: list[ScenarioDefinition] = []
     for path in sorted(root.glob("*.yaml")):
-        scenarios.append(_load_yaml_file(path))
+        scenario = _load_yaml_file(path)
+        if held_out and not scenario.held_out:
+            scenario = replace(scenario, held_out=True)
+        scenarios.append(scenario)
     return scenarios

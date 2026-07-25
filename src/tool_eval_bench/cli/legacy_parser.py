@@ -122,6 +122,20 @@ def _make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run ONLY Hard Mode scenarios (Category P) — shortcut for --hardmode --categories P",
     )
+    select.add_argument(
+        "--scenario-pack",
+        action="append",
+        default=None,
+        metavar="DIR",
+        help="Add a held-out YAML scenario pack from DIR (repeatable). Pack scenarios "
+        "are content-hashed into the run fingerprint, and their prompts and traces "
+        "are withheld from reports so publishing a score doesn't publish the pack.",
+    )
+    select.add_argument(
+        "--pack-only",
+        action="store_true",
+        help="Run ONLY the scenarios from --scenario-pack (skip the public suite)",
+    )
 
     # -- Run control -------------------------------------------------------
     run_ctrl = parser.add_argument_group("run control")

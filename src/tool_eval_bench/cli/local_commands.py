@@ -18,7 +18,11 @@ def _render_dry_run(
     console: Console,
     resolve_scenarios: Callable[[argparse.Namespace], list[Any]],
 ) -> None:
-    scenarios = resolve_scenarios(args)
+    try:
+        scenarios = resolve_scenarios(args)
+    except ValueError as exc:
+        console.print(f"\n[bold red]Error:[/] {exc}\n")
+        raise SystemExit(2) from None
     if args.json:
         category_counts: dict[str, int] = {}
         for scenario in scenarios:

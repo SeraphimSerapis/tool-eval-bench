@@ -19,6 +19,8 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioStatus,
 )
 
+_HELD_OUT_LABEL = "held out"
+
 
 def _default_reports_root() -> str:
     """Resolve default reports root relative to the current working directory.
@@ -123,8 +125,14 @@ class MarkdownReporter:
         context_pressure_config: dict[str, Any] | None = None,
         run_context: RunContext | None = None,
         scenario_metadata: Mapping[str, ScenarioReportMetadata] | None = None,
+        scenario_packs: list[dict[str, Any]] | None = None,
     ) -> Path:
-        """Write a Markdown report for a scenario-based benchmark run."""
+        """Write a Markdown report for a scenario-based benchmark run.
+
+        Scenarios marked held-out in ``scenario_metadata`` have their titles,
+        summaries, and traces withheld: the report is the artifact people
+        publish, and publishing a held-out scenario destroys its value.
+        """
         now = datetime.now(timezone.utc)
         folder = self.root / f"{now.year:04d}" / f"{now.month:02d}"
         folder.mkdir(parents=True, exist_ok=True)
@@ -264,17 +272,27 @@ class MarkdownReporter:
 
         _diff_labels = {1: "★", 2: "★★", 3: "★★★", 4: "★★★★", 5: "★★★★★"}
 
+        held_out_ids = {sid for sid, meta in scenario_metadata.items() if meta.held_out}
+
         for r in summary.scenario_results:
             emoji = status_emoji.get(r.status, "?")
-            note = f" ({r.note})" if r.note else ""
             metadata = scenario_metadata.get(r.scenario_id)
             diff = metadata.difficulty if metadata else None
             diff_str = _diff_labels.get(diff, "?") if diff else "?"
-            title = metadata.title if metadata else r.scenario_id
             failure = r.failure_kind or "—"
+            if r.scenario_id in held_out_ids:
+                title = f"_{_HELD_OUT_LABEL}_"
+                detail = f"_{_HELD_OUT_LABEL}_"
+            else:
+                title = metadata.title if metadata else r.scenario_id
+                note = f" ({r.note})" if r.note else ""
+                detail = f"{r.summary}{note}"
             md.append(
-                f"| {r.scenario_id} | {title} | {diff_str} | {emoji} {r.status.value} | {r.points}/2 | {failure} | {r.summary}{note} |"
+                f"| {r.scenario_id} | {title} | {diff_str} | {emoji} {r.status.value} | {r.points}/2 | {failure} | {detail} |"
             )
+
+        if held_out_ids:
+            md.extend(_render_held_out_note(sorted(held_out_ids), scenario_packs))
 
         # Difficulty distribution summary
         from collections import Counter
@@ -332,6 +350,13 @@ class MarkdownReporter:
         for r in summary.scenario_results:
             md.append(f"### {r.scenario_id}")
             md.append("")
+            if r.scenario_id in held_out_ids:
+                md.append(
+                    f"_{_HELD_OUT_LABEL} — the trace would disclose the scenario's "
+                    "prompt and expected tool calls._"
+                )
+                md.append("")
+                continue
             md.append("```text")
             md.append(r.raw_log)
             md.append("```")
@@ -950,6 +975,29 @@ class MarkdownReporter:
 
         path.write_text("\n".join(md), encoding="utf-8")
         return path
+
+
+def _render_held_out_note(
+    held_out_ids: list[str], scenario_packs: list[dict[str, Any]] | None
+) -> list[str]:
+    """Explain the redaction and attest to which pack produced the numbers.
+
+    The content hash lets a reader confirm two reports were scored against the
+    same held-out set — the check they would otherwise perform by reading the
+    scenarios, which is exactly what must not be published.
+    """
+    md = [
+        "",
+        f"> **{len(held_out_ids)} held-out scenario(s)** — titles, summaries, and traces are "
+        "withheld so publishing this report does not publish the scenarios. Statuses and "
+        "points are scored identically to public scenarios.",
+    ]
+    for pack in scenario_packs or []:
+        name = pack.get("name", "?")
+        count = pack.get("scenario_count", "?")
+        digest = pack.get("content_hash", "?")
+        md.append(f"> - pack `{name}`: {count} scenario(s), content hash `{digest}`")
+    return md
 
 
 # ---------------------------------------------------------------------------

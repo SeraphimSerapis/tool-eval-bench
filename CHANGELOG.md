@@ -4,6 +4,23 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Held-out scenario packs (`--scenario-pack DIR`, `--pack-only`)** — every
+  scenario in this repo is public, which is what makes the benchmark auditable
+  and also what dates it: a published benchmark ends up in training data, and a
+  memorized answer is indistinguishable from a capable one. A pack is a
+  directory of YAML scenarios kept outside the repo, scored exactly like public
+  ones, with two differences. Reports withhold pack titles, summaries, and
+  traces (a deliberate exception to the full-trace rule — publishing a held-out
+  trace burns the scenario; the traces are still stored in SQLite for local
+  inspection). And each pack is hashed by filename and file bytes, with the hash
+  recorded in the run config, folded into `config_fingerprint`, and printed in
+  the report, so readers can confirm two published scores were measured against
+  the same unedited held-out set without seeing it. Colliding scenario IDs —
+  against the public suite or another pack — are rejected rather than silently
+  overridden.
+
 ### Security
 
 - **The API key no longer follows `--metrics-url` to another host** — the flag

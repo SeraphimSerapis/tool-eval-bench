@@ -191,6 +191,26 @@
   },
   {
     "choices": null,
+    "default": null,
+    "dest": "scenario_pack",
+    "flags": [
+      "--scenario-pack"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "pack_only",
+    "flags": [
+      "--pack-only"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": 120.0,
     "dest": "timeout",
     "flags": [

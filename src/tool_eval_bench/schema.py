@@ -155,6 +155,18 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "default": False,
         "description": "Run ONLY Hard Mode scenarios (Category P)",
     },
+    {
+        "name": "scenario_pack",
+        "type": "list[string]",
+        "default": None,
+        "description": "Add a held-out YAML scenario pack directory (repeatable)",
+    },
+    {
+        "name": "pack_only",
+        "type": "bool",
+        "default": False,
+        "description": "Run ONLY scenarios from --scenario-pack",
+    },
     # -- Run control --
     {
         "name": "timeout",

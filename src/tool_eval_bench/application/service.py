@@ -92,6 +92,7 @@ class BenchmarkService:
         weight_by_difficulty: bool = False,
         resume_run_id: str | None = None,
         resume_prior_results: list[dict[str, Any]] | None = None,
+        scenario_packs: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
 
@@ -149,6 +150,7 @@ class BenchmarkService:
             context_pressure_config=context_pressure_config,
             weight_by_difficulty=weight_by_difficulty,
             metadata=metadata,
+            scenario_packs=scenario_packs,
         )
 
         # Build run ID (reuse original for resumed runs)
@@ -234,6 +236,7 @@ class BenchmarkService:
                 context_pressure_config=context_pressure_config,
                 weight_by_difficulty=weight_by_difficulty,
                 metadata=metadata,
+                scenario_packs=scenario_packs,
             )
             logger.info(
                 "Resume merge: %d prior + %d new = %d total scenarios (score: %d)",
@@ -264,6 +267,7 @@ class BenchmarkService:
                     title=scenario.title,
                     category=scenario.category,
                     difficulty=scenario.difficulty,
+                    held_out=scenario.held_out,
                 )
                 for scenario in report_scenarios
             }
@@ -277,6 +281,7 @@ class BenchmarkService:
                     context_pressure_config=context_pressure_config,
                     run_context=run_context,
                     scenario_metadata=scenario_metadata,
+                    scenario_packs=scenario_packs,
                 )
 
             report_writer = write_scenario_report
@@ -377,6 +382,7 @@ def _build_run_config(
     context_pressure_config: dict[str, Any] | None,
     weight_by_difficulty: bool,
     metadata: dict[str, Any],
+    scenario_packs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build persisted config and its deterministic comparison fingerprint."""
     config: dict[str, Any] = {
@@ -398,6 +404,8 @@ def _build_run_config(
     }
     if context_pressure_config:
         config["context_pressure"] = context_pressure_config
+    if scenario_packs:
+        config["scenario_packs"] = scenario_packs
     comparison_context = {
         key: metadata.get(key)
         for key in (

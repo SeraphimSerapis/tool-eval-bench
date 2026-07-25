@@ -35,7 +35,10 @@ The sole interface is the `tool-eval-bench` CLI. There is no web server or TUI.
 - Every completed run MUST also produce a Markdown artifact under `runs/YYYY/MM/`.
 - Run IDs use a UTC timestamp + short nonce-backed hash for unique execution identity.
 - Comparable run configurations use a separate deterministic `config_fingerprint`.
-- Markdown reports MUST include full traces for every scenario.
+- Markdown reports MUST include full traces for every scenario, except
+  scenarios loaded from a held-out `--scenario-pack`. Those keep status and
+  points in the report but withhold titles, summaries, and traces so publishing
+  a score does not publish (and burn) the pack. Full traces remain in SQLite.
 
 ## Compatibility targets
 

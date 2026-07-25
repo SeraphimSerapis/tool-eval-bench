@@ -83,6 +83,9 @@ from tool_eval_bench.cli.resolve import (
     resolve_all_scenarios_for_ids as _resolve_all_scenarios_for_ids,
 )
 from tool_eval_bench.cli.resolve import (
+    resolve_packs as _resolve_packs,
+)
+from tool_eval_bench.cli.resolve import (
     resolve_scenarios as _resolve_scenarios,
 )
 from tool_eval_bench.cli.resolve import (
@@ -119,6 +122,16 @@ logger = logging.getLogger(__name__)
 
 # Valid category letters for --categories
 _VALID_CATEGORIES = {c.value for c in Category}
+
+
+def _pack_attestations(args: Any) -> list[dict[str, Any]] | None:
+    """Content-hash records for any held-out packs in this run, or None.
+
+    Recorded in the run config so a published score can be tied to a specific
+    held-out set without publishing the set itself.
+    """
+    packs = _resolve_packs(args)
+    return [pack.to_dict() for pack in packs] or None
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +350,19 @@ def main() -> None:
                     extra_params[k] = v
         except json.JSONDecodeError as exc:
             parser.error(f"--backend-kwargs is not valid JSON: {exc}")
+
+    # -- Validate --scenario-pack / --pack-only --
+    # Load packs up front: a missing, empty, or colliding pack must abort before
+    # the run starts, not surface as a traceback partway through resolution.
+    try:
+        packs = _resolve_packs(args)
+        _resolve_scenarios(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if packs and not args.json:
+        total = sum(len(p.scenarios) for p in packs)
+        names = ", ".join(f"{p.name} ({p.content_hash})" for p in packs)
+        console.print(f"  [dim]🔒 Held-out packs: {names} — {total} scenario(s)[/]")
 
     # -- Validate --categories --
     if args.categories:
@@ -1051,6 +1077,7 @@ def _run_with_live_display(
             weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
             resume_run_id=getattr(args, "_resume_run_id", None),
             resume_prior_results=getattr(args, "_resume_prior_results", None),
+            scenario_packs=_pack_attestations(args),
             **callbacks,
         )
 
@@ -1214,6 +1241,7 @@ def _run_json(
             weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
             resume_run_id=getattr(args, "_resume_run_id", None),
             resume_prior_results=getattr(args, "_resume_prior_results", None),
+            scenario_packs=_pack_attestations(args),
             on_scenario_start=_stderr_progress_start,
             on_scenario_result=_stderr_progress_result,
         )
@@ -1315,6 +1343,7 @@ def _run_plain(
             weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
             resume_run_id=getattr(args, "_resume_run_id", None),
             resume_prior_results=getattr(args, "_resume_prior_results", None),
+            scenario_packs=_pack_attestations(args),
             **callbacks,
         )
 
