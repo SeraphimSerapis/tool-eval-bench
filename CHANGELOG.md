@@ -10,7 +10,8 @@ All notable changes to `tool-eval-bench` are documented here.
   counted every HTTP `request_end`. At concurrency > 1 each measurement run
   emits multiple ends, so the default sweep climbed past `27/27` (often to
   ~63) before snapping back at completion. Progress now advances once per
-  measurement run.
+  measurement run. A mocked CLI regression test replays concurrent
+  `emit-progress` events through Rich Progress (no live server).
 - **CI format check under Ruff 0.16** — Ruff 0.16 formats Python fenced code
   blocks in Markdown by default. Exclude `*.md` from Ruff so docs examples keep
   intentional layout and CI no longer fails when the unbound `ruff>=0.12` pin
