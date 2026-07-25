@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, RunContext
 from tool_eval_bench.domain.scenarios import (
     Category,
     ScenarioDefinition,
@@ -172,7 +172,7 @@ async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.Mo
         base_url="http://localhost:8000",
         scenarios=[prior, rerun],
         temperature=0.0,
-        timeout_seconds=60.0,
+        timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
         max_turns=8,
         seed=None,
         reference_date=None,

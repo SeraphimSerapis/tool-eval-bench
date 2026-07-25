@@ -138,7 +138,7 @@
       "type": "bool"
     },
     {
-      "default": 60.0,
+      "default": 120.0,
       "description": "Request timeout in seconds",
       "name": "timeout",
       "type": "float"

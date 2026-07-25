@@ -165,6 +165,13 @@ class MarkdownReporter:
             md.append(
                 f"- **Weighted Score**: **{summary.weighted_score}** / 100 _(difficulty-weighted)_"
             )
+        if summary.excluded_scenarios:
+            excluded = ", ".join(f"`{sid}`" for sid in summary.excluded_scenarios)
+            md.append(
+                f"- **Completion Rate**: {summary.completion_rate}% — "
+                f"{len(summary.excluded_scenarios)} scenario(s) excluded from scoring "
+                f"due to infrastructure failures (timeout / connection / 5xx): {excluded}"
+            )
         # Filter empty lines from conditional version stamp
         md = [line for line in md if line is not None and line != ""] + [""]
 

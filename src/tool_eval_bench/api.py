@@ -26,6 +26,7 @@ from typing import Any
 
 from tool_eval_bench import __version__
 from tool_eval_bench.application.service import BenchmarkService
+from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.domain.scenarios import (
     OnScenarioResult,
     OnScenarioStart,
@@ -83,7 +84,7 @@ async def run_benchmark(
     scenarios: list[ScenarioDefinition] | None = None,
     short: bool = False,
     temperature: float = 0.0,
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
     max_turns: int = 8,
     seed: int | None = None,
     reference_date: str | None = None,

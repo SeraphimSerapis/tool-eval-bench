@@ -12,9 +12,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from tool_eval_bench.domain.models import ChatMessage
+from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage
 
 logger = logging.getLogger(__name__)
+
+# HTTP statuses an adapter should retry, and which — if they survive the retry
+# budget — indicate a saturated endpoint rather than a bad request.  A 500 is
+# excluded: it normally reflects a request the server cannot process at all.
+RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 502, 503, 504})
 
 
 @dataclass
@@ -63,7 +68,7 @@ class BackendAdapter(ABC):
         tool_choice: str | dict[str, Any] | None = "auto",
         temperature: float = 0.0,
         max_tokens: int = 4096,
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         api_key: str | None = None,
         base_url: str = "",
         extra_params: dict[str, Any] | None = None,

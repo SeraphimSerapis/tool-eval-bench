@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.domain.scenarios import Category
 
 # ---------------------------------------------------------------------------
@@ -375,7 +376,7 @@ class TestMakeParser:
         assert args.model is None
         assert args.base_url is None
         assert args.temperature == 0.0
-        assert args.timeout == 60.0
+        assert args.timeout == DEFAULT_REQUEST_TIMEOUT_SECONDS
         assert args.max_turns == 8
         assert args.trials == 1
         assert args.parallel == 1

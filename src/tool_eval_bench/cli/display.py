@@ -329,6 +329,12 @@ def _print_final_panel(
         f"  [bold]Points:[/] {summary.total_points}/{summary.max_points}"
     )
 
+    if summary.excluded_scenarios:
+        content += (
+            f"\n  [yellow]⚠  {len(summary.excluded_scenarios)} scenario(s) excluded "
+            f"(infrastructure failure) — completion rate {summary.completion_rate}%[/]"
+        )
+
     # Deployability composite (only when latency data is present)
     if summary.deployability is not None and summary.responsiveness is not None:
         med_s = (summary.median_turn_ms or 0) / 1000

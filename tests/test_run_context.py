@@ -95,7 +95,7 @@ class TestRunContext:
 
     def test_defaults_match_cli_defaults(self):
         """RunContext defaults should match CLI argparse defaults."""
-        from tool_eval_bench.domain.models import RunContext
+        from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, RunContext
 
         ctx = RunContext(
             tool_version="1.0",
@@ -109,7 +109,7 @@ class TestRunContext:
         )
         assert ctx.temperature == 0.0
         assert ctx.max_turns == 8
-        assert ctx.timeout_seconds == 60.0
+        assert ctx.timeout_seconds == DEFAULT_REQUEST_TIMEOUT_SECONDS
         assert ctx.trials == 1
         assert ctx.parallel == 1
         assert ctx.error_rate == 0.0

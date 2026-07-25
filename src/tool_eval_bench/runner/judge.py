@@ -16,7 +16,7 @@ import json
 import logging
 
 from tool_eval_bench.domain.adapters import BackendAdapter
-from tool_eval_bench.domain.models import ChatMessage
+from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage
 from tool_eval_bench.domain.scenarios import (
     ScenarioDefinition,
     ScenarioResult,
@@ -124,7 +124,7 @@ async def judge_failed_scenarios(
     results: list[ScenarioResult],
     states: dict[str, ScenarioState],
     judge_model: str | None = None,
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
 ) -> list[ScenarioResult]:
     """Re-evaluate FAIL results using an LLM judge.
 
@@ -229,7 +229,7 @@ async def _call_judge(
     scenario: ScenarioDefinition,
     result: ScenarioResult,
     state: ScenarioState,
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
 ) -> dict[str, str] | None:
     """Make a single judge API call and parse the response.
 

@@ -6,6 +6,22 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **Infrastructure failures no longer score as model incompetence** — a timeout,
+  connection error, or 5xx/429 from the endpoint says nothing about a model's
+  tool-calling ability, yet each one used to contribute 0 of 2 points and drag
+  the quality score down. Scenarios that fail with `timeout`,
+  `connection_error`, or `server_error` are now removed from both the numerator
+  and the denominator of `final_score`, category percentages, difficulty
+  weighting, token efficiency, and the responsiveness median. They are still
+  listed in full in the report, and the new `completion_rate` /
+  `excluded_scenarios` fields make the shortfall explicit in the score panel,
+  the Markdown artifact, and `--json` output. Comparing two runs with different
+  completion rates is no longer silently comparing quality against luck.
+- **Rate limits are no longer fed back to the model as assistant content** — a
+  429 was caught as a "graceful" 4xx and returned as
+  `[server error 429] …` in the assistant turn, so a saturated server looked
+  like a confused model. 429/502/503/504 now propagate as infrastructure
+  errors.
 - **Perf progress bar overshoot past N/N** — the llama-benchy progress bar
   counted every HTTP `request_end`. At concurrency > 1 each measurement run
   emits multiple ends, so the default sweep climbed past `27/27` (often to
@@ -19,6 +35,17 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Changed
 
+- **Transient HTTP failures are retried with jittered backoff** — the adapter
+  now retries 429/502/503/504, `ConnectError`, `ReadError`, and
+  `RemoteProtocolError` twice (three attempts total) with full-jitter
+  exponential backoff, honoring a sane `Retry-After`. Read timeouts are
+  deliberately *not* retried: the budget is already spent and a retry would
+  multiply run wall-clock time — they are excluded from scoring instead.
+- **Default request timeout raised from 60s to 120s** — 60s was too tight for
+  reasoning-heavy scenarios on modest hardware, so legitimate answers were
+  recorded as timeouts. The default now lives in one place
+  (`domain.models.DEFAULT_REQUEST_TIMEOUT_SECONDS`) instead of being duplicated
+  across ten modules.
 - **llama-benchy progress via `--emit-progress`** — the perf CLI drives its
   progress bar from structured JSONL events (`request_start` / `request_end` /
   `bench_complete`) instead of scraping human-readable log lines. The runner

@@ -16,7 +16,7 @@ import time
 from typing import Any
 
 from tool_eval_bench.domain.adapters import BackendAdapter
-from tool_eval_bench.domain.models import ChatMessage
+from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage
 from tool_eval_bench.domain.plugin import BenchmarkPlugin, BenchmarkResult, OnPluginProgress
 from tool_eval_bench.plugins.gsm8k.dataset import GSM8KItem, load_dataset
 from tool_eval_bench.plugins.gsm8k.evaluator import evaluate_answer
@@ -65,7 +65,7 @@ class GSM8KPlugin(BenchmarkPlugin):
         base_url: str,
         api_key: str | None = None,
         temperature: float = 0.0,
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         seed: int | None = None,
         extra_params: dict[str, Any] | None = None,
         on_progress: OnPluginProgress | None = None,

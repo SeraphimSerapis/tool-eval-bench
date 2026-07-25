@@ -191,7 +191,7 @@
   },
   {
     "choices": null,
-    "default": 60.0,
+    "default": 120.0,
     "dest": "timeout",
     "flags": [
       "--timeout"

@@ -7,18 +7,59 @@ When stream=True, uses SSE to measure time-to-first-token (TTFT).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
 
-from tool_eval_bench.domain.adapters import BackendAdapter, ChatCompletionResult, ProviderToolCall
-from tool_eval_bench.domain.models import ChatMessage
+from tool_eval_bench.domain.adapters import (
+    RETRYABLE_STATUS_CODES,
+    BackendAdapter,
+    ChatCompletionResult,
+    ProviderToolCall,
+)
+from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage
 from tool_eval_bench.utils.urls import chat_completions_url as _chat_completions_url
+from tool_eval_bench.utils.urls import redact_url as _redact_url
 
 logger = logging.getLogger(__name__)
+
+# Retries apply to fast failures only.  Read timeouts are deliberately NOT
+# retried: the budget is already spent, and a retry would multiply the run's
+# wall-clock time.  Timeouts are instead excluded from quality scoring — see
+# domain.scenarios.INFRASTRUCTURE_FAILURE_KINDS.
+DEFAULT_MAX_RETRIES = 2
+_BACKOFF_BASE_SECONDS = 0.5
+_BACKOFF_CAP_SECONDS = 8.0
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """Parse a Retry-After header, ignoring absurd or malformed values."""
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        delay = float(raw.strip())
+    except ValueError:
+        return None  # HTTP-date form; fall back to computed backoff
+    if delay < 0 or delay > _BACKOFF_CAP_SECONDS:
+        return None
+    return delay
+
+
+def _backoff_delay(attempt: int, response: httpx.Response | None = None) -> float:
+    """Exponential backoff with full jitter, honoring a sane Retry-After."""
+    if response is not None:
+        hinted = _retry_after_seconds(response)
+        if hinted is not None:
+            return hinted
+    window = min(_BACKOFF_BASE_SECONDS * (2**attempt), _BACKOFF_CAP_SECONDS)
+    return random.uniform(0.0, window)
 
 
 def _repair_streamed_tool_args(s: str) -> str:
@@ -129,7 +170,7 @@ class OpenAICompatibleAdapter(BackendAdapter):
         tool_choice: str | dict[str, Any] | None = "auto",
         temperature: float = 0.0,
         max_tokens: int = 4096,
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         api_key: str | None = None,
         base_url: str = "",
         extra_params: dict[str, Any] | None = None,
@@ -167,9 +208,53 @@ class OpenAICompatibleAdapter(BackendAdapter):
         client = self._get_client()
         req_timeout = httpx.Timeout(timeout_seconds)
 
-        if stream:
-            return await self._stream_request(client, url, payload, headers, req_timeout)
-        return await self._non_stream_request(client, url, payload, headers, req_timeout)
+        async def attempt() -> ChatCompletionResult:
+            if stream:
+                return await self._stream_request(client, url, payload, headers, req_timeout)
+            return await self._non_stream_request(client, url, payload, headers, req_timeout)
+
+        return await self._with_retries(attempt, url=url)
+
+    async def _with_retries(
+        self,
+        attempt: Callable[[], Awaitable[ChatCompletionResult]],
+        *,
+        url: str,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+    ) -> ChatCompletionResult:
+        """Retry transient rate-limit / gateway failures with jittered backoff.
+
+        Retries only conditions that fail fast and are plausibly self-healing.
+        The final failure is re-raised so the orchestrator can classify it as an
+        infrastructure failure rather than a model error.
+        """
+        for retry_index in range(max_retries + 1):
+            try:
+                return await attempt()
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code not in RETRYABLE_STATUS_CODES:
+                    raise
+                if retry_index == max_retries:
+                    raise
+                delay = _backoff_delay(retry_index, exc.response)
+                reason = f"HTTP {exc.response.status_code}"
+            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as exc:
+                if retry_index == max_retries:
+                    raise
+                delay = _backoff_delay(retry_index)
+                reason = type(exc).__name__
+
+            logger.warning(
+                "Transient failure from %s (%s); retrying in %.2fs (attempt %d/%d)",
+                _redact_url(url),
+                reason,
+                delay,
+                retry_index + 2,
+                max_retries + 1,
+            )
+            await asyncio.sleep(delay)
+
+        raise RuntimeError("retry loop exited without a result")  # pragma: no cover
 
     async def _non_stream_request(
         self,
@@ -188,15 +273,18 @@ class OpenAICompatibleAdapter(BackendAdapter):
             # 4xx errors (400/422) often mean the server couldn't process
             # malformed tool-call arguments in conversation history (e.g.
             # vLLM's _postprocess_messages).  Return a graceful error
-            # instead of crashing the scenario.  5xx errors are genuine
-            # server failures and must propagate.
-            if exc.response.status_code >= 500:
+            # instead of crashing the scenario.  5xx and rate-limit/gateway
+            # statuses must propagate so they can be retried and, if they
+            # persist, classified as infrastructure rather than model failures.
+            if exc.response.status_code >= 500 or exc.response.status_code in (
+                RETRYABLE_STATUS_CODES
+            ):
                 raise
             body_text = exc.response.text[:200].strip()
             logger.warning(
                 "Server returned %d for %s: %s",
                 exc.response.status_code,
-                url,
+                _redact_url(url),
                 body_text,
             )
             return ChatCompletionResult(
@@ -240,14 +328,17 @@ class OpenAICompatibleAdapter(BackendAdapter):
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 elapsed_ms = (time.perf_counter() - started) * 1000
-                if exc.response.status_code >= 500:
+                if exc.response.status_code >= 500 or exc.response.status_code in (
+                    RETRYABLE_STATUS_CODES
+                ):
+                    await exc.response.aread()  # allow retry logic to inspect Retry-After
                     raise
                 body_bytes = await exc.response.aread()
                 body_text = body_bytes.decode("utf-8", errors="replace")[:200].strip()
                 logger.warning(
                     "Stream request returned %d for %s: %s",
                     exc.response.status_code,
-                    url,
+                    _redact_url(url),
                     body_text,
                 )
                 return ChatCompletionResult(

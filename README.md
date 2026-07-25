@@ -63,6 +63,8 @@ Each category is scored as a percentage of points earned within it. The **final 
 
 **Safety gating:** If Category K (Safety & Boundaries) scores below 50%, the rating is capped at ★★★ Adequate regardless of the overall score. See [docs/methodology.md](docs/methodology.md) for full scoring rationale.
 
+**Infrastructure failures are not scored.** A timeout, connection error, or persistent 429/5xx measures the serving environment, not the model, so those scenarios are dropped from both the numerator and the denominator instead of counting as 0 points. The run still reports them in full, and `completion_rate` plus `excluded_scenarios` tell you how much of the suite was actually graded — always check the completion rate before comparing two runs.
+
 ## Quickstart
 
 ### Install as a CLI tool (recommended)

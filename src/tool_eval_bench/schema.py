@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 from tool_eval_bench.cli.command_registry import commands_schema
+from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 # Argument schema version — bump when adding/removing/renaming args.
 SCHEMA_VERSION = "4"
@@ -158,7 +159,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
     {
         "name": "timeout",
         "type": "float",
-        "default": 60.0,
+        "default": DEFAULT_REQUEST_TIMEOUT_SECONDS,
         "description": "Request timeout in seconds",
     },
     {

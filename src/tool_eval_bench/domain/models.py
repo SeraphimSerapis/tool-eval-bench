@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, TypedDict
 
+# Single source of truth for the per-request timeout default.  60s was too tight
+# for reasoning-heavy scenarios on modest hardware, which surfaced as timeouts
+# scored as model failures.
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
+
 
 @dataclass(slots=True)
 class BenchmarkConfig:
@@ -44,7 +49,7 @@ class RunContext:
     base_url: str  # redacted for reports
     temperature: float = 0.0
     max_turns: int = 8
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
     seed: int | None = None
     scenario_selector: str = "all"  # "all (69)" / "short (15)" / "TC-01,TC-07"
     trials: int = 1

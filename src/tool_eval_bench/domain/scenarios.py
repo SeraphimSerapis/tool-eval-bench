@@ -81,6 +81,19 @@ class FailureKind:
     PARTIAL = "partial"
 
 
+# Failures caused by the serving environment rather than the model's reasoning.
+# These are excluded from the quality score's numerator AND denominator so that
+# a slow or overloaded endpoint cannot depress a model's measured quality.
+# Reported separately via ModelScoreSummary.completion_rate.
+INFRASTRUCTURE_FAILURE_KINDS: frozenset[str] = frozenset(
+    {
+        FailureKind.TIMEOUT,
+        FailureKind.CONNECTION_ERROR,
+        FailureKind.SERVER_ERROR,
+    }
+)
+
+
 # ---------------------------------------------------------------------------
 # State types (accumulated during multi-turn orchestration)
 # ---------------------------------------------------------------------------
@@ -248,6 +261,17 @@ class ScenarioResult:
     # Failure taxonomy — why did this scenario fail?
     failure_kind: str | None = None
 
+    @property
+    def is_infrastructure_failure(self) -> bool:
+        """True when this scenario failed because of the serving environment.
+
+        Timeouts, connection errors, and 5xx responses say nothing about the
+        model's tool-calling ability, so they are excluded from quality scoring.
+        """
+        return (
+            self.status == ScenarioStatus.FAIL and self.failure_kind in INFRASTRUCTURE_FAILURE_KINDS
+        )
+
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "scenario_id": self.scenario_id,
@@ -334,6 +358,11 @@ class ModelScoreSummary:
     token_efficiency: float | None = None
     # Difficulty-weighted score (None unless --weight-by-difficulty is used)
     weighted_score: int | None = None
+    # Scenario IDs dropped from scoring because the endpoint failed them
+    # (timeout / connection error / 5xx). See INFRASTRUCTURE_FAILURE_KINDS.
+    excluded_scenarios: list[str] = field(default_factory=list)
+    # Percentage of attempted scenarios that produced a gradable result.
+    completion_rate: float = 100.0
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -372,6 +401,9 @@ class ModelScoreSummary:
                 d["token_efficiency"] = round(self.token_efficiency, 2)
         if self.weighted_score is not None:
             d["weighted_score"] = self.weighted_score
+        if self.excluded_scenarios:
+            d["excluded_scenarios"] = self.excluded_scenarios
+            d["completion_rate"] = round(self.completion_rate, 1)
         return d
 
 

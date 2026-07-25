@@ -15,7 +15,7 @@ import httpx
 from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
 from tool_eval_bench.application.finalization import finalize_completed_run
 from tool_eval_bench.domain.adapters import BackendAdapter
-from tool_eval_bench.domain.models import ChatMessage, RunContext
+from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage, RunContext
 from tool_eval_bench.domain.scenarios import (
     OnScenarioResult,
     OnScenarioStart,
@@ -71,7 +71,7 @@ class BenchmarkService:
         scenario_ids: list[str] | None = None,
         scenarios: list[ScenarioDefinition] | None = None,
         temperature: float = 0.0,
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         max_turns: int = 8,
         seed: int | None = None,
         reference_date: str | None = None,

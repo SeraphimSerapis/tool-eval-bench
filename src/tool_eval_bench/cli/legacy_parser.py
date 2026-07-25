@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from tool_eval_bench.cli.command_registry import COMMAND_SPECS
+from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 
 def _make_parser() -> argparse.ArgumentParser:
@@ -125,7 +126,10 @@ def _make_parser() -> argparse.ArgumentParser:
     # -- Run control -------------------------------------------------------
     run_ctrl = parser.add_argument_group("run control")
     run_ctrl.add_argument(
-        "--timeout", type=float, default=60.0, help="Request timeout in seconds (default: 60)"
+        "--timeout",
+        type=float,
+        default=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        help=f"Request timeout in seconds (default: {DEFAULT_REQUEST_TIMEOUT_SECONDS:g})",
     )
     run_ctrl.add_argument(
         "--max-turns", type=int, default=8, help="Max turns per scenario (default: 8)"

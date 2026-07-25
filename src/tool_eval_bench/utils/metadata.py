@@ -18,7 +18,11 @@ from typing import Any
 
 import httpx
 
-from tool_eval_bench.domain.models import BenchmarkConfig, RunContext
+from tool_eval_bench.domain.models import (
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    BenchmarkConfig,
+    RunContext,
+)
 from tool_eval_bench.utils.urls import models_url as _models_url
 
 logger = logging.getLogger(__name__)
@@ -244,7 +248,7 @@ async def collect_run_context(
     # Tier 2 — CLI parameters (caller fills these)
     temperature: float = 0.0,
     max_turns: int = 8,
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
     seed: int | None = None,
     scenario_selector: str = "all",
     trials: int = 1,
