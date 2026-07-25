@@ -94,6 +94,14 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Changed
 
+- **Traces moved out of the run's scores blob** (schema v4, `scenario_traces`) —
+  raw logs dominate a run's stored bytes, and `history`, `leaderboard`, and
+  `export` all list many runs while reading nothing but scores, so every listing
+  was deserializing megabytes of traces it discarded. Traces are now stored per
+  scenario and rejoined on single-run reads (`get`, `get_latest`,
+  `get_scenario_results`), which resume and full-trace reports still depend on.
+  Rows written by earlier versions keep their inline traces and are read
+  unchanged.
 - **SQLite writes wait instead of failing under contention** — `busy_timeout` is
   set to 10s, so concurrent runs sharing one `data/benchmarks.sqlite` no longer
   raise `database is locked`.

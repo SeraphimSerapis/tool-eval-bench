@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 # Long runs (69+ scenarios, minutes each) used to lose everything on Ctrl-C or a
 # dropped connection.  Scenario results are checkpointed as they complete so an
@@ -31,6 +31,46 @@ def _default_db_path() -> str:
     (which would land inside ``.venv/``).
     """
     return str(Path.cwd() / "data" / "benchmarks.sqlite")
+
+
+def _split_traces(scores: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Return *scores* with per-scenario traces removed, plus the traces.
+
+    The caller's dict is left untouched — it is also handed to the report writer
+    and returned to the CLI, both of which still expect full traces.
+    """
+    results = scores.get("scenario_results")
+    if not isinstance(results, list):
+        return scores, {}
+    traces: dict[str, str] = {}
+    stripped: list[Any] = []
+    for result in results:
+        if not isinstance(result, dict):
+            stripped.append(result)
+            continue
+        scenario_id = result.get("scenario_id")
+        raw_log = result.get("raw_log")
+        if scenario_id and raw_log:
+            traces[str(scenario_id)] = str(raw_log)
+            result = {k: v for k, v in result.items() if k != "raw_log"}
+        stripped.append(result)
+    return {**scores, "scenario_results": stripped}, traces
+
+
+def _merge_traces(scores: dict[str, Any] | None, traces: dict[str, str]) -> dict[str, Any] | None:
+    """Put externalized traces back on their scenario results."""
+    if not scores or not traces:
+        return scores
+    results = scores.get("scenario_results")
+    if not isinstance(results, list):
+        return scores
+    merged = [
+        {**r, "raw_log": traces.get(str(r.get("scenario_id")), r.get("raw_log", ""))}
+        if isinstance(r, dict)
+        else r
+        for r in results
+    ]
+    return {**scores, "scenario_results": merged}
 
 
 class RunRepository:
@@ -111,6 +151,18 @@ class RunRepository:
                     """
                 )
                 version = 3
+            if version < 4:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS scenario_traces (
+                      run_id TEXT NOT NULL,
+                      scenario_id TEXT NOT NULL,
+                      raw_log TEXT NOT NULL,
+                      PRIMARY KEY (run_id, scenario_id)
+                    )
+                    """
+                )
+                version = 4
             if version != int(conn.execute("PRAGMA user_version").fetchone()[0]):
                 conn.execute(f"PRAGMA user_version = {version}")
 
@@ -120,7 +172,13 @@ class RunRepository:
         Uses INSERT OR REPLACE so that resumed runs can update their
         original row.  New runs should generally produce unique IDs
         (microsecond timestamp + random nonce) so collisions don't occur.
+
+        Traces are stored in ``scenario_traces`` rather than inside
+        ``scores_json``: they dominate the blob (a 69-scenario run's traces run
+        to megabytes) and every ``list()`` for ``history`` or ``leaderboard``
+        would otherwise deserialize all of them just to read a score.
         """
+        scores, traces = _split_traces(run_data.get("scores", {}))
         with self._conn as conn:
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
@@ -146,11 +204,22 @@ class RunRepository:
                     run_data.get("status", "completed"),
                     run_data.get("config", {}).get("model", "unknown"),
                     json.dumps(run_data.get("config", {})),
-                    json.dumps(run_data.get("scores", {})),
+                    json.dumps(scores),
                     json.dumps(run_data.get("metadata", {})),
                     run_data.get("run_type", "tool_eval"),
                     run_data.get("report_path"),
                 ),
+            )
+            conn.executemany(
+                """
+                INSERT INTO scenario_traces(run_id, scenario_id, raw_log)
+                VALUES(?,?,?)
+                ON CONFLICT(run_id, scenario_id) DO UPDATE SET raw_log=excluded.raw_log
+                """,
+                [
+                    (run_data["run_id"], scenario_id, raw_log)
+                    for scenario_id, raw_log in traces.items()
+                ],
             )
 
     def mark_run_status(self, run_id: str, status: str) -> None:
@@ -210,8 +279,21 @@ class RunRepository:
         with self._conn as conn:
             conn.execute("DELETE FROM run_checkpoints WHERE run_id=?", (run_id,))
 
-    def get(self, run_id: str) -> dict | None:
-        """Retrieve a single run by ID."""
+    def get_traces(self, run_id: str) -> dict[str, str]:
+        """Return externalized traces for a run, keyed by scenario ID."""
+        with self._conn as conn:
+            rows = conn.execute(
+                "SELECT scenario_id, raw_log FROM scenario_traces WHERE run_id=?",
+                (run_id,),
+            ).fetchall()
+        return {scenario_id: raw_log for scenario_id, raw_log in rows}
+
+    def get(self, run_id: str, *, include_traces: bool = True) -> dict | None:
+        """Retrieve a single run by ID, with traces rehydrated by default.
+
+        Resume and comparison need the traces; pass ``include_traces=False`` to
+        skip the second query when only scores are wanted.
+        """
         with self._conn as conn:
             row = conn.execute(
                 "SELECT run_id, created_at, status, model, config_json, "
@@ -221,20 +303,28 @@ class RunRepository:
             ).fetchone()
         if not row:
             return None
+        scores = json.loads(row[5]) if row[5] else None
+        if include_traces:
+            scores = _merge_traces(scores, self.get_traces(run_id))
         return {
             "run_id": row[0],
             "created_at": row[1],
             "status": row[2],
             "model": row[3],
             "config": json.loads(row[4]),
-            "scores": json.loads(row[5]) if row[5] else None,
+            "scores": scores,
             "metadata": json.loads(row[6]) if row[6] else {},
             "run_type": row[7] if len(row) > 7 else "tool_eval",
             "report_path": row[8] if len(row) > 8 else None,
         }
 
     def list(self, limit: int = 20, model: str | None = None) -> List[dict[str, Any]]:
-        """List recent runs, optionally filtered by model."""
+        """List recent runs, optionally filtered by model.
+
+        Scenario results come back without ``raw_log``; listing is used by
+        ``history``, ``leaderboard``, and ``export``, none of which read traces.
+        Use ``get()`` when a full run is needed.
+        """
         query = (
             "SELECT run_id, created_at, status, model, config_json, "
             "scores_json, metadata_json, run_type, report_path "
@@ -267,7 +357,9 @@ class RunRepository:
     def get_latest(self, model: str | None = None) -> dict | None:
         """Get the most recent run, optionally for a specific model."""
         runs = self.list(limit=1, model=model)
-        return runs[0] if runs else None
+        if not runs:
+            return None
+        return self.get(runs[0]["run_id"])
 
     def get_scenario_results(self, run_id: str) -> List[dict[str, Any]] | None:
         """Extract per-scenario results from a stored run."""

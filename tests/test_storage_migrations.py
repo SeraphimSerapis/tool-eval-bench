@@ -33,7 +33,7 @@ def test_old_database_is_migrated_to_current_schema(tmp_path: Path) -> None:
                 row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
         assert {"run_type", "report_path"} <= columns
-        assert "run_checkpoints" in tables
+        assert {"run_checkpoints", "scenario_traces"} <= tables
         assert version == _SCHEMA_VERSION
 
         repo.upsert_scenario_run(
