@@ -43,6 +43,7 @@ from tool_eval_bench.cli.helpers import (
 from tool_eval_bench.cli.helpers import (
     persist_plugin_run as _persist_plugin_run,
 )
+from tool_eval_bench.cli.helpers import prior_results_for_resume
 from tool_eval_bench.cli.helpers import safety_gate_failed as _safety_gate_failed
 from tool_eval_bench.cli.history import compare_runs as _compare_runs
 from tool_eval_bench.cli.history import (
@@ -780,6 +781,7 @@ def main() -> None:
 
         resume_repo = RunRepository()
         prev_run = resume_repo.get(args.resume)
+        prev_checkpoints = resume_repo.get_checkpoints(args.resume) if prev_run else []
         resume_repo.close()
         if prev_run is None:
             console.print(
@@ -805,7 +807,12 @@ def main() -> None:
             )
             sys.exit(1)
 
-        prev_results = (prev_run.get("scores") or {}).get("scenario_results", [])
+        prev_results = prior_results_for_resume(prev_run, prev_checkpoints)
+        if prev_checkpoints and not args.json:
+            console.print(
+                f"  [dim]ℹ Recovered {len(prev_checkpoints)} checkpointed scenario(s) from "
+                f"interrupted run {args.resume}.[/]"
+            )
         if not prev_results:
             if not args.json:
                 console.print(

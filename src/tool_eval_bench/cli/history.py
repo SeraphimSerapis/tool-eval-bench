@@ -107,7 +107,7 @@ def print_history(console: Console) -> None:
     """List recent benchmark runs from SQLite."""
     from rich.table import Table
 
-    from tool_eval_bench.storage.db import RunRepository
+    from tool_eval_bench.storage.db import RUN_STATUS_COMPLETED, RunRepository
 
     repo = RunRepository()
     runs = repo.list(limit=15)
@@ -134,6 +134,10 @@ def print_history(console: Console) -> None:
         scores = run.get("scores") or {}
         score = scores.get("final_score", "?")
         rating = scores.get("rating", "")
+        if run.get("status") != RUN_STATUS_COMPLETED:
+            # Interrupted and still-running rows have no final score; surface the
+            # status so users know the run is resumable rather than broken.
+            rating = f"[yellow]{run.get('status', 'unknown')} — resumable[/]"
         created = run.get("created_at", "?")[:19]
         context = _extract_context_summary(run)
         table.add_row(

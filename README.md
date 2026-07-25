@@ -238,6 +238,12 @@ tool-eval-bench compare --report a.md b.md -o comparison.html
 tool-eval-bench resume RUN_ID
 ```
 
+Every scenario result is checkpointed to SQLite the moment it finishes, so a
+Ctrl-C or dropped connection midway through the suite costs you only the
+scenario in flight. Interrupted runs appear in `tool-eval-bench history` marked
+`interrupted — resumable`; `resume RUN_ID` replays the finished work from the
+checkpoints and runs everything that never completed or didn't pass.
+
 Use `tool-eval-bench COMMAND --help` for command-specific options. Existing
 flat invocations such as `tool-eval-bench --short`, `--history`, and
 `compare-report A.md B.md -o out.html` remain supported silently for permanent

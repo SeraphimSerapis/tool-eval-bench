@@ -9,7 +9,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
+
+# Long runs (69+ scenarios, minutes each) used to lose everything on Ctrl-C or a
+# dropped connection.  Scenario results are checkpointed as they complete so an
+# interrupted run can be resumed instead of restarted.
+RUN_STATUS_RUNNING = "running"
+RUN_STATUS_INTERRUPTED = "interrupted"
+RUN_STATUS_COMPLETED = "completed"
+
+# Wait rather than fail when another process holds the write lock (concurrent
+# runs against different endpoints share one database file).
+_BUSY_TIMEOUT_MS = 10_000
 
 
 def _default_db_path() -> str:
@@ -36,6 +47,7 @@ class RunRepository:
         self._conn: sqlite3.Connection = sqlite3.connect(self.db_path)
         # WAL mode: crash-safe and allows concurrent reads during active runs
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
         self._init_db()
 
     def close(self) -> None:
@@ -86,6 +98,19 @@ class RunRepository:
                 if "report_path" not in columns:
                     conn.execute("ALTER TABLE scenario_runs ADD COLUMN report_path TEXT")
                 version = 2
+            if version < 3:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS run_checkpoints (
+                      run_id TEXT NOT NULL,
+                      scenario_id TEXT NOT NULL,
+                      created_at TEXT NOT NULL,
+                      result_json TEXT NOT NULL,
+                      PRIMARY KEY (run_id, scenario_id)
+                    )
+                    """
+                )
+                version = 3
             if version != int(conn.execute("PRAGMA user_version").fetchone()[0]):
                 conn.execute(f"PRAGMA user_version = {version}")
 
@@ -127,6 +152,63 @@ class RunRepository:
                     run_data.get("report_path"),
                 ),
             )
+
+    def mark_run_status(self, run_id: str, status: str) -> None:
+        """Update only the status of an existing run row.
+
+        Used to flip a checkpointed run to ``interrupted`` without rewriting
+        scores that were never computed.
+        """
+        with self._conn as conn:
+            conn.execute("UPDATE scenario_runs SET status=? WHERE run_id=?", (status, run_id))
+
+    def checkpoint_scenario_result(self, run_id: str, result: dict[str, Any]) -> None:
+        """Durably record one finished scenario mid-run.
+
+        Idempotent per (run_id, scenario_id) so a re-run of the same scenario
+        within a trial overwrites rather than duplicates.
+        """
+        scenario_id = result.get("scenario_id")
+        if not scenario_id:
+            return
+        with self._conn as conn:
+            conn.execute(
+                """
+                INSERT INTO run_checkpoints(run_id, scenario_id, created_at, result_json)
+                VALUES(?,?,?,?)
+                ON CONFLICT(run_id, scenario_id) DO UPDATE SET
+                  created_at=excluded.created_at,
+                  result_json=excluded.result_json
+                """,
+                (
+                    run_id,
+                    scenario_id,
+                    datetime.now(timezone.utc).isoformat(),
+                    json.dumps(result),
+                ),
+            )
+
+    def get_checkpoints(self, run_id: str) -> List[dict[str, Any]]:
+        """Return checkpointed scenario results for a run, oldest first."""
+        with self._conn as conn:
+            rows = conn.execute(
+                "SELECT result_json FROM run_checkpoints WHERE run_id=? ORDER BY created_at",
+                (run_id,),
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for (payload,) in rows:
+            try:
+                results.append(json.loads(payload))
+            except json.JSONDecodeError:
+                logging.getLogger(__name__).warning(
+                    "Discarding corrupt checkpoint in run %s", run_id
+                )
+        return results
+
+    def clear_checkpoints(self, run_id: str) -> None:
+        """Drop checkpoints once the run's final scores are persisted."""
+        with self._conn as conn:
+            conn.execute("DELETE FROM run_checkpoints WHERE run_id=?", (run_id,))
 
     def get(self, run_id: str) -> dict | None:
         """Retrieve a single run by ID."""

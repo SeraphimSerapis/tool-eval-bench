@@ -6,6 +6,15 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **An interrupted run no longer loses all its work** — a Ctrl-C, dropped
+  connection, or crashed report write at scenario 61 of 69 used to discard every
+  finished scenario, because nothing was persisted until the run completed. Each
+  scenario result is now checkpointed to SQLite as it finishes (schema v3,
+  `run_checkpoints`), the run row is claimed as `running` up front and flipped to
+  `interrupted` on failure, and `--resume <run_id>` rebuilds the completed work
+  from those checkpoints. `--history` marks non-completed runs as resumable.
+  Checkpoints are dropped once the final scores are persisted, so the extra
+  storage is transient.
 - **Infrastructure failures no longer score as model incompetence** — a timeout,
   connection error, or 5xx/429 from the endpoint says nothing about a model's
   tool-calling ability, yet each one used to contribute 0 of 2 points and drag
@@ -35,6 +44,9 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Changed
 
+- **SQLite writes wait instead of failing under contention** — `busy_timeout` is
+  set to 10s, so concurrent runs sharing one `data/benchmarks.sqlite` no longer
+  raise `database is locked`.
 - **Transient HTTP failures are retried with jittered backoff** — the adapter
   now retries 429/502/503/504, `ConnectError`, `ReadError`, and
   `RemoteProtocolError` twice (three attempts total) with full-jitter

@@ -25,7 +25,11 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 from tool_eval_bench.runner.orchestrator import run_all_scenarios, score_results
-from tool_eval_bench.storage.db import RunRepository
+from tool_eval_bench.storage.db import (
+    RUN_STATUS_INTERRUPTED,
+    RUN_STATUS_RUNNING,
+    RunRepository,
+)
 from tool_eval_bench.storage.reports import MarkdownReporter
 from tool_eval_bench.utils.ids import build_config_fingerprint, build_run_id
 from tool_eval_bench.utils.urls import redact_url as _redact_url
@@ -150,6 +154,11 @@ class BenchmarkService:
         # Build run ID (reuse original for resumed runs)
         run_id = resume_run_id or build_run_id(run_config)
 
+        # Claim the run row up front and checkpoint each finished scenario, so an
+        # interrupted long run can be resumed instead of thrown away.
+        self._claim_run(run_id, model, run_config, metadata)
+        checkpointing_result_cb = self._checkpointing_callback(run_id, on_scenario_result)
+
         # Run all scenarios (close adapter connection pool when done)
         try:
             summary = await run_all_scenarios(
@@ -165,7 +174,7 @@ class BenchmarkService:
                 reference_date=reference_date,
                 reference_day=ref_day,
                 on_scenario_start=on_scenario_start,
-                on_scenario_result=on_scenario_result,
+                on_scenario_result=checkpointing_result_cb,
                 concurrency=concurrency,
                 error_rate=error_rate,
                 alpha=alpha,
@@ -173,6 +182,11 @@ class BenchmarkService:
                 context_pressure_messages=context_pressure_messages,
                 weight_by_difficulty=weight_by_difficulty,
             )
+        except BaseException:
+            # Covers KeyboardInterrupt and CancelledError as well as errors —
+            # the partial results stay on disk under this run ID.
+            self._mark_interrupted(run_id)
+            raise
         finally:
             if hasattr(adapter, "aclose"):
                 await adapter.aclose()
@@ -266,13 +280,83 @@ class BenchmarkService:
                 )
 
             report_writer = write_scenario_report
-        finalize_completed_run(
-            run_data,
-            write_report=report_writer,
-            persist=self.repo.upsert_scenario_run if self.repo is not None else None,
-        )
+        try:
+            finalize_completed_run(
+                run_data,
+                write_report=report_writer,
+                persist=self.repo.upsert_scenario_run if self.repo is not None else None,
+            )
+        except BaseException:
+            # The scenarios ran but the run never reached a reportable state.
+            # Leave the checkpoints in place so the work can be recovered.
+            self._mark_interrupted(run_id)
+            raise
+        # Final scores now hold everything the checkpoints held.
+        if self.repo is not None:
+            try:
+                self.repo.clear_checkpoints(run_id)
+            except Exception as exc:  # noqa: BLE001 — cleanup must not fail a good run
+                logger.warning("Failed to clear checkpoints for run %s: %s", run_id, exc)
 
         return run_data
+
+    # -- Crash-resilience helpers ------------------------------------------
+
+    def _claim_run(
+        self,
+        run_id: str,
+        model: str,
+        run_config: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> None:
+        """Insert a ``running`` row so an interrupted run is discoverable."""
+        if self.repo is None:
+            return
+        try:
+            self.repo.upsert_scenario_run(
+                {
+                    "run_id": run_id,
+                    "status": RUN_STATUS_RUNNING,
+                    "config": run_config,
+                    "scores": {},
+                    "metadata": metadata,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 — never block a run on bookkeeping
+            logger.warning("Could not claim run row %s: %s", run_id, exc)
+
+    def _mark_interrupted(self, run_id: str) -> None:
+        if self.repo is None:
+            return
+        try:
+            self.repo.mark_run_status(run_id, RUN_STATUS_INTERRUPTED)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not mark run %s interrupted: %s", run_id, exc)
+        else:
+            logger.info("Run %s interrupted; resume with --resume %s", run_id, run_id)
+
+    def _checkpointing_callback(
+        self, run_id: str, inner: OnScenarioResult | None
+    ) -> OnScenarioResult | None:
+        """Wrap the caller's result callback with durable checkpointing."""
+        if self.repo is None:
+            return inner
+        repo = self.repo
+
+        async def on_result(
+            scenario: ScenarioDefinition,
+            result: ScenarioResult,
+            index: int,
+            total: int,
+        ) -> None:
+            try:
+                repo.checkpoint_scenario_result(run_id, result.to_dict())
+            except Exception as exc:  # noqa: BLE001 — a lost checkpoint is not fatal
+                logger.warning("Failed to checkpoint %s: %s", result.scenario_id, exc)
+            if inner is not None:
+                await inner(scenario, result, index, total)
+
+        return on_result
 
 
 def _build_run_config(

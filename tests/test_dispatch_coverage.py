@@ -477,6 +477,9 @@ def test_dispatch_main_context_pressure_and_resume(monkeypatch: pytest.MonkeyPat
                 },
             }
 
+        def get_checkpoints(self, run_id):
+            return []
+
         def close(self):
             pass
 

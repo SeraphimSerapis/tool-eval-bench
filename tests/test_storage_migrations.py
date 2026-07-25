@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from tool_eval_bench.storage.db import RunRepository
+from tool_eval_bench.storage.db import _SCHEMA_VERSION, RunRepository
 
 
 def test_old_database_is_migrated_to_current_schema(tmp_path: Path) -> None:
@@ -29,8 +29,12 @@ def test_old_database_is_migrated_to_current_schema(tmp_path: Path) -> None:
         with sqlite3.connect(db_path) as conn:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(scenario_runs)")}
             version = conn.execute("PRAGMA user_version").fetchone()[0]
+            tables = {
+                row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
         assert {"run_type", "report_path"} <= columns
-        assert version == 2
+        assert "run_checkpoints" in tables
+        assert version == _SCHEMA_VERSION
 
         repo.upsert_scenario_run(
             {

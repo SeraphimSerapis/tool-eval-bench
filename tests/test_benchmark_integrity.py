@@ -14,6 +14,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ScenarioStatus,
 )
+from tool_eval_bench.storage.db import RUN_STATUS_INTERRUPTED, RUN_STATUS_RUNNING
 
 
 def _evaluate_fail(state: ScenarioState) -> ScenarioEvaluation:
@@ -220,4 +221,12 @@ async def test_report_failure_does_not_store_completed_run(
             scenarios=[scenario],
         )
 
-    repo.upsert_scenario_run.assert_not_called()
+    # A "running" claim row is expected (it makes the run resumable), but nothing
+    # may ever be persisted as completed without its Markdown artifact.
+    statuses = [call.args[0]["status"] for call in repo.upsert_scenario_run.call_args_list]
+    assert statuses == [RUN_STATUS_RUNNING]
+    repo.mark_run_status.assert_called_once_with(
+        repo.upsert_scenario_run.call_args.args[0]["run_id"], RUN_STATUS_INTERRUPTED
+    )
+    # Checkpoints survive so the completed scenarios can be recovered.
+    repo.clear_checkpoints.assert_not_called()

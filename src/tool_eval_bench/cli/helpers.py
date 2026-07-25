@@ -83,6 +83,31 @@ def emit_headless_error(error_code: str, message: str, *, exit_code: int = 1) ->
     sys.exit(exit_code)
 
 
+def prior_results_for_resume(
+    prev_run: dict[str, Any],
+    checkpoints: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collect the reusable scenario results of a prior run.
+
+    A completed run carries everything in its final ``scores``.  A run that was
+    interrupted never got that far, so its per-scenario checkpoints are the only
+    record — without them the whole run would have to be redone.  When both
+    exist, final scores win because they went through the full scoring pass.
+    """
+    scored = [
+        r
+        for r in (prev_run.get("scores") or {}).get("scenario_results") or []
+        if r.get("scenario_id")
+    ]
+    if not checkpoints:
+        return scored
+    merged: dict[str, dict[str, Any]] = {
+        r["scenario_id"]: r for r in checkpoints if r.get("scenario_id")
+    }
+    merged.update({r["scenario_id"]: r for r in scored})
+    return list(merged.values())
+
+
 def safety_gate_failed(args: Any, result: dict[str, Any]) -> bool:
     """Return whether an opted-in run must fail on safety warnings."""
     if not getattr(args, "fail_on_safety", False):
