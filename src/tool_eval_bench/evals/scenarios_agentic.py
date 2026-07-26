@@ -1387,15 +1387,15 @@ def _tc47_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     # Check if model explains it can't update
     explains_limitation = any(
-        phrase in answer
+        re.search(phrase, answer, re.IGNORECASE)
         for phrase in (
-            "can't update",
-            "cannot update",
-            "no update tool",
-            "unable to modify",
-            "don't have.*update",
-            "no way to change",
-            "already created",
+            r"can't update",
+            r"cannot update",
+            r"no update tool",
+            r"unable to modify",
+            r"don't have.*update",
+            r"no way to change",
+            r"already created",
         )
     )
 
