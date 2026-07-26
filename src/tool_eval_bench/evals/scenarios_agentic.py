@@ -781,6 +781,8 @@ def _tc33_eval(state: ScenarioState) -> ScenarioEvaluation:
             "not available",
             "unable to access",
             "unable to retrieve",
+            "couldn't find",
+            "can't find"
         )
     )
 
