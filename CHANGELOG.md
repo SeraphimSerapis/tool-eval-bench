@@ -4,6 +4,13 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **TC-33 recognizes honest internal-search limitations without accepting generic
+  “can't find” wording** — responses now receive full credit when they explicitly
+  state that direct database access is unavailable, or when they report no matching
+  documents after actually using `search_files`.
+
 ## [2.3.0] — 2026-07-25
 
 ### Added
