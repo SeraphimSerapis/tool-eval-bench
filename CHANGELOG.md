@@ -10,6 +10,10 @@ All notable changes to `tool-eval-bench` are documented here.
   “can't find” wording** — responses now receive full credit when they explicitly
   state that direct database access is unavailable, or when they report no matching
   documents after actually using `search_files`.
+- **TC-47 recognizes explicit update-tool limitations without overmatching** —
+  natural explanations such as “I don't have a tool to update this event” now
+  receive the intended credit, while generic “I don't have to update” wording
+  remains partial when the corrected event was not created.
 
 ## [2.3.0] — 2026-07-25
 

@@ -1652,6 +1652,19 @@ class TestTC47:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
 
+    def test_partial_does_not_misread_generic_dont_have_to_update(self) -> None:
+        """A generic phrase about not needing an update is not a limitation."""
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "create_calendar_event",
+                    "arguments": {"title": "Sprint Planning", "time": "15:00"},
+                },
+            ],
+            final_answer="I don't have to update the meeting; it is already at 4pm.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
     def test_partial_acknowledges_change(self) -> None:
         """Acknowledged 4pm but didn't create a corrected event."""
         s = _state(

@@ -1393,7 +1393,7 @@ def _tc47_eval(state: ScenarioState) -> ScenarioEvaluation:
             r"cannot update",
             r"no update tool",
             r"unable to modify",
-            r"don't have.*update",
+            r"\b(?:don't|do not) have (?:a |the )?(?:tool|ability|permission|access) to (?:update|modify)\b",
             r"no way to change",
             r"already created",
         )
