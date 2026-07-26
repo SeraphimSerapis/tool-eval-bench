@@ -87,8 +87,12 @@ git clone https://github.com/SeraphimSerapis/tool-eval-bench.git
 cd tool-eval-bench
 python -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev,perf,hf]'
+pip install -e '.[dev,perf]'
 ```
+
+For contributor setup, quality checks, scenario/evaluator guidance, and the pull
+request checklist, see [CONTRIBUTING.md](CONTRIBUTING.md). Install the optional
+`[hf]` extra only when working on the GSM8K, MMLU, or IFEval dataset plugins.
 
 ### Run with Docker
 

@@ -1,206 +1,190 @@
 # Contributing to tool-eval-bench
 
-Thank you for your interest in contributing! This guide covers how to set up a development environment, add new scenarios, and submit changes.
+Thank you for helping improve `tool-eval-bench`! This guide explains how to set
+up the project, choose the right checks, add or change benchmark behavior, and
+prepare a pull request.
 
-## Development Setup
+The benchmark is deliberately deterministic and auditable. A good contribution
+improves the benchmark without making its scores easier to inflate, harder to
+reproduce, or unclear to interpret.
+
+For the complete repository conventions, see [`AGENTS.md`](AGENTS.md). This
+document is the contributor-facing summary.
+
+## Development setup
+
+The supported development environments use Python 3.11–3.13 and the project
+virtual environment. From a fresh checkout:
 
 ```bash
-# Clone and install in development mode
 git clone https://github.com/SeraphimSerapis/tool-eval-bench.git
 cd tool-eval-bench
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev,perf]'
 ```
 
-### Running Tests
+Install the `[hf]` extra only when working on the GSM8K, MMLU, or IFEval dataset
+plugins. It is not part of the normal quality-bar setup.
+
+Install the hooks once if you plan to commit or push from this checkout:
 
 ```bash
-# Full check suite
-ruff check .
-pytest
-
-# Quick feedback loop
-pytest --tb=short -q
+.venv/bin/pre-commit install
+.venv/bin/pre-commit install --hook-type pre-push
 ```
 
-All tests must pass and `ruff check .` must be clean before submitting a PR.
+## Checks and feedback loops
 
-## Architecture Overview
+Run a focused test while iterating, then run the complete quality bar before
+opening or updating a pull request.
 
-```
-src/tool_eval_bench/
-  adapters/           # OpenAI-compatible HTTP adapter
-  cli/                # CLI entry point & display rendering
-  domain/             # Data models, tool definitions, scoring logic
-  evals/              # Scenario definitions & evaluators
-  runner/             # Orchestrator, service layer, throughput measurement
-  storage/            # SQLite persistence, Markdown report generation
-  utils/              # URL helpers, metadata collection
-```
+### Focused checks
 
-**Key rules:**
-- `domain` must not import storage adapters
-- `evals` depends on domain types, not concrete server logic
-- `runner` orchestrates scenarios using adapter interfaces
-- `cli` is the delivery layer that calls `runner.service`
+```bash
+# Run one evaluator or test module
+.venv/bin/python -m pytest tests/test_evaluators_extended.py -k TC33
 
-## Adding a New Scenario
+# Run the deterministic adapter tests
+.venv/bin/python -m pytest tests/test_adapter.py
 
-Scenarios are defined across several files in `src/tool_eval_bench/evals/`:
-
-- `scenarios.py` — Core 15 scenarios (A–E) + the `ALL_SCENARIOS` registry
-- `scenarios_extended.py` — Extended scenarios (F–G)
-- `scenarios_agentic.py` — Agentic scenarios (H–K)
-- `scenarios_large_toolset.py` — Large-toolset scenarios (L)
-- `scenarios_planning.py` — Planning + creative scenarios (M–N)
-- `scenarios_adversarial.py` — Adversarial safety scenarios (K extras)
-- `scenarios_structured.py` — Structured output scenarios (O)
-
-Each scenario is a `ScenarioDefinition` with:
-
-### 1. Define the scenario
-
-```python
-from tool_eval_bench.domain.scenarios import (
-    Category,
-    ScenarioDefinition,
-    ScenarioEvaluation,
-    ScenarioState,
-    ScenarioStatus,
-    ToolCallRecord,
-)
-
-def _my_handler(state: ScenarioState, call: ToolCallRecord):
-    """Mock tool handler — returns deterministic data."""
-    if call.name == "expected_tool":
-        return {"result": "mock_value"}
-    return {"error": f"Unknown tool: {call.name}"}
-
-def _my_evaluator(state: ScenarioState) -> ScenarioEvaluation:
-    """Evaluator — checks if the model used the correct tool correctly."""
-    calls = [tc for tc in state.tool_calls if tc.name == "expected_tool"]
-    if not calls:
-        return ScenarioEvaluation(
-            status=ScenarioStatus.FAIL,
-            points=0,
-            summary="Did not call expected_tool",
-        )
-    # Check arguments
-    args = calls[0].arguments
-    if args.get("key") == "expected_value":
-        return ScenarioEvaluation(
-            status=ScenarioStatus.PASS,
-            points=2,
-            summary="Correct tool call with correct arguments",
-        )
-    return ScenarioEvaluation(
-        status=ScenarioStatus.PARTIAL,
-        points=1,
-        summary="Called correct tool but wrong arguments",
-    )
-
-MY_SCENARIO = ScenarioDefinition(
-    id="TC-XX",                           # Unique ID (TC-01 through TC-99)
-    title="Short descriptive title",
-    category=Category.A,                  # A through O
-    user_message="The prompt the model sees",
-    description="What the model should do",
-    handle_tool_call=_my_handler,
-    evaluate=_my_evaluator,
-)
+# Run all configured pre-commit checks on the current files
+.venv/bin/pre-commit run --all-files
 ```
 
-### 2. Register the scenario
+### Required quality bar
 
-Add your scenario to the appropriate list in `scenarios.py`:
-
-```python
-# For standard scenarios (included in --short runs):
-SCENARIOS.append(MY_SCENARIO)
-
-# For extended scenarios (excluded from --short):
-EXTENDED_SCENARIOS.append(MY_SCENARIO)
-
-# ALL_SCENARIOS is computed automatically as SCENARIOS + EXTENDED_SCENARIOS
+```bash
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .
+.venv/bin/mypy
+env -u FORCE_COLOR .venv/bin/python -m pytest \
+  tests/ \
+  --ignore=tests/test_llama_benchy.py \
+  -m "not live" \
+  --randomly-seed=104729
 ```
 
-### 3. Write a test
+`FORCE_COLOR` only needs to be unset in environments that define it globally;
+it can cause Rich rendering tests to emit ANSI codes into captured output.
+The project venv is important: using system Python can silently skip async test
+support and produce misleading results.
 
-Add a test in `tests/test_scenarios.py` to verify the evaluator works:
+CI repeats the required suite with seeds `104729`, `130363`, and `155921` on
+Python 3.11, 3.12, and 3.13. It also builds the Docker image, runs a wheel
+smoke test, checks coverage floors, and runs the optional `llama-benchy` tests.
+Those checks do not require a live inference server.
 
-```python
-def test_my_scenario_pass():
-    state = ScenarioState()
-    state.tool_calls.append(ToolCallRecord(
-        id="tc_1", name="expected_tool",
-        raw_arguments='{"key": "expected_value"}',
-        arguments={"key": "expected_value"}, turn=1,
-    ))
-    result = MY_SCENARIO.evaluate(state)
-    assert result.status == ScenarioStatus.PASS
-    assert result.points == 2
+The live canary is separate and requires an OpenAI-compatible endpoint. Use it
+only when you have an authorized test server:
+
+```bash
+TOOL_EVAL_CANARY_BASE_URL=http://host:port/v1 \
+  .venv/bin/python -m pytest -m live tests/test_live_canary.py
 ```
 
-### Scenario Design Guidelines
+## What a good contribution looks like
 
-| Principle | Details |
-|---|---|
-| **Deterministic** | Mock handlers return fixed data. No randomness. |
-| **Self-contained** | Each scenario has its own handler and evaluator. |
-| **Clear pass/fail** | PASS = 2 points, PARTIAL = 1, FAIL = 0. No ambiguity. |
-| **Multi-turn aware** | Use `state.tool_calls` to track calls across turns. |
-| **Category fit** | Choose the right category (see Categories below). |
+Prefer one focused change per pull request. A strong contribution generally:
 
-### Categories
+- explains the problem and the intended user or benchmark impact;
+- includes a regression test for changed behavior;
+- tests both the intended case and plausible false positives or edge cases;
+- preserves deterministic mock data and reproducible scoring;
+- follows the project architecture and existing conventions;
+- updates `README.md` for user-facing CLI or API changes;
+- updates `CHANGELOG.md` for notable behavior, scoring, or compatibility changes;
+- contains no credentials, live endpoints, generated run artifacts, or unrelated
+  formatting changes; and
+- records the checks that were run in the pull request description.
 
-| Category | Focus |
-|---|---|
-| A | Tool Selection — picking the right tool from the set |
-| B | Parameter Precision — units, dates, multi-value extraction |
-| C | Multi-Step Chains — chained reasoning, parallel calls |
-| D | Restraint & Refusal — knowing when NOT to call tools |
-| E | Error Recovery — handling failures, preserving data integrity |
-| F | Localization — German, timezone awareness, translation chains |
-| G | Structured Reasoning — routing, data extraction, constraint validation |
-| H | Instruction Following — output format, tool prohibition, multi-constraint, tool_choice compliance |
-| I | Context & State — cross-reference, state consistency, deduplication, multi-turn correction, constraint accumulation |
-| J | Code Patterns — read-before-write, explain vs execute, chained conditional |
-| K | Safety & Boundaries — ambiguity, scope limits, hallucination, prompt injection, authority escalation (⚠️ failures generate warnings) |
-| L | Toolset Scale — 52-tool namespace, domain confusion |
-| M | Autonomous Planning — goal decomposition, open-ended research, conditional workflows |
-| N | Creative Composition — cross-tool synthesis, data pipelines, notification workflows |
-| O | Structured Output — JSON schema compliance, tool→schema chaining, nested schemas, enum constraints, violation resistance |
+Do not weaken an evaluator merely to make a model score higher. If a model
+behavior should receive more credit, document the evidence that distinguishes it
+from a misleading or hallucinated answer.
 
-## Scoring
+## Changing scenarios and evaluators
 
-- **Per-scenario:** 0 (fail), 1 (partial), or 2 (pass) points
-- **Per-category:** `(earned points / max points) × 100` within each category
-- **Overall score:** `(total points / total max points) × 100` — weighted by scenario count (0–100)
-- **Rating thresholds:**
-  - 90–100 → ★★★★★ Excellent
-  - 75–89 → ★★★★ Good
-  - 60–74 → ★★★ Adequate
-  - 40–59 → ★★ Weak
-  - 0–39 → ★ Poor
-- **Worst category floor:** The lowest-scoring category is surfaced separately
-- **Safety warnings:** Category K failures are explicitly called out (not auto-penalized)
+Scenario definitions live in `src/tool_eval_bench/evals/` and are composed into
+the public registry by `scenarios.py`. Put new behavior in the most relevant
+scenario module rather than growing one monolithic file. Existing modules cover
+core, extended, agentic, large-toolset, planning, adversarial, structured, and
+YAML-backed scenarios.
 
-## Pull Request Checklist
+Each scenario should have:
 
-Before submitting:
+1. A deterministic user prompt and mock tool handler.
+2. A clear evaluator with PASS, PARTIAL, and FAIL outcomes.
+3. A registration path in the public scenario registry.
+4. Tests for the expected pass case, failure case, and important near-misses.
+5. A description that explains what the scenario measures.
 
-- [ ] `ruff check .` passes with no errors
-- [ ] `pytest` passes all tests
-- [ ] New scenarios have evaluator tests
-- [ ] README.md updated if CLI flags changed
-- [ ] CHANGELOG.md updated if notable changes are made
-- [ ] No credentials or API keys in committed code
+For evaluator changes in particular:
 
-## Code Style
+- Score observable behavior and tool-call history, not stylistic preferences.
+- Prefer contextual evidence over broad substring matching.
+- Make PARTIAL represent a meaningful middle outcome, not an arbitrary fallback.
+- Ensure a plausible hallucination or unsafe action cannot receive full credit.
+- Keep external data, randomness, and live services out of mock handlers.
+- Add a test that would have failed before the fix.
 
-- Line length: 100 characters (configured in `pyproject.toml`)
-- Python 3.11+ type hints everywhere
-- Prefer dataclasses over dicts for structured data
-- Async functions for anything touching HTTP
-- No global mutable state — use composition
+The standard score is 0 points for FAIL, 1 for PARTIAL, and 2 for PASS. Scenario
+and category scoring is documented in the README; changes to scoring semantics
+should also be called out in the changelog.
+
+## Architecture boundaries
+
+Keep the layered architecture intact:
+
+- `domain` defines core types and must not import storage adapters.
+- `evals` depends on domain types and owns scenario definitions and evaluators.
+- `runner` orchestrates scenarios through adapter interfaces.
+- `plugins` owns external benchmark datasets, evaluation, and rendering.
+- `application` composes concrete adapters, orchestration, storage, and reports.
+- `cli` is the delivery layer for the application service and plugin runners.
+
+Prefer composition over global state. Keep backend-specific behavior in
+adapters, and preserve the OpenAI-compatible wire format used by vLLM, LiteLLM,
+llama.cpp, and other supported endpoints.
+
+## Other common changes
+
+### CLI or API changes
+
+Update the relevant README usage, API/schema snapshots when the interface
+intentionally changes, tests, and changelog. Verify `--help` output for new or
+changed CLI commands.
+
+### Adapter or orchestration changes
+
+Use deterministic HTTP mocks where possible. Cover streaming, tool calls,
+errors, retries, and compatibility behavior without requiring a live model
+server.
+
+### Plugin changes
+
+Keep dataset loading, evaluation, and report rendering inside the plugin. Use
+the shared adapter and storage infrastructure rather than duplicating it.
+
+### Documentation-only changes
+
+Keep examples executable and update nearby commands when defaults or supported
+options change. Avoid reformatting unrelated sections.
+
+## Pull request checklist
+
+Before submitting a pull request:
+
+- [ ] The change is scoped to one logical purpose.
+- [ ] The problem and intended behavior are explained.
+- [ ] Regression tests were added or updated where behavior changed.
+- [ ] Positive and negative/false-positive cases are covered.
+- [ ] `.venv/bin/ruff check .` passes.
+- [ ] `.venv/bin/ruff format --check .` passes.
+- [ ] `.venv/bin/mypy` passes.
+- [ ] The required pytest suite passes.
+- [ ] README and/or CHANGELOG are updated when applicable.
+- [ ] No secrets, live endpoints, generated reports, or unrelated changes are
+      included.
+- [ ] The PR description lists the validation performed.
+
+Thank you for contributing improvements that make model and tool-use evaluation
+more trustworthy.
