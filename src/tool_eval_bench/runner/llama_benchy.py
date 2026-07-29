@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -78,6 +79,26 @@ def is_available() -> bool:
     return _find_llama_benchy() is not None
 
 
+def _redact_command(cmd: list[str]) -> str:
+    """Render a command for logging without exposing API-key values."""
+    redacted: list[str] = []
+    redact_next = False
+
+    for arg in cmd:
+        if redact_next:
+            redacted.append("<redacted>")
+            redact_next = False
+        elif arg == "--api-key":
+            redacted.append(arg)
+            redact_next = True
+        elif arg.startswith("--api-key="):
+            redacted.append("--api-key=<redacted>")
+        else:
+            redacted.append(arg)
+
+    return shlex.join(redacted)
+
+
 # ---------------------------------------------------------------------------
 # Build command
 # ---------------------------------------------------------------------------
@@ -87,6 +108,7 @@ def _build_command(
     base_url: str,
     model: str,
     *,
+    api_key: str | None = None,
     tokenizer: str | None = None,
     pp: list[int] | None = None,
     tg: list[int] | None = None,
@@ -122,10 +144,14 @@ def _build_command(
     cmd.extend(["--base-url", url])
     cmd.extend(["--model", model])
 
-    # NOTE: api_key is NOT passed on the command line.  It is injected
-    # via OPENAI_API_KEY env var at subprocess invocation time to avoid
-    # leaking credentials in `ps aux` and log output.  See
-    # run_llama_benchy() for the env setup.
+    # llama-benchy 0.4.x only reads endpoint credentials from --api-key.
+    # Respect an explicit pass-through value so existing --benchy-args
+    # workarounds do not produce duplicate options.
+    extra_args_have_api_key = bool(
+        extra_args and any(arg == "--api-key" or arg.startswith("--api-key=") for arg in extra_args)
+    )
+    if api_key and not extra_args_have_api_key:
+        cmd.extend(["--api-key", api_key])
 
     # Tokenizer: when the API model name is an alias (e.g. "Qwen3.6-35B")
     # but the real HF model ID is different (e.g. "Qwen/Qwen3.6-35B-A3B-FP8"),
@@ -314,6 +340,7 @@ async def run_llama_benchy(
         cmd = _build_command(
             base_url,
             model,
+            api_key=api_key,
             tokenizer=tokenizer,
             pp=pp,
             tg=tg,
@@ -328,8 +355,7 @@ async def run_llama_benchy(
             extra_args=extra_args,
         )
 
-        # Log command without secrets (api_key is in env, not argv)
-        logger.info("Running llama-benchy: %s", " ".join(cmd))
+        logger.info("Running llama-benchy: %s", _redact_command(cmd))
 
         # Suppress noisy warnings from transformers/HF Hub in the subprocess:
         # - "PyTorch was not found" (only tokenizers are needed)
@@ -347,14 +373,6 @@ async def run_llama_benchy(
         # construction) is either cached locally or fails with a clear error.
         env["HF_HUB_OFFLINE"] = "1"
         env["TRANSFORMERS_OFFLINE"] = "1"
-        # Pass API key via env var to avoid exposing it in `ps aux`
-        # and /proc/<pid>/cmdline (security audit finding #1).
-        # This OVERRIDES any existing OPENAI_API_KEY in the user's
-        # environment — intentional, since the tool's --api-key /
-        # TOOL_EVAL_API_KEY is the explicit credential for this run.
-        if api_key:
-            env["OPENAI_API_KEY"] = api_key
-
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -431,7 +449,18 @@ async def run_llama_benchy(
             )
 
         raw_data = json.loads(output_path.read_text(encoding="utf-8"))
-        return parse_json_output(raw_data)
+        result = parse_json_output(raw_data)
+        if not result.samples:
+            raise RuntimeError(
+                "llama-benchy produced no benchmark samples. "
+                "Check endpoint authentication and llama-benchy output."
+            )
+        if not any(sample.pp_tps > 0 or sample.tg_tps > 0 for sample in result.samples):
+            raise RuntimeError(
+                "llama-benchy produced no usable throughput metrics. "
+                "Check endpoint authentication and llama-benchy output."
+            )
+        return result
 
     finally:
         # Clean up temp file

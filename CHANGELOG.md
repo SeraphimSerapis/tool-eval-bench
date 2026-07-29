@@ -4,8 +4,15 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+## [2.3.1] — 2026-07-29
+
 ### Fixed
 
+- **Authenticated llama-benchy runs now receive the configured API key (#36)** —
+  `--api-key` is forwarded through llama-benchy's supported CLI option instead
+  of an environment variable that llama-benchy ignores. Logged commands redact
+  the credential, and empty or all-null benchmark output now fails clearly
+  instead of rendering misleading zero-throughput results.
 - **TC-33 recognizes honest internal-search limitations without accepting generic
   “can't find” wording** — responses now receive full credit when they explicitly
   state that direct database access is unavailable, or when they report no matching

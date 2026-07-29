@@ -299,7 +299,7 @@ tool-eval-bench bench --mmlu --ifeval --gsm8k        # all three after tool-eval
 
 ### Throughput benchmark
 
-Throughput measurement uses [llama-benchy](https://github.com/eugr/llama-benchy) — a dedicated benchmarking tool that provides multi-run statistics with mean ± std, proper latency estimation, and cache-busting. Install with `pip install tool-eval-bench[perf]` or ensure `uvx` is on PATH. Progress is shown via a live Rich progress bar.
+Throughput measurement uses [llama-benchy](https://github.com/eugr/llama-benchy) — a dedicated benchmarking tool that provides multi-run statistics with mean ± std, proper latency estimation, and cache-busting. Install with `pip install tool-eval-bench[perf]` or ensure `uvx` is on PATH. Progress is shown via a live Rich progress bar. For authenticated endpoints, the regular `--api-key` value is forwarded to llama-benchy's supported CLI option and redacted from logs. Because llama-benchy 0.4.x does not support environment-based credentials, the key may still be visible to process inspection by other users on the same host while the benchmark is running.
 
 ```bash
 # Throughput only (skip tool-call scenarios)

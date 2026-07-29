@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from tool_eval_bench.runner.llama_benchy import (
     _build_command,
     _parse_benchmark_entry,
+    _redact_command,
     _stat_mean,
     parse_json_output,
 )
@@ -188,11 +190,8 @@ class TestBuildCommand:
         assert "--emit-progress" in cmd
         assert cmd[cmd.index("--emit-progress") + 1] == "-"
 
-    def test_api_key_not_on_command_line(self, monkeypatch):
-        """API key must NOT appear on the command line (security: visible in ps aux).
-
-        The key is passed via OPENAI_API_KEY env var in run_llama_benchy() instead.
-        """
+    def test_api_key_is_forwarded(self, monkeypatch):
+        """API key is passed through llama-benchy's supported CLI option."""
         monkeypatch.setattr(
             "tool_eval_bench.runner.llama_benchy.shutil.which",
             lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
@@ -200,10 +199,38 @@ class TestBuildCommand:
         cmd = _build_command(
             "http://localhost:8888/v1",
             "test-model",
+            api_key="sk-test-secret",
         )
-        assert "--api-key" not in cmd
-        # Ensure no argument looks like a secret
-        assert not any(arg.startswith("sk-") for arg in cmd)
+        key_index = cmd.index("--api-key")
+        assert cmd[key_index + 1] == "sk-test-secret"
+
+    def test_explicit_extra_args_api_key_takes_precedence(self, monkeypatch):
+        """An explicit llama-benchy key is not duplicated by the wrapper."""
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+        cmd = _build_command(
+            "http://localhost:8888/v1",
+            "test-model",
+            api_key="sk-wrapper-key",
+            extra_args=["--api-key", "sk-explicit-key"],
+        )
+        assert cmd.count("--api-key") == 1
+        key_index = cmd.index("--api-key")
+        assert cmd[key_index + 1] == "sk-explicit-key"
+
+    def test_redacts_api_key_from_logged_command(self):
+        command = [
+            "llama-benchy",
+            "--api-key",
+            "sk-test-secret",
+            "--api-key=sk-second-secret",
+        ]
+        rendered = _redact_command(command)
+        assert "sk-test-secret" not in rendered
+        assert "sk-second-secret" not in rendered
+        assert rendered.count("<redacted>") == 2
 
     def test_multiple_pp_tg_depths(self, monkeypatch):
         monkeypatch.setattr(
@@ -601,6 +628,50 @@ def _capture_output_file(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 class TestRunLlamaBenchy:
     """Tests for the async subprocess runner using mocked subprocess."""
 
+    async def test_forwards_api_key_without_logging_it(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The CLI key reaches llama-benchy argv but is redacted from logs."""
+        from tool_eval_bench.runner.llama_benchy import run_llama_benchy
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+        output_file_ref = _capture_output_file(monkeypatch)
+        captured_args: tuple[object, ...] = ()
+        captured_env: dict[str, str] = {}
+
+        async def mock_create_subprocess_exec(*args: object, **kwargs: object) -> _MockProcess:
+            nonlocal captured_args
+            captured_args = args
+            captured_env.update(kwargs.get("env", {}))
+            return _MockProcess(
+                output_file=output_file_ref[0],
+                write_json=SAMPLE_JSON_OUTPUT,
+            )
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
+            mock_create_subprocess_exec,
+        )
+        caplog.set_level(logging.INFO, logger="tool_eval_bench.runner.llama_benchy")
+
+        await run_llama_benchy(
+            "http://localhost:8888/v1",
+            "test-model",
+            api_key="sk-test-secret",
+        )
+
+        key_index = captured_args.index("--api-key")
+        assert captured_args[key_index + 1] == "sk-test-secret"
+        assert "sk-test-secret" not in caplog.text
+        assert "OPENAI_API_KEY" not in captured_env
+
     async def test_happy_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Successful run should parse JSON output and return results."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
@@ -676,6 +747,64 @@ class TestRunLlamaBenchy:
         )
 
         with pytest.raises(RuntimeError, match="did not produce JSON output"):
+            await run_llama_benchy("http://localhost:8888/v1", "test-model")
+
+    async def test_empty_benchmarks_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A successful subprocess with no benchmark samples is still a failure."""
+        from tool_eval_bench.runner.llama_benchy import run_llama_benchy
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+        output_file_ref = _capture_output_file(monkeypatch)
+
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(
+                output_file=output_file_ref[0],
+                write_json={"benchmarks": []},
+            )
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
+            mock_create,
+        )
+
+        with pytest.raises(RuntimeError, match="no benchmark samples"):
+            await run_llama_benchy("http://localhost:8888/v1", "test-model")
+
+    async def test_null_metrics_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Benchmark rows with no usable throughput must not render as zeros."""
+        from tool_eval_bench.runner.llama_benchy import run_llama_benchy
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+        output_file_ref = _capture_output_file(monkeypatch)
+        null_metrics_entry = {
+            "concurrency": 1,
+            "context_size": 0,
+            "prompt_size": 128,
+            "response_size": 32,
+            "pp_throughput": None,
+            "tg_throughput": None,
+            "pp_req_throughput": None,
+            "tg_req_throughput": None,
+        }
+
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(
+                output_file=output_file_ref[0],
+                write_json={"benchmarks": [null_metrics_entry]},
+            )
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
+            mock_create,
+        )
+
+        with pytest.raises(RuntimeError, match="no usable throughput metrics"):
             await run_llama_benchy("http://localhost:8888/v1", "test-model")
 
     async def test_on_output_receives_stderr_lines(self, monkeypatch: pytest.MonkeyPatch) -> None:
