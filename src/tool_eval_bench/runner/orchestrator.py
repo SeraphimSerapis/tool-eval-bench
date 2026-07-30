@@ -237,6 +237,8 @@ def _repair_json_str(s: str) -> str:
 
 def _assistant_message(result: ChatCompletionResult) -> ChatMessage:
     msg: ChatMessage = {"role": "assistant", "content": result.content}
+    if result.message_extra_content is not None:
+        msg["extra_content"] = result.message_extra_content
     if result.tool_calls:
         msg["tool_calls"] = [
             {
@@ -246,16 +248,18 @@ def _assistant_message(result: ChatCompletionResult) -> ChatMessage:
                     "name": tc.name,
                     "arguments": _repair_json_str(tc.arguments_str),
                 },
+                **({"extra_content": tc.extra_content} if tc.extra_content is not None else {}),
             }
             for tc in result.tool_calls
         ]
     return msg
 
 
-def _tool_result_message(call_id: str, result: Any) -> ChatMessage:
+def _tool_result_message(call_id: str, name: str, result: Any) -> ChatMessage:
     return {
         "role": "tool",
         "tool_call_id": call_id,
+        "name": name,
         "content": json.dumps(result) if not isinstance(result, str) else result,
     }
 
@@ -460,7 +464,7 @@ async def run_scenario(
                     ToolResultRecord(call_id=record.id, name=record.name, result=mock_result)
                 )
                 trace_lines.append(f"tool_result={json.dumps(mock_result)}")
-                messages.append(_tool_result_message(tc.id, mock_result))
+                messages.append(_tool_result_message(tc.id, tc.name, mock_result))
                 if scenario.checkpoint:
                     diagnostic = scenario.checkpoint(state, record)
                     if diagnostic:

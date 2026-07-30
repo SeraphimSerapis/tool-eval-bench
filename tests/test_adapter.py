@@ -16,6 +16,7 @@ from tool_eval_bench.adapters.openai_compat import (
     OpenAICompatibleAdapter,
     _normalize_tool_calls,
 )
+from tool_eval_bench.runner.orchestrator import _assistant_message
 
 # ---------------------------------------------------------------------------
 # _normalize_tool_calls — unit tests
@@ -88,6 +89,18 @@ class TestNormalizeToolCalls:
         assert result[0].name == "unknown_tool"
         assert result[0].arguments_str == "{}"
 
+    def test_preserves_provider_extra_content(self) -> None:
+        signature = {"google": {"thought_signature": "sig-a"}}
+        raw = [
+            {
+                "id": "call_1",
+                "extra_content": signature,
+                "function": {"name": "get_weather", "arguments": "{}"},
+            }
+        ]
+        result = _normalize_tool_calls(raw)
+        assert result[0].extra_content == signature
+
 
 # ---------------------------------------------------------------------------
 # _parse_response — unit tests
@@ -135,6 +148,29 @@ class TestParseResponse:
         assert result.content == ""
         assert len(result.tool_calls) == 1
         assert result.tool_calls[0].name == "get_weather"
+
+    def test_preserves_gemini_signature_when_rebuilding_assistant_message(self) -> None:
+        data = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "tc_1",
+                                "extra_content": {"google": {"thought_signature": "sig-a"}},
+                                "function": {"name": "get_weather", "arguments": "{}"},
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+        result = OpenAICompatibleAdapter._parse_response(data, 10.0)
+        rebuilt = _assistant_message(result)
+        assert rebuilt["tool_calls"][0]["extra_content"] == {
+            "google": {"thought_signature": "sig-a"}
+        }
 
     def test_list_content_joined(self) -> None:
         """Some providers return content as a list of parts."""
@@ -712,6 +748,76 @@ async def test_stream_multiple_tool_calls() -> None:
     assert result.tool_calls[0].id == "tc_a"
     assert result.tool_calls[1].name == "func_b"
     assert result.tool_calls[1].id == "tc_b"
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_parallel_tool_calls_without_indices() -> None:
+    """Gemini identifies parallel calls by id and omits numeric indices."""
+    chunks = [
+        json.dumps(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "id": "tc_a",
+                                    "extra_content": {"google": {"thought_signature": "sig-a"}},
+                                    "function": {
+                                        "name": "func_a",
+                                        "arguments": '{"x":',
+                                    },
+                                },
+                                {
+                                    "id": "tc_b",
+                                    "function": {
+                                        "name": "func_b",
+                                        "arguments": '{"y":',
+                                    },
+                                },
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
+        json.dumps(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "id": "tc_a",
+                                    "function": {"arguments": "1}"},
+                                },
+                                {
+                                    "id": "tc_b",
+                                    "function": {"arguments": "2}"},
+                                },
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
+    ]
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(_sse_lines(*chunks)))
+
+    result = await adapter.chat_completion(
+        model="gemini-3-flash",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        stream=True,
+    )
+
+    assert [(tc.id, tc.name, tc.arguments) for tc in result.tool_calls] == [
+        ("tc_a", "func_a", {"x": 1}),
+        ("tc_b", "func_b", {"y": 2}),
+    ]
+    assert result.tool_calls[0].extra_content == {"google": {"thought_signature": "sig-a"}}
     await adapter.aclose()
 
 

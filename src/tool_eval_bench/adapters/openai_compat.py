@@ -121,6 +121,7 @@ def _normalize_tool_calls(raw_calls: list[dict] | None) -> list[ProviderToolCall
                 id=call.get("id", f"tool_call_{idx + 1}"),
                 name=func.get("name", "unknown_tool"),
                 arguments_str=args,
+                extra_content=call.get("extra_content"),
             )
         )
     return result
@@ -317,7 +318,10 @@ class OpenAICompatibleAdapter(BackendAdapter):
         started = time.perf_counter()
         ttft_ms: float | None = None
         content_parts: list[str] = []
-        tool_calls_map: dict[int, dict] = {}  # index → {id, name, arguments}
+        tool_calls_map: dict[int, dict] = {}
+        tool_call_indices_by_id: dict[str, int] = {}
+        next_tool_call_index = 0
+        message_extra_content: dict[str, Any] | None = None
         reasoning_parts: list[str] = []
         stream_usage: dict = {}  # usage from final chunk
 
@@ -384,20 +388,51 @@ class OpenAICompatibleAdapter(BackendAdapter):
 
                 # Accumulate tool calls
                 for tc_delta in delta.get("tool_calls") or []:
-                    idx = tc_delta.get("index", 0)
+                    call_id = tc_delta.get("id")
+                    explicit_idx = tc_delta.get("index")
+                    if explicit_idx is not None:
+                        idx = int(explicit_idx)
+                    elif call_id and call_id in tool_call_indices_by_id:
+                        # Gemini's OpenAI-compatible stream identifies parallel
+                        # calls by id but omits OpenAI's numeric index.
+                        idx = tool_call_indices_by_id[call_id]
+                    elif call_id:
+                        while next_tool_call_index in tool_calls_map:
+                            next_tool_call_index += 1
+                        idx = next_tool_call_index
+                        tool_call_indices_by_id[call_id] = idx
+                        next_tool_call_index += 1
+                    elif len(tool_calls_map) == 1:
+                        # A continuation delta from a provider that omits both
+                        # id and index can still be associated unambiguously.
+                        idx = next(iter(tool_calls_map))
+                    else:
+                        while next_tool_call_index in tool_calls_map:
+                            next_tool_call_index += 1
+                        idx = next_tool_call_index
+                        next_tool_call_index += 1
+
+                    if call_id:
+                        tool_call_indices_by_id[call_id] = idx
                     if idx not in tool_calls_map:
                         tool_calls_map[idx] = {
-                            "id": tc_delta.get("id", f"tool_call_{idx + 1}"),
+                            "id": call_id or f"tool_call_{idx + 1}",
                             "name": "",
                             "arguments": "",
+                            "extra_content": None,
                         }
                     func = tc_delta.get("function") or {}
                     if func.get("name"):
                         tool_calls_map[idx]["name"] = func["name"]
                     if func.get("arguments"):
                         tool_calls_map[idx]["arguments"] += func["arguments"]
-                    if tc_delta.get("id"):
-                        tool_calls_map[idx]["id"] = tc_delta["id"]
+                    if call_id:
+                        tool_calls_map[idx]["id"] = call_id
+                    if tc_delta.get("extra_content") is not None:
+                        tool_calls_map[idx]["extra_content"] = tc_delta["extra_content"]
+
+                if delta.get("extra_content") is not None:
+                    message_extra_content = delta["extra_content"]
 
         elapsed_ms = (time.perf_counter() - started) * 1000
         content = "".join(content_parts)
@@ -427,6 +462,7 @@ class OpenAICompatibleAdapter(BackendAdapter):
                     id=tc["id"],
                     name=tc["name"],
                     arguments_str=repaired_args,
+                    extra_content=tc["extra_content"],
                 )
             )
 
@@ -437,6 +473,7 @@ class OpenAICompatibleAdapter(BackendAdapter):
             elapsed_ms=elapsed_ms,
             ttft_ms=ttft_ms,
             reasoning=reasoning_str,
+            message_extra_content=message_extra_content,
             prompt_tokens=stream_usage.get("prompt_tokens"),
             completion_tokens=stream_usage.get("completion_tokens"),
         )
@@ -471,6 +508,7 @@ class OpenAICompatibleAdapter(BackendAdapter):
             raw_response=data,
             elapsed_ms=elapsed_ms,
             reasoning=reasoning,
+            message_extra_content=message.get("extra_content"),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
         )

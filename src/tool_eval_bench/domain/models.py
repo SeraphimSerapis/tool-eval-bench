@@ -84,3 +84,6 @@ class ChatMessage(TypedDict, total=False):
     tool_calls: list[dict[str, Any]] | None
     tool_call_id: str | None
     name: str | None
+    # Provider-specific message metadata (for example Gemini thought
+    # signatures carried in ``extra_content``).
+    extra_content: dict[str, Any] | None

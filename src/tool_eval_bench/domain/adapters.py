@@ -29,6 +29,9 @@ class ProviderToolCall:
     id: str
     name: str
     arguments_str: str
+    # Provider-specific fields must survive a multi-turn round trip. Gemini
+    # uses this for the thought signature required by Gemini 3 function calls.
+    extra_content: dict[str, Any] | None = None
 
     @property
     def arguments(self) -> dict[str, Any]:
@@ -51,6 +54,9 @@ class ChatCompletionResult:
     elapsed_ms: float = 0.0
     ttft_ms: float | None = None
     reasoning: str | None = None
+    # Metadata attached to the assistant message itself, including provider
+    # extensions from empty/content-only streaming deltas.
+    message_extra_content: dict[str, Any] | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
 

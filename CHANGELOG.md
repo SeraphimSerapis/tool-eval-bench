@@ -4,6 +4,13 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Gemini OpenAI-compatible tool loops preserve thought signatures and parallel
+  calls** — assistant tool-call `extra_content` is retained across turns, and
+  streamed parallel calls are separated by their IDs when Google omits numeric
+  chunk indices.
+
 ## [2.3.1] — 2026-07-29
 
 ### Fixed
