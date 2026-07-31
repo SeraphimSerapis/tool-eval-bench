@@ -209,6 +209,60 @@ def run_throughput(
     return completed
 
 
+def _probe_llamacpp_model_path(base_url: str) -> str | None:
+    """Best-effort read of llama.cpp ``/props.model_path`` (the loaded GGUF)."""
+    import httpx
+
+    url = f"{base_url.rstrip('/').removesuffix('/v1')}/props"
+    try:
+        resp = httpx.get(url, timeout=3.0)
+        if resp.status_code != 200:
+            return None
+        body = resp.json()
+    except (httpx.HTTPError, OSError, ValueError):
+        return None
+    if not isinstance(body, dict):
+        return None
+    path = body.get("model_path")
+    if not path:
+        settings = body.get("default_generation_settings")
+        if isinstance(settings, dict):
+            path = settings.get("model")
+    return path if isinstance(path, str) and path else None
+
+
+def _resolve_benchy_tokenizer(
+    console: Console,
+    model: str,
+    display_name: str,
+    base_url: str,
+    explicit: str | None,
+) -> str | None:
+    """Find a local tokenizer for llama-benchy, reporting what was used.
+
+    llama-benchy runs offline (``HF_HUB_OFFLINE=1``), so an empty HuggingFace
+    cache makes it fail with a raw transformers traceback.  Resolving the path
+    ourselves means users rarely need to pass ``--tokenizer`` by hand.
+    """
+    from tool_eval_bench.utils.tokenizers import resolve_tokenizer
+
+    if explicit:
+        return explicit
+
+    resolution = resolve_tokenizer(model, model_root=display_name)
+    if not resolution:
+        model_path = _probe_llamacpp_model_path(base_url)
+        if model_path:
+            resolution = resolve_tokenizer(model, model_root=display_name, model_path=model_path)
+
+    if resolution.source in ("hf-cache", "hf-cache-alias"):
+        console.print(f"  [dim]🔤 Tokenizer: {resolution.detail} (HuggingFace cache)[/]")
+    elif resolution.source == "model-path":
+        console.print(f"  [dim]🔤 Tokenizer: {resolution.path}[/]")
+
+    return resolution.path
+
+
 def run_llama_benchy(
     console: Console,
     model: str,
@@ -247,6 +301,8 @@ def run_llama_benchy(
             "Or ensure [bold cyan]uvx[/] is on PATH for zero-install usage."
         )
         sys.exit(1)
+
+    tokenizer = _resolve_benchy_tokenizer(console, model, display_name, base_url, tokenizer)
 
     console.print()
     console.print(
