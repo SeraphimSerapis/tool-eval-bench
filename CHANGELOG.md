@@ -4,6 +4,23 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Tokenizer auto-detection for `--perf`** — `--tokenizer` is now rarely needed.
+  The served model id (including the vLLM `root` behind an alias) is matched
+  against the local HuggingFace cache (`HUGGINGFACE_HUB_CACHE`, `HF_HUB_CACHE`,
+  `TRANSFORMERS_CACHE`, `HF_HOME`, `~/.cache/huggingface/hub`), against local
+  model directories, and against llama.cpp's `/props.model_path`. An ambiguous
+  alias is never guessed at, since a wrong-family tokenizer silently skews token
+  counts. Detection is pure filesystem lookup — no network, no `huggingface_hub`
+  dependency. `--tokenizer` still overrides it.
+
+### Changed
+
+- **Offline-tokenizer failures list what's actually cached** — when no tokenizer
+  can be resolved, the error now names the tokenizers present in the HuggingFace
+  cache and shows the `hf download … --include "tokenizer*"` one-liner.
+
 ## [2.4.0] — 2026-07-31
 
 ### Fixed

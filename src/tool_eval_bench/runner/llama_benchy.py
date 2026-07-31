@@ -448,16 +448,29 @@ async def run_llama_benchy(
                 "couldn't find them in the cached files" in line for line in tail
             ) or any("Error loading tokenizer" in line for line in tail)
             if is_offline_tokenizer:
+                from tool_eval_bench.utils.tokenizers import (
+                    format_candidates,
+                    iter_cached_repos,
+                )
+
+                cached = format_candidates(sorted(iter_cached_repos()))
+                cache_hint = (
+                    f"\nTokenizers found in your HuggingFace cache:\n{cached}\n"
+                    "Pass one of these with --tokenizer if it matches the served model.\n"
+                    if cached
+                    else ""
+                )
                 raise RuntimeError(
                     "llama-benchy could not load a tokenizer.\n"
                     "llama-benchy needs a tokenizer to construct prompts, and this "
                     "host is running in offline mode with no tokenizer in the "
                     "HuggingFace cache.\n"
+                    f"{cache_hint}"
                     "Fixes:\n"
                     "  - Pass --tokenizer /path/to/tokenizer.json (or a directory "
                     "containing tokenizer.json) to use a local tokenizer.\n"
-                    "  - Or run once with network access so the gpt2 fallback "
-                    "tokenizer is cached.\n"
+                    "  - Or fetch just the tokenizer once with network access:\n"
+                    '      hf download <org>/<model> --include "tokenizer*" "*config.json"\n'
                     "  - Or use --perf-legacy for the built-in throughput benchmark, "
                     "which needs no tokenizer."
                 )
