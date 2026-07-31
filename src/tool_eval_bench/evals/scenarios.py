@@ -799,7 +799,10 @@ SCENARIOS: list[ScenarioDefinition] = [
         id="TC-06",
         title="Multi-Value Extraction",
         category=Category.B,
-        user_message="Translate 'Where is the nearest hospital?' from English to both Spanish and Japanese.",
+        user_message=(
+            "Use the translate_text tool to translate 'Where is the nearest hospital?' "
+            "from English into both Spanish and Japanese."
+        ),
         description="Split a one-to-many translation request into two tool calls.",
         handle_tool_call=_tc06_handle,
         evaluate=_tc06_eval,
@@ -921,7 +924,8 @@ SCENARIO_DISPLAY_DETAILS: dict[str, ScenarioDisplayDetail] = {
     ),
     "TC-06": ScenarioDisplayDetail(
         "Pass if it makes two translate_text calls, one for Spanish and one for Japanese.",
-        "Fail if it combines both languages into one call or only translates one of them.",
+        "Fail if it answers without the tool, combines both languages into one call, "
+        "or only translates one of them.",
     ),
     "TC-07": ScenarioDisplayDetail(
         "Pass if it searches, reads, resolves the manager, and emails the real total.",

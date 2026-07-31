@@ -68,6 +68,16 @@ def test_plugin_translation_preserves_shared_legacy_options() -> None:
     assert args.parallel == 2
 
 
+def test_perf_tokenizer_flag_parses() -> None:
+    """--tokenizer should flow through the legacy perf path."""
+    _, args = parse_cli_args(
+        _make_parser,
+        ["bench", "--perf-only", "--tokenizer", "/models/tokenizer.json"],
+    )
+    assert args.perf_only is True
+    assert args.tokenizer == "/models/tokenizer.json"
+
+
 def test_compare_run_subcommand() -> None:
     _, args = parse_cli_args(_make_parser, ["compare", "run-a", "run-b"])
     assert args.compare == ["run-a", "run-b"]

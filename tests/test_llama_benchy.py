@@ -1044,6 +1044,41 @@ class TestRunLlamaBenchy:
         with pytest.raises(RuntimeError, match="out of memory"):
             await run_llama_benchy("http://localhost:8888/v1", "test-model")
 
+    async def test_offline_tokenizer_failure_guidance(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty HF cache + offline mode should raise tokenizer guidance, not a raw traceback."""
+        from tool_eval_bench.runner.llama_benchy import run_llama_benchy
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(
+                stderr_lines=[
+                    b"Error loading tokenizer 'test-model': (lightweight tokenizer error: ...)\n",
+                    b"Falling back to 'gpt2' tokenizer as approximation.\n",
+                    b"Traceback (most recent call last):\n",
+                    b"OSError: We couldn't connect to 'https://huggingface.co' to load the "
+                    b"files, and couldn't find them in the cached files.\n",
+                ],
+                returncode=1,
+            )
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
+            mock_create,
+        )
+
+        with pytest.raises(RuntimeError, match="could not load a tokenizer") as exc_info:
+            await run_llama_benchy("http://localhost:8888/v1", "test-model")
+
+        message = str(exc_info.value)
+        assert "--tokenizer" in message
+        assert "--perf-legacy" in message
+
     async def test_non_oom_exit_preserves_original_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

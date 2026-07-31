@@ -6,10 +6,23 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **TC-06 prompt explicitly requires tool use** — the prompt now reads “Use the
+  translate_text tool…”, so a correct direct answer is no longer scored 0/2
+  against a hidden requirement. The one-to-many splitting test is unchanged.
+- **llama-benchy offline-tokenizer failure gives actionable guidance** — when
+  `--perf` fails on an air-gapped host with an empty HuggingFace cache, the raw
+  transformers traceback is replaced with a message pointing to the new
+  `--tokenizer` flag or `--perf-legacy`.
 - **Gemini OpenAI-compatible tool loops preserve thought signatures and parallel
   calls** — assistant tool-call `extra_content` is retained across turns, and
   streamed parallel calls are separated by their IDs when Google omits numeric
   chunk indices.
+
+### Added
+
+- **`--tokenizer PATH` flag for llama-benchy** — point the throughput benchmark
+  at a local `tokenizer.json` (file or directory) so it runs on offline hosts
+  that have no cached tokenizer.
 
 ## [2.3.1] — 2026-07-29
 

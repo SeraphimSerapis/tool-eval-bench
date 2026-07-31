@@ -344,6 +344,12 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Pass-through args for llama-benchy (quoted string)",
     },
     {
+        "name": "tokenizer",
+        "type": "string",
+        "default": None,
+        "description": "Local tokenizer.json path for llama-benchy on offline hosts",
+    },
+    {
         "name": "skip_coherence",
         "type": "bool",
         "default": True,

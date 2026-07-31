@@ -347,6 +347,11 @@ class TestTC05Contract:
 class TestTC06Contract:
     sc = _get("TC-06")
 
+    def test_prompt_requires_tool_use(self):
+        """The prompt must require the translate_text tool so correct direct
+        answers are not scored against a hidden requirement (forum #187)."""
+        assert "translate_text" in self.sc.user_message
+
     def test_pass_two_separate_calls(self):
         s = _state(
             tool_calls=[

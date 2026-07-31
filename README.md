@@ -313,7 +313,17 @@ tool-eval-bench bench --perf --benchy-runs 5 --benchy-latency-mode generation
 
 # Pass arbitrary flags to llama-benchy
 tool-eval-bench bench --perf --benchy-args='--no-warmup --enable-prefix-caching'
+
+# Offline / air-gapped host: point llama-benchy at a local tokenizer
+# (without it, llama-benchy needs network access or a filled HF cache)
+tool-eval-bench bench --perf --tokenizer /models/Qwen3.6/tokenizer.json
 ```
+
+> **Offline hosts:** llama-benchy always needs a tokenizer to construct prompts.
+> tool-eval-bench runs it in offline mode, so on an air-gapped host with an empty
+> HuggingFace cache you must pass `--tokenizer /path/to/tokenizer.json` (a file or
+> a directory containing `tokenizer.json`). Alternatively use `--perf-legacy`,
+> which needs no tokenizer.
 
 | Flag | Default | Purpose |
 |---|---|---|
@@ -326,6 +336,7 @@ tool-eval-bench bench --perf --benchy-args='--no-warmup --enable-prefix-caching'
 | `--benchy-runs` | 3 | Measurement iterations per test point |
 | `--benchy-latency-mode` | `generation` | Latency mode: `api`, `generation`, `none` |
 | `--benchy-args` | — | Pass-through for arbitrary llama-benchy flags |
+| `--tokenizer` | — | Local tokenizer.json path for offline hosts |
 
 ### Legacy built-in throughput
 

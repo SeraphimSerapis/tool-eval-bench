@@ -491,6 +491,7 @@ def main() -> None:
             # When we've already done our own warmup, tell llama-benchy to
             # skip its redundant warmup phase (saves 2 extra requests).
             skip_warmup=not args.no_warmup,
+            tokenizer=getattr(args, "tokenizer", None),
         )
 
         if args.perf_only:

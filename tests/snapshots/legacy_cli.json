@@ -495,6 +495,16 @@
   },
   {
     "choices": null,
+    "default": null,
+    "dest": "tokenizer",
+    "flags": [
+      "--tokenizer"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": false,
     "dest": "skip_coherence",
     "flags": [

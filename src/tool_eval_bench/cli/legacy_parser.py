@@ -270,6 +270,13 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Pass-through args for llama-benchy (quoted string)",
     )
     perf_grp.add_argument(
+        "--tokenizer",
+        default=None,
+        help="Path to a local tokenizer.json (or a directory containing it) used "
+        "for llama-benchy prompt construction. Needed on offline/air-gapped hosts "
+        "with an empty HuggingFace cache.",
+    )
+    perf_grp.add_argument(
         "--skip-coherence",
         action="store_true",
         help="Deprecated: llama-benchy coherence check is now always skipped (retained for compatibility)",

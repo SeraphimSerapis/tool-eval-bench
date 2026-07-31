@@ -437,6 +437,30 @@ async def run_llama_benchy(
                     "If this persists, try --perf-legacy-only for the built-in "
                     "throughput benchmark that does not spawn a subprocess."
                 )
+
+            # Detect offline tokenizer failure: llama-benchy always needs a
+            # tokenizer to construct benchmark prompts, and in offline mode
+            # (HF_HUB_OFFLINE=1, set above) neither the model tokenizer nor
+            # the gpt2 fallback can be fetched when the HuggingFace cache is
+            # empty — transformers raises this OSError.
+            tail = output_lines[-30:] if output_lines else []
+            is_offline_tokenizer = any(
+                "couldn't find them in the cached files" in line for line in tail
+            ) or any("Error loading tokenizer" in line for line in tail)
+            if is_offline_tokenizer:
+                raise RuntimeError(
+                    "llama-benchy could not load a tokenizer.\n"
+                    "llama-benchy needs a tokenizer to construct prompts, and this "
+                    "host is running in offline mode with no tokenizer in the "
+                    "HuggingFace cache.\n"
+                    "Fixes:\n"
+                    "  - Pass --tokenizer /path/to/tokenizer.json (or a directory "
+                    "containing tokenizer.json) to use a local tokenizer.\n"
+                    "  - Or run once with network access so the gpt2 fallback "
+                    "tokenizer is cached.\n"
+                    "  - Or use --perf-legacy for the built-in throughput benchmark, "
+                    "which needs no tokenizer."
+                )
             output_text = "\n".join(output_lines[-20:])  # last 20 lines
             raise RuntimeError(f"llama-benchy exited with code {returncode}:\n{output_text}")
 
