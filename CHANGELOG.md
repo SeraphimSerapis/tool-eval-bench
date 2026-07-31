@@ -4,10 +4,12 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-07-31
+
 ### Fixed
 
-- **TC-06 prompt explicitly requires tool use** — the prompt now reads “Use the
-  translate_text tool…”, so a correct direct answer is no longer scored 0/2
+- **TC-06 prompt explicitly requires tool use** — the prompt now reads "Use the
+  translate_text tool…", so a correct direct answer is no longer scored 0/2
   against a hidden requirement. The one-to-many splitting test is unchanged.
 - **llama-benchy offline-tokenizer failure gives actionable guidance** — when
   `--perf` fails on an air-gapped host with an empty HuggingFace cache, the raw
