@@ -238,10 +238,16 @@ def _record(state: ScenarioState, scenario, name: str, args: dict, turn: int = 1
             [
                 ("get_memory", {"key": "manager"}, 1),
                 ("lookup_directory", {"query": "my manager"}, 2),
+                ("search_files", {"query": "launch checklist"}, 3),
                 (
                     "send_email",
-                    {"to": "avery.patel@company.com", "subject": "Checklist", "body": "Attached"},
-                    3,
+                    {
+                        "to": "avery.patel@company.com",
+                        "subject": "Checklist",
+                        "body": "Attached",
+                        "attachments": ["launch_checklist"],
+                    },
+                    4,
                 ),
             ],
             "Sent.",

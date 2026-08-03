@@ -6,6 +6,21 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **Evaluator audit hardening** — explicit tool errors no longer receive
+  fabricated-data credit; critical argument values, dependency order, exact
+  recipients, conditional actions, structured nested types, safety boundaries,
+  and async polling provenance are now scored against their scenario contracts.
+  Negated numeric answers and misleading substring matches no longer earn PASS.
+
+  **This release also changes scenario behaviour, not just scoring.** Several
+  mock handlers now return empty or error payloads when called with off-target
+  arguments (TC-65, TC-71, TC-82), TC-66's contact fixture returns two
+  Engineering contacts instead of three mixed-department ones, and TC-82's
+  `send_email` tool gained an optional `attachments` parameter. Benchmark
+  results produced before this release are therefore **not comparable** with
+  results produced after it, even for identical model behaviour — the tasks
+  themselves differ, so re-run any baseline you intend to compare against.
+
 - **TC-26, TC-30, and TC-75 deterministic scoring (#38, #39, #40)** — attendee
   suggestions no longer count as contradictory attendance claims, a single
   Python call implementing the full conditional workflow is recognized through

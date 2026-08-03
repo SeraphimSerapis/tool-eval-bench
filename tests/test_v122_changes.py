@@ -62,8 +62,16 @@ class TestTC15FlexibleQuery:
         """Original phrasing should still pass."""
         s = _state(
             tool_calls=[
-                {"name": "web_search", "arguments": {"query": "population of iceland"}},
-                {"name": "calculator", "arguments": {"expression": "372520 * 0.02"}},
+                {
+                    "name": "web_search",
+                    "arguments": {"query": "population of iceland"},
+                    "turn": 1,
+                },
+                {
+                    "name": "calculator",
+                    "arguments": {"expression": "372520 * 0.02"},
+                    "turn": 2,
+                },
             ],
             final_answer="2% of Iceland's population is 7,450.4.",
         )
@@ -73,8 +81,16 @@ class TestTC15FlexibleQuery:
         """'Iceland population' (reversed order) should also pass."""
         s = _state(
             tool_calls=[
-                {"name": "web_search", "arguments": {"query": "Iceland population 2026"}},
-                {"name": "calculator", "arguments": {"expression": "372520 * 0.02"}},
+                {
+                    "name": "web_search",
+                    "arguments": {"query": "Iceland population 2026"},
+                    "turn": 1,
+                },
+                {
+                    "name": "calculator",
+                    "arguments": {"expression": "372520 * 0.02"},
+                    "turn": 2,
+                },
             ],
             final_answer="2% of 372,520 is 7,450.4.",
         )
@@ -84,8 +100,16 @@ class TestTC15FlexibleQuery:
         """Case-insensitive matching should work."""
         s = _state(
             tool_calls=[
-                {"name": "web_search", "arguments": {"query": "Population Iceland current"}},
-                {"name": "calculator", "arguments": {"expression": "372520 * 0.02"}},
+                {
+                    "name": "web_search",
+                    "arguments": {"query": "Population Iceland current"},
+                    "turn": 1,
+                },
+                {
+                    "name": "calculator",
+                    "arguments": {"expression": "372520 * 0.02"},
+                    "turn": 2,
+                },
             ],
             final_answer="The result is 7450.4 people.",
         )

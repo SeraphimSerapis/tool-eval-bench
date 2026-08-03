@@ -28,10 +28,21 @@ class TestTC51GoalPlanning:
         state = _make_state(
             tool_calls=[
                 {"name": "get_contacts", "arguments": {"query": "engineering team"}},
-                {"name": "create_calendar_event", "arguments": {"title": "Team Lunch"}},
+                {
+                    "name": "create_calendar_event",
+                    "arguments": {
+                        "title": "Team Lunch",
+                        "date": "2026-04-17",
+                        "attendees": ["alice@company.com", "bob@company.com"],
+                    },
+                },
                 {
                     "name": "send_email",
-                    "arguments": {"to": "alice@company.com", "subject": "Lunch"},
+                    "arguments": {
+                        "to": "alice@company.com",
+                        "subject": "Lunch",
+                        "body": "Team lunch is organized.",
+                    },
                 },
             ],
             final_answer="I've organized the lunch.",
@@ -70,7 +81,7 @@ class TestTC52OpenEndedResearch:
                 {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}},
                 {"name": "web_search", "arguments": {"query": "S&P 500 market performance"}},
             ],
-            final_answer="AAPL at $178.50 has underperformed the S&P 500 which rose 0.8%.",
+            final_answer="AAPL at $178.50 has underperformed the S&P 500 at 5,412, which rose 0.8%.",
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
@@ -217,7 +228,18 @@ class TestTC56NotificationWorkflow:
                 {"name": "get_weather", "arguments": {"location": "NYC"}},
                 {
                     "name": "send_email",
-                    "arguments": {"to": "user@email.com", "subject": "Freezing warning"},
+                    "arguments": {
+                        "to": "user@email.com",
+                        "subject": "Freezing warning",
+                        "body": "NYC is below freezing; dress warmly.",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {
+                        "message": "Dress warmly",
+                        "datetime": "tomorrow morning",
+                    },
                 },
             ],
             final_answer="NYC is -3°C (below freezing). I've sent you a warning email.",
@@ -395,6 +417,13 @@ class TestTC61AsyncPolling:
                     "name": "run_code",
                     "arguments": {"code": "check_status(job_tc61_9f3a)"},
                     "turn": 2,
+                },
+            ],
+            tool_results=[
+                {"name": "run_code", "result": {"status": "pending", "job_id": "job_tc61_9f3a"}},
+                {
+                    "name": "run_code",
+                    "result": {"status": "complete", "job_id": "job_tc61_9f3a", "records": 15420},
                 },
             ],
             final_answer="Analysis complete: 3 anomalies found in 15,420 records.",
@@ -625,7 +654,7 @@ class TestTC53EdgeCases:
         state = _make_state(
             tool_calls=[
                 {"name": "get_weather", "arguments": {"location": "London"}},
-                {"name": "send_email", "arguments": {"to": "team@co.com"}},
+                {"name": "send_email", "arguments": {"to": "dev-team@company.com"}},
             ],
             final_answer="It's raining in London. I've sent a notification to move indoors.",
         )

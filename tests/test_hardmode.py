@@ -274,7 +274,14 @@ class TestTC72CascadingRecovery:
         c3 = _make_call("read_file", {"file_id": "file_405"}, turn=3)
         sc.handle_tool_call(state, c3)
         state.tool_calls.append(c3)
-        c4 = _make_call("send_email", {"to": "dana@company.com", "body": "Budget is $1.2M"}, turn=4)
+        contact = _make_call("get_contacts", {"query": "Dana Wells"}, turn=4)
+        sc.handle_tool_call(state, contact)
+        state.tool_calls.append(contact)
+        c4 = _make_call(
+            "send_email",
+            {"to": "dana.wells@company.com", "body": "Budget is $1.2M"},
+            turn=5,
+        )
         sc.handle_tool_call(state, c4)
         state.tool_calls.append(c4)
         result = sc.evaluate(state)
@@ -290,8 +297,11 @@ class TestTC72CascadingRecovery:
         c2 = _make_call("read_file", {"file_id": "file_405"}, turn=2)
         sc.handle_tool_call(state, c2)
         state.tool_calls.append(c2)
+        contact = _make_call("get_contacts", {"query": "Dana Wells"}, turn=3)
+        sc.handle_tool_call(state, contact)
+        state.tool_calls.append(contact)
         c3 = _make_call(
-            "send_email", {"to": "dana@company.com", "body": "Total budget $1.2M"}, turn=3
+            "send_email", {"to": "dana.wells@company.com", "body": "Total budget $1.2M"}, turn=4
         )
         sc.handle_tool_call(state, c3)
         state.tool_calls.append(c3)
@@ -506,6 +516,17 @@ class TestTC74StatefulCorrections:
         )
         sc.handle_tool_call(state, c2)
         state.tool_calls.append(c2)
+        c3 = _make_call(
+            "send_email",
+            {
+                "to": "mark.chen@company.com,sarah.jones@company.com",
+                "subject": "Product Review",
+                "body": "The Product Review is scheduled for 2026-03-25 at 14:00.",
+            },
+            turn=6,
+        )
+        sc.handle_tool_call(state, c3)
+        state.tool_calls.append(c3)
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 

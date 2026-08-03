@@ -168,7 +168,7 @@ class TestTC03Contract:
                     "arguments": {
                         "to": "sarah.chen@company.com",
                         "subject": "Meeting",
-                        "body": "...",
+                        "body": "The meeting was moved to 3pm.",
                     },
                     "turn": 2,
                 },
@@ -183,7 +183,11 @@ class TestTC03Contract:
                 {"name": "get_contacts", "arguments": {"query": "Sarah"}, "turn": 1},
                 {
                     "name": "send_email",
-                    "arguments": {"to": "sarah@wrong.com", "subject": "Meeting", "body": "..."},
+                    "arguments": {
+                        "to": "sarah@wrong.com",
+                        "subject": "Meeting",
+                        "body": "The meeting was moved to 3pm.",
+                    },
                     "turn": 2,
                 },
             ],
@@ -200,7 +204,7 @@ class TestTC03Contract:
                     "arguments": {
                         "to": "sarah.chen@company.com",
                         "subject": "Meeting",
-                        "body": "...",
+                        "body": "The meeting was moved to 3pm.",
                     },
                     "turn": 1,
                 },
@@ -328,6 +332,7 @@ class TestTC05Contract:
                     "name": "create_calendar_event",
                     "arguments": {
                         "date": "2026-03-23",
+                        "title": "Team Standup",
                         "time": "09:30:00+01:00",
                         "duration_minutes": 30,
                         "attendees": ["alex.stone@company.com", "jamie.liu@company.com"],
@@ -694,8 +699,7 @@ class TestTC12Contract:
         This is a known evaluator strictness — documented in the contract test.
         """
         s = _state(final_answer="No tool exists for removing emails in the current toolset.")
-        # 'toolset' ≠ 'available tool' per regex — evaluator counts as FAIL
-        assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
 
     def test_fail_used_send_email(self):
         s = _state(
