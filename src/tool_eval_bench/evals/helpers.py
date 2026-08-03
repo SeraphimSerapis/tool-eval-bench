@@ -85,6 +85,31 @@ def answer_contains_number(answer: str, value: str) -> bool:
     return bool(re.search(rf"(?<![\d.]){needle}(?!\d)", collapsed))
 
 
+# A negation only reaches the value it actually governs.  Ordinary answers
+# stack unrelated clauses around the real result ("No rain today — Berlin is
+# 8°C"), so the scope has to end at the nearest clause boundary and cover only
+# the few words immediately before the value.  A wider window rejects correct
+# answers, which is exactly as damaging as accepting negated ones.
+_CLAUSE_BOUNDARY = re.compile(
+    r"[.!?;:,()\[\]\n–—]|\s-\s|"
+    r"\b(?:but|however|instead|and|or|while|whereas|though|although|yet)\b"
+)
+_NEGATION = re.compile(r"\b(?:not|never|no|neither|nor|without)\b|n't\b")
+# Function words carry no distance ("could not find a price of 187" is still a
+# denial), so the window is measured in content words.
+_NEGATION_STOPWORDS = frozenset(
+    "a an the of any some that this it its is are was were be been to in at on for".split()
+)
+_NEGATION_WINDOW_WORDS = 4
+
+
+def _is_negated(prefix: str) -> bool:
+    """Return whether text immediately following ``prefix`` sits under a negation."""
+    clause = _CLAUSE_BOUNDARY.split(prefix.lower())[-1]
+    words = [word for word in clause.split() if word.strip("'\"") not in _NEGATION_STOPWORDS]
+    return any(_NEGATION.search(word) for word in words[-_NEGATION_WINDOW_WORDS:])
+
+
 def answer_affirms_number(answer: str, value: str) -> bool:
     """Return whether ``answer`` presents ``value`` as an asserted result.
 
@@ -93,15 +118,13 @@ def answer_affirms_number(answer: str, value: str) -> bool:
     check opt-in so existing partial-credit paths that only need numeric
     mention semantics remain unchanged.
     """
-    collapsed = answer.replace(",", "")
-    needle = re.escape(value.replace(",", ""))
+    # Only strip digit grouping commas — sentence commas are clause boundaries.
+    collapsed = re.sub(r"(?<=\d),(?=\d)", "", answer)
+    needle = re.escape(re.sub(r"(?<=\d),(?=\d)", "", value))
     pattern = re.compile(rf"(?<![\d.]){needle}(?!\d)", re.IGNORECASE)
     for match in pattern.finditer(collapsed):
-        prefix = collapsed[max(0, match.start() - 80) : match.start()].lower()
-        clause = re.split(r"[.!?;]|\b(?:but|however|instead)\b", prefix)[-1]
-        if re.search(r"\b(?:not|never|no)\b|n't\b", clause):
-            continue
-        return True
+        if not _is_negated(collapsed[max(0, match.start() - 120) : match.start()]):
+            return True
     return False
 
 
@@ -109,9 +132,7 @@ def answer_affirms_text(answer: str, value: str) -> bool:
     """Return whether a textual value is asserted rather than negated."""
     pattern = re.compile(rf"\b{re.escape(value)}\b", re.IGNORECASE)
     for match in pattern.finditer(answer):
-        prefix = answer[max(0, match.start() - 80) : match.start()].lower()
-        clause = re.split(r"[.!?;]|\b(?:but|however|instead)\b", prefix)[-1]
-        if not re.search(r"\b(?:not|never|no)\b|n't\b", clause):
+        if not _is_negated(answer[max(0, match.start() - 120) : match.start()]):
             return True
     return False
 

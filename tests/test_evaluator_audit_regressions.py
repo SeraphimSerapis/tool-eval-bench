@@ -1001,3 +1001,105 @@ def test_audit_regression(scenario_id, state, expected):
 )
 def test_reviewer_boundary_regressions(scenario_id, state, expected):
     assert _SCENARIOS[scenario_id].evaluate(state).status == expected
+
+
+# ---------------------------------------------------------------------------
+# The audit matrices above prove that materially wrong traces no longer PASS.
+# These prove the converse: correct traces phrased the way models actually
+# phrase them still PASS. Every answer here is deliberately written with an
+# unrelated negation, a leading disclaimer, or terse non-English wording —
+# the shapes most likely to be misread by the stricter semantic checks.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "state"),
+    [
+        (
+            "TC-01",
+            _state(
+                calls=[_call("get_weather", {"location": "Berlin"})],
+                answer="No rain today — Berlin is 8°C and overcast.",
+            ),
+        ),
+        (
+            "TC-01",
+            _state(
+                calls=[_call("get_weather", {"location": "Berlin"})],
+                answer="There is no precipitation, and the temperature is 8°C.",
+            ),
+        ),
+        (
+            "TC-02",
+            _state(
+                calls=[_call("get_stock_price", {"ticker": "AAPL"})],
+                answer="I don't have live market access, but get_stock_price reports $187.42.",
+            ),
+        ),
+        (
+            "TC-04",
+            _state(
+                calls=[_call("get_weather", {"location": "Tokyo", "units": "fahrenheit"})],
+                answer="Tokyo is 64°F right now — no need for a jacket.",
+            ),
+        ),
+        (
+            "TC-09",
+            _state(
+                calls=[
+                    _call("get_weather", {"location": "London"}),
+                    _call("get_stock_price", {"ticker": "MSFT"}),
+                ],
+                answer="London: 12°C, no rain expected. MSFT is trading at $412.78.",
+            ),
+        ),
+        ("TC-10", _state(answer="There was no surrender in 1944; the war ended in 1945.")),
+        ("TC-11", _state(answer="No calculator needed: 15% of 200 is 30.")),
+        (
+            "TC-14",
+            _state(
+                calls=[
+                    _call("get_stock_price", {"ticker": "AAPL"}, 1),
+                    _call("web_search", {"query": "AAPL stock price"}, 2),
+                ],
+                results=[_error("get_stock_price")],
+                answer=(
+                    "get_stock_price was temporarily unavailable, so I checked the web "
+                    "instead: AAPL is around $187."
+                ),
+            ),
+        ),
+        (
+            "TC-16",
+            _state(
+                calls=[_call("get_weather", {"location": "München"})],
+                answer="München hat aktuell 14°C bei bewölktem Himmel.",
+            ),
+        ),
+        (
+            "TC-16",
+            _state(
+                calls=[_call("get_weather", {"location": "München"})],
+                answer="München: 14°C und bewölkt.",
+            ),
+        ),
+        (
+            "TC-37",
+            _state(
+                calls=[_call("get_weather", {"location": "Berlin"})],
+                answer="Berlin: overcast, no significant wind, 8°C.",
+            ),
+        ),
+        ("TC-39", _state(answer="No tool needed for this — 15% of 200 is 30.")),
+        (
+            "TC-40",
+            _state(
+                calls=[_call("get_order_status", {"order_id": "Sarah Chen"})],
+                answer="No delays on this one: order ORD-2026-1847 has shipped.",
+            ),
+        ),
+    ],
+)
+def test_natural_phrasing_still_passes(scenario_id, state):
+    result = _SCENARIOS[scenario_id].evaluate(state)
+    assert result.status == ScenarioStatus.PASS, result.summary

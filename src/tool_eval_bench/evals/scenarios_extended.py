@@ -61,6 +61,15 @@ from tool_eval_bench.evals.helpers import (
 # Category F — Localization
 # ===================================================================
 
+# German words with no English homograph. Deliberately excludes "die", "hat",
+# "in", "bei" spellings that double as English words.
+_GERMAN_MARKERS = re.compile(
+    r"\b(?:bewölkt\w*|wetter|grad|beträgt|liegt|derzeit|aktuell|heute|morgen|himmel|"
+    r"regen|sonnig|schnee|und|ist|sind|es|im|der|das|für|nicht|bitte|leider|wird|"
+    r"gerade|verfügbar|erneut|versuchen|dienst)\b",
+    re.IGNORECASE,
+)
+
 
 def _tc16_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
@@ -118,14 +127,13 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
     weather_score = sum(1 for w in weather_german if w in answer_lower)
     generic_score = sum(1 for w in generic_german if w in answer_lower)
-    german_function_words = sum(
-        1
-        for word in (" und ", " ist ", " der ", " die ", " das ", " für ", " nicht ", " bitte ")
-        if word in f" {answer_lower} "
-    )
-    answer_in_german = (weather_score >= 3 and german_function_words >= 1) or (
-        generic_score >= 2 and german_function_words >= 1
-    )
+    # "temperatur", "celsius", "münchen" and "°c" all appear verbatim in English
+    # answers, so the vocabulary score alone cannot prove the reply is German.
+    # Require one marker that has no English reading — but keep the marker set
+    # wide enough that a terse, fully German answer ("München hat aktuell 14°C
+    # bei bewölktem Himmel.") still qualifies.
+    german_markers = len(_GERMAN_MARKERS.findall(answer_lower))
+    answer_in_german = (weather_score >= 3 or generic_score >= 2) and german_markers >= 1
     # Check the model surfaced actual weather data (temp 14 or condition).
     has_data = _answer_contains_number(state.final_answer, "14") or "bewölkt" in answer_lower
     weather_call = next((c for c in state.tool_calls if c.name == "get_weather"), None)
