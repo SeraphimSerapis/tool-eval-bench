@@ -12,7 +12,7 @@ Hard Mode scenarios (Category P) are available via ALL_SCENARIOS_WITH_HARDMODE
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, cast
 
 from tool_eval_bench.domain.scenarios import (
     Category,
@@ -21,6 +21,9 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioEvaluation,
     ScenarioState,
     ToolCallRecord,
+)
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_number as _answer_affirms_number,
 )
 from tool_eval_bench.evals.helpers import (
     answer_contains_number as _answer_contains_number,
@@ -81,6 +84,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    result_is_usable_if_present as _result_is_usable_if_present,
+)
+from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -117,8 +123,11 @@ def _tc01_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     used_web = _has_tool_call(state, "web_search")
     if used_weather and not used_web and len(state.tool_calls) == 1:
+        weather_call = _first_call(state, "get_weather")
+        if weather_call and not _result_is_usable_if_present(state, weather_call):
+            return _fail("get_weather returned an error; the answer cannot fabricate weather data.")
         # Verify the model surfaced actual weather data (temp 8 or condition).
-        has_temp = bool(re.search(r"(?<!\d)8(?!\d)", state.final_answer))
+        has_temp = _answer_affirms_number(state.final_answer, "8")
         has_condition = "overcast" in state.final_answer.lower()
         if has_temp or has_condition:
             return _pass("Used get_weather with Berlin only.")
@@ -158,8 +167,11 @@ def _tc02_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     web = _has_tool_call(state, "web_search")
     if stock and not web and len(state.tool_calls) == 1:
+        stock_call = _first_call(state, "get_stock_price")
+        if stock_call and not _result_is_usable_if_present(state, stock_call):
+            return _partial("get_stock_price returned an error, so no price can be confirmed.")
         # Verify the model surfaced the actual stock price.
-        has_price = _answer_contains_number(state.final_answer, "187")
+        has_price = _answer_affirms_number(state.final_answer, "187")
         if has_price:
             return _pass("Used only get_stock_price for AAPL.")
         return _partial(
@@ -194,6 +206,13 @@ def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
         and contact_call.turn < email_call.turn
         and _includes_text(contact_call.arguments.get("query"), "sarah")
         and _normalize(_as_str(email_call.arguments.get("to"))) == "sarah.chen@company.com"
+        and bool(_as_str(email_call.arguments.get("subject")).strip())
+        and bool(_as_str(email_call.arguments.get("body")).strip())
+        and "moved" in _as_str(email_call.arguments.get("body")).lower()
+        and any(
+            phrase in _as_str(email_call.arguments.get("body")).lower()
+            for phrase in ("3pm", "3 pm", "15:00")
+        )
     ):
         return _pass("Looked up Sarah before sending the email.")
     if (
@@ -203,6 +222,13 @@ def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
         and "?" in state.final_answer
     ):
         return _partial("Asked for Sarah's email instead of inferring the tool chain.")
+    if (
+        contact_call
+        and email_call
+        and contact_call.turn <= email_call.turn
+        and _normalize(_as_str(email_call.arguments.get("to"))) == "sarah.chen@company.com"
+    ):
+        return _partial("Looked up Sarah and attempted the email, but the message was incomplete.")
     return _fail("Did not complete the contact lookup to email chain correctly.")
 
 
@@ -238,11 +264,12 @@ def _tc04_eval(state: ScenarioState) -> ScenarioEvaluation:
         and _includes_text(weather.arguments.get("location"), "tokyo")
         and _normalize(_as_str(weather.arguments.get("units"))) == "fahrenheit"
     ):
-        # Verify the model surfaced the actual temperature or unit.
-        has_data = (
-            _answer_contains_number(state.final_answer, "64")
-            or "fahrenheit" in state.final_answer.lower()
-        )
+        if not _result_is_usable_if_present(state, weather):
+            return _partial(
+                "get_weather returned an error, so the temperature cannot be confirmed."
+            )
+        # The requested unit alone is not returned weather data.
+        has_data = _answer_affirms_number(state.final_answer, "64")
         if has_data:
             return _pass("Requested Tokyo weather in Fahrenheit explicitly.")
         return _partial(
@@ -306,7 +333,8 @@ def _tc05_eval(state: ScenarioState) -> ScenarioEvaluation:
     correct_time = _datetime_matches(
         f"2026-03-23T{_as_str(event.arguments.get('time', ''))}:00", "2026-03-23", "09:30"
     ) or _as_str(event.arguments.get("time", "")).startswith("09:30")
-    if correct_date and correct_time and has_duration and has_attendees:
+    has_title = "standup" in _normalize(_as_str(event.arguments.get("title")))
+    if correct_date and correct_time and has_duration and has_attendees and has_title:
         return _pass("Parsed next Monday and included the requested meeting details.")
     if correct_date and correct_time:
         return _partial("Got the date and time right, but missed some optional structure.")
@@ -351,19 +379,21 @@ def _tc06_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         for c in calls
     )
-    if len(calls) >= 2 and has_spanish and has_japanese and not invalid_bundled:
+    if len(calls) == 2 and has_spanish and has_japanese and not invalid_bundled:
         # Verify the model surfaced the actual translations.
         answer = state.final_answer
         has_spanish_text = "Dónde" in answer or (
             "hospital" in answer.lower() and "cercano" in answer
         )
         has_japanese_text = "病院" in answer or "最寄り" in answer or "どこ" in answer
-        if has_spanish_text or has_japanese_text:
+        if has_spanish_text and has_japanese_text:
             return _pass("Issued separate translate_text calls for both languages.")
         return _partial(
             "Called translate_text correctly for both languages but did not surface "
             "the translations in the answer.",
         )
+    if has_spanish and has_japanese:
+        return _partial("Made the required translations but added an invalid or extra call.")
     return _fail("Did not split the translation request into two valid tool calls.")
 
 
@@ -428,6 +458,17 @@ def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
     ):
         steps += 1
     if steps == 4:
+        ordered = [
+            _first_call(state, "search_files"),
+            _first_call(state, "read_file"),
+            _first_call(state, "get_contacts"),
+            _first_call(state, "send_email"),
+        ]
+        if any(call is None for call in ordered):
+            return _partial("Found all chain steps, but one dependency record was incomplete.")
+        ordered_calls: list[ToolCallRecord] = [cast(ToolCallRecord, call) for call in ordered]
+        if not all(ordered_calls[i].turn < ordered_calls[i + 1].turn for i in range(3)):
+            return _partial("Found all chain steps, but used them out of dependency order.")
         return _pass("Completed the full four-step chain with the right data.")
     if steps >= 3:
         return _partial("Completed most of the chain, but missed one dependent step.")
@@ -499,12 +540,18 @@ def _tc09_eval(state: ScenarioState) -> ScenarioEvaluation:
         c.name == "get_stock_price" for c in first_batch
     )
     if weather and stock:
+        weather_call = _first_call(state, "get_weather")
+        stock_call = _first_call(state, "get_stock_price")
+        if (weather_call and not _result_is_usable_if_present(state, weather_call)) or (
+            stock_call and not _result_is_usable_if_present(state, stock_call)
+        ):
+            return _partial("A requested tool returned an error, so its value cannot be confirmed.")
         # Verify the model actually surfaced the tool result values.
         # Use digit-boundary match for temperature (12) to avoid false
         # positives from the stock price (412.78) which contains "12".
         # (?<!\d)12(?!\d) matches "12C", "12°C", "12 degrees" but not "412".
-        has_temp = bool(re.search(r"(?<!\d)12(?!\d)", state.final_answer))
-        has_price = _answer_contains_number(state.final_answer, "412")
+        has_temp = _answer_affirms_number(state.final_answer, "12")
+        has_price = _answer_affirms_number(state.final_answer, "412")
         if has_temp and has_price:
             note = "Both tools were called in the same assistant turn." if parallel else None
             return _pass("Handled both independent tasks.", note)
@@ -527,7 +574,7 @@ def _tc10_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc10_eval(state: ScenarioState) -> ScenarioEvaluation:
-    if len(state.tool_calls) == 0 and _answer_contains_number(state.final_answer, "1945"):
+    if len(state.tool_calls) == 0 and _answer_affirms_number(state.final_answer, "1945"):
         return _pass("Answered directly without tool use.")
     return _fail("Used tools or missed the basic fact.")
 
@@ -542,7 +589,7 @@ def _tc11_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc11_eval(state: ScenarioState) -> ScenarioEvaluation:
-    correct = _answer_contains_number(state.final_answer, "30")
+    correct = _answer_affirms_number(state.final_answer, "30")
     if len(state.tool_calls) == 0 and correct:
         return _pass("Did the math directly — good restraint.")
     if _has_tool_call(state, "calculator") and correct and not _has_tool_call(state, "web_search"):
@@ -567,9 +614,9 @@ def _tc12_eval(state: ScenarioState) -> ScenarioEvaluation:
     if (
         len(state.tool_calls) == 0
         and _contains_refusal(state.final_answer)
-        and (
-            re.search(r"delete", state.final_answer, re.IGNORECASE)
-            or re.search(r"available tool", state.final_answer, re.IGNORECASE)
+        and re.search(r"delete|remove|erase|email", state.final_answer, re.IGNORECASE)
+        and re.search(
+            r"tool|support|capab|avail|cannot|can't|unable|won't", state.final_answer, re.I
         )
     ):
         return _pass("Refused cleanly because no delete-email tool exists.")
@@ -605,6 +652,13 @@ def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
         queries = [_normalize(_as_str(s.arguments.get("query", ""))) for s in searches]
         if len(queries) >= 2 and queries[0] == queries[1]:
             return _partial("Retried search, but used the exact same query both times.")
+        if not any("johnson" in query for query in queries[1:]):
+            return _fail("Retried search without preserving the Johnson document request.")
+        explicit_results = [r for r in state.tool_results if r.name == "search_files"]
+        if explicit_results:
+            retry_result = explicit_results[-1].result
+            if "file_117" not in str(retry_result) and "johnson" not in str(retry_result).lower():
+                return _fail("The retry returned no recognized Johnson document.")
         return _pass("Retried after the empty result and recovered.")
     if clarified:
         return _pass("Asked for clarification after the empty result.")
@@ -636,14 +690,6 @@ def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
         re.search(r"temporarily unavailable|rate limit|service", transcript, re.IGNORECASE)
         or re.search(r"couldn't|get_stock_price", transcript, re.IGNORECASE)
     )
-    offered_alt = bool(
-        re.search(
-            r"web search|search(?:ing)?(?: for)?(?: the)? information online|search online|try again|fallback|check(?:ing)? .*?(?:website|platform|source)",
-            transcript,
-            re.IGNORECASE,
-        )
-    )
-
     # Tighter partial credit: web_search must have been called AFTER the stock error was
     # received. A model that called web_search before the stock call (or in the same turn)
     # gets no recovery credit — it didn't actually recover, it just happened to search.
@@ -654,10 +700,20 @@ def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
         else False
     )
     used_search_as_fallback = search_after_error
+    fallback_usable = (
+        any(
+            c.turn > stock_error_turn and _result_is_usable_if_present(state, c)
+            for c in search_calls
+        )
+        if stock_error_turn is not None
+        else False
+    )
 
-    if len(stock_calls) >= 1 and acknowledged and (used_search_as_fallback or offered_alt):
+    if len(stock_calls) >= 1 and acknowledged and used_search_as_fallback:
+        if not fallback_usable:
+            return _partial("Tried a fallback source, but it also returned an error.")
         # Also verify the model surfaced the actual price from the fallback search.
-        has_price = _answer_contains_number(state.final_answer, "187")
+        has_price = _answer_affirms_number(state.final_answer, "187")
         if has_price:
             return _pass("Acknowledged the stock tool failure, recovered, and surfaced the price.")
         return _partial(
@@ -668,7 +724,7 @@ def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial(
             "Recovered with web_search after the error, but did not clearly acknowledge it."
         )
-    if len(stock_calls) >= 1 and acknowledged and not (used_search_as_fallback or offered_alt):
+    if len(stock_calls) >= 1 and acknowledged and not used_search_as_fallback:
         return _partial("Acknowledged the error but did not attempt an alternative source.")
     return _fail("Did not handle the tool error with enough integrity.")
 
@@ -723,6 +779,7 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
     if (
         search
         and calc
+        and search.turn < calc.turn
         and _includes_text(search.arguments.get("query"), "population")
         and _includes_text(search.arguments.get("query"), "iceland")
         and "372520" in _as_str(calc.arguments.get("expression")).replace(",", "")
@@ -734,6 +791,17 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial(
             "Correctly piped the population into the calculator but did not surface "
             "the computed result in the answer.",
+        )
+    if (
+        search
+        and calc
+        and search.turn == calc.turn
+        and _includes_text(search.arguments.get("query"), "population")
+        and _includes_text(search.arguments.get("query"), "iceland")
+    ):
+        return _partial(
+            "Issued dependent calls in the same turn, so the calculation could not use "
+            "the search result."
         )
     if not calc and search and _answer_contains_number(state.final_answer, "7450.4"):
         return _partial("Computed the right answer mentally after searching.")

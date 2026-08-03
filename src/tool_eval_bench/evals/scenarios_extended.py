@@ -35,6 +35,9 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
+    has_explicit_tool_error as _has_explicit_tool_error,
+)
+from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
 )
 from tool_eval_bench.evals.helpers import (
@@ -115,13 +118,19 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
     weather_score = sum(1 for w in weather_german if w in answer_lower)
     generic_score = sum(1 for w in generic_german if w in answer_lower)
-    answer_in_german = weather_score >= 3 or generic_score >= 2
+    german_function_words = sum(
+        1
+        for word in (" und ", " ist ", " der ", " die ", " das ", " für ", " nicht ", " bitte ")
+        if word in f" {answer_lower} "
+    )
+    answer_in_german = (weather_score >= 3 and german_function_words >= 1) or (
+        generic_score >= 2 and german_function_words >= 1
+    )
     # Check the model surfaced actual weather data (temp 14 or condition).
     has_data = _answer_contains_number(state.final_answer, "14") or "bewölkt" in answer_lower
-    # When the model uses generic_german tokens (error handling path),
-    # data was never received — don't require it for pass.
-    answered_about_error = generic_score >= 2
-
+    weather_call = next((c for c in state.tool_calls if c.name == "get_weather"), None)
+    weather_failed = bool(weather_call and _has_explicit_tool_error(state, weather_call))
+    answered_about_error = generic_score >= 2 and weather_failed and not has_data
     if used_weather and answer_in_german and (has_data or answered_about_error):
         return _pass("Used get_weather for München and responded in German.")
     if used_weather and answer_in_german and not has_data:
@@ -175,7 +184,8 @@ def _tc17_eval(state: ScenarioState) -> ScenarioEvaluation:
     title_val = _normalize(_as_str(event.arguments.get("title")))
 
     correct_time = time_val == "14:00"
-    correct_tz = tz_val in ("europe/berlin", "cet", "cest", "utc+1", "utc+2")
+    # 2026-03-24 is before the EU DST transition, so CEST is not valid here.
+    correct_tz = tz_val in ("europe/berlin", "cet", "utc+1")
     correct_date = date_val == "2026-03-24"  # next Tuesday from reference date (Friday 2026-03-20)
     has_title = "standup" in title_val or "meeting" in title_val or "besprechung" in title_val
 
@@ -238,23 +248,28 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
     translate_calls = [c for c in state.tool_calls if c.name == "translate_text"]
     email_calls = [c for c in state.tool_calls if c.name == "send_email"]
 
-    translated_to_german = any(
-        _normalize(_as_str(c.arguments.get("target_language"))) in ("german", "de", "deutsch")
+    translations = [
+        c
         for c in translate_calls
-    )
-    sent_email = any(
-        _includes_text(c.arguments.get("to"), "hans")
-        or _includes_text(c.arguments.get("to"), "mueller")
+        if _normalize(_as_str(c.arguments.get("target_language"))) in ("german", "de", "deutsch")
+    ]
+    emails = [
+        c
         for c in email_calls
-    )
+        if _normalize(_as_str(c.arguments.get("to"))) == "hans.mueller@firma.de"
+    ]
+    translated_to_german = bool(translations)
+    sent_email = bool(emails)
     email_has_german = any(
         _includes_text(c.arguments.get("body"), "verschoben")
         or _includes_text(c.arguments.get("body"), "termin")
-        for c in email_calls
+        for c in emails
     )
-
-    if translated_to_german and sent_email and email_has_german:
+    ordered = any(t.turn < e.turn for t in translations for e in emails)
+    if translated_to_german and sent_email and email_has_german and ordered:
         return _pass("Translated to German and emailed the German version to Hans.")
+    if translated_to_german and sent_email and not ordered:
+        return _partial("Translated and emailed the message, but used the steps out of order.")
     if translated_to_german and sent_email and not email_has_german:
         return _partial(
             "Translated correctly but emailed the English version instead of the German one."
@@ -291,15 +306,28 @@ def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
         or re.search(r"(?:^|\n)\s*[-•*]", answer, re.MULTILINE)
     )
 
-    # Check for the classifications
-    checks = [
-        "code" in answer or "engineering" in answer,  # Message 1: code help
-        "schedule" in answer or "calendar" in answer,  # Message 2: scheduling
-        "billing" in answer or "payment" in answer,  # Message 3: billing
-        "devops" in answer or "deploy" in answer,  # Message 4: DevOps
-        "research" in answer,  # Message 5: research
+    # Each label must be attached to the corresponding numbered message. A
+    # keyword bag can pass without classifying anything at all.
+    numbered_checks = [
+        bool(re.search(r"(?:1\s*[.):\-].{0,80})(?:code_help|code|engineering)", answer)),
+        bool(re.search(r"(?:2\s*[.):\-].{0,80})(?:scheduling|schedule|calendar)", answer)),
+        bool(re.search(r"(?:3\s*[.):\-].{0,80})(?:billing|payment)", answer)),
+        bool(re.search(r"(?:4\s*[.):\-].{0,80})(?:devops|deploy)", answer)),
+        bool(re.search(r"(?:5\s*[.):\-].{0,80})research", answer)),
     ]
-    correct = sum(checks)
+    bullet_lines = re.findall(r"(?:^|\n)\s*[-•*]\s*(.+)", answer)
+    expected = [
+        ("code_help", "code", "engineering"),
+        ("scheduling", "schedule", "calendar"),
+        ("billing", "payment"),
+        ("devops", "deploy"),
+        ("research",),
+    ]
+    bullet_correct = sum(
+        any(label in line for label in labels)
+        for line, labels in zip(bullet_lines[:5], expected, strict=False)
+    )
+    correct = max(sum(numbered_checks), bullet_correct)
 
     if correct >= 4 and has_structure:
         return _pass("Classified messages correctly in structured format without tool use.")
@@ -352,19 +380,26 @@ def _tc20_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     Expected: search → read → calculator (or mental math), answer = $141,440
     """
-    searched = any(c.name == "search_files" for c in state.tool_calls)
-    read = any(c.name == "read_file" for c in state.tool_calls)
+    search = next((c for c in state.tool_calls if c.name == "search_files"), None)
+    read = next((c for c in state.tool_calls if c.name == "read_file"), None)
+    searched = bool(
+        search
+        and "q3" in _as_str(search.arguments.get("query")).lower()
+        and "sales" in _as_str(search.arguments.get("query")).lower()
+    )
+    read_correct = bool(read and _as_str(read.arguments.get("file_id")) == "file_q3_sales")
     # Average = 707200 / 5 = 141440
     answer_has_avg = any(
         num in state.final_answer.replace(",", "")
         for num in ("141440", "141,440", "141440.0", "141440.00")
     )
 
-    if searched and read and answer_has_avg:
+    ordered = bool(searched and read_correct and search and read and search.turn < read.turn)
+    if ordered and answer_has_avg:
         return _pass("Found, read, and calculated the correct average ($141,440).")
-    if read and answer_has_avg:
+    if read_correct and answer_has_avg:
         return _partial("Got the right answer but skipped the file search step.")
-    if searched and read and not answer_has_avg:
+    if searched and read_correct and not answer_has_avg:
         return _partial("Found and read the file but calculated incorrectly.")
     return _fail("Did not complete the search→read→calculate chain.")
 
@@ -392,11 +427,36 @@ def _tc21_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     answer = state.final_answer.lower()
     error_checks = [
-        "email" in answer,
-        "age" in answer or "200" in answer,
-        "phone" in answer or "digit" in answer,
-        "date" in answer or "2020" in answer or "month" in answer,
-        "amount" in answer or "negative" in answer or "-50" in answer,
+        bool(
+            re.search(
+                r"email.{0,50}(?:invalid|malformed|bad)|(?:invalid|malformed|bad).{0,50}email",
+                answer,
+            )
+        ),
+        bool(
+            re.search(
+                r"age.{0,50}(?:too high|out of range|over 150)|(?:too high|out of range).{0,50}age",
+                answer,
+            )
+        ),
+        bool(
+            re.search(
+                r"phone.{0,50}(?:invalid|digits?|format)|(?:invalid|digits?|format).{0,50}phone",
+                answer,
+            )
+        ),
+        bool(
+            re.search(
+                r"date.{0,50}(?:invalid|impossible|month 13)|(?:invalid|impossible).{0,50}date",
+                answer,
+            )
+        ),
+        bool(
+            re.search(
+                r"amount.{0,50}(?:negative|below zero|must be positive)|(?:negative|below zero).{0,50}amount",
+                answer,
+            )
+        ),
     ]
     found = sum(error_checks)
     if found >= 4:

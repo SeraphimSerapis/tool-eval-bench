@@ -158,17 +158,12 @@ class TestTC66NestedSchema:
     def test_pass_correct(self) -> None:
         data = {
             "query": "engineering",
-            "total": 3,
+            "total": 2,
             "contacts": [
                 {
                     "name": "Alice Zhang",
                     "email": "alice.zhang@company.com",
                     "department": "Engineering",
-                },
-                {
-                    "name": "Bob Martinez",
-                    "email": "bob.martinez@company.com",
-                    "department": "Design",
                 },
                 {
                     "name": "Carol Singh",
@@ -236,7 +231,10 @@ class TestTC67EnumConstraint:
             "reasoning": "Strong revenue growth of 265% YoY driven by AI demand with analyst targets above current price.",
         }
         state = _make_state(
-            tool_calls=[{"name": "get_stock_price", "arguments": {"ticker": "NVDA"}}],
+            tool_calls=[
+                {"name": "get_stock_price", "arguments": {"ticker": "NVDA"}},
+                {"name": "web_search", "arguments": {"query": "NVDA recent news"}},
+            ],
             final_answer=json.dumps(data),
         )
         result = self.scenario.evaluate(state)

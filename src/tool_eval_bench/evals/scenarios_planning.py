@@ -30,6 +30,9 @@ from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
+    as_str_list as _as_str_list,
+)
+from tool_eval_bench.evals.helpers import (
     asks_for_clarification as _asks_clarification,
 )
 from tool_eval_bench.evals.helpers import (
@@ -40,6 +43,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
+)
+from tool_eval_bench.evals.helpers import (
+    parse_math_expression as _parse_math_expression,
 )
 from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
@@ -98,8 +104,25 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
             or _includes_text(c.arguments.get("query", ""), "team")
         ),
     )
-    created_event = _has_tool_call(state, "create_calendar_event")
-    sent_notification = _has_tool_call(state, "send_email")
+    created_event = _has_tool_call(
+        state,
+        "create_calendar_event",
+        lambda c: all(
+            [
+                bool(_as_str(c.arguments.get("title")).strip()),
+                bool(_as_str(c.arguments.get("date")).strip()),
+                bool(_as_str_list(c.arguments.get("attendees"))),
+            ]
+        ),
+    )
+    sent_notification = _has_tool_call(
+        state,
+        "send_email",
+        lambda c: (
+            bool(_as_str(c.arguments.get("to")).strip())
+            and bool(_as_str(c.arguments.get("body")).strip())
+        ),
+    )
 
     steps = sum([got_contacts, created_event, sent_notification])
 
@@ -114,8 +137,25 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
         if not sent_notification:
             missing.append("notification")
         return _partial(f"Completed 2/3 planning steps. Missing: {', '.join(missing)}.")
-    if got_contacts or created_event:
-        return _partial("Started planning but didn't complete the full workflow.")
+    relevant_calls = [
+        c
+        for c in state.tool_calls
+        if c.name in {"get_contacts", "create_calendar_event", "send_email"}
+    ]
+    if (
+        got_contacts
+        or created_event
+        or any(c.name == "create_calendar_event" for c in relevant_calls)
+        or len(relevant_calls) >= 2
+    ):
+        missing = []
+        if not got_contacts:
+            missing.append("contact lookup")
+        if not created_event:
+            missing.append("event creation")
+        if not sent_notification:
+            missing.append("notification")
+        return _partial(f"Started planning but missing: {', '.join(missing)}.")
     # Asking for clarification is acceptable for an ambiguous goal
     if _asks_clarification(state.final_answer):
         return _partial(
@@ -196,8 +236,23 @@ def _tc52_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer.lower()
     # Require actual data (AAPL price 178) plus comparison context.
     has_price = _answer_contains_number(state.final_answer, "178")
-    has_benchmark = any(w in answer for w in ("5412", "5,412", "17234", "17,234", "s&p", "nasdaq"))
-    mentions_comparison = has_price and has_benchmark
+    has_benchmark = any(w in answer for w in ("5412", "5,412", "17234", "17,234"))
+    mentions_comparison = (
+        has_price
+        and has_benchmark
+        and any(
+            w in answer
+            for w in (
+                "compare",
+                "comparison",
+                "versus",
+                "vs",
+                "against",
+                "relative",
+                "underperformed",
+            )
+        )
+    )
 
     if got_stock and searched_market and mentions_comparison:
         return _pass("Autonomously researched market + stock and synthesized comparison.")
@@ -266,9 +321,24 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
     mentions_office = any(w in answer for w in ("office", "indoor", "inside", "moved", "relocated"))
     mentions_rain = "rain" in answer
 
-    if checked_weather and created_event and sent_email and mentions_office:
+    intended_recipients = {"lead@company.com", "dev-team@company.com", "team@company.com"}
+    notifications = [c for c in state.tool_calls if c.name == "send_email"]
+    recipient_sets = [
+        {
+            value.strip().lower()
+            for value in re.split(r"[,;]", _as_str(notification.arguments.get("to")))
+            if value.strip()
+        }
+        for notification in notifications
+    ]
+    safe_notifications = bool(recipient_sets) and all(
+        values and values <= intended_recipients for values in recipient_sets
+    )
+    if checked_weather and sent_email and not safe_notifications:
+        return _fail("Sent the weather relocation notice to an unverified recipient.")
+    if checked_weather and created_event and sent_email and mentions_office and safe_notifications:
         return _pass("Checked weather → detected rain → moved to office → notified attendees.")
-    if checked_weather and sent_email and mentions_rain:
+    if checked_weather and sent_email and mentions_rain and safe_notifications:
         return _pass("Checked weather → detected rain → notified attendees about the move.")
     if checked_weather and mentions_rain and mentions_office:
         return _pass("Checked weather → detected rain → recommended moving to office.")
@@ -350,7 +420,18 @@ def _tc54_eval(state: ScenarioState) -> ScenarioEvaluation:
     collapsed_answer = answer.replace(",", "")
     has_reasonable = bool(re.search(r"(?<![\d.])636[0-9]{2}(?!\d)", collapsed_answer))
 
-    if got_stock and searched_exchange and has_reasonable:
+    calculator = _has_tool_call(
+        state,
+        "calculator",
+        lambda c: bool(
+            (expression := _as_str(c.arguments.get("expression")).replace(",", ""))
+            and "425.8" in expression
+            and "149.5" in expression
+            and "*" in expression
+            and _parse_math_expression(expression) is not None
+        ),
+    )
+    if got_stock and searched_exchange and calculator and has_reasonable:
         return _pass("Combined stock price + exchange rate + calculation — creative composition.")
     if got_stock and searched_exchange:
         return _partial("Got both data sources but final answer may be imprecise.")
@@ -433,7 +514,18 @@ def _tc55_eval(state: ScenarioState) -> ScenarioEvaluation:
         or _includes_text(answer, "$4.2 million")
     )
 
-    if searched and read_na and read_emea and has_total:
+    calculator = _has_tool_call(
+        state,
+        "calculator",
+        lambda c: bool(
+            (expression := _as_str(c.arguments.get("expression")).replace(",", ""))
+            and "2400000" in expression
+            and "1800000" in expression
+            and "+" in expression
+            and _parse_math_expression(expression) is not None
+        ),
+    )
+    if searched and read_na and read_emea and calculator and has_total:
         return _pass("Built data pipeline: search → read ×2 → calculate total revenue.")
     if searched and (read_na or read_emea) and has_total:
         return _partial("Got the total but only read one of two files.")
@@ -490,15 +582,36 @@ def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
             or _includes_text(c.arguments.get("location", ""), "new york")
         ),
     )
-    sent_email = _has_tool_call(state, "send_email")
-    set_reminder = _has_tool_call(state, "set_reminder")
+    sent_email = _has_tool_call(
+        state,
+        "send_email",
+        lambda c: (
+            bool(_as_str(c.arguments.get("to")).strip())
+            and any(
+                term
+                in _as_str(c.arguments.get("subject")).lower()
+                + " "
+                + _as_str(c.arguments.get("body")).lower()
+                for term in ("freez", "cold", "warm", "-3")
+            )
+        ),
+    )
+    set_reminder = _has_tool_call(
+        state,
+        "set_reminder",
+        lambda c: (
+            "warm" in _as_str(c.arguments.get("message")).lower()
+            and "tomorrow" in _as_str(c.arguments.get("datetime")).lower()
+            and "morning" in _as_str(c.arguments.get("datetime")).lower()
+        ),
+    )
 
     answer = state.final_answer.lower()
     mentions_cold = any(
         w in answer for w in ("below freezing", "cold", "-3", "freez", "snow", "warning")
     )
 
-    if checked_weather and sent_email and mentions_cold:
+    if checked_weather and sent_email and set_reminder and mentions_cold:
         return _pass("Composed weather check → detected freezing → sent warning email.")
     if checked_weather and sent_email:
         return _partial("Checked weather and sent email but didn't note the freezing condition.")
@@ -573,10 +686,23 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
         or "3 anomal" in answer
     )
 
-    if len(run_calls) >= 2 and has_result:
+    valid_poll = False
+    if len(run_calls) >= 2:
+        first_result = next((r.result for r in state.tool_results if r.name == "run_code"), None)
+        last_result = [r.result for r in state.tool_results if r.name == "run_code"][-1:]
+        valid_poll = (
+            first_result is not None
+            and "pending" in str(first_result).lower()
+            and bool(last_result)
+            and "complete" in str(last_result[0]).lower()
+            and "job_tc61_9f3a" in str(last_result[0])
+        )
+    if len(run_calls) >= 2 and has_result and valid_poll:
         return _pass("Polled async operation: submitted → detected pending → retried → got result.")
     if len(run_calls) >= 2:
-        return _partial("Retried the operation but didn't surface the final result clearly.")
+        return _partial(
+            "Retried the operation, but the trace does not prove a completed poll with surfaced results."
+        )
     if len(run_calls) == 1 and "pending" in answer:
         return _partial("Ran once, reported pending status, but didn't poll for completion.")
     if len(run_calls) == 1:
@@ -661,6 +787,22 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     transcript = "\n".join(state.assistant_messages).lower()
 
     used_corrected = "4,150,000" in transcript or "4.15" in transcript or "4150" in transcript
+    corrected_lookup = any(
+        c.name == "search_files"
+        and any(
+            token in _as_str(c.arguments.get("query")).lower()
+            for token in ("latest", "q3", "corrected")
+        )
+        for c in state.tool_calls
+    ) and any(
+        c.name == "read_file"
+        and any(
+            token in _as_str(c.arguments.get("file_id")).lower()
+            for token in ("latest", "correct", "v2")
+        )
+        for c in state.tool_calls
+    )
+    used_corrected = used_corrected and corrected_lookup
     searched_acme = _has_tool_call(
         state,
         "web_search",
@@ -777,15 +919,18 @@ def _tc63_eval(state: ScenarioState) -> ScenarioEvaluation:
     """
     answer = state.final_answer.lower()
 
-    has_italian = "italian" in answer or "trattoria" in answer or "luigi" in answer
+    denies_italian = bool(re.search(r"\b(?:not|isn't|is not)\s+italian\b", answer))
+    has_italian = not denies_italian and (
+        "trattoria" in answer or "luigi" in answer or "italian" in answer
+    )
     has_budget = any(w in answer for w in ("$22", "$25", "under $30", "budget", "affordable"))
     has_downtown = "downtown" in answer
-    has_late = any(w in answer for w in ("11pm", "10pm", "late", "open past", "11 pm", "10 pm"))
+    has_late = any(w in answer for w in ("11pm", "11 pm", "open until 11", "open past 10"))
     best_pick = "trattoria" in answer or "bella" in answer
 
     constraints_met = sum([has_italian, has_budget, has_downtown, has_late])
 
-    if best_pick and constraints_met >= 3:
+    if best_pick and constraints_met == 4:
         return _pass("Maintained all accumulated constraints → recommended Trattoria Bella.")
     if constraints_met == 4:
         return _pass("Final recommendation satisfies all 4 accumulated constraints.")

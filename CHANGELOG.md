@@ -6,6 +6,12 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **Evaluator audit hardening** — explicit tool errors no longer receive
+  fabricated-data credit; critical argument values, dependency order, exact
+  recipients, conditional actions, structured nested types, safety boundaries,
+  and async polling provenance are now scored against their scenario contracts.
+  Negated numeric answers and misleading substring matches no longer earn PASS.
+
 - **TC-26, TC-30, and TC-75 deterministic scoring (#38, #39, #40)** — attendee
   suggestions no longer count as contradictory attendance claims, a single
   Python call implementing the full conditional workflow is recognized through

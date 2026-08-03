@@ -17,6 +17,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ScenarioStatus,
     ToolCallRecord,
+    ToolResultRecord,
 )
 
 # ---------------------------------------------------------------------------
@@ -84,6 +85,37 @@ def answer_contains_number(answer: str, value: str) -> bool:
     return bool(re.search(rf"(?<![\d.]){needle}(?!\d)", collapsed))
 
 
+def answer_affirms_number(answer: str, value: str) -> bool:
+    """Return whether ``answer`` presents ``value`` as an asserted result.
+
+    Numeric substring checks are useful for noisy natural-language answers, but
+    a negated value (``not 30``) is not a correct answer.  Keep this stricter
+    check opt-in so existing partial-credit paths that only need numeric
+    mention semantics remain unchanged.
+    """
+    collapsed = answer.replace(",", "")
+    needle = re.escape(value.replace(",", ""))
+    pattern = re.compile(rf"(?<![\d.]){needle}(?!\d)", re.IGNORECASE)
+    for match in pattern.finditer(collapsed):
+        prefix = collapsed[max(0, match.start() - 80) : match.start()].lower()
+        clause = re.split(r"[.!?;]|\b(?:but|however|instead)\b", prefix)[-1]
+        if re.search(r"\b(?:not|never|no)\b|n't\b", clause):
+            continue
+        return True
+    return False
+
+
+def answer_affirms_text(answer: str, value: str) -> bool:
+    """Return whether a textual value is asserted rather than negated."""
+    pattern = re.compile(rf"\b{re.escape(value)}\b", re.IGNORECASE)
+    for match in pattern.finditer(answer):
+        prefix = answer[max(0, match.start() - 80) : match.start()].lower()
+        clause = re.split(r"[.!?;]|\b(?:but|however|instead)\b", prefix)[-1]
+        if not re.search(r"\b(?:not|never|no)\b|n't\b", clause):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # State inspection helpers
 # ---------------------------------------------------------------------------
@@ -97,6 +129,42 @@ def full_assistant_transcript(state: ScenarioState) -> str:
 def tool_calls_by_name(state: ScenarioState, name: str) -> list[ToolCallRecord]:
     """Filter tool calls by function name."""
     return [c for c in state.tool_calls if c.name == name]
+
+
+def matching_tool_results(state: ScenarioState, call: ToolCallRecord) -> list[ToolResultRecord]:
+    """Return results explicitly associated with ``call``.
+
+    Runtime traces have stable call IDs.  Synthetic evaluator tests often
+    provide only names, so name matching is a deliberate compatibility
+    fallback when no exact call ID is present.
+    """
+    exact = [result for result in state.tool_results if result.call_id == call.id]
+    if exact:
+        return exact
+    return [result for result in state.tool_results if result.name == call.name]
+
+
+def has_explicit_tool_error(state: ScenarioState, call: ToolCallRecord) -> bool:
+    """Return True only for an explicitly recorded error result."""
+    for result in matching_tool_results(state, call):
+        payload = result.result
+        if isinstance(payload, dict) and ("error" in payload or payload.get("status") == "error"):
+            return True
+        if isinstance(payload, str) and re.search(
+            r"\berror\b|\b(?:429|500|502|503|504)\b", payload, re.I
+        ):
+            return True
+    return False
+
+
+def result_is_usable_if_present(state: ScenarioState, call: ToolCallRecord) -> bool:
+    """Treat absent synthetic results as unknown, but reject explicit errors."""
+    return not has_explicit_tool_error(state, call)
+
+
+def has_matching_tool_result(state: ScenarioState, call: ToolCallRecord) -> bool:
+    """Return whether a concrete result record exists for ``call``."""
+    return bool(matching_tool_results(state, call))
 
 
 def has_tool_call(

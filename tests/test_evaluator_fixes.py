@@ -204,8 +204,16 @@ class TestTC15ErrorAware:
         scenario = _find(SCENARIOS, "TC-15")
         state = _make_state(
             tool_calls=[
-                {"name": "web_search", "arguments": {"query": "population of Iceland"}},
-                {"name": "calculator", "arguments": {"expression": "372520 * 0.02"}},
+                {
+                    "name": "web_search",
+                    "arguments": {"query": "population of Iceland"},
+                    "turn": 1,
+                },
+                {
+                    "name": "calculator",
+                    "arguments": {"expression": "372520 * 0.02"},
+                    "turn": 2,
+                },
             ],
             tool_results=[
                 {"name": "web_search", "result": {"results": [{"snippet": "372,520"}]}},

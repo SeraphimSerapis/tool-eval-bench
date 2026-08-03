@@ -266,9 +266,9 @@ class TestTC07:
     def test_pass(self) -> None:
         s = _state(
             tool_calls=[
-                {"name": "search_files", "arguments": {"query": "Q3 budget report"}},
-                {"name": "read_file", "arguments": {"file_id": "file_091"}},
-                {"name": "get_contacts", "arguments": {"query": "manager"}},
+                {"name": "search_files", "arguments": {"query": "Q3 budget report"}, "turn": 1},
+                {"name": "read_file", "arguments": {"file_id": "file_091"}, "turn": 2},
+                {"name": "get_contacts", "arguments": {"query": "manager"}, "turn": 3},
                 {
                     "name": "send_email",
                     "arguments": {
@@ -276,6 +276,7 @@ class TestTC07:
                         "subject": "Budget",
                         "body": "Total is $4.4M",
                     },
+                    "turn": 4,
                 },
             ]
         )
@@ -445,8 +446,8 @@ class TestTC15:
     def test_pass(self) -> None:
         s = _state(
             tool_calls=[
-                {"name": "web_search", "arguments": {"query": "population of iceland"}},
-                {"name": "calculator", "arguments": {"expression": "372520 * 0.02"}},
+                {"name": "web_search", "arguments": {"query": "population of iceland"}, "turn": 1},
+                {"name": "calculator", "arguments": {"expression": "372520 * 0.02"}, "turn": 2},
             ],
             final_answer="2% of Iceland's population (372,520) is 7,450.4.",
         )
@@ -546,6 +547,7 @@ class TestTC18:
                         "source_language": "English",
                         "target_language": "German",
                     },
+                    "turn": 1,
                 },
                 {
                     "name": "send_email",
@@ -554,6 +556,7 @@ class TestTC18:
                         "subject": "Meeting",
                         "body": "Der Termin wurde verschoben",
                     },
+                    "turn": 2,
                 },
             ]
         )
@@ -607,8 +610,8 @@ class TestTC20:
     def test_pass(self) -> None:
         s = _state(
             tool_calls=[
-                {"name": "search_files", "arguments": {"query": "Q3 sales"}},
-                {"name": "read_file", "arguments": {"file_id": "file_q3_sales"}},
+                {"name": "search_files", "arguments": {"query": "Q3 sales"}, "turn": 1},
+                {"name": "read_file", "arguments": {"file_id": "file_q3_sales"}, "turn": 2},
             ],
             final_answer="The average sales per region is $141,440.",
         )
@@ -1229,9 +1232,9 @@ class TestTC38:
     def test_pass(self) -> None:
         s = _state(
             tool_calls=[
-                {"name": "search_files", "arguments": {"query": "Q3 budget report"}},
-                {"name": "read_file", "arguments": {"file_id": "file_091"}},
-                {"name": "get_contacts", "arguments": {"query": "manager"}},
+                {"name": "search_files", "arguments": {"query": "Q3 budget report"}, "turn": 1},
+                {"name": "read_file", "arguments": {"file_id": "file_091"}, "turn": 2},
+                {"name": "get_contacts", "arguments": {"query": "manager"}, "turn": 3},
                 {
                     "name": "send_email",
                     "arguments": {
@@ -1239,6 +1242,7 @@ class TestTC38:
                         "subject": "Budget",
                         "body": "Total is $4.4M",
                     },
+                    "turn": 4,
                 },
             ]
         )
@@ -1441,14 +1445,14 @@ class TestPayloadEnrichment:
 class TestTC41:
     sc = _sc("TC-41")
 
-    def test_pass_valid_string_units(self) -> None:
+    def test_fail_invalid_enum_string_units(self) -> None:
         s = _state(
             tool_calls=[
                 {"name": "get_weather", "arguments": {"location": "Berlin", "units": "metric"}}
             ],
             final_answer="Berlin is 8°C.",
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+        assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
 
     def test_pass_omitted_units(self) -> None:
         s = _state(

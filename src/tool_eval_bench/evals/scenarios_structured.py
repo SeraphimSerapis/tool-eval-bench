@@ -27,9 +27,9 @@ from tool_eval_bench.evals.helpers import (
     as_str,
     first_call,
     generic_tool_fallback,
-    has_tool_call,
     includes_text,
     normalize,
+    result_is_usable_if_present,
 )
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -121,9 +121,9 @@ def _tc64_eval(state: ScenarioState) -> ScenarioEvaluation:
     errors: list[str] = []
     if not isinstance(data.get("title"), str) or not data["title"]:
         errors.append("title must be a non-empty string")
-    if not isinstance(data.get("year"), int):
+    if type(data.get("year")) is not int:
         errors.append("year must be an integer")
-    if not isinstance(data.get("rating"), (int, float)):
+    if type(data.get("rating")) not in (int, float):
         errors.append("rating must be a number")
     elif not (0 <= data["rating"] <= 10):
         errors.append("rating must be between 0 and 10")
@@ -176,6 +176,11 @@ _TC65_SCHEMA = {
 
 def _tc65_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
+        location = normalize(as_str(call.arguments.get("location")))
+        if location != "tokyo":
+            return _noise(
+                {"error": "Weather report only available for Tokyo in this scenario."}, call.name
+            )
         return _noise(
             {
                 "location": "Tokyo",
@@ -193,6 +198,12 @@ def _tc65_eval(state: ScenarioState) -> ScenarioEvaluation:
     weather = first_call(state, "get_weather")
     if not weather:
         return _fail("Did not call get_weather before producing structured output.")
+    if normalize(as_str(weather.arguments.get("location"))) != "tokyo":
+        return _partial("Called get_weather, but for the wrong requested location.")
+    if not result_is_usable_if_present(state, weather):
+        return _partial(
+            "get_weather returned an error, so structured weather data cannot be confirmed."
+        )
 
     answer = state.final_answer.strip()
 
@@ -220,7 +231,17 @@ def _tc65_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     if not includes_text(data.get("location", ""), "tokyo"):
         return _partial("Schema-compliant but location doesn't match tool result.")
+    if data.get("condition") != "Sunny":
+        return _partial("Schema-compliant but condition doesn't match tool result.")
 
+    if (
+        type(data.get("temperature_celsius")) not in (int, float)
+        or not isinstance(data.get("condition"), str)
+        or not isinstance(data.get("recommendation"), str)
+        or not data["recommendation"]
+        or set(data) != required
+    ):
+        return _partial("Structured weather output contains schema-invalid fields.")
     return _pass("Called get_weather, then produced schema-compliant JSON with correct data.")
 
 
@@ -270,11 +291,6 @@ def _tc66_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
                         "department": "Engineering",
                     },
                     {
-                        "name": "Bob Martinez",
-                        "email": "bob.martinez@company.com",
-                        "department": "Design",
-                    },
-                    {
                         "name": "Carol Singh",
                         "email": "carol.singh@company.com",
                         "department": "Engineering",
@@ -290,6 +306,10 @@ def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     contacts_call = first_call(state, "get_contacts")
     if not contacts_call:
         return _fail("Did not call get_contacts.")
+    if normalize(as_str(contacts_call.arguments.get("query"))) != "engineering":
+        return _partial("Called get_contacts, but looked up the wrong contact group.")
+    if not result_is_usable_if_present(state, contacts_call):
+        return _partial("get_contacts returned an error, so contacts cannot be confirmed.")
 
     answer = state.final_answer.strip()
 
@@ -313,8 +333,8 @@ def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not isinstance(contacts, list):
         return _partial("'contacts' is not an array.")
 
-    if len(contacts) < 3:
-        return _partial(f"Expected 3 contacts, got {len(contacts)}.")
+    if len(contacts) != 2:
+        return _partial(f"Expected exactly 2 engineering contacts, got {len(contacts)}.")
 
     # Validate each contact has required fields
     for i, c in enumerate(contacts):
@@ -322,16 +342,25 @@ def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _partial(f"Contact {i} is not an object.")
         if not all(k in c for k in ("name", "email", "department")):
             return _partial(f"Contact {i} is missing required fields.")
+        if not all(isinstance(c.get(k), str) and c[k] for k in ("name", "email", "department")):
+            return _partial(f"Contact {i} has schema-invalid field types.")
+        if set(c) != {"name", "email", "department"}:
+            return _partial(f"Contact {i} contains fields forbidden by the schema.")
 
     # Verify total matches array length
     if data.get("total") != len(contacts):
         return _partial("'total' doesn't match contacts array length.")
 
     # Verify data integrity — contacts should come from tool result
-    names = {c.get("name", "").lower() for c in contacts}
-    expected_names = {"alice zhang", "bob martinez", "carol singh"}
-    if not expected_names.issubset(names):
+    expected_contacts = {
+        ("Alice Zhang", "alice.zhang@company.com", "Engineering"),
+        ("Carol Singh", "carol.singh@company.com", "Engineering"),
+    }
+    actual_contacts = {(c.get("name"), c.get("email"), c.get("department")) for c in contacts}
+    if actual_contacts != expected_contacts:
         return _partial("Contacts don't match tool result data.")
+    if data.get("query") != "engineering" or set(data) != {"query", "total", "contacts"}:
+        return _partial("Top-level contact fields do not match the requested schema and query.")
 
     return _pass("Produced schema-compliant nested JSON with correct contact data from tool.")
 
@@ -397,6 +426,26 @@ def _tc67_eval(state: ScenarioState) -> ScenarioEvaluation:
     stock = first_call(state, "get_stock_price")
     if not stock:
         return _fail("Did not call get_stock_price.")
+    if normalize(as_str(stock.arguments.get("ticker"))) != "nvda":
+        return _partial("Called get_stock_price, but looked up the wrong ticker.")
+    news = next(
+        (
+            call
+            for call in state.tool_calls
+            if call.name == "web_search"
+            and any(
+                word in as_str(call.arguments.get("query")).lower()
+                for word in ("news", "nvidia", "nvda")
+            )
+        ),
+        None,
+    )
+    if news is None:
+        return _partial("Produced a stock analysis without the required recent-news lookup.")
+    if not result_is_usable_if_present(state, stock) or not result_is_usable_if_present(
+        state, news
+    ):
+        return _partial("A required stock or news tool returned an error.")
 
     answer = state.final_answer.strip()
 
@@ -432,6 +481,8 @@ def _tc67_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not isinstance(data.get("reasoning"), str) or len(data["reasoning"]) < 20:
         return _partial("Reasoning field is too short — should explain the signal.")
 
+    if data.get("currency") != "USD" or set(data) != required:
+        return _partial("Analysis contains invalid currency or extra schema fields.")
     return _pass("Produced schema-compliant analysis with correct enum signal and tool data.")
 
 
@@ -503,6 +554,14 @@ def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
             "additionalProperties: false."
         )
 
+    if not isinstance(data.get("task_id"), str) or not isinstance(data.get("assignee"), str):
+        return _partial("task_id and assignee must be strings.")
+    if (
+        data.get("task_id") != "PROJ-127"
+        or data.get("status") != "in_progress"
+        or normalize(as_str(data.get("assignee"))) not in {"me", "myself", "current user"}
+    ):
+        return _partial("Structured task status does not match the requested task update.")
     return _pass(
         "Produced schema-compliant JSON without the forbidden extra fields, "
         "despite the user requesting them."
@@ -585,8 +644,15 @@ def _tc69_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
-    weather = has_tool_call(state, "get_weather")
-    stock = has_tool_call(state, "get_stock_price")
+    weather_call = next((c for c in state.tool_calls if c.name == "get_weather"), None)
+    stock_call = next((c for c in state.tool_calls if c.name == "get_stock_price"), None)
+    weather = (
+        weather_call is not None
+        and normalize(as_str(weather_call.arguments.get("location"))) == "san francisco"
+    )
+    stock = (
+        stock_call is not None and normalize(as_str(stock_call.arguments.get("ticker"))) == "aapl"
+    )
 
     if not weather or not stock:
         missing = []
@@ -594,7 +660,15 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
             missing.append("get_weather")
         if not stock:
             missing.append("get_stock_price")
+        if weather_call and stock_call:
+            return _partial("Called both tools, but their required arguments were invalid.")
         return _fail(f"Did not call required tools: {', '.join(missing)}.")
+    if weather_call is None or stock_call is None:
+        return _fail("Required briefing call records were unavailable.")
+    if not result_is_usable_if_present(state, weather_call) or not result_is_usable_if_present(
+        state, stock_call
+    ):
+        return _partial("A required briefing tool returned an error.")
 
     answer = state.final_answer.strip()
 
@@ -631,17 +705,41 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not isinstance(direction_val, str) or direction_val not in valid_directions:
         return _partial(f"Market direction '{direction_val}' is not a valid enum value.")
 
+    if (
+        not isinstance(data.get("date"), str)
+        or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data["date"])
+        or not isinstance(w.get("location"), str)
+        or not isinstance(w.get("temperature"), (int, float))
+        or isinstance(w.get("temperature"), bool)
+        or not isinstance(w.get("condition"), str)
+        or not isinstance(m.get("ticker"), str)
+        or not isinstance(m.get("price"), (int, float))
+        or isinstance(m.get("price"), bool)
+        or set(w) != {"location", "temperature", "condition"}
+        or set(m) != {"ticker", "price", "direction"}
+        or set(data) != required_top
+    ):
+        return _partial("Nested briefing output contains schema-invalid fields.")
+
     # Validate action_items is array of strings
     actions = data.get("action_items", [])
-    if not isinstance(actions, list) or not all(isinstance(a, str) for a in actions):
-        return _partial("action_items must be an array of strings.")
+    if (
+        not isinstance(actions, list)
+        or not actions
+        or not all(isinstance(a, str) and a.strip() for a in actions)
+    ):
+        return _partial("action_items must be a non-empty array of actionable strings.")
 
     # Verify data integrity from tools
     if w.get("temperature") != 18:
         return _partial("Weather temperature doesn't match tool result (18°C).")
+    if w.get("location") != "San Francisco" or w.get("condition") != "Foggy":
+        return _partial("Weather fields don't match the San Francisco tool result.")
 
     if m.get("price") != 192.30:
         return _partial("Stock price doesn't match tool result (192.30).")
+    if m.get("ticker") != "AAPL":
+        return _partial("Market ticker doesn't match the AAPL tool result.")
 
     # Direction should be "down" since change is negative
     if m.get("direction") != "down":

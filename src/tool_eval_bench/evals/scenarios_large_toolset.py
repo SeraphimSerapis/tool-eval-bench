@@ -6,8 +6,7 @@ model ability to navigate a crowded 52-tool namespace.
 
 from __future__ import annotations
 
-import re
-from typing import Any
+from typing import Any, cast
 
 from tool_eval_bench.domain.scenarios import (
     Category,
@@ -19,8 +18,9 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.domain.tools_large import LARGE_TOOLSET
 from tool_eval_bench.evals.helpers import (
-    answer_contains_number as _answer_contains_number,
+    answer_affirms_number as _answer_affirms_number,
 )
+from tool_eval_bench.evals.helpers import answer_affirms_text as _answer_affirms_text
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
@@ -41,6 +41,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    result_is_usable_if_present as _result_is_usable_if_present,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
@@ -94,9 +97,12 @@ def _tc37_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
 
     if used_weather and total_calls == 1:
+        weather_call = next(c for c in state.tool_calls if c.name == "get_weather")
+        if not _result_is_usable_if_present(state, weather_call):
+            return _partial("get_weather returned an error, so Berlin weather cannot be confirmed.")
         # Verify the model surfaced actual weather data (temp 8 or condition).
-        has_temp = bool(re.search(r"(?<!\d)8(?!\d)", state.final_answer))
-        has_condition = "overcast" in state.final_answer.lower()
+        has_temp = _answer_affirms_number(state.final_answer, "8")
+        has_condition = _answer_affirms_text(state.final_answer, "overcast")
         if has_temp or has_condition:
             return _pass("Used get_weather with Berlin only — perfect selection from 52 tools.")
         return _partial(
@@ -210,6 +216,17 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
 
     if steps == 4 and not domain_calls:
+        ordered = [
+            next((c for c in state.tool_calls if c.name == "search_files"), None),
+            next((c for c in state.tool_calls if c.name == "read_file"), None),
+            next((c for c in state.tool_calls if c.name == "get_contacts"), None),
+            next((c for c in state.tool_calls if c.name == "send_email"), None),
+        ]
+        if any(call is None for call in ordered):
+            return _partial("Completed the calls, but one dependency record was incomplete.")
+        ordered_calls: list[ToolCallRecord] = [cast(ToolCallRecord, call) for call in ordered]
+        if not all(ordered_calls[i].turn < ordered_calls[i + 1].turn for i in range(3)):
+            return _partial("Completed the calls, but violated search→read→contacts→email order.")
         return _pass("Completed the full 4-step chain correctly from 52 tools.")
     if steps == 4 and domain_calls:
         extras = ", ".join(domain_calls[:3])
@@ -246,7 +263,7 @@ def _tc39_eval(state: ScenarioState) -> ScenarioEvaluation:
     Same as TC-11, but with 52 tools. The question is trivial arithmetic.
     With many more tools available, the temptation to use one is even higher.
     """
-    correct = _answer_contains_number(state.final_answer, "30")
+    correct = _answer_affirms_number(state.final_answer, "30")
     total_calls = len(state.tool_calls)
     used_calc = _has_tool_call(state, "calculator")
     used_web = _has_tool_call(state, "web_search")
@@ -351,12 +368,20 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
     total_calls = len(state.tool_calls)
 
     answer = state.final_answer.lower()
-    mentions_status = any(
-        w in answer
-        for w in ("shipped", "order", "ORD-2026-1847".lower(), "keyboard", "usb-c", "tracking")
+    mentions_status = (
+        _answer_affirms_text(answer, "shipped")
+        or "ord-2026-1847" in answer
+        or "keyboard" in answer
+        or "usb-c" in answer
+        or "tracking" in answer
     )
 
     if used_order and total_calls == 1 and mentions_status:
+        order_call = next(c for c in state.tool_calls if c.name == "get_order_status")
+        if not _result_is_usable_if_present(state, order_call):
+            return _partial(
+                "get_order_status returned an error, so order details cannot be confirmed."
+            )
         return _pass("Selected get_order_status precisely from similar-named tools.")
     if used_order and total_calls == 1:
         return _partial(

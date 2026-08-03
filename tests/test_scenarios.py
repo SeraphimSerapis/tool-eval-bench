@@ -179,7 +179,10 @@ class TestTC36MissingInfo:
     def test_pass_asks_for_details(self) -> None:
         s = self._get_scenario()
         state = _make_state(
-            final_answer="I'd be happy to send an email. Could you please provide the recipient and subject?"
+            final_answer=(
+                "I'd be happy to send an email. Could you please provide the recipient, "
+                "subject, and message body?"
+            )
         )
         result = s.evaluate(state)
         assert result.status == ScenarioStatus.PASS

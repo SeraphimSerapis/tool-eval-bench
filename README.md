@@ -65,6 +65,12 @@ Each category is scored as a percentage of points earned within it. The **final 
 
 **Infrastructure failures are not scored.** A timeout, connection error, or persistent 429/5xx measures the serving environment, not the model, so those scenarios are dropped from both the numerator and the denominator instead of counting as 0 points. The run still reports them in full, and `completion_rate` plus `excluded_scenarios` tell you how much of the suite was actually graded — always check the completion rate before comparing two runs.
 
+Evaluator scoring also checks scenario-critical semantics: explicit tool errors
+cannot support fabricated answer data, dependencies and critical arguments must
+be valid, and structured outputs must satisfy their declared types and fields.
+Synthetic tests may omit result records; absence remains compatible, but cannot
+prove result-dependent behavior such as a completed asynchronous poll.
+
 ## Quickstart
 
 ### Install as a CLI tool (recommended)
