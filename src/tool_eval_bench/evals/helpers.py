@@ -238,7 +238,11 @@ def asks_for_clarification(answer: str) -> bool:
     politeness-prefixed requests.
     """
     low = answer.lower()
-    return any(
+    direct_question = re.search(
+        r"\b(?:what\s+(?:time|date|day)|when\s+(?:is|are|should|would|could|can|do|does|will))\b",
+        low,
+    )
+    return direct_question is not None or any(
         word in low
         for word in (
             # Direct question forms

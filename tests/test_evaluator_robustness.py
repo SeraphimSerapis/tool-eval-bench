@@ -233,6 +233,10 @@ class TestAsksForClarification:
             "Just to confirm — should I send this to everyone?",
             "There are multiple options available. Which would you prefer?",
             "I'm not sure which file you're referring to.",
+            "What time should I schedule it?",
+            "What date is the interview?",
+            "What day should I reserve?",
+            "When should I book the room?",
         ],
     )
     def test_detects_clarification(self, phrase):

@@ -4,6 +4,14 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **TC-26, TC-30, and TC-75 deterministic scoring (#38, #39, #40)** — attendee
+  suggestions no longer count as contradictory attendance claims, a single
+  Python call implementing the full conditional workflow is recognized through
+  its AST, and natural date/time clarification questions receive pass or partial
+  credit according to which missing parameters they actually request.
+
 ### Added
 
 - **Tokenizer auto-detection for `--perf`** — `--tokenizer` is now rarely needed.

@@ -31,10 +31,27 @@ def _record(state: ScenarioState, scenario, name: str, args: dict, turn: int = 1
     [
         ("TC-75", [], "Which date and time should I book?", ScenarioStatus.PASS),
         ("TC-75", [], "Which date should I book?", ScenarioStatus.PARTIAL),
+        ("TC-75", [], "What time should I book the interview?", ScenarioStatus.PARTIAL),
+        (
+            "TC-75",
+            [],
+            (
+                "I can help you book the smallest available meeting room for your interview "
+                "panel. What time is the interview on 2026-03-20?"
+            ),
+            ScenarioStatus.PARTIAL,
+        ),
+        ("TC-75", [], "When should I book the interview?", ScenarioStatus.PASS),
         (
             "TC-75",
             [("book_room", {"room_id": "r1", "date": "2026-03-24", "time": "10:00"}, 1)],
             "Booked.",
+            ScenarioStatus.FAIL,
+        ),
+        (
+            "TC-75",
+            [("search_rooms", {"date": "2026-03-24", "time": "10:00"}, 1)],
+            "What date should I use?",
             ScenarioStatus.FAIL,
         ),
         (

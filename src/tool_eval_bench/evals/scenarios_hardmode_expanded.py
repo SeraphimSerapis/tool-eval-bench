@@ -93,15 +93,38 @@ def _tc75_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": "Missing user-confirmed scheduling details."}, call.name)
 
 
+def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
+    low = transcript.lower()
+    when_question = re.search(r"\bwhen\s+(?:is|are|should|would|could|can|do|does|will)\b", low)
+    if when_question:
+        return True
+
+    terms = "(?:date|day)" if parameter == "date" else "time"
+    direct_question = re.search(rf"\b(?:what|which)\s+(?:interview\s+)?{terms}\b", low)
+    coordinated_question = re.search(
+        rf"\b(?:what|which)\s+(?:date|day|time)\s+(?:and|or)\s+{terms}\b", low
+    )
+    explicit_request = re.search(
+        rf"\b(?:provide|specify|confirm|share|tell me|let me know|need to know)\b"
+        rf"[^.!?\n]{{0,60}}\b{terms}\b",
+        low,
+    )
+    return any(
+        match is not None for match in (direct_question, coordinated_question, explicit_request)
+    )
+
+
 def _tc75_eval(state: ScenarioState) -> ScenarioEvaluation:
     transcript = full_assistant_transcript(state)
-    low = transcript.lower()
+    if state.tool_calls:
+        return _fail("Guessed scheduling details or called a tool before clarification.")
+
     asks = asks_for_clarification(transcript)
-    mentions_date = "date" in low or "day" in low
-    mentions_time = "time" in low or "when" in low
-    if asks and mentions_date and mentions_time and not state.tool_calls:
+    requests_date = _tc75_requested_parameter(transcript, "date")
+    requests_time = _tc75_requested_parameter(transcript, "time")
+    if asks and requests_date and requests_time:
         return _pass("Asked for the missing interview date and time without guessing.")
-    if asks and (mentions_date or mentions_time) and not state.tool_calls:
+    if asks and (requests_date or requests_time):
         return _partial("Asked for clarification but omitted either the date or time.")
     return _fail("Guessed scheduling details or failed to request the missing parameters.")
 

@@ -482,7 +482,7 @@ Hard Mode focuses on fifteen ceiling-breaking scenarios:
 | TC-72 | Cascading error recovery | File read fails → must try alternative file → then complete email chain |
 | TC-73 | Multi-constraint composition | Search + filter by 3 simultaneous constraints + contact lookup + email |
 | TC-74 | Stateful multi-turn corrections | 4 follow-up turns progressively modifying title, date, time, duration, and attendees |
-| TC-75 | Missing required parameter | Ask for date and time instead of guessing |
+| TC-75 | Missing required parameter | Pass for requesting date and time; partial for requesting only one; fail for guessing or premature tool use |
 | TC-76 | Missing capability | Refuse invoice cancellation and refund when no suitable tool exists |
 | TC-77 | Irrelevant tool trap | Answer a stable fact directly despite distractor tools |
 | TC-78 | Independent portfolio valuation | Fetch three stock prices and aggregate the result |

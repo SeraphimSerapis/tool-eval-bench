@@ -788,6 +788,49 @@ class TestTC26:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
 
+    def test_pass_unknown_name_only_in_separate_suggestion(self) -> None:
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "create_calendar_event",
+                    "arguments": {"title": "Design Review", "date": "2026-03-21", "time": "15:00"},
+                },
+                {"name": "get_contacts", "arguments": {"query": "Alex"}},
+            ],
+            final_answer=(
+                "No attendees were added when I created the meeting — the attendee list is "
+                "currently empty.\n\nIf you'd like, I can add people to it. For example, I found "
+                "a contact in the directory:\n\n- **Alex Rivera** (alex@company.com) — "
+                "Engineering\n\nJust let me know who you'd like to invite and I'll add them to "
+                "the Design Review."
+            ),
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
+    def test_fail_unknown_name_asserted_as_attendee(self) -> None:
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "create_calendar_event",
+                    "arguments": {"title": "Design Review", "date": "2026-03-21", "time": "15:00"},
+                }
+            ],
+            final_answer="Alex Rivera is attending the Design Review.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
+
+    def test_fail_answer_contradicts_its_no_attendees_claim(self) -> None:
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "create_calendar_event",
+                    "arguments": {"title": "Design Review", "date": "2026-03-21", "time": "15:00"},
+                }
+            ],
+            final_answer="No attendees were specified. Alex Rivera is listed as an attendee.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
+
 
 # ===================================================================
 # TC-27: Deduplication Awareness
@@ -891,6 +934,45 @@ class TestTC30:
             ]
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
+
+    def test_pass_combined_conditional_and_mock_output(self) -> None:
+        code = (
+            "result = 2 + 2\n"
+            "print(result)\n"
+            "if result == 4:\n"
+            "    print('correct')\n"
+            "else:\n"
+            "    print('wrong')"
+        )
+        s = _state(tool_calls=[{"name": "run_code", "arguments": {"code": code}}])
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
+        call = s.tool_calls[0]
+        result = self.sc.handle_tool_call(ScenarioState(), call)
+        assert result["stdout"] == "4\ncorrect"
+
+    def test_single_call_reversed_conditional_does_not_pass(self) -> None:
+        code = (
+            "result = 2 + 2\n"
+            "print(result)\n"
+            "if result == 4:\n"
+            "    print('wrong')\n"
+            "else:\n"
+            "    print('correct')"
+        )
+        s = _state(tool_calls=[{"name": "run_code", "arguments": {"code": code}}])
+        assert self.sc.evaluate(s).status != ScenarioStatus.PASS
+
+    def test_single_call_keywords_without_workflow_does_not_pass(self) -> None:
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "run_code",
+                    "arguments": {"code": "print('2 + 2 correct wrong')"},
+                }
+            ]
+        )
+        assert self.sc.evaluate(s).status != ScenarioStatus.PASS
 
 
 # ===================================================================

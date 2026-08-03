@@ -10,6 +10,7 @@ TC-22 to TC-36, TC-41 to TC-50: adds 25 scenarios across 4 categories:
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from typing import Any
@@ -360,12 +361,36 @@ def _tc26_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
     is_honest = any(ind in answer for ind in honest_indicators)
 
-    # Check for hallucinated names (bad) — names not in the tool response
+    # Check for asserted attendees not present in the event creation call. Names
+    # in separate suggestions are harmless; only attendance claims contradict
+    # the remembered empty attendee list.
     create_call = next(c for c in state.tool_calls if c.name == "create_calendar_event")
     attendees_specified = create_call.arguments.get("attendees", [])
     known_names = {n.lower() for n in (attendees_specified or [])}
     hallucinated_names = ["alex", "sarah", "john", "maria", "bob", "team lead"]
-    hallucinated = any(name in answer and name not in known_names for name in hallucinated_names)
+    unknown_names = [
+        name
+        for name in hallucinated_names
+        if not any(name in known_attendee for known_attendee in known_names)
+    ]
+    clauses = re.split(r"(?<=[.!?;])\s+|\n+", answer)
+    attendance_claims = (
+        r"(?:is|are|was|were|will be|has been|have been)\s+"
+        r"(?:an?\s+)?(?:attendee|attendees|attending|invited|joining|listed|going to attend)",
+        r"(?:attendee|attendees|attendance list|invitee|invitees)\s+"
+        r"(?:is|are|includes?|lists?|contains?)",
+        r"(?:attended|joined)\s+by",
+    )
+    hallucinated = any(
+        name in clause
+        and any(
+            re.search(rf"\b{re.escape(name)}\b.{{0,60}}\b{claim}", clause)
+            or re.search(rf"\b{claim}.{{0,60}}\b{re.escape(name)}\b", clause)
+            for claim in attendance_claims
+        )
+        for clause in clauses
+        for name in unknown_names
+    )
 
     if is_honest and not hallucinated:
         return _pass("Correctly recalled from previous turn that no attendees were specified.")
@@ -549,9 +574,106 @@ def _tc29_eval(state: ScenarioState) -> ScenarioEvaluation:
 # ===================================================================
 
 
+def _tc30_print_argument(statement: ast.stmt) -> ast.expr | None:
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return None
+    call = statement.value
+    if (
+        not isinstance(call.func, ast.Name)
+        or call.func.id != "print"
+        or len(call.args) != 1
+        or call.keywords
+    ):
+        return None
+    return call.args[0]
+
+
+def _tc30_is_integer(node: ast.expr, value: int) -> bool:
+    return isinstance(node, ast.Constant) and type(node.value) is int and node.value == value
+
+
+def _tc30_is_calculation(node: ast.expr, calculated_names: set[str]) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id in calculated_names
+    return (
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Add)
+        and _tc30_is_integer(node.left, 2)
+        and _tc30_is_integer(node.right, 2)
+    )
+
+
+def _tc30_prints_text(statements: list[ast.stmt], expected: str) -> bool:
+    if len(statements) != 1:
+        return False
+    argument = _tc30_print_argument(statements[0])
+    return (
+        isinstance(argument, ast.Constant)
+        and isinstance(argument.value, str)
+        and argument.value.strip().lower() == expected
+    )
+
+
+def _tc30_is_expected_workflow(code: str) -> bool:
+    """Recognize the requested combined Python workflow without executing it."""
+    try:
+        module = ast.parse(code, mode="exec")
+    except (SyntaxError, ValueError, TypeError):
+        return False
+
+    calculated_names: set[str] = set()
+    printed_calculation = False
+    for index, statement in enumerate(module.body):
+        if (
+            isinstance(statement, ast.Assign)
+            and not printed_calculation
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and _tc30_is_calculation(statement.value, calculated_names)
+        ):
+            calculated_names.add(statement.targets[0].id)
+            continue
+
+        printed = _tc30_print_argument(statement)
+        if (
+            printed is not None
+            and not printed_calculation
+            and _tc30_is_calculation(printed, calculated_names)
+        ):
+            printed_calculation = True
+            continue
+
+        if not isinstance(statement, ast.If) or not printed_calculation:
+            return False
+        comparison = statement.test
+        if (
+            not isinstance(comparison, ast.Compare)
+            or len(comparison.ops) != 1
+            or not isinstance(comparison.ops[0], ast.Eq)
+            or len(comparison.comparators) != 1
+        ):
+            continue
+        left = comparison.left
+        right = comparison.comparators[0]
+        compares_result_to_four = (
+            _tc30_is_calculation(left, calculated_names) and _tc30_is_integer(right, 4)
+        ) or (_tc30_is_integer(left, 4) and _tc30_is_calculation(right, calculated_names))
+        if (
+            compares_result_to_four
+            and _tc30_prints_text(statement.body, "correct")
+            and _tc30_prints_text(statement.orelse, "wrong")
+            and index == len(module.body) - 1
+        ):
+            return True
+        return False
+    return False
+
+
 def _tc30_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "run_code":
         code = _as_str(call.arguments.get("code"))
+        if _tc30_is_expected_workflow(code):
+            return _noise({"stdout": "4\ncorrect", "stderr": "", "exit_code": 0}, "run_code")
         if "2+2" in code or "2 + 2" in code:
             return _noise({"stdout": "4", "stderr": "", "exit_code": 0}, "run_code")
         if "correct" in code.lower():
@@ -586,8 +708,12 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _fail("Ran the 'wrong' branch despite the result being 4.")
         return _partial("Made 2 calls but the conditional logic was unclear.")
 
-    # Single call — credit if it ran the correct branch (model did mental math)
-    first_code = _as_str(code_calls[0].arguments.get("code")).lower()
+    # Single call — accept either the complete conditional workflow or the
+    # existing mental-math shortcut that prints only the correct branch.
+    raw_first_code = _as_str(code_calls[0].arguments.get("code"))
+    if _tc30_is_expected_workflow(raw_first_code):
+        return _pass("Ran the calculation and correct conditional branch in one call.")
+    first_code = raw_first_code.lower()
     if "correct" in first_code and "wrong" not in first_code:
         return _pass("Computed 2+2=4 mentally, ran only the 'correct' branch.")
     if "2+2" in first_code or "2 + 2" in first_code:
