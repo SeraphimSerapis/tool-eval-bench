@@ -520,7 +520,10 @@ _TC82_TOOLS = [
             "body": _STRING,
             "attachments": {"type": "array", "items": _STRING},
         },
-        ["to", "subject", "body", "attachments"],
+        # `attachments` stays optional: the evaluator scores whether the model
+        # chose to attach the checklist, so requiring it in the schema would
+        # hand over the very behaviour under test.
+        ["to", "subject", "body"],
     ),
 ]
 

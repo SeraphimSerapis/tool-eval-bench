@@ -1263,14 +1263,16 @@ def _tc36_eval(state: ScenarioState) -> ScenarioEvaluation:
         word in answer for word in ("who", "recipient", "to whom", "email address")
     )
     asks_subject = "subject" in answer or "what should the subject" in answer
-    asks_body = any(word in answer for word in ("body", "message", "content", "what should i say"))
+    asks_body = bool(re.search(r"\b(?:body|message|content|say|write|tell them)\b", answer))
 
-    if not email_calls and asks_recipient and asks_subject and asks_body:
-        return _pass("Correctly asked for missing recipient/subject/body.")
+    # The recipient is the one detail that cannot be inferred at all, so it is
+    # required. Asking what to say covers the rest — demanding the word
+    # "subject" as well would reject "Who should I send it to, and what would
+    # you like it to say?", which is a complete clarification.
+    if not email_calls and asks_recipient and (asks_subject or asks_body):
+        return _pass("Correctly asked for the missing recipient and message content.")
     if not email_calls and asks_clarification:
-        return _partial(
-            "Asked for some missing email details but not recipient, subject, and body."
-        )
+        return _partial("Asked for some missing email details but not the recipient and content.")
     if not email_calls and not asks_clarification:
         return _partial("Didn't send an email but also didn't clearly ask for details.")
     if email_calls:

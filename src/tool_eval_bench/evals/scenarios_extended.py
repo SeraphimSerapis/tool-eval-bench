@@ -298,6 +298,21 @@ def _tc19_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+_TC19_MARKER = re.compile(
+    r"(?:^|\n)[^\S\n]*\|?[^\S\n]*(?:message[^\S\n]*)?\*{0,2}([1-5])\*{0,2}[^\S\n]*[.):\-|]"
+)
+
+
+def _tc19_segments(answer: str) -> dict[int, str]:
+    """Map each message number to the text the answer attaches to it."""
+    markers = [(int(m.group(1)), m.start(), m.end()) for m in _TC19_MARKER.finditer(answer)]
+    segments: dict[int, str] = {}
+    for position, (index, _, end) in enumerate(markers):
+        stop = markers[position + 1][1] if position + 1 < len(markers) else len(answer)
+        segments.setdefault(index, answer[end:stop])
+    return segments
+
+
 def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User asks: classify 5 messages into categories. Model should not use tools.
 
@@ -308,22 +323,12 @@ def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     answer = state.final_answer.lower()
 
-    # Require structured output (numbered list, bullet points, or clear per-message labeling)
+    # Require structured output (numbered list, bullets, table, or per-message labeling)
     has_structure = bool(
         re.search(r"(?:^|\n)\s*(?:1[.)\]]|message\s*1)", answer, re.MULTILINE)
-        or re.search(r"(?:^|\n)\s*[-•*]", answer, re.MULTILINE)
+        or re.search(r"(?:^|\n)\s*[-•*|]", answer, re.MULTILINE)
     )
 
-    # Each label must be attached to the corresponding numbered message. A
-    # keyword bag can pass without classifying anything at all.
-    numbered_checks = [
-        bool(re.search(r"(?:1\s*[.):\-].{0,80})(?:code_help|code|engineering)", answer)),
-        bool(re.search(r"(?:2\s*[.):\-].{0,80})(?:scheduling|schedule|calendar)", answer)),
-        bool(re.search(r"(?:3\s*[.):\-].{0,80})(?:billing|payment)", answer)),
-        bool(re.search(r"(?:4\s*[.):\-].{0,80})(?:devops|deploy)", answer)),
-        bool(re.search(r"(?:5\s*[.):\-].{0,80})research", answer)),
-    ]
-    bullet_lines = re.findall(r"(?:^|\n)\s*[-•*]\s*(.+)", answer)
     expected = [
         ("code_help", "code", "engineering"),
         ("scheduling", "schedule", "calendar"),
@@ -331,11 +336,23 @@ def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
         ("devops", "deploy"),
         ("research",),
     ]
+    # Each label must be attached to the corresponding message. A keyword bag
+    # can pass without classifying anything at all — but the layout carrying
+    # that association is the model's choice, so segment on the message marker
+    # rather than assuming one list style. This covers "1.", "1)", "Message 1:",
+    # "**1**" and markdown table rows alike.
+    segments = _tc19_segments(answer)
+    numbered_correct = sum(
+        any(label in segments[index] for label in labels)
+        for index, labels in enumerate(expected, start=1)
+        if index in segments
+    )
+    bullet_lines = re.findall(r"(?:^|\n)\s*[-•*]\s*(.+)", answer)
     bullet_correct = sum(
         any(label in line for label in labels)
         for line, labels in zip(bullet_lines[:5], expected, strict=False)
     )
-    correct = max(sum(numbered_checks), bullet_correct)
+    correct = max(numbered_correct, bullet_correct)
 
     if correct >= 4 and has_structure:
         return _pass("Classified messages correctly in structured format without tool use.")

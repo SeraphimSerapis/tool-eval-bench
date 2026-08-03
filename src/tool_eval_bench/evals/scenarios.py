@@ -379,7 +379,14 @@ def _tc06_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         for c in calls
     )
-    if len(calls) == 2 and has_spanish and has_japanese and not invalid_bundled:
+    # Extra calls only disqualify when they are off-target. A repeated call for
+    # one of the two requested languages is a retry, not a mistake.
+    extraneous = any(
+        _normalize(_as_str(c.arguments.get("target_language"))) not in ("spanish", "japanese")
+        or not _includes_text(c.arguments.get("text"), "where is the nearest hospital")
+        for c in calls
+    )
+    if has_spanish and has_japanese and not invalid_bundled and not extraneous:
         # Verify the model surfaced the actual translations.
         answer = state.final_answer
         has_spanish_text = "Dónde" in answer or (

@@ -306,7 +306,11 @@ def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     contacts_call = first_call(state, "get_contacts")
     if not contacts_call:
         return _fail("Did not call get_contacts.")
-    if normalize(as_str(contacts_call.arguments.get("query"))) != "engineering":
+    # Listing every contact and filtering client-side is a valid strategy, so an
+    # empty/broad query is fine — the contact data itself is verified below.
+    # Only a query aimed at a different group is wrong.
+    contacts_query = normalize(as_str(contacts_call.arguments.get("query")))
+    if contacts_query not in ("", "all", "*", "contacts") and "engineering" not in contacts_query:
         return _partial("Called get_contacts, but looked up the wrong contact group.")
     if not result_is_usable_if_present(state, contacts_call):
         return _partial("get_contacts returned an error, so contacts cannot be confirmed.")

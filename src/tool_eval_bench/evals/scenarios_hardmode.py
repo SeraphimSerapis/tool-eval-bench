@@ -521,12 +521,25 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     attendees = set(as_str_list(args.get("attendees")))
     expected_attendees = {"mark.chen@company.com", "sarah.jones@company.com"}
     attendees_ok = attendees == expected_attendees
-    confirmation = [c for c in state.tool_calls if c.name == "send_email"]
-    email_ok = any(
-        {value.strip() for value in as_str(c.arguments.get("to")).split(",")} == expected_attendees
-        and c.turn > last_event.turn
-        for c in confirmation
-    )
+    # "Send a confirmation email to both Mark and Sarah" is satisfied by one
+    # email addressed to both or by one email each — what matters is that both
+    # were notified after the event was created, and nobody else was.
+    confirmation = [
+        c for c in state.tool_calls if c.name == "send_email" and c.turn > last_event.turn
+    ]
+    notified: set[str] = set()
+    email_ok = bool(confirmation)
+    for call in confirmation:
+        recipients = {
+            value.strip().lower()
+            for value in re.split(r"[,;]", as_str(call.arguments.get("to")))
+            if value.strip()
+        }
+        if not recipients or not recipients <= expected_attendees:
+            email_ok = False
+            break
+        notified |= recipients
+    email_ok = email_ok and notified == expected_attendees
     # Check if Sarah was added
     contacts_searched = has_tool_call(
         state, "get_contacts", lambda c: includes_text(c.arguments.get("query"), "sarah")

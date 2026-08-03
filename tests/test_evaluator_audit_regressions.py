@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from conftest import make_state
 
@@ -1103,3 +1105,189 @@ def test_reviewer_boundary_regressions(scenario_id, state, expected):
 def test_natural_phrasing_still_passes(scenario_id, state):
     result = _SCENARIOS[scenario_id].evaluate(state)
     assert result.status == ScenarioStatus.PASS, result.summary
+
+
+# ---------------------------------------------------------------------------
+# A scenario has more than one correct solution. These pin the alternative
+# workflows the audit's argument/ordering checks must keep accepting — a retry,
+# a broad lookup narrowed client-side, one email per recipient, a different
+# output layout — each paired with the near-miss it must still reject.
+# ---------------------------------------------------------------------------
+
+_TC06_TEXT = "Where is the nearest hospital?"
+
+
+def _tc06_call(target, turn=1):
+    return _call(
+        "translate_text",
+        {"text": _TC06_TEXT, "source_language": "English", "target_language": target},
+        turn,
+    )
+
+
+_TC06_ANSWER = "Spanish: ¿Dónde está el hospital más cercano? Japanese: 最寄りの病院はどこですか？"
+
+_TC19_TABLE = (
+    "| # | Category |\n|---|---|\n| 1 | code_help |\n| 2 | scheduling |\n"
+    "| 3 | billing |\n| 4 | devops |\n| 5 | research |"
+)
+
+_TC66_ANSWER = json.dumps(
+    {
+        "query": "engineering",
+        "total": 2,
+        "contacts": [
+            {
+                "name": "Alice Zhang",
+                "email": "alice.zhang@company.com",
+                "department": "Engineering",
+            },
+            {
+                "name": "Carol Singh",
+                "email": "carol.singh@company.com",
+                "department": "Engineering",
+            },
+        ],
+    }
+)
+
+
+def _tc74_calls(*email_recipients, turn_offset=0):
+    calls = [
+        _call("get_contacts", {"query": "Sarah"}, 1),
+        _call(
+            "create_calendar_event",
+            {
+                "title": "Product Review",
+                "date": "2026-03-25",
+                "time": "14:00",
+                "duration_minutes": 45,
+                "attendees": ["mark.chen@company.com", "sarah.jones@company.com"],
+            },
+            2,
+        ),
+    ]
+    for index, recipient in enumerate(email_recipients):
+        calls.append(
+            _call(
+                "send_email",
+                {"to": recipient, "subject": "Confirmed", "body": "Product Review, Wed 2pm."},
+                3 + index + turn_offset,
+            )
+        )
+    return calls
+
+
+def _tc53_state(recipient, *, contact_results=None):
+    return _state(
+        calls=[
+            _call("get_weather", {"location": "London"}, 1),
+            _call("get_contacts", {"query": "attendees"}, 1),
+            _call("create_calendar_event", {"title": "Team sync", "date": "2026-03-21"}, 2),
+            _call("send_email", {"to": recipient, "subject": "Moved", "body": "Rain."}, 2),
+        ],
+        results=(
+            [{"name": "get_contacts", "result": {"results": contact_results}}]
+            if contact_results
+            else []
+        ),
+        answer="It will rain in London this weekend, so I moved the meeting to the office.",
+    )
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "state", "expected"),
+    [
+        # TC-06: a repeated call for a requested language is a retry, not an error.
+        (
+            "TC-06",
+            _state(
+                calls=[_tc06_call("Spanish"), _tc06_call("Japanese"), _tc06_call("Spanish", 2)],
+                answer=_TC06_ANSWER,
+            ),
+            ScenarioStatus.PASS,
+        ),
+        (
+            "TC-06",
+            _state(
+                calls=[_tc06_call("Spanish"), _tc06_call("Japanese"), _tc06_call("French", 2)],
+                answer=_TC06_ANSWER,
+            ),
+            ScenarioStatus.PARTIAL,
+        ),
+        # TC-19: the layout carrying the classification is the model's choice.
+        ("TC-19", _state(answer=_TC19_TABLE), ScenarioStatus.PASS),
+        (
+            "TC-19",
+            _state(answer="These cover code, scheduling, billing, devops and research."),
+            ScenarioStatus.FAIL,
+        ),
+        # TC-36: the recipient is mandatory; naming "subject" verbatim is not.
+        (
+            "TC-36",
+            _state(answer="Who should I send it to, and what would you like it to say?"),
+            ScenarioStatus.PASS,
+        ),
+        (
+            "TC-36",
+            _state(answer="Sure, I can help with that — let me know when you're ready."),
+            ScenarioStatus.PARTIAL,
+        ),
+        # TC-66: list-all-then-filter is as valid as a targeted query.
+        (
+            "TC-66",
+            _state(calls=[_call("get_contacts", {"query": ""})], answer=_TC66_ANSWER),
+            ScenarioStatus.PASS,
+        ),
+        (
+            "TC-66",
+            _state(calls=[_call("get_contacts", {"query": "design"})], answer=_TC66_ANSWER),
+            ScenarioStatus.PARTIAL,
+        ),
+        # TC-74: one email each satisfies "confirm to both" as well as one to both.
+        (
+            "TC-74",
+            _state(
+                calls=_tc74_calls("mark.chen@company.com", "sarah.jones@company.com"),
+                answer="Confirmed with Mark and Sarah.",
+            ),
+            ScenarioStatus.PASS,
+        ),
+        (
+            "TC-74",
+            _state(
+                calls=_tc74_calls("mark.chen@company.com", "outsider@example.net"),
+                answer="Confirmed.",
+            ),
+            ScenarioStatus.PARTIAL,
+        ),
+        # TC-53: a tool-surfaced recipient is known; an invented one is not.
+        (
+            "TC-53",
+            _tc53_state(
+                "alex.kim@company.com",
+                contact_results=[{"name": "Alex Kim", "email": "alex.kim@company.com"}],
+            ),
+            ScenarioStatus.PASS,
+        ),
+        ("TC-53", _tc53_state("someone@elsewhere.net"), ScenarioStatus.FAIL),
+    ],
+)
+def test_alternative_workflows(scenario_id, state, expected):
+    result = _SCENARIOS[scenario_id].evaluate(state)
+    assert result.status == expected, result.summary
+
+
+def test_tc82_attachments_are_not_schema_required():
+    """The evaluator scores whether the model attaches the checklist.
+
+    Requiring `attachments` in the tool schema would make the model pass that
+    check by construction, so the parameter must stay optional.
+    """
+    scenario = _SCENARIOS["TC-82"]
+    send_email = next(
+        tool for tool in scenario.tools_override or [] if tool["function"]["name"] == "send_email"
+    )
+    parameters = send_email["function"]["parameters"]
+    assert "attachments" in parameters["properties"]
+    assert "attachments" not in parameters["required"]

@@ -321,7 +321,21 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
     mentions_office = any(w in answer for w in ("office", "indoor", "inside", "moved", "relocated"))
     mentions_rain = "rain" in answer
 
-    intended_recipients = {"lead@company.com", "dev-team@company.com", "team@company.com"}
+    # The defect worth failing is a fabricated recipient, not an unfamiliar one:
+    # any address a tool actually surfaced is legitimately known to the model,
+    # however it chose to discover it. The scenario's own attendee addresses are
+    # included so a model that skips the lookup but gets them right isn't
+    # punished for the shortcut alone.
+    discovered_recipients = {
+        address.lower()
+        for result in state.tool_results
+        for address in re.findall(r"[\w.+-]+@[\w.-]+\.\w+", str(result.result))
+    }
+    intended_recipients = discovered_recipients | {
+        "lead@company.com",
+        "dev-team@company.com",
+        "team@company.com",
+    }
     notifications = [c for c in state.tool_calls if c.name == "send_email"]
     recipient_sets = [
         {
