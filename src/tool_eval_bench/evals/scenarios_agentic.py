@@ -2292,6 +2292,9 @@ AGENTIC_SCENARIOS: list[ScenarioDefinition] = [
         description="5-turn research workflow: search→read→compare→summarize→email. Tests deep state tracking.",
         handle_tool_call=_tc46_handle,
         evaluate=_tc46_eval,
+        # 5 user turns + tool-call rounds need up to 11 assistant turns for the
+        # canonical reference path; 12 keeps it finite with one-turn headroom.
+        max_turns_override=12,
         follow_up_messages=[
             "Read the 2025 one.",
             "What's our market share growth compared to last year? Check the 2024 report too.",

@@ -180,6 +180,11 @@ class ScenarioDefinition:
     # to the adapter's response_format parameter. Used by structured output
     # scenarios to request JSON schema enforcement.
     response_format_override: dict[str, Any] | None = None
+    # Optional per-scenario turn budget.  If set, the orchestrator uses this
+    # value instead of the global ``max_turns`` for this scenario.  Used by
+    # deep multi-turn workflows (e.g. TC-46) whose reference path needs more
+    # exchanges than the global default, while keeping the limit finite.
+    max_turns_override: int | None = None
     # Difficulty rating (1–5 scale).  None means "unrated" for backward
     # compatibility.  See docs/methodology.md for the tier definitions.
     #   1 = trivial   — single tool, obvious mapping
@@ -265,6 +270,9 @@ class ScenarioResult:
     state_checkpoints: list[str] = field(default_factory=list)
     # Failure taxonomy — why did this scenario fail?
     failure_kind: str | None = None
+    # True when the run stopped because the turn budget ran out before a
+    # final answer was produced / follow-ups were exhausted.
+    turn_budget_exceeded: bool = False
 
     @property
     def is_infrastructure_failure(self) -> bool:
@@ -292,6 +300,8 @@ class ScenarioResult:
         }
         if self.failure_kind is not None:
             d["failure_kind"] = self.failure_kind
+        if self.turn_budget_exceeded:
+            d["turn_budget_exceeded"] = self.turn_budget_exceeded
         if self.ttft_ms is not None:
             d["ttft_ms"] = round(self.ttft_ms, 1)
         if self.turn_latencies_ms:
@@ -330,6 +340,7 @@ class ScenarioResult:
             parallel_tool_turns=list(data.get("parallel_tool_turns", [])),
             state_checkpoints=list(data.get("state_checkpoints", [])),
             failure_kind=data.get("failure_kind"),
+            turn_budget_exceeded=data.get("turn_budget_exceeded", False),
         )
 
 
