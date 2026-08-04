@@ -12,7 +12,7 @@ Hard Mode scenarios (Category P) are available via ALL_SCENARIOS_WITH_HARDMODE
 from __future__ import annotations
 
 import re
-from typing import Any, cast
+from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
     Category,
@@ -477,44 +477,57 @@ def _tc07_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
-    steps = 0
-    if _has_tool_call(
-        state,
-        "search_files",
-        lambda c: _includes_text(c.arguments.get("query"), "q3 budget report"),
-    ):
-        steps += 1
-    if _has_tool_call(
-        state, "read_file", lambda c: _normalize(_as_str(c.arguments.get("file_id"))) == "file_091"
-    ):
-        steps += 1
-    if _has_tool_call(
-        state, "get_contacts", lambda c: _includes_text(c.arguments.get("query"), "manager")
-    ):
-        steps += 1
-    if _has_tool_call(
-        state,
-        "send_email",
-        lambda c: (
+    search_calls = _tool_calls_by_name(state, "search_files")
+    read_calls = [
+        c
+        for c in _tool_calls_by_name(state, "read_file")
+        if _normalize(_as_str(c.arguments.get("file_id"))) == "file_091"
+    ]
+    contact_calls = [
+        c
+        for c in _tool_calls_by_name(state, "get_contacts")
+        if _includes_text(c.arguments.get("query"), "manager")
+    ]
+    email_calls = [
+        c
+        for c in _tool_calls_by_name(state, "send_email")
+        if (
             _normalize(_as_str(c.arguments.get("to"))) == "jordan.park@company.com"
             and (
                 _includes_text(c.arguments.get("body"), "4.4m")
                 or _includes_text(c.arguments.get("body"), "$4.4m")
             )
-        ),
-    ):
-        steps += 1
+        )
+    ]
+
+    semantic_search_calls = [
+        c
+        for c in search_calls
+        if (
+            "q3" in _normalize(_as_str(c.arguments.get("query")))
+            and "budget" in _normalize(_as_str(c.arguments.get("query")))
+        )
+    ]
+
+    # The search handler resolves any query to file_091, so a search followed
+    # by a read of that file is handler-resolved evidence. Keep the candidate
+    # calls here, then validate the dependency graph using those same calls.
+    search_step = bool(semantic_search_calls or (search_calls and read_calls))
+    steps = sum((search_step, bool(read_calls), bool(contact_calls), bool(email_calls)))
     if steps == 4:
-        ordered = [
-            _first_call(state, "search_files"),
-            _first_call(state, "read_file"),
-            _first_call(state, "get_contacts"),
-            _first_call(state, "send_email"),
-        ]
-        if any(call is None for call in ordered):
-            return _partial("Found all chain steps, but one dependency record was incomplete.")
-        ordered_calls: list[ToolCallRecord] = [cast(ToolCallRecord, call) for call in ordered]
-        if not all(ordered_calls[i].turn < ordered_calls[i + 1].turn for i in range(3)):
+        # Dependency graph instead of one total order: the file read depends
+        # on the search result, and both the read and the contact lookup must
+        # complete before the email is sent. read and contacts are independent
+        # and may be issued in either relative order. Use the calls that
+        # satisfied the argument checks above, not arbitrary first calls.
+        dependency_satisfied = any(
+            search.turn < read.turn < email.turn and contacts.turn < email.turn
+            for search in search_calls
+            for read in read_calls
+            for contacts in contact_calls
+            for email in email_calls
+        )
+        if not dependency_satisfied:
             return _partial("Found all chain steps, but used them out of dependency order.")
         return _pass("Completed the full four-step chain with the right data.")
     if steps >= 3:

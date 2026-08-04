@@ -500,6 +500,112 @@ class TestTC07Contract:
         result = self.sc.evaluate(s)
         assert result.status != ScenarioStatus.PASS
 
+    def test_pass_semantic_search_query(self):
+        """Search query without the literal report name still resolves."""
+        s = _state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "Q3 budget"}, "turn": 1},
+                {"name": "read_file", "arguments": {"file_id": "file_091"}, "turn": 2},
+                {"name": "get_contacts", "arguments": {"query": "manager"}, "turn": 3},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "jordan.park@company.com",
+                        "subject": "Budget",
+                        "body": "Total is $4.4M",
+                    },
+                    "turn": 4,
+                },
+            ],
+            final_answer="Email sent.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
+    def test_pass_contacts_before_read(self):
+        """read and get_contacts are independent — either order passes."""
+        s = _state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "Q3 Budget Report"}, "turn": 1},
+                {"name": "get_contacts", "arguments": {"query": "manager"}, "turn": 2},
+                {"name": "read_file", "arguments": {"file_id": "file_091"}, "turn": 3},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "jordan.park@company.com",
+                        "subject": "Budget",
+                        "body": "Total is $4.4M",
+                    },
+                    "turn": 4,
+                },
+            ],
+            final_answer="Email sent.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
+    def test_pass_handler_resolved_evidence(self):
+        """Reading the file the search handler resolved counts as the search."""
+        s = _state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "reports"}, "turn": 1},
+                {"name": "read_file", "arguments": {"file_id": "file_091"}, "turn": 2},
+                {"name": "get_contacts", "arguments": {"query": "manager"}, "turn": 3},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "jordan.park@company.com",
+                        "subject": "Budget",
+                        "body": "Total is $4.4M",
+                    },
+                    "turn": 4,
+                },
+            ],
+            final_answer="Email sent.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
+    def test_fail_unresolved_search_no_evidence(self):
+        """Search with an unrelated query and a wrong file read is not credited."""
+        s = _state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "reports"}, "turn": 1},
+                {"name": "read_file", "arguments": {"file_id": "file_123"}, "turn": 2},
+                {"name": "get_contacts", "arguments": {"query": "manager"}, "turn": 3},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "jordan.park@company.com",
+                        "subject": "Budget",
+                        "body": "Total is $4.4M",
+                    },
+                    "turn": 4,
+                },
+            ],
+            final_answer="Sent.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
+
+    def test_partial_when_correct_read_follows_email(self):
+        """A valid read after the email must not repair an earlier wrong read."""
+        s = _state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "Q3 budget"}, "turn": 1},
+                {"name": "read_file", "arguments": {"file_id": "file_123"}, "turn": 2},
+                {"name": "get_contacts", "arguments": {"query": "manager"}, "turn": 2},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "jordan.park@company.com",
+                        "subject": "Budget",
+                        "body": "Total is $4.4M",
+                    },
+                    "turn": 3,
+                },
+                {"name": "read_file", "arguments": {"file_id": "file_091"}, "turn": 4},
+            ],
+            final_answer="Sent.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
 
 # ---------------------------------------------------------------------------
 # TC-08: Conditional Branching

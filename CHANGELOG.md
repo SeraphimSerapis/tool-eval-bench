@@ -21,6 +21,14 @@ All notable changes to `tool-eval-bench` are documented here.
   results produced after it, even for identical model behaviour — the tasks
   themselves differ, so re-run any baseline you intend to compare against.
 
+- **TC-07 semantic search and dependency-aware ordering** — the `search_files`
+  step now accepts a semantically sufficient query (mentions `q3` and `budget`)
+  or handler-resolved file evidence (a subsequent read of the resolved
+  `file_091`), instead of requiring the literal `q3 budget report` substring.
+  The four-step chain check now enforces a dependency graph (`search → read →
+  email` and `contacts → email`) rather than one total order, so `get_contacts`
+  may run before `read_file`.
+
 - **TC-26, TC-30, and TC-75 deterministic scoring (#38, #39, #40)** — attendee
   suggestions no longer count as contradictory attendance claims, a single
   Python call implementing the full conditional workflow is recognized through
