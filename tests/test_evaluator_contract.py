@@ -584,6 +584,28 @@ class TestTC07Contract:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
 
+    def test_partial_when_correct_read_follows_email(self):
+        """A valid read after the email must not repair an earlier wrong read."""
+        s = _state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "Q3 budget"}, "turn": 1},
+                {"name": "read_file", "arguments": {"file_id": "file_123"}, "turn": 2},
+                {"name": "get_contacts", "arguments": {"query": "manager"}, "turn": 2},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "jordan.park@company.com",
+                        "subject": "Budget",
+                        "body": "Total is $4.4M",
+                    },
+                    "turn": 3,
+                },
+                {"name": "read_file", "arguments": {"file_id": "file_091"}, "turn": 4},
+            ],
+            final_answer="Sent.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
 
 # ---------------------------------------------------------------------------
 # TC-08: Conditional Branching
