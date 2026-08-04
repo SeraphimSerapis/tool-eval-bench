@@ -12,6 +12,39 @@ from __future__ import annotations
 
 from typing import Any
 
+# Language designators accepted by the translate_text mock/evaluators.
+#
+# This is the explicit, finite set used across all scenarios — the schema
+# advertises exactly these values and the scenario handlers accept exactly
+# these values (full canonical names plus a small alias table). It is NOT a
+# full ISO 639 / BCP-47 resolver: only the designators listed here are valid.
+# tests/test_tc06_translate_text_contract.py keeps this list in sync with
+# the scenario alias tables.
+TRANSLATE_LANGUAGE_DESIGNATORS: list[str] = [
+    "english",
+    "en",
+    "en-us",
+    "en-gb",
+    "en-ca",
+    "en-au",
+    "spanish",
+    "es",
+    "es-es",
+    "es-419",
+    "espanol",
+    "español",
+    "castilian",
+    "spa",
+    "japanese",
+    "ja",
+    "ja-jp",
+    "日本語",
+    "jpn",
+    "german",
+    "de",
+    "deutsch",
+]
+
 UNIVERSAL_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -175,8 +208,14 @@ UNIVERSAL_TOOLS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "text": {"type": "string"},
-                    "source_language": {"type": "string"},
-                    "target_language": {"type": "string"},
+                    "source_language": {
+                        "type": "string",
+                        "enum": TRANSLATE_LANGUAGE_DESIGNATORS,
+                    },
+                    "target_language": {
+                        "type": "string",
+                        "enum": TRANSLATE_LANGUAGE_DESIGNATORS,
+                    },
                 },
                 "required": ["text", "source_language", "target_language"],
                 "additionalProperties": False,

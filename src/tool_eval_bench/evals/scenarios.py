@@ -346,28 +346,66 @@ def _tc05_eval(state: ScenarioState) -> ScenarioEvaluation:
 # ===================================================================
 
 
+# Language designators accepted by the translate_text mock and evaluator.
+# This is an explicit, finite alias table for the canonical languages the
+# mock actually translates — NOT a full ISO 639 / BCP-47 resolver. Only the
+# designators listed here are valid. The translate_text schema in
+# domain/tools.py (TRANSLATE_LANGUAGE_DESIGNATORS) advertises exactly these
+# values plus the German designators used by the extended scenarios; the
+# contract test (tests/test_tc06_translate_text_contract.py) keeps them in
+# sync.
+_LANGUAGE_ALIASES: dict[str, str] = {
+    "english": "english",
+    "en": "english",
+    "en-us": "english",
+    "en-gb": "english",
+    "en-ca": "english",
+    "en-au": "english",
+    "spanish": "spanish",
+    "es": "spanish",
+    "es-es": "spanish",
+    "es-419": "spanish",
+    "espanol": "spanish",
+    "español": "spanish",
+    "castilian": "spanish",
+    "spa": "spanish",
+    "japanese": "japanese",
+    "ja": "japanese",
+    "ja-jp": "japanese",
+    "日本語": "japanese",
+    "jpn": "japanese",
+}
+
+
+def _language_alias(value: Any) -> str | None:
+    """Resolve a language designator to the canonical language name used by
+    the mock, or None when the string is not a language designator."""
+    return _LANGUAGE_ALIASES.get(_normalize(_as_str(value)))
+
+
 def _tc06_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "translate_text":
-        target = _normalize(_as_str(call.arguments.get("target_language")))
+        target = _language_alias(call.arguments.get("target_language"))
         if target == "spanish":
             return _noise({"translated": "¿Dónde está el hospital más cercano?"}, "translate_text")
         if target == "japanese":
             return _noise({"translated": "最寄りの病院はどこですか？"}, "translate_text")
-        return _noise({"error": f"Unsupported target language {target}."}, "translate_text")
+        raw = _as_str(call.arguments.get("target_language"))
+        return _noise({"error": f"Unsupported target language {raw}."}, "translate_text")
     return _generic_tool_fallback(call)
 
 
 def _tc06_eval(state: ScenarioState) -> ScenarioEvaluation:
     calls = _tool_calls_by_name(state, "translate_text")
     has_spanish = any(
-        _normalize(_as_str(c.arguments.get("source_language"))) == "english"
-        and _normalize(_as_str(c.arguments.get("target_language"))) == "spanish"
+        _language_alias(c.arguments.get("source_language")) == "english"
+        and _language_alias(c.arguments.get("target_language")) == "spanish"
         and _includes_text(c.arguments.get("text"), "where is the nearest hospital")
         for c in calls
     )
     has_japanese = any(
-        _normalize(_as_str(c.arguments.get("source_language"))) == "english"
-        and _normalize(_as_str(c.arguments.get("target_language"))) == "japanese"
+        _language_alias(c.arguments.get("source_language")) == "english"
+        and _language_alias(c.arguments.get("target_language")) == "japanese"
         and _includes_text(c.arguments.get("text"), "where is the nearest hospital")
         for c in calls
     )
@@ -379,10 +417,12 @@ def _tc06_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         for c in calls
     )
-    # Extra calls only disqualify when they are off-target. A repeated call for
-    # one of the two requested languages is a retry, not a mistake.
+    # A call is extra/off-target when its target language is not one of the
+    # two required languages (Spanish or Japanese by any accepted designator)
+    # or when the text is missing/off-topic. Calls targeting Spanish or
+    # Japanese by any accepted designator count as translation attempts.
     extraneous = any(
-        _normalize(_as_str(c.arguments.get("target_language"))) not in ("spanish", "japanese")
+        _language_alias(c.arguments.get("target_language")) not in ("spanish", "japanese")
         or not _includes_text(c.arguments.get("text"), "where is the nearest hospital")
         for c in calls
     )

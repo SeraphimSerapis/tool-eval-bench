@@ -27,6 +27,15 @@ All notable changes to `tool-eval-bench` are documented here.
   its AST, and natural date/time clarification questions receive pass or partial
   credit according to which missing parameters they actually request.
 
+- **TC-06 `translate_text` language designators (PR #43)** — the mock and
+  evaluator now accept an explicit, finite set of language designators
+  (canonical names plus aliases such as `es`, `ja`, `spa`, `jpn`, `en-us`).
+  The `translate_text` tool schema advertises exactly the union of the
+  designators accepted across all scenarios; the previous schema listed
+  `german` for TC-06 even though its mock rejected it, and omitted the
+  aliases the evaluator accepted. A dedicated contract test keeps the
+  schema enum and the scenario alias tables in sync.
+
 ### Added
 
 - **Tokenizer auto-detection for `--perf`** — `--tokenizer` is now rarely needed.
