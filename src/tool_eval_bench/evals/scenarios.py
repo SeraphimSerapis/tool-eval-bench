@@ -482,7 +482,9 @@ def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
         read = _first_call(state, "read_file")
         contacts = _first_call(state, "get_contacts")
         email = _first_call(state, "send_email")
-        if any(call is None for call in (search, read, contacts, email)):
+        # Keep the checks explicit so static type checkers can narrow every
+        # optional call before the dependency-order comparison below.
+        if search is None or read is None or contacts is None or email is None:
             return _partial("Found all chain steps, but one dependency record was incomplete.")
         # Dependency graph instead of one total order: the file read depends
         # on the search result, and both the read and the contact lookup must
