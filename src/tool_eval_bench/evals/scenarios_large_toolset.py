@@ -150,6 +150,23 @@ def _tc38_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         )
     if call.name == "send_email":
         return _noise({"status": "sent"}, "send_email")
+    if call.name == "get_org_chart":
+        # Engineering org chart — the canonical manager record must agree with
+        # the get_contacts fixture so an org-chart verification resolves (not
+        # re-introduces) the manager identity.
+        if _includes_text(call.arguments.get("department"), "engineering"):
+            return _noise(
+                {
+                    "department": "Engineering",
+                    "manager": {
+                        "name": "Jordan Park",
+                        "email": "jordan.park@company.com",
+                        "role": "manager",
+                    },
+                },
+                "get_org_chart",
+            )
+        return _noise({"results": []}, "get_org_chart")
     # Domain-specific tools that might be tempting but wrong
     if call.name == "get_customer_profile":
         return _noise(
@@ -208,11 +225,20 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     ):
         steps += 1
 
+    # A get_org_chart lookup for the Engineering department is an accepted
+    # manager-verification step and is not treated as domain-tool contamination.
+    # Unrelated org-chart lookups still count as irrelevant calls.
+    def _is_manager_verification(c: ToolCallRecord) -> bool:
+        return c.name == "get_org_chart" and _includes_text(
+            c.arguments.get("department"), "engineering"
+        )
+
     # Check for domain-tool contamination
     domain_calls = [
         c.name
         for c in state.tool_calls
         if c.name not in ("search_files", "read_file", "get_contacts", "send_email", "web_search")
+        and not _is_manager_verification(c)
     ]
 
     if steps == 4 and not domain_calls:
