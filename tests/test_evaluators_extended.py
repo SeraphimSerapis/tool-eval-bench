@@ -693,6 +693,55 @@ class TestTC23:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
 
+    def test_pass_formatted_multiline(self) -> None:
+        """A substantively correct answer with headings, bullets, and line breaks
+        must still PASS — formatting must not lower the score."""
+        s = _state(
+            final_answer=(
+                "What get_stock_price likely does:\n"
+                "\n"
+                "- It retrieves the current stock price for a given ticker symbol.\n"
+                "- It returns the price as a numeric value.\n"
+                "\n"
+                "Based on its parameters, it fetches stock data by ticker."
+            )
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
+    def test_pass_multiline_crlf(self) -> None:
+        """CRLF line breaks and extra spacing must be treated as equivalent
+        whitespace, not as semantic breaks."""
+        s = _state(
+            final_answer=(
+                "get_stock_price is a function that\r\n"
+                "\r\n"
+                "   retrieves the current stock price   for a ticker symbol   "
+                "and returns it as a float."
+            )
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
+    def test_partial_missing_required_meaning(self) -> None:
+        """Mentioning the function and stocks without asserting any
+        retrieval/return/fetch action must stay PARTIAL."""
+        s = _state(
+            final_answer="get_stock_price is a function related to stock prices and tickers."
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
+    def test_partial_negated_meaning(self) -> None:
+        """An answer that explicitly negates the required facts (does not
+        retrieve/return) must stay PARTIAL even when formatted."""
+        s = _state(
+            final_answer=(
+                "What get_stock_price does:\n"
+                "\n"
+                "- It does not retrieve or return any stock price.\n"
+                "- It is unrelated to ticker data."
+            )
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
     def test_fail_called_tool(self) -> None:
         s = _state(
             tool_calls=[{"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}],

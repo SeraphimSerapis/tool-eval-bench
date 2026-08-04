@@ -174,6 +174,12 @@ def _tc23_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail(f"Used tools ({tools_used}) despite instruction to not use any.")
 
     answer = state.final_answer.lower()
+    # Collapse all whitespace (including LF/CRLF, tabs, and runs of spaces)
+    # so formatting such as headings, bullets, and line breaks cannot break
+    # the semantic regex chains below. Meaning is unchanged: the chains still
+    # require a retrieval/return/fetch action tied to stock/price/ticker and
+    # to the function name, and negation of those facts still blocks a pass.
+    answer = re.sub(r"\s+", " ", answer)
     # Should explain what the function does
     explains = bool(
         re.search(
