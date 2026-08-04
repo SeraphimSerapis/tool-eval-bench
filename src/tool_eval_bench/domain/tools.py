@@ -14,10 +14,11 @@ from typing import Any
 
 # Language designators accepted by the translate_text mock/evaluators.
 #
-# This is the explicit, finite set used across all scenarios — the schema
-# advertises exactly these values and the scenario handlers accept exactly
-# these values (full canonical names plus a small alias table). It is NOT a
-# full ISO 639 / BCP-47 resolver: only the designators listed here are valid.
+# These are the explicit, finite values used across all scenarios. The
+# source-language enum uses this union; target_language has a narrower,
+# role-specific union below because the scenarios never translate *to*
+# regional English variants. This is NOT a full ISO 639 / BCP-47 resolver:
+# only the designators listed here are valid.
 # tests/test_tc06_translate_text_contract.py keeps this list in sync with
 # the scenario alias tables.
 TRANSLATE_LANGUAGE_DESIGNATORS: list[str] = [
@@ -43,6 +44,16 @@ TRANSLATE_LANGUAGE_DESIGNATORS: list[str] = [
     "german",
     "de",
     "deutsch",
+]
+
+# Target values accepted by at least one translate_text scenario handler.
+# en-us/en-gb/en-ca/en-au are valid TC-06 source designators, but no scenario
+# accepts them as target values, so advertising them for target_language would
+# let a model make a schema-valid call that the mock always rejects.
+TRANSLATE_TARGET_LANGUAGE_DESIGNATORS: list[str] = [
+    designator
+    for designator in TRANSLATE_LANGUAGE_DESIGNATORS
+    if designator not in {"en-us", "en-gb", "en-ca", "en-au"}
 ]
 
 UNIVERSAL_TOOLS: list[dict[str, Any]] = [
@@ -214,7 +225,7 @@ UNIVERSAL_TOOLS: list[dict[str, Any]] = [
                     },
                     "target_language": {
                         "type": "string",
-                        "enum": TRANSLATE_LANGUAGE_DESIGNATORS,
+                        "enum": TRANSLATE_TARGET_LANGUAGE_DESIGNATORS,
                     },
                 },
                 "required": ["text", "source_language", "target_language"],

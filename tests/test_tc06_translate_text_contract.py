@@ -10,11 +10,11 @@ finite language-designator vocabulary introduced by PR #43:
    returns PASS only when both translations are present in the final answer —
    a missing translation fails, and extra/off-target calls or an incomplete
    answer downgrade PASS to PARTIAL;
-4. the translate_text tool schema advertises exactly the finite supported
-   designator set — the TC-06 alias table plus the German designators carried
-   by the shared tool — with no omissions and no extras. This is NOT a full
-   ISO 639 / BCP-47 resolver: only the explicitly listed designators are
-   valid.
+4. the translate_text tool schema advertises finite source and target
+   designator sets — the TC-06 alias table plus the German designators carried
+   by the shared tool, with source-only regional English aliases excluded from
+   target_language. This is NOT a full ISO 639 / BCP-47 resolver: only the
+   explicitly listed designators are valid.
 
 The tests exercise the scenario's public ``handle_tool_call``/``evaluate``
 methods with real ``ScenarioState``/``ToolCallRecord`` objects built with the
@@ -28,6 +28,7 @@ from conftest import make_state, make_tool_call
 from tool_eval_bench.domain.scenarios import ScenarioStatus
 from tool_eval_bench.domain.tools import (
     TRANSLATE_LANGUAGE_DESIGNATORS,
+    TRANSLATE_TARGET_LANGUAGE_DESIGNATORS,
     UNIVERSAL_TOOLS,
 )
 from tool_eval_bench.evals.scenarios import _LANGUAGE_ALIASES, SCENARIOS
@@ -193,13 +194,29 @@ def test_translate_text_schema_enum_matches_supported_designators():
     src_enum = props["source_language"]["enum"]
     tgt_enum = props["target_language"]["enum"]
     assert src_enum == TRANSLATE_LANGUAGE_DESIGNATORS
-    assert tgt_enum == TRANSLATE_LANGUAGE_DESIGNATORS
+    assert tgt_enum == TRANSLATE_TARGET_LANGUAGE_DESIGNATORS
 
-    # The schema is exactly the TC-06 alias table plus the German
+    # The source schema is exactly the TC-06 alias table plus the German
     # designators carried by the shared tool: no omissions, no extras.
-    expected = set(_LANGUAGE_ALIASES) | _EXTENDED_ONLY
-    assert set(TRANSLATE_LANGUAGE_DESIGNATORS) == expected
-    assert len(TRANSLATE_LANGUAGE_DESIGNATORS) == len(expected)
+    expected_source = set(_LANGUAGE_ALIASES) | _EXTENDED_ONLY
+    assert set(TRANSLATE_LANGUAGE_DESIGNATORS) == expected_source
+    assert len(TRANSLATE_LANGUAGE_DESIGNATORS) == len(expected_source)
+
+    # Targets are the values accepted by at least one scenario handler. The
+    # regional English aliases are source-only in TC-06 and rejected as
+    # targets by TC-18, so they must not be advertised here.
+    expected_target = (
+        {
+            designator
+            for designator, canonical in _LANGUAGE_ALIASES.items()
+            if canonical in {"spanish", "japanese"}
+        }
+        | {"english", "en"}
+        | _EXTENDED_ONLY
+    )
+    assert set(TRANSLATE_TARGET_LANGUAGE_DESIGNATORS) == expected_target
+    assert len(TRANSLATE_TARGET_LANGUAGE_DESIGNATORS) == len(expected_target)
+    assert not {"en-us", "en-gb", "en-ca", "en-au"} & set(tgt_enum)
 
 
 def test_tc06_registered():
