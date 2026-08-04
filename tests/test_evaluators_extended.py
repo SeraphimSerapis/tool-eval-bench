@@ -742,6 +742,17 @@ class TestTC23:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
 
+    def test_partial_negated_function_description_multiline(self) -> None:
+        """A multiline negation of the function's purpose must not PASS after
+        whitespace normalization makes the explanation chain match."""
+        s = _state(
+            final_answer=(
+                "get_stock_price is not a function that\n"
+                "retrieves the current stock price for a ticker."
+            )
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
     def test_fail_called_tool(self) -> None:
         s = _state(
             tool_calls=[{"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}],

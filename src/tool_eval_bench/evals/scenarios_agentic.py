@@ -188,7 +188,11 @@ def _tc23_eval(state: ScenarioState) -> ScenarioEvaluation:
             answer,
         )
     ) and not re.search(
-        r"(?:does not|doesn't|not|never)\s+(?:retriev|return|fetch|look up|obtain)", answer
+        r"(?:does not|doesn't|not|never)\s+"
+        r"(?:(?:a|an|the)\s+)?"
+        r"(?:function\s+(?:that|which)\s+)?"
+        r"(?:retriev|return|fetch|look up|obtain)",
+        answer,
     )
     if explains:
         return _pass("Explained the function without calling any tools.")
