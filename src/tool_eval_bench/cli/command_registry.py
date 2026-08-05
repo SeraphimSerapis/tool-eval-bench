@@ -32,6 +32,7 @@ RUN_CONTROL = (
     "parallel",
     "error_rate",
     "no_warmup",
+    "no_preflight",
     "reference_date",
 )
 SCENARIOS = ("scenarios", "categories", "short", "hardmode", "hardmode_only")

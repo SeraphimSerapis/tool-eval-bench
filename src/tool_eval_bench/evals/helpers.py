@@ -166,10 +166,14 @@ def matching_tool_results(state: ScenarioState, call: ToolCallRecord) -> list[To
 
 
 def has_explicit_tool_error(state: ScenarioState, call: ToolCallRecord) -> bool:
-    """Return True only for an explicitly recorded error result."""
+    """Return True for an explicitly recorded error or unsuccessful result."""
+    unsuccessful_statuses = {"error", "failed", "blocked", "cancelled", "canceled"}
     for result in matching_tool_results(state, call):
         payload = result.result
-        if isinstance(payload, dict) and ("error" in payload or payload.get("status") == "error"):
+        if isinstance(payload, dict) and (
+            "error" in payload
+            or str(payload.get("status", "")).strip().lower() in unsuccessful_statuses
+        ):
             return True
         if isinstance(payload, str) and re.search(
             r"\berror\b|\b(?:429|500|502|503|504)\b", payload, re.I
@@ -179,7 +183,7 @@ def has_explicit_tool_error(state: ScenarioState, call: ToolCallRecord) -> bool:
 
 
 def result_is_usable_if_present(state: ScenarioState, call: ToolCallRecord) -> bool:
-    """Treat absent synthetic results as unknown, but reject explicit errors."""
+    """Treat absent synthetic results as unknown, but reject explicit failures."""
     return not has_explicit_tool_error(state, call)
 
 

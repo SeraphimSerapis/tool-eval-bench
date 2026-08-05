@@ -165,22 +165,28 @@ def enrich_calendar(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def enrich_contacts(payload: dict[str, Any]) -> dict[str, Any]:
-    """Add realistic metadata to contact lookup responses."""
+    """Add realistic metadata to contact lookup responses.
+
+    A contact that already declares a ``role`` (e.g. ``manager``) keeps it as
+    the canonical representation: stamping a generic ``title: "Team Member"``
+    on top would contradict that role, so the noise layer only adds the title
+    when the contact declares neither a role nor a title.
+    """
     results = payload.get("results", [])
     enriched_results = []
     for i, r in enumerate(results):
-        enriched_results.append(
-            {
-                **r,
-                "id": f"contact_{1000 + i}",
-                "department": "Engineering",
-                "phone": "+1-555-0100",
-                "title": "Team Member",
-                "last_contacted": "2026-03-18T15:30:00Z",
-                "notes": "",
-                "source": "directory",
-            }
-        )
+        enriched = {
+            **r,
+            "id": f"contact_{1000 + i}",
+            "department": "Engineering",
+            "phone": "+1-555-0100",
+            "last_contacted": "2026-03-18T15:30:00Z",
+            "notes": "",
+            "source": "directory",
+        }
+        if "role" not in r and "title" not in r:
+            enriched["title"] = "Team Member"
+        enriched_results.append(enriched)
     return {
         "results": enriched_results,
         "total_contacts": len(results),

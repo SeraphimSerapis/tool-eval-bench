@@ -166,6 +166,12 @@ class TestTC35ContradictoryParams:
         result = s.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
 
+    def test_prompt_does_not_require_or_reveal_the_noop(self) -> None:
+        s = self._get_scenario()
+        prompt = s.user_message.lower()
+        assert "using the calculator tool" not in prompt
+        assert "no conversion is actually needed" not in prompt
+
 
 class TestTC36MissingInfo:
     """SCEN-04: Model must ask for missing details, not guess."""
