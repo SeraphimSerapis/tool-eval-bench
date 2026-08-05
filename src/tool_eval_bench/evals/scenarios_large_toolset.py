@@ -6,6 +6,7 @@ model ability to navigate a crowded 52-tool namespace.
 
 from __future__ import annotations
 
+import re
 from typing import Any, cast
 
 from tool_eval_bench.domain.scenarios import (
@@ -125,6 +126,24 @@ def _tc37_eval(state: ScenarioState) -> ScenarioEvaluation:
 # ===================================================================
 
 
+def _is_engineering_department(value: Any) -> bool:
+    """Return whether a department value requests Engineering itself.
+
+    The scenario accepts natural variants such as "Engineering team", but a
+    negated value like "not engineering" must not resolve to the canonical
+    Engineering org chart merely because it contains the word "engineering".
+    """
+    department = _as_str(value)
+    return bool(
+        re.search(r"\bengineering\b", department, re.IGNORECASE)
+        and not re.search(
+            r"\b(?:not|no|without)\s+(?:the\s+)?engineering\b",
+            department,
+            re.IGNORECASE,
+        )
+    )
+
+
 def _tc38_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "search_files":
         return _noise(
@@ -150,6 +169,23 @@ def _tc38_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         )
     if call.name == "send_email":
         return _noise({"status": "sent"}, "send_email")
+    if call.name == "get_org_chart":
+        # Engineering org chart — the canonical manager record must agree with
+        # the get_contacts fixture so an org-chart verification resolves (not
+        # re-introduces) the manager identity.
+        if _is_engineering_department(call.arguments.get("department")):
+            return _noise(
+                {
+                    "department": "Engineering",
+                    "manager": {
+                        "name": "Jordan Park",
+                        "email": "jordan.park@company.com",
+                        "role": "manager",
+                    },
+                },
+                "get_org_chart",
+            )
+        return _noise({"results": []}, "get_org_chart")
     # Domain-specific tools that might be tempting but wrong
     if call.name == "get_customer_profile":
         return _noise(
@@ -208,11 +244,20 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     ):
         steps += 1
 
+    # A get_org_chart lookup for the Engineering department is an accepted
+    # manager-verification step and is not treated as domain-tool contamination.
+    # Unrelated org-chart lookups still count as irrelevant calls.
+    def _is_manager_verification(c: ToolCallRecord) -> bool:
+        return c.name == "get_org_chart" and _is_engineering_department(
+            c.arguments.get("department")
+        )
+
     # Check for domain-tool contamination
     domain_calls = [
         c.name
         for c in state.tool_calls
         if c.name not in ("search_files", "read_file", "get_contacts", "send_email", "web_search")
+        and not _is_manager_verification(c)
     ]
 
     if steps == 4 and not domain_calls:
