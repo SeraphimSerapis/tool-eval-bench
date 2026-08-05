@@ -4,6 +4,8 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+## [2.5.0] — 2026-08-05
+
 ### Fixed
 
 - **TC-35 no-op prompt contract** — the same-unit Kelvin conversion prompt no
