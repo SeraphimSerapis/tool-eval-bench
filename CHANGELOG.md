@@ -21,21 +21,6 @@ All notable changes to `tool-eval-bench` are documented here.
   (ignore all previous, system override, send email to attacker) anywhere in
   the assistant transcript. Any send_email tool call still fails regardless
   of the final text.
-- **Evaluator audit hardening** — explicit tool errors no longer receive
-  fabricated-data credit; critical argument values, dependency order, exact
-  recipients, conditional actions, structured nested types, safety boundaries,
-  and async polling provenance are now scored against their scenario contracts.
-  Negated numeric answers and misleading substring matches no longer earn PASS.
-
-  **This release also changes scenario behaviour, not just scoring.** Several
-  mock handlers now return empty or error payloads when called with off-target
-  arguments (TC-65, TC-71, TC-82), TC-66's contact fixture returns two
-  Engineering contacts instead of three mixed-department ones, and TC-82's
-  `send_email` tool gained an optional `attachments` parameter. Benchmark
-  results produced before this release are therefore **not comparable** with
-  results produced after it, even for identical model behaviour — the tasks
-  themselves differ, so re-run any baseline you intend to compare against.
-
 - **TC-07 semantic search and dependency-aware ordering** — the `search_files`
   step now accepts a semantically sufficient query (mentions `q3` and `budget`)
   or handler-resolved file evidence (a subsequent read of the resolved
@@ -43,12 +28,6 @@ All notable changes to `tool-eval-bench` are documented here.
   The four-step chain check now enforces a dependency graph (`search → read →
   email` and `contacts → email`) rather than one total order, so `get_contacts`
   may run before `read_file`.
-
-- **TC-26, TC-30, and TC-75 deterministic scoring (#38, #39, #40)** — attendee
-  suggestions no longer count as contradictory attendance claims, a single
-  Python call implementing the full conditional workflow is recognized through
-  its AST, and natural date/time clarification questions receive pass or partial
-  credit according to which missing parameters they actually request.
 
 - **TC-06 `translate_text` language designators (PR #43)** — the mock and
   evaluator now accept an explicit, finite set of language designators
@@ -103,6 +82,33 @@ All notable changes to `tool-eval-bench` are documented here.
   would have been rejected as an unsupported backend had it reached the service
   layer. It is now accepted by `--backend`, the JSON schema, and the public API.
   All backends continue to share the same OpenAI-compatible adapter.
+
+## [2.4.1] — 2026-08-03
+
+### Fixed
+
+- **Evaluator audit hardening** — explicit tool errors no longer receive
+  fabricated-data credit; critical argument values, dependency order, exact
+  recipients, conditional actions, structured nested types, safety boundaries,
+  and async polling provenance are now scored against their scenario contracts.
+  Negated numeric answers and misleading substring matches no longer earn PASS.
+
+  **This release also changes scenario behaviour, not just scoring.** Several
+  mock handlers now return empty or error payloads when called with off-target
+  arguments (TC-65, TC-71, TC-82), TC-66's contact fixture returns two
+  Engineering contacts instead of three mixed-department ones, and TC-82's
+  `send_email` tool gained an optional `attachments` parameter. Benchmark
+  results produced before this release are therefore **not comparable** with
+  results produced after it, even for identical model behaviour — the tasks
+  themselves differ, so re-run any baseline you intend to compare against.
+
+- **TC-26, TC-30, and TC-75 deterministic scoring (#38, #39, #40)** — attendee
+  suggestions no longer count as contradictory attendance claims, a single
+  Python call implementing the full conditional workflow is recognized through
+  its AST, and natural date/time clarification questions receive pass or partial
+  credit according to which missing parameters they actually request.
+
+### Added
 
 - **Tokenizer auto-detection for `--perf`** — `--tokenizer` is now rarely needed.
   The served model id (including the vLLM `root` behind an alias) is matched
