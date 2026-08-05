@@ -804,7 +804,7 @@ class TestTC54EdgeCases:
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
-        assert "calculator" in result.summary.lower()
+        assert "did not call calculator" in result.summary.lower()
         assert "imprecise" not in result.summary.lower()
 
     def test_partial_calculator_no_verification(self) -> None:
@@ -821,7 +821,7 @@ class TestTC54EdgeCases:
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
-        assert "verify" in result.summary.lower()
+        assert "did not verify the required 425.8 * 149.5" in result.summary.lower()
         assert "does not match" not in result.summary.lower()
 
     def test_partial_calculator_literal_result_no_verification(self) -> None:
@@ -839,7 +839,7 @@ class TestTC54EdgeCases:
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
-        assert "verify" in result.summary.lower()
+        assert "did not verify the required 425.8 * 149.5" in result.summary.lower()
         assert "does not match" not in result.summary.lower()
 
     def test_partial_calculator_verified_answer_disagrees(self) -> None:
@@ -856,6 +856,7 @@ class TestTC54EdgeCases:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
         assert "does not match" in result.summary.lower()
+
 
 class TestTC55EdgeCases:
     sc = _get("TC-55")

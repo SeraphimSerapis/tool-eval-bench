@@ -42,9 +42,6 @@ from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
 from tool_eval_bench.evals.helpers import (
-    tool_calls_by_name as _tool_calls_by_name,
-)
-from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
 )
 from tool_eval_bench.evals.helpers import (
@@ -55,6 +52,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
