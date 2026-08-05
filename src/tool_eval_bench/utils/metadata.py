@@ -24,7 +24,9 @@ from tool_eval_bench.domain.models import (
     BenchmarkConfig,
     RunContext,
 )
+from tool_eval_bench.utils.urls import metrics_url as _metrics_url
 from tool_eval_bench.utils.urls import models_url as _models_url
+from tool_eval_bench.utils.urls import root_url as _root_url
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +118,7 @@ async def _probe_vllm_version(base_url: str, api_key: str | None) -> dict[str, A
     headers: dict[str, str] = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    url = f"{base_url.rstrip('/')}/version"
+    url = f"{_root_url(base_url)}/version"
     try:
         async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
             resp = await client.get(url, headers=headers)
@@ -135,7 +137,7 @@ async def _probe_vllm_version(base_url: str, api_key: str | None) -> dict[str, A
 async def _probe_llamacpp(base_url: str) -> dict[str, Any]:
     """Probe /health or /props (llama.cpp endpoints)."""
     for path in ["/props", "/health"]:
-        url = f"{base_url.rstrip('/')}{path}"
+        url = f"{_root_url(base_url)}{path}"
         try:
             async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
                 resp = await client.get(url)
@@ -160,7 +162,7 @@ async def _probe_litellm(base_url: str, api_key: str | None) -> dict[str, Any]:
     headers: dict[str, str] = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    url = f"{base_url.rstrip('/')}/health"
+    url = f"{_root_url(base_url)}/health"
     try:
         async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
             resp = await client.get(url, headers=headers)
@@ -179,6 +181,72 @@ async def _probe_litellm(base_url: str, api_key: str | None) -> dict[str, Any]:
     except (httpx.HTTPError, OSError, ValueError) as exc:
         logger.debug("LiteLLM /health probe failed: %s", exc)
     return {}
+
+
+# Each engine namespaces its own Prometheus metrics, which turns out to be a
+# far more reliable fingerprint than HTTP headers: vLLM's OpenAI server runs on
+# uvicorn and doesn't set an identifying ``Server`` header, and llama.cpp's
+# cpp-httplib server doesn't either. Order matters only in that the first
+# matching non-comment line wins.
+_METRICS_BACKEND_PREFIXES: tuple[tuple[str, str, str], ...] = (
+    ("vllm:", "vllm", "vLLM"),
+    ("llamacpp:", "llamacpp", "llama.cpp"),
+    ("sglang:", "sglang", "SGLang"),
+    ("sglang_", "sglang", "SGLang"),  # SGLang >=0.5.4 renamed the metric prefix
+)
+
+
+def detect_backend_from_metrics(text: str) -> tuple[str, str] | None:
+    """Identify the backend from its Prometheus ``/metrics`` namespace.
+
+    Returns ``(backend, label)`` for the first recognized metric-name prefix,
+    or ``None`` if the text doesn't match a known engine.
+    """
+    for line in text.splitlines():
+        if not line or line[0] == "#":
+            continue
+        for prefix, backend, label in _METRICS_BACKEND_PREFIXES:
+            if line.startswith(prefix):
+                return backend, label
+    return None
+
+
+async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple[str, str] | None:
+    """Best-effort identification of vllm/llamacpp/sglang for an arbitrary server.
+
+    Tried in order of specificity, so a generic signal can never outvote a
+    distinctive one:
+
+    1. The ``/metrics`` namespace — see :func:`detect_backend_from_metrics`.
+       Unambiguous, but llama.cpp's ``--metrics`` flag is opt-in.
+    2. vLLM's ``/version`` — llama.cpp 404s this, so it cannot false-positive.
+    3. llama.cpp's ``/props``/``/health``.  Deliberately last: ``/health``
+       is generic enough that other engines answer it, and vLLM only avoids
+       matching here because its ``/health`` body is empty.
+
+    Each probe uses a tight timeout and is best-effort; returns ``None`` if
+    nothing matched.
+    """
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
+            resp = await client.get(_metrics_url(base_url), headers=headers)
+            if resp.status_code == 200:
+                hit = detect_backend_from_metrics(resp.text)
+                if hit:
+                    return hit
+    except (httpx.HTTPError, OSError) as exc:
+        logger.debug("/metrics backend probe failed: %s", exc)
+
+    if await _probe_vllm_version(base_url, api_key):
+        return "vllm", "vLLM"
+
+    if await _probe_llamacpp(base_url):
+        return "llamacpp", "llama.cpp"
+
+    return None
 
 
 def _guess_quantization(model_name: str | None) -> str | None:
@@ -238,6 +306,11 @@ async def _probe_engine(
     elif backend_l == "litellm":
         litellm_info = await _probe_litellm(base_url, api_key)
         result.update(litellm_info)
+    elif backend_l == "sglang":
+        # No well-documented, stable metadata endpoint for version info yet;
+        # the metrics-based detector that produced this label already confirms
+        # the engine, so just record the name.
+        result.setdefault("engine_name", "SGLang")
     else:
         # Try all in order (vLLM first as most common)
         for prober in [
