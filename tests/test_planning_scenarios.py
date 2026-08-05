@@ -210,6 +210,24 @@ class TestTC55DataPipeline:
         # Partial — only read one file but got the total (somehow)
         assert result.status in (ScenarioStatus.PASS, ScenarioStatus.PARTIAL)
 
+    def test_partial_both_files_total_no_calculator(self) -> None:
+        """Regression: both regional files read + correct total, but no
+        calculator call. The "(read_na or read_emea) and has_total" branch
+        must not shadow the both-files case with a misleading reason."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "Q3 revenue"}},
+                {"name": "read_file", "arguments": {"file_id": "q3_rev_na"}},
+                {"name": "read_file", "arguments": {"file_id": "q3_rev_emea"}},
+            ],
+            final_answer="NA revenue is $2,400,000 and EMEA revenue is $1,800,000; total is $4,200,000.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        # Reason must reflect that both files were read, not "only one".
+        assert "both" in result.summary.lower()
+        assert "only read one" not in result.summary.lower()
+
     def test_fail_no_search(self) -> None:
         state = _make_state(final_answer="The Q3 revenue was around $4M.")
         result = self.sc.evaluate(state)

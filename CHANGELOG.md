@@ -41,6 +41,14 @@ All notable changes to `tool-eval-bench` are documented here.
   while unrelated org-chart lookups still count as contamination. The TC-38
   mock now returns an Engineering org chart whose manager record agrees with
   the contacts fixture.
+- **TC-55 branch ordering** — in `_tc55_eval`, the broad
+  `searched and (read_na or read_emea) and has_total` branch shadowed the
+  both-files case: reading **both** regional files and producing the correct
+  total without a calculator call was reported as *"only read one of two
+  files"*. A dedicated `searched and read_na and read_emea and has_total`
+  branch now precedes the `or`-subset, so the reason reflects the actual
+  trace. Regression test `test_partial_both_files_total_no_calculator`
+  covers the case.
 - **TC-52 stock fixture coherence** — `get_stock_price` enrichment now derives
   `previous_close` from the declared `change` field when one is present
   (`change = price - previous_close`), instead of always applying a hardcoded
