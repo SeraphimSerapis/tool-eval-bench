@@ -620,6 +620,8 @@ def test_preflight_and_warmup_user_outcomes(monkeypatch: pytest.MonkeyPatch) -> 
                 raise httpx.ConnectError("down")
             if self.mode == "error":
                 raise RuntimeError("unexpected")
+            if self.mode == "blank_error":
+                raise RuntimeError()
             status = 500 if self.mode == "http" else 200
             return httpx.Response(status, text="bad", request=httpx.Request("POST", url))
 
@@ -632,6 +634,11 @@ def test_preflight_and_warmup_user_outcomes(monkeypatch: pytest.MonkeyPatch) -> 
         with pytest.raises(SystemExit) as exc:
             probe.preflight_model_check(console, "url", "m", None)
         assert exc.value.code == code
+    client.mode = "blank_error"
+    with pytest.raises(SystemExit) as exc:
+        probe.preflight_model_check(console, "url", "m", None)
+    assert exc.value.code == 3
+    assert "RuntimeError" in console.export_text()
 
     monkeypatch.setattr(throughput, "warmup", async_return(20_000))
     probe.warmup_server(console, "url", "m", None)
@@ -644,6 +651,106 @@ def test_preflight_and_warmup_user_outcomes(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(throughput, "warmup", fail)
     probe.warmup_server(console, "url", "m", None)
     assert "Warm-up failed" in console.export_text()
+
+
+def test_preflight_forwards_request_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from tool_eval_bench.cli import probe
+
+    observed: dict[str, object] = {}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, **kwargs):
+            observed["url"] = url
+            observed["post"] = kwargs
+            return httpx.Response(
+                200,
+                json={"choices": [{}]},
+                request=httpx.Request("POST", url),
+            )
+
+    def make_client(**kwargs):
+        observed["client_kwargs"] = kwargs
+        return Client()
+
+    monkeypatch.setattr(httpx, "AsyncClient", make_client)
+    probe.preflight_model_check(
+        Console(),
+        "http://server/v1",
+        "m",
+        None,
+        timeout_seconds=17.5,
+        temperature=0.4,
+        extra_params={"reasoning_effort": "low", "top_p": 0.9},
+    )
+
+    assert observed["client_kwargs"] == {"timeout": 17.5}
+    post = observed["post"]
+    assert isinstance(post, dict)
+    payload = post["json"]
+    assert isinstance(payload, dict)
+    assert payload["reasoning_effort"] == "low"
+    assert payload["top_p"] == 0.9
+    assert payload["temperature"] == 0.4
+    assert payload["model"] == "m"
+
+
+def test_dispatch_preflight_can_be_skipped_and_receives_merged_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    from tool_eval_bench.cli import dispatch, plugin_runners
+    from tool_eval_bench.utils import metadata
+
+    async def context(**kwargs):
+        return None
+
+    calls: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(
+        dispatch,
+        "_preflight_model_check",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
+    monkeypatch.setattr(dispatch, "_do_warmup", lambda *args, **kwargs: None)
+    monkeypatch.setattr(metadata, "collect_run_context", context)
+    monkeypatch.setattr(plugin_runners, "run_selected_plugins", lambda *args, **kwargs: False)
+    base_argv = [
+        "tool-eval-bench",
+        "--model",
+        "m",
+        "--backend",
+        "vllm",
+        "--base-url",
+        "url",
+        "--timeout",
+        "17.5",
+        "--temperature",
+        "0.3",
+        "--backend-kwargs",
+        '{"reasoning_effort":"low"}',
+        "--skip-tool-eval",
+        "--no-warmup",
+    ]
+
+    monkeypatch.setattr(sys, "argv", base_argv)
+    dispatch.main()
+    assert len(calls) == 1
+    assert calls[0][1]["timeout_seconds"] == 17.5
+    assert calls[0][1]["temperature"] == 0.3
+    assert calls[0][1]["extra_params"] == {"reasoning_effort": "low"}
+
+    monkeypatch.setattr(sys, "argv", [*base_argv, "--no-preflight"])
+    dispatch.main()
+    assert len(calls) == 1
 
 
 def test_dispatch_legacy_spec_and_sweep_modes(

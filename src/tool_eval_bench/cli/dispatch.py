@@ -429,7 +429,17 @@ def main() -> None:
     # -- Pre-flight: verify the model actually works (issue #19) --
     # Some servers list models in /v1/models but fail on real requests.
     # Without this check, the benchmark produces misleading scores.
-    _preflight_model_check(console, base_url, model, api_key, headless=args.json)
+    if not args.no_preflight:
+        _preflight_model_check(
+            console,
+            base_url,
+            model,
+            api_key,
+            headless=args.json,
+            timeout_seconds=args.timeout,
+            temperature=args.temperature,
+            extra_params=extra_params or None,
+        )
 
     # -- Warm-up --
     if not args.no_warmup and not args.json:
