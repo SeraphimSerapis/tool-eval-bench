@@ -68,7 +68,39 @@ All notable changes to `tool-eval-bench` are documented here.
   still score PARTIAL. Regression tests cover single-line, formatted
   multi-line, and CRLF answers plus negative semantic cases.
 
+- **Backend mislabelled as vLLM** — every run against an explicit `--base-url`
+  reported `backend: vllm`, whatever was actually serving. Detection only ran
+  during localhost auto-discovery, so an explicit `--base-url` (or
+  `TOOL_EVAL_BASE_URL`) fell through to a hardcoded default; and that detector
+  only read the HTTP `Server` header, which neither vLLM (uvicorn) nor
+  llama.cpp (cpp-httplib) sets, leaving a port table that assumed vLLM on
+  8080/8081/8082. The engine is now identified from its Prometheus `/metrics`
+  namespace (`vllm:`, `llamacpp:`, `sglang:`/`sglang_`), which is what actually
+  distinguishes these servers. Detection runs whenever the backend was not
+  pinned via `--backend`/`TOOL_EVAL_BACKEND`, regardless of how the base URL
+  was resolved, and is skipped by `--no-probe-engine`. Probes are ordered by
+  specificity so a generic signal cannot outvote a distinctive one: `/metrics`,
+  then vLLM's `/version` (llama.cpp 404s it), then llama.cpp's
+  `/props`/`/health` last — `/health` is generic enough that vLLM answers it
+  too, escaping misclassification only because its body is empty.
+
+  **Runs recorded before this release may carry the wrong `backend` label** if
+  they targeted a non-vLLM server via an explicit base URL. The label is
+  metadata only — it never selected a code path, since all backends share the
+  OpenAI-compatible adapter — so scores are unaffected.
+
+- **Engine metadata dropped for `/v1` base URLs** — `/props`, `/version`, and
+  `/health` live at the server root, but were appended to the base URL, so a
+  `http://host:port/v1` base requested `/v1/props` and `/v1/version` and got
+  404s from real llama.cpp and vLLM servers. `engine_version` and `gpu_count`
+  were silently missing from every report using that URL form.
+
 ### Added
+
+- **`sglang` as a backend label** — previously it collapsed into `vllm`, and
+  would have been rejected as an unsupported backend had it reached the service
+  layer. It is now accepted by `--backend`, the JSON schema, and the public API.
+  All backends continue to share the same OpenAI-compatible adapter.
 
 - **Tokenizer auto-detection for `--perf`** — `--tokenizer` is now rarely needed.
   The served model id (including the vLLM `root` behind an alias) is matched
