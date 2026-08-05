@@ -554,6 +554,8 @@ def _tc55_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     if searched and read_na and read_emea and calculator and has_total:
         return _pass("Built data pipeline: search → read ×2 → calculate total revenue.")
+    if searched and read_na and read_emea and has_total:
+        return _partial("Read both files and produced the total but didn't use the calculator.")
     if searched and (read_na or read_emea) and has_total:
         return _partial("Got the total but only read one of two files.")
     if searched and read_na and read_emea:

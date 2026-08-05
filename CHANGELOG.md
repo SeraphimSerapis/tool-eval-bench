@@ -41,6 +41,28 @@ All notable changes to `tool-eval-bench` are documented here.
   while unrelated org-chart lookups still count as contamination. The TC-38
   mock now returns an Engineering org chart whose manager record agrees with
   the contacts fixture.
+- **TC-55 branch ordering** — in `_tc55_eval`, the broad
+  `searched and (read_na or read_emea) and has_total` branch shadowed the
+  both-files case: reading **both** regional files and producing the correct
+  total without a calculator call was reported as *"only read one of two
+  files"*. A dedicated `searched and read_na and read_emea and has_total`
+  branch now precedes the `or`-subset, so the reason reflects the actual
+  trace. Regression test `test_partial_both_files_total_no_calculator`
+  covers the case.
+- **TC-52 stock fixture coherence** — `get_stock_price` enrichment now derives
+  `previous_close` from the declared `change` field when one is present
+  (`change = price - previous_close`), instead of always applying a hardcoded
+  `price - 1.23` offset. TC-52's AAPL fixture previously returned
+  `price 178.50`, `previous_close 177.27`, and `change -2.30`, which are
+  mathematically incompatible; it now returns `previous_close 180.80`
+  (`178.50 + 2.30`), consistent with `change -2.30` and `change_percent
+  -1.27%`. A fixture-integrity regression test verifies the change, percentage,
+  sign/direction, and evaluator-visible numbers agree with the mock response.
+
+  **This changes the TC-52 mock response.** Models that reported the old
+  `177.27` previous close will now see `180.80`; benchmark results produced
+  before this change are therefore **not comparable** with results produced
+  after it for identical model behaviour.
 - **TC-54 cross-tool synthesis verdict contract** — the evaluator now states a
   single, truthful policy for the partial path: calculator use is mandatory.
   When both data sources are retrieved but the calculator was never called, the
