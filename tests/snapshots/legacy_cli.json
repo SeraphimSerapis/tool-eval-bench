@@ -271,6 +271,16 @@
   },
   {
     "choices": null,
+    "default": false,
+    "dest": "no_preflight",
+    "flags": [
+      "--no-preflight"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": null,
     "dest": "reference_date",
     "flags": [

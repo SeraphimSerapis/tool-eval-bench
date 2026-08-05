@@ -189,6 +189,12 @@
       "type": "bool"
     },
     {
+      "default": false,
+      "description": "Skip the strict model availability pre-flight check",
+      "name": "no_preflight",
+      "type": "bool"
+    },
+    {
       "default": null,
       "description": "Override benchmark reference date (YYYY-MM-DD)",
       "name": "reference_date",
@@ -624,5 +630,5 @@
       ]
     }
   },
-  "schema_version": "4"
+  "schema_version": "5"
 }

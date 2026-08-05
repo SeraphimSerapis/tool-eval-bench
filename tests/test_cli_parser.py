@@ -113,9 +113,9 @@ def test_removed_noop_flags_are_rejected() -> None:
         parse_cli_args(_make_parser, ["--experimental-async"])
 
 
-def test_schema_v4_describes_every_command() -> None:
+def test_schema_v5_describes_every_command() -> None:
     schema = get_schema()
-    assert schema["schema_version"] == "4"
+    assert schema["schema_version"] == "5"
     assert schema["commands"] is COMMANDS_SCHEMA
     assert set(COMMANDS_SCHEMA) == KNOWN_COMMANDS
 

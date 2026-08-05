@@ -171,6 +171,11 @@ def _make_parser() -> argparse.ArgumentParser:
     )
     run_ctrl.add_argument("--no-warmup", action="store_true", help="Skip server warm-up request")
     run_ctrl.add_argument(
+        "--no-preflight",
+        action="store_true",
+        help="Skip the strict model availability pre-flight check",
+    )
+    run_ctrl.add_argument(
         "--reference-date", default=None, help="Override benchmark reference date (YYYY-MM-DD)"
     )
     run_ctrl.add_argument(
