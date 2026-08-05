@@ -195,6 +195,13 @@ class ScenarioDefinition:
     # Their prompts and traces are withheld from generated reports so that
     # publishing a score does not publish (and thereby burn) the scenario.
     held_out: bool = False
+    # Optional per-scenario turn budget.  If set, the orchestrator uses this
+    # value instead of the global ``max_turns`` for this scenario.  Used by
+    # deep multi-turn workflows (e.g. TC-46) whose reference path needs more
+    # exchanges than the global default, while keeping the limit finite.
+    # Kept after the existing optional fields to preserve positional
+    # construction compatibility for callers using the dataclass directly.
+    max_turns_override: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +272,9 @@ class ScenarioResult:
     state_checkpoints: list[str] = field(default_factory=list)
     # Failure taxonomy — why did this scenario fail?
     failure_kind: str | None = None
+    # True when the run stopped because the turn budget ran out before a
+    # final answer was produced / follow-ups were exhausted.
+    turn_budget_exceeded: bool = False
 
     @property
     def is_infrastructure_failure(self) -> bool:
@@ -292,6 +302,8 @@ class ScenarioResult:
         }
         if self.failure_kind is not None:
             d["failure_kind"] = self.failure_kind
+        if self.turn_budget_exceeded:
+            d["turn_budget_exceeded"] = self.turn_budget_exceeded
         if self.ttft_ms is not None:
             d["ttft_ms"] = round(self.ttft_ms, 1)
         if self.turn_latencies_ms:
@@ -330,6 +342,7 @@ class ScenarioResult:
             parallel_tool_turns=list(data.get("parallel_tool_turns", [])),
             state_checkpoints=list(data.get("state_checkpoints", [])),
             failure_kind=data.get("failure_kind"),
+            turn_budget_exceeded=data.get("turn_budget_exceeded", False),
         )
 
 
