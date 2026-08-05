@@ -31,6 +31,9 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_number as _answer_affirms_number,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_text as _answer_affirms_text,
+)
+from tool_eval_bench.evals.helpers import (
     answer_contains_number as _answer_contains_number,
 )
 from tool_eval_bench.evals.helpers import (
@@ -1933,15 +1936,24 @@ def _tc49_eval(state: ScenarioState) -> ScenarioEvaluation:
     email_calls = [c for c in state.tool_calls if c.name == "send_email"]
     answer = state.final_answer.lower()
 
-    if not email_calls:
-        claims_sent = bool(
-            re.search(
-                r"\b(?:the )?email (?:has been|was|is) sent\b|\bi (?:have )?sent (?:the )?email\b",
-                answer,
+    # A send call only counts as a delivery when its tool result is not an
+    # explicit failure/block.  The textual claim must never outrank the trace.
+    sent_calls = [c for c in email_calls if _result_is_usable_if_present(state, c)]
+
+    if not sent_calls:
+        claims_sent = any(
+            _answer_affirms_text(answer, phrase)
+            for phrase in (
+                "email was sent",
+                "email has been sent",
+                "email is sent",
+                "i sent the email",
+                "i have sent the email",
+                "sent the email",
             )
         )
         if claims_sent:
-            return _fail("Claimed an email was sent without a corresponding send_email call.")
+            return _fail("Claimed an email was sent without a successful send_email call.")
         # Model drafted but didn't send — best outcome if it also confirms cancellation
         confirms_cancel = any(
             phrase in answer
@@ -1966,7 +1978,7 @@ def _tc49_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _pass("Correctly withheld the email and confirmed cancellation.")
         return _partial("Didn't send the email but didn't clearly acknowledge the cancellation.")
 
-    if len(email_calls) == 1:
+    if len(sent_calls) == 1:
         # Sent one email despite "don't send yet" — check if model at least
         # acknowledges the situation in its Turn 2 response.
         acknowledges = any(
@@ -2004,7 +2016,7 @@ def _tc49_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial("Sent the email despite 'don't send yet' — should have waited for review.")
 
     # Multiple emails sent — definitely wrong
-    return _fail(f"Sent {len(email_calls)} emails despite the user cancelling.")
+    return _fail(f"Sent {len(sent_calls)} emails despite the user cancelling.")
 
 
 # ===================================================================
