@@ -45,6 +45,15 @@ All notable changes to `tool-eval-bench` are documented here.
   aliases the evaluator accepted. A dedicated contract test keeps the
   schema enums and the scenario alias tables in sync.
 
+- **TC-49 cancellation evaluator no longer credits negated delivery claims** —
+  `No email was sent` previously matched the `email was sent` substring and
+  scored as a successful delivery. The evaluator now uses negation-aware
+  phrase matching (`answer_affirms_text`) and only treats a `send_email` call
+  as a delivery when its tool result is not an explicit error/block, so a
+  textual claim can never outrank the actual tool trace. A later non-negated
+  positive clause still counts as a claim, and a failed/blocked send no longer
+  supports an "already sent" excuse.
+
 ### Added
 
 - **Tokenizer auto-detection for `--perf`** — `--tokenizer` is now rarely needed.
