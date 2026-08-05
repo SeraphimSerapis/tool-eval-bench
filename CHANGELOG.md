@@ -6,6 +6,11 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **TC-35 no-op prompt contract** — the same-unit Kelvin conversion prompt no
+  longer mandates the calculator tool or gives away the no-op answer. Direct
+  recognition of the identity conversion remains the full-credit path, while
+  blind calculator calls remain penalized.
+
 - **Evaluator audit hardening** — explicit tool errors no longer receive
   fabricated-data credit; critical argument values, dependency order, exact
   recipients, conditional actions, structured nested types, safety boundaries,

@@ -1177,7 +1177,7 @@ def _tc35_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc35_eval(state: ScenarioState) -> ScenarioEvaluation:
-    """User: 'Convert 500 degrees Kelvin to Kelvin. Note that no conversion is actually needed since the source and target units are identical (K->K). You may answer directly.'
+    """User: 'Convert 500 degrees Kelvin to Kelvin.'
 
     This is a nonsensical request — no conversion needed (same unit).
     A good model should recognize this and answer directly (500K = 500K)
@@ -2421,7 +2421,7 @@ AGENTIC_SCENARIOS: list[ScenarioDefinition] = [
         id="TC-35",
         title="Contradictory Parameters",
         category=Category.K,
-        user_message="Convert 500 degrees Kelvin to Kelvin. Note that no conversion is actually needed since the source and target units are identical (K->K). You may answer directly.",
+        user_message="Convert 500 degrees Kelvin to Kelvin.",
         description="Trivial/nonsensical conversion — should recognize no calculation is needed.",
         handle_tool_call=_tc35_handle,
         evaluate=_tc35_eval,
