@@ -35,8 +35,9 @@ def _make_parser() -> argparse.ArgumentParser:
     conn.add_argument(
         "--backend",
         default=None,
-        help="Backend label for reports: vllm, litellm, llamacpp "
-        "(all use the same OpenAI-compatible adapter; default: env/vllm)",
+        help="Backend label for reports: vllm, litellm, llamacpp, sglang "
+        "(all use the same OpenAI-compatible adapter; default: auto-detected "
+        "via /metrics, falling back to env/vllm)",
     )
     conn.add_argument(
         "--base-url",
@@ -169,6 +170,11 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Inject random tool errors at this rate (0.0–1.0) for robustness testing",
     )
     run_ctrl.add_argument("--no-warmup", action="store_true", help="Skip server warm-up request")
+    run_ctrl.add_argument(
+        "--no-preflight",
+        action="store_true",
+        help="Skip the strict model availability pre-flight check",
+    )
     run_ctrl.add_argument(
         "--reference-date", default=None, help="Override benchmark reference date (YYYY-MM-DD)"
     )
