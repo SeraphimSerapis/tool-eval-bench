@@ -192,6 +192,14 @@ def enrich_contacts(payload: dict[str, Any]) -> dict[str, Any]:
 def enrich_stock(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to stock price responses."""
     price = payload.get("price", 0)
+    # Derive previous close from the declared change when present so the
+    # fixture's change/change_percent/previous_close fields stay coherent
+    # (change = price - previous_close). Fall back to the historical
+    # price - 1.23 offset for fixtures that don't declare a change field.
+    change = payload.get("change")
+    previous_close = (
+        round(price - float(change), 2) if change is not None else round(price - 1.23, 2)
+    )
     return {
         **payload,
         "timestamp": "2026-03-20T16:00:00Z",
@@ -203,7 +211,7 @@ def enrich_stock(payload: dict[str, Any]) -> dict[str, Any]:
         "day_low": round(price * 0.988, 2),
         "week_52_high": round(price * 1.25, 2),
         "week_52_low": round(price * 0.72, 2),
-        "previous_close": round(price - 1.23, 2),
+        "previous_close": previous_close,
         "after_hours": None,
         "request_id": "req_sp_8c1d4e2a",
     }
