@@ -6,7 +6,9 @@ Coverage for TC-51 through TC-63 (Categories M, N, plus C/I/K expansions).
 from conftest import make_state as _make_state
 
 from tool_eval_bench.domain.scenarios import (
+    ScenarioState,
     ScenarioStatus,
+    ToolCallRecord,
 )
 
 
@@ -644,6 +646,72 @@ class TestTC52EdgeCases:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
         assert "synthesize" in result.summary.lower()
+
+    def test_stock_fixture_integrity(self) -> None:
+        """The AAPL stock fixture must be internally coherent.
+
+        Verifies the relationships between price, previous_close, change, and
+        change_percent rather than just re-asserting literal constants:
+        change == price - previous_close, change_percent == change / previous_close * 100,
+        sign/direction agree (negative change => price below previous close), and the
+        enriched mock response is what the model actually sees.
+        """
+        from tool_eval_bench.evals.noise import enrich_payload
+
+        enriched = enrich_payload(
+            "get_stock_price",
+            {"ticker": "AAPL", "price": 178.50, "change": -2.3, "change_percent": -1.27},
+        )
+        price = enriched["price"]
+        previous_close = enriched["previous_close"]
+        change = enriched["change"]
+        change_percent = enriched["change_percent"]
+
+        # change = price - previous_close (absolute change relationship)
+        assert abs((price - previous_close) - change) < 1e-9
+        # percentage = change / previous_close * 100, rounded to 2 decimals
+        expected_percent = round(change / previous_close * 100, 2)
+        assert abs(change_percent - expected_percent) < 1e-9
+        # sign/direction agree: negative change => price below previous close
+        assert change < 0
+        assert price < previous_close
+        # textual formatted value agrees with the numeric field
+        assert f"{change_percent:.2f}%" == "-1.27%"
+
+    def test_stock_fixture_matches_evaluator_expectations(self) -> None:
+        """The mock response numbers must match what the TC-52 evaluator looks for.
+
+        The evaluator requires the answer to surface the AAPL price ("178") and the
+        market benchmark ("5412"/"17234"); the handler's mock data must actually
+        provide those numbers so a model that reports them is reporting real data.
+        """
+        state = ScenarioState()
+        stock = self.sc.handle_tool_call(
+            state,
+            ToolCallRecord(
+                id="c1",
+                name="get_stock_price",
+                raw_arguments='{"ticker": "AAPL"}',
+                arguments={"ticker": "AAPL"},
+                turn=1,
+            ),
+        )
+        assert str(stock["price"]) == "178.5"
+        assert "178" in str(stock["price"])
+
+        search = self.sc.handle_tool_call(
+            state,
+            ToolCallRecord(
+                id="c2",
+                name="web_search",
+                raw_arguments='{"query": "S&P 500 market performance"}',
+                arguments={"query": "S&P 500 market performance"},
+                turn=2,
+            ),
+        )
+        snippet = search["results"][0]["snippet"]
+        assert "5,412.50" in snippet  # evaluator accepts "5412" or "5,412"
+        assert "17,234.12" in snippet  # evaluator accepts "17234" or "17,234"
 
 
 class TestTC53EdgeCases:
