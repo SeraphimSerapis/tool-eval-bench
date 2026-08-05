@@ -379,6 +379,167 @@ class TestProbeEngine:
 
         assert result["quantization"] == "AWQ"
 
+    @pytest.mark.asyncio
+    async def test_sglang_probe_sets_engine_name_without_extra_calls(self) -> None:
+        from tool_eval_bench.utils.metadata import _probe_engine
+
+        models_resp = _mock_response(200, {"data": [{"id": "sglang-model"}]})
+        client = _mock_async_client([models_resp])
+        with patch("tool_eval_bench.utils.metadata.httpx.AsyncClient", return_value=client):
+            result = await _probe_engine("http://localhost:30000", None, "sglang")
+
+        assert result["engine_name"] == "SGLang"
+        assert result["server_model_id"] == "sglang-model"
+        # Only the /v1/models probe should have fired — no speculative HTTP calls.
+        assert client.get.await_count == 1
+
+
+# ---------------------------------------------------------------------------
+# detect_backend_from_metrics / probe_backend_hint
+# ---------------------------------------------------------------------------
+
+
+class TestDetectBackendFromMetrics:
+    def test_identifies_vllm(self) -> None:
+        from tool_eval_bench.utils.metadata import detect_backend_from_metrics
+
+        text = (
+            "# HELP vllm:num_requests_running Number of requests running.\n"
+            "# TYPE vllm:num_requests_running gauge\n"
+            "vllm:num_requests_running 3.0\n"
+        )
+        assert detect_backend_from_metrics(text) == ("vllm", "vLLM")
+
+    def test_identifies_llamacpp(self) -> None:
+        from tool_eval_bench.utils.metadata import detect_backend_from_metrics
+
+        text = (
+            "# HELP llamacpp:prompt_tokens_total Number of prompt tokens processed.\n"
+            "# TYPE llamacpp:prompt_tokens_total counter\n"
+            "llamacpp:prompt_tokens_total 128\n"
+        )
+        assert detect_backend_from_metrics(text) == ("llamacpp", "llama.cpp")
+
+    def test_identifies_sglang_legacy_prefix(self) -> None:
+        from tool_eval_bench.utils.metadata import detect_backend_from_metrics
+
+        assert detect_backend_from_metrics("sglang:num_running_reqs 1\n") == ("sglang", "SGLang")
+
+    def test_identifies_sglang_underscore_prefix(self) -> None:
+        from tool_eval_bench.utils.metadata import detect_backend_from_metrics
+
+        assert detect_backend_from_metrics("sglang_num_running_reqs 1\n") == ("sglang", "SGLang")
+
+    def test_returns_none_for_unrecognized_text(self) -> None:
+        from tool_eval_bench.utils.metadata import detect_backend_from_metrics
+
+        assert detect_backend_from_metrics("some_other_metric 1\n") is None
+        assert detect_backend_from_metrics("") is None
+
+
+class TestProbeBackendHint:
+    @pytest.mark.asyncio
+    async def test_detects_llamacpp_from_metrics_without_further_probes(self) -> None:
+        from tool_eval_bench.utils.metadata import probe_backend_hint
+
+        metrics_resp = _mock_response(200)
+        metrics_resp.text = "llamacpp:prompt_tokens_total 5\n"
+        client = _mock_async_client([metrics_resp])
+        with patch("tool_eval_bench.utils.metadata.httpx.AsyncClient", return_value=client):
+            result = await probe_backend_hint("http://192.168.10.239:8080")
+
+        assert result == ("llamacpp", "llama.cpp")
+        assert client.get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_llamacpp_props_probe_when_metrics_unavailable(self) -> None:
+        """llama.cpp's --metrics flag is opt-in, so the /props path must work."""
+        from tool_eval_bench.utils.metadata import probe_backend_hint
+
+        metrics_resp = _mock_response(404)
+        version_resp = _mock_response(404)  # llama.cpp 404s vLLM's /version
+        props_resp = _mock_response(200, {"build_info": "1234", "total_slots": 1})
+        with patch(
+            "tool_eval_bench.utils.metadata.httpx.AsyncClient",
+            return_value=_mock_async_client([metrics_resp, version_resp, props_resp]),
+        ):
+            result = await probe_backend_hint("http://localhost:8080")
+
+        assert result == ("llamacpp", "llama.cpp")
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_vllm_version_probe(self) -> None:
+        from tool_eval_bench.utils.metadata import probe_backend_hint
+
+        metrics_resp = _mock_response(404)
+        version_resp = _mock_response(200, {"version": "0.5.1"})
+        with patch(
+            "tool_eval_bench.utils.metadata.httpx.AsyncClient",
+            return_value=_mock_async_client([metrics_resp, version_resp]),
+        ):
+            result = await probe_backend_hint("http://localhost:8000")
+
+        assert result == ("vllm", "vLLM")
+
+    @pytest.mark.asyncio
+    async def test_vllm_wins_over_generic_llamacpp_health_fingerprint(self) -> None:
+        """Regression: /version is specific, llama.cpp's /health is generic.
+
+        A vLLM build whose /health returns a JSON body must not be reported as
+        llama.cpp — the specific probe has to be consulted first.
+        """
+        from tool_eval_bench.utils.metadata import probe_backend_hint
+
+        metrics_resp = _mock_response(404)
+        version_resp = _mock_response(200, {"version": "0.11.0"})
+        # Would match _probe_llamacpp if it were ever reached.
+        health_resp = _mock_response(200, {"status": "ok"})
+        with patch(
+            "tool_eval_bench.utils.metadata.httpx.AsyncClient",
+            return_value=_mock_async_client([metrics_resp, version_resp, health_resp]),
+        ):
+            result = await probe_backend_hint("http://localhost:8000")
+
+        assert result == ("vllm", "vLLM")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("base", ["http://host:8080", "http://host:8080/v1"])
+    async def test_root_level_probes_ignore_v1_suffix(self, base: str) -> None:
+        """Regression: /props and /version live at the server root.
+
+        Appending them to a ``.../v1`` base URL requests ``/v1/props``, which
+        real llama.cpp and vLLM servers 404 — silently losing engine version
+        metadata for anyone who passes the ``/v1`` form.
+        """
+        from tool_eval_bench.utils.metadata import _probe_llamacpp, _probe_vllm_version
+
+        props_resp = _mock_response(200, {"build_info": "b10277", "total_slots": 2})
+        client = _mock_async_client([props_resp])
+        with patch("tool_eval_bench.utils.metadata.httpx.AsyncClient", return_value=client):
+            result = await _probe_llamacpp(base)
+        assert result["engine_version"] == "b10277"
+        assert client.get.await_args.args[0] == "http://host:8080/props"
+
+        version_resp = _mock_response(200, {"version": "0.11.0"})
+        client = _mock_async_client([version_resp])
+        with patch("tool_eval_bench.utils.metadata.httpx.AsyncClient", return_value=client):
+            result = await _probe_vllm_version(base, None)
+        assert result["engine_version"] == "0.11.0"
+        assert client.get.await_args.args[0] == "http://host:8080/version"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_nothing_matches(self) -> None:
+        from tool_eval_bench.utils.metadata import probe_backend_hint
+
+        responses = [_mock_response(404) for _ in range(4)]
+        with patch(
+            "tool_eval_bench.utils.metadata.httpx.AsyncClient",
+            return_value=_mock_async_client(responses),
+        ):
+            result = await probe_backend_hint("http://localhost:9999")
+
+        assert result is None
+
 
 # ---------------------------------------------------------------------------
 # collect_run_context

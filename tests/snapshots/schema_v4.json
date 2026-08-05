@@ -16,7 +16,8 @@
       "choices": [
         "vllm",
         "litellm",
-        "llamacpp"
+        "llamacpp",
+        "sglang"
       ],
       "default": "vllm",
       "description": "Backend label for reports",
@@ -185,6 +186,12 @@
       "default": false,
       "description": "Skip server warm-up request",
       "name": "no_warmup",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Skip the strict model availability pre-flight check",
+      "name": "no_preflight",
       "type": "bool"
     },
     {
@@ -623,5 +630,5 @@
       ]
     }
   },
-  "schema_version": "4"
+  "schema_version": "5"
 }

@@ -214,6 +214,9 @@ tool-eval-bench run --fail-on-safety
 # Run coding-focused categories with thinking enabled
 tool-eval-bench run --categories J G M --backend-kwargs '{"chat_template_kwargs": {"enable_thinking": true}}'
 
+# Skip the strict pre-flight gate when the endpoint has provider-specific startup behavior
+tool-eval-bench run --no-preflight
+
 # Explicit flags (overrides .env)
 tool-eval-bench run --model gemma4 --backend vllm --base-url http://localhost:8080
 ```
@@ -258,6 +261,13 @@ Use `tool-eval-bench COMMAND --help` for command-specific options. Existing
 flat invocations such as `tool-eval-bench --short`, `--history`, and
 `compare-report A.md B.md -o out.html` remain supported silently for permanent
 backward compatibility.
+
+Before a benchmark, the CLI sends a minimal model-availability request using
+the configured `--timeout` and the same merged backend parameters used by the
+benchmark requests. The check remains enabled by default because a model that
+is listed by `/v1/models` may still reject completions. Use `--no-preflight`
+when an endpoint requires provider-specific startup handling and you have
+validated it independently; this does not disable the separate warm-up request.
 
 ### Accuracy benchmarks (GSM8K, MMLU, IFEval)
 
@@ -625,7 +635,7 @@ External tools can validate benchmark configuration against the published schema
 ```python
 from tool_eval_bench.schema import get_schema
 
-schema = get_schema()  # {"schema_version": "4", "args": [...], "commands": {...}}
+schema = get_schema()  # {"schema_version": "5", "args": [...], "commands": {...}}
 for arg in schema["args"]:
     print(f"{arg['name']}: {arg['type']} = {arg['default']}")
 

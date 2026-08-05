@@ -15,8 +15,10 @@ import pytest
 from tool_eval_bench.adapters.base import BackendAdapter, ChatCompletionResult, ProviderToolCall
 from tool_eval_bench.domain.scenarios import (
     Category,
+    FailureKind,
     ScenarioDefinition,
     ScenarioEvaluation,
+    ScenarioResult,
     ScenarioState,
     ScenarioStatus,
     ToolCallRecord,
@@ -549,3 +551,301 @@ async def test_checkpoint_runs_after_each_tool_call() -> None:
 
     assert seen == ["get_weather", "calculator"]
     assert result.state_checkpoints == ["calculator observed"]
+
+
+# ---------------------------------------------------------------------------
+# Per-scenario turn budget (max_turns_override) and budget-exhaustion signals
+# ---------------------------------------------------------------------------
+
+
+def _stalled_tool_adapter(tool_name: str = "get_weather") -> MockAdapter:
+    """Adapter that always calls a tool and never produces a final answer."""
+    return MockAdapter(
+        [{"content": "", "tool_calls": [{"name": tool_name, "arguments": {}}]} for _ in range(30)]
+    )
+
+
+def _tool_then_final_adapter(tool_name: str = "get_weather") -> MockAdapter:
+    """Adapter that calls a tool once, then gives a final answer."""
+    return MockAdapter(
+        [
+            {"content": "", "tool_calls": [{"name": tool_name, "arguments": {}}]},
+            {"content": "done"},
+        ]
+    )
+
+
+def _tool_failing_evaluator(scenario_id: str) -> ScenarioDefinition:
+    """Scenario whose evaluator always fails unless the tool was never used."""
+    return ScenarioDefinition(
+        id=scenario_id,
+        title=scenario_id,
+        description=scenario_id,
+        category=Category.A,
+        user_message="Use the tool.",
+        handle_tool_call=lambda state, call: state.tool_calls.append(call),
+        evaluate=lambda state: ScenarioEvaluation(
+            status=ScenarioStatus.FAIL,
+            points=0,
+            summary="never used required tool",
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_max_turns_override_extends_budget() -> None:
+    """A scenario's max_turns_override replaces the global max_turns."""
+    scenario = _tool_failing_evaluator("OVR-01")
+    scenario.max_turns_override = 5
+    result = await run_scenario(
+        _stalled_tool_adapter(),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=2,
+    )
+    # 5 tool-call turns fit inside the override; the global 2 would have cut it.
+    assert result.turn_count == 5
+    assert result.turn_budget_exceeded is True
+    assert result.failure_kind == FailureKind.BUDGET_EXCEEDED
+
+
+@pytest.mark.asyncio
+async def test_max_turns_override_keeps_limit_finite() -> None:
+    """Even with an override, a looping model stops at the override value."""
+    scenario = _tool_failing_evaluator("OVR-02")
+    scenario.max_turns_override = 6
+    result = await run_scenario(
+        _stalled_tool_adapter(),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=3,
+    )
+    assert result.turn_count == 6  # stopped at the override, not unbounded
+    assert result.turn_budget_exceeded is True
+    assert result.failure_kind == FailureKind.BUDGET_EXCEEDED
+
+
+@pytest.mark.asyncio
+async def test_max_turns_override_not_set_uses_global_budget() -> None:
+    """Scenarios without an override keep using the global max_turns."""
+    scenario = _tool_failing_evaluator("OVR-03")
+    result = await run_scenario(
+        _stalled_tool_adapter(),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=4,
+    )
+    assert result.turn_count == 4  # global budget applied
+    assert result.turn_budget_exceeded is True
+    assert result.failure_kind == FailureKind.BUDGET_EXCEEDED
+
+
+@pytest.mark.asyncio
+async def test_normal_completion_does_not_flag_budget_exceeded() -> None:
+    """A model that reaches a final answer is not marked as budget-exhausted."""
+    scenario = ScenarioDefinition(
+        id="OVR-04",
+        title="OVR-04",
+        description="OVR-04",
+        category=Category.A,
+        user_message="Do the task.",
+        handle_tool_call=lambda state, call: state.tool_calls.append(call),
+        evaluate=lambda state: ScenarioEvaluation(
+            status=ScenarioStatus.PASS,
+            points=2,
+            summary="ok",
+        ),
+    )
+    result = await run_scenario(
+        _tool_then_final_adapter(),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+    )
+    assert result.turn_count == 2
+    assert result.turn_budget_exceeded is False
+    assert result.failure_kind is None
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_is_distinct_from_evaluator_failure() -> None:
+    """Budget run-out sets BUDGET_EXCEEDED, not the evaluator's failure kind."""
+    scenario = _tool_failing_evaluator("OVR-05")
+    result = await run_scenario(
+        _stalled_tool_adapter(),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=3,
+    )
+    # Evaluator says FAIL/missing-tool, but the reason must be budget, not tool.
+    assert result.status == ScenarioStatus.FAIL
+    assert result.turn_budget_exceeded is True
+    assert result.failure_kind == FailureKind.BUDGET_EXCEEDED
+
+
+@pytest.mark.asyncio
+async def test_tc46_has_scenario_budget_override() -> None:
+    """TC-46 declares a per-scenario budget for its deep multi-turn workflow."""
+    from tool_eval_bench.evals.scenarios_agentic import AGENTIC_SCENARIOS
+
+    tc46 = next(s for s in AGENTIC_SCENARIOS if s.id == "TC-46")
+    assert tc46.max_turns_override is not None
+    # Canonical reference path: 5 user turns + tool rounds + final answers.
+    # search, read2025, read2024, calc, contacts, email + final answers = 11.
+    # With parallel calls the minimum is 8; the override keeps headroom finite.
+    assert tc46.max_turns_override >= 9
+    assert tc46.max_turns_override <= 12
+
+
+@pytest.mark.asyncio
+async def test_deep_multiturn_workflow_fits_override_budget() -> None:
+    """A TC-46-like 11-turn reference path fits inside a 12-turn override."""
+    # Canonical deep workflow: 1 user message + 4 follow-ups.
+    # T1 search, T2 read2025, T3 final, T4 final, T5 read2024+calc (parallel),
+    # T6 final, T7 final, T8 contacts+email (parallel), T9 final.
+    # The canonical non-parallel path needs up to 11 assistant turns.
+    responses = [
+        {"content": "", "tool_calls": [{"name": "search_files", "arguments": {}}]},
+        {"content": "", "tool_calls": [{"name": "read_file", "arguments": {"file": "2025"}}]},
+        {"content": "found"},
+        {"content": "read"},
+        {
+            "content": "",
+            "tool_calls": [
+                {"name": "read_file", "arguments": {"file": "2024"}},
+                {"name": "calculator", "arguments": {"expr": "growth"}},
+            ],
+        },
+        {"content": "compared"},
+        {"content": "risks"},
+        {
+            "content": "",
+            "tool_calls": [
+                {"name": "get_contacts", "arguments": {}},
+                {"name": "send_email", "arguments": {"to": "jordan.park@company.com"}},
+            ],
+        },
+        {"content": "sent"},
+    ]
+    scenario = ScenarioDefinition(
+        id="DEEP-01",
+        title="DEEP-01",
+        description="deep multi-turn",
+        category=Category.A,
+        user_message="Find the competitor analysis report.",
+        follow_up_messages=[
+            "Read the 2025 one.",
+            "What's our market share growth compared to last year?",
+            "Summarize the key risks from both reports.",
+            "Email that summary to my manager.",
+        ],
+        handle_tool_call=lambda state, call: state.tool_calls.append(call),
+        evaluate=lambda state: ScenarioEvaluation(
+            status=ScenarioStatus.PASS,
+            points=2,
+            summary="ok",
+        ),
+    )
+    scenario.max_turns_override = 12
+    result = await run_scenario(
+        MockAdapter(responses),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,  # global default would cut the deep workflow
+    )
+    # The override lets the full 9-turn path complete; global 8 would fail it.
+    assert result.status == ScenarioStatus.PASS
+    assert result.turn_budget_exceeded is False
+    assert result.turn_count == 9
+
+
+@pytest.mark.asyncio
+async def test_deep_multiturn_workflow_cut_by_global_budget() -> None:
+    """The same deep workflow is cut at the global max_turns without override."""
+    responses = [
+        {"content": "", "tool_calls": [{"name": "search_files", "arguments": {}}]},
+        {"content": "", "tool_calls": [{"name": "read_file", "arguments": {"file": "2025"}}]},
+        {"content": "found"},
+        {"content": "read"},
+        {
+            "content": "",
+            "tool_calls": [
+                {"name": "read_file", "arguments": {"file": "2024"}},
+                {"name": "calculator", "arguments": {"expr": "growth"}},
+            ],
+        },
+        {"content": "compared"},
+        {"content": "risks"},
+        {
+            "content": "",
+            "tool_calls": [
+                {"name": "get_contacts", "arguments": {}},
+                {"name": "send_email", "arguments": {"to": "jordan.park@company.com"}},
+            ],
+        },
+        {"content": "sent"},
+    ]
+    scenario = ScenarioDefinition(
+        id="DEEP-02",
+        title="DEEP-02",
+        description="deep multi-turn",
+        category=Category.A,
+        user_message="Find the competitor analysis report.",
+        follow_up_messages=[
+            "Read the 2025 one.",
+            "What's our market share growth compared to last year?",
+            "Summarize the key risks from both reports.",
+            "Email that summary to my manager.",
+        ],
+        handle_tool_call=lambda state, call: state.tool_calls.append(call),
+        evaluate=lambda state: ScenarioEvaluation(
+            status=ScenarioStatus.FAIL,
+            points=0,
+            summary="did not finish",
+        ),
+    )
+    # No override: the global budget of 6 cuts the path before completion.
+    result = await run_scenario(
+        MockAdapter(responses),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=6,
+    )
+    assert result.turn_count == 6
+    assert result.turn_budget_exceeded is True
+    assert result.failure_kind == FailureKind.BUDGET_EXCEEDED
+
+
+def test_turn_budget_exceeded_roundtrips_through_serialization() -> None:
+    """budget-exhausted results survive to_dict/from_dict resume round-trips."""
+    source = ScenarioResult(
+        scenario_id="TC-46",
+        status=ScenarioStatus.FAIL,
+        points=0,
+        summary="Turn budget exceeded before final email.",
+        turn_budget_exceeded=True,
+    )
+
+    restored = ScenarioResult.from_dict(source.to_dict())
+
+    assert restored.scenario_id == "TC-46"
+    assert restored.turn_budget_exceeded is True
+    # Older persisted rows without the flag must still deserialize as False.
+    legacy_dict = source.to_dict()
+    legacy_dict.pop("turn_budget_exceeded", None)
+    legacy = ScenarioResult.from_dict(legacy_dict)
+    assert legacy.turn_budget_exceeded is False
