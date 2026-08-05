@@ -327,7 +327,8 @@ async def run_scenario(
     scenario_tool_choice = scenario.tool_choice_override or "auto"
     # Per-scenario budget overrides the global max_turns for deep workflows
     # (e.g. TC-46) without raising the default for every scenario.
-    max_turns = scenario.max_turns_override or max_turns
+    if scenario.max_turns_override is not None:
+        max_turns = scenario.max_turns_override
     available_tool_names = [
         str(tool.get("function", {}).get("name", "?")) for tool in (scenario_tools or [])
     ]

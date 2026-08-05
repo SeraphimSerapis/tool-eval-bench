@@ -180,11 +180,6 @@ class ScenarioDefinition:
     # to the adapter's response_format parameter. Used by structured output
     # scenarios to request JSON schema enforcement.
     response_format_override: dict[str, Any] | None = None
-    # Optional per-scenario turn budget.  If set, the orchestrator uses this
-    # value instead of the global ``max_turns`` for this scenario.  Used by
-    # deep multi-turn workflows (e.g. TC-46) whose reference path needs more
-    # exchanges than the global default, while keeping the limit finite.
-    max_turns_override: int | None = None
     # Difficulty rating (1–5 scale).  None means "unrated" for backward
     # compatibility.  See docs/methodology.md for the tier definitions.
     #   1 = trivial   — single tool, obvious mapping
@@ -200,6 +195,13 @@ class ScenarioDefinition:
     # Their prompts and traces are withheld from generated reports so that
     # publishing a score does not publish (and thereby burn) the scenario.
     held_out: bool = False
+    # Optional per-scenario turn budget.  If set, the orchestrator uses this
+    # value instead of the global ``max_turns`` for this scenario.  Used by
+    # deep multi-turn workflows (e.g. TC-46) whose reference path needs more
+    # exchanges than the global default, while keeping the limit finite.
+    # Kept after the existing optional fields to preserve positional
+    # construction compatibility for callers using the dataclass directly.
+    max_turns_override: int | None = None
 
 
 # ---------------------------------------------------------------------------
