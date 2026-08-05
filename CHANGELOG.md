@@ -45,6 +45,16 @@ All notable changes to `tool-eval-bench` are documented here.
   aliases the evaluator accepted. A dedicated contract test keeps the
   schema enums and the scenario alias tables in sync.
 
+- **TC-23 whitespace-tolerant explanation scoring** — the evaluator now
+  collapses all whitespace (LF/CRLF, tabs, repeated spaces) before checking
+  the semantic regex chains, so a substantively correct answer that uses
+  headings, bullets, and line breaks no longer scores PARTIAL merely because
+  formatting broke a regex chain. Semantic requirements are unchanged:
+  the chains still require a retrieval/return/fetch action tied to
+  stock/price/ticker and to the function name, and negated or missing facts
+  still score PARTIAL. Regression tests cover single-line, formatted
+  multi-line, and CRLF answers plus negative semantic cases.
+
 ### Added
 
 - **Tokenizer auto-detection for `--perf`** — `--tokenizer` is now rarely needed.
