@@ -6,7 +6,9 @@ Coverage for TC-51 through TC-63 (Categories M, N, plus C/I/K expansions).
 from conftest import make_state as _make_state
 
 from tool_eval_bench.domain.scenarios import (
+    ScenarioState,
     ScenarioStatus,
+    ToolCallRecord,
 )
 
 
@@ -207,6 +209,24 @@ class TestTC55DataPipeline:
         result = self.sc.evaluate(state)
         # Partial — only read one file but got the total (somehow)
         assert result.status in (ScenarioStatus.PASS, ScenarioStatus.PARTIAL)
+
+    def test_partial_both_files_total_no_calculator(self) -> None:
+        """Regression: both regional files read + correct total, but no
+        calculator call. The "(read_na or read_emea) and has_total" branch
+        must not shadow the both-files case with a misleading reason."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "Q3 revenue"}},
+                {"name": "read_file", "arguments": {"file_id": "q3_rev_na"}},
+                {"name": "read_file", "arguments": {"file_id": "q3_rev_emea"}},
+            ],
+            final_answer="NA revenue is $2,400,000 and EMEA revenue is $1,800,000; total is $4,200,000.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        # Reason must reflect that both files were read, not "only one".
+        assert "both" in result.summary.lower()
+        assert "only read one" not in result.summary.lower()
 
     def test_fail_no_search(self) -> None:
         state = _make_state(final_answer="The Q3 revenue was around $4M.")
@@ -645,6 +665,72 @@ class TestTC52EdgeCases:
         assert result.status == ScenarioStatus.PARTIAL
         assert "synthesize" in result.summary.lower()
 
+    def test_stock_fixture_integrity(self) -> None:
+        """The AAPL stock fixture must be internally coherent.
+
+        Verifies the relationships between price, previous_close, change, and
+        change_percent rather than just re-asserting literal constants:
+        change == price - previous_close, change_percent == change / previous_close * 100,
+        sign/direction agree (negative change => price below previous close), and the
+        enriched mock response is what the model actually sees.
+        """
+        from tool_eval_bench.evals.noise import enrich_payload
+
+        enriched = enrich_payload(
+            "get_stock_price",
+            {"ticker": "AAPL", "price": 178.50, "change": -2.3, "change_percent": -1.27},
+        )
+        price = enriched["price"]
+        previous_close = enriched["previous_close"]
+        change = enriched["change"]
+        change_percent = enriched["change_percent"]
+
+        # change = price - previous_close (absolute change relationship)
+        assert abs((price - previous_close) - change) < 1e-9
+        # percentage = change / previous_close * 100, rounded to 2 decimals
+        expected_percent = round(change / previous_close * 100, 2)
+        assert abs(change_percent - expected_percent) < 1e-9
+        # sign/direction agree: negative change => price below previous close
+        assert change < 0
+        assert price < previous_close
+        # textual formatted value agrees with the numeric field
+        assert f"{change_percent:.2f}%" == "-1.27%"
+
+    def test_stock_fixture_matches_evaluator_expectations(self) -> None:
+        """The mock response numbers must match what the TC-52 evaluator looks for.
+
+        The evaluator requires the answer to surface the AAPL price ("178") and the
+        market benchmark ("5412"/"17234"); the handler's mock data must actually
+        provide those numbers so a model that reports them is reporting real data.
+        """
+        state = ScenarioState()
+        stock = self.sc.handle_tool_call(
+            state,
+            ToolCallRecord(
+                id="c1",
+                name="get_stock_price",
+                raw_arguments='{"ticker": "AAPL"}',
+                arguments={"ticker": "AAPL"},
+                turn=1,
+            ),
+        )
+        assert str(stock["price"]) == "178.5"
+        assert "178" in str(stock["price"])
+
+        search = self.sc.handle_tool_call(
+            state,
+            ToolCallRecord(
+                id="c2",
+                name="web_search",
+                raw_arguments='{"query": "S&P 500 market performance"}',
+                arguments={"query": "S&P 500 market performance"},
+                turn=2,
+            ),
+        )
+        snippet = search["results"][0]["snippet"]
+        assert "5,412.50" in snippet  # evaluator accepts "5412" or "5,412"
+        assert "17,234.12" in snippet  # evaluator accepts "17234" or "17,234"
+
 
 class TestTC53EdgeCases:
     sc = _get("TC-53")
@@ -706,17 +792,70 @@ class TestTC54EdgeCases:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
 
-    def test_partial_both_imprecise(self) -> None:
-        """Got both data sources but final answer doesn't have correct number."""
+    def test_partial_exact_sum_no_calculator(self) -> None:
+        """Both sources retrieved, exact sum stated, but calculator never
+        called → partial, and the reason must name the missing calculator."""
         state = _make_state(
             tool_calls=[
                 {"name": "get_stock_price", "arguments": {"ticker": "MSFT"}},
-                {"name": "web_search", "arguments": {"query": "USD JPY exchange rate"}},
+                {"name": "web_search", "arguments": {"query": "USD to JPY exchange rate"}},
             ],
-            final_answer="MSFT is around 425 dollars which is some amount of JPY.",
+            final_answer="MSFT is $425.80; the exact JPY equivalent is 63657.1.",
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
+        assert "did not call calculator" in result.summary.lower()
+        assert "imprecise" not in result.summary.lower()
+
+    def test_partial_calculator_no_verification(self) -> None:
+        """Calculator called but with an expression that does not verify the
+        required 425.8 * 149.5 multiplication → partial naming the missing
+        verification, not a mismatch."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_stock_price", "arguments": {"ticker": "MSFT"}},
+                {"name": "web_search", "arguments": {"query": "USD to JPY exchange rate"}},
+                {"name": "calculator", "arguments": {"expression": "149.5 + 425.8"}},
+            ],
+            final_answer="MSFT is $425.80; the exact JPY equivalent is 63657.1.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "did not verify the required 425.8 * 149.5" in result.summary.lower()
+        assert "does not match" not in result.summary.lower()
+
+    def test_partial_calculator_literal_result_no_verification(self) -> None:
+        """Regression: calculator called with the literal result 63657.15
+        (no 425.8 * 149.5 multiplication), final answer agrees with the
+        calculator, but the conversion was never verified → partial naming the
+        missing verification, not a mismatch."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_stock_price", "arguments": {"ticker": "MSFT"}},
+                {"name": "web_search", "arguments": {"query": "USD to JPY exchange rate"}},
+                {"name": "calculator", "arguments": {"expression": "63657.15"}},
+            ],
+            final_answer="MSFT is $425.80; the exact JPY equivalent is 63657.15.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "did not verify the required 425.8 * 149.5" in result.summary.lower()
+        assert "does not match" not in result.summary.lower()
+
+    def test_partial_calculator_verified_answer_disagrees(self) -> None:
+        """Calculator called and verifies 425.8 * 149.5, but the final answer
+        does not match the computed result → partial naming the mismatch."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_stock_price", "arguments": {"ticker": "MSFT"}},
+                {"name": "web_search", "arguments": {"query": "USD to JPY exchange rate"}},
+                {"name": "calculator", "arguments": {"expression": "425.8 * 149.5"}},
+            ],
+            final_answer="MSFT is $425.80; the exact JPY equivalent is 60000.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "does not match" in result.summary.lower()
 
 
 class TestTC55EdgeCases:

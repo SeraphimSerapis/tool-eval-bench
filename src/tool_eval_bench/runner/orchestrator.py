@@ -329,6 +329,10 @@ async def run_scenario(
     # None → use defaults; [] → explicitly no tools
     scenario_tools = UNIVERSAL_TOOLS if scenario.tools_override is None else scenario.tools_override
     scenario_tool_choice = scenario.tool_choice_override or "auto"
+    # Per-scenario budget overrides the global max_turns for deep workflows
+    # (e.g. TC-46) without raising the default for every scenario.
+    if scenario.max_turns_override is not None:
+        max_turns = scenario.max_turns_override
     available_tool_names = [
         str(tool.get("function", {}).get("name", "?")) for tool in (scenario_tools or [])
     ]
@@ -371,6 +375,11 @@ async def run_scenario(
             "no concurrent requests, and consistent KV-cache configuration.",
             seed,
         )
+
+    # True when the loop ends because the turn budget ran out before the model
+    # produced a final answer (or before exhausting the follow-up queue).
+    # Distinguishes turn-budget exhaustion from evaluator failures.
+    budget_exhausted = True
 
     try:
         for turn in range(1, max_turns + 1):
@@ -434,6 +443,7 @@ async def run_scenario(
 
                 # No more follow-ups → conversation is done
                 state.final_answer = result.content
+                budget_exhausted = False
                 break
 
             tool_names = [tc.name for tc in result.tool_calls]
@@ -571,7 +581,14 @@ async def run_scenario(
         tool_call_arg_bytes=total_arg_bytes,
         parallel_tool_turns=parallel_tool_turns,
         state_checkpoints=state_checkpoints,
-        failure_kind=_classify_evaluation_failure(state, evaluation),
+        failure_kind=(
+            FailureKind.BUDGET_EXCEEDED
+            if budget_exhausted and evaluation.status != ScenarioStatus.PASS
+            else _classify_evaluation_failure(state, evaluation)
+        ),
+        # A turn-budget run-out is a distinct failure reason, not an evaluator
+        # verdict: the model never reached a final answer / exhausted follow-ups.
+        turn_budget_exceeded=budget_exhausted,
     )
 
 

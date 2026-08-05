@@ -257,6 +257,7 @@ def main() -> None:
     # Cascade: CLI flag → env var → auto-discovery
     model = args.model or os.getenv("TOOL_EVAL_MODEL") or None
     backend = args.backend or os.getenv("TOOL_EVAL_BACKEND", "")
+    backend_explicit = bool(backend)
     base_url = args.base_url or os.getenv("TOOL_EVAL_BASE_URL", "")
     api_key = args.api_key or os.getenv("TOOL_EVAL_API_KEY")
 
@@ -289,7 +290,28 @@ def main() -> None:
                 "Use --base-url or set TOOL_EVAL_BASE_URL in .env"
             )
 
-    # Default backend if still unset
+    # Authoritative backend detection: a port-based guess (from localhost
+    # auto-discovery, above) or a hardcoded default both get overridden here
+    # by actually asking the server what it is — via its /metrics namespace,
+    # llama.cpp's /props /health fingerprint, or vLLM's /version endpoint.
+    # This is what tells a remote llama.cpp box apart from vLLM/SGLang instead
+    # of silently defaulting to "vllm". Skipped when the user pinned --backend
+    # / TOOL_EVAL_BACKEND explicitly, or opted out of engine probing.
+    if not backend_explicit and base_url and not args.probe and not args.no_probe_engine:
+        from tool_eval_bench.utils.metadata import probe_backend_hint as _probe_backend_hint
+
+        hint = asyncio.run(_probe_backend_hint(base_url, api_key))
+        if hint:
+            backend, backend_label = hint
+            if args.json:
+                sys.stderr.write(
+                    json.dumps({"event": "backend_detected", "backend": backend}) + "\n"
+                )
+                sys.stderr.flush()
+            else:
+                console.print(f"[dim]  Detected backend: {backend_label}[/]")
+
+    # Default backend if still unset (detection above was inconclusive, or skipped)
     if not backend:
         backend = "vllm"
 
@@ -407,7 +429,17 @@ def main() -> None:
     # -- Pre-flight: verify the model actually works (issue #19) --
     # Some servers list models in /v1/models but fail on real requests.
     # Without this check, the benchmark produces misleading scores.
-    _preflight_model_check(console, base_url, model, api_key, headless=args.json)
+    if not args.no_preflight:
+        _preflight_model_check(
+            console,
+            base_url,
+            model,
+            api_key,
+            headless=args.json,
+            timeout_seconds=args.timeout,
+            temperature=args.temperature,
+            extra_params=extra_params or None,
+        )
 
     # -- Warm-up --
     if not args.no_warmup and not args.json:

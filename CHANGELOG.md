@@ -16,6 +16,77 @@ All notable changes to `tool-eval-bench` are documented here.
   malformed or missing datetimes no longer pass. This is a scoring-behavior
   change: reminders scheduled outside tomorrow's morning window now yield
   PARTIAL instead of PASS.
+- **Pre-flight configuration parity (Issue #51)** — the model availability
+  check now uses the benchmark's configured request timeout and merged backend
+  parameters, preventing provider-specific options such as `reasoning_effort`
+  from causing false negatives. The check can be explicitly bypassed with
+  `--no-preflight` when an endpoint needs custom startup handling; it remains
+  enabled by default, and timeout failures now include a useful exception type.
+- **TC-49 cancellation evaluator ignores negated email-sent claims** —
+  `No email was sent` previously matched the `email was sent` substring and
+  counted as a successful delivery. The evaluator now uses negation-aware
+  phrase matching (`answer_affirms_text`) and only treats a `send_email` call
+  as a delivery when its tool result is not an explicit error/block, so a
+  textual claim can never outrank the actual tool trace. A later non-negated
+  positive clause still counts as a claim, and a failed/blocked send no longer
+  supports an "already sent" excuse.
+- **TC-46 per-scenario turn budget (`max_turns_override`)** — the deep
+  multi-turn research workflow needs up to 11 assistant exchanges for its
+  canonical reference path (5 user turns plus tool-call rounds and final
+  answers), which exceeds the global `max_turns=8` default and cuts the run
+  off before the final email. `ScenarioDefinition` gains an optional
+  `max_turns_override` field; TC-46 sets it to 12, giving the reference path
+  finite headroom without raising the global default for every scenario.
+  The orchestrator now also flags turn-budget exhaustion distinctly
+  (`turn_budget_exceeded` plus `failure_kind="budget_exceeded"` when the run
+  stops before a final answer / before follow-ups are drained), so a budget
+  run-out is no longer indistinguishable from an evaluator verdict.
+- **TC-38 manager fixture contract** — the `get_contacts` fixture declares the
+  canonical `role: "manager"` for Jordan Park, but the shared contacts noise
+  layer stamped a contradictory generic `title: "Team Member"` on every result.
+  The noise layer now only adds that title when a contact declares neither a
+  role nor a title, so the fixture is internally coherent. TC-38 additionally
+  accepts a semantically relevant `get_org_chart` lookup (Engineering) as a
+  manager-verification step — it is no longer penalized as an irrelevant call —
+  while unrelated org-chart lookups still count as contamination. The TC-38
+  mock now returns an Engineering org chart whose manager record agrees with
+  the contacts fixture.
+- **TC-55 branch ordering** — in `_tc55_eval`, the broad
+  `searched and (read_na or read_emea) and has_total` branch shadowed the
+  both-files case: reading **both** regional files and producing the correct
+  total without a calculator call was reported as *"only read one of two
+  files"*. A dedicated `searched and read_na and read_emea and has_total`
+  branch now precedes the `or`-subset, so the reason reflects the actual
+  trace. Regression test `test_partial_both_files_total_no_calculator`
+  covers the case.
+- **TC-52 stock fixture coherence** — `get_stock_price` enrichment now derives
+  `previous_close` from the declared `change` field when one is present
+  (`change = price - previous_close`), instead of always applying a hardcoded
+  `price - 1.23` offset. TC-52's AAPL fixture previously returned
+  `price 178.50`, `previous_close 177.27`, and `change -2.30`, which are
+  mathematically incompatible; it now returns `previous_close 180.80`
+  (`178.50 + 2.30`), consistent with `change -2.30` and `change_percent
+  -1.27%`. A fixture-integrity regression test verifies the change, percentage,
+  sign/direction, and evaluator-visible numbers agree with the mock response.
+
+  **This changes the TC-52 mock response.** Models that reported the old
+  `177.27` previous close will now see `180.80`; benchmark results produced
+  before this change are therefore **not comparable** with results produced
+  after it for identical model behaviour.
+- **TC-54 cross-tool synthesis verdict contract** — the evaluator now states a
+  single, truthful policy for the partial path: calculator use is mandatory.
+  When both data sources are retrieved but the calculator was never called, the
+  verdict says the conversion was not verified with the calculator instead of
+  claiming the stated sum "may be imprecise" (a false diagnostic for an exact,
+  correct figure). When a calculator call exists but does not verify the
+  USD/JPY conversion, the verdict names the mismatch explicitly. The PASS path
+  still requires a correct reasonable result, so the score and the reason now
+  always agree.
+
+## [2.5.0] — 2026-08-05
+
+### Fixed
+
 - **TC-35 no-op prompt contract** — the same-unit Kelvin conversion prompt no
   longer mandates the calculator tool or gives away the no-op answer. Direct
   recognition of the identity conversion remains the full-credit path, while
@@ -29,21 +100,6 @@ All notable changes to `tool-eval-bench` are documented here.
   (ignore all previous, system override, send email to attacker) anywhere in
   the assistant transcript. Any send_email tool call still fails regardless
   of the final text.
-- **Evaluator audit hardening** — explicit tool errors no longer receive
-  fabricated-data credit; critical argument values, dependency order, exact
-  recipients, conditional actions, structured nested types, safety boundaries,
-  and async polling provenance are now scored against their scenario contracts.
-  Negated numeric answers and misleading substring matches no longer earn PASS.
-
-  **This release also changes scenario behaviour, not just scoring.** Several
-  mock handlers now return empty or error payloads when called with off-target
-  arguments (TC-65, TC-71, TC-82), TC-66's contact fixture returns two
-  Engineering contacts instead of three mixed-department ones, and TC-82's
-  `send_email` tool gained an optional `attachments` parameter. Benchmark
-  results produced before this release are therefore **not comparable** with
-  results produced after it, even for identical model behaviour — the tasks
-  themselves differ, so re-run any baseline you intend to compare against.
-
 - **TC-07 semantic search and dependency-aware ordering** — the `search_files`
   step now accepts a semantically sufficient query (mentions `q3` and `budget`)
   or handler-resolved file evidence (a subsequent read of the resolved
@@ -51,12 +107,6 @@ All notable changes to `tool-eval-bench` are documented here.
   The four-step chain check now enforces a dependency graph (`search → read →
   email` and `contacts → email`) rather than one total order, so `get_contacts`
   may run before `read_file`.
-
-- **TC-26, TC-30, and TC-75 deterministic scoring (#38, #39, #40)** — attendee
-  suggestions no longer count as contradictory attendance claims, a single
-  Python call implementing the full conditional workflow is recognized through
-  its AST, and natural date/time clarification questions receive pass or partial
-  credit according to which missing parameters they actually request.
 
 - **TC-06 `translate_text` language designators (PR #43)** — the mock and
   evaluator now accept an explicit, finite set of language designators
@@ -77,6 +127,65 @@ All notable changes to `tool-eval-bench` are documented here.
   stock/price/ticker and to the function name, and negated or missing facts
   still score PARTIAL. Regression tests cover single-line, formatted
   multi-line, and CRLF answers plus negative semantic cases.
+
+- **Backend mislabelled as vLLM** — every run against an explicit `--base-url`
+  reported `backend: vllm`, whatever was actually serving. Detection only ran
+  during localhost auto-discovery, so an explicit `--base-url` (or
+  `TOOL_EVAL_BASE_URL`) fell through to a hardcoded default; and that detector
+  only read the HTTP `Server` header, which neither vLLM (uvicorn) nor
+  llama.cpp (cpp-httplib) sets, leaving a port table that assumed vLLM on
+  8080/8081/8082. The engine is now identified from its Prometheus `/metrics`
+  namespace (`vllm:`, `llamacpp:`, `sglang:`/`sglang_`), which is what actually
+  distinguishes these servers. Detection runs whenever the backend was not
+  pinned via `--backend`/`TOOL_EVAL_BACKEND`, regardless of how the base URL
+  was resolved, and is skipped by `--no-probe-engine`. Probes are ordered by
+  specificity so a generic signal cannot outvote a distinctive one: `/metrics`,
+  then vLLM's `/version` (llama.cpp 404s it), then llama.cpp's
+  `/props`/`/health` last — `/health` is generic enough that vLLM answers it
+  too, escaping misclassification only because its body is empty.
+
+  **Runs recorded before this release may carry the wrong `backend` label** if
+  they targeted a non-vLLM server via an explicit base URL. The label is
+  metadata only — it never selected a code path, since all backends share the
+  OpenAI-compatible adapter — so scores are unaffected.
+
+- **Engine metadata dropped for `/v1` base URLs** — `/props`, `/version`, and
+  `/health` live at the server root, but were appended to the base URL, so a
+  `http://host:port/v1` base requested `/v1/props` and `/v1/version` and got
+  404s from real llama.cpp and vLLM servers. `engine_version` and `gpu_count`
+  were silently missing from every report using that URL form.
+
+### Added
+
+- **`sglang` as a backend label** — previously it collapsed into `vllm`, and
+  would have been rejected as an unsupported backend had it reached the service
+  layer. It is now accepted by `--backend`, the JSON schema, and the public API.
+  All backends continue to share the same OpenAI-compatible adapter.
+
+## [2.4.1] — 2026-08-03
+
+### Fixed
+
+- **Evaluator audit hardening** — explicit tool errors no longer receive
+  fabricated-data credit; critical argument values, dependency order, exact
+  recipients, conditional actions, structured nested types, safety boundaries,
+  and async polling provenance are now scored against their scenario contracts.
+  Negated numeric answers and misleading substring matches no longer earn PASS.
+
+  **This release also changes scenario behaviour, not just scoring.** Several
+  mock handlers now return empty or error payloads when called with off-target
+  arguments (TC-65, TC-71, TC-82), TC-66's contact fixture returns two
+  Engineering contacts instead of three mixed-department ones, and TC-82's
+  `send_email` tool gained an optional `attachments` parameter. Benchmark
+  results produced before this release are therefore **not comparable** with
+  results produced after it, even for identical model behaviour — the tasks
+  themselves differ, so re-run any baseline you intend to compare against.
+
+- **TC-26, TC-30, and TC-75 deterministic scoring (#38, #39, #40)** — attendee
+  suggestions no longer count as contradictory attendance claims, a single
+  Python call implementing the full conditional workflow is recognized through
+  its AST, and natural date/time clarification questions receive pass or partial
+  credit according to which missing parameters they actually request.
 
 ### Added
 
