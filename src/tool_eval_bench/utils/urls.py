@@ -66,12 +66,24 @@ def models_url(base_url: str) -> str:
     return f"{_normalize_base(base_url)}/models"
 
 
-def metrics_url(base_url: str) -> str:
-    """Build the Prometheus /metrics URL from a base URL (not under /v1)."""
+def root_url(base_url: str) -> str:
+    """Strip a trailing ``/v1`` (and any trailing slash) from a base URL.
+
+    Engine-identity endpoints — vLLM's ``/version``, llama.cpp's ``/props``
+    and ``/health`` — live at the server root, *not* under ``/v1``.  Callers
+    that naively append to ``base_url`` request ``/v1/props`` and get a 404
+    whenever the user passes the ``http://host:port/v1`` form, silently
+    losing engine version metadata.
+    """
     b = base_url.rstrip("/")
     if b.endswith("/v1"):
         b = b[:-3]
-    return f"{b}/metrics"
+    return b
+
+
+def metrics_url(base_url: str) -> str:
+    """Build the Prometheus /metrics URL from a base URL (not under /v1)."""
+    return f"{root_url(base_url)}/metrics"
 
 
 def metrics_request_target(

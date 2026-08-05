@@ -36,7 +36,7 @@ from tool_eval_bench.utils.urls import redact_url as _redact_url
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_BACKENDS = {"vllm", "litellm", "llamacpp", "llama.cpp", "llama_cpp"}
+_SUPPORTED_BACKENDS = {"vllm", "litellm", "llamacpp", "llama.cpp", "llama_cpp", "sglang"}
 
 
 class BenchmarkService:
@@ -62,7 +62,9 @@ class BenchmarkService:
     def _adapter_for(self, backend: str) -> BackendAdapter:
         backend_l = backend.lower()
         if backend_l not in _SUPPORTED_BACKENDS:
-            raise ValueError(f"Unsupported backend: {backend}. Supported: vllm, litellm, llamacpp")
+            raise ValueError(
+                f"Unsupported backend: {backend}. Supported: vllm, litellm, llamacpp, sglang"
+            )
         return OpenAICompatibleAdapter()
 
     async def run_benchmark(
