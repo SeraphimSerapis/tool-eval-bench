@@ -783,6 +783,320 @@ class TestTC56EdgeCases:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
 
+    def test_pass_iso_timestamp_reminder(self) -> None:
+        """TC-56: an ISO timestamp resolving to the next calendar day in the
+        morning window passes semantic validation."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "me",
+                        "subject": "Freezing warning",
+                        "body": "It is below freezing",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {
+                        "message": "dress warmly",
+                        "datetime": "2026-03-21T08:00:00Z",
+                    },
+                },
+            ],
+            tool_results=[{"location": "NYC", "temperature": -3}],
+            final_answer=(
+                "NYC is -3 degrees, below freezing. I have sent a warning "
+                "email and set a reminder to dress warmly tomorrow morning."
+            ),
+        )
+        state.meta["reference_date"] = "2026-03-20"
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
+    def test_pass_iso_morning_lower_bound(self) -> None:
+        """TC-56: 05:00 is the inclusive lower edge of the morning window."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "me",
+                        "subject": "Freezing warning",
+                        "body": "It is below freezing",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {
+                        "message": "dress warmly",
+                        "datetime": "2026-03-21T05:00:00",
+                    },
+                },
+            ],
+            tool_results=[{"location": "NYC", "temperature": -3}],
+            final_answer="NYC is below freezing; warning sent and reminder set.",
+        )
+        state.meta["reference_date"] = "2026-03-20"
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
+    def test_pass_iso_morning_upper_bound(self) -> None:
+        """TC-56: 11:59 is inside the morning window (12:00 is exclusive)."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "me",
+                        "subject": "Freezing warning",
+                        "body": "It is below freezing",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {
+                        "message": "dress warmly",
+                        "datetime": "2026-03-21T11:59:00",
+                    },
+                },
+            ],
+            tool_results=[{"location": "NYC", "temperature": -3}],
+            final_answer="NYC is below freezing; warning sent and reminder set.",
+        )
+        state.meta["reference_date"] = "2026-03-20"
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
+    def test_partial_iso_noon_exclusive(self) -> None:
+        """TC-56: 12:00 is outside the morning window, so the reminder is
+        not accepted and the workflow stays partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "me",
+                        "subject": "Freezing warning",
+                        "body": "It is below freezing",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {
+                        "message": "dress warmly",
+                        "datetime": "2026-03-21T12:00:00",
+                    },
+                },
+            ],
+            tool_results=[{"location": "NYC", "temperature": -3}],
+            final_answer="NYC is below freezing; warning sent.",
+        )
+        state.meta["reference_date"] = "2026-03-20"
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_iso_today_morning(self) -> None:
+        """TC-56: today's morning is not tomorrow, so the reminder is not
+        accepted and the workflow stays partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "me",
+                        "subject": "Freezing warning",
+                        "body": "It is below freezing",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {
+                        "message": "dress warmly",
+                        "datetime": "2026-03-20T08:00:00",
+                    },
+                },
+            ],
+            tool_results=[{"location": "NYC", "temperature": -3}],
+            final_answer="NYC is below freezing; warning sent.",
+        )
+        state.meta["reference_date"] = "2026-03-20"
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_iso_day_after_tomorrow(self) -> None:
+        """TC-56: the day after tomorrow is not tomorrow morning, so the
+        workflow stays partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "me",
+                        "subject": "Freezing warning",
+                        "body": "It is below freezing",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {
+                        "message": "dress warmly",
+                        "datetime": "2026-03-22T08:00:00",
+                    },
+                },
+            ],
+            tool_results=[{"location": "NYC", "temperature": -3}],
+            final_answer="NYC is below freezing; warning sent.",
+        )
+        state.meta["reference_date"] = "2026-03-20"
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_iso_malformed(self) -> None:
+        """TC-56: a malformed ISO timestamp must not crash the evaluator;
+        it simply means the reminder is not accepted (partial verdict)."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "me",
+                        "subject": "Freezing warning",
+                        "body": "It is below freezing",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {
+                        "message": "dress warmly",
+                        "datetime": "2026-13-99T25:00:00",
+                    },
+                },
+            ],
+            tool_results=[{"location": "NYC", "temperature": -3}],
+            final_answer="NYC is below freezing; warning sent.",
+        )
+        state.meta["reference_date"] = "2026-03-20"
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_pass_iso_timezone_offset(self) -> None:
+        """TC-56: a timezone-aware timestamp still passes; offsets are
+        ignored and only the calendar date + hour are compared."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "me",
+                        "subject": "Freezing warning",
+                        "body": "It is below freezing",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {
+                        "message": "dress warmly",
+                        "datetime": "2026-03-21T08:00:00+02:00",
+                    },
+                },
+            ],
+            tool_results=[{"location": "NYC", "temperature": -3}],
+            final_answer="NYC is below freezing; warning sent and reminder set.",
+        )
+        state.meta["reference_date"] = "2026-03-20"
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
+    def test_pass_iso_month_boundary(self) -> None:
+        """TC-56: reference date near a month boundary still resolves the
+        next calendar day (March 31 → April 1)."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "me",
+                        "subject": "Freezing warning",
+                        "body": "It is below freezing",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {
+                        "message": "dress warmly",
+                        "datetime": "2026-04-01T08:00:00",
+                    },
+                },
+            ],
+            tool_results=[{"location": "NYC", "temperature": -3}],
+            final_answer="NYC is below freezing; warning sent and reminder set.",
+        )
+        state.meta["reference_date"] = "2026-03-31"
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
+    def test_pass_iso_year_boundary(self) -> None:
+        """TC-56: reference date near a year boundary still resolves the
+        next calendar day (December 31 → January 1)."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "me",
+                        "subject": "Freezing warning",
+                        "body": "It is below freezing",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {
+                        "message": "dress warmly",
+                        "datetime": "2026-01-01T08:00:00",
+                    },
+                },
+            ],
+            tool_results=[{"location": "NYC", "temperature": -3}],
+            final_answer="NYC is below freezing; warning sent and reminder set.",
+        )
+        state.meta["reference_date"] = "2025-12-31"
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
+    def test_partial_iso_missing_datetime(self) -> None:
+        """TC-56: a missing datetime means the reminder is not accepted,
+        so the workflow stays partial."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "me",
+                        "subject": "Freezing warning",
+                        "body": "It is below freezing",
+                    },
+                },
+                {"name": "set_reminder", "arguments": {"message": "dress warmly"}},
+            ],
+            tool_results=[{"location": "NYC", "temperature": -3}],
+            final_answer="NYC is below freezing; warning sent.",
+        )
+        state.meta["reference_date"] = "2026-03-20"
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
 
 class TestTC61EdgeCases:
     sc = _get("TC-61")

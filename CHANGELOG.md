@@ -6,6 +6,16 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **TC-56 semantic reminder time (scoring)** — a `set_reminder` call now only
+  earns the notification-workflow credit when its ISO `datetime` resolves to
+  the *next calendar day* in a documented morning window (05:00 inclusive to
+  12:00 exclusive) relative to the scenario reference date. Literal
+  `"tomorrow morning"` text remains accepted for backward compatibility.
+  Timezone offsets/`Z` are ignored (calendar date + hour only, matching the
+  shared `datetime_matches` convention), month/year rollover is handled, and
+  malformed or missing datetimes no longer pass. This is a scoring-behavior
+  change: reminders scheduled outside tomorrow's morning window now yield
+  PARTIAL instead of PASS.
 - **TC-35 no-op prompt contract** — the same-unit Kelvin conversion prompt no
   longer mandates the calculator tool or gives away the no-op answer. Direct
   recognition of the identity conversion remains the full-credit path, while

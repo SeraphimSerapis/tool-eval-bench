@@ -13,6 +13,7 @@ TC-63: Accumulating constraints (Category I expansion).
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -581,6 +582,56 @@ def _tc56_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+def _is_tomorrow_morning(datetime_value, state):
+    """Return whether a set_reminder datetime is semantically tomorrow
+    morning. Accepts either natural-language text ("tomorrow morning") or
+    an ISO timestamp that resolves to the next calendar day in a morning
+    window relative to the scenario reference date.
+
+    Morning window: 05:00 inclusive through 12:00 exclusive (5 <= hour < 12).
+    Timezone offsets are ignored, matching the shared ``datetime_matches``
+    convention: only the calendar date and hour are compared, so a model that
+    emits an explicit offset is not penalised for choosing a different zone.
+    """
+    if not datetime_value:
+        return False
+    dt_str = _as_str(datetime_value).strip().lower()
+    if not dt_str:
+        return False
+
+    # Natural-language form (backward compatible with existing tests).
+    if "tomorrow" in dt_str and "morning" in dt_str:
+        return True
+
+    ref = state.meta.get("reference_date")
+    if ref is None:
+        return False
+    try:
+        ref_dt = datetime.fromisoformat(str(ref).strip())
+    except Exception:
+        return False
+
+    # Normalise ISO timestamps: strip a trailing Z and parse as naive
+    # (Z means UTC, but for calendar-day semantics we compare dates only).
+    parse_str = dt_str
+    if parse_str.endswith("z"):
+        parse_str = parse_str[:-1]
+    try:
+        target = datetime.fromisoformat(parse_str)
+    except Exception:
+        return False
+    if ref_dt.tzinfo is None and target.tzinfo is not None:
+        target = target.replace(tzinfo=None)
+    if ref_dt.tzinfo is not None and target.tzinfo is None:
+        target = target.replace(tzinfo=ref_dt.tzinfo)
+
+    next_day = date(ref_dt.year, ref_dt.month, ref_dt.day) + timedelta(days=1)
+    if target.date() != next_day:
+        return False
+    hour = target.time().hour
+    return 5 <= hour < 12
+
+
 def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Check the weather in NYC. If it's below freezing, email me
     a warning and set a reminder to dress warmly tomorrow morning.'
@@ -615,8 +666,7 @@ def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
         "set_reminder",
         lambda c: (
             "warm" in _as_str(c.arguments.get("message")).lower()
-            and "tomorrow" in _as_str(c.arguments.get("datetime")).lower()
-            and "morning" in _as_str(c.arguments.get("datetime")).lower()
+            and _is_tomorrow_morning(c.arguments.get("datetime"), state)
         ),
     )
 

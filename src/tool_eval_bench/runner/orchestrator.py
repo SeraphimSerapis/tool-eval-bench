@@ -315,6 +315,10 @@ async def run_scenario(
     """Run a single scenario through the multi-turn orchestration loop."""
     t0 = time.monotonic()
     state = ScenarioState()
+    # Meta must match the reference date actually injected into the prompt:
+    # _initial_messages falls back to the benchmark default when None.
+    state.meta["reference_date"] = reference_date or BENCHMARK_REFERENCE_DATE
+    state.meta["reference_day"] = reference_day or BENCHMARK_REFERENCE_DAY
     messages = _initial_messages(
         scenario.user_message,
         reference_date=reference_date,
