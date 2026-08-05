@@ -278,6 +278,75 @@ def test_dispatch_main_skip_and_perf_only_routes(
     dispatch.main()
 
 
+@pytest.mark.parametrize(
+    ("cli_backend", "hint", "expect_probe_called"),
+    [
+        # No --backend given: the server is actually probed, and its answer
+        # (not a hardcoded "vllm" default) becomes the report's backend label.
+        (None, ("llamacpp", "llama.cpp"), True),
+        (None, ("sglang", "SGLang"), True),
+        # Probe is inconclusive: falls back to the historical "vllm" default.
+        (None, None, True),
+        # User pinned --backend explicitly: detection must not run at all.
+        ("vllm", None, False),
+    ],
+)
+def test_dispatch_detects_backend_for_explicit_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    cli_backend: str | None,
+    hint: tuple[str, str] | None,
+    expect_probe_called: bool,
+) -> None:
+    """A remote --base-url must be probed for its real backend, not
+    defaulted to "vllm" — this is what tells a llama.cpp/SGLang box apart
+    from vLLM instead of mislabeling every unrecognized port as vLLM.
+    """
+    import sys
+
+    from tool_eval_bench.cli import dispatch, plugin_runners
+    from tool_eval_bench.utils import metadata
+
+    async def context(**kwargs):
+        return None
+
+    calls: list[str] = []
+
+    async def fake_probe_backend_hint(base_url, api_key=None):
+        calls.append(base_url)
+        return hint
+
+    monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
+    monkeypatch.setattr(dispatch, "_preflight_model_check", lambda *a, **k: None)
+    monkeypatch.setattr(dispatch, "_do_warmup", lambda *a, **k: None)
+    monkeypatch.setattr(metadata, "collect_run_context", context)
+    monkeypatch.setattr(metadata, "probe_backend_hint", fake_probe_backend_hint)
+    monkeypatch.setattr(plugin_runners, "run_selected_plugins", lambda *a, **k: False)
+
+    argv = [
+        "tool-eval-bench",
+        "--model",
+        "m",
+        "--base-url",
+        "http://192.168.10.239:8080/v1",
+        "--skip-tool-eval",
+        "--no-warmup",
+    ]
+    if cli_backend:
+        argv += ["--backend", cli_backend]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    dispatch.main()
+
+    assert bool(calls) == expect_probe_called
+
+    out = capsys.readouterr().out
+    if hint is not None:
+        assert f"Detected backend: {hint[1]}" in out
+    else:
+        assert "Detected backend:" not in out
+
+
 def test_detect_model_single_fallback_and_headless_multiple(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

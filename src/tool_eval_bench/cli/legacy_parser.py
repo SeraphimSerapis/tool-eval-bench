@@ -35,8 +35,9 @@ def _make_parser() -> argparse.ArgumentParser:
     conn.add_argument(
         "--backend",
         default=None,
-        help="Backend label for reports: vllm, litellm, llamacpp "
-        "(all use the same OpenAI-compatible adapter; default: env/vllm)",
+        help="Backend label for reports: vllm, litellm, llamacpp, sglang "
+        "(all use the same OpenAI-compatible adapter; default: auto-detected "
+        "via /metrics, falling back to env/vllm)",
     )
     conn.add_argument(
         "--base-url",
