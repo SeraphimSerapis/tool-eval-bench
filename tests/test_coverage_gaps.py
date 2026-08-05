@@ -405,6 +405,14 @@ class TestNoiseEnrichment:
         r = enrich_contacts({"results": [{"name": "A"}, {"name": "B"}]})
         assert len(r["results"]) == 2
         assert r["results"][0]["department"] == "Engineering"
+        assert r["results"][0]["title"] == "Team Member"
+
+    def test_enrich_contacts_preserves_declared_role(self):
+        # A contact that already declares a canonical role must not get a
+        # contradictory generic title (TC-38 manager fixture coherence).
+        r = enrich_contacts({"results": [{"name": "Jordan Park", "role": "manager"}]})
+        assert r["results"][0]["role"] == "manager"
+        assert "title" not in r["results"][0]
 
     def test_enrich_stock(self):
         r = enrich_stock({"price": 100.0})
