@@ -207,6 +207,7 @@ class TestTC55DataPipeline:
         result = self.sc.evaluate(state)
         # Partial — only read one file but got the total (somehow)
         assert result.status in (ScenarioStatus.PASS, ScenarioStatus.PARTIAL)
+
     def test_partial_both_files_total_no_calculator(self) -> None:
         """Regression: both regional files read + correct total, but no
         calculator call. The "(read_na or read_emea) and has_total" branch
@@ -224,6 +225,7 @@ class TestTC55DataPipeline:
         # Reason must reflect that both files were read, not "only one".
         assert "both" in result.summary.lower()
         assert "only read one" not in result.summary.lower()
+
     def test_fail_no_search(self) -> None:
         state = _make_state(final_answer="The Q3 revenue was around $4M.")
         result = self.sc.evaluate(state)
