@@ -448,7 +448,13 @@ def _tc54_eval(state: ScenarioState) -> ScenarioEvaluation:
     if got_stock and searched_exchange and calculator and has_reasonable:
         return _pass("Combined stock price + exchange rate + calculation — creative composition.")
     if got_stock and searched_exchange:
-        return _partial("Got both data sources but final answer may be imprecise.")
+        if _has_tool_call(state, "calculator"):
+            return _partial(
+                "Called calculator but the final answer does not match the computed USD/JPY conversion."
+            )
+        return _partial(
+            "Got both data sources but did not call calculator to verify the exact conversion."
+        )
     if got_stock and not searched_exchange:
         return _partial("Got stock price but didn't look up the exchange rate.")
     if searched_exchange and not got_stock:

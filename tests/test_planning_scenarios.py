@@ -706,17 +706,37 @@ class TestTC54EdgeCases:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
 
-    def test_partial_both_imprecise(self) -> None:
-        """Got both data sources but final answer doesn't have correct number."""
+    def test_partial_exact_sum_no_calculator(self) -> None:
+        """Both sources retrieved and the answer states an exact figure, but the
+        calculator tool was never called → partial, and the reason must name the
+        missing calculator call rather than claiming the sum is imprecise."""
         state = _make_state(
             tool_calls=[
                 {"name": "get_stock_price", "arguments": {"ticker": "MSFT"}},
-                {"name": "web_search", "arguments": {"query": "USD JPY exchange rate"}},
+                {"name": "web_search", "arguments": {"query": "USD to JPY exchange rate"}},
             ],
-            final_answer="MSFT is around 425 dollars which is some amount of JPY.",
+            final_answer="MSFT is $425.80; the exact JPY equivalent is 63657.15.",
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
+        assert "calculator" in result.summary.lower()
+        assert "imprecise" not in result.summary.lower()
+
+    def test_partial_calculator_mismatch(self) -> None:
+        """Both sources retrieved and a calculator call exists, but it does not
+        verify the USD/JPY conversion → partial naming the mismatch."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_stock_price", "arguments": {"ticker": "MSFT"}},
+                {"name": "web_search", "arguments": {"query": "USD to JPY exchange rate"}},
+                {"name": "calculator", "arguments": {"expression": "1 + 1"}},
+            ],
+            final_answer="MSFT is $425.80; the exact JPY equivalent is 63657.15.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "calculator" in result.summary.lower()
+        assert "imprecise" not in result.summary.lower()
 
 
 class TestTC55EdgeCases:
