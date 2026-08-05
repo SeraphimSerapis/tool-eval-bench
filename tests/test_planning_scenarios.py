@@ -792,18 +792,70 @@ class TestTC54EdgeCases:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
 
-    def test_partial_both_imprecise(self) -> None:
-        """Got both data sources but final answer doesn't have correct number."""
+    def test_partial_exact_sum_no_calculator(self) -> None:
+        """Both sources retrieved, exact sum stated, but calculator never
+        called → partial, and the reason must name the missing calculator."""
         state = _make_state(
             tool_calls=[
                 {"name": "get_stock_price", "arguments": {"ticker": "MSFT"}},
-                {"name": "web_search", "arguments": {"query": "USD JPY exchange rate"}},
+                {"name": "web_search", "arguments": {"query": "USD to JPY exchange rate"}},
             ],
-            final_answer="MSFT is around 425 dollars which is some amount of JPY.",
+            final_answer="MSFT is $425.80; the exact JPY equivalent is 63657.1.",
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
+        assert "calculator" in result.summary.lower()
+        assert "imprecise" not in result.summary.lower()
 
+    def test_partial_calculator_no_verification(self) -> None:
+        """Calculator called but with an expression that does not verify the
+        required 425.8 * 149.5 multiplication → partial naming the missing
+        verification, not a mismatch."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_stock_price", "arguments": {"ticker": "MSFT"}},
+                {"name": "web_search", "arguments": {"query": "USD to JPY exchange rate"}},
+                {"name": "calculator", "arguments": {"expression": "149.5 + 425.8"}},
+            ],
+            final_answer="MSFT is $425.80; the exact JPY equivalent is 63657.1.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "verify" in result.summary.lower()
+        assert "does not match" not in result.summary.lower()
+
+    def test_partial_calculator_literal_result_no_verification(self) -> None:
+        """Regression: calculator called with the literal result 63657.15
+        (no 425.8 * 149.5 multiplication), final answer agrees with the
+        calculator, but the conversion was never verified → partial naming the
+        missing verification, not a mismatch."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_stock_price", "arguments": {"ticker": "MSFT"}},
+                {"name": "web_search", "arguments": {"query": "USD to JPY exchange rate"}},
+                {"name": "calculator", "arguments": {"expression": "63657.15"}},
+            ],
+            final_answer="MSFT is $425.80; the exact JPY equivalent is 63657.15.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "verify" in result.summary.lower()
+        assert "does not match" not in result.summary.lower()
+
+    def test_partial_calculator_verified_answer_disagrees(self) -> None:
+        """Calculator called and verifies 425.8 * 149.5, but the final answer
+        does not match the computed result → partial naming the mismatch."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_stock_price", "arguments": {"ticker": "MSFT"}},
+                {"name": "web_search", "arguments": {"query": "USD to JPY exchange rate"}},
+                {"name": "calculator", "arguments": {"expression": "425.8 * 149.5"}},
+            ],
+            final_answer="MSFT is $425.80; the exact JPY equivalent is 60000.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "does not match" in result.summary.lower()
 
 class TestTC55EdgeCases:
     sc = _get("TC-55")

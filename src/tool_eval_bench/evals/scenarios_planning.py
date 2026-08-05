@@ -42,6 +42,9 @@ from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
 from tool_eval_bench.evals.helpers import (
+    tool_calls_by_name as _tool_calls_by_name,
+)
+from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
 )
 from tool_eval_bench.evals.helpers import (
@@ -448,7 +451,17 @@ def _tc54_eval(state: ScenarioState) -> ScenarioEvaluation:
     if got_stock and searched_exchange and calculator and has_reasonable:
         return _pass("Combined stock price + exchange rate + calculation — creative composition.")
     if got_stock and searched_exchange:
-        return _partial("Got both data sources but final answer may be imprecise.")
+        if not _tool_calls_by_name(state, "calculator"):
+            return _partial(
+                "Got both data sources but did not call calculator to verify the exact conversion."
+            )
+        if not calculator:
+            return _partial(
+                "Called calculator but did not verify the required 425.8 * 149.5 USD/JPY conversion."
+            )
+        return _partial(
+            "Called calculator and verified the conversion, but the final answer does not match the computed USD/JPY conversion."
+        )
     if got_stock and not searched_exchange:
         return _partial("Got stock price but didn't look up the exchange rate.")
     if searched_exchange and not got_stock:
