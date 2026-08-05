@@ -106,7 +106,7 @@ async def run_benchmark(
     Args:
         model: Model name/path to evaluate.
         base_url: Server base URL (e.g. ``http://localhost:8000``).
-        backend: Backend label — ``vllm``, ``litellm``, or ``llamacpp``.
+        backend: Backend label — ``vllm``, ``litellm``, ``llamacpp``, or ``sglang``.
         api_key: Optional API key for authenticated endpoints.
         scenarios: Explicit scenario list.  If *None*, ``short`` controls
             the default set (15 core vs 69 full).
