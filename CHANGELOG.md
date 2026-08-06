@@ -6,16 +6,16 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
-- **TC-56 semantic reminder time (scoring)** — a `set_reminder` call now only
-  earns the notification-workflow credit when its ISO `datetime` resolves to
-  the *next calendar day* in a documented morning window (05:00 inclusive to
-  12:00 exclusive) relative to the scenario reference date. Literal
-  `"tomorrow morning"` text remains accepted for backward compatibility.
-  Timezone offsets/`Z` are ignored (calendar date + hour only, matching the
-  shared `datetime_matches` convention), month/year rollover is handled, and
-  malformed or missing datetimes no longer pass. This is a scoring-behavior
-  change: reminders scheduled outside tomorrow's morning window now yield
-  PARTIAL instead of PASS.
+- **TC-56 semantic reminder time (scoring)** — `set_reminder` now also accepts
+  an ISO `datetime` that resolves to the *next calendar day* in a documented
+  morning window (05:00 inclusive to 12:00 exclusive) relative to the scenario
+  reference date. Literal `"tomorrow morning"` text remains accepted for
+  backward compatibility. Timezone offsets/`Z` are ignored (calendar date +
+  hour only, same ignore-offset idea as `datetime_matches`), and month/year
+  rollover is handled. This is an additive scoring change: correct next-day
+  morning ISO timestamps that previously failed the literal substring gate can
+  now PASS; outside-window, wrong-day, malformed, and missing datetimes stay
+  PARTIAL as before.
 - **Pre-flight configuration parity (Issue #51)** — the model availability
   check now uses the benchmark's configured request timeout and merged backend
   parameters, preventing provider-specific options such as `reasoning_effort`

@@ -597,16 +597,19 @@ def _tc56_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
-def _is_tomorrow_morning(datetime_value, state):
-    """Return whether a set_reminder datetime is semantically tomorrow
-    morning. Accepts either natural-language text ("tomorrow morning") or
-    an ISO timestamp that resolves to the next calendar day in a morning
-    window relative to the scenario reference date.
+def _is_tomorrow_morning(datetime_value: Any, state: ScenarioState) -> bool:
+    """Return whether a set_reminder datetime is semantically tomorrow morning.
 
-    Morning window: 05:00 inclusive through 12:00 exclusive (5 <= hour < 12).
-    Timezone offsets are ignored, matching the shared ``datetime_matches``
-    convention: only the calendar date and hour are compared, so a model that
-    emits an explicit offset is not penalised for choosing a different zone.
+    Accepts either natural-language text ("tomorrow morning") or an ISO
+    timestamp that resolves to the next calendar day in a morning window
+    relative to the scenario reference date in ``state.meta``.
+
+    Morning window (ISO path only): 05:00 inclusive through 12:00 exclusive
+    (``5 <= hour < 12``). Timezone offsets are ignored — only calendar date and
+    hour are compared (same ignore-offset idea as ``datetime_matches``, but
+    this helper uses a next-day hour *window*, not an exact ``HH:MM`` match).
+    The natural-language path keeps the historical substring check and does
+    not enforce the hour window, so existing full-workflow tests stay green.
     """
     if not datetime_value:
         return False
@@ -614,7 +617,7 @@ def _is_tomorrow_morning(datetime_value, state):
     if not dt_str:
         return False
 
-    # Natural-language form (backward compatible with existing tests).
+    # Natural-language form (backward compatible; hour window not applied).
     if "tomorrow" in dt_str and "morning" in dt_str:
         return True
 
