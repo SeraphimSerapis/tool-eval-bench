@@ -248,6 +248,28 @@ class TestPrintFinalPanel:
         output = console.file.getvalue()
         assert "45.3s" in output
 
+    def test_shows_benchmark_version_in_summary(self) -> None:
+        from tool_eval_bench import __version__
+
+        summary = _make_summary()
+        console = Console(file=StringIO(), width=200, no_color=True)
+        _print_final_panel(console, "test-model", summary, elapsed=45.3)
+
+        output = console.file.getvalue()
+        assert "Benchmark:" in output
+        assert f"tool-eval-bench v{__version__}" in output
+
+    def test_benchmark_version_precedes_pass_counts(self) -> None:
+        """The version line lives in the primary summary block, not buried
+        near the completion time at the bottom of the panel."""
+        summary = _make_summary()
+        console = Console(file=StringIO(), width=200, no_color=True)
+        _print_final_panel(console, "test-model", summary, elapsed=45.3)
+
+        output = console.file.getvalue()
+        assert output.index("Benchmark:") < output.index("passed")
+        assert output.index("Benchmark:") < output.index("Completed in")
+
     def test_shows_scoring_methodology(self) -> None:
         summary = _make_summary()
         console = Console(file=StringIO(), width=200, no_color=True)

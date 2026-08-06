@@ -319,10 +319,18 @@ def _print_final_panel(
         if rc.server_model_root and rc.server_model_root != model:
             model_info_lines += f"\n  [dim]Model root:   {rc.server_model_root}[/]"
 
+    try:
+        from tool_eval_bench import __version__
+
+        benchmark_line = f"\n  [bold]Benchmark:[/] tool-eval-bench v{__version__}"
+    except ImportError:
+        benchmark_line = ""
+
     content = (
         f"  [bold]Model:[/]  {model}\n"
         f"  [bold]Score:[/]  [{rating_color}]{score} / 100[/]\n"
         f"  [bold]Rating:[/] [{rating_color}]{rating}[/]"
+        f"{benchmark_line}"
         f"{model_info_lines}\n"
         f"\n"
         f"  [green]✅ {passes} passed[/]   [yellow]⚠️  {partials} partial[/]   [red]❌ {fails} failed[/]\n"
@@ -369,15 +377,7 @@ def _print_final_panel(
         )
         content += f"\n  [bold]Weakest:[/] [{floor_color}]{summary.worst_category}[/]"
 
-    # Version stamp
-    try:
-        from tool_eval_bench import __version__
-
-        version_tag = f"  [dim]│  tool-eval-bench v{__version__}[/]"
-    except ImportError:
-        version_tag = ""
-
-    content += f"\n\n  [dim]Completed in {elapsed:.1f}s[/]{version_tag}"
+    content += f"\n\n  [dim]Completed in {elapsed:.1f}s[/]"
 
     # Token usage summary (when server reports usage data)
     if summary.total_tokens > 0:
