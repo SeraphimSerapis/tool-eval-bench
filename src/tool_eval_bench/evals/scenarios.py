@@ -716,8 +716,14 @@ def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _fail("Retried search without preserving the Johnson document request.")
         explicit_results = [r for r in state.tool_results if r.name == "search_files"]
         if explicit_results:
-            retry_result = explicit_results[-1].result
-            if "file_117" not in str(retry_result) and "johnson" not in str(retry_result).lower():
+            # The first search is the seeded empty result; the document must
+            # appear in at least one of the retry results.  A later failed
+            # search must not erase an earlier successful retry.
+            retry_results = explicit_results[1:] if len(explicit_results) > 1 else explicit_results
+            if not any(
+                "file_117" in str(r.result) or "johnson" in str(r.result).lower()
+                for r in retry_results
+            ):
                 return _fail("The retry returned no recognized Johnson document.")
         return _pass("Retried after the empty result and recovered.")
     if clarified:

@@ -1316,3 +1316,38 @@ def test_tc82_attachments_are_not_schema_required():
     parameters = send_email["function"]["parameters"]
     assert "attachments" in parameters["properties"]
     assert "attachments" not in parameters["required"]
+
+
+def test_tc13_retry_found_doc_then_later_search_failed():
+    """TC-13: a successful retry must not be erased by a later failed search.
+
+    The model retries with a different query, finds the document in the
+    second search, but a third search returns an error.  The evaluator must
+    still PASS because the document was actually recovered.
+    """
+    scenario = _SCENARIOS["TC-13"]
+    state = _state(
+        calls=[
+            _call("search_files", {"query": "Johnson proposal"}, 1),
+            _call("search_files", {"query": "Johnson"}, 2),
+            _call("search_files", {"query": "proposal"}, 3),
+        ],
+        results=[
+            {"name": "search_files", "result": {"results": [], "total_matches": 0}},
+            {
+                "name": "search_files",
+                "result": {
+                    "results": [
+                        {
+                            "file_id": "file_117",
+                            "name": "Johnson_Project_Proposal_v2.docx",
+                        }
+                    ]
+                },
+            },
+            {"name": "search_files", "result": {"error": "ERR_TOOL_UNAVAILABLE", "status": 500}},
+        ],
+        answer="Found the Johnson proposal document.",
+    )
+    result = scenario.evaluate(state)
+    assert result.status == ScenarioStatus.PASS, result.summary
