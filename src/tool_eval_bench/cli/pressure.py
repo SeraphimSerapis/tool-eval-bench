@@ -32,6 +32,7 @@ def _write_pressure_sweep_report(
     breaking_point: float | None,
     first_degradation: float | None,
     output_dir: str | None,
+    label: str | None = None,
 ) -> Path:
     """Compatibility wrapper around the shared Markdown reporter."""
     from tool_eval_bench.storage.reports import MarkdownReporter
@@ -46,6 +47,7 @@ def _write_pressure_sweep_report(
         level_results=level_results,
         breaking_point=breaking_point,
         first_degradation=first_degradation,
+        label=label,
     )
 
 
@@ -80,6 +82,7 @@ def run_pressure_sweep(
     with_config_fingerprint: Any = None,
     persist_plugin_run: Any = None,
     metadata_for_storage: Any = None,
+    label: str | None = None,
 ) -> None:
     """Run scenarios at increasing context pressure and report breaking point."""
     from rich.panel import Panel
@@ -382,6 +385,9 @@ def run_pressure_sweep(
         }
     )
     sweep_run_id = build_run_id(sweep_config)
+    metadata = metadata_for_storage(None)
+    if label:
+        metadata["label"] = label
     run_data = {
         "run_id": sweep_run_id,
         "run_type": "context-pressure",
@@ -393,7 +399,7 @@ def run_pressure_sweep(
             "first_degradation": first_degradation,
             "level_results": level_results,
         },
-        "metadata": metadata_for_storage(None),
+        "metadata": metadata,
     }
     report_path = _report_then_persist_pressure_sweep(
         report_kwargs={
@@ -406,6 +412,7 @@ def run_pressure_sweep(
             "breaking_point": breaking_point,
             "first_degradation": first_degradation,
             "output_dir": getattr(args, "output_dir", None),
+            "label": label,
         },
         run_data=run_data,
         persist_plugin_run=persist_plugin_run,

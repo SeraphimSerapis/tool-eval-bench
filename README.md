@@ -211,6 +211,9 @@ tool-eval-bench run --categories K A
 # Make safety-critical failures fail a CI job (exit status 2)
 tool-eval-bench run --fail-on-safety
 
+# Tag an execution so every report it generates is identifiable
+tool-eval-bench run --label "tonyd2wild tool hardening 646c55f" --trials 3
+
 # Run coding-focused categories with thinking enabled
 tool-eval-bench run --categories J G M --backend-kwargs '{"chat_template_kwargs": {"enable_thinking": true}}'
 
@@ -765,6 +768,26 @@ Artifacts:
 - Markdown report (`runs/YYYY/MM/<run_id>.md`) with full traces for public
   scenarios; held-out pack scenarios redact titles, summaries, and traces in the
   report (traces remain in SQLite for local inspection)
+
+### Labeling runs (`--label`)
+
+`--label "..."` attaches an arbitrary, free-form string to an execution. Every
+report that execution generates carries it: a `Label` row in the tool-eval Run
+Context table, a `- **Label**:` header line in the plugin / throughput /
+spec-decode / pressure-sweep reports, and the persisted metadata (shown in
+`history` and included in `export`). Report filenames also gain a safe slug of
+the label, so all files from one execution end with the same marker:
+
+```
+runs/2026/08/<run_id>--tonyd2wild-tool-hardening-646c55f.md
+runs/2026/08/<run_id>--tonyd2wild-tool-hardening-646c55f_summary.md
+```
+
+The full human-readable label (spaces, dots, capitals — anything) is rendered
+verbatim inside the reports; only the filename uses a slug (lowercased,
+punctuation collapsed to dashes, `.-_` kept, capped at 80 chars). The label is
+purely an annotation — it does not affect the run ID or `config_fingerprint`,
+so identical runs with different labels remain comparable.
 
 ## Backends
 

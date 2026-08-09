@@ -19,6 +19,11 @@ def _extract_context_summary(run: dict) -> str:
     config = run.get("config") or {}
     parts: list[str] = []
 
+    # User-supplied run label (--label), when present
+    label = metadata.get("label") or config.get("label")
+    if label:
+        parts.append(str(label))
+
     # Tool version
     version = metadata.get("tool_version")
     if version:
@@ -59,6 +64,10 @@ def _extract_context_panel(run: dict) -> list[str]:
     metadata = run.get("metadata") or {}
     config = run.get("config") or {}
     lines: list[str] = []
+
+    label = metadata.get("label") or config.get("label")
+    if label:
+        lines.append(f"  [bold]Label:[/] {label}")
 
     version = metadata.get("tool_version")
     if version:

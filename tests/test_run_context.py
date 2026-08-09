@@ -505,3 +505,58 @@ class TestRepairJsonStr:
         # Must be valid JSON
         parsed = json.loads(args_str)
         assert isinstance(parsed, dict)
+
+
+# ---------------------------------------------------------------------------
+# --label run annotation (Tier 2 CLI parameter)
+# ---------------------------------------------------------------------------
+
+
+class TestRunLabel:
+    """The run label is an arbitrary user string attached to an execution."""
+
+    def test_label_defaults_to_none(self):
+        from tool_eval_bench.domain.models import RunContext
+
+        ctx = RunContext(
+            tool_version="1.4.0",
+            git_sha=None,
+            hostname="h",
+            platform_info="p",
+            python_version="3.12",
+            model="m",
+            backend="vllm",
+            base_url="http://localhost",
+        )
+        assert ctx.label is None
+        assert "label" not in ctx.to_dict()
+
+    def test_to_dict_includes_label(self):
+        from tool_eval_bench.domain.models import RunContext
+
+        ctx = RunContext(
+            tool_version="1.4.0",
+            git_sha=None,
+            hostname="h",
+            platform_info="p",
+            python_version="3.12",
+            model="m",
+            backend="vllm",
+            base_url="http://localhost",
+            label="aiden-sparkrun aiden-3.75-sparkrun toolargs no proxy 229a985",
+        )
+        assert (
+            ctx.to_dict()["label"] == "aiden-sparkrun aiden-3.75-sparkrun toolargs no proxy 229a985"
+        )
+
+    async def test_collect_run_context_carries_label(self):
+        from tool_eval_bench.utils.metadata import collect_run_context
+
+        ctx = await collect_run_context(
+            model="m",
+            backend="vllm",
+            base_url="http://localhost",
+            label="tonyd2wild tool hardening 646c55f",
+            probe_engine=False,
+        )
+        assert ctx.label == "tonyd2wild tool hardening 646c55f"

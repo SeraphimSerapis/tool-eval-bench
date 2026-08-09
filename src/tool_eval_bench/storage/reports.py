@@ -7,6 +7,7 @@ throughput metrics, and full traces for inspection.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -32,6 +33,35 @@ def _default_reports_root() -> str:
     return str(Path.cwd() / "runs")
 
 
+def slugify_label(label: str | None, *, max_length: int = 80) -> str:
+    """Return a filesystem-safe slug of a run label for report filenames.
+
+    Lowercases, collapses whitespace/punctuation to single dashes, and keeps
+    ``.`` ``-`` ``_`` so version-like strings stay readable ("3.75" →
+    "3.75").  Empty or unsafe-only labels yield ``""`` so callers can fall
+    back to plain run-ID filenames.  Called with the :option:`--label` value;
+    the full human-readable label is still rendered inside the report body.
+    """
+    if not label:
+        return ""
+    normalized = unicodedata.normalize("NFKD", label).encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", normalized.lower())
+    slug = re.sub(r"-{2,}", "-", slug).strip("-._")
+    return slug[:max_length]
+
+
+def report_filename(run_id: str, label: str | None, suffix: str = "") -> str:
+    """Report file name: ``{run_id}--{slug}{suffix}.md``, or plain without a label.
+
+    ``suffix`` is used for derived reports (e.g. ``_summary``), so the slug
+    stays adjacent to the run ID: ``{run_id}--{slug}_summary.md``.
+    """
+    slug = slugify_label(label)
+    if not slug:
+        return f"{run_id}{suffix}.md"
+    return f"{run_id}--{slug}{suffix}.md"
+
+
 def _trace_block(raw_log: str) -> list[str]:
     """Return a Markdown fence long enough to preserve a complete raw trace."""
     longest = max((len(match) for match in re.findall(r"`+", raw_log)), default=0)
@@ -54,18 +84,21 @@ class MarkdownReporter:
         level_results: list[dict[str, Any]],
         breaking_point: float | None,
         first_degradation: float | None,
+        label: str | None = None,
     ) -> Path:
         """Write a trace-complete artifact for a context-pressure sweep."""
         now = datetime.now(timezone.utc)
         folder = self.root / f"{now.year:04d}" / f"{now.month:02d}"
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{run_id}.md"
+        path = folder / report_filename(run_id, label)
+        label_line = [f"- **Label**: `{label}`"] if label else []
         markdown = [
             f"# Context Pressure Sweep — {model}",
             "",
             f"- **Run ID**: `{run_id}`",
             f"- **Date**: `{now.isoformat()}`",
             "- **Mode**: context-pressure-sweep",
+            *label_line,
             f"- **Backend**: {backend}",
             f"- **Server**: {display_url}",
             f"- **Context Window**: {context_size:,} tokens",
@@ -136,7 +169,8 @@ class MarkdownReporter:
         now = datetime.now(timezone.utc)
         folder = self.root / f"{now.year:04d}" / f"{now.month:02d}"
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{run_id}.md"
+        label = run_context.label if run_context is not None else None
+        path = folder / report_filename(run_id, label)
 
         status_emoji = {
             ScenarioStatus.PASS: "✅",
@@ -377,7 +411,8 @@ class MarkdownReporter:
         now = datetime.now(timezone.utc)
         folder = self.root / f"{now.year:04d}" / f"{now.month:02d}"
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{run_id}.md"
+        label = run_context.label if run_context is not None else None
+        path = folder / report_filename(run_id, label)
 
         # Version stamp
         version_str = ""
@@ -395,6 +430,8 @@ class MarkdownReporter:
         ]
         if version_str:
             md.append(f"- **tool-eval-bench**: `{version_str}`")
+        if label:
+            md.append(f"- **Label**: `{label}`")
         md.append("")
 
         # Run Context section
@@ -446,7 +483,8 @@ class MarkdownReporter:
         now = datetime.now(timezone.utc)
         folder = self.root / f"{now.year:04d}" / f"{now.month:02d}"
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{run_id}_summary.md"
+        label = run_context.label if run_context is not None else None
+        path = folder / report_filename(run_id, label, suffix="_summary")
 
         n = agg.get("trials", len(summaries))
 
@@ -739,19 +777,22 @@ class MarkdownReporter:
         run_id: str,
         model: str,
         spec_samples: list[Any],
+        label: str | None = None,
     ) -> Path:
         """Write a Markdown report for speculative decoding benchmark results."""
         now = datetime.now(timezone.utc)
         folder = self.root / f"{now.year:04d}" / f"{now.month:02d}"
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{run_id}.md"
+        path = folder / report_filename(run_id, label)
 
+        label_line = [f"- **Label**: `{label}`"] if label else []
         md = [
             f"# Speculative Decoding Benchmark — {model}",
             "",
             f"- **Run ID**: `{run_id}`",
             f"- **Date**: `{now.isoformat()}`",
             "- **Mode**: spec-bench",
+            *label_line,
         ]
 
         # Detect method
@@ -1016,6 +1057,12 @@ def _render_run_context(ctx: RunContext) -> list[str]:
             "",
             "| Parameter | Value |",
             "|---|---|",
+        ]
+    )
+    if ctx.label:
+        md.append(f"| **Label** | `{ctx.label}` |")
+    md.extend(
+        [
             f"| Backend | {ctx.backend} |",
             f"| Server | `{ctx.base_url}` |",
             f"| Model (API) | `{ctx.model}` |",

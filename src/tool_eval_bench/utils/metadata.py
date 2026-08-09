@@ -356,6 +356,7 @@ async def collect_run_context(
     thinking_enabled: bool = True,
     extra_params: dict[str, Any] | None = None,
     context_pressure: float | None = None,
+    label: str | None = None,
     redact_url: bool = True,
     probe_engine: bool = True,
 ) -> RunContext:
@@ -397,6 +398,7 @@ async def collect_run_context(
         thinking_enabled=thinking_enabled,
         extra_params=extra_params,
         context_pressure=context_pressure,
+        label=label,
         # Tier 3
         server_model_id=engine_info.get("server_model_id"),
         server_model_root=engine_info.get("server_model_root"),

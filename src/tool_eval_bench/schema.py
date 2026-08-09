@@ -31,7 +31,7 @@ from tool_eval_bench.cli.command_registry import commands_schema
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 # Argument schema version — bump when adding/removing/renaming args.
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 
 COMMANDS_SCHEMA: dict[str, dict[str, Any]] = commands_schema()
 
@@ -268,6 +268,15 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "type": "string",
         "default": None,
         "description": "Directory for report files (default: ./runs/)",
+    },
+    {
+        "name": "label",
+        "type": "string",
+        "default": None,
+        "description": (
+            "Free-form annotation recorded on every report this run generates "
+            "(shown in the report body; a safe slug is added to report filenames)"
+        ),
     },
     {
         "name": "dry_run",
