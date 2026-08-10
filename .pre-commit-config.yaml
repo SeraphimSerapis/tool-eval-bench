@@ -1,6 +1,8 @@
 # Pre-commit hooks — run `pre-commit install` to activate.
 # See https://pre-commit.com for more information.
 
+default_install_hook_types: [pre-commit, pre-push, post-checkout]
+
 repos:
   # ── Ruff: lint + format ─────────────────────────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -27,3 +29,11 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-push]
+
+      - id: link-worktree-venv
+        name: link primary venv into Git worktrees
+        entry: python scripts/link_worktree_venv.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        stages: [post-checkout]
