@@ -1351,3 +1351,82 @@ def test_tc13_retry_found_doc_then_later_search_failed():
     )
     result = scenario.evaluate(state)
     assert result.status == ScenarioStatus.PASS, result.summary
+    assert result.summary == "Retried after the empty result and recovered."
+
+
+@pytest.mark.parametrize(
+    "retry_result",
+    [
+        {"error": "Johnson document not found", "status": 404},
+        {"query": "Johnson", "results": [], "total_matches": 0},
+        {"error": "Could not load file_117", "status": 500},
+        {
+            "error": "partial search failure",
+            "results": [{"file_id": "file_117", "name": "Johnson_Project_Proposal_v2.docx"}],
+        },
+    ],
+)
+def test_tc13_retry_requires_document_in_structured_results(retry_result):
+    """Error text and echoed queries cannot prove that the retry recovered."""
+    scenario = _SCENARIOS["TC-13"]
+    state = _state(
+        calls=[
+            _call("search_files", {"query": "Johnson proposal"}, 1),
+            _call("search_files", {"query": "Johnson"}, 2),
+        ],
+        results=[
+            {"name": "search_files", "result": {"results": [], "total_matches": 0}},
+            {"name": "search_files", "result": retry_result},
+        ],
+        answer="I could not find the document.",
+    )
+
+    result = scenario.evaluate(state)
+    assert result.status == ScenarioStatus.FAIL
+    assert result.summary == "The retry returned no recognized Johnson document."
+
+
+def test_tc13_first_result_cannot_stand_in_for_missing_retry_result():
+    scenario = _SCENARIOS["TC-13"]
+    state = _state(
+        calls=[
+            _call("search_files", {"query": "Johnson proposal"}, 1),
+            _call("search_files", {"query": "Johnson"}, 2),
+        ],
+        results=[
+            {
+                "call_id": "call_0",
+                "name": "search_files",
+                "result": {
+                    "results": [{"file_id": "file_117", "name": "Johnson_Project_Proposal_v2.docx"}]
+                },
+            }
+        ],
+        answer="Found it.",
+    )
+
+    result = scenario.evaluate(state)
+    assert result.status == ScenarioStatus.FAIL
+    assert result.summary == "The retry returned no recognized Johnson document."
+
+
+def test_tc13_retry_accepts_exact_document_name_without_file_id():
+    scenario = _SCENARIOS["TC-13"]
+    state = _state(
+        calls=[
+            _call("search_files", {"query": "Johnson proposal"}, 1),
+            _call("search_files", {"query": "Johnson"}, 2),
+        ],
+        results=[
+            {"name": "search_files", "result": {"results": []}},
+            {
+                "name": "search_files",
+                "result": {"results": [{"name": "Johnson_Project_Proposal_v2.docx"}]},
+            },
+        ],
+        answer="Found it.",
+    )
+
+    result = scenario.evaluate(state)
+    assert result.status == ScenarioStatus.PASS
+    assert result.summary == "Retried after the empty result and recovered."
