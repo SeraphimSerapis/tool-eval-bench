@@ -32,6 +32,36 @@ logger = logging.getLogger(__name__)
 
 _PROBE_TIMEOUT = 5  # seconds — tight timeout for engine probes
 
+# Git exports repository-local variables while hooks run.  Those variables
+# override both the subprocess working directory and ``git -C``, so inheriting
+# them can make a nested ``git init`` mutate this checkout or make provenance
+# resolve against the hook's repository instead of the installed package.
+_GIT_REPOSITORY_ENV_VARS = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+)
+
+
+def _git_env_without_repository() -> dict[str, str]:
+    """Return the process environment without an inherited Git repository."""
+    env = os.environ.copy()
+    for name in _GIT_REPOSITORY_ENV_VARS:
+        env.pop(name, None)
+    return env
+
 
 # ---------------------------------------------------------------------------
 # Tier 1: local environment
@@ -58,6 +88,7 @@ def _git_sha() -> str | None:
             out = subprocess.check_output(  # noqa: S603 — args are module constants
                 ["git", "-C", str(package_root), *args],
                 stderr=subprocess.DEVNULL,
+                env=_git_env_without_repository(),
             )
         except (OSError, subprocess.CalledProcessError):
             return None

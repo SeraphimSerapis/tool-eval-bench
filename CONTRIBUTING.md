@@ -30,8 +30,12 @@ Install the hooks once if you plan to commit or push from this checkout:
 
 ```bash
 .venv/bin/pre-commit install
-.venv/bin/pre-commit install --hook-type pre-push
 ```
+
+The configured default installs pre-commit, pre-push, and post-checkout hooks.
+The post-checkout hook links the primary checkout's `.venv` into new Git
+worktrees, so the documented quality commands work there without reinstalling
+dependencies. Re-run the install command once after upgrading an older clone.
 
 ## Checks and feedback loops
 
