@@ -251,6 +251,12 @@
       "type": "string"
     },
     {
+      "default": null,
+      "description": "Free-form annotation recorded on every report this run generates (shown in the report body; a safe slug is added to report filenames)",
+      "name": "label",
+      "type": "string"
+    },
+    {
       "default": false,
       "description": "Show which scenarios would run, then exit (no server needed)",
       "name": "dry_run",
@@ -630,5 +636,5 @@
       ]
     }
   },
-  "schema_version": "5"
+  "schema_version": "6"
 }

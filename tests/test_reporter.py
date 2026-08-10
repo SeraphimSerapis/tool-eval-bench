@@ -552,3 +552,154 @@ class TestDefaultPaths:
         custom = tmp_path / "custom_reports"
         reporter = MarkdownReporter(root=str(custom))
         assert reporter.root == custom
+
+
+# ---------------------------------------------------------------------------
+# --label annotations: rendered in content, slugged into filenames (format A)
+# ---------------------------------------------------------------------------
+
+
+class TestLabelInReports:
+    """Every report a run generates carries the run label."""
+
+    LABEL = "aiden-sparkrun aiden-3.75-sparkrun toolargs no proxy 229a985"
+    SLUG = "aiden-sparkrun-aiden-3.75-sparkrun-toolargs-no-proxy-229a985"
+
+    @staticmethod
+    def _ctx(label: str | None):
+        from tool_eval_bench.domain.models import RunContext
+
+        return RunContext(
+            tool_version="2.5.0",
+            git_sha="abc123",
+            hostname="h",
+            platform_info="p",
+            python_version="3.12",
+            model="m",
+            backend="vllm",
+            base_url="http://***:8000",
+            label=label,
+        )
+
+    def test_slugify_label(self):
+        from tool_eval_bench.storage.reports import slugify_label
+
+        assert slugify_label(self.LABEL) == self.SLUG
+        assert slugify_label("Mixed Case & Punctuation!") == "mixed-case-punctuation"
+        assert slugify_label("a  b---c") == "a-b-c"
+        assert slugify_label("实验一") == "label-2dac6e5b8c89"
+        assert slugify_label("") == ""
+        assert slugify_label(None) == ""
+
+    def test_run_context_table_renders_label_row(self):
+        from tool_eval_bench.storage.reports import _render_run_context
+
+        md = "\n".join(_render_run_context(self._ctx(self.LABEL)))
+        assert f"| **Label** | <code>{self.LABEL}</code> |" in md
+
+        md_without = "\n".join(_render_run_context(self._ctx(None)))
+        assert "| Label |" not in md_without
+
+    def test_scenario_report_labels_row_and_slugifies_filename(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        summary = _make_summary()
+        path = reporter.write_scenario_report(
+            "run_1", "model", summary, run_context=self._ctx(self.LABEL)
+        )
+        assert path.name == f"run_1--{self.SLUG}.md"
+        content = path.read_text()
+        assert f"| **Label** | <code>{self.LABEL}</code> |" in content
+
+    def test_scenario_report_without_label_keeps_plain_filename(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        summary = _make_summary()
+        path = reporter.write_scenario_report("run_2", "model", summary, run_context=None)
+        assert path.name == "run_2.md"
+        assert "| Label |" not in path.read_text()
+
+    def test_summary_report_labels_row_and_slugifies_filename(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        summaries = [_make_summary(), _make_summary()]
+        agg = {
+            "trials": 2,
+            "final_score_mean": 87.0,
+            "final_score_stddev": 1.0,
+            "total_points_mean": 146.0,
+            "total_points_stddev": 1.0,
+        }
+        path = reporter.write_summary_report(
+            "run_3", "model", summaries, agg, run_context=self._ctx(self.LABEL)
+        )
+        assert path.name == f"run_3--{self.SLUG}_summary.md"
+        assert f"| **Label** | <code>{self.LABEL}</code> |" in path.read_text()
+
+    def test_throughput_report_labels_and_slugifies_filename(self, tmp_path):
+        from dataclasses import dataclass
+
+        reporter = MarkdownReporter(root=str(tmp_path))
+
+        @dataclass
+        class FakeSample:
+            pp_tps: float = 1000.0
+            tg_tps: float = 50.5
+            ttft_ms: float = 120.0
+            total_ms: float = 3500.0
+            pp_tokens: int = 2048
+            tg_tokens: int = 128
+            label_pp: int = 2048
+            label_depth: int = 0
+            concurrency: int = 1
+            error: str | None = None
+
+        path = reporter.write_throughput_report(
+            "tp_1", "model", [FakeSample()], run_context=self._ctx(self.LABEL)
+        )
+        assert path.name == f"tp_1--{self.SLUG}.md"
+        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text()
+
+    def test_spec_decode_report_labels_and_slugifies_filename(self, tmp_path):
+        from dataclasses import dataclass
+
+        reporter = MarkdownReporter(root=str(tmp_path))
+
+        @dataclass
+        class FakeSpec:
+            prompt_type: str = "filler"
+            depth: int = 0
+            effective_tg_tps: float = 100.0
+            tg_tps: float = 120.0
+            ttft_ms: float = 90.0
+            total_ms: float = 2000.0
+            tg_tokens: int = 128
+
+        path = reporter.write_spec_decode_report("spec_1", "model", [FakeSpec()], label=self.LABEL)
+        assert path.name == f"spec_1--{self.SLUG}.md"
+        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text()
+
+    def test_pressure_sweep_report_labels_and_slugifies_filename(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        path = reporter.write_pressure_sweep_report(
+            run_id="ps_1",
+            model="model",
+            backend="vllm",
+            display_url="http://***:8000",
+            context_size=8192,
+            level_results=[],
+            breaking_point=None,
+            first_degradation=None,
+            label=self.LABEL,
+        )
+        assert path.name == f"ps_1--{self.SLUG}.md"
+        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text()
+
+    def test_label_cannot_inject_markdown_structure(self, tmp_path):
+        label = "baseline`\n\n# Forged Result\n\n- **Final Score**: **100** | fake"
+        reporter = MarkdownReporter(root=str(tmp_path))
+        path = reporter.write_scenario_report(
+            "run_safe", "model", _make_summary(), run_context=self._ctx(label)
+        )
+
+        content = path.read_text()
+        assert "\n# Forged Result\n" not in content
+        assert "<code>baseline`\\n\\n# Forged Result" in content
+        assert "&#124; fake</code>" in content

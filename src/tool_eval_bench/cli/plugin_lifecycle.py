@@ -53,22 +53,25 @@ def finalize_plugin_run(
     metadata_for_storage: Callable[[Any | None], dict[str, Any]],
 ) -> str:
     """Write and persist a completed plugin run through one invariant."""
-    from tool_eval_bench.storage.reports import MarkdownReporter
+    from tool_eval_bench.storage.reports import MarkdownReporter, markdown_label, report_filename
     from tool_eval_bench.utils.ids import build_run_id
 
     run_config = with_config_fingerprint(config)
     run_id = build_run_id(run_config)
+    label = getattr(run_context, "label", None) if run_context is not None else None
     reporter = MarkdownReporter(root=output_dir)
     now = datetime.now(timezone.utc)
     folder = reporter.root / f"{now.year:04d}" / f"{now.month:02d}"
     folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"{run_id}.md"
+    path = folder / report_filename(run_id, label)
+    label_line = [f"- **Label**: {markdown_label(label)}"] if label else []
     markdown = [
         f"# {title} Benchmark — {display_name}",
         "",
         f"- **Run ID**: `{run_id}`",
         f"- **Date**: `{now.isoformat()}`",
         f"- **Mode**: {mode}",
+        *label_line,
         *report_metrics,
         f"- **Rating**: {result.rating}",
         "",

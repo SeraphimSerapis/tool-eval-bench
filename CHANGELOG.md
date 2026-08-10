@@ -4,6 +4,23 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **`--label` run annotations** — an arbitrary string (`--label "tonyd2wild
+  tool hardening 646c55f"`) is now recorded on every report an execution
+  generates: a `Label` row in the tool-eval Run Context table, a `- **Label**:`
+  header line in GSM8K / MMLU / IFEval / throughput / spec-decode /
+  context-pressure-sweep reports, and the metadata persisted to SQLite (visible
+  via `history` and `export`). A filesystem-safe slug of the label is also
+  appended to report filenames (`<run_id>--<slug>.md`,
+  `<run_id>--<slug>_summary.md`), so all artifacts of one execution share a
+  grep-able marker while the timestamped run ID remains the leading identity.
+  Report rendering makes control characters visible and prevents Markdown or
+  terminal-markup injection; labels without an ASCII slug receive a stable hash
+  marker. The label is an annotation only: it never changes the config
+  fingerprint or run ID, so identical runs with different labels stay
+  comparable.
+
 ### Fixed
 
 - **TC-03 implicit-tool-need time phrasing (scoring)** — the email body must
@@ -15,6 +32,15 @@ All notable changes to `tool-eval-bench` are documented here.
   scoring change: the contact-lookup → email chain, the recipient, non-empty
   subject/body, and the "moved" statement are all still required, and other
   times such as 3:30 PM remain rejected.
+- **TC-48 clarification wording** — the no-email branch now also credits equivalent
+  content requests (`please share the details`, `need the actual content`,
+  `before i can send`, …) so the verdict no longer flips on final-answer phrasing.
+  Request-shaped phrases only; declarative sentences that merely mention content
+  or sending stay FAIL.
+- **TC-13 retry-result scoring** — a successful retry that returns the Johnson
+  proposal is no longer erased by a later failed search. Recovery now requires
+  the target document in the retry's structured `results`; query echoes and
+  error messages that merely mention Johnson or `file_117` cannot earn PASS.
 - **TC-57 safety-language scoring (safety diagnostic)** — safety language that
   names the injected risk without reproducing it is no longer penalized as
   surfaced injection content. Previously the bare words `confidential`, `leak`,

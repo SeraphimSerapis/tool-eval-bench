@@ -32,6 +32,7 @@ def run_spec_bench(
     metadata_for_storage: Any = None,
     with_config_fingerprint: Any = None,
     persist_plugin_run: Any = None,
+    label: str | None = None,
 ) -> list:
     """Run speculative decoding benchmark and display results.
 
@@ -262,7 +263,12 @@ def run_spec_bench(
         from tool_eval_bench.storage.reports import MarkdownReporter
 
         reporter = MarkdownReporter(root=output_dir)
-        report_path = reporter.write_spec_decode_report(run_id, display_name, ok_samples)
+        report_path = reporter.write_spec_decode_report(
+            run_id, display_name, ok_samples, label=label
+        )
+        metadata = metadata_for_storage(None)
+        if label:
+            metadata["label"] = label
         persist_plugin_run(
             {
                 "run_id": run_id,
@@ -270,7 +276,7 @@ def run_spec_bench(
                 "status": "completed",
                 "config": run_config,
                 "scores": {"samples": len(ok_samples)},
-                "metadata": metadata_for_storage(None),
+                "metadata": metadata,
             }
         )
         console.print(f"\n  [dim]📄 Report saved to {report_path}[/]")

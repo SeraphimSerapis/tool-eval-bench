@@ -714,6 +714,26 @@ def _tc13_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc13_result_has_document(result: Any) -> bool:
+    """Return whether a structured search result contains the target document."""
+    unsuccessful_statuses = {"error", "failed", "blocked", "cancelled", "canceled"}
+    if (
+        not isinstance(result, dict)
+        or "error" in result
+        or _normalize(_as_str(result.get("status"))) in unsuccessful_statuses
+        or not isinstance(result.get("results"), list)
+    ):
+        return False
+    for item in result["results"]:
+        if not isinstance(item, dict):
+            continue
+        file_id = _normalize(_as_str(item.get("file_id")))
+        name = _normalize(_as_str(item.get("name")))
+        if file_id == "file_117" or name == "johnson_project_proposal_v2.docx":
+            return True
+    return False
+
+
 def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
     searches = _tool_calls_by_name(state, "search_files")
     retried = len(searches) >= 2
@@ -727,8 +747,15 @@ def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _fail("Retried search without preserving the Johnson document request.")
         explicit_results = [r for r in state.tool_results if r.name == "search_files"]
         if explicit_results:
-            retry_result = explicit_results[-1].result
-            if "file_117" not in str(retry_result) and "johnson" not in str(retry_result).lower():
+            # The first search is the seeded empty result; the document must
+            # appear in at least one of the retry results.  A later failed
+            # search must not erase an earlier successful retry.
+            retry_call_ids = {call.id for call in searches[1:]}
+            retry_results = [r for r in explicit_results if r.call_id in retry_call_ids]
+            if not retry_results and len(explicit_results) > 1:
+                # Compatibility for synthetic states that omit stable call IDs.
+                retry_results = explicit_results[1:]
+            if not any(_tc13_result_has_document(r.result) for r in retry_results):
                 return _fail("The retry returned no recognized Johnson document.")
         return _pass("Retried after the empty result and recovered.")
     if clarified:

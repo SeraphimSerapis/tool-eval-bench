@@ -58,6 +58,10 @@ class RunContext:
     thinking_enabled: bool = True
     extra_params: dict[str, Any] | None = None
     context_pressure: float | None = None
+    # Free-form user-supplied annotation recorded on every artifact a run
+    # generates (issued via --label). Deliberately not part of any
+    # config fingerprint: a label never makes identical runs incomparable.
+    label: str | None = None
 
     # -- Tier 3: inference engine (best-effort) --
     server_model_id: str | None = None
