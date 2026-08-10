@@ -6,6 +6,8 @@ throughput metrics, and full traces for inspection.
 
 from __future__ import annotations
 
+import hashlib
+import html
 import re
 import unicodedata
 from datetime import datetime, timezone
@@ -38,16 +40,44 @@ def slugify_label(label: str | None, *, max_length: int = 80) -> str:
 
     Lowercases, collapses whitespace/punctuation to single dashes, and keeps
     ``.`` ``-`` ``_`` so version-like strings stay readable ("3.75" →
-    "3.75").  Empty or unsafe-only labels yield ``""`` so callers can fall
-    back to plain run-ID filenames.  Called with the :option:`--label` value;
-    the full human-readable label is still rendered inside the report body.
+    "3.75"). Empty labels yield ``""`` so callers can fall back to plain
+    run-ID filenames. Labels without an ASCII representation use a stable hash
+    marker so every non-empty label still produces an identifiable file.
     """
     if not label:
         return ""
     normalized = unicodedata.normalize("NFKD", label).encode("ascii", "ignore").decode("ascii")
     slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", normalized.lower())
     slug = re.sub(r"-{2,}", "-", slug).strip("-._")
+    if not slug:
+        digest = hashlib.sha256(label.encode("utf-8")).hexdigest()[:12]
+        slug = f"label-{digest}"
     return slug[:max_length]
+
+
+def safe_label_text(label: str) -> str:
+    """Make control characters visible without changing persisted metadata."""
+    visible: list[str] = []
+    for char in label:
+        if char == "\n":
+            visible.append(r"\n")
+        elif char == "\r":
+            visible.append(r"\r")
+        elif char == "\t":
+            visible.append(r"\t")
+        elif unicodedata.category(char).startswith("C"):
+            visible.append(f"\\u{ord(char):04x}")
+        else:
+            visible.append(char)
+    return "".join(visible)
+
+
+def markdown_label(label: str, *, table_cell: bool = False) -> str:
+    """Render a label as inert inline HTML for Markdown reports."""
+    visible = html.escape(safe_label_text(label), quote=False)
+    if table_cell:
+        visible = visible.replace("|", "&#124;")
+    return f"<code>{visible}</code>"
 
 
 def report_filename(run_id: str, label: str | None, suffix: str = "") -> str:
@@ -91,7 +121,7 @@ class MarkdownReporter:
         folder = self.root / f"{now.year:04d}" / f"{now.month:02d}"
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / report_filename(run_id, label)
-        label_line = [f"- **Label**: `{label}`"] if label else []
+        label_line = [f"- **Label**: {markdown_label(label)}"] if label else []
         markdown = [
             f"# Context Pressure Sweep — {model}",
             "",
@@ -431,7 +461,7 @@ class MarkdownReporter:
         if version_str:
             md.append(f"- **tool-eval-bench**: `{version_str}`")
         if label:
-            md.append(f"- **Label**: `{label}`")
+            md.append(f"- **Label**: {markdown_label(label)}")
         md.append("")
 
         # Run Context section
@@ -785,7 +815,7 @@ class MarkdownReporter:
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / report_filename(run_id, label)
 
-        label_line = [f"- **Label**: `{label}`"] if label else []
+        label_line = [f"- **Label**: {markdown_label(label)}"] if label else []
         md = [
             f"# Speculative Decoding Benchmark — {model}",
             "",
@@ -1060,7 +1090,7 @@ def _render_run_context(ctx: RunContext) -> list[str]:
         ]
     )
     if ctx.label:
-        md.append(f"| **Label** | `{ctx.label}` |")
+        md.append(f"| **Label** | {markdown_label(ctx.label, table_cell=True)} |")
     md.extend(
         [
             f"| Backend | {ctx.backend} |",

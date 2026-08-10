@@ -587,6 +587,7 @@ class TestLabelInReports:
         assert slugify_label(self.LABEL) == self.SLUG
         assert slugify_label("Mixed Case & Punctuation!") == "mixed-case-punctuation"
         assert slugify_label("a  b---c") == "a-b-c"
+        assert slugify_label("实验一") == "label-2dac6e5b8c89"
         assert slugify_label("") == ""
         assert slugify_label(None) == ""
 
@@ -594,7 +595,7 @@ class TestLabelInReports:
         from tool_eval_bench.storage.reports import _render_run_context
 
         md = "\n".join(_render_run_context(self._ctx(self.LABEL)))
-        assert f"| **Label** | `{self.LABEL}` |" in md
+        assert f"| **Label** | <code>{self.LABEL}</code> |" in md
 
         md_without = "\n".join(_render_run_context(self._ctx(None)))
         assert "| Label |" not in md_without
@@ -607,7 +608,7 @@ class TestLabelInReports:
         )
         assert path.name == f"run_1--{self.SLUG}.md"
         content = path.read_text()
-        assert f"| **Label** | `{self.LABEL}` |" in content
+        assert f"| **Label** | <code>{self.LABEL}</code> |" in content
 
     def test_scenario_report_without_label_keeps_plain_filename(self, tmp_path):
         reporter = MarkdownReporter(root=str(tmp_path))
@@ -630,7 +631,7 @@ class TestLabelInReports:
             "run_3", "model", summaries, agg, run_context=self._ctx(self.LABEL)
         )
         assert path.name == f"run_3--{self.SLUG}_summary.md"
-        assert f"| **Label** | `{self.LABEL}` |" in path.read_text()
+        assert f"| **Label** | <code>{self.LABEL}</code> |" in path.read_text()
 
     def test_throughput_report_labels_and_slugifies_filename(self, tmp_path):
         from dataclasses import dataclass
@@ -654,7 +655,7 @@ class TestLabelInReports:
             "tp_1", "model", [FakeSample()], run_context=self._ctx(self.LABEL)
         )
         assert path.name == f"tp_1--{self.SLUG}.md"
-        assert f"- **Label**: `{self.LABEL}`" in path.read_text()
+        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text()
 
     def test_spec_decode_report_labels_and_slugifies_filename(self, tmp_path):
         from dataclasses import dataclass
@@ -673,7 +674,7 @@ class TestLabelInReports:
 
         path = reporter.write_spec_decode_report("spec_1", "model", [FakeSpec()], label=self.LABEL)
         assert path.name == f"spec_1--{self.SLUG}.md"
-        assert f"- **Label**: `{self.LABEL}`" in path.read_text()
+        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text()
 
     def test_pressure_sweep_report_labels_and_slugifies_filename(self, tmp_path):
         reporter = MarkdownReporter(root=str(tmp_path))
@@ -689,4 +690,16 @@ class TestLabelInReports:
             label=self.LABEL,
         )
         assert path.name == f"ps_1--{self.SLUG}.md"
-        assert f"- **Label**: `{self.LABEL}`" in path.read_text()
+        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text()
+
+    def test_label_cannot_inject_markdown_structure(self, tmp_path):
+        label = "baseline`\n\n# Forged Result\n\n- **Final Score**: **100** | fake"
+        reporter = MarkdownReporter(root=str(tmp_path))
+        path = reporter.write_scenario_report(
+            "run_safe", "model", _make_summary(), run_context=self._ctx(label)
+        )
+
+        content = path.read_text()
+        assert "\n# Forged Result\n" not in content
+        assert "<code>baseline`\\n\\n# Forged Result" in content
+        assert "&#124; fake</code>" in content

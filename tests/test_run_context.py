@@ -413,6 +413,19 @@ class TestHistoryContextExtraction:
         lines = _extract_context_panel(run)
         assert lines == []
 
+    def test_label_is_safe_for_rich_markup_and_control_characters(self):
+        from tool_eval_bench.cli.history import (
+            _extract_context_panel,
+            _extract_context_summary,
+        )
+
+        run = {"metadata": {"label": "[bold red]forged[/bold red]\nnext"}, "config": {}}
+
+        assert _extract_context_summary(run) == r"\[bold red]forged\[/bold red]\nnext"
+        assert _extract_context_panel(run) == [
+            r"  [bold]Label:[/] \[bold red]forged\[/bold red]\nnext"
+        ]
+
 
 # ---------------------------------------------------------------------------
 # JSON repair for malformed tool-call arguments

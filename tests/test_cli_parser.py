@@ -352,5 +352,5 @@ def test_finalize_plugin_run_renders_label_and_slugifies_filename(
     reports = list(tmp_path.rglob(f"{run_id}--{SLUG}.md"))
     assert len(reports) == 1
     text = reports[0].read_text()
-    assert f"- **Label**: `{LABEL}`" in text
+    assert f"- **Label**: <code>{LABEL}</code>" in text
     assert persisted[0]["metadata"]["label"] == LABEL

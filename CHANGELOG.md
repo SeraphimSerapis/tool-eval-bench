@@ -15,8 +15,11 @@ All notable changes to `tool-eval-bench` are documented here.
   appended to report filenames (`<run_id>--<slug>.md`,
   `<run_id>--<slug>_summary.md`), so all artifacts of one execution share a
   grep-able marker while the timestamped run ID remains the leading identity.
-  The label is an annotation only: it never changes the config fingerprint or
-  run ID, so identical runs with different labels stay comparable.
+  Report rendering makes control characters visible and prevents Markdown or
+  terminal-markup injection; labels without an ASCII slug receive a stable hash
+  marker. The label is an annotation only: it never changes the config
+  fingerprint or run ID, so identical runs with different labels stay
+  comparable.
 
 ### Fixed
 

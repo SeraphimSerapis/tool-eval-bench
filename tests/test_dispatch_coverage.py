@@ -227,7 +227,10 @@ def test_dispatch_main_skip_and_perf_only_routes(
     from tool_eval_bench.storage import reports
     from tool_eval_bench.utils import metadata
 
+    context_calls: list[dict] = []
+
     async def context(**kwargs):
+        context_calls.append(kwargs)
         return None
 
     monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
@@ -245,6 +248,8 @@ def test_dispatch_main_skip_and_perf_only_routes(
             "--base-url",
             "url",
             "--skip-tool-eval",
+            "--label",
+            "startup A",
             "--no-warmup",
             "--no-think",
             "--top-p",
@@ -254,6 +259,7 @@ def test_dispatch_main_skip_and_perf_only_routes(
         ],
     )
     dispatch.main()
+    assert context_calls[-1]["label"] == "startup A"
 
     monkeypatch.setattr(dispatch, "_run_llama_benchy", lambda *a, **k: [_sample()])
     monkeypatch.setattr(
@@ -792,15 +798,33 @@ def test_dispatch_legacy_spec_and_sweep_modes(
     )
     dispatch.main()
 
-    called: list[str] = []
-    monkeypatch.setattr(dispatch, "_run_spec_bench", lambda *a, **k: called.append("spec"))
+    called: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        dispatch,
+        "_run_spec_bench",
+        lambda *a, **k: called.append(("spec", k)),
+    )
     monkeypatch.setattr(
         sys,
         "argv",
-        ["tool-eval-bench", "--model", "m", "--base-url", "url", "--spec-bench", "--no-warmup"],
+        [
+            "tool-eval-bench",
+            "--model",
+            "m",
+            "--base-url",
+            "url",
+            "--spec-bench",
+            "--label",
+            "spec A",
+            "--no-warmup",
+        ],
     )
     dispatch.main()
-    monkeypatch.setattr(dispatch, "_run_pressure_sweep", lambda *a, **k: called.append("sweep"))
+    monkeypatch.setattr(
+        dispatch,
+        "_run_pressure_sweep",
+        lambda *a, **k: called.append(("sweep", k)),
+    )
     monkeypatch.setattr(
         sys,
         "argv",
@@ -812,8 +836,13 @@ def test_dispatch_legacy_spec_and_sweep_modes(
             "url",
             "--context-pressure-sweep",
             "0.5-0.8",
+            "--label",
+            "sweep A",
             "--no-warmup",
         ],
     )
     dispatch.main()
-    assert called == ["spec", "sweep"]
+    assert [(name, kwargs["label"]) for name, kwargs in called] == [
+        ("spec", "spec A"),
+        ("sweep", "sweep A"),
+    ]

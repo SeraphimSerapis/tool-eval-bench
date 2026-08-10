@@ -8,6 +8,9 @@ from __future__ import annotations
 import sys
 
 from rich.console import Console
+from rich.markup import escape
+
+from tool_eval_bench.storage.reports import safe_label_text
 
 
 def _extract_context_summary(run: dict) -> str:
@@ -22,7 +25,7 @@ def _extract_context_summary(run: dict) -> str:
     # User-supplied run label (--label), when present
     label = metadata.get("label") or config.get("label")
     if label:
-        parts.append(str(label))
+        parts.append(escape(safe_label_text(str(label))))
 
     # Tool version
     version = metadata.get("tool_version")
@@ -67,7 +70,7 @@ def _extract_context_panel(run: dict) -> list[str]:
 
     label = metadata.get("label") or config.get("label")
     if label:
-        lines.append(f"  [bold]Label:[/] {label}")
+        lines.append(f"  [bold]Label:[/] {escape(safe_label_text(str(label)))}")
 
     version = metadata.get("tool_version")
     if version:

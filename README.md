@@ -783,11 +783,13 @@ runs/2026/08/<run_id>--tonyd2wild-tool-hardening-646c55f.md
 runs/2026/08/<run_id>--tonyd2wild-tool-hardening-646c55f_summary.md
 ```
 
-The full human-readable label (spaces, dots, capitals — anything) is rendered
-verbatim inside the reports; only the filename uses a slug (lowercased,
-punctuation collapsed to dashes, `.-_` kept, capped at 80 chars). The label is
-purely an annotation — it does not affect the run ID or `config_fingerprint`,
-so identical runs with different labels remain comparable.
+The full label is persisted unchanged. Reports render it as inert inline code;
+line breaks and control characters are shown as visible escapes so a label
+cannot alter the Markdown structure. Only the filename uses a slug (lowercased,
+punctuation collapsed to dashes, `.-_` kept, capped at 80 chars). Labels with no
+ASCII representation receive a deterministic `label-<hash>` marker. The label
+is purely an annotation — it does not affect the run ID or
+`config_fingerprint`, so identical runs with different labels remain comparable.
 
 ## Backends
 
