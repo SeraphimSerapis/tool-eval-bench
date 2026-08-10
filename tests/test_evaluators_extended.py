@@ -2164,6 +2164,28 @@ class TestTC48:
         assert result.status == ScenarioStatus.PARTIAL
         assert "bare names" in result.summary.lower()
 
+    def test_partial_contact_lookup_then_clarification_alt_wording(self) -> None:
+        """Looked up Alice and Bob, asked for content with alternative wording —
+        still partial credit (regression: wording must not flip verdict to FAIL)."""
+        s = _state(
+            tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Alice"}},
+                {"name": "get_contacts", "arguments": {"query": "Bob"}},
+            ],
+            final_answer=(
+                "I've also looked up Bob and found him in the contacts: "
+                "Bob Martinez — bob.martinez@company.com. "
+                "So the email would go to Alice Kim (alice.kim@company.com) "
+                "with Bob Martinez (bob.martinez@company.com) on CC. "
+                "However, I still need the actual content of the project update "
+                "before I can send anything. Please share the details you'd like "
+                "in the email, and I'll send it to Alice with Bob CC'd."
+            ),
+        )
+        result = self.sc.evaluate(s)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "asked" in result.summary.lower()
+
 
 # ===================================================================
 # TC-49: Cancellation Across Turns
