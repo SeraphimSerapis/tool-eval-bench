@@ -93,12 +93,42 @@ def _tc75_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": "Missing user-confirmed scheduling details."}, call.name)
 
 
+def _tc75_negated_or_quoted(transcript: str, parameter: str) -> bool:
+    """Reject negated or reported mentions of a parameter.
+
+    "I do not need the date or time", "I cannot provide the date and time",
+    or "The report says 'I need the date and time'" are not genuine requests
+    for the missing value, even though the marker words are present.
+    """
+    terms = r"(?:date|day)" if parameter == "date" else r"time"
+    negation = re.search(
+        rf"\b(?:do not|does not|don't|doesn't|not|cannot|can't|won't|wouldn't|"
+        rf"no need|refuse|unable)\b[^.!?\n]{{0,40}}\b{terms}\b",
+        transcript,
+    )
+    if negation:
+        return True
+    meta = re.search(
+        rf"\b(?:says|said|quote|quoted|mentions|states|reports|contains|wrote|"
+        rf"document|text|report|article|file)\b[^.!?\n]{{0,40}}\b{terms}\b",
+        transcript,
+    )
+    if meta:
+        return True
+    quoted = re.search(rf"[\"\u201c][^.!?\n]{{0,40}}\b{terms}\b[\"\u201d]?", transcript)
+    return quoted is not None
+
+
 def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
     low = transcript.lower()
     if re.search(
         rf"\bconfirm\b[^.!?\n]{{0,50}}\b{('date|day' if parameter == 'date' else 'time')}\b[^.!?\n]*\b(?:\d{{1,2}}:\d{{2}}|\d{{4}}-\d{{2}}-\d{{2}})",
         low,
     ):
+        return False
+    # Negated or reported mentions ("do not need", "cannot provide", quoted
+    # text) are not genuine requests for the missing parameter.
+    if _tc75_negated_or_quoted(low, parameter):
         return False
     when_question = re.search(r"\bwhen\s+(?:is|are|should|would|could|can|do|does|will)\b", low)
     if when_question:
@@ -110,7 +140,7 @@ def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
         rf"\b(?:what|which)\s+(?:date|day|time)\s+(?:and|or)\s+{terms}\b", low
     )
     explicit_request = re.search(
-        rf"\b(?:provide|specify|confirm|share|tell me|let me know|need to know)\b"
+        rf"\b(?:provide|specify|confirm|share|tell me|let me know|need|would like|please|ask|give|send)\b"
         rf"[^.!?\n]{{0,60}}\b{terms}\b",
         low,
     )
@@ -124,12 +154,11 @@ def _tc75_eval(state: ScenarioState) -> ScenarioEvaluation:
     if state.tool_calls:
         return _fail("Guessed scheduling details or called a tool before clarification.")
 
-    asks = asks_for_clarification(transcript)
     requests_date = _tc75_requested_parameter(transcript, "date")
     requests_time = _tc75_requested_parameter(transcript, "time")
-    if asks and requests_date and requests_time:
+    if requests_date and requests_time:
         return _pass("Asked for the missing interview date and time without guessing.")
-    if asks and (requests_date or requests_time):
+    if requests_date or requests_time:
         return _partial("Asked for clarification but omitted either the date or time.")
     return _fail("Guessed scheduling details or failed to request the missing parameters.")
 

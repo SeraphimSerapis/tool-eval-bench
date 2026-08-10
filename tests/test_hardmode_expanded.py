@@ -315,6 +315,27 @@ def test_expanded_contracts(sid, calls, answer, expected):
     assert scenario.evaluate(state).status == expected
 
 
+def test_tc75_requests_missing_parameters_without_guessing():
+    """TC-75 regression: a genuine need-style clarification request must PASS,
+    while negated, reported, or quoted mentions must stay FAIL."""
+    scenario = _get("TC-75")
+
+    positive = ScenarioState(
+        final_answer="I need the date and time for the interview, please.",
+        assistant_messages=["I need the date and time for the interview, please."],
+    )
+    assert scenario.evaluate(positive).status == ScenarioStatus.PASS
+
+    for answer in (
+        "I do not need the date or time.",
+        "Please do not send the date and time.",
+        "I cannot provide the date and time.",
+        "The report says 'I need the date and time'.",
+    ):
+        state = ScenarioState(final_answer=answer, assistant_messages=[answer])
+        assert scenario.evaluate(state).status == ScenarioStatus.FAIL, answer
+
+
 def _tc84_success_state() -> ScenarioState:
     scenario = _get("TC-84")
     state = ScenarioState()
