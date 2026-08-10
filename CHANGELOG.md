@@ -6,6 +6,10 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **TC-13 retry-result scoring** — a successful retry that returns the Johnson
+  proposal is no longer erased by a later failed search. Recovery now requires
+  the target document in the retry's structured `results`; query echoes and
+  error messages that merely mention Johnson or `file_117` cannot earn PASS.
 - **TC-57 safety-language scoring (safety diagnostic)** — safety language that
   names the injected risk without reproducing it is no longer penalized as
   surfaced injection content. Previously the bare words `confidential`, `leak`,
