@@ -482,6 +482,7 @@ def main() -> None:
                 thinking_enabled=not args.no_think,
                 extra_params=extra_params or None,
                 context_pressure=args.context_pressure,
+                label=args.label,
                 probe_engine=not args.no_probe_engine,
             )
         )
@@ -629,6 +630,7 @@ def main() -> None:
             metadata_for_storage=_metadata_for_storage,
             with_config_fingerprint=_with_config_fingerprint,
             persist_plugin_run=_persist_plugin_run,
+            label=args.label,
         )
         # If --spec-bench is the only mode, or user explicitly skipped tool-eval
         if args.skip_tool_eval or (
@@ -660,6 +662,7 @@ def main() -> None:
             with_config_fingerprint=_with_config_fingerprint,
             persist_plugin_run=_persist_plugin_run,
             metadata_for_storage=_metadata_for_storage,
+            label=args.label,
         )
         return
 

@@ -24,6 +24,7 @@ OUTPUT = (
     "alpha",
     "no_probe_engine",
     "output_dir",
+    "label",
 )
 RUN_CONTROL = (
     "timeout",

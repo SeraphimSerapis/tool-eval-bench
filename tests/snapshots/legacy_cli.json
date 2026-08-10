@@ -331,6 +331,16 @@
   },
   {
     "choices": null,
+    "default": null,
+    "dest": "label",
+    "flags": [
+      "--label"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": false,
     "dest": "redact_url",
     "flags": [

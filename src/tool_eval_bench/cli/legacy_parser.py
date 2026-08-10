@@ -198,6 +198,13 @@ def _make_parser() -> argparse.ArgumentParser:
     )
     output.add_argument("--no-live", action="store_true", help="Disable live updating display")
     output.add_argument(
+        "--label",
+        default=None,
+        metavar="TEXT",
+        help="Free-form annotation attached to every report this run generates "
+        "(shown in the report body; a safe slug of it is added to report filenames)",
+    )
+    output.add_argument(
         "--redact-url",
         action="store_true",
         help="Mask the server URL in display output (for screenshots/recordings)",
