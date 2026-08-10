@@ -23,6 +23,11 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **TC-48 clarification wording** — the no-email branch now also credits equivalent
+  content requests (`please share the details`, `need the actual content`,
+  `before i can send`, …) so the verdict no longer flips on final-answer phrasing.
+  Request-shaped phrases only; declarative sentences that merely mention content
+  or sending stay FAIL.
 - **TC-13 retry-result scoring** — a successful retry that returns the Johnson
   proposal is no longer erased by a later failed search. Recovery now requires
   the target document in the retry's structured `results`; query echoes and
