@@ -277,6 +277,25 @@ class TestTC03Contract:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
 
+    def test_partial_time_3_00_am_not_accepted(self):
+        """3:00 AM is a different time — must not pass as the requested 3pm."""
+        s = _state(
+            tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Sarah"}, "turn": 1},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "sarah.chen@company.com",
+                        "subject": "Meeting",
+                        "body": "The meeting has been moved to 3:00 AM.",
+                    },
+                    "turn": 2,
+                },
+            ],
+            final_answer="Email sent to Sarah.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
 
 # ---------------------------------------------------------------------------
 # TC-04: Unit Handling

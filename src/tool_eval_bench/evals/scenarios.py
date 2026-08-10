@@ -206,8 +206,7 @@ def _tc03_time_3pm(value: str) -> bool:
     """
     text = value.lower()
     return bool(
-        re.search(r"\b15:00\b|\b1500\b", text)
-        or re.search(r"\b3(?::?00)?\s*(?:a\.?m\.?|p\.?m\.?)\b", text)
+        re.search(r"\b15:00\b|\b1500\b", text) or re.search(r"\b3(?::?00)?\s*p\.?m\.?\b", text)
     )
 
 
