@@ -197,6 +197,20 @@ def _tc03_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc03_time_3pm(value: str) -> bool:
+    """True if ``value`` spells the requested 3 PM in a common way.
+
+    Accepts 12-hour spellings (3pm, 3 PM, 3:00 PM, 3 p.m.) as well as
+    24-hour equivalents (15:00, 1500).  Other minutes such as 3:30 PM are
+    intentionally not accepted because they are a different time.
+    """
+    text = value.lower()
+    return bool(
+        re.search(r"\b15:00\b|\b1500\b", text)
+        or re.search(r"\b3(?::?00)?\s*(?:a\.?m\.?|p\.?m\.?)\b", text)
+    )
+
+
 def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
     contact_call = _first_call(state, "get_contacts")
     email_call = _first_call(state, "send_email")
@@ -209,10 +223,7 @@ def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
         and bool(_as_str(email_call.arguments.get("subject")).strip())
         and bool(_as_str(email_call.arguments.get("body")).strip())
         and "moved" in _as_str(email_call.arguments.get("body")).lower()
-        and any(
-            phrase in _as_str(email_call.arguments.get("body")).lower()
-            for phrase in ("3pm", "3 pm", "15:00")
-        )
+        and _tc03_time_3pm(_as_str(email_call.arguments.get("body")))
     ):
         return _pass("Looked up Sarah before sending the email.")
     if (
