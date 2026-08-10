@@ -2186,6 +2186,19 @@ class TestTC48:
         assert result.status == ScenarioStatus.PARTIAL
         assert "asked" in result.summary.lower()
 
+    def test_fail_contact_lookup_declarative_no_ask(self) -> None:
+        """Contacts resolved but final answer is declarative, not a content request.
+
+        Phrases like 'the content of' / 'before sending' must not flip this to PARTIAL.
+        """
+        s = _state(
+            tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Alice"}},
+            ],
+            final_answer="The content of the email is ready. I'll send it soon.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
+
 
 # ===================================================================
 # TC-49: Cancellation Across Turns

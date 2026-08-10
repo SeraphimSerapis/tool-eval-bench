@@ -1779,7 +1779,6 @@ def _tc48_eval(state: ScenarioState) -> ScenarioEvaluation:
                     "please share",
                     "share the details",
                     "provide the content",
-                    "the content of",
                     "need the content",
                     "need the actual content",
                     "need the details",
@@ -1791,14 +1790,11 @@ def _tc48_eval(state: ScenarioState) -> ScenarioEvaluation:
                     "let me know what",
                     "tell me what",
                     "before i can send",
-                    "before sending",
                     "send me the",
                     "could you share",
                     "can you share",
                     "what's the content",
                     "what is the content",
-                    "waiting for",
-                    "awaiting",
                 )
             )
             if asks_for_content:
