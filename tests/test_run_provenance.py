@@ -16,7 +16,7 @@ import pytest
 
 from tool_eval_bench.application.service import _build_run_config
 from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
-from tool_eval_bench.utils.metadata import _git_sha
+from tool_eval_bench.utils.metadata import _git_env_without_repository, _git_sha
 
 
 def _scenario(sid: str) -> ScenarioDefinition:
@@ -59,7 +59,8 @@ class TestGitShaProvenance:
         """Running from an unrelated repo must not attribute its SHA to the run."""
         unrelated = tmp_path / "unrelated"
         unrelated.mkdir()
-        subprocess.run(["git", "init", "-q"], cwd=unrelated, check=True)
+        clean_env = _git_env_without_repository()
+        subprocess.run(["git", "init", "-q"], cwd=unrelated, check=True, env=clean_env)
         subprocess.run(
             [
                 "git",
@@ -75,14 +76,19 @@ class TestGitShaProvenance:
             ],
             cwd=unrelated,
             check=True,
+            env=clean_env,
         )
         foreign = (
-            subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=unrelated)
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"], cwd=unrelated, env=clean_env
+            )
             .decode()
             .strip()
         )
 
         monkeypatch.chdir(unrelated)
+        monkeypatch.setenv("GIT_DIR", str(unrelated / ".git"))
+        monkeypatch.setenv("GIT_WORK_TREE", str(unrelated))
         sha = _git_sha()
 
         assert sha != foreign
@@ -184,6 +190,7 @@ def _package_head() -> str | None:
         out = subprocess.check_output(  # noqa: S603 — fixed argv, test-only
             ["git", "-C", str(package_root), "rev-parse", "--short", "HEAD"],
             stderr=subprocess.DEVNULL,
+            env=_git_env_without_repository(),
         )
     except (OSError, subprocess.CalledProcessError):
         return None

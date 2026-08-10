@@ -1,4 +1,4 @@
-.venv/
+.venv
 activate/
 # Dev-environment resolution only: CI installs via `pip install -e '.[dev]'`
 # and the package ships as a wheel resolved against pyproject constraints,

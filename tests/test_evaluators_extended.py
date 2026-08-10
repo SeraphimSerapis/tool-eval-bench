@@ -100,8 +100,26 @@ class TestTC03:
                     "name": "send_email",
                     "arguments": {
                         "to": "sarah.chen@company.com",
-                        "subject": "Meeting",
+                        "subject": "Meeting moved",
                         "body": "Moved to 3pm",
+                    },
+                    "turn": 2,
+                },
+            ]
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
+    def test_pass_time_as_3_00_pm(self) -> None:
+        """'3:00 PM' formatting must count as the requested 3pm time."""
+        s = _state(
+            tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Sarah"}, "turn": 1},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "sarah.chen@company.com",
+                        "subject": "Meeting moved",
+                        "body": "The meeting has been moved to 3:00 PM.",
                     },
                     "turn": 2,
                 },

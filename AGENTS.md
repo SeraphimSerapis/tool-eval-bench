@@ -62,9 +62,12 @@ across Python 3.11–3.13, and enforces the configured branch-coverage floor.
 
 ```bash
 pip install -e '.[dev]'       # includes pre-commit
-pre-commit install            # ruff lint on every commit
-pre-commit install --hook-type pre-push  # mypy + pytest on every push
+pre-commit install            # pre-commit, pre-push, and post-checkout hooks
 ```
+
+The post-checkout hook links the primary checkout's `.venv` into newly created
+Git worktrees. Re-run `pre-commit install` once after upgrading from an older
+checkout so the new hook type is installed.
 
 **Always use the project venv** (`.venv/bin/python`), not system Python.
 Dev dependencies like `pytest-asyncio` are installed in the venv via `pip install -e '.[dev]'`.
