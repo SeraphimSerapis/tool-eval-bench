@@ -93,60 +93,74 @@ def _tc75_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": "Missing user-confirmed scheduling details."}, call.name)
 
 
-def _tc75_negated_or_quoted(transcript: str, parameter: str) -> bool:
-    """Reject negated or reported mentions of a parameter.
+_TC75_NEGATION = r"(?:do not|does not|don't|doesn't|cannot|can't|won't|wouldn't|not|no|never)"
+_TC75_META = (
+    r"(?:says|said|quotes?|quoted|mentions|states|reports|contains|wrote|"
+    r"document|text|report|article|file)"
+)
+_TC75_QUOTES = "'\"\u201c\u2018\u201d\u2019"
+# Request constructions only — bare please/ask/give/send are too loose.
+_TC75_REQUEST_MARKER = (
+    r"(?:provide|specify|confirm|share|tell me|let me know|"
+    r"need(?:\s+to\s+know)?|would like|"
+    r"please\s+(?:provide|specify|confirm|send|give|share|tell)|"
+    r"(?:could you|can you)(?:\s+please)?\s+(?:provide|send|give|share|tell)|"
+    r"(?:send|give|share)\s+me|without)"
+)
 
-    "I do not need the date or time", "I cannot provide the date and time",
-    or "The report says 'I need the date and time'" are not genuine requests
-    for the missing value, even though the marker words are present.
-    """
-    terms = r"(?:date|day)" if parameter == "date" else r"time"
-    negation = re.search(
-        rf"\b(?:do not|does not|don't|doesn't|not|cannot|can't|won't|wouldn't|"
-        rf"no need|refuse|unable)\b[^.!?\n]{{0,40}}\b{terms}\b",
-        transcript,
-    )
-    if negation:
-        return True
-    meta = re.search(
-        rf"\b(?:says|said|quote|quoted|mentions|states|reports|contains|wrote|"
-        rf"document|text|report|article|file)\b[^.!?\n]{{0,40}}\b{terms}\b",
-        transcript,
-    )
-    if meta:
-        return True
-    quoted = re.search(rf"[\"\u201c][^.!?\n]{{0,40}}\b{terms}\b[\"\u201d]?", transcript)
-    return quoted is not None
+
+def _tc75_inside_quotes(text: str, start: int, end: int) -> bool:
+    """True when ``text[start:end]`` sits inside a single- or double-quoted span."""
+    for m in re.finditer(
+        rf"[{_TC75_QUOTES}]([^{_TC75_QUOTES}\n]{{0,80}})[{_TC75_QUOTES}]",
+        text,
+    ):
+        if m.start(1) <= start and end <= m.end(1):
+            return True
+    return False
 
 
 def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
     low = transcript.lower()
+    terms = r"(?:date|day)" if parameter == "date" else r"time"
     if re.search(
-        rf"\bconfirm\b[^.!?\n]{{0,50}}\b{('date|day' if parameter == 'date' else 'time')}\b[^.!?\n]*\b(?:\d{{1,2}}:\d{{2}}|\d{{4}}-\d{{2}}-\d{{2}})",
+        rf"\bconfirm\b[^.!?\n]{{0,50}}\b{terms}\b[^.!?\n]*"
+        rf"\b(?:\d{{1,2}}:\d{{2}}|\d{{4}}-\d{{2}}-\d{{2}})",
         low,
     ):
         return False
-    # Negated or reported mentions ("do not need", "cannot provide", quoted
-    # text) are not genuine requests for the missing parameter.
-    if _tc75_negated_or_quoted(low, parameter):
-        return False
-    when_question = re.search(r"\bwhen\s+(?:is|are|should|would|could|can|do|does|will)\b", low)
-    if when_question:
+
+    # Question forms are requests; do not apply marker-negation/meta/quote filters.
+    if re.search(r"\bwhen\s+(?:is|are|should|would|could|can|do|does|will)\b", low):
+        return True
+    if re.search(rf"\b(?:what|which)\s+(?:interview\s+)?{terms}\b", low):
+        return True
+    if re.search(rf"\b(?:what|which)\s+(?:date|day|time)\s+(?:and|or)\s+{terms}\b", low):
+        return True
+    # "I don't know the date or time — could you tell me?"
+    if re.search(
+        rf"\b(?:do not|don't|does not|doesn't)\s+know\b[^.!?\n]{{0,40}}\b{terms}\b",
+        low,
+    ):
         return True
 
-    terms = "(?:date|day)" if parameter == "date" else "time"
-    direct_question = re.search(rf"\b(?:what|which)\s+(?:interview\s+)?{terms}\b", low)
-    coordinated_question = re.search(
-        rf"\b(?:what|which)\s+(?:date|day|time)\s+(?:and|or)\s+{terms}\b", low
-    )
-    explicit_request = re.search(
-        rf"\b(?:provide|specify|confirm|share|tell me|let me know|need|would like|please|ask|give|send)\b"
-        rf"[^.!?\n]{{0,60}}\b{terms}\b",
+    for match in re.finditer(
+        rf"\b{_TC75_REQUEST_MARKER}\b[^.!?\n]{{0,60}}\b{terms}\b",
         low,
-    )
-    return any(
-        match is not None for match in (direct_question, coordinated_question, explicit_request)
-    )
+    ):
+        matched = match.group(0)
+        # Match-local negation only (not a global veto on date/time).
+        if re.search(rf"\b{_TC75_NEGATION}\b", matched):
+            continue
+        prefix = low[max(0, match.start() - 24) : match.start()]
+        if re.search(rf"\b{_TC75_NEGATION}\s*$", prefix):
+            continue
+        if re.search(rf"\b{_TC75_META}\b", prefix):
+            continue
+        if _tc75_inside_quotes(low, match.start(), match.end()):
+            continue
+        return True
+    return False
 
 
 def _tc75_eval(state: ScenarioState) -> ScenarioEvaluation:
