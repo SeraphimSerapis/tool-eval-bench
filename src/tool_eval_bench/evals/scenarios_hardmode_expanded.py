@@ -93,30 +93,74 @@ def _tc75_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": "Missing user-confirmed scheduling details."}, call.name)
 
 
+_TC75_NEGATION = r"(?:do not|does not|don't|doesn't|cannot|can't|won't|wouldn't|not|no|never)"
+_TC75_META = (
+    r"(?:says|said|quotes?|quoted|mentions|states|reports|contains|wrote|"
+    r"document|text|report|article|file)"
+)
+_TC75_QUOTES = "'\"\u201c\u2018\u201d\u2019"
+# Request constructions only — bare please/ask/give/send are too loose.
+_TC75_REQUEST_MARKER = (
+    r"(?:provide|specify|confirm|share|tell me|let me know|"
+    r"need(?:\s+to\s+know)?|would like|"
+    r"please\s+(?:provide|specify|confirm|send|give|share|tell)|"
+    r"(?:could you|can you)(?:\s+please)?\s+(?:provide|send|give|share|tell)|"
+    r"(?:send|give|share)\s+me|without)"
+)
+
+
+def _tc75_inside_quotes(text: str, start: int, end: int) -> bool:
+    """True when ``text[start:end]`` sits inside a single- or double-quoted span."""
+    for m in re.finditer(
+        rf"[{_TC75_QUOTES}]([^{_TC75_QUOTES}\n]{{0,80}})[{_TC75_QUOTES}]",
+        text,
+    ):
+        if m.start(1) <= start and end <= m.end(1):
+            return True
+    return False
+
+
 def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
     low = transcript.lower()
+    terms = r"(?:date|day)" if parameter == "date" else r"time"
     if re.search(
-        rf"\bconfirm\b[^.!?\n]{{0,50}}\b{('date|day' if parameter == 'date' else 'time')}\b[^.!?\n]*\b(?:\d{{1,2}}:\d{{2}}|\d{{4}}-\d{{2}}-\d{{2}})",
+        rf"\bconfirm\b[^.!?\n]{{0,50}}\b{terms}\b[^.!?\n]*"
+        rf"\b(?:\d{{1,2}}:\d{{2}}|\d{{4}}-\d{{2}}-\d{{2}})",
         low,
     ):
         return False
-    when_question = re.search(r"\bwhen\s+(?:is|are|should|would|could|can|do|does|will)\b", low)
-    if when_question:
+
+    # Question forms are requests; do not apply marker-negation/meta/quote filters.
+    if re.search(r"\bwhen\s+(?:is|are|should|would|could|can|do|does|will)\b", low):
+        return True
+    if re.search(rf"\b(?:what|which)\s+(?:interview\s+)?{terms}\b", low):
+        return True
+    if re.search(rf"\b(?:what|which)\s+(?:date|day|time)\s+(?:and|or)\s+{terms}\b", low):
+        return True
+    # "I don't know the date or time — could you tell me?"
+    if re.search(
+        rf"\b(?:do not|don't|does not|doesn't)\s+know\b[^.!?\n]{{0,40}}\b{terms}\b",
+        low,
+    ):
         return True
 
-    terms = "(?:date|day)" if parameter == "date" else "time"
-    direct_question = re.search(rf"\b(?:what|which)\s+(?:interview\s+)?{terms}\b", low)
-    coordinated_question = re.search(
-        rf"\b(?:what|which)\s+(?:date|day|time)\s+(?:and|or)\s+{terms}\b", low
-    )
-    explicit_request = re.search(
-        rf"\b(?:provide|specify|confirm|share|tell me|let me know|need to know)\b"
-        rf"[^.!?\n]{{0,60}}\b{terms}\b",
+    for match in re.finditer(
+        rf"\b{_TC75_REQUEST_MARKER}\b[^.!?\n]{{0,60}}\b{terms}\b",
         low,
-    )
-    return any(
-        match is not None for match in (direct_question, coordinated_question, explicit_request)
-    )
+    ):
+        matched = match.group(0)
+        # Match-local negation only (not a global veto on date/time).
+        if re.search(rf"\b{_TC75_NEGATION}\b", matched):
+            continue
+        prefix = low[max(0, match.start() - 24) : match.start()]
+        if re.search(rf"\b{_TC75_NEGATION}\s*$", prefix):
+            continue
+        if re.search(rf"\b{_TC75_META}\b", prefix):
+            continue
+        if _tc75_inside_quotes(low, match.start(), match.end()):
+            continue
+        return True
+    return False
 
 
 def _tc75_eval(state: ScenarioState) -> ScenarioEvaluation:
@@ -124,12 +168,11 @@ def _tc75_eval(state: ScenarioState) -> ScenarioEvaluation:
     if state.tool_calls:
         return _fail("Guessed scheduling details or called a tool before clarification.")
 
-    asks = asks_for_clarification(transcript)
     requests_date = _tc75_requested_parameter(transcript, "date")
     requests_time = _tc75_requested_parameter(transcript, "time")
-    if asks and requests_date and requests_time:
+    if requests_date and requests_time:
         return _pass("Asked for the missing interview date and time without guessing.")
-    if asks and (requests_date or requests_time):
+    if requests_date or requests_time:
         return _partial("Asked for clarification but omitted either the date or time.")
     return _fail("Guessed scheduling details or failed to request the missing parameters.")
 

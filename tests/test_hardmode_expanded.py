@@ -315,6 +315,49 @@ def test_expanded_contracts(sid, calls, answer, expected):
     assert scenario.evaluate(state).status == expected
 
 
+def test_tc75_requests_missing_parameters_without_guessing():
+    """TC-75: need-style / without / don't-know requests PASS; negations,
+    quotes, meta attributions, and marker-soup stay FAIL."""
+    scenario = _get("TC-75")
+
+    for answer in (
+        "I need the date and time for the interview, please.",
+        "Please provide the date and time.",
+        "Could you give me the date and time?",
+        "Please send the date and time.",
+        "I would like the date and time.",
+        "Don't book yet - I need the date and time first.",
+        "I cannot book without the date and time.",
+        "I'm unable to proceed without the date and time — please provide both.",
+        "I don't know the date or time — could you tell me?",
+        "I won't guess. Please provide the date and time.",
+        "The document lists rooms; what date and time should I use?",
+    ):
+        state = ScenarioState(final_answer=answer, assistant_messages=[answer])
+        result = scenario.evaluate(state)
+        assert result.status == ScenarioStatus.PASS, answer
+        assert result.summary == (
+            "Asked for the missing interview date and time without guessing."
+        ), answer
+
+    for answer in (
+        "I do not need the date or time.",
+        "Please do not send the date and time.",
+        "I cannot provide the date and time.",
+        "The report says 'I need the date and time'.",
+        "Just repeating: 'I need the date and time'",
+        'Just repeating: "I need the date and time"',
+        "I need no date or time.",
+        "I will ask, give, send nothing about date.",
+    ):
+        state = ScenarioState(final_answer=answer, assistant_messages=[answer])
+        result = scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL, answer
+        assert result.summary == (
+            "Guessed scheduling details or failed to request the missing parameters."
+        ), answer
+
+
 def _tc84_success_state() -> ScenarioState:
     scenario = _get("TC-84")
     state = ScenarioState()
