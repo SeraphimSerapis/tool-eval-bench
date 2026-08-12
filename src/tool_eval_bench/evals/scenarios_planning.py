@@ -669,7 +669,7 @@ def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
         state,
         "send_email",
         lambda c: (
-            bool(_as_str(c.arguments.get("to")).strip())
+            _as_str(c.arguments.get("to")).strip().lower() == "user@company.com"
             and any(
                 term
                 in _as_str(c.arguments.get("subject")).lower()
@@ -1086,7 +1086,7 @@ PLANNING_SCENARIOS: list[ScenarioDefinition] = [
         id="TC-56",
         title="Notification Workflow",
         category=Category.N,
-        user_message="Check the weather in NYC. If it's below freezing, email me a warning and set a reminder to dress warmly tomorrow morning.",
+        user_message="Check the weather in NYC. If it's below freezing, email me at user@company.com with a warning and set a reminder to dress warmly tomorrow morning.",
         description="Compose weather check → conditional → email notification.",
         handle_tool_call=_tc56_handle,
         evaluate=_tc56_eval,

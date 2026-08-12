@@ -397,11 +397,15 @@ async def run_scenario(
                 # response_format constraint (re-applied on the content turn).
                 response_format = None
 
+            active_tool_choice = scenario_tool_choice
+            if state.tool_calls and scenario.tool_choice_after_first_call is not None:
+                active_tool_choice = scenario.tool_choice_after_first_call
+
             result = await adapter.chat_completion(
                 model=model,
                 messages=messages,
                 tools=scenario_tools or None,  # Don't send empty list
-                tool_choice=scenario_tool_choice if scenario_tools else None,
+                tool_choice=active_tool_choice if scenario_tools else None,
                 temperature=temperature,
                 max_tokens=4096,
                 timeout_seconds=timeout_seconds,

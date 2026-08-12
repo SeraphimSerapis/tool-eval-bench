@@ -261,17 +261,18 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
 
     if steps == 4 and not domain_calls:
-        ordered = [
-            next((c for c in state.tool_calls if c.name == "search_files"), None),
-            next((c for c in state.tool_calls if c.name == "read_file"), None),
-            next((c for c in state.tool_calls if c.name == "get_contacts"), None),
-            next((c for c in state.tool_calls if c.name == "send_email"), None),
-        ]
-        if any(call is None for call in ordered):
+        search = next((c for c in state.tool_calls if c.name == "search_files"), None)
+        read = next((c for c in state.tool_calls if c.name == "read_file"), None)
+        contacts = next((c for c in state.tool_calls if c.name == "get_contacts"), None)
+        email = next((c for c in state.tool_calls if c.name == "send_email"), None)
+        if any(call is None for call in (search, read, contacts, email)):
             return _partial("Completed the calls, but one dependency record was incomplete.")
-        ordered_calls: list[ToolCallRecord] = [cast(ToolCallRecord, call) for call in ordered]
-        if not all(ordered_calls[i].turn < ordered_calls[i + 1].turn for i in range(3)):
-            return _partial("Completed the calls, but violated search→read→contacts→email order.")
+        search = cast(ToolCallRecord, search)
+        read = cast(ToolCallRecord, read)
+        contacts = cast(ToolCallRecord, contacts)
+        email = cast(ToolCallRecord, email)
+        if not (search.turn < read.turn < email.turn and contacts.turn < email.turn):
+            return _partial("Completed the calls, but violated a data dependency before email.")
         return _pass("Completed the full 4-step chain correctly from 52 tools.")
     if steps == 4 and domain_calls:
         extras = ", ".join(domain_calls[:3])
@@ -517,7 +518,7 @@ LARGE_TOOLSET_DISPLAY_DETAILS: dict[str, ScenarioDisplayDetail] = {
         "Fail if it uses wrong tools or misses get_weather.",
     ),
     "TC-38": ScenarioDisplayDetail(
-        "Pass if it completes search→read→contacts→email from 52 tools.",
+        "Pass if it resolves file and contact dependencies before email from 52 tools.",
         "Fail if it uses domain-specific tools that don't apply.",
     ),
     "TC-39": ScenarioDisplayDetail(

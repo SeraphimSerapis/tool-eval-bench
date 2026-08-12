@@ -676,6 +676,46 @@ async def test_normal_completion_does_not_flag_budget_exceeded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_choice_can_relax_after_first_tool_call() -> None:
+    """A scenario can require its first tool call and then permit final text."""
+    scenario = ScenarioDefinition(
+        id="CHOICE-01",
+        title="CHOICE-01",
+        description="Require one tool, then answer.",
+        category=Category.H,
+        user_message="Calculate 7 * 8.",
+        handle_tool_call=_simple_handler,
+        evaluate=lambda state: ScenarioEvaluation(
+            status=ScenarioStatus.PASS,
+            points=2,
+            summary="ok",
+        ),
+        tool_choice_override="required",
+        tool_choice_after_first_call="auto",
+    )
+    adapter = MockAdapter(
+        [
+            {"content": "", "tool_calls": [{"name": "calculator", "arguments": {}}]},
+            {"content": "56"},
+        ]
+    )
+
+    result = await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=scenario,
+    )
+
+    assert result.turn_budget_exceeded is False
+    assert [payload["tool_choice"] for payload in adapter.captured_payloads] == [
+        "required",
+        "auto",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_budget_exhaustion_is_distinct_from_evaluator_failure() -> None:
     """Budget run-out sets BUDGET_EXCEEDED, not the evaluator's failure kind."""
     scenario = _tool_failing_evaluator("OVR-05")

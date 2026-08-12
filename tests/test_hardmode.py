@@ -348,6 +348,12 @@ class TestTC72CascadingRecovery:
         result = sc.handle_tool_call(state, call)
         assert "1.2M" in str(result) or "750K" in str(result)
 
+    def test_search_returns_summary_backup_not_unrelated_file(self):
+        sc = _get_scenario("TC-72")
+        state = ScenarioState()
+        result = sc.handle_tool_call(state, _make_call("search_files", {"query": "Project Alpha"}))
+        assert "Project_Alpha_Summary_Backup.docx" in str(result)
+
 
 # ===========================================================================
 # TC-73: Multi-Constraint Composition
@@ -484,6 +490,7 @@ class TestTC74StatefulCorrections:
     def test_has_follow_up_messages(self):
         sc = _get_scenario("TC-74")
         assert len(sc.follow_up_messages) == 4
+        assert sc.max_turns_override == 12
 
     def test_follow_ups_contain_all_corrections(self):
         """Each follow-up introduces a specific correction."""
@@ -579,6 +586,25 @@ class TestTC74StatefulCorrections:
         result = sc.evaluate(state)
         # 0/5 corrections → FAIL
         assert result.status == ScenarioStatus.FAIL
+
+    def test_fail_duplicate_events_even_when_last_has_all_corrections(self):
+        sc = _get_scenario("TC-74")
+        state = ScenarioState()
+        for turn, time in ((1, "10:00"), (5, "14:00")):
+            call = _make_call(
+                "create_calendar_event",
+                {
+                    "title": "Product Review",
+                    "date": "2026-03-25",
+                    "time": time,
+                    "duration_minutes": 45,
+                    "attendees": ["mark.chen@company.com", "sarah.jones@company.com"],
+                },
+                turn=turn,
+            )
+            sc.handle_tool_call(state, call)
+            state.tool_calls.append(call)
+        assert sc.evaluate(state).status == ScenarioStatus.FAIL
 
     def test_handler_contacts_sarah(self):
         sc = _get_scenario("TC-74")

@@ -256,7 +256,7 @@ def _tc72_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             {
                 "results": [
                     {"file_id": "file_404", "name": "Project_Alpha_Summary.docx"},
-                    {"file_id": "file_405", "name": "Project_Alpha_Budget.xlsx"},
+                    {"file_id": "file_405", "name": "Project_Alpha_Summary_Backup.docx"},
                 ]
             },
             "search_files",
@@ -268,7 +268,7 @@ def _tc72_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         if fid == "file_405":
             return _noise(
                 {
-                    "content": "Project Alpha budget: Total $1.2M. Engineering: $750K, Marketing: $450K."
+                    "content": "Project Alpha summary backup: approved budget totals $1.2M. Engineering: $750K, Marketing: $450K."
                 },
                 "read_file",
             )
@@ -509,6 +509,9 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not events:
         return _fail("Never created a calendar event.")
 
+    if len(events) > 1:
+        return _fail("Created multiple events instead of preserving one draft until authorization.")
+
     # Check the LAST event creation (should reflect all corrections)
     last_event = events[-1]
     args = last_event.arguments
@@ -611,17 +614,18 @@ HARDMODE_SCENARIOS: list[ScenarioDefinition] = [
         id="TC-74",
         title="Stateful Multi-Turn Corrections",
         category=Category.P,
-        user_message="Schedule a Team Sync for next Tuesday at 10am, 30 minutes, with Mark.",
-        description="Track progressive corrections across 4 follow-up turns: title, date, time, duration, and attendee changes.",
+        user_message="Draft a Team Sync for next Tuesday at 10am, 30 minutes, with Mark. Do not create it until I explicitly tell you to.",
+        description="Track progressive draft corrections, then create and notify exactly once when authorized.",
         handle_tool_call=_tc74_handle,
         evaluate=_tc74_eval,
         follow_up_messages=[
             "Actually, change the title to 'Product Review'.",
             "Move it to Wednesday instead.",
             "Also add Sarah to the invite. And make it 45 minutes.",
-            "One more change — push the time to 2pm. Then send a confirmation email to both Mark and Sarah.",
+            "One more change — push the time to 2pm. Now create it and send a confirmation email to both Mark and Sarah.",
         ],
         difficulty=5,
+        max_turns_override=12,
     ),
 ]
 

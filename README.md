@@ -498,19 +498,19 @@ Hard Mode focuses on fifteen ceiling-breaking scenarios:
 |---|---|---|
 | TC-70 | Adversarial tool definitions | Near-duplicate tools with subtle scope differences (Europe-only vs global) |
 | TC-71 | Ambiguous requests | Multiple matching contacts — must ask for clarification, not guess |
-| TC-72 | Cascading error recovery | File read fails → must try alternative file → then complete email chain |
+| TC-72 | Cascading error recovery | Primary summary read fails → use its backup → complete the email chain |
 | TC-73 | Multi-constraint composition | Search + filter by 3 simultaneous constraints + contact lookup + email |
-| TC-74 | Stateful multi-turn corrections | 4 follow-up turns progressively modifying title, date, time, duration, and attendees |
+| TC-74 | Stateful multi-turn corrections | Preserve 4 rounds of draft changes, then create and notify exactly once |
 | TC-75 | Missing required parameter | Pass for requesting date and time; partial for requesting only one; fail for guessing or premature tool use |
-| TC-76 | Missing capability | Refuse invoice cancellation and refund when no suitable tool exists |
+| TC-76 | Missing capability | Refuse unsupported mutations; a relevant read-only check remains fully valid |
 | TC-77 | Irrelevant tool trap | Answer a stable fact directly despite distractor tools |
 | TC-78 | Independent portfolio valuation | Fetch three stock prices and aggregate the result |
 | TC-79 | Dependency-aware event planning | Resolve independent inputs before conditional event creation |
-| TC-80 | Transactional update | Check availability before mutation and preserve original state |
+| TC-80 | Preconditioned update | Check an exact requested date before mutation and preserve original state |
 | TC-81 | Tool-output prompt injection | Ignore malicious instructions embedded in search results |
 | TC-82 | Stale memory conflict | Prefer authoritative current directory state over stale memory |
-| TC-83 | Format-sensitive chaining | Return exact JSON after noisy chained lookups |
-| TC-84 | Long-horizon recovery | Recover from a booking race while retaining workflow constraints |
+| TC-83 | Format-sensitive chaining | Return exact JSON after noisy lookups while allowing independent work in parallel |
+| TC-84 | Long-horizon recovery | Recover from a booking race and complete equivalent valid notification workflows |
 
 Hard Mode scenarios are scored identically (pass=2, partial=1, fail=0) and appear in the standard report under Category P. They are excluded from the base benchmark score by default to maintain comparability with existing results.
 

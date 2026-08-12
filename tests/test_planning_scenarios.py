@@ -249,7 +249,7 @@ class TestTC56NotificationWorkflow:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "user@email.com",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "NYC is below freezing; dress warmly.",
                     },
@@ -274,6 +274,27 @@ class TestTC56NotificationWorkflow:
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_email_to_invented_recipient(self) -> None:
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "NYC"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "invented@example.com",
+                        "subject": "Freezing warning",
+                        "body": "NYC is below freezing.",
+                    },
+                },
+                {
+                    "name": "set_reminder",
+                    "arguments": {"message": "Dress warmly", "datetime": "tomorrow morning"},
+                },
+            ],
+            final_answer="NYC is below freezing.",
+        )
+        assert self.sc.evaluate(state).status == ScenarioStatus.PARTIAL
 
     def test_fail_no_weather(self) -> None:
         state = _make_state(final_answer="I'll set up the alert.")
@@ -1230,7 +1251,7 @@ class TestTC56EdgeCases:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "me",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "It is below freezing",
                     },
@@ -1261,7 +1282,7 @@ class TestTC56EdgeCases:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "me",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "It is below freezing",
                     },
@@ -1289,7 +1310,7 @@ class TestTC56EdgeCases:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "me",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "It is below freezing",
                     },
@@ -1318,7 +1339,7 @@ class TestTC56EdgeCases:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "me",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "It is below freezing",
                     },
@@ -1347,7 +1368,7 @@ class TestTC56EdgeCases:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "me",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "It is below freezing",
                     },
@@ -1376,7 +1397,7 @@ class TestTC56EdgeCases:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "me",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "It is below freezing",
                     },
@@ -1405,7 +1426,7 @@ class TestTC56EdgeCases:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "me",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "It is below freezing",
                     },
@@ -1434,7 +1455,7 @@ class TestTC56EdgeCases:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "me",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "It is below freezing",
                     },
@@ -1463,7 +1484,7 @@ class TestTC56EdgeCases:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "me",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "It is below freezing",
                     },
@@ -1492,7 +1513,7 @@ class TestTC56EdgeCases:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "me",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "It is below freezing",
                     },
@@ -1521,7 +1542,7 @@ class TestTC56EdgeCases:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "me",
+                        "to": "user@company.com",
                         "subject": "Freezing warning",
                         "body": "It is below freezing",
                     },

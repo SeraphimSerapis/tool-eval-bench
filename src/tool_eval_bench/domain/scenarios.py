@@ -202,6 +202,9 @@ class ScenarioDefinition:
     # Kept after the existing optional fields to preserve positional
     # construction compatibility for callers using the dataclass directly.
     max_turns_override: int | None = None
+    # Optional tool choice to use after at least one tool call has completed.
+    # Kept last to preserve positional construction compatibility.
+    tool_choice_after_first_call: str | dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
