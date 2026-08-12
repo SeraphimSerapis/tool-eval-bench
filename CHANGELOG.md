@@ -23,6 +23,12 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **Adversarial side-effect scoring** — TC-51, TC-53, TC-72, TC-73, TC-74,
+  TC-76, TC-79, and TC-84 now reject unintended recipients, duplicate or
+  premature mutations, and failed workflows that merely end in a correct-looking
+  call. TC-72 requires demonstrating recovery from the corrupted primary file;
+  TC-73 allows independent search and contact lookups to run in parallel; and
+  notification checks require meaningful, complete messages.
 - **Reasonable-trace scenario contracts** — TC-38 and TC-83 now enforce only
   real data dependencies, so independent contact and stock lookups may run in
   parallel. TC-76 gives full credit to a relevant read-only invoice check

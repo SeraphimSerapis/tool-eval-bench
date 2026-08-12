@@ -29,22 +29,28 @@ class TestTC51GoalPlanning:
     def test_pass_full_decomposition(self) -> None:
         state = _make_state(
             tool_calls=[
-                {"name": "get_contacts", "arguments": {"query": "engineering team"}},
+                {"name": "get_contacts", "arguments": {"query": "engineering team"}, "turn": 1},
                 {
                     "name": "create_calendar_event",
                     "arguments": {
                         "title": "Team Lunch",
                         "date": "2026-04-17",
-                        "attendees": ["alice@company.com", "bob@company.com"],
+                        "attendees": [
+                            "alice@company.com",
+                            "bob@company.com",
+                            "carol@company.com",
+                        ],
                     },
+                    "turn": 2,
                 },
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "alice@company.com",
+                        "to": "alice@company.com,bob@company.com,carol@company.com",
                         "subject": "Lunch",
                         "body": "Team lunch is organized.",
                     },
+                    "turn": 3,
                 },
             ],
             final_answer="I've organized the lunch.",
@@ -115,11 +121,20 @@ class TestTC53ConditionalPlanning:
     def test_pass_full_conditional_flow(self) -> None:
         state = _make_state(
             tool_calls=[
-                {"name": "get_weather", "arguments": {"location": "London"}},
-                {"name": "create_calendar_event", "arguments": {"title": "Meeting - Office"}},
+                {"name": "get_weather", "arguments": {"location": "London"}, "turn": 1},
+                {
+                    "name": "create_calendar_event",
+                    "arguments": {"title": "Meeting - Office"},
+                    "turn": 2,
+                },
                 {
                     "name": "send_email",
-                    "arguments": {"to": "team@company.com", "subject": "Meeting moved"},
+                    "arguments": {
+                        "to": "team@company.com",
+                        "subject": "Meeting moved",
+                        "body": "The outdoor meeting is moving indoors because of rain.",
+                    },
+                    "turn": 3,
                 },
             ],
             final_answer="It's raining in London so I've moved the meeting to the office and notified attendees.",
@@ -137,6 +152,25 @@ class TestTC53ConditionalPlanning:
 
     def test_fail_no_weather_check(self) -> None:
         state = _make_state(final_answer="I'll move the meeting.")
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+
+    def test_fail_notification_before_weather_lookup(self) -> None:
+        state = _make_state(
+            tool_calls=[
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "team@company.com",
+                        "subject": "Meeting moved",
+                        "body": "The meeting is moving indoors because of rain.",
+                    },
+                    "turn": 1,
+                },
+                {"name": "get_weather", "arguments": {"location": "London"}, "turn": 2},
+            ],
+            final_answer="It's raining in London, so I've moved the meeting to the office and notified attendees.",
+        )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
 
@@ -1059,8 +1093,16 @@ class TestTC53EdgeCases:
         """Checked weather + sent email + mentions rain → pass (alternative path)."""
         state = _make_state(
             tool_calls=[
-                {"name": "get_weather", "arguments": {"location": "London"}},
-                {"name": "send_email", "arguments": {"to": "dev-team@company.com"}},
+                {"name": "get_weather", "arguments": {"location": "London"}, "turn": 1},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "dev-team@company.com",
+                        "subject": "Meeting moved",
+                        "body": "The outdoor meeting is moving indoors because of rain.",
+                    },
+                    "turn": 2,
+                },
             ],
             final_answer="It's raining in London. I've sent a notification to move indoors.",
         )
@@ -1072,6 +1114,14 @@ class TestTC53EdgeCases:
         state = _make_state(
             tool_calls=[{"name": "get_weather", "arguments": {"location": "London"}}],
             final_answer="It's raining in London. You may want to move the meeting.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_recommendation_without_notification(self) -> None:
+        state = _make_state(
+            tool_calls=[{"name": "get_weather", "arguments": {"location": "London"}}],
+            final_answer="It's raining in London, so the meeting should move to the office.",
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL

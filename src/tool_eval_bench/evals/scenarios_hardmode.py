@@ -38,6 +38,7 @@ from tool_eval_bench.evals.helpers import (
     has_tool_call,
     includes_text,
     normalize,
+    result_is_usable_if_present,
     tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -287,43 +288,73 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
     read_calls = tool_calls_by_name(state, "read_file")
     contact_calls = tool_calls_by_name(state, "get_contacts")
     email_calls = tool_calls_by_name(state, "send_email")
-    email_call = email_calls[-1] if email_calls else None
+    email_call = email_calls[0] if len(email_calls) == 1 else None
 
-    tried_404 = any(normalize(as_str(c.arguments.get("file_id"))) == "file_404" for c in read_calls)
-    tried_405 = any(normalize(as_str(c.arguments.get("file_id"))) == "file_405" for c in read_calls)
+    read_404_calls = [
+        c for c in read_calls if normalize(as_str(c.arguments.get("file_id"))) == "file_404"
+    ]
+    read_405_calls = [
+        c
+        for c in read_calls
+        if normalize(as_str(c.arguments.get("file_id"))) == "file_405"
+        and result_is_usable_if_present(state, c)
+    ]
+    tried_404 = bool(read_404_calls)
+    tried_405 = bool(read_405_calls)
     email_has_budget = email_call and (
         includes_text(email_call.arguments.get("body"), "1.2m")
         or includes_text(email_call.arguments.get("body"), "$1.2")
         or includes_text(email_call.arguments.get("body"), "750")
     )
 
-    searched_alpha = any("alpha" in as_str(c.arguments.get("query")).lower() for c in searches)
-    resolved_dana = any("dana" in as_str(c.arguments.get("query")).lower() for c in contact_calls)
-    safe_emails = bool(email_calls) and all(
-        normalize(as_str(c.arguments.get("to"))) == "dana.wells@company.com" for c in email_calls
+    valid_searches = [
+        c
+        for c in searches
+        if "alpha" in as_str(c.arguments.get("query")).lower()
+        and result_is_usable_if_present(state, c)
+    ]
+    valid_contacts = [
+        c
+        for c in contact_calls
+        if "dana" in as_str(c.arguments.get("query")).lower()
+        and result_is_usable_if_present(state, c)
+    ]
+    searched_alpha = bool(valid_searches)
+    resolved_dana = bool(valid_contacts)
+    recovery_ordered = bool(
+        valid_searches
+        and any(
+            search.turn < corrupted.turn < backup.turn
+            for search in valid_searches
+            for corrupted in read_404_calls
+            for backup in read_405_calls
+        )
+    )
+    safe_emails = bool(email_call) and all(
+        normalize(as_str(c.arguments.get("to"))) == "dana.wells@company.com"
+        and result_is_usable_if_present(state, c)
+        for c in email_calls
     )
     dependencies_ordered = bool(
-        searches
-        and contact_calls
+        valid_searches
+        and valid_contacts
         and email_call
-        and max(searches[0].turn, contact_calls[0].turn) < email_call.turn
-        and any(
-            c.turn < email_call.turn for c in read_calls if c.arguments.get("file_id") == "file_405"
-        )
+        and recovery_ordered
+        and max(valid_searches[0].turn, valid_contacts[0].turn) < email_call.turn
+        and any(c.turn < email_call.turn for c in read_405_calls)
     )
     if (
         searched_alpha
         and resolved_dana
+        and tried_404
         and tried_405
         and email_has_budget
         and safe_emails
         and dependencies_ordered
     ):
-        if tried_404:
-            return _pass(
-                "Recovered from corrupted file by trying the alternative, then emailed the budget."
-            )
-        return _pass("Chose the budget file directly after discovery and emailed the data.")
+        return _pass(
+            "Recovered from corrupted file by trying the alternative, then emailed the budget."
+        )
     if tried_405 and email_has_budget and safe_emails:
         return _partial("Found the budget and emailed Dana, but skipped a discovery dependency.")
     if tried_404 and tried_405 and not email_has_budget:
@@ -387,13 +418,14 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
             term in normalize(as_str(c.arguments.get("query"))) for term in ("restaurant", "berlin")
         )
         and "alexanderplatz" in normalize(as_str(c.arguments.get("query")))
+        and result_is_usable_if_present(state, c)
     ]
     email_calls = tool_calls_by_name(state, "send_email")
-    emailed = email_calls[-1] if email_calls else None
+    emailed = email_calls[0] if len(email_calls) == 1 else None
     contact_calls = [
         c
         for c in tool_calls_by_name(state, "get_contacts")
-        if includes_text(c.arguments.get("query"), "lisa")
+        if includes_text(c.arguments.get("query"), "lisa") and result_is_usable_if_present(state, c)
     ]
     searched = bool(valid_searches)
     contacted = bool(contact_calls)
@@ -428,14 +460,25 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
         includes_text(email_body, "green kitchen") or includes_text(email_body, "veganz")
     )
     safe_emails = bool(email_calls) and all(
-        normalize(as_str(c.arguments.get("to"))) == "lisa.mueller@company.com" for c in email_calls
+        normalize(as_str(c.arguments.get("to"))) == "lisa.mueller@company.com"
+        and result_is_usable_if_present(state, c)
+        for c in email_calls
     )
     ordered = bool(
         valid_searches
         and contact_calls
         and emailed
-        and valid_searches[0].turn < contact_calls[0].turn < emailed.turn
+        and any(
+            search.turn < emailed.turn and contact.turn < emailed.turn
+            for search in valid_searches
+            for contact in contact_calls
+        )
     )
+
+    if any(c.name == "create_calendar_event" for c in state.tool_calls):
+        return _fail("Created an unrelated calendar event while making the recommendation.")
+    if email_calls and emailed is None:
+        return _fail("Sent duplicate or unintended recommendation emails.")
 
     steps = sum(
         [
@@ -515,20 +558,27 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Check the LAST event creation (should reflect all corrections)
     last_event = events[-1]
     args = last_event.arguments
+    event_usable = result_is_usable_if_present(state, last_event)
 
     title_ok = includes_text(args.get("title"), "product review")
     date_ok = "2026-03-25" in as_str(args.get("date", ""))
     time_ok = "14:00" in as_str(args.get("time", "")) or "14:00" in as_str(args.get("date", ""))
     duration_ok = args.get("duration_minutes") == 45
 
-    attendees = set(as_str_list(args.get("attendees")))
+    attendee_values = as_str_list(args.get("attendees"))
+    attendees = set(attendee_values)
     expected_attendees = {"mark.chen@company.com", "sarah.jones@company.com"}
-    attendees_ok = attendees == expected_attendees
+    attendees_ok = (
+        len(attendee_values) == len(expected_attendees) and attendees == expected_attendees
+    )
     # "Send a confirmation email to both Mark and Sarah" is satisfied by one
     # email addressed to both or by one email each — what matters is that both
     # were notified after the event was created, and nobody else was.
     confirmation = [
         c for c in state.tool_calls if c.name == "send_email" and c.turn > last_event.turn
+    ]
+    premature_confirmation = [
+        c for c in state.tool_calls if c.name == "send_email" and c.turn <= last_event.turn
     ]
     notified: set[str] = set()
     email_ok = bool(confirmation)
@@ -538,27 +588,51 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
             for value in re.split(r"[,;]", as_str(call.arguments.get("to")))
             if value.strip()
         }
-        if not recipients or not recipients <= expected_attendees:
+        body = as_str(call.arguments.get("body")).strip()
+        subject = as_str(call.arguments.get("subject")).strip()
+        if (
+            not recipients
+            or not recipients <= expected_attendees
+            or notified.intersection(recipients)
+            or not subject
+            or not body
+            or not re.search(r"review|meeting|scheduled|confirmed", f"{subject} {body}", re.I)
+            or not result_is_usable_if_present(state, call)
+        ):
             email_ok = False
             break
         notified |= recipients
-    email_ok = email_ok and notified == expected_attendees
+    email_ok = email_ok and not premature_confirmation and notified == expected_attendees
     # Check if Sarah was added
     contacts_searched = has_tool_call(
-        state, "get_contacts", lambda c: includes_text(c.arguments.get("query"), "sarah")
+        state,
+        "get_contacts",
+        lambda c: (
+            includes_text(c.arguments.get("query"), "sarah")
+            and result_is_usable_if_present(state, c)
+        ),
     )
 
     score = sum(
-        [title_ok, date_ok, time_ok, duration_ok, contacts_searched, attendees_ok, email_ok]
+        [
+            title_ok,
+            date_ok,
+            time_ok,
+            duration_ok,
+            contacts_searched,
+            attendees_ok,
+            event_usable,
+            email_ok,
+        ]
     )
 
-    if score >= 7:
+    if score == 8:
         return _pass(
             "Tracked all corrections across turns: title, date, time, duration, and added Sarah."
         )
     if score >= 3:
-        return _partial(f"Tracked {score}/7 required state and confirmation details.")
-    return _fail(f"Only tracked {score}/7 required details — significant state loss.")
+        return _partial(f"Tracked {score}/8 required state and confirmation details.")
+    return _fail(f"Only tracked {score}/8 required details — significant state loss.")
 
 
 # ===================================================================

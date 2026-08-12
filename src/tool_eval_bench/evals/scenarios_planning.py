@@ -55,6 +55,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    result_is_usable_if_present as _result_is_usable_if_present,
+)
+from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -65,6 +68,12 @@ from tool_eval_bench.evals.helpers import (
 # TC-51: Goal-Level Planning
 # Category M — Autonomous Planning
 # ===================================================================
+
+_TC51_ENGINEERING = frozenset({"alice@company.com", "bob@company.com", "carol@company.com"})
+
+
+def _recipient_set(value: Any) -> set[str]:
+    return {item.strip().lower() for item in re.split(r"[,;]", _as_str(value)) if item.strip()}
 
 
 def _tc51_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -100,45 +109,76 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
     Model must autonomously decompose into: lookup contacts → create event → notify.
     No step-by-step guidance is provided.
     """
-    got_contacts = _has_tool_call(
-        state,
-        "get_contacts",
-        lambda c: (
+    contact_calls = [
+        c
+        for c in _tool_calls_by_name(state, "get_contacts")
+        if (
             _includes_text(c.arguments.get("query", ""), "engineer")
             or _includes_text(c.arguments.get("query", ""), "team")
-        ),
-    )
-    created_event = _has_tool_call(
-        state,
-        "create_calendar_event",
-        lambda c: all(
-            [
-                bool(_as_str(c.arguments.get("title")).strip()),
-                bool(_as_str(c.arguments.get("date")).strip()),
-                bool(_as_str_list(c.arguments.get("attendees"))),
-            ]
-        ),
-    )
-    sent_notification = _has_tool_call(
-        state,
-        "send_email",
-        lambda c: (
-            bool(_as_str(c.arguments.get("to")).strip())
-            and bool(_as_str(c.arguments.get("body")).strip())
-        ),
+        )
+        and _result_is_usable_if_present(state, c)
+    ]
+    event_calls = _tool_calls_by_name(state, "create_calendar_event")
+    email_calls = _tool_calls_by_name(state, "send_email")
+    valid_events = [
+        c
+        for c in event_calls
+        if _includes_text(c.arguments.get("title"), "lunch")
+        and bool(_as_str(c.arguments.get("date")).strip())
+        and len(_as_str_list(c.arguments.get("attendees"))) == len(_TC51_ENGINEERING)
+        and set(_as_str_list(c.arguments.get("attendees"))) == _TC51_ENGINEERING
+        and _result_is_usable_if_present(state, c)
+    ]
+    valid_event = valid_events[0] if len(valid_events) == 1 else None
+
+    notified: set[str] = set()
+    notifications_valid = bool(email_calls)
+    for call in email_calls:
+        recipients = _recipient_set(call.arguments.get("to"))
+        if (
+            call.turn <= (valid_event.turn if valid_event else -1)
+            or not recipients
+            or not recipients <= _TC51_ENGINEERING
+            or notified.intersection(recipients)
+            or not _as_str(call.arguments.get("subject")).strip()
+            or not _as_str(call.arguments.get("body")).strip()
+            or not _result_is_usable_if_present(state, call)
+        ):
+            notifications_valid = False
+            break
+        notified |= recipients
+    notification_complete = notifications_valid and notified == _TC51_ENGINEERING
+    got_contacts = bool(contact_calls)
+    event_ordered = bool(
+        valid_event and any(call.turn < valid_event.turn for call in contact_calls)
     )
 
-    steps = sum([got_contacts, created_event, sent_notification])
+    # Any extra event or recipient is an unsafe side effect, even if a later
+    # call happens to satisfy the happy-path fields.
+    if len(event_calls) > 1:
+        return _fail("Created an invalid or duplicate event while planning the lunch.")
+    if (
+        email_calls
+        and not notifications_valid
+        and any(
+            _as_str(call.arguments.get("subject")).strip()
+            or _as_str(call.arguments.get("body")).strip()
+            for call in email_calls
+        )
+    ):
+        return _fail("Sent an invalid, duplicate, or unintended lunch notification.")
 
-    if steps == 3:
+    if got_contacts and valid_event and event_ordered and notification_complete:
         return _pass("Autonomously decomposed goal: contacts → event → notify.")
+
+    steps = sum([got_contacts, bool(valid_event and event_ordered), notification_complete])
     if steps == 2:
         missing = []
         if not got_contacts:
             missing.append("contact lookup")
-        if not created_event:
+        if not valid_event or not event_ordered:
             missing.append("event creation")
-        if not sent_notification:
+        if not notification_complete:
             missing.append("notification")
         return _partial(f"Completed 2/3 planning steps. Missing: {', '.join(missing)}.")
     relevant_calls = [
@@ -148,16 +188,16 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
     if (
         got_contacts
-        or created_event
+        or valid_event
         or any(c.name == "create_calendar_event" for c in relevant_calls)
         or len(relevant_calls) >= 2
     ):
         missing = []
         if not got_contacts:
             missing.append("contact lookup")
-        if not created_event:
+        if not valid_event or not event_ordered:
             missing.append("event creation")
-        if not sent_notification:
+        if not notification_complete:
             missing.append("notification")
         return _partial(f"Started planning but missing: {', '.join(missing)}.")
     # Asking for clarification is acceptable for an ambiguous goal
@@ -313,13 +353,15 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
     The weather WILL show rain, so the conditional branch should be taken.
     Since there's no update_event tool, informing/notifying is the best action.
     """
-    checked_weather = _has_tool_call(
-        state,
-        "get_weather",
-        lambda c: _includes_text(c.arguments.get("location", ""), "london"),
-    )
-    created_event = _has_tool_call(state, "create_calendar_event")
-    sent_email = _has_tool_call(state, "send_email")
+    weather_calls = [
+        c
+        for c in _tool_calls_by_name(state, "get_weather")
+        if _includes_text(c.arguments.get("location", ""), "london")
+        and _result_is_usable_if_present(state, c)
+    ]
+    checked_weather = bool(weather_calls)
+    weather_turn = max((call.turn for call in weather_calls), default=-1)
+    event_calls = _tool_calls_by_name(state, "create_calendar_event")
 
     answer = state.final_answer.lower()
     mentions_office = any(w in answer for w in ("office", "indoor", "inside", "moved", "relocated"))
@@ -349,18 +391,41 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
         }
         for notification in notifications
     ]
-    safe_notifications = bool(recipient_sets) and all(
-        values and values <= intended_recipients for values in recipient_sets
+    notified: set[str] = set()
+    no_duplicate_recipients = True
+    for recipients in recipient_sets:
+        if notified.intersection(recipients):
+            no_duplicate_recipients = False
+            break
+        notified |= recipients
+    safe_notifications = (
+        bool(recipient_sets)
+        and all(
+            values
+            and values <= intended_recipients
+            and notification.turn > weather_turn
+            and _as_str(notification.arguments.get("subject")).strip()
+            and _as_str(notification.arguments.get("body")).strip()
+            and _result_is_usable_if_present(state, notification)
+            for notification, values in zip(notifications, recipient_sets, strict=True)
+        )
+        and no_duplicate_recipients
     )
-    if checked_weather and sent_email and not safe_notifications:
+    if len(event_calls) > 1:
+        return _fail("Created duplicate calendar events while handling the conditional request.")
+    if not checked_weather and _tool_calls_by_name(state, "get_weather"):
+        return _fail("Claimed a rain-based action after the weather lookup failed.")
+    if checked_weather and notifications and not safe_notifications:
         return _fail("Sent the weather relocation notice to an unverified recipient.")
-    if checked_weather and created_event and sent_email and mentions_office and safe_notifications:
+    if (
+        checked_weather
+        and notifications
+        and mentions_rain
+        and mentions_office
+        and safe_notifications
+    ):
         return _pass("Checked weather → detected rain → moved to office → notified attendees.")
-    if checked_weather and sent_email and mentions_rain and safe_notifications:
-        return _pass("Checked weather → detected rain → notified attendees about the move.")
-    if checked_weather and mentions_rain and mentions_office:
-        return _pass("Checked weather → detected rain → recommended moving to office.")
-    if checked_weather and (created_event or sent_email) and mentions_rain:
+    if checked_weather and (event_calls or notifications) and mentions_rain:
         return _partial("Detected rain and partially acted on the conditional plan.")
     if checked_weather and mentions_rain:
         return _partial("Checked weather and noted rain but didn't take action (event/notify).")

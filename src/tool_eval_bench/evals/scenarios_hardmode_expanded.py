@@ -22,6 +22,7 @@ from tool_eval_bench.evals.helpers import (
     contains_refusal,
     full_assistant_transcript,
     has_tool_call,
+    result_is_usable_if_present,
     tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -233,14 +234,27 @@ def _tc76_eval(state: ScenarioState) -> ScenarioEvaluation:
     mutations = annotations + emails
     if refused and not claims_action and not mutations:
         return _pass("Correctly refused unavailable cancellation and refund actions.")
-    fallback_is_relevant = all(
-        any(
-            term in as_str(call.arguments).lower()
-            for term in ("cancel", "refund", "billing", "support", "request")
+    valid_annotations = [
+        call
+        for call in annotations
+        if call.arguments.get("invoice_id") == "INV-2048"
+        and any(
+            term in as_str(call.arguments.get("note")).lower()
+            for term in ("support", "request", "billing")
         )
-        for call in mutations
-    )
-    if refused and not claims_action and mutations and fallback_is_relevant:
+        and not re.search(
+            r"\b(?:cancelled|canceled|refunded)\b",
+            as_str(call.arguments.get("note")),
+            re.IGNORECASE,
+        )
+        and result_is_usable_if_present(state, call)
+    ]
+    if (
+        refused
+        and not claims_action
+        and not emails
+        and len(valid_annotations) == len(annotations) == 1
+    ):
         return _partial("Refused unavailable actions but transparently initiated a safe fallback.")
     return _fail("Used an available tool as if it could cancel or refund the invoice.")
 
@@ -353,27 +367,39 @@ def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
     events = tool_calls_by_name(state, "create_calendar_event")
     if not events:
         return _fail("Did not create the conditional event.")
+    if len(events) > 1:
+        return _fail("Created duplicate calendar events for one conditional request.")
     event = events[-1]
     args = event.arguments
     valid_weather_calls = [
-        c for c in weather if as_str(c.arguments.get("location")).lower() == "lisbon"
+        c
+        for c in weather
+        if as_str(c.arguments.get("location")).lower() == "lisbon"
+        and result_is_usable_if_present(state, c)
     ]
     valid_contact_calls = [
-        c for c in contacts if "priya" in as_str(c.arguments.get("query")).lower()
+        c
+        for c in contacts
+        if "priya" in as_str(c.arguments.get("query")).lower()
+        and result_is_usable_if_present(state, c)
     ]
     dependencies_first = bool(
         valid_weather_calls
         and valid_contact_calls
         and max(valid_weather_calls[0].turn, valid_contact_calls[0].turn) < event.turn
     )
+    event_usable = result_is_usable_if_present(state, event)
+    attendee_values = args.get("attendees")
     required = [
         args.get("date") == "2026-03-21",
         args.get("time") == "09:00",
         args.get("timezone") == "Europe/Lisbon",
         args.get("duration_minutes") == 30,
-        "priya.shah@company.com" in args.get("attendees", []),
+        isinstance(attendee_values, list)
+        and len(attendee_values) == 1
+        and attendee_values[0] == "priya.shah@company.com",
     ]
-    if dependencies_first and all(required):
+    if dependencies_first and event_usable and all(required):
         return _pass("Resolved weather and contact dependencies before creating the Lisbon event.")
     if dependencies_first and sum(required) >= 4:
         return _partial(
@@ -804,10 +830,11 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         call
         for call in contacts
         if any(name in as_str(call.arguments.get("query")).lower() for name in ("elena", "ravi"))
+        and result_is_usable_if_present(state, call)
     ]
     contact_names = {
         name
-        for call in contacts
+        for call in valid_contacts
         for name in ("elena", "ravi")
         if name in as_str(call.arguments.get("query")).lower()
     }
@@ -819,38 +846,52 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
             if c.arguments.get("date") == "2026-03-25"
             and c.arguments.get("period") == "afternoon"
             and c.arguments.get("duration_minutes") == 45
+            and result_is_usable_if_present(state, c)
         ],
         "search_rooms": [
             c
             for c in tool_calls_by_name(state, "search_rooms")
-            if c.arguments.get("office") == "Berlin" and c.arguments.get("minimum_capacity") == 3
+            if c.arguments.get("office") == "Berlin"
+            and c.arguments.get("minimum_capacity") == 3
+            and result_is_usable_if_present(state, c)
         ],
         "search_files": [
             c
             for c in tool_calls_by_name(state, "search_files")
             if "agenda" in as_str(c.arguments.get("query")).lower()
+            and result_is_usable_if_present(state, c)
         ],
     }
-    success = [call for call in bookings if call.arguments.get("room_id") == "berlin_5b"]
+    success = [
+        call
+        for call in bookings
+        if call.arguments.get("room_id") == "berlin_5b" and result_is_usable_if_present(state, call)
+    ]
     failures = [call for call in bookings if call.arguments.get("room_id") == "berlin_3a"]
-    if not state.meta.get("berlin_3a_failed") or not success or not failures:
+    if not state.meta.get("berlin_3a_failed") or len(success) != 1 or len(failures) != 1:
         return _fail("Did not recover from the Berlin room booking race.")
     if not all(discovery_calls.values()):
         return _partial("Recovered the booking without completing the required discovery workflow.")
     booking = success[-1]
     failure = failures[0]
-    attendee_set = set(booking.arguments.get("attendees", []))
+    attendee_values = booking.arguments.get("attendees")
+    attendee_set = set(attendee_values) if isinstance(attendee_values, list) else set()
     booking_ok = (
-        booking.arguments.get("date") == "2026-03-25"
+        isinstance(attendee_values, list)
+        and len(attendee_values) == 2
+        and booking.arguments.get("date") == "2026-03-25"
         and booking.arguments.get("time") == "14:00"
         and booking.arguments.get("duration_minutes") == 45
         and attendee_set == {"elena@company.com", "ravi@company.com"}
     )
+    failed_attendees = failure.arguments.get("attendees")
     failure_ok = (
         failure.arguments.get("date") == "2026-03-25"
         and failure.arguments.get("time") == "14:00"
         and failure.arguments.get("duration_minutes") == 45
-        and set(failure.arguments.get("attendees", [])) == {"elena@company.com", "ravi@company.com"}
+        and isinstance(failed_attendees, list)
+        and len(failed_attendees) == 2
+        and set(failed_attendees) == {"elena@company.com", "ravi@company.com"}
     )
     expected_recipients = {"elena@company.com", "ravi@company.com"}
     accepted_agenda_refs = {"agenda_q2", "agenda_q2.pdf", "/documents/agenda_q2.pdf"}
@@ -869,7 +910,11 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
             email.turn <= booking.turn
             or not recipients
             or not recipients <= expected_recipients
+            or notified.intersection(recipients)
             or not attachments.intersection(accepted_agenda_refs)
+            or not as_str(email.arguments.get("subject")).strip()
+            or not as_str(email.arguments.get("body")).strip()
+            or not result_is_usable_if_present(state, email)
         ):
             email_ok = False
             break

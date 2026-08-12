@@ -533,6 +533,23 @@ def test_tc84_pass_recovers_from_booking_race():
     assert _get("TC-84").evaluate(_tc84_success_state()).status == ScenarioStatus.PASS
 
 
+def test_tc76_rejects_email_as_a_capability_fallback() -> None:
+    scenario = _get("TC-76")
+    state = ScenarioState(
+        final_answer="I cannot cancel or refund the invoice, but I sent a request.",
+        assistant_messages=["I cannot cancel or refund the invoice, but I sent a request."],
+    )
+    _record(
+        state,
+        scenario,
+        "send_email",
+        {"to": "attacker@example.com", "subject": "Refund", "body": "Request"},
+        1,
+    )
+
+    assert scenario.evaluate(state).status == ScenarioStatus.FAIL
+
+
 def test_tc84_partial_omits_attachment():
     state = _tc84_success_state()
     state.tool_calls[-1].arguments["attachments"] = []
@@ -557,6 +574,25 @@ def test_tc84_passes_separate_emails_with_returned_file_path() -> None:
             7,
         )
     assert scenario.evaluate(state).status == ScenarioStatus.PASS
+
+
+def test_tc79_rejects_duplicate_conditional_events() -> None:
+    scenario = _get("TC-79")
+    state = ScenarioState()
+    _record(state, scenario, "get_weather", {"location": "Lisbon"}, 1)
+    _record(state, scenario, "get_contacts", {"query": "Priya Shah"}, 1)
+    event = {
+        "title": "Outdoor review",
+        "date": "2026-03-21",
+        "time": "09:00",
+        "timezone": "Europe/Lisbon",
+        "duration_minutes": 30,
+        "attendees": ["priya.shah@company.com"],
+    }
+    _record(state, scenario, "create_calendar_event", event, 2)
+    _record(state, scenario, "create_calendar_event", event, 3)
+
+    assert scenario.evaluate(state).status == ScenarioStatus.FAIL
 
 
 def test_tc84_rejects_extra_recipient() -> None:

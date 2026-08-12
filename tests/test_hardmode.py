@@ -287,8 +287,8 @@ class TestTC72CascadingRecovery:
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 
-    def test_pass_goes_straight_to_budget_file(self):
-        """Smart model picks file_405 (budget) directly — also PASS."""
+    def test_partial_goes_straight_to_backup_file(self):
+        """Choosing the backup directly does not demonstrate error recovery."""
         sc = _get_scenario("TC-72")
         state = ScenarioState()
         c1 = _make_call("search_files", {"query": "Project Alpha"}, turn=1)
@@ -306,7 +306,26 @@ class TestTC72CascadingRecovery:
         sc.handle_tool_call(state, c3)
         state.tool_calls.append(c3)
         result = sc.evaluate(state)
-        assert result.status == ScenarioStatus.PASS
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_partial_backup_before_corrupted_primary(self):
+        """Reading the backup first does not establish that recovery was needed."""
+        sc = _get_scenario("TC-72")
+        state = ScenarioState()
+        for call in (
+            _make_call("search_files", {"query": "Project Alpha"}, turn=1),
+            _make_call("read_file", {"file_id": "file_405"}, turn=2),
+            _make_call("read_file", {"file_id": "file_404"}, turn=3),
+            _make_call("get_contacts", {"query": "Dana Wells"}, turn=4),
+            _make_call(
+                "send_email",
+                {"to": "dana.wells@company.com", "body": "Budget is $1.2M"},
+                turn=5,
+            ),
+        ):
+            sc.handle_tool_call(state, call)
+            state.tool_calls.append(call)
+        assert sc.evaluate(state).status == ScenarioStatus.PARTIAL
 
     def test_partial_reads_both_but_no_email(self):
         """Recovers from error and reads budget, but doesn't email."""
@@ -395,6 +414,33 @@ class TestTC73MultiConstraint:
         state.assistant_messages.append(state.final_answer)
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
+
+    def test_pass_allows_independent_contact_lookup_in_parallel(self):
+        sc = _get_scenario("TC-73")
+        state = ScenarioState()
+        search = _make_call(
+            "web_search", {"query": "vegan restaurant Berlin near Alexanderplatz"}, turn=1
+        )
+        contact = _make_call("get_contacts", {"query": "Lisa"}, turn=1)
+        for call in (search, contact):
+            sc.handle_tool_call(state, call)
+            state.tool_calls.append(call)
+        state.assistant_messages.append(
+            "Green Kitchen Berlin is vegan-friendly, open on Sundays, and 0.8km from Alexanderplatz."
+        )
+        email = _make_call(
+            "send_email",
+            {
+                "to": "lisa.mueller@company.com",
+                "body": "I recommend Green Kitchen Berlin for Sunday.",
+            },
+            turn=2,
+        )
+        sc.handle_tool_call(state, email)
+        state.tool_calls.append(email)
+        state.final_answer = "I've emailed the Green Kitchen recommendation to Lisa."
+
+        assert sc.evaluate(state).status == ScenarioStatus.PASS
 
     def test_partial_searches_and_filters_but_no_email(self):
         sc = _get_scenario("TC-73")
