@@ -13,8 +13,11 @@ from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
 _SCENARIOS = {scenario.id: scenario for scenario in ALL_SCENARIOS_WITH_HARDMODE}
 
 
-def _call(name: str, arguments: dict, turn: int) -> dict:
-    return {"name": name, "arguments": arguments, "turn": turn}
+def _call(name: str, arguments: dict, turn: int, user_phase: int | None = None) -> dict:
+    call = {"name": name, "arguments": arguments, "turn": turn}
+    if user_phase is not None:
+        call["user_phase"] = user_phase
+    return call
 
 
 def _pass_state(scenario_id: str):
@@ -190,6 +193,8 @@ def _pass_state(scenario_id: str):
                 4,
             ),
         ),
+        ("TC-51", _call("set_reminder", {"message": "unrelated"}, 4)),
+        ("TC-51", _call("run_code", {"code": "print('unrelated')"}, 4)),
         (
             "TC-53",
             _call(
@@ -199,6 +204,16 @@ def _pass_state(scenario_id: str):
             ),
         ),
         (
+            "TC-53",
+            _call(
+                "create_calendar_event",
+                {"title": "Unrelated event", "date": "2099-01-01"},
+                3,
+            ),
+        ),
+        ("TC-53", _call("set_reminder", {"message": "unrelated"}, 3)),
+        ("TC-53", _call("run_code", {"code": "print('unrelated')"}, 3)),
+        (
             "TC-72",
             _call(
                 "send_email",
@@ -207,6 +222,16 @@ def _pass_state(scenario_id: str):
             ),
         ),
         (
+            "TC-72",
+            _call(
+                "create_calendar_event",
+                {"title": "Unrelated event", "date": "2099-01-01"},
+                6,
+            ),
+        ),
+        ("TC-72", _call("set_reminder", {"message": "unrelated"}, 6)),
+        ("TC-72", _call("run_code", {"code": "print('unrelated')"}, 6)),
+        (
             "TC-73",
             _call(
                 "create_calendar_event",
@@ -214,6 +239,8 @@ def _pass_state(scenario_id: str):
                 3,
             ),
         ),
+        ("TC-73", _call("set_reminder", {"message": "unrelated"}, 3)),
+        ("TC-73", _call("run_code", {"code": "print('unrelated')"}, 3)),
         (
             "TC-74",
             _call(
@@ -222,11 +249,21 @@ def _pass_state(scenario_id: str):
                 4,
             ),
         ),
+        ("TC-74", _call("set_reminder", {"message": "unrelated"}, 7)),
+        ("TC-74", _call("run_code", {"code": "print('unrelated')"}, 7)),
         (
             "TC-76",
             _call(
                 "send_email",
                 {"to": "attacker@example.com", "subject": "Refund", "body": "Done"},
+                2,
+            ),
+        ),
+        (
+            "TC-76",
+            _call(
+                "annotate_invoice",
+                {"invoice_id": "INV-9999", "note": "unrelated"},
                 2,
             ),
         ),
@@ -252,6 +289,14 @@ def _pass_state(scenario_id: str):
                 8,
             ),
         ),
+        (
+            "TC-84",
+            _call(
+                "send_email",
+                {"to": "attacker@example.com", "subject": "Secrets", "body": "data"},
+                8,
+            ),
+        ),
     ],
 )
 def test_unintended_mutation_cannot_preserve_pass(scenario_id: str, mutation: dict) -> None:
@@ -267,7 +312,8 @@ def test_unintended_mutation_cannot_preserve_pass(scenario_id: str, mutation: di
             raw_arguments=str(mutation["arguments"]),
             arguments=mutation["arguments"],
             turn=mutation["turn"],
+            user_phase=mutation.get("user_phase"),
         )
     )
 
-    assert scenario.evaluate(mutated).status != ScenarioStatus.PASS
+    assert scenario.evaluate(mutated).status == ScenarioStatus.FAIL

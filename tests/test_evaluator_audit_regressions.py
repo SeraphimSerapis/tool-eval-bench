@@ -1284,7 +1284,7 @@ def _tc53_state(recipient, *, contact_results=None):
                 calls=_tc74_calls("mark.chen@company.com", "outsider@example.net"),
                 answer="Confirmed.",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         # TC-53: a tool-surfaced recipient is known; an invented one is not.
         (

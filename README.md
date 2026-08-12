@@ -514,6 +514,10 @@ Hard Mode focuses on fifteen ceiling-breaking scenarios:
 
 Hard Mode scenarios are scored identically (pass=2, partial=1, fail=0) and appear in the standard report under Category P. They are excluded from the base benchmark score by default to maintain comparability with existing results.
 
+Multi-turn authorization scenarios record the active user-message phase for
+each tool call. This prevents a correct-looking mutation made before the
+authorizing follow-up from receiving credit.
+
 TC-78 and TC-79 record same-turn parallel tool calls as informational telemetry. Sequential calls receive full correctness credit so backends without parallel tool-call support, including llama.cpp, remain first-class targets.
 
 ### Held-out scenario packs

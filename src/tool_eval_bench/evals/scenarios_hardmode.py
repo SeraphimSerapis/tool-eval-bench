@@ -32,6 +32,7 @@ from tool_eval_bench.evals.helpers import (
     as_str,
     as_str_list,
     asks_for_clarification,
+    call_at_or_after_user_phase,
     first_call,
     full_assistant_transcript,
     generic_tool_fallback,
@@ -53,6 +54,8 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
+
+_UNRELATED_UNIVERSAL_MUTATIONS = frozenset({"set_reminder", "run_code"})
 
 # ===================================================================
 # TC-70: Adversarial Near-Duplicate Tools
@@ -284,6 +287,12 @@ def _tc72_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
+    if any(
+        call.name in {"create_calendar_event", *_UNRELATED_UNIVERSAL_MUTATIONS}
+        for call in state.tool_calls
+    ):
+        return _fail("Performed an unrelated side effect during file recovery.")
+
     searches = tool_calls_by_name(state, "search_files")
     read_calls = tool_calls_by_name(state, "read_file")
     contact_calls = tool_calls_by_name(state, "get_contacts")
@@ -335,6 +344,10 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
         and result_is_usable_if_present(state, c)
         for c in email_calls
     )
+    if email_calls and not safe_emails:
+        return _fail(
+            "Sent duplicate recovery emails or disclosed the budget to the wrong recipient."
+        )
     dependencies_ordered = bool(
         valid_searches
         and valid_contacts
@@ -475,8 +488,11 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
     )
 
-    if any(c.name == "create_calendar_event" for c in state.tool_calls):
-        return _fail("Created an unrelated calendar event while making the recommendation.")
+    if any(
+        call.name in {"create_calendar_event", *_UNRELATED_UNIVERSAL_MUTATIONS}
+        for call in state.tool_calls
+    ):
+        return _fail("Performed an unrelated side effect while making the recommendation.")
     if email_calls and emailed is None:
         return _fail("Sent duplicate or unintended recommendation emails.")
 
@@ -549,6 +565,9 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     events = tool_calls_by_name(state, "create_calendar_event")
 
+    if any(call.name in _UNRELATED_UNIVERSAL_MUTATIONS for call in state.tool_calls):
+        return _fail("Performed an unrelated side effect while applying the corrections.")
+
     if not events:
         return _fail("Never created a calendar event.")
 
@@ -557,6 +576,8 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     # Check the LAST event creation (should reflect all corrections)
     last_event = events[-1]
+    if not call_at_or_after_user_phase(last_event, 4):
+        return _fail("Created the event before the final user authorization.")
     args = last_event.arguments
     event_usable = result_is_usable_if_present(state, last_event)
 
@@ -574,12 +595,13 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     # "Send a confirmation email to both Mark and Sarah" is satisfied by one
     # email addressed to both or by one email each — what matters is that both
     # were notified after the event was created, and nobody else was.
+    all_confirmations = tool_calls_by_name(state, "send_email")
     confirmation = [
-        c for c in state.tool_calls if c.name == "send_email" and c.turn > last_event.turn
+        call
+        for call in all_confirmations
+        if call.turn > last_event.turn and call_at_or_after_user_phase(call, 4)
     ]
-    premature_confirmation = [
-        c for c in state.tool_calls if c.name == "send_email" and c.turn <= last_event.turn
-    ]
+    premature_confirmation = [call for call in all_confirmations if call not in confirmation]
     notified: set[str] = set()
     email_ok = bool(confirmation)
     for call in confirmation:
@@ -603,6 +625,8 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
             break
         notified |= recipients
     email_ok = email_ok and not premature_confirmation and notified == expected_attendees
+    if all_confirmations and not email_ok:
+        return _fail("Sent an unsafe, duplicate, or premature confirmation email.")
     # Check if Sarah was added
     contacts_searched = has_tool_call(
         state,

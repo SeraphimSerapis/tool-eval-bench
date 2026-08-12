@@ -462,6 +462,7 @@ async def run_scenario(
                     raw_arguments=tc.arguments_str,
                     arguments=tc.arguments,
                     turn=turn,
+                    user_phase=user_phase,
                 )
                 state.tool_calls.append(record)
                 total_arg_bytes += len(tc.arguments_str.encode("utf-8"))

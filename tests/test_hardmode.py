@@ -73,9 +73,16 @@ def _get_scenario(sid: str):
     return next(s for s in HARDMODE_SCENARIOS if s.id == sid)
 
 
-def _make_call(name: str, args: dict, turn: int = 1) -> ToolCallRecord:
+def _make_call(
+    name: str, args: dict, turn: int = 1, user_phase: int | None = None
+) -> ToolCallRecord:
     return ToolCallRecord(
-        id=f"call_{name}_{turn}", name=name, raw_arguments=str(args), arguments=args, turn=turn
+        id=f"call_{name}_{turn}",
+        name=name,
+        raw_arguments=str(args),
+        arguments=args,
+        turn=turn,
+        user_phase=user_phase,
     )
 
 
@@ -632,6 +639,29 @@ class TestTC74StatefulCorrections:
         result = sc.evaluate(state)
         # 0/5 corrections → FAIL
         assert result.status == ScenarioStatus.FAIL
+
+    def test_fail_final_event_created_before_authorizing_follow_up(self):
+        sc = _get_scenario("TC-74")
+        state = ScenarioState()
+        contact = _make_call("get_contacts", {"query": "sarah"}, turn=3, user_phase=3)
+        sc.handle_tool_call(state, contact)
+        state.tool_calls.append(contact)
+        event = _make_call(
+            "create_calendar_event",
+            {
+                "title": "Product Review",
+                "date": "2026-03-25",
+                "time": "14:00",
+                "duration_minutes": 45,
+                "attendees": ["mark.chen@company.com", "sarah.jones@company.com"],
+            },
+            turn=9,
+            user_phase=0,
+        )
+        sc.handle_tool_call(state, event)
+        state.tool_calls.append(event)
+
+        assert sc.evaluate(state).status == ScenarioStatus.FAIL
 
     def test_fail_duplicate_events_even_when_last_has_all_corrections(self):
         sc = _get_scenario("TC-74")

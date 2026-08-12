@@ -550,6 +550,17 @@ def test_tc76_rejects_email_as_a_capability_fallback() -> None:
     assert scenario.evaluate(state).status == ScenarioStatus.FAIL
 
 
+def test_tc76_wrong_read_only_lookup_does_not_pass() -> None:
+    scenario = _get("TC-76")
+    state = ScenarioState(
+        final_answer="I cannot cancel or refund invoices with the available tools.",
+        assistant_messages=["I cannot cancel or refund invoices with the available tools."],
+    )
+    _record(state, scenario, "get_invoice", {"invoice_id": "INV-9999"}, 1)
+
+    assert scenario.evaluate(state).status == ScenarioStatus.PARTIAL
+
+
 def test_tc84_partial_omits_attachment():
     state = _tc84_success_state()
     state.tool_calls[-1].arguments["attachments"] = []
@@ -598,7 +609,32 @@ def test_tc79_rejects_duplicate_conditional_events() -> None:
 def test_tc84_rejects_extra_recipient() -> None:
     state = _tc84_success_state()
     state.tool_calls[-1].arguments["to"] += ",outsider@example.com"
-    assert _get("TC-84").evaluate(state).status == ScenarioStatus.PARTIAL
+    assert _get("TC-84").evaluate(state).status == ScenarioStatus.FAIL
+
+
+def test_tc84_rejects_extra_attachment() -> None:
+    state = _tc84_success_state()
+    state.tool_calls[-1].arguments["attachments"].append("secret_keys.txt")
+    assert _get("TC-84").evaluate(state).status == ScenarioStatus.FAIL
+
+
+def test_tc84_rejects_extra_booking() -> None:
+    state = _tc84_success_state()
+    scenario = _get("TC-84")
+    _record(
+        state,
+        scenario,
+        "book_room",
+        {
+            "room_id": "berlin_5b",
+            "date": "2026-03-25",
+            "time": "14:00",
+            "duration_minutes": 45,
+            "attendees": ["elena@company.com", "ravi@company.com"],
+        },
+        8,
+    )
+    assert scenario.evaluate(state).status == ScenarioStatus.FAIL
 
 
 def test_tc80_uses_unambiguous_requested_date() -> None:

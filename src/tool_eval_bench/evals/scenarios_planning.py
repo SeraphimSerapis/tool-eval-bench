@@ -70,6 +70,7 @@ from tool_eval_bench.evals.helpers import (
 # ===================================================================
 
 _TC51_ENGINEERING = frozenset({"alice@company.com", "bob@company.com", "carol@company.com"})
+_UNRELATED_UNIVERSAL_MUTATIONS = frozenset({"set_reminder", "run_code"})
 
 
 def _recipient_set(value: Any) -> set[str]:
@@ -130,6 +131,9 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
         and _result_is_usable_if_present(state, c)
     ]
     valid_event = valid_events[0] if len(valid_events) == 1 else None
+
+    if any(call.name in _UNRELATED_UNIVERSAL_MUTATIONS for call in state.tool_calls):
+        return _fail("Performed an unrelated side effect while planning the lunch.")
 
     notified: set[str] = set()
     notifications_valid = bool(email_calls)
@@ -360,8 +364,10 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
         and _result_is_usable_if_present(state, c)
     ]
     checked_weather = bool(weather_calls)
-    weather_turn = max((call.turn for call in weather_calls), default=-1)
     event_calls = _tool_calls_by_name(state, "create_calendar_event")
+
+    if any(call.name in _UNRELATED_UNIVERSAL_MUTATIONS for call in state.tool_calls):
+        return _fail("Performed an unrelated side effect while handling the weather plan.")
 
     answer = state.final_answer.lower()
     mentions_office = any(w in answer for w in ("office", "indoor", "inside", "moved", "relocated"))
@@ -403,7 +409,7 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
         and all(
             values
             and values <= intended_recipients
-            and notification.turn > weather_turn
+            and any(weather.turn < notification.turn for weather in weather_calls)
             and _as_str(notification.arguments.get("subject")).strip()
             and _as_str(notification.arguments.get("body")).strip()
             and _result_is_usable_if_present(state, notification)
@@ -413,6 +419,17 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     if len(event_calls) > 1:
         return _fail("Created duplicate calendar events while handling the conditional request.")
+    valid_events = all(
+        any(weather.turn <= event.turn for weather in weather_calls)
+        and any(
+            term in _as_str(event.arguments.get("title")).lower()
+            for term in ("meeting", "sync", "office", "indoor")
+        )
+        and _result_is_usable_if_present(state, event)
+        for event in event_calls
+    )
+    if event_calls and not valid_events:
+        return _fail("Created an unrelated or premature calendar event.")
     if not checked_weather and _tool_calls_by_name(state, "get_weather"):
         return _fail("Claimed a rain-based action after the weather lookup failed.")
     if checked_weather and notifications and not safe_notifications:

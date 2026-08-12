@@ -174,6 +174,29 @@ class TestTC53ConditionalPlanning:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
 
+    def test_pass_harmless_weather_recheck_after_notification(self) -> None:
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "London"}, "turn": 1},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "team@company.com",
+                        "subject": "Meeting moved",
+                        "body": "The outdoor meeting is moving indoors because of rain.",
+                    },
+                    "turn": 2,
+                },
+                {"name": "get_weather", "arguments": {"location": "London"}, "turn": 3},
+            ],
+            final_answer=(
+                "It's raining in London, so I've moved the meeting to the office and "
+                "notified attendees."
+            ),
+        )
+
+        assert self.sc.evaluate(state).status == ScenarioStatus.PASS
+
 
 # ===================================================================
 # TC-54: Cross-Tool Synthesis (Category N)

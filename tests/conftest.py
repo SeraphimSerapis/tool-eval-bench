@@ -46,6 +46,7 @@ def make_state(
                         raw_arguments=json.dumps(tc.get("arguments", {})),
                         arguments=tc.get("arguments", {}),
                         turn=tc.get("turn", 1),
+                        user_phase=tc.get("user_phase"),
                     )
                 )
             else:
@@ -76,6 +77,7 @@ def make_tool_call(
     arguments: dict | None = None,
     turn: int = 1,
     call_id: str | None = None,
+    user_phase: int | None = None,
 ) -> ToolCallRecord:
     """Build a ``ToolCallRecord`` for testing."""
     args = arguments or {}
@@ -85,4 +87,5 @@ def make_tool_call(
         raw_arguments=json.dumps(args),
         arguments=args,
         turn=turn,
+        user_phase=user_phase,
     )

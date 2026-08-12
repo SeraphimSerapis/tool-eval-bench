@@ -187,6 +187,18 @@ def result_is_usable_if_present(state: ScenarioState, call: ToolCallRecord) -> b
     return not has_explicit_tool_error(state, call)
 
 
+def call_at_or_after_user_phase(call: ToolCallRecord, minimum_phase: int) -> bool:
+    """Check that a call follows the required user message.
+
+    Runtime traces carry explicit zero-based user phases. Older synthetic and
+    imported traces lack that field, so they remain evaluable under their
+    original contracts rather than receiving a fabricated phase.
+    """
+    if call.user_phase is not None:
+        return call.user_phase >= minimum_phase
+    return True
+
+
 def has_matching_tool_result(state: ScenarioState, call: ToolCallRecord) -> bool:
     """Return whether a concrete result record exists for ``call``."""
     return bool(matching_tool_results(state, call))

@@ -716,6 +716,44 @@ async def test_tool_choice_can_relax_after_first_tool_call() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_calls_record_the_active_user_phase() -> None:
+    """Tool provenance distinguishes initial work from follow-up authorization."""
+    observed_phases: list[int | None] = []
+
+    def evaluate(state: ScenarioState) -> ScenarioEvaluation:
+        observed_phases.extend(call.user_phase for call in state.tool_calls)
+        return ScenarioEvaluation(status=ScenarioStatus.PASS, points=2, summary="ok")
+
+    scenario = ScenarioDefinition(
+        id="PHASE-01",
+        title="PHASE-01",
+        description="Act only after authorization.",
+        category=Category.I,
+        user_message="Prepare the action, but do not execute it.",
+        follow_up_messages=["Execute it now."],
+        handle_tool_call=_simple_handler,
+        evaluate=evaluate,
+    )
+    adapter = MockAdapter(
+        [
+            {"content": "Draft prepared."},
+            {"content": "", "tool_calls": [{"name": "calculator", "arguments": {}}]},
+            {"content": "Done."},
+        ]
+    )
+
+    await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=scenario,
+    )
+
+    assert observed_phases == [1]
+
+
+@pytest.mark.asyncio
 async def test_budget_exhaustion_is_distinct_from_evaluator_failure() -> None:
     """Budget run-out sets BUDGET_EXCEEDED, not the evaluator's failure kind."""
     scenario = _tool_failing_evaluator("OVR-05")

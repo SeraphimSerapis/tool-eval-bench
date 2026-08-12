@@ -108,6 +108,9 @@ class ToolCallRecord:
     raw_arguments: str
     arguments: dict[str, Any]
     turn: int
+    # Zero-based user-message phase. ``None`` preserves compatibility for
+    # synthetic or externally constructed traces that predate phase tracking.
+    user_phase: int | None = None
 
 
 @dataclass
