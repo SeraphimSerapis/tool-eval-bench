@@ -225,11 +225,20 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
         lambda c: _normalize(_as_str(c.arguments.get("file_id"))) == "file_091",
     ):
         steps += 1
-    if _has_tool_call(
+    manager_lookup = _has_tool_call(
         state,
         "get_contacts",
         lambda c: _includes_text(c.arguments.get("query"), "manager"),
-    ):
+    )
+
+    # The org chart is an equivalent authoritative source for the manager.
+    # Keep the dependency semantic: either lookup must precede delivery.
+    manager_lookup = manager_lookup or _has_tool_call(
+        state,
+        "get_org_chart",
+        lambda c: _is_engineering_department(c.arguments.get("department")),
+    )
+    if manager_lookup:
         steps += 1
     if _has_tool_call(
         state,
@@ -263,15 +272,31 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     if steps == 4 and not domain_calls:
         search = next((c for c in state.tool_calls if c.name == "search_files"), None)
         read = next((c for c in state.tool_calls if c.name == "read_file"), None)
-        contacts = next((c for c in state.tool_calls if c.name == "get_contacts"), None)
+        manager = next(
+            (
+                c
+                for c in state.tool_calls
+                if c.name == "get_contacts" and _includes_text(c.arguments.get("query"), "manager")
+            ),
+            None,
+        )
+        manager = manager or next(
+            (
+                c
+                for c in state.tool_calls
+                if c.name == "get_org_chart"
+                and _is_engineering_department(c.arguments.get("department"))
+            ),
+            None,
+        )
         email = next((c for c in state.tool_calls if c.name == "send_email"), None)
-        if any(call is None for call in (search, read, contacts, email)):
+        if any(call is None for call in (search, read, manager, email)):
             return _partial("Completed the calls, but one dependency record was incomplete.")
         search = cast(ToolCallRecord, search)
         read = cast(ToolCallRecord, read)
-        contacts = cast(ToolCallRecord, contacts)
+        manager = cast(ToolCallRecord, manager)
         email = cast(ToolCallRecord, email)
-        if not (search.turn < read.turn < email.turn and contacts.turn < email.turn):
+        if not (search.turn < read.turn < email.turn and manager.turn < email.turn):
             return _partial("Completed the calls, but violated a data dependency before email.")
         return _pass("Completed the full 4-step chain correctly from 52 tools.")
     if steps == 4 and domain_calls:
