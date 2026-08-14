@@ -1,0 +1,146 @@
+"""Warm-up must survive endpoints that reject optional speed hints.
+
+Gemini's OpenAI-compatibility layer answers HTTP 400 for unknown request
+fields instead of ignoring them, which used to fail warm-up outright.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import pytest
+
+from tool_eval_bench.runner import throughput
+
+
+class _Response:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        self.text = "unknown field"
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _RecordingClient:
+    """Fake httpx.AsyncClient that fails every request carrying a given key."""
+
+    def __init__(self, reject_key: str | None, status_code: int = 400) -> None:
+        self._reject_key = reject_key
+        self._status_code = status_code
+        self.calls: list[tuple[str, dict[str, Any], dict[str, str]]] = []
+
+    async def __aenter__(self) -> _RecordingClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def post(self, url: str, *, json: dict[str, Any], headers: dict[str, str]) -> _Response:
+        self.calls.append((url, json, headers))
+        if self._reject_key is not None and self._reject_key in json:
+            return _Response(self._status_code)
+        return _Response(200)
+
+
+@pytest.fixture
+def client_factory(monkeypatch):
+    def install(client: _RecordingClient) -> _RecordingClient:
+        monkeypatch.setattr(throughput.httpx, "AsyncClient", lambda **kwargs: client)
+        return client
+
+    return install
+
+
+class TestWarmupHintFallback:
+    def test_retries_without_chat_template_kwargs_on_400(self, client_factory):
+        client = client_factory(_RecordingClient("chat_template_kwargs"))
+
+        elapsed = asyncio.run(throughput.warmup("http://server/v1", "m", "key"))
+
+        assert elapsed >= 0
+        assert len(client.calls) == 2
+        assert "chat_template_kwargs" in client.calls[0][1]
+        assert "chat_template_kwargs" not in client.calls[1][1]
+        # The rest of the request is preserved.
+        assert client.calls[1][1]["model"] == "m"
+        assert client.calls[1][1]["max_tokens"] == throughput.WARMUP_MAX_TOKENS
+
+    def test_retries_on_422(self, client_factory):
+        client = client_factory(_RecordingClient("chat_template_kwargs", status_code=422))
+
+        asyncio.run(throughput.warmup("http://server/v1", "m"))
+
+        assert len(client.calls) == 2
+
+    def test_failure_still_raises_after_the_retry(self, client_factory):
+        """A 400 the hints did not cause is a real failure and must surface."""
+        client = client_factory(_RecordingClient("model"))
+
+        with pytest.raises(RuntimeError, match="HTTP 400"):
+            asyncio.run(throughput.warmup("http://server/v1", "m"))
+
+        assert len(client.calls) == 2  # first attempt, then the stripped retry
+
+    def test_no_second_attempt_when_nothing_can_be_stripped(self, client_factory):
+        client = client_factory(_RecordingClient("contents"))
+        request = ("http://gemini/models/m:generateContent", {"contents": []}, {})
+
+        with pytest.raises(RuntimeError, match="HTTP 400"):
+            asyncio.run(throughput.warmup("ignored", "m", request=request))
+
+        assert len(client.calls) == 1
+
+    def test_success_sends_one_request(self, client_factory):
+        client = client_factory(_RecordingClient(None))
+
+        asyncio.run(throughput.warmup("http://server/v1", "m"))
+
+        assert len(client.calls) == 1
+
+    def test_other_error_statuses_are_not_retried(self, client_factory):
+        client = client_factory(_RecordingClient("chat_template_kwargs", status_code=500))
+
+        with pytest.raises(RuntimeError, match="HTTP 500"):
+            asyncio.run(throughput.warmup("http://server/v1", "m"))
+
+        assert len(client.calls) == 1
+
+
+class TestWarmupRequestOverride:
+    def test_supplied_request_is_used_verbatim(self, client_factory):
+        client = client_factory(_RecordingClient(None))
+        request = (
+            "http://gemini/v1beta/models/m:generateContent",
+            {"contents": [{"role": "user", "parts": [{"text": "Say hello."}]}]},
+            {"x-goog-api-key": "k"},
+        )
+
+        asyncio.run(throughput.warmup("ignored", "m", "ignored", request=request))
+
+        url, payload, headers = client.calls[0]
+        assert url == request[0]
+        assert payload == request[1]
+        assert headers == request[2]
+
+    def test_gemini_thinking_config_is_stripped_on_rejection(self):
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": "Say hello."}]}],
+            "generationConfig": {
+                "temperature": 0.0,
+                "maxOutputTokens": 4,
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
+        }
+
+        stripped = throughput._without_optional_hints(payload)
+
+        assert stripped is not None
+        assert "thinkingConfig" not in stripped["generationConfig"]
+        assert stripped["generationConfig"]["maxOutputTokens"] == 4
+        assert stripped["contents"] == payload["contents"]
+
+    def test_nothing_to_strip_returns_none(self):
+        assert throughput._without_optional_hints({"model": "m"}) is None

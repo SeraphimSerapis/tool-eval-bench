@@ -404,41 +404,75 @@ async def estimate_latency(
 # ---------------------------------------------------------------------------
 
 
+WARMUP_MAX_TOKENS = 4
+
+# Thinking/reasoning models (Qwen3.x, QwQ, Gemini 3, …) can spend a long time in
+# an internal chain-of-thought phase before emitting visible tokens.  Warm-up
+# only needs to prime the KV cache, so it asks for thinking to be turned off.
+# vLLM and friends read ``chat_template_kwargs``; the Gemini adapter maps the
+# same key onto ``generationConfig.thinkingConfig``.
+WARMUP_EXTRA_PARAMS: dict[str, Any] = {"chat_template_kwargs": {"enable_thinking": False}}
+
+# Hints that speed warm-up up but are not part of any endpoint's contract.
+# Strict endpoints (notably Gemini's OpenAI-compatibility layer) reject unknown
+# request fields outright with HTTP 400 rather than ignoring them.
+_OPTIONAL_WARMUP_KEYS = ("chat_template_kwargs", "extra_body")
+_REJECTION_STATUS_CODES = (400, 422)
+
+
+def _without_optional_hints(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Strip speed hints from a warm-up payload, or return None if there are none."""
+    stripped = {k: v for k, v in payload.items() if k not in _OPTIONAL_WARMUP_KEYS}
+    config = payload.get("generationConfig")
+    if isinstance(config, dict) and "thinkingConfig" in config:
+        stripped["generationConfig"] = {k: v for k, v in config.items() if k != "thinkingConfig"}
+    return stripped if stripped != payload else None
+
+
 async def warmup(
     base_url: str,
     model: str,
     api_key: str | None = None,
     timeout: float = 120.0,
+    *,
+    request: tuple[str, dict[str, Any], dict[str, str]] | None = None,
 ) -> float:
     """Send a trivial completion to prime the server.
 
     Returns elapsed time in milliseconds.
 
-    Thinking/reasoning models (Qwen3.x, QwQ, etc.) may spend significant
-    time in an internal chain-of-thought phase before emitting visible
-    tokens.  Since warm-up only needs to prime the KV cache, we disable
-    thinking via ``chat_template_kwargs`` and ``extra_body`` to keep the
-    request fast and avoid read-timeout failures.
+    ``request`` overrides the (url, payload, headers) triple, so callers that
+    know the endpoint's wire format can supply a non-OpenAI request.  If the
+    endpoint rejects the payload outright, warm-up retries once without the
+    optional speed hints before giving up.
     """
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Say hello."},
-        ],
-        "max_tokens": 4,
-        "temperature": 0.0,
-        # Disable thinking/reasoning to avoid long chain-of-thought delays.
-        # Supported by vLLM (chat_template_kwargs) and other backends (extra_body).
-        "chat_template_kwargs": {"enable_thinking": False},
-    }
+    if request is None:
+        url = _chat_url(base_url)
+        headers = _headers(api_key)
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Say hello."},
+            ],
+            "max_tokens": WARMUP_MAX_TOKENS,
+            "temperature": 0.0,
+            **WARMUP_EXTRA_PARAMS,
+        }
+    else:
+        url, payload, headers = request
+
     t0 = time.perf_counter()
     async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(
-            _chat_url(base_url),
-            json=payload,
-            headers=_headers(api_key),
-        )
+        resp = await client.post(url, json=payload, headers=headers)
+        if resp.status_code in _REJECTION_STATUS_CODES:
+            retry_payload = _without_optional_hints(payload)
+            if retry_payload is not None:
+                logger.debug(
+                    "Warm-up rejected with HTTP %s; retrying without optional hints",
+                    resp.status_code,
+                )
+                resp = await client.post(url, json=retry_payload, headers=headers)
         resp.raise_for_status()
     return (time.perf_counter() - t0) * 1000
     # Note: warmup intentionally uses its own client since it runs
