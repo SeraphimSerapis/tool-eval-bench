@@ -77,7 +77,7 @@ async def test_e2e_single_scenario_pipeline() -> None:
         service = BenchmarkService(repo=repo, reporter=reporter)
 
         # Monkey-patch adapter creation to use our mock
-        service._adapter_for = lambda backend: SmokeMockAdapter()
+        service._adapter_for = lambda *_args, **_kwargs: SmokeMockAdapter()
 
         result = await service.run_benchmark(
             model="smoke-test-model",
@@ -131,7 +131,7 @@ async def test_e2e_fail_scenario_persists() -> None:
         repo = RunRepository(db_path=db_path)
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
-        service._adapter_for = lambda backend: FailMockAdapter()
+        service._adapter_for = lambda *_args, **_kwargs: FailMockAdapter()
 
         result = await service.run_benchmark(
             model="fail-model",
@@ -174,7 +174,7 @@ async def test_e2e_multiple_scenarios() -> None:
         repo = RunRepository(db_path=db_path)
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
-        service._adapter_for = lambda backend: MultiMockAdapter()
+        service._adapter_for = lambda *_args, **_kwargs: MultiMockAdapter()
 
         result = await service.run_benchmark(
             model="multi-test",
@@ -217,7 +217,7 @@ async def test_e2e_callbacks_invoked() -> None:
         repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
-        service._adapter_for = lambda backend: SmokeMockAdapter()
+        service._adapter_for = lambda *_args, **_kwargs: SmokeMockAdapter()
 
         await service.run_benchmark(
             model="cb-test",
@@ -275,7 +275,7 @@ async def test_e2e_random_tool_model_scores_low() -> None:
         repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
-        service._adapter_for = lambda backend: RandomToolAdapter()
+        service._adapter_for = lambda *_args, **_kwargs: RandomToolAdapter()
 
         result = await service.run_benchmark(
             model="random-tool-model",
@@ -317,7 +317,7 @@ async def test_e2e_text_only_model_fails_all_tool_scenarios() -> None:
         repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
-        service._adapter_for = lambda backend: TextOnlyAdapter()
+        service._adapter_for = lambda *_args, **_kwargs: TextOnlyAdapter()
 
         result = await service.run_benchmark(
             model="text-only-model",
@@ -344,7 +344,7 @@ async def test_e2e_report_includes_tool_overhead() -> None:
         repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
-        service._adapter_for = lambda backend: SmokeMockAdapter()
+        service._adapter_for = lambda *_args, **_kwargs: SmokeMockAdapter()
 
         result = await service.run_benchmark(
             model="overhead-test",
@@ -392,7 +392,7 @@ async def test_e2e_no_think_threaded_to_adapter() -> None:
         repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
-        service._adapter_for = lambda backend: CapturingAdapter()
+        service._adapter_for = lambda *_args, **_kwargs: CapturingAdapter()
 
         await service.run_benchmark(
             model="think-test",
@@ -443,7 +443,7 @@ async def test_e2e_sampling_params_threaded_to_adapter() -> None:
         repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
-        service._adapter_for = lambda backend: CapturingAdapter()
+        service._adapter_for = lambda *_args, **_kwargs: CapturingAdapter()
 
         await service.run_benchmark(
             model="sampling-test",

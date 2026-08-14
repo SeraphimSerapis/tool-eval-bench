@@ -87,7 +87,7 @@ def run_pressure_sweep(
     """Run scenarios at increasing context pressure and report breaking point."""
     from rich.panel import Panel
 
-    from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
+    from tool_eval_bench.adapters.factory import build_adapter
     from tool_eval_bench.runner.context_pressure import (
         ContextPressureConfig,
         build_pressure_messages,
@@ -228,7 +228,7 @@ def run_pressure_sweep(
                 end="",
             )
 
-            adapter = OpenAICompatibleAdapter()
+            adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
             try:
                 summary = asyncio.run(
                     run_all_scenarios(

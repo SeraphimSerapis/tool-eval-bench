@@ -12,7 +12,8 @@ from typing import Any, cast
 
 import httpx
 
-from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
+from tool_eval_bench.adapters.factory import build_adapter
+from tool_eval_bench.adapters.openai_compat import RateLimitObserver
 from tool_eval_bench.application.finalization import finalize_completed_run
 from tool_eval_bench.domain.adapters import BackendAdapter
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage, RunContext
@@ -36,7 +37,15 @@ from tool_eval_bench.utils.urls import redact_url as _redact_url
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_BACKENDS = {"vllm", "litellm", "llamacpp", "llama.cpp", "llama_cpp", "sglang"}
+_SUPPORTED_BACKENDS = {
+    "vllm",
+    "litellm",
+    "llamacpp",
+    "llama.cpp",
+    "llama_cpp",
+    "sglang",
+    "gemini",
+}
 
 
 class BenchmarkService:
@@ -59,13 +68,25 @@ class BenchmarkService:
             else cast(MarkdownReporter | None, reporter)
         )
 
-    def _adapter_for(self, backend: str) -> BackendAdapter:
+    def _adapter_for(
+        self,
+        backend: str,
+        base_url: str = "",
+        wire_format: str | None = None,
+    ) -> BackendAdapter:
+        """Return the adapter for a backend label and endpoint.
+
+        ``backend`` is a reporting label (vllm, litellm, …); the request format
+        follows the endpoint itself, detected from ``base_url`` unless
+        ``wire_format`` names one explicitly.
+        """
         backend_l = backend.lower()
         if backend_l not in _SUPPORTED_BACKENDS:
             raise ValueError(
-                f"Unsupported backend: {backend}. Supported: vllm, litellm, llamacpp, sglang"
+                f"Unsupported backend: {backend}. "
+                "Supported: vllm, litellm, llamacpp, sglang, gemini"
             )
-        return OpenAICompatibleAdapter()
+        return build_adapter(base_url, wire_format=wire_format)
 
     async def run_benchmark(
         self,
@@ -95,6 +116,8 @@ class BenchmarkService:
         resume_run_id: str | None = None,
         resume_prior_results: list[dict[str, Any]] | None = None,
         scenario_packs: list[dict[str, Any]] | None = None,
+        rate_limit_observer: RateLimitObserver | None = None,
+        wire_format: str | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
 
@@ -103,7 +126,11 @@ class BenchmarkService:
         dicts from a previous run), those results are merged into the final
         summary so the stored run contains the complete result set.
         """
-        adapter = self._adapter_for(backend)
+        adapter = self._adapter_for(backend, base_url, wire_format)
+        if rate_limit_observer is not None:
+            setter = getattr(adapter, "set_rate_limit_observer", None)
+            if setter is not None:
+                setter(rate_limit_observer)
 
         # Compute reference day name from date if provided
         ref_day: str | None = None
@@ -192,6 +219,13 @@ class BenchmarkService:
             self._mark_interrupted(run_id)
             raise
         finally:
+            status = getattr(adapter, "rate_limit_status", None)
+            if status is not None and status.retries:
+                logger.info(
+                    "Endpoint rate-limited this run: %d retries, %.0fs spent waiting",
+                    status.retries,
+                    status.total_wait_seconds,
+                )
             if hasattr(adapter, "aclose"):
                 await adapter.aclose()
 

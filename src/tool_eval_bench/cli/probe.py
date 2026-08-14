@@ -8,6 +8,7 @@ from typing import Any
 
 from rich.console import Console
 
+from tool_eval_bench.adapters.requests import minimal_request
 from tool_eval_bench.cli.helpers import emit_headless_error
 from tool_eval_bench.domain.errors import CONNECTION_FAILED, MODEL_NOT_AVAILABLE
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
@@ -23,6 +24,7 @@ def preflight_model_check(
     timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
     temperature: float = 0.0,
     extra_params: dict[str, Any] | None = None,
+    wire_format: str = "openai",
 ) -> None:
     """Verify that a listed model can serve a minimal completion.
 
@@ -32,23 +34,15 @@ def preflight_model_check(
     """
     import httpx
 
-    from tool_eval_bench.utils.urls import chat_completions_url
-
-    url = chat_completions_url(base_url)
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Say hello."},
-        ],
-        "max_tokens": 1,
-        "temperature": temperature,
-    }
-    if extra_params:
-        payload.update(extra_params)
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    url, payload, headers = minimal_request(
+        base_url,
+        model,
+        api_key,
+        wire_format=wire_format,
+        temperature=temperature,
+        max_tokens=1,
+        extra_params=extra_params,
+    )
 
     async def check() -> httpx.Response:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
@@ -97,16 +91,38 @@ def preflight_model_check(
         sys.exit(3)
 
 
-def warmup_server(console: Console, base_url: str, model: str, api_key: str | None) -> None:
+def warmup_server(
+    console: Console,
+    base_url: str,
+    model: str,
+    api_key: str | None,
+    *,
+    wire_format: str = "openai",
+) -> None:
     """Prime the model server before measuring benchmark behavior."""
-    from tool_eval_bench.runner.throughput import warmup
+    from tool_eval_bench.runner.throughput import (
+        WARMUP_EXTRA_PARAMS,
+        WARMUP_MAX_TOKENS,
+        warmup,
+    )
+
+    request = minimal_request(
+        base_url,
+        model,
+        api_key,
+        wire_format=wire_format,
+        max_tokens=WARMUP_MAX_TOKENS,
+        extra_params=WARMUP_EXTRA_PARAMS,
+    )
 
     with console.status(
         "[dim]  Warming up server… (first request may be slow with speculative decoding)[/]",
         spinner="dots",
     ):
         try:
-            milliseconds = asyncio.run(warmup(base_url, model, api_key, timeout=120.0))
+            milliseconds = asyncio.run(
+                warmup(base_url, model, api_key, timeout=120.0, request=request)
+            )
             if milliseconds > 10_000:
                 console.print(
                     f"  [bold green]✓[/] Warm-up complete [dim]({milliseconds:.0f} ms — "

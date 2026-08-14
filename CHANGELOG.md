@@ -6,6 +6,35 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Added
 
+- **Native Google Gemini API support** — pointing `--base-url` at
+  `https://generativelanguage.googleapis.com` now speaks the native
+  `:generateContent` API (https://ai.google.dev/api) instead of requiring
+  Google's OpenAI compatibility layer. The format is detected from the URL —
+  the compatibility layer lives under `/v1beta/openai` on the same host, so both
+  keep working — and `--format auto|openai|gemini` pins it when detection is
+  wrong. `gemini` is now a valid `--backend` label, selected automatically for
+  hosted endpoints so reports stop claiming "vllm", and engine probing
+  (`/metrics`, `/props`, `/version`) is skipped where it means nothing.
+  Translation covers system instructions, function declarations and tool-choice
+  modes, tool results, streaming SSE, thinking budgets, `usageMetadata` token
+  counts, and Gemini 3 thought signatures, which round-trip through tool calls
+  as the API requires. GSM8K / MMLU / IFEval and the context-pressure sweep
+  follow the same format as the main run.
+
+- **Graceful rate-limit handling** — hosted endpoints with per-minute quotas
+  (Gemini, OpenAI, and similar) no longer turn a benchmark run into a string of
+  infrastructure failures. HTTP 429 now draws on its own retry budget (6 by
+  default, separate from the 2 generic transient retries), honors `Retry-After`
+  up to a full 60s quota window, and backs off exponentially with half jitter.
+  A rate limit observed by one request pauses every in-flight request, and the
+  adapter then paces subsequent requests apart — widening on each 429, decaying
+  back to unthrottled after sustained success — so retries do not walk straight
+  back into the same limit. Pacing stays completely off until a 429 is actually
+  seen, so local vLLM / llama.cpp runs are unaffected. Throttling is reported in
+  the live progress footer and as a one-line note under the results
+  (`⏳ Rate limited  12 retries, 38s waiting on the endpoint's quota`) instead of
+  interleaving retry log lines with scenario results.
+
 - **`--label` run annotations** — an arbitrary string (`--label "tonyd2wild
   tool hardening 646c55f"`) is now recorded on every report an execution
   generates: a `Label` row in the tool-eval Run Context table, a `- **Label**:`
@@ -33,6 +62,14 @@ All notable changes to `tool-eval-bench` are documented here.
   scenarios changed TC-38 and TC-47 from PARTIAL to PASS, TC-74 from PARTIAL
   to FAIL, TC-76 from PARTIAL to PASS, TC-83 from FAIL to PARTIAL, and TC-84
   from PARTIAL to PASS. TC-45, TC-48, TC-56, TC-72, and TC-80 were unchanged.
+
+- **Warm-up no longer fails on strict endpoints** — warm-up asks the server to
+  skip chain-of-thought via `chat_template_kwargs`, which vLLM and friends
+  understand and most hosted APIs ignore. Gemini's OpenAI-compatibility layer
+  instead rejects the unknown field with HTTP 400, so every run against it
+  opened with `⚠ Warm-up failed`. Warm-up now retries once without the optional
+  hints before giving up, and callers can hand it a request built for the
+  endpoint's own wire format.
 
 - **Adversarial side-effect scoring** — TC-51, TC-53, TC-72, TC-73, TC-74,
   TC-76, TC-79, and TC-84 now reject unintended recipients, duplicate or

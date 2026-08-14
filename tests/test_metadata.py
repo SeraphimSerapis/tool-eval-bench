@@ -393,6 +393,20 @@ class TestProbeEngine:
         # Only the /v1/models probe should have fired — no speculative HTTP calls.
         assert client.get.await_count == 1
 
+    @pytest.mark.asyncio
+    async def test_gemini_probe_makes_no_requests(self) -> None:
+        """A hosted API has no engine metadata and no /v1/models to ask."""
+        from tool_eval_bench.utils.metadata import _probe_engine
+
+        client = _mock_async_client([])
+        with patch("tool_eval_bench.utils.metadata.httpx.AsyncClient", return_value=client):
+            result = await _probe_engine(
+                "https://generativelanguage.googleapis.com", "key", "gemini"
+            )
+
+        assert result == {"engine_name": "Google Gemini API"}
+        assert client.get.await_count == 0
+
 
 # ---------------------------------------------------------------------------
 # detect_backend_from_metrics / probe_backend_hint

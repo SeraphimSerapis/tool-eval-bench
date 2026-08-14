@@ -222,6 +222,10 @@ tool-eval-bench run --no-preflight
 
 # Explicit flags (overrides .env)
 tool-eval-bench run --model gemma4 --backend vllm --base-url http://localhost:8080
+
+# Hosted Gemini — the native API is detected from the URL (--format pins it manually)
+tool-eval-bench run --model gemini-3-flash --api-key "$GEMINI_API_KEY" \
+  --base-url https://generativelanguage.googleapis.com
 ```
 
 ### CLI commands and common workflows
@@ -693,7 +697,7 @@ AGENTS.md             # Contributor conventions (architecture, quality bar, git 
 src/tool_eval_bench/
   api.py              # Public programmatic API (run_benchmark, format_result)
   schema.py           # Machine-readable args schema for external validators
-  adapters/           # OpenAI-compatible adapter (vllm, litellm, llamacpp)
+  adapters/           # OpenAI-compatible adapter (vllm, litellm, llamacpp) + native Gemini
   cli/
     bench.py          # Main CLI entry point (tool-eval-bench)
     commands.py       # Scenario resolution helpers

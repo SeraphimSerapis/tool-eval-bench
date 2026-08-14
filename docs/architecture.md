@@ -126,9 +126,15 @@ canonical source for now.
 | Module | Purpose |
 |---|---|
 | `base.py` | Compatibility re-export of the domain-owned `BackendAdapter` port and result types |
-| `openai_compat.py` | `OpenAICompatibleAdapter` — single adapter for vLLM, LiteLLM, llama.cpp, SGLang |
+| `openai_compat.py` | `OpenAICompatibleAdapter` — vLLM, LiteLLM, llama.cpp, SGLang, and Google's OpenAI compatibility layer |
+| `gemini.py` | `GeminiAdapter` — the native Gemini `:generateContent` API |
+| `http_retry.py` | Shared retry, backoff, and rate-limit pacing for both adapters |
+| `wire_format.py` | Which format an endpoint speaks, detected from its URL |
+| `factory.py` | `build_adapter()` — picks the adapter for a base URL / `--format` |
+| `requests.py` | Minimal single-shot request bodies for pre-flight and warm-up |
 
-All backends use the same adapter; the `--backend` flag is a label for reports.
+The `--backend` flag is a label for reports; the request format follows the
+endpoint itself, detected from the base URL unless `--format` pins it.
 
 ### `plugins/` — Pluggable Benchmarks
 

@@ -96,6 +96,7 @@ async def run_benchmark(
     on_scenario_result: OnScenarioResult | None = None,
     persist: bool = True,
     output_dir: str | None = None,
+    wire_format: str | None = None,
 ) -> dict[str, Any]:
     """Run tool-eval-bench programmatically and return structured results.
 
@@ -106,7 +107,8 @@ async def run_benchmark(
     Args:
         model: Model name/path to evaluate.
         base_url: Server base URL (e.g. ``http://localhost:8000``).
-        backend: Backend label — ``vllm``, ``litellm``, ``llamacpp``, or ``sglang``.
+        backend: Backend label — ``vllm``, ``litellm``, ``llamacpp``, ``sglang``,
+            or ``gemini``.
         api_key: Optional API key for authenticated endpoints.
         scenarios: Explicit scenario list.  If *None*, ``short`` controls
             the default set (15 core vs 69 full).
@@ -125,7 +127,10 @@ async def run_benchmark(
         persist: When *True* (default), persist results to SQLite + Markdown.
             Set to *False* when the caller handles its own persistence
             (e.g. sparkrun).
-        output_dir: Directory for Markdown report files (default: ``./runs/``).\n            The SQLite database is always at ``./data/benchmarks.sqlite``.
+        output_dir: Directory for Markdown report files (default: ``./runs/``).
+            The SQLite database is always at ``./data/benchmarks.sqlite``.
+        wire_format: Request format the endpoint speaks — ``openai``, ``gemini``,
+            or ``auto``/*None* to detect it from ``base_url``.
 
     Returns:
         A versioned JSON-serializable dict containing ``run_id``, ``config``,
@@ -164,6 +169,7 @@ async def run_benchmark(
         error_rate=error_rate,
         alpha=alpha,
         extra_params=extra_params,
+        wire_format=wire_format,
     )
 
     return format_result(run_data)

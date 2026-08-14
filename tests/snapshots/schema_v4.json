@@ -17,7 +17,8 @@
         "vllm",
         "litellm",
         "llamacpp",
-        "sglang"
+        "sglang",
+        "gemini"
       ],
       "default": "vllm",
       "description": "Backend label for reports",
@@ -34,6 +35,17 @@
       "default": null,
       "description": "API key (optional; can also be set via TOOL_EVAL_API_KEY env var)",
       "name": "api_key",
+      "type": "string"
+    },
+    {
+      "choices": [
+        "auto",
+        "openai",
+        "gemini"
+      ],
+      "default": "auto",
+      "description": "Endpoint wire format (default: detect from the base URL)",
+      "name": "format",
       "type": "string"
     },
     {

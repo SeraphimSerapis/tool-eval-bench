@@ -50,6 +50,20 @@
     "required": false
   },
   {
+    "choices": [
+      "auto",
+      "openai",
+      "gemini"
+    ],
+    "default": "auto",
+    "dest": "format",
+    "flags": [
+      "--format"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
     "choices": null,
     "default": false,
     "dest": "probe",

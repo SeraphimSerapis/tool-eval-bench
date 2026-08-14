@@ -321,13 +321,19 @@ async def _probe_engine(
 ) -> dict[str, Any]:
     """Run all engine probes and merge results. Best-effort."""
     result: dict[str, Any] = {}
+    backend_l = backend.lower()
 
-    # Always probe /v1/models (works for all backends)
+    if backend_l == "gemini":
+        # A hosted API serves no engine metadata, and its native endpoint does
+        # not answer /v1/models at all, so every probe below would be a wasted
+        # round trip against Google's servers.
+        return {"engine_name": "Google Gemini API"}
+
+    # Always probe /v1/models (works for all self-hosted backends)
     models_info = await _probe_models(base_url, api_key)
     result.update(models_info)
 
     # Backend-specific probes
-    backend_l = backend.lower()
     if backend_l == "vllm":
         vllm_info = await _probe_vllm_version(base_url, api_key)
         result.update(vllm_info)

@@ -9,6 +9,7 @@ from typing import Any
 
 from rich.console import Console
 
+from tool_eval_bench.adapters.wire_format import gemini_models_url
 from tool_eval_bench.cli.helpers import emit_headless_error as _headless_error
 from tool_eval_bench.domain.errors import (
     CONNECTION_FAILED,
@@ -26,6 +27,7 @@ def _detect_model(
     *,
     display_url: str | None = None,
     headless: bool = False,
+    wire_format: str = "openai",
 ) -> tuple[str, str]:
     """Query /v1/models and auto-select or let the user pick.
 
@@ -40,20 +42,29 @@ def _detect_model(
     """
     import httpx
 
+    gemini = wire_format == "gemini"
     url = base_url.rstrip("/")
-    models_endpoint = f"{url}/v1/models"
-    # Handle base_url that already ends with /v1
-    if url.endswith("/v1"):
-        models_endpoint = f"{url}/models"
     headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    if gemini:
+        models_endpoint = gemini_models_url(base_url)
+        if api_key:
+            headers["x-goog-api-key"] = api_key
+    else:
+        models_endpoint = f"{url}/v1/models"
+        # Handle base_url that already ends with /v1
+        if url.endswith("/v1"):
+            models_endpoint = f"{url}/models"
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
 
     # Build a display-safe endpoint URL for console output
     show_url = display_url or base_url
-    show_endpoint = f"{show_url.rstrip('/')}/v1/models"
-    if show_url.rstrip("/").endswith("/v1"):
-        show_endpoint = f"{show_url.rstrip('/')}/models"
+    if gemini:
+        show_endpoint = gemini_models_url(show_url)
+    else:
+        show_endpoint = f"{show_url.rstrip('/')}/v1/models"
+        if show_url.rstrip("/").endswith("/v1"):
+            show_endpoint = f"{show_url.rstrip('/')}/models"
     if not headless:
         console.print(f"[dim]  Querying {show_endpoint} …[/]", end=" ")
 
@@ -63,7 +74,7 @@ def _detect_model(
         nonlocal used_fallback
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(models_endpoint, headers=headers)
-            if resp.status_code == 404:
+            if resp.status_code == 404 and not gemini:
                 fallback_url = f"{url}/models"
                 resp = await client.get(fallback_url, headers=headers)
                 used_fallback = True
@@ -109,7 +120,8 @@ def _detect_model(
 
     try:
         data = resp.json()
-        model_list = data.get("data", [])
+        # OpenAI lists under "data"; the native Gemini API lists under "models".
+        model_list = data.get("data") or data.get("models") or []
     except Exception:
         status_code = resp.status_code
         content_type = resp.headers.get("Content-Type", "unknown")
@@ -129,10 +141,12 @@ def _detect_model(
     # LiteLLM/others: may not have "root"
     models: list[tuple[str, str]] = []
     for m in model_list:
-        api_id = m.get("id", "")
+        # Gemini names a model "models/gemini-3.7-flash"; the id sent in a
+        # request is the trailing segment.
+        api_id = m.get("id") or str(m.get("name", "")).removeprefix("models/")
         if not api_id:
             continue
-        root = m.get("root", "")
+        root = m.get("root") or m.get("displayName", "")
         # Use root as display name if it differs from the alias
         display = root if root and root != api_id else api_id
         models.append((api_id, display))

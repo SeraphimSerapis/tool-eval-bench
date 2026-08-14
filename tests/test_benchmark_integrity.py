@@ -138,7 +138,7 @@ async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.Mo
     repo = MagicMock()
     adapter = object()
     service = BenchmarkService(repo=repo, reporter=reporter)
-    monkeypatch.setattr(service, "_adapter_for", lambda backend: adapter)
+    monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: adapter)
 
     result = await service.run_benchmark(
         model="test-model",
@@ -211,7 +211,7 @@ async def test_report_failure_does_not_store_completed_run(
     reporter = MagicMock()
     reporter.write_scenario_report.side_effect = OSError("report filesystem unavailable")
     service = BenchmarkService(repo=repo, reporter=reporter)
-    monkeypatch.setattr(service, "_adapter_for", lambda backend: object())
+    monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
 
     with pytest.raises(OSError, match="report filesystem unavailable"):
         await service.run_benchmark(

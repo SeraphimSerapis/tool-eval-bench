@@ -53,7 +53,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "backend",
         "type": "string",
         "default": "vllm",
-        "choices": ["vllm", "litellm", "llamacpp", "sglang"],
+        "choices": ["vllm", "litellm", "llamacpp", "sglang", "gemini"],
         "description": "Backend label for reports",
     },
     {
@@ -67,6 +67,13 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "type": "string",
         "default": None,
         "description": "API key (optional; can also be set via TOOL_EVAL_API_KEY env var)",
+    },
+    {
+        "name": "format",
+        "type": "string",
+        "default": "auto",
+        "choices": ["auto", "openai", "gemini"],
+        "description": "Endpoint wire format (default: detect from the base URL)",
     },
     {
         "name": "probe",

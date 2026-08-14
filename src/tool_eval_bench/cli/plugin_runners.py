@@ -69,7 +69,7 @@ def _run_gsm8k_benchmark(
     """Run the GSM8K grade-school math benchmark and display results."""
     from rich.panel import Panel
 
-    from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
+    from tool_eval_bench.adapters.factory import build_adapter
     from tool_eval_bench.plugins.gsm8k.plugin import GSM8KPlugin
 
     n_shots = args.gsm8k_shots
@@ -92,7 +92,7 @@ def _run_gsm8k_benchmark(
     )
 
     plugin = GSM8KPlugin()
-    adapter = OpenAICompatibleAdapter()
+    adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
     result_holder: list = []
 
     # -- Phase 1: Load dataset (with visible progress) --
@@ -345,7 +345,7 @@ def _run_mmlu_benchmark(
     """Run the MMLU benchmark and display results."""
     from rich.panel import Panel
 
-    from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
+    from tool_eval_bench.adapters.factory import build_adapter
     from tool_eval_bench.plugins.mmlu.plugin import MMLUPlugin
 
     n_shots = args.mmlu_shots
@@ -370,7 +370,7 @@ def _run_mmlu_benchmark(
     )
 
     plugin = MMLUPlugin()
-    adapter = OpenAICompatibleAdapter()
+    adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
     result_holder: list = []
 
     # -- Phase 1: Load dataset (with visible progress) --
@@ -652,7 +652,7 @@ def _run_ifeval_benchmark(
     """Run the IFEval instruction-following benchmark and display results."""
     from rich.panel import Panel
 
-    from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
+    from tool_eval_bench.adapters.factory import build_adapter
     from tool_eval_bench.plugins.ifeval.plugin import IFEvalPlugin
 
     limit = args.ifeval_limit
@@ -672,7 +672,7 @@ def _run_ifeval_benchmark(
     )
 
     plugin = IFEvalPlugin()
-    adapter = OpenAICompatibleAdapter()
+    adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
     result_holder: list = []
 
     # -- Phase 1: Load dataset --

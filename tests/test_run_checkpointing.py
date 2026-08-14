@@ -177,7 +177,7 @@ class TestServiceCheckpointing:
 
         monkeypatch.setattr(service_module, "run_all_scenarios", fake_run)
         service = BenchmarkService(repo=repo, reporter=None)
-        monkeypatch.setattr(service, "_adapter_for", lambda backend: object())
+        monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
 
         run_data = await service.run_benchmark(
             model="m", backend="vllm", base_url="http://localhost:8000", scenarios=[scenario]
@@ -211,7 +211,7 @@ class TestServiceCheckpointing:
 
         monkeypatch.setattr(service_module, "run_all_scenarios", fake_run)
         service = BenchmarkService(repo=repo, reporter=None)
-        monkeypatch.setattr(service, "_adapter_for", lambda backend: object())
+        monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
 
         with pytest.raises(KeyboardInterrupt):
             await service.run_benchmark(
@@ -255,7 +255,7 @@ class TestServiceCheckpointing:
 
         monkeypatch.setattr(service_module, "run_all_scenarios", fake_run)
         service = BenchmarkService(repo=repo, reporter=None)
-        monkeypatch.setattr(service, "_adapter_for", lambda backend: object())
+        monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
 
         await service.run_benchmark(
             model="m",
@@ -290,7 +290,7 @@ class TestServiceCheckpointing:
 
         monkeypatch.setattr(service_module, "run_all_scenarios", fake_run)
         service = BenchmarkService(repo=broken, reporter=None)
-        monkeypatch.setattr(service, "_adapter_for", lambda backend: object())
+        monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
 
         run_data = await service.run_benchmark(
             model="m", backend="vllm", base_url="http://localhost:8000", scenarios=[scenario]
@@ -320,7 +320,7 @@ class TestServiceCheckpointing:
 
         monkeypatch.setattr(service_module, "run_all_scenarios", fake_run)
         service = BenchmarkService(repo=None, reporter=None)
-        monkeypatch.setattr(service, "_adapter_for", lambda backend: object())
+        monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
 
         await service.run_benchmark(
             model="m",

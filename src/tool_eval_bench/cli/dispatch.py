@@ -25,6 +25,7 @@ from typing import Any
 from dotenv import load_dotenv  # noqa: F401  (re-exported via _load_dotenv)
 from rich.console import Console
 
+from tool_eval_bench.adapters.wire_format import resolve_wire_format as _resolve_wire_format
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.cli import model_probe as _model_probe
 from tool_eval_bench.cli.compare_report import (
@@ -146,6 +147,7 @@ def _detect_model(
     *,
     display_url: str | None = None,
     headless: bool = False,
+    wire_format: str = "openai",
 ) -> tuple[str, str]:
     """Compatibility wrapper preserving the historical asyncio patch seam."""
     _model_probe.asyncio = asyncio
@@ -155,6 +157,7 @@ def _detect_model(
         console,
         display_url=display_url,
         headless=headless,
+        wire_format=wire_format,
     )
 
 
@@ -290,6 +293,18 @@ def main() -> None:
                 "Use --base-url or set TOOL_EVAL_BASE_URL in .env"
             )
 
+    # Which request format the endpoint speaks (native Gemini vs OpenAI-compatible).
+    # Detected from the URL unless --format pins it.
+    try:
+        wire_format = _resolve_wire_format(args.format, base_url)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if wire_format == "gemini" and not backend_explicit:
+        # Engine probing (/metrics, /props, /version) is meaningless against a
+        # hosted API, and "vllm" would be a false label on every report.
+        backend = "gemini"
+        backend_explicit = True
+
     # Authoritative backend detection: a port-based guess (from localhost
     # auto-discovery, above) or a hardcoded default both get overridden here
     # by actually asking the server what it is — via its /metrics namespace,
@@ -335,6 +350,7 @@ def main() -> None:
             console,
             display_url=display_url,
             headless=args.json,
+            wire_format=wire_format,
         )
         if not args.json:
             console.print()
@@ -436,6 +452,7 @@ def main() -> None:
             model,
             api_key,
             headless=args.json,
+            wire_format=wire_format,
             timeout_seconds=args.timeout,
             temperature=args.temperature,
             extra_params=extra_params or None,
@@ -443,7 +460,7 @@ def main() -> None:
 
     # -- Warm-up --
     if not args.no_warmup and not args.json:
-        _do_warmup(console, base_url, model, api_key)
+        _do_warmup(console, base_url, model, api_key, wire_format=wire_format)
 
     # -- Build RunContext (issue #6: full execution context metadata) --
     # Built early so perf-only and spec-bench paths also get engine detection.
@@ -950,6 +967,7 @@ def main() -> None:
             context_pressure_config=pressure_config_dict,
             display_url=display_url,
             run_context=run_context,
+            wire_format=wire_format,
         )
     elif args.json:
         _run_json(
@@ -963,6 +981,7 @@ def main() -> None:
             context_pressure_messages=pressure_messages,
             context_pressure_config=pressure_config_dict,
             run_context=run_context,
+            wire_format=wire_format,
         )
     else:
         _run_plain(
@@ -980,6 +999,7 @@ def main() -> None:
             context_pressure_config=pressure_config_dict,
             display_url=display_url,
             run_context=run_context,
+            wire_format=wire_format,
         )
 
 
@@ -1071,6 +1091,7 @@ def _run_with_live_display(
     context_pressure_config: dict | None = None,
     display_url: str | None = None,
     run_context: Any | None = None,
+    wire_format: str = "openai",
 ) -> None:
     """Run with Rich live display — the default visual mode."""
     from tool_eval_bench.runner.orchestrator import score_results
@@ -1091,6 +1112,7 @@ def _run_with_live_display(
         if show:
             callbacks["on_scenario_start"] = display.on_scenario_start
             callbacks["on_scenario_result"] = display.on_scenario_result
+            callbacks["rate_limit_observer"] = display.on_rate_limit
         return await service.run_benchmark(
             model=model,
             backend=backend,
@@ -1114,6 +1136,7 @@ def _run_with_live_display(
             resume_run_id=getattr(args, "_resume_run_id", None),
             resume_prior_results=getattr(args, "_resume_prior_results", None),
             scenario_packs=_pack_attestations(args),
+            wire_format=wire_format,
             **callbacks,
         )
 
@@ -1249,6 +1272,7 @@ def _run_json(
     context_pressure_messages: list[ChatMessage] | None = None,
     context_pressure_config: dict | None = None,
     run_context: Any | None = None,
+    wire_format: str = "openai",
 ) -> None:
     """Run and output raw JSON (with optional JSONL progress on stderr)."""
     trials = max(1, args.trials)
@@ -1278,6 +1302,7 @@ def _run_json(
             resume_run_id=getattr(args, "_resume_run_id", None),
             resume_prior_results=getattr(args, "_resume_prior_results", None),
             scenario_packs=_pack_attestations(args),
+            wire_format=wire_format,
             on_scenario_start=_stderr_progress_start,
             on_scenario_result=_stderr_progress_result,
         )
@@ -1342,6 +1367,7 @@ def _run_plain(
     context_pressure_config: dict | None = None,
     display_url: str | None = None,
     run_context: Any | None = None,
+    wire_format: str = "openai",
 ) -> None:
     """Run with simple line-by-line output."""
     console.print(f"\n[bold]Tool-Call Benchmark[/] — {display_name}")
@@ -1380,6 +1406,7 @@ def _run_plain(
             resume_run_id=getattr(args, "_resume_run_id", None),
             resume_prior_results=getattr(args, "_resume_prior_results", None),
             scenario_packs=_pack_attestations(args),
+            wire_format=wire_format,
             **callbacks,
         )
 

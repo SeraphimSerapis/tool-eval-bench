@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from tool_eval_bench.adapters.wire_format import WIRE_FORMATS
 from tool_eval_bench.cli.command_registry import COMMAND_SPECS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
@@ -35,9 +36,9 @@ def _make_parser() -> argparse.ArgumentParser:
     conn.add_argument(
         "--backend",
         default=None,
-        help="Backend label for reports: vllm, litellm, llamacpp, sglang "
-        "(all use the same OpenAI-compatible adapter; default: auto-detected "
-        "via /metrics, falling back to env/vllm)",
+        help="Backend label for reports: vllm, litellm, llamacpp, sglang, gemini "
+        "(the request format follows the endpoint, not this label — see --format; "
+        "default: auto-detected via /metrics, falling back to env/vllm)",
     )
     conn.add_argument(
         "--base-url",
@@ -45,6 +46,13 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Server base URL (default: auto-discover on localhost, or from .env)",
     )
     conn.add_argument("--api-key", default=None, help="API key")
+    conn.add_argument(
+        "--format",
+        choices=list(WIRE_FORMATS),
+        default="auto",
+        help="Request wire format: openai (/v1/chat/completions) or gemini "
+        "(native :generateContent). Default: auto-detected from --base-url",
+    )
     conn.add_argument(
         "--probe",
         action="store_true",
