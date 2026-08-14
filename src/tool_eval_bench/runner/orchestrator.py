@@ -237,6 +237,8 @@ def _repair_json_str(s: str) -> str:
 
 def _assistant_message(result: ChatCompletionResult) -> ChatMessage:
     msg: ChatMessage = {"role": "assistant", "content": result.content}
+    if result.tool_calls and result.reasoning is not None:
+        msg["reasoning_content"] = result.reasoning
     if result.message_extra_content is not None:
         msg["extra_content"] = result.message_extra_content
     if result.tool_calls:

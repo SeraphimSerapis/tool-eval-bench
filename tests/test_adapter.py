@@ -204,6 +204,49 @@ class TestParseResponse:
         result = OpenAICompatibleAdapter._parse_response(data, 1.0)
         assert result.reasoning == "I thought about it"
 
+    def test_preserves_reasoning_content_in_tool_history(self) -> None:
+        data = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "reasoning_content": "I need to look up the weather.",
+                        "tool_calls": [
+                            {
+                                "id": "tc_1",
+                                "function": {
+                                    "name": "get_weather",
+                                    "arguments": '{"location":"Hangzhou"}',
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+        result = OpenAICompatibleAdapter._parse_response(data, 1.0)
+
+        rebuilt = _assistant_message(result)
+
+        assert rebuilt["reasoning_content"] == "I need to look up the weather."
+
+    def test_does_not_replay_reasoning_without_tool_calls(self) -> None:
+        data = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "Answer",
+                        "reasoning_content": "Private intermediate reasoning.",
+                    }
+                }
+            ]
+        }
+        result = OpenAICompatibleAdapter._parse_response(data, 1.0)
+
+        rebuilt = _assistant_message(result)
+
+        assert "reasoning_content" not in rebuilt
+
     def test_empty_choices(self) -> None:
         """Missing choices gracefully returns empty content."""
         result = OpenAICompatibleAdapter._parse_response({}, 1.0)
