@@ -237,7 +237,13 @@ def _repair_json_str(s: str) -> str:
 
 def _assistant_message(result: ChatCompletionResult) -> ChatMessage:
     msg: ChatMessage = {"role": "assistant", "content": result.content}
-    if result.tool_calls and result.reasoning is not None:
+    # DeepSeek thinking-mode tool loops require the exact reasoning_content
+    # from every prior assistant turn on later requests that still send
+    # ``tools``. Dropping it on a tool-call turn is an HTTP 400; dropping it
+    # on the final answer still 400s once a follow-up user message continues
+    # the conversation with tools attached. Non-thinking models leave
+    # ``result.reasoning`` as None, so the field is omitted.
+    if result.reasoning is not None:
         msg["reasoning_content"] = result.reasoning
     if result.message_extra_content is not None:
         msg["extra_content"] = result.message_extra_content

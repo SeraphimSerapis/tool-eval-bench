@@ -221,6 +221,70 @@ async def test_tool_call_pass() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reasoning_content_round_trips_on_later_tool_requests() -> None:
+    """DeepSeek requires prior reasoning_content on every later request with tools.
+
+    That includes the tool-call hop and a follow-up user turn after the model
+    already produced a final answer.
+    """
+    follow_up_scenario = ScenarioDefinition(
+        id="TEST-REASONING",
+        title="Reasoning round-trip",
+        category=Category.A,
+        user_message="What's the weather in Hangzhou?",
+        description="Should call get_weather then answer a follow-up",
+        handle_tool_call=_simple_handler,
+        evaluate=_simple_evaluator,
+        follow_up_messages=["And tomorrow?"],
+    )
+    adapter = MockAdapter(
+        [
+            ChatCompletionResult(
+                content="",
+                tool_calls=[
+                    ProviderToolCall(
+                        id="tc_1",
+                        name="get_weather",
+                        arguments_str='{"location": "Hangzhou"}',
+                    )
+                ],
+                reasoning="I need today's weather in Hangzhou.",
+            ),
+            ChatCompletionResult(
+                content="Hangzhou is 22C and sunny.",
+                reasoning="Share the weather result.",
+            ),
+            ChatCompletionResult(
+                content="Tomorrow looks similar.",
+                reasoning="Reuse the earlier lookup.",
+            ),
+        ]
+    )
+
+    result = await run_scenario(
+        adapter,
+        model="test",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=follow_up_scenario,
+    )
+
+    assert result.status == ScenarioStatus.PASS
+    assert len(adapter.captured_payloads) == 3
+    assert adapter.captured_payloads[1]["tools"]
+    assert adapter.captured_payloads[2]["tools"]
+
+    tool_hop_msgs = adapter.captured_payloads[1]["messages"]
+    follow_up_msgs = adapter.captured_payloads[2]["messages"]
+    tool_hop_assistant = [m for m in tool_hop_msgs if m["role"] == "assistant"]
+    follow_up_assistant = [m for m in follow_up_msgs if m["role"] == "assistant"]
+
+    assert tool_hop_assistant[0]["reasoning_content"] == "I need today's weather in Hangzhou."
+    assert follow_up_assistant[0]["reasoning_content"] == "I need today's weather in Hangzhou."
+    assert follow_up_assistant[1]["reasoning_content"] == "Share the weather result."
+
+
+@pytest.mark.asyncio
 async def test_multi_turn_tool_chain() -> None:
     """Model makes two sequential tool calls across turns."""
 

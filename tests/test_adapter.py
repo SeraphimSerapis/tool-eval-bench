@@ -230,13 +230,36 @@ class TestParseResponse:
 
         assert rebuilt["reasoning_content"] == "I need to look up the weather."
 
-    def test_does_not_replay_reasoning_without_tool_calls(self) -> None:
+    def test_preserves_reasoning_content_on_final_answer(self) -> None:
         data = {
             "choices": [
                 {
                     "message": {
                         "content": "Answer",
-                        "reasoning_content": "Private intermediate reasoning.",
+                        "reasoning_content": "Share the weather result.",
+                    }
+                }
+            ]
+        }
+        result = OpenAICompatibleAdapter._parse_response(data, 1.0)
+
+        rebuilt = _assistant_message(result)
+
+        assert rebuilt["reasoning_content"] == "Share the weather result."
+        assert "tool_calls" not in rebuilt
+
+    def test_does_not_add_reasoning_when_absent(self) -> None:
+        data = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "Answer",
+                        "tool_calls": [
+                            {
+                                "id": "tc_1",
+                                "function": {"name": "get_weather", "arguments": "{}"},
+                            }
+                        ],
                     }
                 }
             ]
@@ -630,6 +653,52 @@ async def test_stream_reasoning_content() -> None:
 
     assert result.content == "The answer is 42"
     assert result.reasoning == "Let me think..."
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_preserves_reasoning_content_in_tool_history() -> None:
+    """Streamed first-turn tool calls must still round-trip reasoning_content."""
+    chunks = [
+        json.dumps({"choices": [{"delta": {"reasoning_content": "Look up Hangzhou."}}]}),
+        json.dumps(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "tc_1",
+                                    "function": {
+                                        "name": "get_weather",
+                                        "arguments": '{"location":"Hangzhou"}',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
+    ]
+    body = _sse_lines(*chunks)
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        stream=True,
+    )
+
+    rebuilt = _assistant_message(result)
+
+    assert result.reasoning == "Look up Hangzhou."
+    assert rebuilt["reasoning_content"] == "Look up Hangzhou."
+    assert rebuilt["tool_calls"][0]["function"]["name"] == "get_weather"
     await adapter.aclose()
 
 
