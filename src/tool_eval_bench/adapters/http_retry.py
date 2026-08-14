@@ -48,21 +48,92 @@ _PACING_MAX_SECONDS = 10.0
 _PACING_DECAY_AFTER_SUCCESSES = 8
 
 
+def _error_body(response: httpx.Response) -> dict | None:
+    """Best-effort parse of a JSON error body; None if there isn't one."""
+    try:
+        data = response.json()
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _retry_delay_from_body(response: httpx.Response) -> float | None:
+    """Parse Google's ``RetryInfo.retryDelay`` (e.g. ``"2s"``) from an error body.
+
+    Only the native Gemini API sends this — OpenAI-compatible endpoints send
+    ``Retry-After`` as a header instead — but checking a body that doesn't have
+    it is a harmless no-op, so both wire formats can share this helper.
+    """
+    data = _error_body(response)
+    if data is None:
+        return None
+    for detail in ((data.get("error") or {}).get("details")) or []:
+        if not isinstance(detail, dict):
+            continue
+        if not str(detail.get("@type", "")).endswith("RetryInfo"):
+            continue
+        raw = detail.get("retryDelay")
+        if isinstance(raw, str) and raw.endswith("s"):
+            try:
+                return float(raw[:-1])
+            except ValueError:
+                return None
+    return None
+
+
 def _retry_after_seconds(
     response: httpx.Response,
     cap: float = _BACKOFF_CAP_SECONDS,
 ) -> float | None:
-    """Parse a Retry-After header, ignoring absurd or malformed values."""
+    """Parse a retry hint from the ``Retry-After`` header or a JSON error body."""
     raw = response.headers.get("Retry-After")
-    if not raw:
+    delay: float | None = None
+    if raw:
+        try:
+            delay = float(raw.strip())
+        except ValueError:
+            delay = None  # HTTP-date form; fall back to computed backoff
+    if delay is None:
+        delay = _retry_delay_from_body(response)
+    if delay is None:
         return None
-    try:
-        delay = float(raw.strip())
-    except ValueError:
-        return None  # HTTP-date form; fall back to computed backoff
     if delay < 0 or delay > cap:
         return None
     return delay
+
+
+def _daily_quota_exhaustion(response: httpx.Response) -> str | None:
+    """Describe a 429 as unrecoverable if it names a *daily* quota, else None.
+
+    Google's Gemini API reports both per-minute and per-day quotas as a plain
+    HTTP 429 with ``RESOURCE_EXHAUSTED``, and even attaches a ``RetryInfo``
+    delay to the daily case — but that delay only reflects request pacing
+    within the window, not when the daily quota itself resets. Retrying (for
+    up to a few minutes, per the rate-limit budget) cannot succeed until then,
+    so it is better to fail the request immediately with a clear reason than
+    to silently burn the retry budget and surface as a generic timeout.
+    """
+    data = _error_body(response)
+    if data is None:
+        return None
+    error = data.get("error") or {}
+    if error.get("status") != "RESOURCE_EXHAUSTED":
+        return None
+    for detail in error.get("details") or []:
+        if not isinstance(detail, dict) or not str(detail.get("@type", "")).endswith(
+            "QuotaFailure"
+        ):
+            continue
+        for violation in detail.get("violations") or []:
+            quota_id = str(violation.get("quotaId", ""))
+            if "PerDay" in quota_id:
+                dims = violation.get("quotaDimensions") or {}
+                model = dims.get("model")
+                limit = violation.get("quotaValue")
+                where = f" for {model}" if model else ""
+                how_many = f" (limit: {limit}/day)" if limit else ""
+                return f"Daily quota exhausted{where}{how_many}"
+    return None
 
 
 def _backoff_delay(attempt: int, response: httpx.Response | None = None) -> float:
@@ -284,6 +355,14 @@ class RetryingHTTPAdapter:
                     raise
                 rate_limited = status == 429
                 if rate_limited:
+                    exhaustion = _daily_quota_exhaustion(exc.response)
+                    if exhaustion is not None:
+                        logger.warning(
+                            "%s from %s; not retrying (would not resolve within the retry budget)",
+                            exhaustion,
+                            _redact_url(url),
+                        )
+                        raise
                     if rate_limit_retries >= rate_limit_budget:
                         raise
                     rate_limit_retries += 1

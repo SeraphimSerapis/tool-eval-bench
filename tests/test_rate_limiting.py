@@ -12,6 +12,7 @@ import asyncio
 import httpx
 import pytest
 
+from tool_eval_bench.adapters.http_retry import _daily_quota_exhaustion
 from tool_eval_bench.adapters.openai_compat import (
     DEFAULT_MAX_RATE_LIMIT_RETRIES,
     DEFAULT_MAX_RETRIES,
@@ -24,6 +25,50 @@ from tool_eval_bench.adapters.openai_compat import (
 )
 
 _OK = {"choices": [{"message": {"role": "assistant", "content": "hi"}}]}
+
+# A real response body from Google's Gemini API for a daily free-tier quota.
+_DAILY_QUOTA_BODY = {
+    "error": {
+        "code": 429,
+        "message": "You exceeded your current quota... Please retry in 36.36s.",
+        "status": "RESOURCE_EXHAUSTED",
+        "details": [
+            {
+                "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                "violations": [
+                    {
+                        "quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+                        "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+                        "quotaDimensions": {"location": "global", "model": "gemini-3.7-flash"},
+                        "quotaValue": "20",
+                    }
+                ],
+            },
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "36s"},
+        ],
+    }
+}
+
+# A per-minute quota — the ordinary, retryable case.
+_PER_MINUTE_QUOTA_BODY = {
+    "error": {
+        "code": 429,
+        "message": "Quota exceeded.",
+        "status": "RESOURCE_EXHAUSTED",
+        "details": [
+            {
+                "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                "violations": [
+                    {
+                        "quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+                        "quotaValue": "15",
+                    }
+                ],
+            },
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "2s"},
+        ],
+    }
+}
 
 
 def _adapter(handler, *, paced: bool = False, **kwargs) -> Adapter:
@@ -74,6 +119,77 @@ class TestRateLimitBackoff:
 
     def test_backoff_never_returns_a_useless_near_zero_sleep(self) -> None:
         assert all(_rate_limit_delay(0) >= 1.0 for _ in range(50))
+
+    def test_retry_delay_parsed_from_gemini_body_when_no_header(self) -> None:
+        """Gemini sends RetryInfo.retryDelay in the JSON body, not Retry-After."""
+        resp = httpx.Response(429, json=_PER_MINUTE_QUOTA_BODY)
+        assert _retry_after_seconds(resp, cap=60.0) == 2.0
+        assert _rate_limit_delay(0, resp) == 2.0
+
+    def test_header_wins_over_body_when_both_present(self) -> None:
+        resp = httpx.Response(429, headers={"Retry-After": "5"}, json=_PER_MINUTE_QUOTA_BODY)
+        assert _retry_after_seconds(resp, cap=60.0) == 5.0
+
+    def test_malformed_body_does_not_crash_retry_parsing(self) -> None:
+        resp = httpx.Response(429, content=b"not json")
+        assert _retry_after_seconds(resp, cap=60.0) is None
+
+
+class TestDailyQuotaExhaustion:
+    def test_daily_quota_is_detected(self) -> None:
+        resp = httpx.Response(429, json=_DAILY_QUOTA_BODY)
+        reason = _daily_quota_exhaustion(resp)
+        assert reason is not None
+        assert "gemini-3.7-flash" in reason
+        assert "20" in reason
+
+    def test_per_minute_quota_is_not_daily_exhaustion(self) -> None:
+        resp = httpx.Response(429, json=_PER_MINUTE_QUOTA_BODY)
+        assert _daily_quota_exhaustion(resp) is None
+
+    def test_non_quota_429_is_not_daily_exhaustion(self) -> None:
+        resp = httpx.Response(429, text="slow down")
+        assert _daily_quota_exhaustion(resp) is None
+
+    def test_ordinary_openai_error_body_is_not_daily_exhaustion(self) -> None:
+        resp = httpx.Response(429, json={"error": {"message": "rate limited", "type": "..."}})
+        assert _daily_quota_exhaustion(resp) is None
+
+    @pytest.mark.asyncio
+    async def test_daily_quota_fails_fast_without_burning_the_retry_budget(self, no_sleep) -> None:
+        """A daily quota cannot recover within any retry budget; retrying wastes minutes
+        and would otherwise surface as an unexplained scenario timeout."""
+        attempts = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts["n"] += 1
+            return httpx.Response(429, json=_DAILY_QUOTA_BODY)
+
+        adapter = _adapter(handler, max_rate_limit_retries=6)
+        with pytest.raises(httpx.HTTPStatusError) as excinfo:
+            await adapter.chat_completion(model="m", messages=[], base_url="http://x")
+
+        assert excinfo.value.response.status_code == 429
+        assert attempts["n"] == 1  # no retries at all
+        await adapter.aclose()
+
+    @pytest.mark.asyncio
+    async def test_per_minute_quota_still_retries_normally(self, no_sleep) -> None:
+        """Only the daily case should fail fast; ordinary rate limits still recover."""
+        attempts = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                return httpx.Response(429, json=_PER_MINUTE_QUOTA_BODY)
+            return httpx.Response(200, json=_OK)
+
+        adapter = _adapter(handler)
+        result = await adapter.chat_completion(model="m", messages=[], base_url="http://x")
+
+        assert result.content == "hi"
+        assert attempts["n"] == 2
+        await adapter.aclose()
 
 
 class TestRateLimitRetries:
