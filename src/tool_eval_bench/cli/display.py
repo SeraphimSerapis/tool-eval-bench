@@ -20,6 +20,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from tool_eval_bench.adapters.openai_compat import RateLimitStatus
 from tool_eval_bench.domain.scenarios import (
     Category,
     ModelScoreSummary,
@@ -104,6 +105,7 @@ class BenchmarkDisplay:
         self.results: dict[str, ScenarioResult] = {}
         self.active_scenario: str | None = None
         self.started_at = time.time()
+        self.rate_limit: RateLimitStatus | None = None
 
         # Live footer (lazy init)
         self._live: Live | None = None
@@ -168,6 +170,11 @@ class BenchmarkDisplay:
         # Update the footer
         self._refresh_footer()
 
+    def on_rate_limit(self, status: RateLimitStatus) -> None:
+        """Record throttling from the adapter (shown in the footer, not logged)."""
+        self.rate_limit = status
+        self._refresh_footer()
+
     def set_finished(
         self,
         summary: ModelScoreSummary,
@@ -176,6 +183,11 @@ class BenchmarkDisplay:
     ) -> None:
         """Stop the live footer and print the static summary."""
         self.stop()
+        if self.rate_limit and self.rate_limit.retries:
+            self.console.print(
+                f"\n  [yellow]⏳ Rate limited[/] [dim]{self.rate_limit.retries} retries, "
+                f"{self.rate_limit.total_wait_seconds:.0f}s waiting on the endpoint's quota[/]"
+            )
         self.console.print()
         _print_category_scores(self.console, summary)
         self.console.print()
@@ -241,8 +253,16 @@ class BenchmarkDisplay:
         else:
             status = "[dim]Waiting…[/]"
 
+        throttle = ""
+        if self.rate_limit and self.rate_limit.retries:
+            if self.rate_limit.pacing_seconds > 0:
+                detail = f"pacing {self.rate_limit.pacing_seconds:.1f}s"
+            else:
+                detail = "recovered"
+            throttle = f"  [yellow]⏳ {self.rate_limit.retries} rate limits[/] [dim]({detail})[/]"
+
         text = Text.from_markup(
-            f"\n  {status}  {bar}  [bold]{done}[/]/{total}  [dim]({elapsed:.0f}s)[/]"
+            f"\n  {status}  {bar}  [bold]{done}[/]/{total}  [dim]({elapsed:.0f}s)[/]{throttle}"
         )
         return text
 

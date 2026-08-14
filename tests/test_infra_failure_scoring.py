@@ -233,7 +233,7 @@ class TestRetryBackoff:
         adapter = OpenAICompatibleAdapter()
         adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         monkeypatch.setattr(
-            "tool_eval_bench.adapters.openai_compat._backoff_delay", lambda *a, **k: 0.0
+            "tool_eval_bench.adapters.http_retry._backoff_delay", lambda *a, **k: 0.0
         )
 
         result = await adapter.chat_completion(
@@ -255,7 +255,7 @@ class TestRetryBackoff:
         adapter = OpenAICompatibleAdapter()
         adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         monkeypatch.setattr(
-            "tool_eval_bench.adapters.openai_compat._backoff_delay", lambda *a, **k: 0.0
+            "tool_eval_bench.adapters.http_retry._backoff_delay", lambda *a, **k: 0.0
         )
 
         with pytest.raises(httpx.HTTPStatusError) as excinfo:
@@ -276,7 +276,7 @@ class TestRetryBackoff:
         adapter = OpenAICompatibleAdapter()
         adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         monkeypatch.setattr(
-            "tool_eval_bench.adapters.openai_compat._backoff_delay", lambda *a, **k: 0.0
+            "tool_eval_bench.adapters.http_retry._rate_limit_delay", lambda *a, **k: 0.0
         )
 
         with pytest.raises(httpx.HTTPStatusError):

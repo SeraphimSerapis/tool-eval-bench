@@ -432,6 +432,9 @@ def test_dispatch_live_and_plain_multitrial(
         async def on_scenario_result(self, *args):
             pass
 
+        def on_rate_limit(self, status):
+            pass
+
         def set_finished(self, *args, **kwargs):
             pass
 

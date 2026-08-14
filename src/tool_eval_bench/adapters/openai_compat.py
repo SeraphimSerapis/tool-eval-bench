@@ -7,16 +7,24 @@ When stream=True, uses SSE to measure time-to-first-token (TTFT).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import random
 import time
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
 
+from tool_eval_bench.adapters.http_retry import (
+    DEFAULT_MAX_RATE_LIMIT_RETRIES,
+    DEFAULT_MAX_RETRIES,
+    RateLimitCoordinator,
+    RateLimitObserver,
+    RateLimitStatus,
+    RetryingHTTPAdapter,
+    _backoff_delay,
+    _rate_limit_delay,
+    _retry_after_seconds,
+)
 from tool_eval_bench.domain.adapters import (
     RETRYABLE_STATUS_CODES,
     BackendAdapter,
@@ -29,37 +37,19 @@ from tool_eval_bench.utils.urls import redact_url as _redact_url
 
 logger = logging.getLogger(__name__)
 
-# Retries apply to fast failures only.  Read timeouts are deliberately NOT
-# retried: the budget is already spent, and a retry would multiply the run's
-# wall-clock time.  Timeouts are instead excluded from quality scoring — see
-# domain.scenarios.INFRASTRUCTURE_FAILURE_KINDS.
-DEFAULT_MAX_RETRIES = 2
-_BACKOFF_BASE_SECONDS = 0.5
-_BACKOFF_CAP_SECONDS = 8.0
-
-
-def _retry_after_seconds(response: httpx.Response) -> float | None:
-    """Parse a Retry-After header, ignoring absurd or malformed values."""
-    raw = response.headers.get("Retry-After")
-    if not raw:
-        return None
-    try:
-        delay = float(raw.strip())
-    except ValueError:
-        return None  # HTTP-date form; fall back to computed backoff
-    if delay < 0 or delay > _BACKOFF_CAP_SECONDS:
-        return None
-    return delay
-
-
-def _backoff_delay(attempt: int, response: httpx.Response | None = None) -> float:
-    """Exponential backoff with full jitter, honoring a sane Retry-After."""
-    if response is not None:
-        hinted = _retry_after_seconds(response)
-        if hinted is not None:
-            return hinted
-    window = min(_BACKOFF_BASE_SECONDS * (2**attempt), _BACKOFF_CAP_SECONDS)
-    return random.uniform(0.0, window)
+# Re-exported for callers and tests that reach for the retry policy through the
+# adapter module it used to live in.
+__all__ = [
+    "DEFAULT_MAX_RATE_LIMIT_RETRIES",
+    "DEFAULT_MAX_RETRIES",
+    "OpenAICompatibleAdapter",
+    "RateLimitCoordinator",
+    "RateLimitObserver",
+    "RateLimitStatus",
+    "_backoff_delay",
+    "_rate_limit_delay",
+    "_retry_after_seconds",
+]
 
 
 def _repair_streamed_tool_args(s: str) -> str:
@@ -127,7 +117,7 @@ def _normalize_tool_calls(raw_calls: list[dict] | None) -> list[ProviderToolCall
     return result
 
 
-class OpenAICompatibleAdapter(BackendAdapter):
+class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
     """OpenAI-compatible adapter with connection reuse.
 
     Works with any server exposing /v1/chat/completions (vLLM, LiteLLM,
@@ -135,32 +125,6 @@ class OpenAICompatibleAdapter(BackendAdapter):
     on first use and reused across all requests.
     Call ``aclose()`` when done (optional — Python GC handles cleanup).
     """
-
-    def __init__(self) -> None:
-        self._client: httpx.AsyncClient | None = None
-
-    def _get_client(self) -> httpx.AsyncClient:
-        """Return the shared client, creating it lazily on first access.
-
-        The client is created WITHOUT a fixed timeout — callers pass
-        per-request timeouts to avoid mismatch between warm-up (60s),
-        throughput (180s), and scenario requests.
-        """
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(120.0),  # generous default; overridden per-request
-                limits=httpx.Limits(
-                    max_connections=20,
-                    max_keepalive_connections=10,
-                ),
-            )
-        return self._client
-
-    async def aclose(self) -> None:
-        """Close the underlying HTTP client (releases connections)."""
-        if self._client is not None and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
 
     async def chat_completion(
         self,
@@ -210,52 +174,12 @@ class OpenAICompatibleAdapter(BackendAdapter):
         req_timeout = httpx.Timeout(timeout_seconds)
 
         async def attempt() -> ChatCompletionResult:
+            await self._rate_limits.acquire()
             if stream:
                 return await self._stream_request(client, url, payload, headers, req_timeout)
             return await self._non_stream_request(client, url, payload, headers, req_timeout)
 
         return await self._with_retries(attempt, url=url)
-
-    async def _with_retries(
-        self,
-        attempt: Callable[[], Awaitable[ChatCompletionResult]],
-        *,
-        url: str,
-        max_retries: int = DEFAULT_MAX_RETRIES,
-    ) -> ChatCompletionResult:
-        """Retry transient rate-limit / gateway failures with jittered backoff.
-
-        Retries only conditions that fail fast and are plausibly self-healing.
-        The final failure is re-raised so the orchestrator can classify it as an
-        infrastructure failure rather than a model error.
-        """
-        for retry_index in range(max_retries + 1):
-            try:
-                return await attempt()
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code not in RETRYABLE_STATUS_CODES:
-                    raise
-                if retry_index == max_retries:
-                    raise
-                delay = _backoff_delay(retry_index, exc.response)
-                reason = f"HTTP {exc.response.status_code}"
-            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as exc:
-                if retry_index == max_retries:
-                    raise
-                delay = _backoff_delay(retry_index)
-                reason = type(exc).__name__
-
-            logger.warning(
-                "Transient failure from %s (%s); retrying in %.2fs (attempt %d/%d)",
-                _redact_url(url),
-                reason,
-                delay,
-                retry_index + 2,
-                max_retries + 1,
-            )
-            await asyncio.sleep(delay)
-
-        raise RuntimeError("retry loop exited without a result")  # pragma: no cover
 
     async def _non_stream_request(
         self,
