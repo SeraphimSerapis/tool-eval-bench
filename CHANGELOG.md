@@ -64,11 +64,11 @@ All notable changes to `tool-eval-bench` are documented here.
 
 - **DeepSeek thinking tool-loop history** — OpenAI-compatible responses already
   parsed `reasoning_content`, but the orchestrator dropped it while rebuilding
-  assistant messages for the next request. Every assistant turn that produced
-  reasoning now preserves the exact field, including final answers, so a later
-  request that still sends `tools` (the next tool-call hop, or a follow-up
-  user turn) does not fail DeepSeek's required reasoning round-trip with
-  HTTP 400. Turns without reasoning are unchanged.
+  assistant messages for the next request. Every assistant message in a user
+  turn that called tools now preserves the exact field as DeepSeek requires.
+  Ordinary no-tool turns no longer replay it; doing so caused HTTP 500 errors
+  on follow-up-heavy TC-46, TC-47, and TC-50 with DeepSeek V4 Flash via both
+  vLLM and the hosted API.
 
 - **Daily quota exhaustion no longer wastes the retry budget** — Google's
   Gemini API reports a per-day quota limit as a plain HTTP 429, the same as a
