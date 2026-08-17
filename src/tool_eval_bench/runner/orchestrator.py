@@ -235,15 +235,13 @@ def _repair_json_str(s: str) -> str:
         return "{}"
 
 
-def _assistant_message(result: ChatCompletionResult) -> ChatMessage:
+def _assistant_message(
+    result: ChatCompletionResult, *, preserve_reasoning: bool = False
+) -> ChatMessage:
     msg: ChatMessage = {"role": "assistant", "content": result.content}
-    # DeepSeek thinking-mode tool loops require the exact reasoning_content
-    # from every prior assistant turn on later requests that still send
-    # ``tools``. Dropping it on a tool-call turn is an HTTP 400; dropping it
-    # on the final answer still 400s once a follow-up user message continues
-    # the conversation with tools attached. Non-thinking models leave
-    # ``result.reasoning`` as None, so the field is omitted.
-    if result.reasoning is not None:
+    # DeepSeek requires reasoning_content for every assistant message in a user
+    # turn that called tools. Ordinary no-tool turns must not add it back.
+    if result.reasoning is not None and (result.tool_calls or preserve_reasoning):
         msg["reasoning_content"] = result.reasoning
     if result.message_extra_content is not None:
         msg["extra_content"] = result.message_extra_content
@@ -437,7 +435,8 @@ async def run_scenario(
                 total_completion_tokens += result.completion_tokens
 
             state.assistant_messages.append(result.content)
-            messages.append(_assistant_message(result))
+            phase_has_tool_calls = any(call.user_phase == user_phase for call in state.tool_calls)
+            messages.append(_assistant_message(result, preserve_reasoning=phase_has_tool_calls))
             trace_lines.append(f"assistant_turn_{turn}={result.content or '[tool_calls_only]'}")
             if result.reasoning:
                 trace_lines.append(f"assistant_reasoning_{turn}={result.reasoning}")

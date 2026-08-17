@@ -230,7 +230,7 @@ class TestParseResponse:
 
         assert rebuilt["reasoning_content"] == "I need to look up the weather."
 
-    def test_preserves_reasoning_content_on_final_answer(self) -> None:
+    def test_does_not_replay_reasoning_content_on_final_answer(self) -> None:
         data = {
             "choices": [
                 {
@@ -245,7 +245,7 @@ class TestParseResponse:
 
         rebuilt = _assistant_message(result)
 
-        assert rebuilt["reasoning_content"] == "Share the weather result."
+        assert "reasoning_content" not in rebuilt
         assert "tool_calls" not in rebuilt
 
     def test_does_not_add_reasoning_when_absent(self) -> None:

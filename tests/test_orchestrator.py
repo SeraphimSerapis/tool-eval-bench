@@ -221,12 +221,8 @@ async def test_tool_call_pass() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reasoning_content_round_trips_on_later_tool_requests() -> None:
-    """DeepSeek requires prior reasoning_content on every later request with tools.
-
-    That includes the tool-call hop and a follow-up user turn after the model
-    already produced a final answer.
-    """
+async def test_tool_turn_reasoning_round_trips_on_later_requests() -> None:
+    """DeepSeek replays all reasoning from a user turn that called tools."""
     follow_up_scenario = ScenarioDefinition(
         id="TEST-REASONING",
         title="Reasoning round-trip",
@@ -282,6 +278,41 @@ async def test_reasoning_content_round_trips_on_later_tool_requests() -> None:
     assert tool_hop_assistant[0]["reasoning_content"] == "I need today's weather in Hangzhou."
     assert follow_up_assistant[0]["reasoning_content"] == "I need today's weather in Hangzhou."
     assert follow_up_assistant[1]["reasoning_content"] == "Share the weather result."
+
+
+@pytest.mark.asyncio
+async def test_no_tool_turn_reasoning_is_not_replayed_on_follow_up() -> None:
+    scenario = ScenarioDefinition(
+        id="TEST-NO-TOOL-REASONING",
+        title="No-tool reasoning",
+        category=Category.A,
+        user_message="Draft a meeting.",
+        description="Answer a follow-up without tools",
+        handle_tool_call=_simple_handler,
+        evaluate=_simple_evaluator,
+        follow_up_messages=["Change it to 4pm."],
+    )
+    adapter = MockAdapter(
+        [
+            ChatCompletionResult(content="Drafted for 3pm.", reasoning="Prepare a draft."),
+            ChatCompletionResult(content="Changed to 4pm.", reasoning="Apply the correction."),
+        ]
+    )
+
+    await run_scenario(
+        adapter,
+        model="test",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=scenario,
+    )
+
+    assistant = [
+        message
+        for message in adapter.captured_payloads[1]["messages"]
+        if message["role"] == "assistant"
+    ]
+    assert "reasoning_content" not in assistant[0]
 
 
 @pytest.mark.asyncio

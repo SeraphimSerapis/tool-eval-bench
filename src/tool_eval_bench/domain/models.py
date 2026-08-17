@@ -88,8 +88,7 @@ class ChatMessage(TypedDict, total=False):
     tool_calls: list[dict[str, Any]] | None
     tool_call_id: str | None
     name: str | None
-    # OpenAI-compatible reasoning extension required by DeepSeek when an
-    # assistant turn is replayed on a later request that still sends tools.
+    # OpenAI-compatible reasoning extension replayed for DeepSeek turns using tools.
     reasoning_content: str | None
     # Provider-specific message metadata (for example Gemini thought
     # signatures carried in ``extra_content``).
