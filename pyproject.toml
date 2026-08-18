@@ -118,6 +118,8 @@ ignore = [
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]
 asyncio_mode = "auto"
+tmp_path_retention_count = 1
+tmp_path_retention_policy = "failed"
 markers = [
   "live: requires a live external service or inference endpoint",
   "slow: takes materially longer than the default unit-test suite",
