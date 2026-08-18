@@ -32,6 +32,7 @@ from tool_eval_bench.domain.adapters import (
     ProviderToolCall,
 )
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage
+from tool_eval_bench.utils.openai_compat import max_tokens_retry_payload
 from tool_eval_bench.utils.urls import chat_completions_url as _chat_completions_url
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 
@@ -126,6 +127,20 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
     Call ``aclose()`` when done (optional — Python GC handles cleanup).
     """
 
+    def __init__(
+        self,
+        *,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        max_rate_limit_retries: int = DEFAULT_MAX_RATE_LIMIT_RETRIES,
+        rate_limit_observer: RateLimitObserver | None = None,
+    ) -> None:
+        super().__init__(
+            max_retries=max_retries,
+            max_rate_limit_retries=max_rate_limit_retries,
+            rate_limit_observer=rate_limit_observer,
+        )
+        self._max_completion_tokens_endpoints: set[tuple[str, str]] = set()
+
     async def chat_completion(
         self,
         *,
@@ -143,10 +158,17 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
         response_format: dict[str, Any] | None = None,
         parallel_tool_calls: bool | None = True,
     ) -> ChatCompletionResult:
+        url = _chat_completions_url(base_url)
+        endpoint = (url, model)
+        token_key = (
+            "max_completion_tokens"
+            if endpoint in self._max_completion_tokens_endpoints
+            else "max_tokens"
+        )
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "max_tokens": max_tokens,
+            token_key: max_tokens,
             "temperature": temperature,
         }
 
@@ -161,6 +183,10 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
 
         if extra_params:
             payload.update(extra_params)
+            if "max_completion_tokens" in extra_params:
+                payload.pop("max_tokens", None)
+            elif "max_tokens" in extra_params:
+                payload.pop("max_completion_tokens", None)
 
         if stream:
             payload["stream"] = True
@@ -169,7 +195,6 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
-        url = _chat_completions_url(base_url)
         client = self._get_client()
         req_timeout = httpx.Timeout(timeout_seconds)
 
@@ -206,6 +231,15 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
             ):
                 raise
             body_text = exc.response.text[:200].strip()
+            retry_payload = max_tokens_retry_payload(
+                payload, exc.response.status_code, exc.response.text
+            )
+            if retry_payload is not None:
+                payload.clear()
+                payload.update(retry_payload)
+                self._max_completion_tokens_endpoints.add((url, str(payload.get("model", ""))))
+                logger.info("Endpoint rejected max_tokens; retrying with max_completion_tokens")
+                return await self._non_stream_request(client, url, payload, headers, timeout)
             logger.warning(
                 "Server returned %d for %s: %s",
                 exc.response.status_code,
@@ -262,7 +296,17 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     await exc.response.aread()  # allow retry logic to inspect Retry-After
                     raise
                 body_bytes = await exc.response.aread()
-                body_text = body_bytes.decode("utf-8", errors="replace")[:200].strip()
+                full_body_text = body_bytes.decode("utf-8", errors="replace")
+                body_text = full_body_text[:200].strip()
+                retry_payload = max_tokens_retry_payload(
+                    payload, exc.response.status_code, full_body_text
+                )
+                if retry_payload is not None:
+                    payload.clear()
+                    payload.update(retry_payload)
+                    self._max_completion_tokens_endpoints.add((url, str(payload.get("model", ""))))
+                    logger.info("Endpoint rejected max_tokens; retrying with max_completion_tokens")
+                    return await self._stream_request(client, url, payload, headers, timeout)
                 logger.warning(
                     "Stream request returned %d for %s: %s",
                     exc.response.status_code,

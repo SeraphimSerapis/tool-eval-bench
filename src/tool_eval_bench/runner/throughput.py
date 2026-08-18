@@ -21,6 +21,7 @@ from typing import Any
 
 import httpx
 
+from tool_eval_bench.utils.openai_compat import max_tokens_retry_payload
 from tool_eval_bench.utils.urls import chat_completions_url as _chat_url
 from tool_eval_bench.utils.urls import models_url as models_url_fn
 
@@ -65,6 +66,8 @@ class TokenizerConfig:
     #   "probe"     — ratio estimated from a real request
     #   "heuristic" — 4 chars/token fallback (may be off by 20-40% for non-English text)
     calibration_confidence: str = "heuristic"
+    # OpenAI-compatible endpoints disagree on the output-token field name.
+    output_token_field: str = "max_tokens"
     # Per-run flag: ensures MTP detection is logged once per calibration
     # context instead of using module-level mutable state.
     mtp_warned: bool = False
@@ -190,6 +193,7 @@ async def calibrate(
     base_url: str,
     model: str,
     api_key: str | None = None,
+    tok_cfg: TokenizerConfig | None = None,
 ) -> TokenizerConfig:
     """Calibrate prompt building for accurate token counts.
 
@@ -198,7 +202,7 @@ async def calibrate(
 
     Returns a TokenizerConfig with the calibrated state.
     """
-    cfg = TokenizerConfig()
+    cfg = tok_cfg or TokenizerConfig()
 
     # Try /tokenize first
     probe_text = _FILLER_PARAGRAPH * 3
@@ -220,7 +224,7 @@ async def calibrate(
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": probe_text}],
-        "max_tokens": 1,
+        cfg.output_token_field: 1,
         "temperature": 0.0,
     }
     try:
@@ -229,6 +233,14 @@ async def calibrate(
             json=payload,
             headers=_headers(api_key),
         )
+        retry_payload = max_tokens_retry_payload(payload, resp.status_code, resp.text)
+        if retry_payload is not None:
+            cfg.output_token_field = "max_completion_tokens"
+            resp = await client.post(
+                _chat_url(base_url),
+                json=retry_payload,
+                headers=_headers(api_key),
+            )
         resp.raise_for_status()
         data = resp.json()
         prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
@@ -436,6 +448,7 @@ async def warmup(
     timeout: float = 120.0,
     *,
     request: tuple[str, dict[str, Any], dict[str, str]] | None = None,
+    tok_cfg: TokenizerConfig | None = None,
 ) -> float:
     """Send a trivial completion to prime the server.
 
@@ -464,15 +477,24 @@ async def warmup(
 
     t0 = time.perf_counter()
     async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.post(url, json=payload, headers=headers)
-        if resp.status_code in _REJECTION_STATUS_CODES:
-            retry_payload = _without_optional_hints(payload)
+        for _ in range(3):
+            resp = await client.post(url, json=payload, headers=headers)
+            if resp.status_code not in _REJECTION_STATUS_CODES:
+                break
+            retry_payload = max_tokens_retry_payload(payload, resp.status_code, resp.text)
             if retry_payload is not None:
+                if tok_cfg is not None:
+                    tok_cfg.output_token_field = "max_completion_tokens"
+                logger.debug("Warm-up rejected max_tokens; retrying with max_completion_tokens")
+            else:
+                retry_payload = _without_optional_hints(payload)
+                if retry_payload is None:
+                    break
                 logger.debug(
                     "Warm-up rejected with HTTP %s; retrying without optional hints",
                     resp.status_code,
                 )
-                resp = await client.post(url, json=retry_payload, headers=headers)
+            payload = retry_payload
         resp.raise_for_status()
     return (time.perf_counter() - t0) * 1000
     # Note: warmup intentionally uses its own client since it runs
@@ -546,7 +568,7 @@ async def _stream_one(
     payload = {
         "model": model,
         "messages": messages,
-        "max_tokens": tg,
+        (tok_cfg.output_token_field if tok_cfg else "max_tokens"): tg,
         "temperature": 0.0,
         "stream": True,
         "stream_options": {"include_usage": True},
@@ -646,6 +668,16 @@ async def _stream_one(
             if end_of_stream_time == t0:
                 end_of_stream_time = time.perf_counter()
 
+    except httpx.HTTPStatusError as exc:
+        await exc.response.aread()
+        retry_payload = max_tokens_retry_payload(
+            payload, exc.response.status_code, exc.response.text
+        )
+        if retry_payload is not None and tok_cfg is not None:
+            tok_cfg.output_token_field = "max_completion_tokens"
+            return await _stream_one(client, base_url, model, messages, tg, api_key, tok_cfg)
+        elapsed = (time.perf_counter() - t0) * 1000
+        return ThroughputSample(error=str(exc), total_ms=elapsed)
     except Exception as exc:
         elapsed = (time.perf_counter() - t0) * 1000
         return ThroughputSample(error=str(exc), total_ms=elapsed)
@@ -886,8 +918,9 @@ async def run_throughput_matrix(
     depths = depths or [0, 4096, 8192]
     concurrency_levels = concurrency_levels or [1, 2, 4]
 
-    # Warm up first
-    warmup_ms = await warmup(base_url, model, api_key)
+    # Warm up first and retain any endpoint capability learned from its response.
+    tok_cfg = TokenizerConfig()
+    warmup_ms = await warmup(base_url, model, api_key, tok_cfg=tok_cfg)
 
     # Shared client for all throughput measurements
     async with httpx.AsyncClient(
@@ -895,7 +928,7 @@ async def run_throughput_matrix(
         limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
     ) as client:
         # Calibrate tokenizer ratio + detect /tokenize
-        tok_cfg = await calibrate(client, base_url, model, api_key)
+        tok_cfg = await calibrate(client, base_url, model, api_key, tok_cfg)
         method = "/tokenize" if tok_cfg.has_tokenize_endpoint else "probe"
         logger.info(
             "Using %.2f chars/token (%s) for prompt building", tok_cfg.chars_per_token, method

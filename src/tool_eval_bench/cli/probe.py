@@ -12,6 +12,7 @@ from tool_eval_bench.adapters.requests import minimal_request
 from tool_eval_bench.cli.helpers import emit_headless_error
 from tool_eval_bench.domain.errors import CONNECTION_FAILED, MODEL_NOT_AVAILABLE
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
+from tool_eval_bench.utils.openai_compat import max_tokens_retry_payload
 
 
 def preflight_model_check(
@@ -46,7 +47,11 @@ def preflight_model_check(
 
     async def check() -> httpx.Response:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            return await client.post(url, json=payload, headers=headers)
+            response = await client.post(url, json=payload, headers=headers)
+            retry_payload = max_tokens_retry_payload(payload, response.status_code, response.text)
+            if retry_payload is not None:
+                response = await client.post(url, json=retry_payload, headers=headers)
+            return response
 
     try:
         response = asyncio.run(check())

@@ -711,6 +711,44 @@ def test_preflight_forwards_request_configuration(monkeypatch: pytest.MonkeyPatc
     assert payload["model"] == "m"
 
 
+def test_preflight_retries_with_max_completion_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from tool_eval_bench.cli import probe
+
+    bodies: list[dict] = []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, json, headers):
+            bodies.append(json)
+            if "max_tokens" in json:
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "message": "Unsupported parameter: max_tokens. Use max_completion_tokens instead."
+                        }
+                    },
+                    request=httpx.Request("POST", url),
+                )
+            return httpx.Response(200, json={"choices": [{}]})
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: Client())
+    probe.preflight_model_check(Console(), "http://server/v1", "m", None)
+
+    assert len(bodies) == 2
+    assert bodies[1]["max_completion_tokens"] == 1
+    assert "max_tokens" not in bodies[1]
+
+
 def test_dispatch_preflight_can_be_skipped_and_receives_merged_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

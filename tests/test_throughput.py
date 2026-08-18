@@ -311,6 +311,52 @@ async def test_stream_one_standard_ar() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_one_retries_with_max_completion_tokens() -> None:
+    from tool_eval_bench.runner.throughput import _stream_one
+
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "max_tokens" in body:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Unsupported parameter: max_tokens. Use max_completion_tokens instead."
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            content=(
+                _make_sse_line({"choices": [{"delta": {"content": "ok"}, "token_ids": [1]}]})
+                + "data: [DONE]\n\n"
+            ).encode(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    cfg = TokenizerConfig()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await _stream_one(
+            client,
+            "http://localhost:8000/v1",
+            "test-model",
+            [{"role": "user", "content": "hi"}],
+            9,
+            None,
+            cfg,
+        )
+
+    assert sample.error is None
+    assert cfg.output_token_field == "max_completion_tokens"
+    assert len(bodies) == 2
+    assert bodies[1]["max_completion_tokens"] == 9
+    assert "max_tokens" not in bodies[1]
+
+
+@pytest.mark.asyncio
 async def test_stream_one_no_token_ids() -> None:
     """Server without token_ids support — fallback to 1 per chunk."""
     from tool_eval_bench.runner.throughput import _stream_one
