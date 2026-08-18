@@ -12,7 +12,10 @@ from tool_eval_bench.adapters.requests import minimal_request
 from tool_eval_bench.cli.helpers import emit_headless_error
 from tool_eval_bench.domain.errors import CONNECTION_FAILED, MODEL_NOT_AVAILABLE
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
-from tool_eval_bench.utils.openai_compat import max_tokens_retry_payload
+from tool_eval_bench.utils.openai_compat import (
+    max_tokens_retry_payload,
+    output_token_limit_reached,
+)
 
 
 def preflight_model_check(
@@ -55,7 +58,9 @@ def preflight_model_check(
 
     try:
         response = asyncio.run(check())
-        if response.status_code >= 400:
+        if response.status_code >= 400 and not output_token_limit_reached(
+            response.status_code, response.text
+        ):
             body = response.text[:300].strip()
             if headless:
                 emit_headless_error(
@@ -103,6 +108,8 @@ def warmup_server(
     api_key: str | None,
     *,
     wire_format: str = "openai",
+    temperature: float = 0.0,
+    extra_params: dict[str, Any] | None = None,
 ) -> None:
     """Prime the model server before measuring benchmark behavior."""
     from tool_eval_bench.runner.throughput import (
@@ -111,13 +118,16 @@ def warmup_server(
         warmup,
     )
 
+    warmup_params = dict(extra_params or {})
+    warmup_params.setdefault("chat_template_kwargs", WARMUP_EXTRA_PARAMS["chat_template_kwargs"])
     request = minimal_request(
         base_url,
         model,
         api_key,
         wire_format=wire_format,
+        temperature=temperature,
         max_tokens=WARMUP_MAX_TOKENS,
-        extra_params=WARMUP_EXTRA_PARAMS,
+        extra_params=warmup_params,
     )
 
     with console.status(
@@ -139,4 +149,8 @@ def warmup_server(
                 )
         except Exception as exc:
             message = str(exc) or type(exc).__name__
+            response = getattr(exc, "response", None)
+            body = getattr(response, "text", "").strip()
+            if body and body not in message:
+                message = f"{message}: {body[:300]}"
             console.print(f"  [bold yellow]⚠[/] Warm-up failed [dim]({message})[/]")

@@ -21,7 +21,10 @@ from typing import Any
 
 import httpx
 
-from tool_eval_bench.utils.openai_compat import max_tokens_retry_payload
+from tool_eval_bench.utils.openai_compat import (
+    max_tokens_retry_payload,
+    output_token_limit_reached,
+)
 from tool_eval_bench.utils.urls import chat_completions_url as _chat_url
 from tool_eval_bench.utils.urls import models_url as models_url_fn
 
@@ -479,6 +482,9 @@ async def warmup(
     async with httpx.AsyncClient(timeout=timeout) as client:
         for _ in range(3):
             resp = await client.post(url, json=payload, headers=headers)
+            if output_token_limit_reached(resp.status_code, resp.text):
+                logger.debug("Warm-up reached the model's output-token limit")
+                break
             if resp.status_code not in _REJECTION_STATUS_CODES:
                 break
             retry_payload = max_tokens_retry_payload(payload, resp.status_code, resp.text)
@@ -495,7 +501,8 @@ async def warmup(
                     resp.status_code,
                 )
             payload = retry_payload
-        resp.raise_for_status()
+        if not output_token_limit_reached(resp.status_code, resp.text):
+            resp.raise_for_status()
     return (time.perf_counter() - t0) * 1000
     # Note: warmup intentionally uses its own client since it runs
     # before the throughput sweep and has a much longer timeout.
