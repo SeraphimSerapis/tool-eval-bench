@@ -661,6 +661,15 @@ def test_preflight_and_warmup_user_outcomes(monkeypatch: pytest.MonkeyPatch) -> 
     probe.warmup_server(console, "url", "m", None)
     assert "Warm-up failed" in console.export_text()
 
+    async def fail_with_response(*args, **kwargs):
+        request = httpx.Request("POST", "http://server/v1/chat/completions")
+        response = httpx.Response(400, text="provider detail", request=request)
+        raise httpx.HTTPStatusError("bad request", request=request, response=response)
+
+    monkeypatch.setattr(throughput, "warmup", fail_with_response)
+    probe.warmup_server(console, "url", "m", None)
+    assert "provider detail" in console.export_text()
+
 
 def test_preflight_forwards_request_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     import httpx
@@ -749,6 +758,53 @@ def test_preflight_retries_with_max_completion_tokens(
     assert "max_tokens" not in bodies[1]
 
 
+def test_preflight_accepts_output_limit_as_model_availability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from tool_eval_bench.cli import probe
+
+    bodies: list[dict] = []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, json, headers):
+            bodies.append(json)
+            request = httpx.Request("POST", url)
+            if "max_tokens" in json:
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "message": "Unsupported parameter: max_tokens. Use max_completion_tokens instead."
+                        }
+                    },
+                    request=request,
+                )
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Could not finish the message because max_tokens or model output limit was reached. Please try again with higher max_tokens."
+                    }
+                },
+                request=request,
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: Client())
+
+    probe.preflight_model_check(Console(), "http://server/v1", "reasoning-model", None)
+
+    assert len(bodies) == 2
+    assert bodies[1]["max_completion_tokens"] == 1
+
+
 def test_dispatch_preflight_can_be_skipped_and_receives_merged_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -761,13 +817,18 @@ def test_dispatch_preflight_can_be_skipped_and_receives_merged_config(
         return None
 
     calls: list[tuple[tuple, dict]] = []
+    warmup_calls: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
         dispatch,
         "_preflight_model_check",
         lambda *args, **kwargs: calls.append((args, kwargs)),
     )
     monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
-    monkeypatch.setattr(dispatch, "_do_warmup", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        dispatch,
+        "_do_warmup",
+        lambda *args, **kwargs: warmup_calls.append((args, kwargs)),
+    )
     monkeypatch.setattr(metadata, "collect_run_context", context)
     monkeypatch.setattr(plugin_runners, "run_selected_plugins", lambda *args, **kwargs: False)
     base_argv = [
@@ -785,7 +846,6 @@ def test_dispatch_preflight_can_be_skipped_and_receives_merged_config(
         "--backend-kwargs",
         '{"reasoning_effort":"low"}',
         "--skip-tool-eval",
-        "--no-warmup",
     ]
 
     monkeypatch.setattr(sys, "argv", base_argv)
@@ -794,10 +854,14 @@ def test_dispatch_preflight_can_be_skipped_and_receives_merged_config(
     assert calls[0][1]["timeout_seconds"] == 17.5
     assert calls[0][1]["temperature"] == 0.3
     assert calls[0][1]["extra_params"] == {"reasoning_effort": "low"}
+    assert len(warmup_calls) == 1
+    assert warmup_calls[0][1]["temperature"] == 0.3
+    assert warmup_calls[0][1]["extra_params"] == {"reasoning_effort": "low"}
 
     monkeypatch.setattr(sys, "argv", [*base_argv, "--no-preflight"])
     dispatch.main()
     assert len(calls) == 1
+    assert len(warmup_calls) == 2
 
 
 def test_dispatch_legacy_spec_and_sweep_modes(

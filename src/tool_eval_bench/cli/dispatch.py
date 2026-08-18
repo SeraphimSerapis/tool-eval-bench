@@ -460,7 +460,15 @@ def main() -> None:
 
     # -- Warm-up --
     if not args.no_warmup and not args.json:
-        _do_warmup(console, base_url, model, api_key, wire_format=wire_format)
+        _do_warmup(
+            console,
+            base_url,
+            model,
+            api_key,
+            wire_format=wire_format,
+            temperature=args.temperature,
+            extra_params=extra_params or None,
+        )
 
     # -- Build RunContext (issue #6: full execution context metadata) --
     # Built early so perf-only and spec-bench paths also get engine detection.

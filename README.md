@@ -272,9 +272,12 @@ backward compatibility.
 Before a benchmark, the CLI sends a minimal model-availability request using
 the configured `--timeout` and the same merged backend parameters used by the
 benchmark requests. The check remains enabled by default because a model that
-is listed by `/v1/models` may still reject completions. Use `--no-preflight`
-when an endpoint requires provider-specific startup handling and you have
-validated it independently; this does not disable the separate warm-up request.
+is listed by `/v1/models` may still reject completions. A hosted reasoning model
+that exhausts the probe's deliberately small output budget still counts as
+available. The separate warm-up request uses the benchmark's temperature and
+backend parameters and treats the same response as successful model work. Use
+`--no-preflight` when an endpoint requires provider-specific startup handling
+and you have validated it independently; this does not disable warm-up.
 
 ### Accuracy benchmarks (GSM8K, MMLU, IFEval)
 

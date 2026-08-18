@@ -114,6 +114,30 @@ class TestWarmupHintFallback:
         assert "max_tokens" not in client.calls[2][1]
         assert client.calls[2][1]["max_completion_tokens"] == throughput.WARMUP_MAX_TOKENS
 
+    def test_output_limit_after_fallbacks_counts_as_success(self, client_factory):
+        class ExhaustedReasoningBudget(_RecordingClient):
+            async def post(self, url, *, json, headers):
+                self.calls.append((url, json, headers))
+                if "max_tokens" in json:
+                    return _Response(
+                        400,
+                        "Unsupported parameter: max_tokens. Use max_completion_tokens instead.",
+                    )
+                if "chat_template_kwargs" in json:
+                    return _Response(400)
+                return _Response(
+                    400,
+                    "Could not finish the message because max_tokens or model output limit "
+                    "was reached. Please try again with higher max_tokens.",
+                )
+
+        client = client_factory(ExhaustedReasoningBudget(None))
+
+        elapsed = asyncio.run(throughput.warmup("http://server/v1", "reasoning-model"))
+
+        assert elapsed >= 0
+        assert len(client.calls) == 3
+
     def test_failure_still_raises_after_the_retry(self, client_factory):
         """A 400 the hints did not cause is a real failure and must surface."""
         client = client_factory(_RecordingClient("model"))
@@ -149,6 +173,38 @@ class TestWarmupHintFallback:
 
 
 class TestWarmupRequestOverride:
+    def test_probe_builds_warmup_with_request_configuration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from rich.console import Console
+
+        from tool_eval_bench.cli import probe
+
+        observed: dict[str, Any] = {}
+
+        async def record(*args, **kwargs):
+            observed.update(kwargs)
+            return 1.0
+
+        monkeypatch.setattr(throughput, "warmup", record)
+
+        probe.warmup_server(
+            Console(),
+            "http://server/v1",
+            "reasoning-model",
+            None,
+            temperature=1.0,
+            extra_params={
+                "reasoning_effort": "low",
+                "chat_template_kwargs": {"thinking": True},
+            },
+        )
+
+        _, payload, _ = observed["request"]
+        assert payload["temperature"] == 1.0
+        assert payload["reasoning_effort"] == "low"
+        assert payload["chat_template_kwargs"] == {"thinking": True}
+
     def test_supplied_request_is_used_verbatim(self, client_factory):
         client = client_factory(_RecordingClient(None))
         request = (
