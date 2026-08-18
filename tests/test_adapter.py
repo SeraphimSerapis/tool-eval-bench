@@ -500,6 +500,87 @@ async def test_response_format_included_in_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_retries_with_max_completion_tokens_and_caches_capability() -> None:
+    bodies: list[dict] = []
+
+    def reject_legacy_field(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "max_tokens" in body:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Unsupported parameter: 'max_tokens'. Use 'max_completion_tokens' instead."
+                    }
+                },
+            )
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(reject_legacy_field))
+
+    for _ in range(2):
+        result = await adapter.chat_completion(
+            model="new-token-field-model",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=123,
+            base_url="http://localhost:8000",
+        )
+        assert result.content == "ok"
+
+    assert len(bodies) == 3
+    assert bodies[0]["max_tokens"] == 123
+    assert "max_completion_tokens" not in bodies[0]
+    assert [body["max_completion_tokens"] for body in bodies[1:]] == [123, 123]
+    assert all("max_tokens" not in body for body in bodies[1:])
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_transient_retry_keeps_negotiated_token_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench.adapters import http_retry
+
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if len(bodies) == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Unsupported parameter: max_tokens. Use max_completion_tokens instead."
+                    }
+                },
+            )
+        if len(bodies) == 2:
+            return httpx.Response(503, json={"error": "busy"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(http_retry, "_backoff_delay", lambda *args: 0.0)
+    adapter = OpenAICompatibleAdapter(max_retries=1)
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        max_tokens=88,
+        base_url="http://localhost:8000",
+    )
+
+    assert result.content == "ok"
+    assert len(bodies) == 3
+    assert "max_tokens" in bodies[0]
+    assert all(body.get("max_completion_tokens") == 88 for body in bodies[1:])
+    assert all("max_tokens" not in body for body in bodies[1:])
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
 async def test_extra_params_merged_into_payload() -> None:
     """Extra params should be merged into the request payload."""
 
@@ -517,6 +598,25 @@ async def test_extra_params_merged_into_payload() -> None:
         messages=[{"role": "user", "content": "hi"}],
         base_url="http://localhost:8000",
         extra_params={"seed": 42, "top_p": 0.9},
+    )
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_explicit_max_completion_tokens_suppresses_legacy_default() -> None:
+    def check_extra(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["max_completion_tokens"] == 77
+        assert "max_tokens" not in body
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(check_extra))
+    await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        extra_params={"max_completion_tokens": 77},
     )
     await adapter.aclose()
 
@@ -783,6 +883,45 @@ async def test_stream_5xx_raises() -> None:
             base_url="http://localhost:8000",
             stream=True,
         )
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_with_max_completion_tokens() -> None:
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "max_tokens" in body:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Unsupported parameter: max_tokens; use max_completion_tokens instead"
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            content=_sse_lines(json.dumps({"choices": [{"delta": {"content": "ok"}}]})),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        max_tokens=55,
+        base_url="http://localhost:8000",
+        stream=True,
+    )
+
+    assert result.content == "ok"
+    assert len(bodies) == 2
+    assert bodies[1]["max_completion_tokens"] == 55
+    assert "max_tokens" not in bodies[1]
     await adapter.aclose()
 
 

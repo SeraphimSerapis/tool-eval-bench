@@ -15,9 +15,9 @@ from tool_eval_bench.runner import throughput
 
 
 class _Response:
-    def __init__(self, status_code: int) -> None:
+    def __init__(self, status_code: int, text: str = "unknown field") -> None:
         self.status_code = status_code
-        self.text = "unknown field"
+        self.text = text
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -41,7 +41,12 @@ class _RecordingClient:
     async def post(self, url: str, *, json: dict[str, Any], headers: dict[str, str]) -> _Response:
         self.calls.append((url, json, headers))
         if self._reject_key is not None and self._reject_key in json:
-            return _Response(self._status_code)
+            text = (
+                "Unsupported parameter: max_tokens. Use max_completion_tokens instead."
+                if self._reject_key == "max_tokens"
+                else "unknown field"
+            )
+            return _Response(self._status_code, text)
         return _Response(200)
 
 
@@ -74,6 +79,40 @@ class TestWarmupHintFallback:
         asyncio.run(throughput.warmup("http://server/v1", "m"))
 
         assert len(client.calls) == 2
+
+    def test_retries_with_max_completion_tokens(self, client_factory):
+        client = client_factory(_RecordingClient("max_tokens"))
+        tok_cfg = throughput.TokenizerConfig()
+
+        asyncio.run(throughput.warmup("http://server/v1", "m", tok_cfg=tok_cfg))
+
+        assert len(client.calls) == 2
+        assert client.calls[0][1]["max_tokens"] == throughput.WARMUP_MAX_TOKENS
+        assert "max_tokens" not in client.calls[1][1]
+        assert client.calls[1][1]["max_completion_tokens"] == throughput.WARMUP_MAX_TOKENS
+        assert tok_cfg.output_token_field == "max_completion_tokens"
+
+    def test_handles_hint_and_token_field_rejections(self, client_factory):
+        class RejectBoth(_RecordingClient):
+            async def post(self, url, *, json, headers):
+                self.calls.append((url, json, headers))
+                if "chat_template_kwargs" in json:
+                    return _Response(400)
+                if "max_tokens" in json:
+                    return _Response(
+                        400,
+                        "Unsupported parameter: max_tokens. Use max_completion_tokens instead.",
+                    )
+                return _Response(200)
+
+        client = client_factory(RejectBoth(None))
+
+        asyncio.run(throughput.warmup("http://server/v1", "m"))
+
+        assert len(client.calls) == 3
+        assert "chat_template_kwargs" not in client.calls[1][1]
+        assert "max_tokens" not in client.calls[2][1]
+        assert client.calls[2][1]["max_completion_tokens"] == throughput.WARMUP_MAX_TOKENS
 
     def test_failure_still_raises_after_the_retry(self, client_factory):
         """A 400 the hints did not cause is a real failure and must surface."""

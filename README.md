@@ -807,7 +807,7 @@ Any OpenAI-compatible `/v1/chat/completions` endpoint works:
 - **LiteLLM** — proxy for multiple backends
 - **llama.cpp** — lightweight local inference
 
-The adapter sends real `tools` + `tool_choice` in the request and parses `tool_calls` from the response — no prompt hacking or JSON regex matching.
+The adapter sends real `tools` + `tool_choice` in the request and parses `tool_calls` from the response — no prompt hacking or JSON regex matching. It defaults to the widely supported `max_tokens` field; if an endpoint explicitly rejects that field and requests `max_completion_tokens`, the adapter retries once and remembers the choice for that endpoint and model. This capability check is response-driven rather than tied to provider or model names.
 
 ### LiteLLM / Model Routers
 

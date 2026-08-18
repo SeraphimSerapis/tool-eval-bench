@@ -55,6 +55,8 @@ def minimal_request(
     }
     if extra_params:
         payload.update(extra_params)
+        if "max_completion_tokens" in extra_params:
+            payload.pop("max_tokens", None)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return chat_completions_url(base_url), payload, headers
