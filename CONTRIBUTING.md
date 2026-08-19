@@ -96,7 +96,8 @@ Prefer one focused change per pull request. A strong contribution generally:
 - preserves deterministic mock data and reproducible scoring;
 - follows the project architecture and existing conventions;
 - updates `README.md` for user-facing CLI or API changes;
-- updates `CHANGELOG.md` for notable behavior, scoring, or compatibility changes;
+- adds a changelog fragment under `changelog.d/` for notable behavior, scoring, or
+  compatibility changes;
 - contains no credentials, live endpoints, generated run artifacts, or unrelated
   formatting changes; and
 - records the checks that were run in the pull request description.
@@ -132,7 +133,33 @@ For evaluator changes in particular:
 
 The standard score is 0 points for FAIL, 1 for PARTIAL, and 2 for PASS. Scenario
 and category scoring is documented in the README; changes to scoring semantics
-should also be called out in the changelog.
+also need a changelog fragment, because they move results a previous run already
+produced.
+
+## Changelog entries
+
+`CHANGELOG.md` is generated and is not edited by hand. Add a fragment instead:
+
+```bash
+.venv/bin/towncrier create --edit +short-slug.fixed.md
+```
+
+Use the issue or PR number when there is one (`72.fixed.md`), and the `+slug` form when there is
+not. Types are `added`, `changed`, `fixed`, `removed`, and `security`.
+
+This is why parallel branches stopped conflicting: previously every change edited the same lines at
+the top of `CHANGELOG.md`, so any two open pull requests collided there. A file per change cannot.
+
+Preview what your fragment will look like:
+
+```bash
+.venv/bin/towncrier build --draft --version 0.0.0
+```
+
+Format, types, and worked examples: [`changelog.d/README.md`](changelog.d/README.md).
+
+Purely internal changes, refactors with no observable effect, and test-only changes do not need a
+fragment. If a user running the benchmark would notice, it needs one.
 
 ## Architecture boundaries
 
@@ -154,8 +181,8 @@ llama.cpp, and other supported endpoints.
 ### CLI or API changes
 
 Update the relevant README usage, API/schema snapshots when the interface
-intentionally changes, tests, and changelog. Verify `--help` output for new or
-changed CLI commands.
+intentionally changes, tests, and a changelog fragment. Verify `--help` output for
+new or changed CLI commands.
 
 ### Adapter or orchestration changes
 
@@ -185,7 +212,8 @@ Before submitting a pull request:
 - [ ] `.venv/bin/ruff format --check .` passes.
 - [ ] `.venv/bin/mypy` passes.
 - [ ] The required pytest suite passes.
-- [ ] README and/or CHANGELOG are updated when applicable.
+- [ ] README is updated when applicable.
+- [ ] A changelog fragment was added under `changelog.d/` when applicable.
 - [ ] No secrets, live endpoints, generated reports, or unrelated changes are
       included.
 - [ ] The PR description lists the validation performed.

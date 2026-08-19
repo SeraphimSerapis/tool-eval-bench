@@ -4,14 +4,26 @@ Checklist for publishing a new release.
 
 ## Pre-release
 
-1. **Update version strings** (all three MUST match):
-   ```
-   pyproject.toml        → version = "X.Y.Z"
-   src/tool_eval_bench/__init__.py → __version__ = "X.Y.Z"
-   CHANGELOG.md          → ## [X.Y.Z] — YYYY-MM-DD
+1. **Do not edit any version string.** The version comes from the git tag via
+   setuptools-scm. `pyproject.toml` declares `dynamic = ["version"]` and
+   `src/tool_eval_bench/__init__.py` resolves it from the generated
+   `_version.py`. Tagging in the Tagging section below is what sets the version.
+
+2. **Build the changelog from its fragments**:
+   ```bash
+   .venv/bin/towncrier build --draft --version X.Y.Z   # preview, writes nothing
+   .venv/bin/towncrier build --version X.Y.Z           # writes and deletes fragments
    ```
 
-2. **Lint, format, and run the required randomized suite**:
+   This replaces the old step of hand-editing `CHANGELOG.md`. `towncrier build`
+   collects every file in `changelog.d/`, inserts a `## [X.Y.Z] — YYYY-MM-DD`
+   section, and removes the fragments. Read the draft before writing: it is the
+   last point where an unclear entry is cheap to fix.
+
+   An empty `changelog.d/` means nothing user-visible changed since the last
+   release, which is a reason to question whether the release is needed.
+
+3. **Lint, format, and run the required randomized suite**:
    ```bash
    ruff check .
    ruff format --check .
@@ -22,7 +34,7 @@ Checklist for publishing a new release.
    done
    ```
 
-3. **Run coverage and the optional performance integration**:
+4. **Run coverage and the optional performance integration**:
    ```bash
    .venv/bin/python -m pytest tests/ \
      --ignore=tests/test_llama_benchy.py -m "not live" \
@@ -37,7 +49,7 @@ Checklist for publishing a new release.
    The release gate is 80% branch coverage. Record any notable module-level
    gaps in the release notes even when the aggregate gate passes.
 
-4. **Build and smoke-test the installed wheel in isolation**:
+5. **Build and smoke-test the installed wheel in isolation**:
    ```bash
    rm -rf dist
    .venv/bin/python -m pip install build
@@ -65,9 +77,29 @@ git tag vX.Y.Z
 git push origin main --tags
 ```
 
+The tag is what sets the version, so tag before building any artifact you intend
+to publish. A wheel built before the tag reports the previous release plus a dev
+suffix.
+
+## Release notes
+
+The notes are the changelog section `towncrier build` just wrote. Extract it
+rather than retyping it, so the GitHub release and the changelog cannot drift:
+
+```bash
+scripts/release_notes.py X.Y.Z > /tmp/notes.md
+gh release create vX.Y.Z --title "vX.Y.Z" --notes-file /tmp/notes.md
+```
+
+Add anything that belongs in a release announcement but not in a changelog
+(upgrade instructions, a known-issues note, coverage gaps recorded in step 4) by
+editing `/tmp/notes.md` before creating the release. Leave `CHANGELOG.md` as the
+generated record.
+
 ## Post-release
 
-- Add a new `## [Unreleased]` section at the top of `CHANGELOG.md`
+- `changelog.d/` is already empty; `towncrier build` deleted the fragments it
+  consumed. There is no `## [Unreleased]` section to recreate.
 
 ## Live Certification (required before major releases)
 
