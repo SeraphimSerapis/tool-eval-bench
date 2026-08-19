@@ -49,7 +49,49 @@ dev = [
   "pytest-randomly>=3.16.0",
   "ruff>=0.12.0",
   "pre-commit>=4.0.0",
+  "towncrier>=24.8.0",
 ]
+
+[tool.towncrier]
+# CHANGELOG.md is generated. Each change adds its own file under changelog.d/
+# instead of editing the changelog directly, so two branches never touch the
+# same lines and never conflict. `towncrier build` collapses them at release.
+package = "tool_eval_bench"
+package_dir = "src"
+directory = "changelog.d"
+filename = "CHANGELOG.md"
+start_string = "<!-- towncrier release notes start -->\n"
+# Matches the heading style used by every release below it. The leading "##"
+# also tells towncrier to render category headings at "###".
+title_format = "## [{version}] \u2014 {project_date}"
+issue_format = "[#{issue}](https://github.com/SeraphimSerapis/tool-eval-bench/issues/{issue})"
+# Entries are written as finished prose; leave them exactly as authored.
+wrap = false
+
+[[tool.towncrier.type]]
+directory = "added"
+name = "Added"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "changed"
+name = "Changed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "fixed"
+name = "Fixed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "removed"
+name = "Removed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "security"
+name = "Security"
+showcontent = true
 
 [tool.mypy]
 python_version = "3.11"
