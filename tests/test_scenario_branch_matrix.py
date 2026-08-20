@@ -43,7 +43,9 @@ _STRING_VALUES = {
 # defaults and overrides lock the expected fail/partial/pass verdict for every
 # advertised tool, so an evaluator branch changing semantics cannot hide behind
 # a generic "returned a legal score" assertion.
-_PARTIAL_BY_DEFAULT = frozenset({"TC-35", "TC-36", "TC-41", "TC-42", "TC-43", "TC-45", "TC-49"})
+# TC-35 is absent deliberately: its filler answer never states 500 K, and the
+# evaluator grades what the answer asserts rather than which tool went unused.
+_PARTIAL_BY_DEFAULT = frozenset({"TC-36", "TC-41", "TC-42", "TC-43", "TC-45", "TC-49"})
 _TOOL_POINT_OVERRIDES = {
     ("TC-26", "create_calendar_event"): 1,
     ("TC-27", "get_weather"): 1,
@@ -53,7 +55,6 @@ _TOOL_POINT_OVERRIDES = {
     ("TC-31", "search_files"): 1,
     ("TC-33", "web_search"): 1,
     ("TC-34", "read_file"): 1,
-    ("TC-35", "calculator"): 0,
     ("TC-36", "send_email"): 0,
     ("TC-41", "get_weather"): 2,
     ("TC-42", "get_weather"): 2,

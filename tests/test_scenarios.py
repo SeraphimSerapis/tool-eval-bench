@@ -166,6 +166,55 @@ class TestTC35ContradictoryParams:
         result = s.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
 
+    def test_pass_mentioning_another_scale_in_passing(self) -> None:
+        """A reference to Celsius or Fahrenheit is not an answer in that unit.
+
+        Captured from a real run: the evaluator used to veto any answer
+        containing the word "fahrenheit", which failed correct answers for
+        explaining what makes Kelvin different.
+        """
+        s = self._get_scenario()
+        for answer in (
+            "500 K. This is a terminology correction rather than a real conversion. "
+            "The numerical value stays the same: 500 K. Unlike Celsius and Fahrenheit, "
+            "the Kelvin scale has no degree prefix.",
+            "No conversion needed: 500 K. Kelvin is absolute, unlike Celsius and Fahrenheit.",
+            "500K — already in Kelvin, nothing to convert.",
+        ):
+            result = s.evaluate(_make_state(final_answer=answer))
+            assert result.status == ScenarioStatus.PASS, answer
+
+    def test_fail_answer_in_another_unit(self) -> None:
+        s = self._get_scenario()
+        for answer in ("500 degrees Fahrenheit.", "That comes to 226.85 °C."):
+            result = s.evaluate(_make_state(final_answer=answer))
+            assert result.status == ScenarioStatus.FAIL, answer
+
+    def test_fail_identity_language_without_the_value(self) -> None:
+        """Saying the units match is not the same as answering the question."""
+        s = self._get_scenario()
+        result = s.evaluate(
+            _make_state(
+                final_answer="Kelvin and Kelvin are the same unit, so there is nothing to do."
+            )
+        )
+        assert result.status == ScenarioStatus.FAIL
+
+    def test_partial_unrequested_extra_conversion(self) -> None:
+        """An unasked-for conversion is scored as its own shortfall, not as a
+        wrong-unit answer."""
+        s = self._get_scenario()
+        result = s.evaluate(
+            _make_state(final_answer="500 K, which is the same value. That's about 440.33 °F.")
+        )
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "unrequested" in result.summary
+
+    def test_partial_value_without_explanation(self) -> None:
+        s = self._get_scenario()
+        result = s.evaluate(_make_state(final_answer="The answer is 500 K."))
+        assert result.status == ScenarioStatus.PARTIAL
+
     def test_prompt_does_not_require_or_reveal_the_noop(self) -> None:
         s = self._get_scenario()
         prompt = s.user_message.lower()
