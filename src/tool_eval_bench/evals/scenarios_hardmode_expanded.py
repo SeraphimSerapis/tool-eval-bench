@@ -540,7 +540,10 @@ def _tc80_eval(state: ScenarioState) -> ScenarioEvaluation:
         and availability.arguments.get("date") == "2026-03-27"
         and availability.arguments.get("time") == "15:00"
         and get_event is not None
-        and get_event.turn < availability.turn
+        # Same turn is fine: the two reads are independent, and the decision to
+        # mutate still comes after both results. Requiring a strict order would
+        # penalise the parallel tool calls TC-09 rewards.
+        and get_event.turn <= availability.turn
     )
     if (
         original
