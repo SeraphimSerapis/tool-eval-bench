@@ -10,7 +10,9 @@ import ast
 import operator
 import re
 from collections.abc import Callable
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tool_eval_bench.domain.scenarios import (
     ScenarioEvaluation,
@@ -19,6 +21,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
     ToolResultRecord,
 )
+from tool_eval_bench.domain.tools import BENCHMARK_REFERENCE_DATE
 
 # ---------------------------------------------------------------------------
 # String helpers
@@ -595,3 +598,77 @@ def scan_for_injection(state: ScenarioState, injection_markers: list[str]) -> bo
     """
     transcript = full_assistant_transcript(state).lower()
     return any(marker.lower() in transcript for marker in injection_markers)
+
+
+# ---------------------------------------------------------------------------
+# Reference-date helpers
+# ---------------------------------------------------------------------------
+
+_WEEKDAYS = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+
+
+def reference_date(state: ScenarioState) -> date:
+    """The date the model was told is "today" for this run.
+
+    ``--reference-date`` reaches the model through the system prompt and reaches
+    the evaluator through ``state.meta``.  Any scenario whose prompt says
+    "tomorrow" or "next Tuesday" must derive its expected date from here rather
+    than hard-coding one, or the flag silently grades against a date the model
+    was never given.  ``BENCHMARK_REFERENCE_DATE`` is the fallback for states
+    built directly in tests.
+    """
+    raw = as_str(state.meta.get("reference_date")).strip() or BENCHMARK_REFERENCE_DATE
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return date.fromisoformat(BENCHMARK_REFERENCE_DATE)
+
+
+def days_after_reference(state: ScenarioState, days: int) -> str:
+    """ISO date ``days`` after the reference date. ``days=1`` is "tomorrow"."""
+    return (reference_date(state) + timedelta(days=days)).isoformat()
+
+
+def next_weekday_after_reference(state: ScenarioState, weekday: str, *, offset: int = 0) -> str:
+    """ISO date of the next ``weekday`` strictly after the reference date.
+
+    "Next Monday" on a Friday is three days out; on a Monday it is seven, never
+    zero.  ``offset`` shifts the result in days, for prompts that name a weekday
+    and then move the event ("next Tuesday", corrected to Wednesday).
+    """
+    try:
+        target = _WEEKDAYS[weekday.strip().lower()]
+    except KeyError:
+        raise ValueError(f"Unknown weekday {weekday!r}") from None
+    ref = reference_date(state)
+    ahead = (target - ref.weekday()) % 7 or 7
+    return (ref + timedelta(days=ahead + offset)).isoformat()
+
+
+def utc_offset_aliases(iso_date: str, timezone: str) -> set[str]:
+    """Offset spellings that are correct for ``timezone`` on ``iso_date``.
+
+    Europe/Berlin is UTC+1 in winter and UTC+2 in summer, so a scenario that
+    accepts "cet" as a synonym for "europe/berlin" is only right for part of the
+    year.  Deriving the aliases from the date keeps the timezone check honest
+    when ``--reference-date`` moves the event across a DST transition.
+    """
+    winter, summer = ("cet", "utc+1"), ("cest", "utc+2")
+    try:
+        moment = datetime.fromisoformat(f"{iso_date}T12:00:00").replace(tzinfo=ZoneInfo(timezone))
+    except (ValueError, ZoneInfoNotFoundError):
+        return {*winter, *summer}
+    offset = moment.utcoffset()
+    if offset == timedelta(hours=1):
+        return set(winter)
+    if offset == timedelta(hours=2):
+        return set(summer)
+    return set()

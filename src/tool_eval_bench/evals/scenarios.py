@@ -51,6 +51,9 @@ from tool_eval_bench.evals.helpers import (
     datetime_matches as _datetime_matches,
 )
 from tool_eval_bench.evals.helpers import (
+    days_after_reference as _days_after_reference,
+)
+from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
@@ -70,6 +73,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     is_only_tool as _is_only_tool,
+)
+from tool_eval_bench.evals.helpers import (
+    next_weekday_after_reference as _next_weekday_after_reference,
 )
 from tool_eval_bench.evals.helpers import (
     normalize as _normalize,
@@ -337,11 +343,13 @@ def _tc05_eval(state: ScenarioState) -> ScenarioEvaluation:
     has_attendees = any(_includes_text(a, "alex") for a in attendees) and any(
         _includes_text(a, "jamie") for a in attendees
     )
+    # "next Monday" is relative to the run's reference date, not a fixed day.
+    expected_date = _next_weekday_after_reference(state, "monday")
     # Use flexible date matching — accept any ISO 8601 date representation
-    correct_date = _date_matches(event.arguments.get("date"), "2026-03-23")
+    correct_date = _date_matches(event.arguments.get("date"), expected_date)
     # Time: accept "09:30" with any seconds/offset
     correct_time = _datetime_matches(
-        f"2026-03-23T{_as_str(event.arguments.get('time', ''))}:00", "2026-03-23", "09:30"
+        f"{expected_date}T{_as_str(event.arguments.get('time', ''))}:00", expected_date, "09:30"
     ) or _as_str(event.arguments.get("time", "")).startswith("09:30")
     has_title = "standup" in _normalize(_as_str(event.arguments.get("title")))
     if correct_date and correct_time and has_duration and has_attendees and has_title:
@@ -570,7 +578,9 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
         and weather.turn < reminder.turn
         and _includes_text(reminder.arguments.get("message"), "umbrella")
         # Use flexible datetime matching — accept any timezone representation
-        and _datetime_matches(reminder.arguments.get("datetime"), "2026-03-21", "08:00")
+        and _datetime_matches(
+            reminder.arguments.get("datetime"), _days_after_reference(state, 1), "08:00"
+        )
     ):
         return _pass("Checked the weather first, then set the rainy-day reminder.")
     if weather and not reminder and _asks_for_clarification(state.final_answer):
@@ -1084,7 +1094,8 @@ SCENARIO_DISPLAY_DETAILS: dict[str, ScenarioDisplayDetail] = {
         "Fail if it ignores the Fahrenheit instruction.",
     ),
     "TC-05": ScenarioDisplayDetail(
-        "Pass if it creates the event for 2026-03-23 at 09:30 with 30 minutes and Alex plus Jamie.",
+        "Pass if it creates the event for the Monday after the reference date "
+        "at 09:30 with 30 minutes and Alex plus Jamie.",
         "Fail if it misparses next Monday or drops core event details.",
     ),
     "TC-06": ScenarioDisplayDetail(

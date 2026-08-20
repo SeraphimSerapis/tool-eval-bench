@@ -18,10 +18,6 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-
-# ---------------------------------------------------------------------------
-# Helpers (shared via evals.helpers)
-# ---------------------------------------------------------------------------
 from tool_eval_bench.evals.helpers import (
     answer_contains_number as _answer_contains_number,
 )
@@ -40,6 +36,13 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
 )
+
+# ---------------------------------------------------------------------------
+# Helpers (shared via evals.helpers)
+# ---------------------------------------------------------------------------
+from tool_eval_bench.evals.helpers import (
+    next_weekday_after_reference as _next_weekday_after_reference,
+)
 from tool_eval_bench.evals.helpers import (
     normalize as _normalize,
 )
@@ -51,6 +54,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    utc_offset_aliases as _utc_offset_aliases,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
@@ -191,10 +197,17 @@ def _tc17_eval(state: ScenarioState) -> ScenarioEvaluation:
     date_val = _as_str(event.arguments.get("date"))
     title_val = _normalize(_as_str(event.arguments.get("title")))
 
+    # "nächsten Dienstag" is relative to the run's reference date.
+    expected_date = _next_weekday_after_reference(state, "tuesday")
+
     correct_time = time_val == "14:00"
-    # 2026-03-24 is before the EU DST transition, so CEST is not valid here.
-    correct_tz = tz_val in ("europe/berlin", "cet", "utc+1")
-    correct_date = date_val == "2026-03-24"  # next Tuesday from reference date (Friday 2026-03-20)
+    # Which offset spelling is correct depends on whether the target date falls
+    # inside EU summer time, so derive the accepted aliases from the date rather
+    # than assuming the March default.
+    correct_tz = tz_val == "europe/berlin" or tz_val in _utc_offset_aliases(
+        expected_date, "Europe/Berlin"
+    )
+    correct_date = date_val == expected_date
     has_title = "standup" in title_val or "meeting" in title_val or "besprechung" in title_val
 
     if correct_time and correct_tz and correct_date and has_title:
@@ -576,7 +589,8 @@ EXTENDED_DISPLAY_DETAILS: dict[str, ScenarioDisplayDetail] = {
         "Fail if it responds in English or misses the weather tool.",
     ),
     "TC-17": ScenarioDisplayDetail(
-        "Pass if it creates the event at 14:00 with timezone Europe/Berlin for 2026-03-24.",
+        "Pass if it creates the event at 14:00 with timezone Europe/Berlin "
+        "for the Tuesday after the reference date.",
         "Fail if it uses UTC or gets the date wrong.",
     ),
     "TC-18": ScenarioDisplayDetail(
