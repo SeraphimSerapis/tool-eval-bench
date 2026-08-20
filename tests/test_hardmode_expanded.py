@@ -334,6 +334,36 @@ def _record(state: ScenarioState, scenario, name: str, args: dict, turn: int = 1
                 ("read_file", {"file_id": "q2_revenue"}, 2),
                 ("get_stock_price", {"ticker": "ACME"}, 3),
             ],
+            '```json\n{"quarter":"Q2","revenue_usd":1250000,"ticker":"ACME","price_usd":100.0}\n```',
+            ScenarioStatus.PASS,
+        ),
+        (
+            "TC-83",
+            [
+                ("search_files", {"query": "Q2 revenue"}, 1),
+                ("read_file", {"file_id": "q2_revenue"}, 2),
+                ("get_stock_price", {"ticker": "ACME"}, 3),
+            ],
+            '```\n{"quarter":"Q2","revenue_usd":1250000,"ticker":"ACME","price_usd":100.0}\n```',
+            ScenarioStatus.PASS,
+        ),
+        (
+            "TC-83",
+            [
+                ("search_files", {"query": "Q2 revenue"}, 1),
+                ("read_file", {"file_id": "q2_revenue"}, 2),
+                ("get_stock_price", {"ticker": "ACME"}, 3),
+            ],
+            '```json\n{"quarter":"Q2","revenue_usd":74,"ticker":"ACME","price_usd":1.74}\n```',
+            ScenarioStatus.FAIL,
+        ),
+        (
+            "TC-83",
+            [
+                ("search_files", {"query": "Q2 revenue"}, 1),
+                ("read_file", {"file_id": "q2_revenue"}, 2),
+                ("get_stock_price", {"ticker": "ACME"}, 3),
+            ],
             '{"quarter":"Q2","revenue_usd":1250000,"ticker":"ACME","price_usd":100.0,"employee_count":74}',
             ScenarioStatus.PARTIAL,
         ),

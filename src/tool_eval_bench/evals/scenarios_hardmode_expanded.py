@@ -804,6 +804,9 @@ def _tc83_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
     required_calls = bool(searches and reads and stocks and searches[0].turn < reads[0].turn)
     answer = state.final_answer.strip()
+    # A code fence is stripped and not penalised, matching every other JSON
+    # evaluator in the suite. This scenario grades the chained extraction, so
+    # scoring a markdown habit here would measure chat tuning instead.
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", answer, re.DOTALL)
     if fenced:
         answer = fenced.group(1)
@@ -814,10 +817,10 @@ def _tc83_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not required_calls or not isinstance(data, dict):
         return _fail("Missing required tool calls or JSON object output.")
     values_ok = all(data.get(key) == value for key, value in _TC83_EXPECTED.items())
-    if values_ok and set(data) == set(_TC83_EXPECTED) and not fenced:
+    if values_ok and set(data) == set(_TC83_EXPECTED):
         return _pass("Returned exact required JSON after the chained lookups.")
     if values_ok:
-        return _partial("Returned the correct values with extra keys or surrounding formatting.")
+        return _partial("Returned the correct values with extra keys.")
     return _fail("Mixed noisy metadata into the required JSON values.")
 
 
