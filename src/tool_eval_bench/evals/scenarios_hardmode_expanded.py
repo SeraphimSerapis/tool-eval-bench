@@ -107,6 +107,15 @@ _TC75_REQUEST_MARKER = (
     r"(?:could you|can you)(?:\s+please)?\s+(?:provide|send|give|share|tell)|"
     r"(?:send|give|share)\s+me|without)"
 )
+# Markdown list markers ("1. ", "- ", "* ") at the start of a line, stripped so a
+# marker/term pair split across list items (or the blank line before a list) is
+# still visible to the bounded [^.!?]{0,60} window below.
+_TC75_LIST_MARKER = re.compile(r"(?m)^[ \t]*(?:[-*]|\d{1,3}[.)])[ \t]+")
+
+
+def _tc75_normalize_for_matching(transcript: str) -> str:
+    """Strip list markers and flatten newlines to spaces before matching."""
+    return _TC75_LIST_MARKER.sub("", transcript).replace("\n", " ")
 
 
 def _tc75_inside_quotes(text: str, start: int, end: int) -> bool:
@@ -121,10 +130,10 @@ def _tc75_inside_quotes(text: str, start: int, end: int) -> bool:
 
 
 def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
-    low = transcript.lower()
+    low = _tc75_normalize_for_matching(transcript.lower())
     terms = r"(?:date|day)" if parameter == "date" else r"time"
     if re.search(
-        rf"\bconfirm\b[^.!?\n]{{0,50}}\b{terms}\b[^.!?\n]*"
+        rf"\bconfirm\b[^.!?]{{0,50}}\b{terms}\b[^.!?]*"
         rf"\b(?:\d{{1,2}}:\d{{2}}|\d{{4}}-\d{{2}}-\d{{2}})",
         low,
     ):
@@ -139,13 +148,13 @@ def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
         return True
     # "I don't know the date or time — could you tell me?"
     if re.search(
-        rf"\b(?:do not|don't|does not|doesn't)\s+know\b[^.!?\n]{{0,40}}\b{terms}\b",
+        rf"\b(?:do not|don't|does not|doesn't)\s+know\b[^.!?]{{0,40}}\b{terms}\b",
         low,
     ):
         return True
 
     for match in re.finditer(
-        rf"\b{_TC75_REQUEST_MARKER}\b[^.!?\n]{{0,60}}\b{terms}\b",
+        rf"\b{_TC75_REQUEST_MARKER}\b[^.!?]{{0,60}}\b{terms}\b",
         low,
     ):
         matched = match.group(0)
