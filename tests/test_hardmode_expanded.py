@@ -475,6 +475,54 @@ def test_tc75_requests_missing_parameters_without_guessing():
         ), answer
 
 
+def test_tc75_requests_missing_parameters_across_markdown_lists():
+    """TC-75: a request split across ordinary Markdown list/whitespace formatting
+    still PASSes; the same formatting does not defeat the negation guard."""
+    scenario = _get("TC-75")
+
+    for answer in (
+        "I can help with that. Please provide:\n\n"
+        "1. Date and time of the interview panel\n"
+        "2. Number of attendees",
+        "Please provide the following:\n- Date\n- Time",
+        "Please provide **Date and time** for the interview.",
+        "I need the following:\n1) The interview date\n2) The interview time",
+    ):
+        state = ScenarioState(final_answer=answer, assistant_messages=[answer])
+        result = scenario.evaluate(state)
+        assert result.status == ScenarioStatus.PASS, answer
+        assert result.summary == (
+            "Asked for the missing interview date and time without guessing."
+        ), answer
+
+    answer = "Please do not send:\n- Date\n- Time"
+    state = ScenarioState(final_answer=answer, assistant_messages=[answer])
+    result = scenario.evaluate(state)
+    assert result.status == ScenarioStatus.FAIL, answer
+    assert result.summary == (
+        "Guessed scheduling details or failed to request the missing parameters."
+    ), answer
+
+
+def test_tc75_request_does_not_reach_across_a_paragraph_break():
+    """TC-75: flattening Markdown must not let a request marker match a term the
+    model used to state what it already knows.  A blank line ends the request
+    unless it follows the colon that introduces a list."""
+    scenario = _get("TC-75")
+
+    for answer in (
+        "Please provide:\n- Attendee count\n- Room\n\nThe date and time are set",
+        "Please provide the attendee count\n\nI will use tomorrow's date at 14:00",
+        "Here is what I need\n\nAttendee count\n\nThe date is already known to me",
+    ):
+        state = ScenarioState(final_answer=answer, assistant_messages=[answer])
+        result = scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL, answer
+        assert result.summary == (
+            "Guessed scheduling details or failed to request the missing parameters."
+        ), answer
+
+
 def _tc84_success_state() -> ScenarioState:
     scenario = _get("TC-84")
     state = ScenarioState()
