@@ -20,8 +20,10 @@ from tool_eval_bench.evals.helpers import (
     as_str,
     asks_for_clarification,
     contains_refusal,
+    days_after_reference,
     full_assistant_transcript,
     has_tool_call,
+    next_weekday_after_reference,
     result_is_usable_if_present,
     tool_calls_by_name,
 )
@@ -425,7 +427,7 @@ def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
     event_usable = result_is_usable_if_present(state, event)
     attendee_values = args.get("attendees")
     required = [
-        args.get("date") == "2026-03-21",
+        args.get("date") == days_after_reference(state, 1),
         args.get("time") == "09:00",
         args.get("timezone") == "Europe/Lisbon",
         args.get("duration_minutes") == 30,
@@ -837,6 +839,11 @@ _TC84_TOOLS = [
 ]
 
 
+def _tc84_slot_date(state: ScenarioState) -> str:
+    """The "next Wednesday" the prompt asks for, relative to the reference date."""
+    return next_weekday_after_reference(state, "wednesday")
+
+
 def _tc84_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_contacts":
         query = as_str(call.arguments.get("query")).strip().lower()
@@ -852,8 +859,19 @@ def _tc84_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             ]
         return _noise({"results": results}, call.name)
     if call.name == "search_slots":
+        # The offered slot has to be the day the prompt asked for, or the
+        # simulator contradicts the reference date the model was given.
         return _noise(
-            {"slots": [{"date": "2026-03-25", "time": "14:00", "duration_minutes": 45}]}, call.name
+            {
+                "slots": [
+                    {
+                        "date": _tc84_slot_date(state),
+                        "time": "14:00",
+                        "duration_minutes": 45,
+                    }
+                ]
+            },
+            call.name,
         )
     if call.name == "search_rooms":
         return _noise({"rooms": copy.deepcopy(_ROOMS)}, call.name)
@@ -894,7 +912,7 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         "search_slots": [
             c
             for c in tool_calls_by_name(state, "search_slots")
-            if c.arguments.get("date") == "2026-03-25"
+            if c.arguments.get("date") == _tc84_slot_date(state)
             and c.arguments.get("period") == "afternoon"
             and c.arguments.get("duration_minutes") == 45
             and result_is_usable_if_present(state, c)
@@ -936,14 +954,14 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
     booking_ok = (
         isinstance(attendee_values, list)
         and len(attendee_values) == 2
-        and booking.arguments.get("date") == "2026-03-25"
+        and booking.arguments.get("date") == _tc84_slot_date(state)
         and booking.arguments.get("time") == "14:00"
         and booking.arguments.get("duration_minutes") == 45
         and attendee_set == {"elena@company.com", "ravi@company.com"}
     )
     failed_attendees = failure.arguments.get("attendees")
     failure_ok = (
-        failure.arguments.get("date") == "2026-03-25"
+        failure.arguments.get("date") == _tc84_slot_date(state)
         and failure.arguments.get("time") == "14:00"
         and failure.arguments.get("duration_minutes") == 45
         and isinstance(failed_attendees, list)

@@ -38,6 +38,7 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback,
     has_tool_call,
     includes_text,
+    next_weekday_after_reference,
     normalize,
     result_is_usable_if_present,
     tool_calls_by_name,
@@ -557,7 +558,7 @@ def _tc74_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     # After all follow-ups, the final event should be:
     # Title: Product Review (changed from "Team Sync")
-    # Date: 2026-03-25 (Wednesday, changed from Tuesday)
+    # Date: the Wednesday after "next Tuesday", per the third follow-up
     # Time: 14:00 (changed from 10:00)
     # Duration: 45 min (changed from 30)
     # Attendees should include Mark Chen (original) + Sarah Jones (added in follow-up)
@@ -582,7 +583,8 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     event_usable = result_is_usable_if_present(state, last_event)
 
     title_ok = includes_text(args.get("title"), "product review")
-    date_ok = "2026-03-25" in as_str(args.get("date", ""))
+    expected_date = next_weekday_after_reference(state, "tuesday", offset=1)
+    date_ok = expected_date in as_str(args.get("date", ""))
     time_ok = "14:00" in as_str(args.get("time", "")) or "14:00" in as_str(args.get("date", ""))
     duration_ok = args.get("duration_minutes") == 45
 
