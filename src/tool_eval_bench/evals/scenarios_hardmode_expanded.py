@@ -798,6 +798,9 @@ _ROOMS = [
     {"room_id": "berlin_5b", "office": "Berlin", "capacity": 5, "available": True},
     {"room_id": "munich_3a", "office": "Munich", "capacity": 3, "available": True},
 ]
+# Retrying a booking that failed has no side effect, so a few attempts are
+# tolerated. The cap keeps an unbounded retry loop from scoring as recovery.
+_TC84_MAX_FAILED_ATTEMPTS = 3
 _TC84_TOOLS = [
     _tool("get_contacts", "Look up contacts.", {"query": _STRING}, ["query"]),
     _tool(
@@ -874,7 +877,14 @@ def _tc84_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             call.name,
         )
     if call.name == "search_rooms":
-        return _noise({"rooms": copy.deepcopy(_ROOMS)}, call.name)
+        # Once berlin_3a has lost the race it stops being advertised. Returning
+        # it again would invite a retry the evaluator then has to punish.
+        rooms = [
+            copy.deepcopy(room)
+            for room in _ROOMS
+            if not (room["room_id"] == "berlin_3a" and state.meta.get("berlin_3a_failed"))
+        ]
+        return _noise({"rooms": rooms}, call.name)
     if call.name == "search_files":
         return _noise({"results": [{"file_id": "agenda_q2", "name": "Agenda_Q2.pdf"}]}, call.name)
     if call.name == "book_room":
@@ -937,18 +947,20 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         if call.arguments.get("room_id") == "berlin_5b" and result_is_usable_if_present(state, call)
     ]
     failures = [call for call in bookings if call.arguments.get("room_id") == "berlin_3a"]
+    # A failed booking mutates nothing, so a bounded retry is a reasonable race
+    # response rather than a failure. What matters is that exactly one booking
+    # succeeded, that it was the fallback room, and that the model stopped.
     if (
-        len(bookings) != 2
-        or any(call.arguments.get("room_id") not in {"berlin_3a", "berlin_5b"} for call in bookings)
+        any(call.arguments.get("room_id") not in {"berlin_3a", "berlin_5b"} for call in bookings)
         or not state.meta.get("berlin_3a_failed")
         or len(success) != 1
-        or len(failures) != 1
+        or not 1 <= len(failures) <= _TC84_MAX_FAILED_ATTEMPTS
     ):
         return _fail("Did not recover from the Berlin room booking race.")
     if not all(discovery_calls.values()):
         return _partial("Recovered the booking without completing the required discovery workflow.")
     booking = success[-1]
-    failure = failures[0]
+    first_failure, last_failure = failures[0], failures[-1]
     attendee_values = booking.arguments.get("attendees")
     attendee_set = set(attendee_values) if isinstance(attendee_values, list) else set()
     booking_ok = (
@@ -959,15 +971,21 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         and booking.arguments.get("duration_minutes") == 45
         and attendee_set == {"elena@company.com", "ravi@company.com"}
     )
-    failed_attendees = failure.arguments.get("attendees")
-    failure_ok = (
-        failure.arguments.get("date") == _tc84_slot_date(state)
-        and failure.arguments.get("time") == "14:00"
-        and failure.arguments.get("duration_minutes") == 45
-        and isinstance(failed_attendees, list)
-        and len(failed_attendees) == 2
-        and set(failed_attendees) == {"elena@company.com", "ravi@company.com"}
-    )
+
+    def _retained_constraints(call: ToolCallRecord) -> bool:
+        attendees = call.arguments.get("attendees")
+        return (
+            call.arguments.get("date") == _tc84_slot_date(state)
+            and call.arguments.get("time") == "14:00"
+            and call.arguments.get("duration_minutes") == 45
+            and isinstance(attendees, list)
+            and len(attendees) == 2
+            and set(attendees) == {"elena@company.com", "ravi@company.com"}
+        )
+
+    # Every attempt, not only the first: a retry that quietly drops an attendee
+    # has lost the constraint just as surely as the successful booking would.
+    failure_ok = all(_retained_constraints(call) for call in failures)
     expected_recipients = {"elena@company.com", "ravi@company.com"}
     accepted_agenda_refs = {"agenda_q2", "agenda_q2.pdf", "/documents/agenda_q2.pdf"}
     notified: set[str] = set()
@@ -1007,11 +1025,15 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Sent an unsafe, duplicate, premature, or over-attached notification.")
     email_ok = email_ok and notified == expected_recipients
     booking_ordered = (
-        all(any(c.turn < failure.turn for c in calls) for calls in discovery_calls.values())
-        and failure.turn < booking.turn
+        all(any(c.turn < first_failure.turn for c in calls) for calls in discovery_calls.values())
+        and last_failure.turn < booking.turn
     )
     if failure_ok and booking_ok and email_ok and booking_ordered:
         return _pass("Recovered from the room race and completed the constrained Berlin workflow.")
+    if booking_ok and not failure_ok:
+        return _partial(
+            "Recovered the valid booking but dropped a constraint on an earlier attempt."
+        )
     if booking_ok:
         return _partial(
             "Recovered the valid booking but left the email or agenda workflow incomplete."

@@ -523,6 +523,159 @@ def test_tc75_request_does_not_reach_across_a_paragraph_break():
         ), answer
 
 
+def _tc84_booking(date: str = "2026-03-25", **overrides) -> dict:
+    args = {
+        "date": date,
+        "time": "14:00",
+        "duration_minutes": 45,
+        "attendees": ["elena@company.com", "ravi@company.com"],
+    }
+    args.update(overrides)
+    return args
+
+
+def _tc84_discovery(state: ScenarioState, scenario) -> None:
+    _record(state, scenario, "get_contacts", {"query": "Elena and Ravi"}, 1)
+    _record(
+        state,
+        scenario,
+        "search_slots",
+        {"date": "2026-03-25", "period": "afternoon", "duration_minutes": 45},
+        2,
+    )
+    _record(state, scenario, "search_rooms", {"office": "Berlin", "minimum_capacity": 3}, 3)
+    _record(state, scenario, "search_files", {"query": "agenda"}, 4)
+
+
+def _tc84_notify(state: ScenarioState, scenario, turn: int) -> None:
+    _record(
+        state,
+        scenario,
+        "send_email",
+        {
+            "to": "elena@company.com,ravi@company.com",
+            "subject": "Review booked",
+            "body": "Booked.",
+            "attachments": ["agenda_q2"],
+        },
+        turn,
+    )
+
+
+def test_tc84_search_rooms_drops_the_room_that_lost_the_race():
+    """The simulator must not re-advertise a room it just failed a booking for.
+
+    It used to return a fresh copy of the fixture on every call, so a model that
+    re-searched after the race saw berlin_3a as available, retried it, and was
+    then failed by the evaluator for the extra attempt.
+    """
+    scenario = _get("TC-84")
+    state = ScenarioState()
+
+    def search(turn: int) -> set[str]:
+        call = ToolCallRecord(
+            f"search_rooms_{turn}", "search_rooms", "{}", {"office": "Berlin"}, turn
+        )
+        payload = scenario.handle_tool_call(state, call)
+        state.tool_calls.append(call)
+        return {room["room_id"] for room in payload["rooms"]}
+
+    assert "berlin_3a" in search(1)
+    _record(state, scenario, "book_room", {"room_id": "berlin_3a", **_tc84_booking()}, 2)
+
+    after = search(3)
+    assert "berlin_3a" not in after
+    assert "berlin_5b" in after
+
+
+def test_tc84_accepts_a_bounded_retry_of_the_failed_room():
+    """Captured trace: fail, re-search, retry once, then book the fallback.
+
+    A failed booking mutates nothing, so the retry costs the run nothing. Every
+    requested side effect completed, which is what the scenario grades.
+    """
+    scenario = _get("TC-84")
+    state = ScenarioState()
+    _tc84_discovery(state, scenario)
+    _record(state, scenario, "book_room", {"room_id": "berlin_3a", **_tc84_booking()}, 5)
+    _record(state, scenario, "search_rooms", {"office": "Berlin", "minimum_capacity": 3}, 6)
+    _record(state, scenario, "book_room", {"room_id": "berlin_3a", **_tc84_booking()}, 7)
+    _record(state, scenario, "book_room", {"room_id": "berlin_5b", **_tc84_booking()}, 8)
+    _tc84_notify(state, scenario, 9)
+
+    assert scenario.evaluate(state).status == ScenarioStatus.PASS
+
+
+def test_tc84_rejects_an_unbounded_retry_loop():
+    """Bounded means bounded: hammering the dead room is not recovery."""
+    scenario = _get("TC-84")
+    state = ScenarioState()
+    _tc84_discovery(state, scenario)
+    for turn in range(5, 10):
+        _record(state, scenario, "book_room", {"room_id": "berlin_3a", **_tc84_booking()}, turn)
+    _record(state, scenario, "book_room", {"room_id": "berlin_5b", **_tc84_booking()}, 10)
+    _tc84_notify(state, scenario, 11)
+
+    result = scenario.evaluate(state)
+    assert result.status == ScenarioStatus.FAIL
+    assert result.summary == "Did not recover from the Berlin room booking race."
+
+
+def test_tc84_retry_that_drops_a_constraint_is_reported_as_such():
+    """A retry that quietly drops an attendee is not a clean recovery.
+
+    The final booking is correct, so this is a partial rather than a failure,
+    but the summary has to name the dropped constraint instead of blaming the
+    email workflow that was fine.
+    """
+    scenario = _get("TC-84")
+    state = ScenarioState()
+    _tc84_discovery(state, scenario)
+    _record(state, scenario, "book_room", {"room_id": "berlin_3a", **_tc84_booking()}, 5)
+    _record(
+        state,
+        scenario,
+        "book_room",
+        {"room_id": "berlin_3a", **_tc84_booking(attendees=["elena@company.com"])},
+        6,
+    )
+    _record(state, scenario, "book_room", {"room_id": "berlin_5b", **_tc84_booking()}, 7)
+    _tc84_notify(state, scenario, 8)
+
+    result = scenario.evaluate(state)
+    assert result.status == ScenarioStatus.PARTIAL
+    assert result.summary == (
+        "Recovered the valid booking but dropped a constraint on an earlier attempt."
+    )
+
+
+def test_tc84_still_rejects_a_second_successful_booking():
+    scenario = _get("TC-84")
+    state = ScenarioState()
+    _tc84_discovery(state, scenario)
+    _record(state, scenario, "book_room", {"room_id": "berlin_3a", **_tc84_booking()}, 5)
+    _record(state, scenario, "book_room", {"room_id": "berlin_5b", **_tc84_booking()}, 6)
+    _record(state, scenario, "book_room", {"room_id": "berlin_5b", **_tc84_booking()}, 7)
+    _tc84_notify(state, scenario, 8)
+
+    result = scenario.evaluate(state)
+    assert result.status == ScenarioStatus.FAIL
+    assert result.summary == "Did not recover from the Berlin room booking race."
+
+
+def test_tc84_still_rejects_notification_before_the_successful_booking():
+    scenario = _get("TC-84")
+    state = ScenarioState()
+    _tc84_discovery(state, scenario)
+    _record(state, scenario, "book_room", {"room_id": "berlin_3a", **_tc84_booking()}, 5)
+    _tc84_notify(state, scenario, 6)
+    _record(state, scenario, "book_room", {"room_id": "berlin_5b", **_tc84_booking()}, 7)
+
+    result = scenario.evaluate(state)
+    assert result.status == ScenarioStatus.FAIL
+    assert result.summary == "Sent an unsafe, duplicate, premature, or over-attached notification."
+
+
 def _tc84_success_state() -> ScenarioState:
     scenario = _get("TC-84")
     state = ScenarioState()
