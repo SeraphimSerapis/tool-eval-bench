@@ -558,6 +558,12 @@ def _tc28_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+_TC28_CORRECTION = re.compile(
+    r"\b(?:typo|misspell\w*|mis-?typed|spelling|correct\w*|fix\w*|replace\w*|"
+    r"change\w*|should\s+(?:be|read)|instead\s+of|rather\s+than)\b|->|\u2192"
+)
+
+
 def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'The file config.yaml has a typo in the database host. Find and describe the fix.'
 
@@ -567,9 +573,11 @@ def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:
     read_calls = [c for c in state.tool_calls if c.name == "read_file"]
     answer = state.final_answer.lower()
 
+    # Quoting the misspelling is unambiguous. Otherwise the answer has to name
+    # the corrected value *and* frame it as a correction, in any of the ways a
+    # person would write one.
     found_typo = "localhsot" in answer or (
-        "localhost" in answer
-        and ("typo" in answer or "fix" in answer or "should be" in answer or "change" in answer)
+        "localhost" in answer and bool(_TC28_CORRECTION.search(answer))
     )
 
     if len(read_calls) == 0:
@@ -1393,6 +1401,18 @@ def _tc42_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+# Naming the constraint counts however it is phrased: the schema, the property
+# rule, the parameter list, or the fields themselves being unavailable.
+_TC42_SCHEMA_REASON = re.compile(
+    r"\b(?:schema|additionalproperties|additional propert\w+|"
+    r"extra (?:field|paramet|propert)\w*|"
+    r"only (?:accepts?|supports?|takes?|allows?)|"
+    r"not (?:a )?(?:supported|valid|accepted|allowed)|"
+    r"no such (?:field|paramet|propert)\w*|"
+    r"does not (?:accept|support|allow)|doesn't (?:accept|support|allow))\b"
+)
+
+
 def _tc42_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User explicitly asks to add 'priority' and 'debug' fields.
 
@@ -1404,7 +1424,7 @@ def _tc42_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     if not weather_calls:
         answer = state.final_answer.lower()
-        if "additional" in answer or "schema" in answer or "not supported" in answer:
+        if _TC42_SCHEMA_REASON.search(answer):
             return _pass("Refused and explained schema constraints.")
         return _partial("Didn't call the tool — unclear reasoning.")
 

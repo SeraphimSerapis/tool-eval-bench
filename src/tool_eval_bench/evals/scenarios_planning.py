@@ -1074,6 +1074,38 @@ def _tc63_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+_TC63_BUDGET_CEILING = 30
+# The constraint is "open past 10pm", so closing *at* 22:00 does not satisfy it.
+_TC63_LATE_HOUR = 22
+_TC63_PAST_CUTOFF = re.compile(r"\b(?:past|after|later than|beyond)\s+10(?!\d)\s*(?:p\.?m\.?)?")
+_TC63_PRICE = re.compile(r"\$\s?(\d{1,3})")
+_TC63_CLOCK = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\b(\d{1,2}):(\d{2})\b")
+
+
+def _tc63_within_budget(answer: str) -> bool:
+    """True when the answer names a per-person price at or under the ceiling."""
+    return any(int(m) <= _TC63_BUDGET_CEILING for m in _TC63_PRICE.findall(answer))
+
+
+def _tc63_open_late(answer: str) -> bool:
+    """True when the answer names a closing time at or after the late cutoff.
+
+    Accepts "11pm", "11 PM", "23:00", and "open until 11:30pm" alike, plus the
+    user's own phrasing ("open past 10"). Closing at 22:00 exactly does not
+    count, since the request was for somewhere open *past* 10pm.
+    """
+    if _TC63_PAST_CUTOFF.search(answer):
+        return True
+    for hour12, minute12, meridiem, hour24, minute24 in _TC63_CLOCK.findall(answer):
+        if meridiem:
+            hour, minute = int(hour12) % 12 + (12 if meridiem == "pm" else 0), int(minute12 or 0)
+        else:
+            hour, minute = int(hour24), int(minute24 or 0)
+        if (hour, minute) > (_TC63_LATE_HOUR, 0):
+            return True
+    return False
+
+
 def _tc63_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Find me a restaurant for dinner tonight.'
     Then constraints accumulate: Italian → under $30 → downtown → open past 10pm.
@@ -1087,9 +1119,14 @@ def _tc63_eval(state: ScenarioState) -> ScenarioEvaluation:
     has_italian = not denies_italian and (
         "trattoria" in answer or "luigi" in answer or "italian" in answer
     )
-    has_budget = any(w in answer for w in ("$22", "$25", "under $30", "budget", "affordable"))
-    has_downtown = "downtown" in answer
-    has_late = any(w in answer for w in ("11pm", "11 pm", "open until 11", "open past 10"))
+    # Read the numbers rather than matching the fixture's exact spelling. A
+    # model that paraphrases the price or uses a 24-hour clock has still
+    # retained the constraint.
+    has_budget = _tc63_within_budget(answer) or any(
+        w in answer for w in ("budget", "affordable", "cheap", "inexpensive")
+    )
+    has_downtown = "downtown" in answer or "city centre" in answer or "city center" in answer
+    has_late = _tc63_open_late(answer)
     best_pick = "trattoria" in answer or "bella" in answer
 
     constraints_met = sum([has_italian, has_budget, has_downtown, has_late])

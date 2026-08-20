@@ -422,6 +422,17 @@ def _tc73_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return generic_tool_fallback(call)
 
 
+_TC73_EXCLUSION = re.compile(
+    r"\b(?:closed|shut|not open|isn.?t open|no longer open|"
+    r"not vegan|isn.?t vegan|non-?vegan|no vegan (?:option|dish|menu)\w*|"
+    r"exclude\w*|rule[sd]? out|ruled out|discount\w*|dropp?\w*|skipp?\w*|"
+    r"unsuitable|not suitable|"
+    r"does not (?:meet|have|qualify|fit|work|offer)|"
+    r"doesn.?t (?:meet|have|qualify|fit|work|offer)|"
+    r"fails? (?:to )?(?:meet|match)|not a (?:match|fit|good fit))\b"
+)
+
+
 def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
     transcript = full_assistant_transcript(state)
     search_calls = tool_calls_by_name(state, "web_search")
@@ -447,23 +458,11 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Check constraint filtering: should pick Green Kitchen or Veganz (open Sunday + vegan)
     # NOT Mitte Brasserie (closed Sundays, not vegan)
     mentions_valid = "green kitchen" in transcript.lower() or "veganz" in transcript.lower()
-    mentions_invalid = "mitte brasserie" in transcript.lower() and not any(
-        kw in transcript.lower()
-        for kw in (
-            "closed",
-            "not vegan",
-            "not open",
-            "exclude",
-            "doesn't meet",
-            "does not meet",
-            "unsuitable",
-            "ruled out",
-            "doesn't have",
-            "does not have",
-            "isn't open",
-            "is not open",
-            "skip",
-        )
+    # Naming the unsuitable option is fine as long as the model says why it is
+    # out. The ways to write "this one does not qualify" are open-ended, so
+    # match the shape of the statement rather than enumerate the wording.
+    mentions_invalid = "mitte brasserie" in transcript.lower() and not _TC73_EXCLUSION.search(
+        transcript.lower()
     )
 
     email_to_lisa = (
