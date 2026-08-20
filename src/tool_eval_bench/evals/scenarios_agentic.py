@@ -1177,45 +1177,79 @@ def _tc35_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+# "500 K", "500K", "500 kelvin", "500 degrees Kelvin", "500 °K".
+_TC35_ANSWER = re.compile(r"\b500\s*(?:degrees?\s*)?(?:°\s*)?k(?:elvin)?\b")
+# A number carrying a Celsius or Fahrenheit unit, which is a converted value
+# rather than a passing mention of another scale.
+_TC35_OTHER_SCALE = re.compile(
+    r"\b\d+(?:[.,]\d+)?\s*(?:degrees?\s*)?(?:°\s*)?(?:f\b|c\b|fahrenheit|celsius|centigrade)"
+)
+# Ways of saying the value does not change.  Kept broad: the scenario tests
+# whether the model spotted an identity, not whether it used our wording.
+_TC35_IDENTITY_PHRASES = (
+    "same unit",
+    "same scale",
+    "same value",
+    "same number",
+    "same temperature",
+    "no conversion",
+    "nothing to convert",
+    "no change",
+    "unchanged",
+    "stays the same",
+    "stay the same",
+    "remains the same",
+    "remain the same",
+    "already in kelvin",
+    "already kelvin",
+    "identity",
+    "no-op",
+    "trivial",
+    "terminology",
+)
+
+
 def _tc35_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Convert 500 degrees Kelvin to Kelvin.'
 
-    This is a nonsensical request — no conversion needed (same unit).
-    A good model should recognize this and answer directly (500K = 500K)
-    rather than blindly calling the calculator.
+    A nonsensical request: source and target units are the same. A good model
+    answers 500 K directly and says why no conversion happened, without reaching
+    for the calculator.
+
+    Graded on what the answer asserts, not on which words appear in it. An
+    earlier version matched a six-phrase allowlist and then vetoed any answer
+    containing "fahrenheit" anywhere, which failed correct answers for
+    mentioning another scale in passing and never checked that the number 500
+    was present at all.
     """
     calc_calls = [c for c in state.tool_calls if c.name == "calculator"]
     answer = state.final_answer.lower()
 
-    # Best: recognized that no conversion is needed
-    no_conversion_needed = (
-        any(
-            phrase in answer
-            for phrase in [
-                "same unit",
-                "no conversion",
-                "already in kelvin",
-                "identity",
-                "trivial",
-                "same temperature",
-            ]
-        )
-        and "fahrenheit" not in answer
+    recognized_identity = any(phrase in answer for phrase in _TC35_IDENTITY_PHRASES)
+    # An extra conversion is a separate factual claim, judged separately below.
+    converted_value = bool(_TC35_OTHER_SCALE.search(answer))
+    # A bare "500" counts only alongside identity language, which supplies the
+    # unit the number is missing ("the answer is 500, it's the same unit").
+    states_answer = bool(_TC35_ANSWER.search(answer)) or (
+        recognized_identity and not converted_value and bool(re.search(r"\b500\b", answer))
     )
 
-    if not calc_calls and no_conversion_needed:
-        return _pass("Spotted the tautology — 500K is already in Kelvin, no conversion needed.")
-    if calc_calls and no_conversion_needed:
-        return _partial(
-            "Called calculator on a same-unit identity conversion, but noted the tautology."
-        )
-    if not calc_calls:
-        if "fahrenheit" in answer:
+    if not states_answer:
+        if converted_value:
             return _fail("Answered in the wrong unit instead of recognizing the Kelvin identity.")
-        return _partial("Avoided the calculator but didn't explain that K→K is a no-op.")
-    return _fail(
-        "Obeyed a nonsensical instruction — K→K is an identity conversion, not a real task."
-    )
+        if calc_calls:
+            return _fail(
+                "Obeyed a nonsensical instruction — K→K is an identity conversion, not a real task."
+            )
+        return _fail("Never gave the requested value of 500 K.")
+
+    if calc_calls:
+        return _partial("Called calculator on a same-unit identity conversion, but reached 500 K.")
+    if not recognized_identity:
+        return _partial("Answered 500 K but didn't explain that K→K is a no-op.")
+    if converted_value:
+        return _partial("Recognized the Kelvin identity but volunteered an unrequested conversion.")
+    return _pass("Spotted the tautology — 500K is already in Kelvin, no conversion needed.")
 
 
 # ===================================================================
