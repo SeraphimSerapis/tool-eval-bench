@@ -1,6 +1,6 @@
 # tool-eval-bench
 
-A **tool-calling quality benchmark** for evaluating LLM tool-use in agentic workflows across open-weight model serving stacks (**vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**). Also includes pluggable accuracy benchmarks (**GSM8K**, **MMLU**, **IFEval**) via the same OpenAI-compatible endpoints.
+A **tool-calling quality benchmark** for evaluating LLM tool-use in agentic workflows across open-weight model serving stacks (**vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**). It also includes pluggable accuracy benchmarks (**GSM8K**, **MMLU**, **IFEval**) through the same adapter layer.
 
 Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool runs **69 standard deterministic scenarios** across categories A–O, plus **19 opt-in Hard Mode scenarios**, through OpenAI-compatible `/v1/chat/completions` endpoints. It scores each result as **pass**, **partial**, or **fail**, and produces detailed trace reports. Mock tool responses include realistic payload noise (extra metadata, timestamps, nested objects) to test whether models can extract relevant fields from noisy API responses. It also includes an integrated **throughput benchmark** (llama-bench style) for measuring prefill and token generation speed.
 
@@ -22,7 +22,7 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 | **F — Localization** | TC-16 – TC-18 | German language, timezone awareness, translate+forward |
 | **G — Structured Reasoning** | TC-19 – TC-21 | Message routing, data extraction, constraint validation |
 | **H — Instruction Following** | TC-22 – TC-24, TC-44 – TC-45 | Output format, tool prohibition, multi-constraint, tool_choice compliance |
-| **I — Context & State** | TC-25 – TC-27, TC-46 – TC-50, TC-62 – TC-63 | Cross-reference, state consistency, multi-turn correction, 6-turn chains, constraint accumulation |
+| **I — Context & State** | TC-25 – TC-27, TC-46 – TC-50, TC-62 – TC-63 | Cross-reference, state consistency, multi-turn correction, 5-turn chains, constraint accumulation |
 | **J — Code Patterns** | TC-28 – TC-30 | Read-before-write, explain vs execute, chained conditional |
 | **K — Safety & Boundaries** | TC-31 – TC-36, TC-41 – TC-43, TC-57 – TC-60 | Ambiguity, prompt injection (file/search/system/sleeper), authority escalation, contradictory params, parameter validation |
 | **L — Toolset Scale** | TC-37 – TC-40 | Tool selection from 52 tools, multi-step in crowded namespace, restraint under abundance |
@@ -225,6 +225,9 @@ tool-eval-bench run --seed 42
 # Full + Hard Mode: 88 scenarios for top-performing models
 tool-eval-bench run --seed 42 --hardmode
 
+# Select Hard Mode IDs directly, without enabling the full pack
+tool-eval-bench run --scenarios TC-85 TC-88
+
 # Full + throughput — quality + speed (recommended)
 tool-eval-bench bench --seed 42 --perf
 
@@ -295,10 +298,17 @@ checkpoints and runs only missing, corrupt, or infrastructure-failed scenarios.
 Pass, partial, and ordinary fail outcomes are immutable evidence under that run
 ID. Start a new run when you want another scored attempt.
 
+Scenario selection is validated before model discovery. The default run has 69
+standard scenarios. `--hardmode` adds all 19 Category P scenarios for 88 total,
+and `--hardmode-only` runs those 19 alone. Public IDs passed to `--scenarios`
+resolve against all 88, so `--scenarios TC-85` works without `--hardmode` and
+takes precedence over `--short` and `--categories`. To select Category P by
+category, use `--hardmode --categories P` or `--hardmode-only`.
+
 Use `tool-eval-bench COMMAND --help` for command-specific options. Existing
 flat invocations such as `tool-eval-bench --short`, `--history`, and
 `compare-report A.md B.md -o out.html` remain supported silently. Removed
-interfaces, including the former built-in throughput flags, are rejected.
+interfaces, including `--perf-legacy` and `--perf-legacy-only`, are rejected.
 
 Before a benchmark, the CLI sends a minimal model-availability request using
 the configured `--timeout` and the same merged backend parameters used by the
@@ -533,7 +543,7 @@ Hard Mode focuses on nineteen ceiling-breaking scenarios:
 | Scenario | Focus Area | What it tests |
 |---|---|---|
 | TC-70 | Adversarial tool definitions | Near-duplicate tools with subtle scope differences (Europe-only vs global) |
-| TC-71 | Ambiguous requests | Multiple matching contacts — must ask for clarification, not guess |
+| TC-71 | Ambiguous recipient | Find multiple matching contacts and ask for clarification, not guess |
 | TC-72 | Cascading error recovery | Primary summary read fails → use its backup → complete the email chain |
 | TC-73 | Multi-constraint composition | Search + filter by 3 simultaneous constraints + contact lookup + email |
 | TC-74 | Stateful multi-turn corrections | Preserve 4 rounds of draft changes, then create and notify exactly once |
@@ -542,15 +552,15 @@ Hard Mode focuses on nineteen ceiling-breaking scenarios:
 | TC-77 | Irrelevant tool trap | Answer a stable fact directly despite distractor tools |
 | TC-78 | Independent portfolio valuation | Fetch three stock prices and aggregate the result |
 | TC-79 | Dependency-aware event planning | Resolve independent inputs before conditional event creation |
-| TC-80 | Preconditioned update | Check an exact requested date before mutation and preserve original state |
+| TC-80 | Preconditioned update safety | Check an exact requested date before mutation and preserve original state |
 | TC-81 | Tool-output prompt injection | Ignore malicious instructions embedded in search results |
 | TC-82 | Stale memory conflict | Prefer authoritative current directory state over stale memory |
 | TC-83 | Format-sensitive chaining | Return exact JSON after noisy lookups while allowing independent work in parallel |
-| TC-84 | Long-horizon recovery | Recover from a booking race and complete equivalent valid notification workflows |
-| TC-85 | Ambiguous mutation | Wait through pending replication, confirm one least-privilege credential, and avoid duplicate creation |
-| TC-86 | Optimistic concurrency | Re-read after two consecutive conflicts and preserve both concurrent field changes |
-| TC-87 | Pagination integrity | Follow four cursors, reject a stale-count shortcut, deduplicate, resolve routing, and delay notification |
-| TC-88 | Preserved reasoning | Carry three linked, privately planned constrained values across two user follow-ups |
+| TC-84 | Long-horizon recovery with constraint retention | Recover from a booking race and complete equivalent valid notification workflows |
+| TC-85 | Exactly-once provisioning after ambiguous commit | Wait through pending replication, confirm one least-privilege credential, avoid duplicates, and never disclose the secret |
+| TC-86 | Optimistic concurrency without lost updates | Re-read after two consecutive conflicts and preserve both concurrent field changes |
+| TC-87 | Complete pagination with cursor integrity | Follow four cursors, reject a stale-count shortcut, deduplicate, resolve routing, and delay notification |
+| TC-88 | Preserved reasoning across follow-ups | Carry three linked, privately planned constrained values across two user follow-ups |
 
 TC-88 opts into replaying the provider's `reasoning_content` field across its
 follow-up turns. It does not ask the model to print its reasoning to the user.
@@ -559,7 +569,10 @@ valid outputs from a backend that keeps reasoning opaque receive partial credit.
 Other scenarios keep the default behavior and do not replay completed no-tool
 reasoning across user turns.
 
-Hard Mode scenarios are scored identically (pass=2, partial=1, fail=0) and appear in the standard report under Category P. They are excluded from the base benchmark score by default to maintain comparability with existing results.
+Hard Mode scenarios use the same scoring (pass=2, partial=1, fail=0) and appear
+under Category P in reports. They are absent from the default 69-scenario run;
+when selected, they contribute to that run's score. This keeps default results
+comparable across standard-suite runs.
 
 Multi-turn authorization scenarios record the active user-message phase for
 each tool call. This prevents a correct-looking mutation made before the
@@ -715,6 +728,9 @@ Progress events on stderr:
 {"event":"benchmark_complete","json_file":"/tmp/result.json","final_score":87}
 ```
 
+The example shows a standard-suite run. A full Hard Mode run reports `total: 88`
+in its scenario progress events.
+
 ## How It Works
 
 For every scenario, the model receives:
@@ -725,10 +741,10 @@ For every scenario, the model receives:
 5. Realistic payload noise on all mock responses (extra metadata, timestamps, IDs)
 
 The orchestrator then:
-1. Calls the model via `/v1/chat/completions` with `tools` in the OpenAI wire format
+1. Calls the selected backend adapter with the scenario's tools. OpenAI-compatible endpoints use `/v1/chat/completions`; Gemini can use its native wire format.
 2. Executes any requested tool calls against **deterministic mock handlers**
 3. Appends tool results back into the conversation
-4. Repeats for up to 8 assistant turns
+4. Repeats for the configured turn limit, which defaults to 8 and can be higher for deep scenarios
 5. Evaluates the full trace against scenario-specific scoring logic
 
 ## Architecture
@@ -746,10 +762,19 @@ src/tool_eval_bench/
   adapters/           # OpenAI-compatible adapters (vLLM, SGLang, LiteLLM, llama.cpp) + native Gemini
   application/
     service.py        # Benchmark orchestration, persistence, and public application service
+    finalization.py   # Completed-run finalization and checkpoint merging
   cli/
     bench.py          # Main CLI entry point (tool-eval-bench)
+    command_registry.py # Discoverable subcommands and translation rules
     commands.py       # Scenario resolution helpers
+    compare_report.py # HTML comparison command for Markdown reports
+    dispatch.py       # Runtime command routing and benchmark flow
     helpers.py        # Small CLI helpers (dotenv, redaction, JSON output, etc.)
+    local_commands.py # Dry-run and local command rendering
+    model_probe.py    # Model discovery and availability probing
+    parser.py         # Subcommand discovery and legacy translation
+    plugin_lifecycle.py # Shared plugin lifecycle and persistence
+    plugin_runners.py # Plugin-specific execution and reporting
     server.py         # Server discovery and backend detection
     perf.py           # External llama-benchy throughput integration
     spec_bench.py     # Speculative-decoding / MTP benchmark runner
@@ -761,6 +786,7 @@ src/tool_eval_bench/
     spec_live_rendering.py  # Rich component rendering for spec-live
   domain/
     errors.py         # Structured error code constants
+    measurement.py    # Measurement client port and raw stream types
     models.py         # BenchmarkConfig
     plugin.py         # BenchmarkPlugin ABC + BenchmarkResult (pluggable benchmarks)
     scenarios.py      # Scenario types, evaluation types, scoring
@@ -769,6 +795,7 @@ src/tool_eval_bench/
   evals/
     helpers.py        # Shared evaluator utilities (safe math, text matching)
     noise.py          # Deterministic payload enrichment (realistic API noise)
+    packs.py          # Held-out YAML scenario-pack loading and attestations
     scenarios.py            # Core 15 scenarios (A–E) + central registry
     scenarios_extended.py   # Extended scenarios (F–G)
     scenarios_agentic.py    # Agentic scenarios (H–K partial)
@@ -794,6 +821,9 @@ src/tool_eval_bench/
   storage/
     db.py             # SQLite persistence
     reports.py        # Markdown report writer
+  compare_reports/
+    summary.py        # Summary report comparison
+    tool_eval.py      # Tool-evaluation report and trace comparison
   plugins/
     hf_utils.py       # Shared HuggingFace downloader (retry, resume, throttle)
     registry.py       # Plugin registry (get_plugin, available_plugins)
@@ -803,6 +833,8 @@ src/tool_eval_bench/
   utils/
     ids.py            # Run ID generation
     metadata.py       # System/backend metadata collection (engine probing)
+    openai_compat.py  # OpenAI-compatible request and response helpers
+    tokenizers.py     # Local tokenizer discovery for throughput prompts
     urls.py           # Shared URL helpers for OpenAI-compatible endpoints
 ```
 

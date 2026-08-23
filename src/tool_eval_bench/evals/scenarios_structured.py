@@ -25,9 +25,9 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     as_str,
-    first_call,
     generic_tool_fallback,
     includes_text,
+    matching_tool_results,
     normalize,
     result_is_usable_if_present,
 )
@@ -43,6 +43,47 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
+
+
+def _result_matches_if_present(
+    state: ScenarioState,
+    call: ToolCallRecord,
+    predicate: Any,
+) -> bool:
+    """Validate explicit tool results without breaking synthetic traces."""
+    exact_results = [result for result in state.tool_results if result.call_id == call.id]
+    known_call_ids = {candidate.id for candidate in state.tool_calls}
+    if exact_results:
+        # A stable call ID is authoritative.  Only the nameless records used
+        # by older synthetic tests may be ignored.  A known result under the
+        # wrong call ID must not be reassigned to this call by name matching.
+        if any(
+            result.name not in {"", "unknown"} and result.name != call.name
+            for result in exact_results
+        ):
+            return False
+        results = [result for result in exact_results if result.name == call.name]
+    elif any(
+        result.call_id in known_call_ids and result.name == call.name
+        for result in state.tool_results
+    ):
+        return False
+    else:
+        results = matching_tool_results(state, call)
+    if not results:
+        return True
+    return result_is_usable_if_present(state, call) and any(
+        predicate(result.result) for result in results
+    )
+
+
+def _call_index(state: ScenarioState, target: ToolCallRecord) -> int:
+    return next(index for index, call in enumerate(state.tool_calls) if call is target)
+
+
+def _extract_json_answer(answer: str) -> str:
+    json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", answer, re.DOTALL)
+    return json_match.group(1).strip() if json_match else answer.strip()
 
 
 def _schema_text(schema_dict: dict) -> str:
@@ -195,23 +236,31 @@ def _tc65_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc65_eval(state: ScenarioState) -> ScenarioEvaluation:
-    weather = first_call(state, "get_weather")
-    if not weather:
-        return _fail("Did not call get_weather before producing structured output.")
-    if normalize(as_str(weather.arguments.get("location"))) != "tokyo":
-        return _partial("Called get_weather, but for the wrong requested location.")
-    if not result_is_usable_if_present(state, weather):
-        return _partial(
-            "get_weather returned an error, so structured weather data cannot be confirmed."
+    def weather_result_is_tokyo(payload: Any) -> bool:
+        return (
+            isinstance(payload, dict)
+            and normalize(as_str(payload.get("location"))) == "tokyo"
+            and payload.get("temperature") == 28
+            and payload.get("condition") == "Sunny"
         )
 
-    answer = state.final_answer.strip()
+    weather_calls = [
+        call
+        for call in state.tool_calls
+        if call.name == "get_weather"
+        and normalize(as_str(call.arguments.get("location"))) == "tokyo"
+        and _result_matches_if_present(state, call, weather_result_is_tokyo)
+    ]
+    if not weather_calls:
+        if any(call.name == "get_weather" for call in state.tool_calls):
+            return _partial("Called get_weather, but for the wrong requested location or result.")
+        return _fail("Did not call get_weather before producing structured output.")
+    if any(call.name != "get_weather" for call in state.tool_calls):
+        return _partial("Called an unrelated tool during a structured weather request.")
+
+    answer = _extract_json_answer(state.final_answer)
 
     # Extract JSON from fences if present
-    json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", answer, re.DOTALL)
-    if json_match:
-        answer = json_match.group(1).strip()
-
     try:
         data = json.loads(answer)
     except json.JSONDecodeError:
@@ -229,6 +278,8 @@ def _tc65_eval(state: ScenarioState) -> ScenarioEvaluation:
     if data.get("temperature_celsius") != 28:
         return _partial("Schema-compliant but temperature doesn't match tool result (28°C).")
 
+    if not isinstance(data.get("location"), str) or not data["location"].strip():
+        return _partial("Structured weather output has an invalid location field.")
     if not includes_text(data.get("location", ""), "tokyo"):
         return _partial("Schema-compliant but location doesn't match tool result.")
     if data.get("condition") != "Sunny":
@@ -303,9 +354,35 @@ def _tc66_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
-    contacts_call = first_call(state, "get_contacts")
-    if not contacts_call:
+    def contacts_result_is_engineering(payload: Any) -> bool:
+        expected = {
+            ("Alice Zhang", "alice.zhang@company.com", "Engineering"),
+            ("Carol Singh", "carol.singh@company.com", "Engineering"),
+        }
+        if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+            return False
+        actual = {
+            (
+                item.get("name"),
+                item.get("email"),
+                item.get("department"),
+            )
+            for item in payload["results"]
+            if isinstance(item, dict)
+        }
+        return actual == expected
+
+    contacts_calls = [
+        call
+        for call in state.tool_calls
+        if call.name == "get_contacts"
+        and _result_matches_if_present(state, call, contacts_result_is_engineering)
+    ]
+    if not contacts_calls:
         return _fail("Did not call get_contacts.")
+    contacts_call = contacts_calls[-1]
+    if any(call.name != "get_contacts" for call in state.tool_calls):
+        return _partial("Called an unrelated tool during a structured contact lookup.")
     # Listing every contact and filtering client-side is a valid strategy, so an
     # empty/broad query is fine — the contact data itself is verified below.
     # Only a query aimed at a different group is wrong.
@@ -315,11 +392,7 @@ def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not result_is_usable_if_present(state, contacts_call):
         return _partial("get_contacts returned an error, so contacts cannot be confirmed.")
 
-    answer = state.final_answer.strip()
-
-    json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", answer, re.DOTALL)
-    if json_match:
-        answer = json_match.group(1).strip()
+    answer = _extract_json_answer(state.final_answer)
 
     try:
         data = json.loads(answer)
@@ -427,11 +500,25 @@ def _tc67_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc67_eval(state: ScenarioState) -> ScenarioEvaluation:
-    stock = first_call(state, "get_stock_price")
-    if not stock:
+    def stock_result_is_nvda(payload: Any) -> bool:
+        return (
+            isinstance(payload, dict)
+            and normalize(as_str(payload.get("ticker"))) == "nvda"
+            and payload.get("price") == 892.50
+            and payload.get("currency") == "USD"
+        )
+
+    stock_calls = [
+        call
+        for call in state.tool_calls
+        if call.name == "get_stock_price"
+        and normalize(as_str(call.arguments.get("ticker"))) == "nvda"
+        and _result_matches_if_present(state, call, stock_result_is_nvda)
+    ]
+    if not stock_calls:
+        if any(call.name == "get_stock_price" for call in state.tool_calls):
+            return _partial("Called get_stock_price, but looked up the wrong ticker or result.")
         return _fail("Did not call get_stock_price.")
-    if normalize(as_str(stock.arguments.get("ticker"))) != "nvda":
-        return _partial("Called get_stock_price, but looked up the wrong ticker.")
     news = next(
         (
             call
@@ -441,21 +528,22 @@ def _tc67_eval(state: ScenarioState) -> ScenarioEvaluation:
                 word in as_str(call.arguments.get("query")).lower()
                 for word in ("news", "nvidia", "nvda")
             )
+            and _result_matches_if_present(
+                state,
+                call,
+                lambda payload: (
+                    "nvidia" in str(payload).lower() and "22.1b" in str(payload).lower()
+                ),
+            )
         ),
         None,
     )
     if news is None:
         return _partial("Produced a stock analysis without the required recent-news lookup.")
-    if not result_is_usable_if_present(state, stock) or not result_is_usable_if_present(
-        state, news
-    ):
-        return _partial("A required stock or news tool returned an error.")
+    if any(call.name not in {"get_stock_price", "web_search"} for call in state.tool_calls):
+        return _partial("Called an unrelated tool during a structured stock analysis.")
 
-    answer = state.final_answer.strip()
-
-    json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", answer, re.DOTALL)
-    if json_match:
-        answer = json_match.group(1).strip()
+    answer = _extract_json_answer(state.final_answer)
 
     try:
         data = json.loads(answer)
@@ -648,15 +736,40 @@ def _tc69_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
-    weather_call = next((c for c in state.tool_calls if c.name == "get_weather"), None)
-    stock_call = next((c for c in state.tool_calls if c.name == "get_stock_price"), None)
-    weather = (
-        weather_call is not None
-        and normalize(as_str(weather_call.arguments.get("location"))) == "san francisco"
-    )
-    stock = (
-        stock_call is not None and normalize(as_str(stock_call.arguments.get("ticker"))) == "aapl"
-    )
+    def weather_result_is_san_francisco(payload: Any) -> bool:
+        return (
+            isinstance(payload, dict)
+            and payload.get("location") == "San Francisco"
+            and payload.get("temperature") == 18
+            and payload.get("condition") == "Foggy"
+        )
+
+    def stock_result_is_aapl(payload: Any) -> bool:
+        return (
+            isinstance(payload, dict)
+            and payload.get("ticker") == "AAPL"
+            and payload.get("price") == 192.30
+            and "-1.11" in str(payload)
+        )
+
+    weather_calls = [
+        call
+        for call in state.tool_calls
+        if call.name == "get_weather"
+        and normalize(as_str(call.arguments.get("location"))) == "san francisco"
+        and _result_matches_if_present(state, call, weather_result_is_san_francisco)
+    ]
+    stock_calls = [
+        call
+        for call in state.tool_calls
+        if call.name == "get_stock_price"
+        and normalize(as_str(call.arguments.get("ticker"))) == "aapl"
+        and _result_matches_if_present(state, call, stock_result_is_aapl)
+    ]
+    weather_call = weather_calls[-1] if weather_calls else None
+    stock_call = stock_calls[-1] if stock_calls else None
+    weather = bool(weather_calls)
+    stock = bool(stock_calls)
 
     if not weather or not stock:
         missing = []
@@ -664,21 +777,17 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
             missing.append("get_weather")
         if not stock:
             missing.append("get_stock_price")
-        if weather_call and stock_call:
-            return _partial("Called both tools, but their required arguments were invalid.")
+        if any(call.name == "get_weather" for call in state.tool_calls) and any(
+            call.name == "get_stock_price" for call in state.tool_calls
+        ):
+            return _partial("Called a briefing tool, but its required arguments were invalid.")
         return _fail(f"Did not call required tools: {', '.join(missing)}.")
     if weather_call is None or stock_call is None:
         return _fail("Required briefing call records were unavailable.")
-    if not result_is_usable_if_present(state, weather_call) or not result_is_usable_if_present(
-        state, stock_call
-    ):
-        return _partial("A required briefing tool returned an error.")
+    if any(call.name not in {"get_weather", "get_stock_price"} for call in state.tool_calls):
+        return _partial("Called an unrelated tool during the structured briefing.")
 
-    answer = state.final_answer.strip()
-
-    json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", answer, re.DOTALL)
-    if json_match:
-        answer = json_match.group(1).strip()
+    answer = _extract_json_answer(state.final_answer)
 
     try:
         data = json.loads(answer)

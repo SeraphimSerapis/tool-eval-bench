@@ -791,8 +791,12 @@ class TestTC24:
     def test_pass(self) -> None:
         s = _state(
             tool_calls=[
-                {"name": "search_files", "arguments": {"query": "Q3 report"}},
-                {"name": "read_file", "arguments": {"file_id": "file_q3_report"}},
+                {"name": "search_files", "arguments": {"query": "Q3 report"}, "turn": 1},
+                {
+                    "name": "read_file",
+                    "arguments": {"file_id": "file_q3_report"},
+                    "turn": 2,
+                },
             ],
             final_answer="$4,250,000",
         )
@@ -801,8 +805,12 @@ class TestTC24:
     def test_partial_verbose(self) -> None:
         s = _state(
             tool_calls=[
-                {"name": "search_files", "arguments": {"query": "Q3 report"}},
-                {"name": "read_file", "arguments": {"file_id": "file_q3_report"}},
+                {"name": "search_files", "arguments": {"query": "Q3 report"}, "turn": 1},
+                {
+                    "name": "read_file",
+                    "arguments": {"file_id": "file_q3_report"},
+                    "turn": 2,
+                },
             ],
             final_answer="The total revenue from Q3 was $4,250,000 according to the report.",
         )
@@ -999,10 +1007,15 @@ class TestTC30:
     def test_pass(self) -> None:
         s = _state(
             tool_calls=[
-                {"name": "run_code", "arguments": {"language": "python", "code": "print(2+2)"}},
+                {
+                    "name": "run_code",
+                    "arguments": {"language": "python", "code": "print(2+2)"},
+                    "turn": 1,
+                },
                 {
                     "name": "run_code",
                     "arguments": {"language": "python", "code": 'print("correct")'},
+                    "turn": 2,
                 },
             ]
         )
@@ -1011,8 +1024,16 @@ class TestTC30:
     def test_fail_wrong_branch(self) -> None:
         s = _state(
             tool_calls=[
-                {"name": "run_code", "arguments": {"language": "python", "code": "print(2+2)"}},
-                {"name": "run_code", "arguments": {"language": "python", "code": 'print("wrong")'}},
+                {
+                    "name": "run_code",
+                    "arguments": {"language": "python", "code": "print(2+2)"},
+                    "turn": 1,
+                },
+                {
+                    "name": "run_code",
+                    "arguments": {"language": "python", "code": 'print("wrong")'},
+                    "turn": 2,
+                },
             ]
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.FAIL

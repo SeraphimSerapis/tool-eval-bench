@@ -275,6 +275,7 @@ def _tc85_eval(state: ScenarioState) -> ScenarioEvaluation:
             call,
             lambda payload: (
                 payload.get("status") == "confirmed"
+                and payload.get("service_id") == "svc_prod_analytics"
                 and payload.get("principal") == "reports-bot"
                 and payload.get("scopes") == ["read:reports"]
             ),
@@ -394,6 +395,17 @@ def _tc86_incident(state: ScenarioState) -> dict[str, Any]:
     )
 
 
+def _tc86_tags_match(value: Any, expected: tuple[str, ...]) -> bool:
+    """Compare set-like tags exactly while rejecting duplicates and omissions."""
+    return (
+        isinstance(value, list)
+        and all(isinstance(tag, str) for tag in value)
+        and len(value) == len(expected)
+        and len(set(value)) == len(value)
+        and set(value) == set(expected)
+    )
+
+
 def _tc86_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     incident = _tc86_incident(state)
     if call.name == "get_incident":
@@ -489,7 +501,7 @@ def _tc86_eval(state: ScenarioState) -> ScenarioEvaluation:
             lambda payload: (
                 payload.get("version") == 8
                 and payload.get("assignee") == "Mika"
-                and payload.get("tags") == ["customer-impact", "database"]
+                and _tc86_tags_match(payload.get("tags"), ("customer-impact", "database"))
             ),
         )
     ]
@@ -518,15 +530,38 @@ def _tc86_eval(state: ScenarioState) -> ScenarioEvaluation:
             lambda payload: (
                 payload.get("version") == 9
                 and payload.get("assignee") == "Mika"
-                and payload.get("tags") == ["customer-impact", "database", "priority-customer"]
+                and _tc86_tags_match(
+                    payload.get("tags"),
+                    ("customer-impact", "database", "priority-customer"),
+                )
             ),
         )
     ]
-    successful = [
+    successful_updates = [
         call
         for call in updates
         if _has_result(state, call, lambda payload: payload.get("status") == "updated")
     ]
+    successful = [
+        call
+        for call in successful_updates
+        if _has_result(
+            state,
+            call,
+            lambda payload: (
+                payload.get("status") == "updated"
+                and payload.get("version") == 10
+                and payload.get("severity") == "P1"
+                and payload.get("assignee") == "Mika"
+                and _tc86_tags_match(
+                    payload.get("tags"),
+                    ("customer-impact", "database", "priority-customer"),
+                )
+            ),
+        )
+    ]
+    if successful_updates and not successful:
+        return _fail("Applied an incident update with the wrong preserved fields or version.")
     if any(not initial_reads or call.turn <= initial_reads[0].turn for call in updates):
         return _fail("Attempted an incident update before reading the current version.")
     if len(first_conflicts) > 1 or len(second_conflicts) > 1:
@@ -542,6 +577,19 @@ def _tc86_eval(state: ScenarioState) -> ScenarioEvaluation:
     if successful:
         if len(successful) != 1 or state.meta.get("tc86_successful_updates") != 1:
             return _fail("Applied the incident mutation more than once.")
+        invalid_second_attempt = any(
+            call.arguments.get("expected_version") == 8
+            and version_eight_reads
+            and call.turn > version_eight_reads[-1].turn
+            and (
+                call.arguments.get("severity") != "P1"
+                or call.arguments.get("assignee") != "Mika"
+                or not _tc86_tags_match(call.arguments.get("tags"), ("customer-impact", "database"))
+            )
+            for call in updates
+        )
+        if invalid_second_attempt:
+            return _fail("Dropped a concurrent field while retrying after the first conflict.")
         update = successful[0]
         preserved = (
             version_nine_reads
@@ -549,7 +597,10 @@ def _tc86_eval(state: ScenarioState) -> ScenarioEvaluation:
             and update.arguments.get("expected_version") == 9
             and update.arguments.get("severity") == "P1"
             and update.arguments.get("assignee") == "Mika"
-            and update.arguments.get("tags") == ["customer-impact", "database", "priority-customer"]
+            and _tc86_tags_match(
+                update.arguments.get("tags"),
+                ("customer-impact", "database", "priority-customer"),
+            )
         )
         if not preserved:
             return _fail("Overwrote fields or updated without the current version.")
@@ -567,6 +618,24 @@ def _tc86_eval(state: ScenarioState) -> ScenarioEvaluation:
 _TC87_ONCALL = "oncall@company.com"
 _TC87_IDS = ["INC-901", "INC-902", "INC-903", "INC-904", "INC-905", "INC-906"]
 _TC87_INCIDENT_ID = re.compile(r"\bINC-\d+\b")
+_TC87_PAGES: dict[str, dict[str, Any]] = {
+    "": {
+        "incidents": [{"id": "INC-901", "severity": "P1"}, {"id": "INC-902", "severity": "P1"}],
+        "next_page_token": "p2",
+    },
+    "p2": {
+        "incidents": [{"id": "INC-902", "severity": "P1"}, {"id": "INC-903", "severity": "P1"}],
+        "next_page_token": "p3",
+    },
+    "p3": {
+        "incidents": [{"id": "INC-904", "severity": "P1"}, {"id": "INC-905", "severity": "P1"}],
+        "next_page_token": "p4",
+    },
+    "p4": {
+        "incidents": [{"id": "INC-905", "severity": "P1"}, {"id": "INC-906", "severity": "P1"}],
+        "next_page_token": None,
+    },
+}
 _TC87_TOOLS = [
     _tool(
         "list_incidents",
@@ -676,6 +745,17 @@ def _tc87_eval(state: ScenarioState) -> ScenarioEvaluation:
         and _has_result(state, pages[1], lambda payload: payload.get("next_page_token") == "p3")
         and _has_result(state, pages[2], lambda payload: payload.get("next_page_token") == "p4")
         and _has_result(state, pages[3], lambda payload: payload.get("next_page_token") is None)
+        and all(
+            _has_result(
+                state,
+                page,
+                lambda payload, token=token: (
+                    payload.get("incidents") == _TC87_PAGES[token]["incidents"]
+                    and payload.get("next_page_token") == _TC87_PAGES[token]["next_page_token"]
+                ),
+            )
+            for page, token in zip(pages, expected_tokens, strict=False)
+        )
     )
     if len(actual_tokens) != len(set(actual_tokens)) or not filters_ok:
         return _fail("Repeated a cursor or changed filters while paginating.")
@@ -730,6 +810,8 @@ def _tc88_eval(state: ScenarioState) -> ScenarioEvaluation:
     if len(state.assistant_messages) != 3:
         return _fail("Did not provide one answer for each of the three user turns.")
     numbers = [message.strip() for message in state.assistant_messages]
+    if state.final_answer.strip() != numbers[-1]:
+        return _fail("The final answer did not preserve the third follow-up value.")
     if not all(re.fullmatch(r"[1-9]\d{19}", number) for number in numbers):
         return _fail("Returned extra text or a value that was not exactly 20 digits.")
     if len(set(numbers)) != 3:

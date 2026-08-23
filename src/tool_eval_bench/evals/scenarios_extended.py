@@ -8,6 +8,7 @@ TC-16 to TC-21: adds 6 new scenarios in 2 new categories:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -17,6 +18,9 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioEvaluation,
     ScenarioState,
     ToolCallRecord,
+)
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_text as _answer_affirms_text,
 )
 from tool_eval_bench.evals.helpers import (
     answer_contains_number as _answer_contains_number,
@@ -35,6 +39,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
+)
+from tool_eval_bench.evals.helpers import (
+    matching_tool_results as _matching_tool_results,
 )
 
 # ---------------------------------------------------------------------------
@@ -56,11 +63,80 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    result_is_usable_if_present as _result_is_usable_if_present,
+)
+from tool_eval_bench.evals.helpers import (
     utc_offset_aliases as _utc_offset_aliases,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
+
+
+def _positive_argument_contains(value: Any, expected: str) -> bool:
+    """Match a requested entity without accepting an explicit negation."""
+    text = _as_str(value).strip().lower()
+    target = expected.strip().lower()
+    if not text or not re.search(rf"(?<!\w){re.escape(target)}(?!\w)", text):
+        return False
+    return not re.search(
+        rf"\b(?:not|no|without|except|exclude|excluding)\s+(?:the\s+)?"
+        rf"{re.escape(target)}\b",
+        text,
+    )
+
+
+def _numeric_value(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = _as_str(value).strip().replace(",", "").replace("$", "")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _status_is_success(payload: Any, *, statuses: set[str] | None = None) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    return _normalize(_as_str(payload.get("status"))) in (
+        statuses
+        or {
+            "accepted",
+            "created",
+            "delivered",
+            "ok",
+            "queued",
+            "scheduled",
+            "sent",
+            "set",
+            "success",
+        }
+    )
+
+
+def _result_matches_if_present(
+    state: ScenarioState,
+    call: ToolCallRecord,
+    predicate: Callable[[Any], bool],
+) -> bool:
+    """Validate a result when present, retaining synthetic trace compatibility."""
+    exact_results = [result for result in state.tool_results if result.call_id == call.id]
+    known_call_ids = {candidate.id for candidate in state.tool_calls}
+    if exact_results:
+        results = exact_results
+    elif any(result.call_id in known_call_ids for result in state.tool_results):
+        return False
+    else:
+        results = _matching_tool_results(state, call)
+    if not results:
+        return True
+    return _result_is_usable_if_present(state, call) and any(
+        predicate(result.result) for result in results
+    )
+
 
 # ===================================================================
 # TC-16: German Language Tool Call
@@ -104,16 +180,31 @@ def _tc16_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc16_weather_result_is_munich(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    if "location" in payload and not (
+        _positive_argument_contains(payload.get("location"), "münchen")
+        or _positive_argument_contains(payload.get("location"), "munich")
+    ):
+        return False
+    return _numeric_value(payload.get("temperature")) == 14 or _includes_text(
+        payload.get("condition"), "bewölkt"
+    )
+
+
 def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User asked in German — should use get_weather and respond in German."""
-    used_weather = any(
-        c.name == "get_weather"
-        and (
-            _includes_text(c.arguments.get("location"), "münchen")
-            or _includes_text(c.arguments.get("location"), "munich")
-        )
+    matching_weather_calls = [
+        c
         for c in state.tool_calls
-    )
+        if c.name == "get_weather"
+        and (
+            _positive_argument_contains(c.arguments.get("location"), "münchen")
+            or _positive_argument_contains(c.arguments.get("location"), "munich")
+        )
+    ]
+    used_weather = bool(matching_weather_calls)
     # Check that the final answer is in German.
     # Two paths: weather-specific vocabulary (when tool succeeds) or
     # generic German (when tool returns an error and model reports failure).
@@ -142,10 +233,19 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer_in_german = (weather_score >= 3 or generic_score >= 2) and german_markers >= 1
     # Check the model surfaced actual weather data (temp 14 or condition).
     has_data = _answer_contains_number(state.final_answer, "14") or "bewölkt" in answer_lower
-    weather_call = next((c for c in state.tool_calls if c.name == "get_weather"), None)
-    weather_failed = bool(weather_call and _has_explicit_tool_error(state, weather_call))
+    weather_success = any(
+        _result_matches_if_present(state, call, _tc16_weather_result_is_munich)
+        for call in matching_weather_calls
+    )
+    weather_failed = any(_has_explicit_tool_error(state, call) for call in matching_weather_calls)
     answered_about_error = generic_score >= 2 and weather_failed and not has_data
-    if used_weather and answer_in_german and (has_data or answered_about_error):
+    if used_weather and answer_in_german and answered_about_error:
+        if generic_score >= 4:
+            return _pass("Used get_weather and clearly reported the service error in German.")
+        return _partial(
+            "Reported the weather tool error in German, but did not receive weather data."
+        )
+    if used_weather and answer_in_german and has_data and weather_success:
         return _pass("Used get_weather for München and responded in German.")
     if used_weather and answer_in_german and not has_data:
         return _partial(
@@ -186,11 +286,18 @@ def _tc17_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc17_event_result_is_created(payload: Any) -> bool:
+    return _status_is_success(payload, statuses={"accepted", "created", "ok", "success"})
+
+
 def _tc17_eval(state: ScenarioState) -> ScenarioEvaluation:
     """Should create event at 14:00 Europe/Berlin, not UTC."""
-    event = next((c for c in state.tool_calls if c.name == "create_calendar_event"), None)
+    event_calls = [c for c in state.tool_calls if c.name == "create_calendar_event"]
+    event = event_calls[0] if event_calls else None
     if not event:
         return _fail("Did not create the calendar event.")
+    if not _result_matches_if_present(state, event, _tc17_event_result_is_created):
+        return _partial("The calendar mutation did not return a successful creation result.")
 
     time_val = _as_str(event.arguments.get("time"))
     tz_val = _normalize(_as_str(event.arguments.get("timezone")))
@@ -208,9 +315,14 @@ def _tc17_eval(state: ScenarioState) -> ScenarioEvaluation:
         expected_date, "Europe/Berlin"
     )
     correct_date = date_val == expected_date
-    has_title = "standup" in title_val or "meeting" in title_val or "besprechung" in title_val
+    has_title = any(
+        _positive_argument_contains(title_val, title)
+        for title in ("standup", "meeting", "besprechung")
+    )
 
     if correct_time and correct_tz and correct_date and has_title:
+        if len(event_calls) > 1:
+            return _partial("Created the requested event but issued duplicate calendar mutations.")
         return _pass("Scheduled for 14:00 Europe/Berlin on the correct date.")
     if correct_time and correct_date and not correct_tz:
         return _partial(
@@ -260,6 +372,20 @@ def _tc18_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc18_translation_result_is_german(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    translated = _as_str(payload.get("translated"))
+    return _includes_text(translated, "verschoben") and _includes_text(translated, "termin")
+
+
+def _tc18_email_result_is_sent(payload: Any) -> bool:
+    return _status_is_success(
+        payload,
+        statuses={"accepted", "delivered", "ok", "queued", "sent", "success"},
+    )
+
+
 def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
     """Should translate the message to German and then email it.
 
@@ -274,20 +400,42 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
         for c in translate_calls
         if _normalize(_as_str(c.arguments.get("target_language"))) in ("german", "de", "deutsch")
     ]
+    valid_translations = [
+        c
+        for c in translations
+        if _normalize(_as_str(c.arguments.get("source_language"))) in ("english", "en")
+        and _positive_argument_contains(c.arguments.get("text"), "meeting")
+    ]
     emails = [
         c
         for c in email_calls
         if _normalize(_as_str(c.arguments.get("to"))) == "hans.mueller@firma.de"
     ]
+    usable_translations = [
+        call
+        for call in valid_translations
+        if _result_matches_if_present(state, call, _tc18_translation_result_is_german)
+    ]
+    usable_emails = [
+        call
+        for call in emails
+        if _result_matches_if_present(state, call, _tc18_email_result_is_sent)
+    ]
     translated_to_german = bool(translations)
+    # Keep attempted, correctly addressed mutations visible to the partial
+    # outcome.  Passing still requires a usable result and complete arguments.
     sent_email = bool(emails)
     email_has_german = any(
-        _includes_text(c.arguments.get("body"), "verschoben")
-        or _includes_text(c.arguments.get("body"), "termin")
-        for c in emails
+        _answer_affirms_text(_as_str(c.arguments.get("body")), "verschoben")
+        or _answer_affirms_text(_as_str(c.arguments.get("body")), "termin")
+        for c in usable_emails
     )
-    ordered = any(t.turn < e.turn for t in translations for e in emails)
+    ordered = any(t.turn < e.turn for t in usable_translations for e in usable_emails)
     if translated_to_german and sent_email and email_has_german and ordered:
+        if len(translations) != 1 or len(emails) != 1 or len(email_calls) != 1:
+            return _partial(
+                "Translated and emailed the message but issued duplicate or incorrect email mutations."
+            )
         return _pass("Translated to German and emailed the German version to Hans.")
     if translated_to_german and sent_email and not ordered:
         return _partial("Translated and emailed the message, but used the steps out of order.")
@@ -326,6 +474,11 @@ def _tc19_segments(answer: str) -> dict[int, str]:
     return segments
 
 
+def _tc19_label_is_asserted(segment: str, label: str) -> bool:
+    """Match a category label as an assertion, not ``not <label>``."""
+    return _answer_affirms_text(segment, label)
+
+
 def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User asks: classify 5 messages into categories. Model should not use tools.
 
@@ -356,13 +509,13 @@ def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
     # "**1**" and markdown table rows alike.
     segments = _tc19_segments(answer)
     numbered_correct = sum(
-        any(label in segments[index] for label in labels)
+        any(_tc19_label_is_asserted(segments[index], label) for label in labels)
         for index, labels in enumerate(expected, start=1)
         if index in segments
     )
     bullet_lines = re.findall(r"(?:^|\n)\s*[-•*]\s*(.+)", answer)
     bullet_correct = sum(
-        any(label in line for label in labels)
+        any(_tc19_label_is_asserted(line, label) for label in labels)
         for line, labels in zip(bullet_lines[:5], expected, strict=False)
     )
     correct = max(numbered_correct, bullet_correct)
@@ -413,6 +566,39 @@ def _tc20_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc20_search_result_has_sales_file(payload: Any) -> bool:
+    if (
+        not isinstance(payload, dict)
+        or "error" in payload
+        or not isinstance(payload.get("results"), list)
+    ):
+        return False
+    return any(
+        isinstance(item, dict)
+        and (
+            _normalize(_as_str(item.get("file_id"))) == "file_q3_sales"
+            or (
+                _includes_text(item.get("name"), "q3") and _includes_text(item.get("name"), "sales")
+            )
+        )
+        for item in payload["results"]
+    )
+
+
+def _tc20_read_result_has_sales_report(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    content = _as_str(payload.get("content"))
+    return _includes_text(content, "707,200") or _includes_text(content, "707200")
+
+
+def _tc20_calculator_result_is_average(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    value = _numeric_value(payload.get("result"))
+    return value is not None and abs(value - 141440) < 1e-9
+
+
 def _tc20_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User asks to find the file, read it, and calculate the average sales per region.
 
@@ -422,17 +608,39 @@ def _tc20_eval(state: ScenarioState) -> ScenarioEvaluation:
     read = next((c for c in state.tool_calls if c.name == "read_file"), None)
     searched = bool(
         search
-        and "q3" in _as_str(search.arguments.get("query")).lower()
-        and "sales" in _as_str(search.arguments.get("query")).lower()
+        and _positive_argument_contains(search.arguments.get("query"), "q3")
+        and _positive_argument_contains(search.arguments.get("query"), "sales")
     )
     read_correct = bool(read and _as_str(read.arguments.get("file_id")) == "file_q3_sales")
-    # Average = 707200 / 5 = 141440
-    answer_has_avg = any(
-        num in state.final_answer.replace(",", "")
-        for num in ("141440", "141,440", "141440.0", "141440.00")
+    search_result_usable = bool(
+        search and _result_matches_if_present(state, search, _tc20_search_result_has_sales_file)
     )
+    read_result_usable = bool(
+        read and _result_matches_if_present(state, read, _tc20_read_result_has_sales_report)
+    )
+    calculator_calls = [c for c in state.tool_calls if c.name == "calculator"]
+    calculator_usable = True
+    calculator_after_read = True
+    if calculator_calls:
+        calculator = calculator_calls[0]
+        calculator_usable = _result_matches_if_present(
+            state, calculator, _tc20_calculator_result_is_average
+        )
+        calculator_after_read = bool(read and read.turn < calculator.turn)
+    # Average = 707200 / 5 = 141440
+    answer_has_avg = _answer_contains_number(state.final_answer, "141440")
 
-    ordered = bool(searched and read_correct and search and read and search.turn < read.turn)
+    ordered = bool(
+        searched
+        and read_correct
+        and search
+        and read
+        and search.turn < read.turn
+        and search_result_usable
+        and read_result_usable
+        and calculator_usable
+        and calculator_after_read
+    )
     if ordered and answer_has_avg:
         return _pass("Found, read, and calculated the correct average ($141,440).")
     if read_correct and answer_has_avg:
@@ -453,6 +661,46 @@ def _tc21_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc21_asserts_issue(answer: str, field: str, issue_pattern: str) -> bool:
+    """Find an asserted validation issue, not a quoted or negated mention."""
+    for clause in re.split(r"[.!?;\n]", answer):
+        if not re.search(rf"\b{field}\b", clause, re.IGNORECASE):
+            continue
+        match = re.search(issue_pattern, clause, re.IGNORECASE)
+        if not match:
+            continue
+        before = clause[: match.start()]
+        negation = re.search(r"\b(?:not|never|no)\b(?:\s+\w+){0,4}\s*$", before, re.IGNORECASE)
+        if negation and not re.search(
+            r"(?:\b(?:valid|correct|acceptable)\b|\bwithin\s+range\b)",
+            negation.group(),
+            re.IGNORECASE,
+        ):
+            continue
+        positive_quality_claim = False
+        for quality in re.finditer(
+            r"(?:\b(?:valid|correct|acceptable)\b|\bwithin\s+range\b)",
+            clause,
+            re.IGNORECASE,
+        ):
+            quality_before = clause[: quality.start()]
+            if not re.search(
+                r"(?:\b(?:not|never|no)\b(?:\s+\w+){0,2}|n't)\s*$",
+                quality_before,
+                re.IGNORECASE,
+            ):
+                positive_quality_claim = True
+                break
+        if positive_quality_claim:
+            # A clause such as "email is valid but malformed" is
+            # contradictory.  A negated quality claim, such as
+            # "email is not valid because it is malformed", supports the
+            # issue instead of suppressing it.
+            continue
+        return True
+    return False
+
+
 def _tc21_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User provides a JSON payload with 5 deliberate errors, asks the model to find them all.
 
@@ -465,35 +713,18 @@ def _tc21_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     answer = state.final_answer.lower()
     error_checks = [
-        bool(
-            re.search(
-                r"email.{0,50}(?:invalid|malformed|bad)|(?:invalid|malformed|bad).{0,50}email",
-                answer,
-            )
+        _tc21_asserts_issue(answer, "email", r"(?:invalid|malformed|bad)"),
+        _tc21_asserts_issue(answer, "age", r"(?:too\s+high|out\s+of\s+range|over\s+150)"),
+        _tc21_asserts_issue(
+            answer,
+            "phone",
+            r"(?:invalid|wrong|bad|too\s+few|fewer\s+than|short|format|not\s+(?:10|ten))",
         ),
-        bool(
-            re.search(
-                r"age.{0,50}(?:too high|out of range|over 150)|(?:too high|out of range).{0,50}age",
-                answer,
-            )
-        ),
-        bool(
-            re.search(
-                r"phone.{0,50}(?:invalid|digits?|format)|(?:invalid|digits?|format).{0,50}phone",
-                answer,
-            )
-        ),
-        bool(
-            re.search(
-                r"date.{0,50}(?:invalid|impossible|month 13)|(?:invalid|impossible).{0,50}date",
-                answer,
-            )
-        ),
-        bool(
-            re.search(
-                r"amount.{0,50}(?:negative|below zero|must be positive)|(?:negative|below zero).{0,50}amount",
-                answer,
-            )
+        _tc21_asserts_issue(answer, "date", r"(?:invalid|impossible|month\s+13|bad\s+format)"),
+        _tc21_asserts_issue(
+            answer,
+            "amount",
+            r"(?:negative|below\s+zero|less\s+than\s+zero|must\s+be\s+positive)",
         ),
     ]
     found = sum(error_checks)

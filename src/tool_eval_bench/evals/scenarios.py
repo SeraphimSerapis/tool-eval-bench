@@ -27,6 +27,9 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_number as _answer_affirms_number,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_text as _answer_affirms_text,
+)
+from tool_eval_bench.evals.helpers import (
     answer_contains_number as _answer_contains_number,
 )
 
@@ -135,6 +138,102 @@ def _result_matches_if_present(
     )
 
 
+def _positive_argument_contains(value: Any, expected: str) -> bool:
+    """Match an entity in a tool argument without accepting a negation.
+
+    Scenario arguments are model-authored input, not prose to summarize.  A
+    substring check such as ``"not Berlin"`` or ``"not Sarah"`` must not be
+    treated as the requested entity.  Keep the accepted surface broad enough
+    for normal qualifiers such as ``Berlin, Germany`` while rejecting an
+    explicit denial immediately before the entity.
+    """
+    text = _as_str(value).strip().lower()
+    target = expected.strip().lower()
+    if not text or not re.search(rf"(?<!\w){re.escape(target)}(?!\w)", text):
+        return False
+    return not re.search(
+        rf"\b(?:not|no|without|except|exclude|excluding)\s+(?:the\s+)?"
+        rf"{re.escape(target)}\b",
+        text,
+    )
+
+
+def _numeric_value(value: Any) -> float | None:
+    """Parse a scalar numeric tool result without accepting arbitrary text."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = _as_str(value).strip().replace(",", "").replace("$", "")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _status_is_success(payload: Any, *, statuses: set[str] | None = None) -> bool:
+    """Return whether a structured mutation result explicitly succeeded."""
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    status = _normalize(_as_str(payload.get("status")))
+    accepted = statuses or {
+        "accepted",
+        "created",
+        "delivered",
+        "ok",
+        "queued",
+        "scheduled",
+        "sent",
+        "set",
+        "success",
+    }
+    return status in accepted
+
+
+def _tc01_weather_result_is_berlin(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    if "location" in payload and not _positive_argument_contains(payload.get("location"), "berlin"):
+        return False
+    if "units" in payload and _normalize(_as_str(payload.get("units"))) != "celsius":
+        return False
+    return _numeric_value(payload.get("temperature")) == 8 or _answer_affirms_text(
+        _as_str(payload.get("condition")), "overcast"
+    )
+
+
+def _tc02_stock_result_is_aapl(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    if "ticker" in payload and _normalize(_as_str(payload.get("ticker"))) != "aapl":
+        return False
+    price = _numeric_value(payload.get("price"))
+    return price is not None and abs(price - 187.42) < 1e-9
+
+
+def _tc04_weather_result_is_tokyo_fahrenheit(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    return (
+        _positive_argument_contains(payload.get("location"), "tokyo")
+        and _normalize(_as_str(payload.get("units"))) == "fahrenheit"
+        and _numeric_value(payload.get("temperature")) == 64
+    )
+
+
+def _tc05_calendar_result_is_created(payload: Any) -> bool:
+    return _status_is_success(payload, statuses={"accepted", "created", "ok", "success"})
+
+
+def _attendee_matches(value: str, name: str) -> bool:
+    """Match a requested attendee by name or email local part."""
+    text = value.strip().lower()
+    target = name.strip().lower()
+    if text == target or text.startswith(f"{target}@"):
+        return True
+    return bool(re.search(rf"(?<!\w){re.escape(target)}(?!\w)", text))
+
+
 # ===================================================================
 # TC-01: Direct Specialist Match
 # ===================================================================
@@ -161,16 +260,23 @@ def _tc01_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 def _tc01_eval(state: ScenarioState) -> ScenarioEvaluation:
     used_weather = _has_tool_call(
-        state, "get_weather", lambda c: _includes_text(c.arguments.get("location"), "berlin")
+        state,
+        "get_weather",
+        lambda c: _positive_argument_contains(c.arguments.get("location"), "berlin"),
     )
     used_web = _has_tool_call(state, "web_search")
     if used_weather and not used_web and len(state.tool_calls) == 1:
         weather_call = _first_call(state, "get_weather")
-        if weather_call and not _result_is_usable_if_present(state, weather_call):
-            return _fail("get_weather returned an error; the answer cannot fabricate weather data.")
+        if weather_call and not _result_matches_if_present(
+            state, weather_call, _tc01_weather_result_is_berlin
+        ):
+            return _fail(
+                "get_weather did not return usable Berlin weather data; the answer cannot "
+                "fabricate weather data."
+            )
         # Verify the model surfaced actual weather data (temp 8 or condition).
         has_temp = _answer_affirms_number(state.final_answer, "8")
-        has_condition = "overcast" in state.final_answer.lower()
+        has_condition = _answer_affirms_text(state.final_answer, "overcast")
         if has_temp or has_condition:
             return _pass("Used get_weather with Berlin only.")
         return _partial(
@@ -210,8 +316,12 @@ def _tc02_eval(state: ScenarioState) -> ScenarioEvaluation:
     web = _has_tool_call(state, "web_search")
     if stock and not web and len(state.tool_calls) == 1:
         stock_call = _first_call(state, "get_stock_price")
-        if stock_call and not _result_is_usable_if_present(state, stock_call):
-            return _partial("get_stock_price returned an error, so no price can be confirmed.")
+        if stock_call and not _result_matches_if_present(
+            state, stock_call, _tc02_stock_result_is_aapl
+        ):
+            return _partial(
+                "get_stock_price did not return a usable AAPL price, so no price can be confirmed."
+            )
         # Verify the model surfaced the actual stock price.
         has_price = _answer_affirms_number(state.final_answer, "187")
         if has_price:
@@ -282,7 +392,7 @@ def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
     contact_calls = [
         call
         for call in _tool_calls_by_name(state, "get_contacts")
-        if _includes_text(call.arguments.get("query"), "sarah")
+        if _positive_argument_contains(call.arguments.get("query"), "sarah")
     ]
     email_calls = _tool_calls_by_name(state, "send_email")
     complete_email_calls = [
@@ -292,7 +402,17 @@ def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
             _normalize(_as_str(call.arguments.get("to"))) == "sarah.chen@company.com"
             and bool(_as_str(call.arguments.get("subject")).strip())
             and bool(_as_str(call.arguments.get("body")).strip())
-            and "moved" in _as_str(call.arguments.get("body")).lower()
+            and re.search(
+                r"\b(?:the\s+)?(?:meeting\s+)?(?:has\s+been\s+|was\s+)?moved\s+to\s+"
+                r"(?:3(?::00)?\s*p\.?m\.?|15:00)\b",
+                _as_str(call.arguments.get("body")),
+                re.IGNORECASE,
+            )
+            and not re.search(
+                r"\b(?:not|never|no)\s+(?:been\s+)?moved\b",
+                _as_str(call.arguments.get("body")),
+                re.IGNORECASE,
+            )
             and _tc03_time_3pm(_as_str(call.arguments.get("body")))
         )
     ]
@@ -384,16 +504,20 @@ def _tc04_eval(state: ScenarioState) -> ScenarioEvaluation:
     weather = _first_call(state, "get_weather")
     if (
         weather
-        and _includes_text(weather.arguments.get("location"), "tokyo")
+        and _positive_argument_contains(weather.arguments.get("location"), "tokyo")
         and _normalize(_as_str(weather.arguments.get("units"))) == "fahrenheit"
     ):
-        if not _result_is_usable_if_present(state, weather):
+        if not _result_matches_if_present(state, weather, _tc04_weather_result_is_tokyo_fahrenheit):
             return _partial(
                 "get_weather returned an error, so the temperature cannot be confirmed."
             )
         # The requested unit alone is not returned weather data.
         has_data = _answer_affirms_number(state.final_answer, "64")
         if has_data:
+            if len(state.tool_calls) != 1:
+                return _partial(
+                    "Used the right weather parameters but added an unnecessary tool call."
+                )
             return _pass("Requested Tokyo weather in Fahrenheit explicitly.")
         return _partial(
             "Called get_weather with correct units but did not surface the temperature "
@@ -401,7 +525,7 @@ def _tc04_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
     if (
         weather
-        and _includes_text(weather.arguments.get("location"), "tokyo")
+        and _positive_argument_contains(weather.arguments.get("location"), "tokyo")
         and not _as_str(weather.arguments.get("units"))
         and (
             "fahrenheit" in state.final_answer.lower()
@@ -442,24 +566,31 @@ def _tc05_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc05_eval(state: ScenarioState) -> ScenarioEvaluation:
-    event = _first_call(state, "create_calendar_event")
+    event_calls = _tool_calls_by_name(state, "create_calendar_event")
+    event = event_calls[0] if event_calls else None
     if not event:
         return _fail("Did not create the calendar event.")
+    if not _result_matches_if_present(state, event, _tc05_calendar_result_is_created):
+        return _partial("The calendar mutation did not return a successful creation result.")
     attendees = _as_str_list(event.arguments.get("attendees"))
     has_duration = event.arguments.get("duration_minutes") == 30
-    has_attendees = any(_includes_text(a, "alex") for a in attendees) and any(
-        _includes_text(a, "jamie") for a in attendees
+    has_attendees = any(_attendee_matches(a, "alex") for a in attendees) and any(
+        _attendee_matches(a, "jamie") for a in attendees
     )
     # "next Monday" is relative to the run's reference date, not a fixed day.
     expected_date = _next_weekday_after_reference(state, "monday")
     # Use flexible date matching — accept any ISO 8601 date representation
     correct_date = _date_matches(event.arguments.get("date"), expected_date)
-    # Time: accept "09:30" with any seconds/offset
-    correct_time = _datetime_matches(
-        f"{expected_date}T{_as_str(event.arguments.get('time', ''))}:00", expected_date, "09:30"
-    ) or _as_str(event.arguments.get("time", "")).startswith("09:30")
-    has_title = "standup" in _normalize(_as_str(event.arguments.get("title")))
+    # Time: accept HH:MM with optional seconds or an explicit offset.
+    correct_time = bool(
+        re.fullmatch(
+            r"09:30(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?", _as_str(event.arguments.get("time")).strip()
+        )
+    )
+    has_title = _positive_argument_contains(event.arguments.get("title"), "standup")
     if correct_date and correct_time and has_duration and has_attendees and has_title:
+        if len(event_calls) > 1:
+            return _partial("Created the requested event but issued duplicate calendar mutations.")
         return _pass("Parsed next Monday and included the requested meeting details.")
     if correct_date and correct_time:
         return _partial("Got the date and time right, but missed some optional structure.")
@@ -520,18 +651,33 @@ def _tc06_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc06_translation_result_is_valid(payload: Any, target: str) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    translated = _as_str(payload.get("translated"))
+    if not translated:
+        return False
+    if target == "spanish":
+        return _includes_text(translated, "hospital") and (
+            _includes_text(translated, "cercano") or _includes_text(translated, "dónde")
+        )
+    return _includes_text(translated, "病院") and (
+        _includes_text(translated, "どこ") or _includes_text(translated, "最寄り")
+    )
+
+
 def _tc06_eval(state: ScenarioState) -> ScenarioEvaluation:
     calls = _tool_calls_by_name(state, "translate_text")
     has_spanish = any(
         _language_alias(c.arguments.get("source_language")) == "english"
         and _language_alias(c.arguments.get("target_language")) == "spanish"
-        and _includes_text(c.arguments.get("text"), "where is the nearest hospital")
+        and _positive_argument_contains(c.arguments.get("text"), "where is the nearest hospital")
         for c in calls
     )
     has_japanese = any(
         _language_alias(c.arguments.get("source_language")) == "english"
         and _language_alias(c.arguments.get("target_language")) == "japanese"
-        and _includes_text(c.arguments.get("text"), "where is the nearest hospital")
+        and _positive_argument_contains(c.arguments.get("text"), "where is the nearest hospital")
         for c in calls
     )
     invalid_bundled = any(
@@ -548,10 +694,44 @@ def _tc06_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Japanese by any accepted designator count as translation attempts.
     extraneous = any(
         _language_alias(c.arguments.get("target_language")) not in ("spanish", "japanese")
-        or not _includes_text(c.arguments.get("text"), "where is the nearest hospital")
+        or _language_alias(c.arguments.get("source_language")) != "english"
+        or not _positive_argument_contains(c.arguments.get("text"), "where is the nearest hospital")
         for c in calls
     )
-    if has_spanish and has_japanese and not invalid_bundled and not extraneous:
+    spanish_calls = [
+        c
+        for c in calls
+        if _language_alias(c.arguments.get("source_language")) == "english"
+        and _language_alias(c.arguments.get("target_language")) == "spanish"
+        and _positive_argument_contains(c.arguments.get("text"), "where is the nearest hospital")
+    ]
+    japanese_calls = [
+        c
+        for c in calls
+        if _language_alias(c.arguments.get("source_language")) == "english"
+        and _language_alias(c.arguments.get("target_language")) == "japanese"
+        and _positive_argument_contains(c.arguments.get("text"), "where is the nearest hospital")
+    ]
+    usable_spanish = any(
+        _result_matches_if_present(
+            state, call, lambda payload: _tc06_translation_result_is_valid(payload, "spanish")
+        )
+        for call in spanish_calls
+    )
+    usable_japanese = any(
+        _result_matches_if_present(
+            state, call, lambda payload: _tc06_translation_result_is_valid(payload, "japanese")
+        )
+        for call in japanese_calls
+    )
+    if (
+        has_spanish
+        and has_japanese
+        and usable_spanish
+        and usable_japanese
+        and not invalid_bundled
+        and not extraneous
+    ):
         # Verify the model surfaced the actual translations.
         answer = state.final_answer
         has_spanish_text = "Dónde" in answer or (
@@ -644,17 +824,14 @@ def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
     contact_calls = [
         c
         for c in _tool_calls_by_name(state, "get_contacts")
-        if _includes_text(c.arguments.get("query"), "manager")
+        if _positive_argument_contains(c.arguments.get("query"), "manager")
     ]
     email_calls = [
         c
         for c in _tool_calls_by_name(state, "send_email")
         if (
             _normalize(_as_str(c.arguments.get("to"))) == "jordan.park@company.com"
-            and (
-                _includes_text(c.arguments.get("body"), "4.4m")
-                or _includes_text(c.arguments.get("body"), "$4.4m")
-            )
+            and (_answer_affirms_number(_as_str(c.arguments.get("body")), "4.4"))
         )
     ]
 
@@ -662,8 +839,8 @@ def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
         c
         for c in search_calls
         if (
-            "q3" in _normalize(_as_str(c.arguments.get("query")))
-            and "budget" in _normalize(_as_str(c.arguments.get("query")))
+            _positive_argument_contains(c.arguments.get("query"), "q3")
+            and _positive_argument_contains(c.arguments.get("query"), "budget")
         )
     ]
 
@@ -704,6 +881,10 @@ def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
     )
     if steps == 4:
+        if len(_tool_calls_by_name(state, "send_email")) != 1:
+            return _partial(
+                "Found the chain but issued an unsafe duplicate or incorrect email mutation."
+            )
         # Dependency graph instead of one total order: the file read depends
         # on the search result, and both the read and the contact lookup must
         # complete before the email is sent. read and contacts are independent
@@ -759,29 +940,25 @@ def _tc08_weather_result_is_rainy(payload: Any) -> bool:
 
 def _tc08_reminder_result_is_set(payload: Any) -> bool:
     """Return whether an explicit reminder result confirms creation."""
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or "error" in payload:
         return False
-    return _normalize(_as_str(payload.get("status"))) in {
-        "accepted",
-        "created",
-        "ok",
-        "scheduled",
-        "set",
-        "success",
-    } or bool(_as_str(payload.get("reminder_id")).strip())
+    status = _normalize(_as_str(payload.get("status")))
+    if not status:
+        return bool(_as_str(payload.get("reminder_id")).strip())
+    return status in {"accepted", "created", "ok", "scheduled", "set", "success"}
 
 
 def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
     weather_calls = [
         call
         for call in _tool_calls_by_name(state, "get_weather")
-        if _includes_text(call.arguments.get("location"), "paris")
+        if _positive_argument_contains(call.arguments.get("location"), "paris")
     ]
     reminder_calls = [
         call
         for call in _tool_calls_by_name(state, "set_reminder")
         if (
-            _includes_text(call.arguments.get("message"), "umbrella")
+            _positive_argument_contains(call.arguments.get("message"), "umbrella")
             # Use flexible datetime matching — accept any timezone representation
             and _datetime_matches(
                 call.arguments.get("datetime"), _days_after_reference(state, 1), "08:00"
@@ -805,6 +982,10 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
         if weather.turn < reminder.turn
     ]
     if ordered_pairs:
+        if len(reminder_calls) != 1 or len(weather_calls) != 1 or len(state.tool_calls) != 2:
+            return _partial(
+                "Checked the weather but issued duplicate or additional reminder mutations."
+            )
         return _pass("Checked the weather first, then set the rainy-day reminder.")
 
     if weather_calls and reminder_calls:
@@ -857,12 +1038,36 @@ def _tc09_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc09_weather_result_is_london(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    return (
+        _positive_argument_contains(payload.get("location"), "london")
+        and _numeric_value(payload.get("temperature")) == 12
+    )
+
+
+def _tc09_stock_result_is_msft(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    price = _numeric_value(payload.get("price"))
+    return (
+        _normalize(_as_str(payload.get("ticker"))) == "msft"
+        and price is not None
+        and abs(price - 412.78) < 1e-9
+    )
+
+
 def _tc09_eval(state: ScenarioState) -> ScenarioEvaluation:
     weather = _has_tool_call(
-        state, "get_weather", lambda c: _includes_text(c.arguments.get("location"), "london")
+        state,
+        "get_weather",
+        lambda c: _positive_argument_contains(c.arguments.get("location"), "london"),
     )
     stock = _has_tool_call(
-        state, "get_stock_price", lambda c: _normalize(_as_str(c.arguments.get("ticker"))) == "msft"
+        state,
+        "get_stock_price",
+        lambda c: _normalize(_as_str(c.arguments.get("ticker"))) == "msft",
     )
     first_batch = [c for c in state.tool_calls if c.turn == 1]
     parallel = any(c.name == "get_weather" for c in first_batch) and any(
@@ -871,10 +1076,14 @@ def _tc09_eval(state: ScenarioState) -> ScenarioEvaluation:
     if weather and stock:
         weather_call = _first_call(state, "get_weather")
         stock_call = _first_call(state, "get_stock_price")
-        if (weather_call and not _result_is_usable_if_present(state, weather_call)) or (
-            stock_call and not _result_is_usable_if_present(state, stock_call)
+        if weather_call and not _result_matches_if_present(
+            state, weather_call, _tc09_weather_result_is_london
         ):
-            return _partial("A requested tool returned an error, so its value cannot be confirmed.")
+            return _partial("The weather result was unusable, so its value cannot be confirmed.")
+        if stock_call and not _result_matches_if_present(
+            state, stock_call, _tc09_stock_result_is_msft
+        ):
+            return _partial("The stock result was unusable, so its value cannot be confirmed.")
         # Verify the model actually surfaced the tool result values.
         # Use digit-boundary match for temperature (12) to avoid false
         # positives from the stock price (412.78) which contains "12".
@@ -882,6 +1091,8 @@ def _tc09_eval(state: ScenarioState) -> ScenarioEvaluation:
         has_temp = _answer_affirms_number(state.final_answer, "12")
         has_price = _answer_affirms_number(state.final_answer, "412")
         if has_temp and has_price:
+            if len(state.tool_calls) != 2:
+                return _partial("Handled both requested tools but added an unnecessary tool call.")
             note = "Both tools were called in the same assistant turn." if parallel else None
             return _pass("Handled both independent tasks.", note)
         return _partial(
@@ -903,7 +1114,14 @@ def _tc10_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc10_eval(state: ScenarioState) -> ScenarioEvaluation:
-    if len(state.tool_calls) == 0 and _answer_affirms_number(state.final_answer, "1945"):
+    answer = state.final_answer.strip()
+    contextual = bool(re.search(r"\b(?:world\s+war|wwii|war|ended|surrender|year)\b", answer, re.I))
+    terse_year = bool(re.fullmatch(r"1945[.!]?", answer, re.I))
+    if (
+        len(state.tool_calls) == 0
+        and _answer_affirms_number(answer, "1945")
+        and (contextual or terse_year)
+    ):
         return _pass("Answered directly without tool use.")
     return _fail("Used tools or missed the basic fact.")
 
@@ -919,7 +1137,11 @@ def _tc11_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 def _tc11_eval(state: ScenarioState) -> ScenarioEvaluation:
     correct = _answer_affirms_number(state.final_answer, "30")
-    if len(state.tool_calls) == 0 and correct:
+    contextual = bool(
+        re.search(r"15\s*%|\b200\b|percent|dollars?|answer|result", state.final_answer, re.I)
+    )
+    terse_answer = bool(re.fullmatch(r"30[.!]?", state.final_answer.strip()))
+    if len(state.tool_calls) == 0 and correct and (contextual or terse_answer):
         return _pass("Did the math directly — good restraint.")
     if _has_tool_call(state, "calculator") and correct and not _has_tool_call(state, "web_search"):
         return _partial(
@@ -997,13 +1219,17 @@ def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
     retried = len(searches) >= 2
     clarified = len(searches) == 1 and _asks_for_clarification(state.final_answer)
     if retried:
+        explicit_results = [r for r in state.tool_results if r.name == "search_files"]
+        if explicit_results and searches[0].turn >= searches[1].turn:
+            return _fail("Retried search before receiving the first result.")
         # Ensure the retry used a meaningfully different query (not just repeating)
         queries = [_normalize(_as_str(s.arguments.get("query", ""))) for s in searches]
-        if len(queries) >= 2 and queries[0] == queries[1]:
+        if len(queries) >= 2 and any(
+            left == right for left, right in zip(queries, queries[1:], strict=False)
+        ):
             return _partial("Retried search, but used the exact same query both times.")
-        if not any("johnson" in query for query in queries[1:]):
+        if not any(_positive_argument_contains(query, "johnson") for query in queries[1:]):
             return _fail("Retried search without preserving the Johnson document request.")
-        explicit_results = [r for r in state.tool_results if r.name == "search_files"]
         if explicit_results:
             # The first search is the seeded empty result; the document must
             # appear in at least one of the retry results.  A later failed
@@ -1013,10 +1239,16 @@ def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
             if not retry_results and len(explicit_results) > 1:
                 # Compatibility for synthetic states that omit stable call IDs.
                 retry_results = explicit_results[1:]
+            first_results = [r for r in explicit_results if r.call_id == searches[0].id]
+            if first_results and any(_tc13_result_has_document(r.result) for r in first_results):
+                return _fail("The retry returned no recognized Johnson document.")
             if not any(_tc13_result_has_document(r.result) for r in retry_results):
                 return _fail("The retry returned no recognized Johnson document.")
         return _pass("Retried after the empty result and recovered.")
     if clarified:
+        explicit_results = [r for r in state.tool_results if r.name == "search_files"]
+        if explicit_results and any(_tc13_result_has_document(r.result) for r in explicit_results):
+            return _partial("Asked for clarification even though the search returned a document.")
         return _pass("Asked for clarification after the empty result.")
     return _fail("Did not adapt after the empty search response.")
 
@@ -1038,8 +1270,61 @@ def _tc14_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc14_result_is_error(payload: Any) -> bool:
+    if isinstance(payload, dict):
+        status = _normalize(_as_str(payload.get("status")))
+        return "error" in payload or status in {
+            "blocked",
+            "cancelled",
+            "canceled",
+            "error",
+            "failed",
+        }
+    return bool(re.search(r"\berror\b|\b(?:429|500|502|503|504)\b", _as_str(payload), re.I))
+
+
+def _result_matches_error_if_present(state: ScenarioState, call: ToolCallRecord) -> bool:
+    """Match an expected explicit error while keeping synthetic traces valid."""
+    exact_results = [result for result in state.tool_results if result.call_id == call.id]
+    known_call_ids = {candidate.id for candidate in state.tool_calls}
+    if exact_results:
+        return any(_tc14_result_is_error(result.result) for result in exact_results)
+    if any(result.call_id in known_call_ids for result in state.tool_results):
+        return False
+    results = _matching_tool_results(state, call)
+    return not results or any(_tc14_result_is_error(result.result) for result in results)
+
+
+def _tc14_search_result_has_price(payload: Any) -> bool:
+    if (
+        not isinstance(payload, dict)
+        or "error" in payload
+        or not isinstance(payload.get("results"), list)
+    ):
+        return False
+    return any(
+        isinstance(item, dict)
+        and _includes_text(item.get("snippet"), "aapl")
+        and bool(re.search(r"\b187(?:\.42)?\b", _as_str(item.get("snippet"))))
+        for item in payload["results"]
+    )
+
+
+def _tc14_search_result_is_usable(state: ScenarioState, call: ToolCallRecord) -> bool:
+    """Validate a fallback result without borrowing an unrelated tool result."""
+    exact_results = [result for result in state.tool_results if result.call_id == call.id]
+    if exact_results:
+        return not any(_tc14_result_is_error(result.result) for result in exact_results) and any(
+            _tc14_search_result_has_price(result.result) for result in exact_results
+        )
+    same_name_results = [result for result in state.tool_results if result.name == call.name]
+    if not same_name_results:
+        return True
+    return any(_tc14_search_result_has_price(result.result) for result in same_name_results)
+
+
 def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
-    stock_calls = _tool_calls_by_name(state, "get_stock_price")
+    stock_attempts = _tool_calls_by_name(state, "get_stock_price")
     search_calls = _tool_calls_by_name(state, "web_search")
     transcript = _full_assistant_transcript(state)
     acknowledged = bool(
@@ -1049,7 +1334,14 @@ def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Tighter partial credit: web_search must have been called AFTER the stock error was
     # received. A model that called web_search before the stock call (or in the same turn)
     # gets no recovery credit — it didn't actually recover, it just happened to search.
-    stock_error_turn = stock_calls[0].turn if stock_calls else None
+    stock_error_turn = (
+        next(
+            (call.turn for call in stock_attempts if _result_matches_error_if_present(state, call)),
+            None,
+        )
+        if stock_attempts
+        else None
+    )
     search_after_error = (
         any(c.turn > stock_error_turn for c in search_calls)
         if stock_error_turn is not None
@@ -1058,14 +1350,16 @@ def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
     used_search_as_fallback = search_after_error
     fallback_usable = (
         any(
-            c.turn > stock_error_turn and _result_is_usable_if_present(state, c)
+            c.turn > stock_error_turn
+            and _positive_argument_contains(c.arguments.get("query"), "aapl")
+            and _tc14_search_result_is_usable(state, c)
             for c in search_calls
         )
         if stock_error_turn is not None
         else False
     )
 
-    if len(stock_calls) >= 1 and acknowledged and used_search_as_fallback:
+    if stock_attempts and acknowledged and used_search_as_fallback:
         if not fallback_usable:
             return _partial("Tried a fallback source, but it also returned an error.")
         # Also verify the model surfaced the actual price from the fallback search.
@@ -1076,11 +1370,11 @@ def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
             "Handled the error gracefully but did not surface the actual stock price "
             "from the web search fallback.",
         )
-    if len(stock_calls) >= 1 and used_search_as_fallback and not acknowledged:
+    if stock_attempts and used_search_as_fallback and not acknowledged:
         return _partial(
             "Recovered with web_search after the error, but did not clearly acknowledge it."
         )
-    if len(stock_calls) >= 1 and acknowledged and not used_search_as_fallback:
+    if stock_attempts and acknowledged and not used_search_as_fallback:
         return _partial("Acknowledged the error but did not attempt an alternative source.")
     return _fail("Did not handle the tool error with enough integrity.")
 
@@ -1107,16 +1401,41 @@ def _tc15_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc15_search_result_has_population(payload: Any) -> bool:
+    if (
+        not isinstance(payload, dict)
+        or "error" in payload
+        or not isinstance(payload.get("results"), list)
+    ):
+        return False
+    return any(
+        isinstance(item, dict)
+        and (
+            bool(re.search(r"\b372[,.]?520\b", _as_str(item.get("snippet"))))
+            or any(
+                _numeric_value(item.get(field)) == 372520
+                for field in ("population", "population_estimate", "value")
+            )
+        )
+        for item in payload["results"]
+    )
+
+
+def _tc15_calculator_result_is_percentage(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    value = _numeric_value(payload.get("result"))
+    return value is not None and abs(value - 7450.4) < 1e-9
+
+
 def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
     search = _first_call(state, "web_search")
     calc = _first_call(state, "calculator")
 
-    # Check if the search tool actually returned data or was error-injected
-    search_results = [r for r in state.tool_results if r.name == "web_search"]
-    search_got_error = any(
-        "error" in str(r.result).lower()
-        and ("429" in str(r.result) or "500" in str(r.result) or "503" in str(r.result))
-        for r in search_results
+    # Check if the search tool actually returned data or was error-injected.
+    search_results = [r for r in state.tool_results if r.call_id == search.id] if search else []
+    search_got_error = bool(
+        search and search_results and any(_tc14_result_is_error(r.result) for r in search_results)
     )
 
     if search_got_error:
@@ -1126,7 +1445,11 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
         has_reasonable_answer = any(
             num in answer for num in ("7450", "7450.4", "7500", "7504", "7451")
         )
-        if search and has_reasonable_answer:
+        if (
+            search
+            and has_reasonable_answer
+            and _positive_argument_contains(search.arguments.get("query"), "iceland")
+        ):
             return _partial("Search tool failed — used background knowledge as fallback.")
         if search:
             return _partial("Attempted search but tool failed — answer was incomplete.")
@@ -1136,9 +1459,11 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
         search
         and calc
         and search.turn < calc.turn
-        and _includes_text(search.arguments.get("query"), "population")
-        and _includes_text(search.arguments.get("query"), "iceland")
+        and _positive_argument_contains(search.arguments.get("query"), "population")
+        and _positive_argument_contains(search.arguments.get("query"), "iceland")
         and "372520" in _as_str(calc.arguments.get("expression")).replace(",", "")
+        and _result_matches_if_present(state, search, _tc15_search_result_has_population)
+        and _result_matches_if_present(state, calc, _tc15_calculator_result_is_percentage)
     ):
         # Verify the model surfaced the actual computed result.
         has_result = _answer_contains_number(state.final_answer, "7450")
@@ -1152,8 +1477,8 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
         search
         and calc
         and search.turn == calc.turn
-        and _includes_text(search.arguments.get("query"), "population")
-        and _includes_text(search.arguments.get("query"), "iceland")
+        and _positive_argument_contains(search.arguments.get("query"), "population")
+        and _positive_argument_contains(search.arguments.get("query"), "iceland")
     ):
         return _partial(
             "Issued dependent calls in the same turn, so the calculation could not use "

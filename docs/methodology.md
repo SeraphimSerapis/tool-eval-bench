@@ -61,12 +61,44 @@ Where `max_points = num_scenarios_in_category × 2`.
 | M | Autonomous Planning | 3 | Goal decomposition, open-ended research, conditional workflows |
 | N | Creative Composition | 3 | Cross-tool synthesis, data pipelines, notification workflows |
 | O | Structured Output | 6 | JSON schema compliance, tool→schema chaining, nested schemas, enum constraints, violation resistance |
-| P | Hard Mode _(opt-in)_ | 15 | Ceiling-breaking relevance, parallel-call, stateful, adversarial, format-sensitive, and recovery scenarios |
+| P | Hard Mode _(opt-in)_ | 19 | Ceiling-breaking relevance, parallel-call, stateful, transactional, adversarial, format-sensitive, recovery, pagination, and reasoning-continuity scenarios |
 
 > **Hard Mode (Category P)** is excluded from the standard benchmark by default.
-> Enable with `--hardmode` to include these 15 scenarios, raising the total from
-> 69 to 88. Category P scores are tracked separately and do not affect the base
-> score unless explicitly included. This preserves comparability with existing results.
+> Enable with `--hardmode` to include all 19 scenarios, raising the total from 69 to 88.
+> Use `--hardmode-only` for Category P alone. Explicit public IDs also resolve against the full
+> registry, so `--scenarios TC-85` selects that Hard Mode scenario without `--hardmode`. Explicit
+> IDs take precedence over `--short` and `--categories`; `--hardmode-only` remains restrictive.
+> To select Category P by category, use `--hardmode --categories P` or `--hardmode-only`.
+> Category P contributes to the score when it is selected and is absent from the default 69-scenario
+> run. This preserves comparability with existing results.
+
+### Hard Mode scenarios
+
+Category P contains 19 deterministic scenarios. The registry and evaluators are split across
+`scenarios_hardmode.py` (TC-70 to TC-74), `scenarios_hardmode_expanded.py` (TC-75 to TC-84), and
+`scenarios_hardmode_transactional.py` (TC-85 to TC-88).
+
+| ID | Scenario | Focus |
+|---|---|---|
+| TC-70 | Adversarial near-duplicate tools | Select the global weather tool for a non-European city. |
+| TC-71 | Ambiguous recipient | Find three matching contacts and ask before sending. |
+| TC-72 | Cascading error recovery | Recover from a corrupted file through its alternative and complete the email chain. |
+| TC-73 | Multi-constraint composition | Preserve Sunday, vegan, distance, contact, and email constraints. |
+| TC-74 | Stateful multi-turn corrections | Retain four rounds of draft changes and create and notify exactly once after authorization. |
+| TC-75 | Missing required parameter | Ask for both date and time instead of guessing a booking. |
+| TC-76 | Missing capability | Refuse unsupported cancellation and refund mutations while allowing a valid read. |
+| TC-77 | Irrelevant tool trap | Answer a stable fact directly despite distractor tools. |
+| TC-78 | Independent portfolio valuation | Fetch three prices and calculate the requested portfolio total. |
+| TC-79 | Dependency-aware event planning | Resolve weather and contact inputs before conditional event creation. |
+| TC-80 | Preconditioned update safety | Resolve the event, check availability, and preserve the original state if the requested slot is unavailable. |
+| TC-81 | Tool-output prompt injection | Ignore malicious instructions embedded in search results. |
+| TC-82 | Stale memory conflict resolution | Prefer the current directory over stale memory when choosing a recipient. |
+| TC-83 | Format-sensitive chained summary | Return exact JSON after extracting values from noisy tool payloads. |
+| TC-84 | Long-horizon recovery with constraint retention | Recover from a booking race without losing room, attendee, agenda, or notification constraints. |
+| TC-85 | Exactly-once provisioning after ambiguous commit | Confirm one least-privilege credential after pending replication without duplicate creation or secret disclosure. |
+| TC-86 | Optimistic concurrency without lost updates | Recover from two version conflicts while preserving concurrent field changes. |
+| TC-87 | Complete pagination with cursor integrity | Traverse four pages, deduplicate, verify completion, and delay one exact digest until the end. |
+| TC-88 | Preserved reasoning across follow-ups | Carry three linked constrained values across two follow-ups without tools or extra output. |
 
 ---
 
@@ -104,7 +136,7 @@ Each scenario is assigned a **difficulty tier** from 1 to 5:
 | 2 | Easy | 17 | Straightforward parameter extraction or basic refusal |
 | 3 | Moderate | 31 | Multi-step chains, structured reasoning, or format compliance |
 | 4 | Hard | 24 | Complex chaining, safety traps, adversarial inputs, or multi-constraint composition |
-| 5 | Very Hard | 8 | Cascading errors, stateful multi-turn corrections, or extreme disambiguation |
+| 5 | Very Hard | 12 | Cascading errors, stateful multi-turn corrections, transactional recovery, pagination, or extreme disambiguation |
 
 Difficulty tiers are shown in reports (star ratings ★–★★★★★) and in `--dry-run`
 output for planning purposes.
@@ -112,7 +144,7 @@ output for planning purposes.
 ### Difficulty-Weighted Scoring (`--weight-by-difficulty`)
 
 By default, all scenarios contribute equally to the final score regardless of
-difficulty (a trivial TC-01 and a very-hard TC-72 both worth 2 points max).
+difficulty (a trivial TC-01 and a very-hard TC-73 both worth 2 points max).
 The `--weight-by-difficulty` flag activates an alternative scoring formula:
 
 ```
@@ -508,8 +540,8 @@ that safety should act as a multiplicative gate rather than an additive term.
 
 In addition to the tool-calling benchmark, `tool-eval-bench` supports pluggable
 accuracy benchmarks that evaluate model knowledge and instruction-following
-capabilities.  These run through the same OpenAI-compatible adapter but require
-only `/v1/chat/completions` — no `tools` support needed.
+capabilities. These run through the same adapter layer and require chat
+completion support, but do not need `tools`.
 
 All accuracy benchmarks use the `BenchmarkPlugin` ABC defined in
 `domain/plugin.py`, which standardizes dataset loading, evaluation, progress

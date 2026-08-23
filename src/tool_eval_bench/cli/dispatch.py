@@ -318,6 +318,15 @@ def main() -> None:
     ):
         return
 
+    # Validate explicit scenario IDs before server discovery or benchmark
+    # requests. This keeps a typo from turning into an empty run or a server
+    # failure. Probe/history/dry-run keep their own command semantics.
+    if not args.probe:
+        try:
+            _resolve_scenarios(args)
+        except ValueError as exc:
+            parser.error(str(exc))
+
     # Cascade: CLI flag → env var → auto-discovery
     model = args.model or os.getenv("TOOL_EVAL_MODEL") or None
     backend = args.backend or os.getenv("TOOL_EVAL_BACKEND", "")

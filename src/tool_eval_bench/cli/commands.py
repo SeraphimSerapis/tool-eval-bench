@@ -38,6 +38,9 @@ def resolve_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
     """Resolve scenarios from --short, --scenarios, --categories, and --hardmode flags.
 
     Priority: --scenarios (individual IDs) > --categories > --short > all.
+    Explicit IDs resolve against the complete public registry, so naming a
+    Hard Mode ID opts that scenario in without enabling the full Hard Mode
+    suite.  The default pool still excludes Hard Mode.
     --hardmode-only runs Category P scenarios exclusively.
     --hardmode adds Category P scenarios to whichever base set is selected.
     --scenario-pack appends held-out packs; --pack-only runs those alone.
@@ -51,13 +54,17 @@ def resolve_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
 
     pack_scenarios = resolve_pack_scenarios(args)
 
-    # Determine the base scenario pool
+    # Determine the base scenario pool. Explicit IDs are resolved against the
+    # complete public registry so a named Hard Mode scenario opts in on its
+    # own. ``--hardmode-only`` and ``--pack-only`` remain restrictive pools.
     if getattr(args, "pack_only", False):
         if not pack_scenarios:
             raise ValueError("--pack-only requires at least one --scenario-pack")
         base = list(pack_scenarios)
     elif getattr(args, "hardmode_only", False):
         base = list(HARDMODE_SCENARIOS)
+    elif args.scenarios:
+        base = list(ALL_SCENARIOS_WITH_HARDMODE)
     elif args.short:
         base = list(SCENARIOS)
         if getattr(args, "hardmode", False):
@@ -78,6 +85,10 @@ def resolve_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
 
     if args.scenarios:
         requested = set(args.scenarios)
+        known_ids = {scenario.id for scenario in base}
+        unknown = sorted(requested - known_ids)
+        if unknown:
+            raise ValueError(f"Unknown scenarios: {', '.join(unknown)}")
         return [s for s in base if s.id in requested]
 
     if args.categories:

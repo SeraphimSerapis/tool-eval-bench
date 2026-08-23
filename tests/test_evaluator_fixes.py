@@ -136,8 +136,12 @@ class TestTC25ErrorAware:
         scenario = _find(AGENTIC_SCENARIOS, "TC-25")
         state = _make_state(
             tool_calls=[
-                {"name": "get_weather", "arguments": {"location": "Berlin"}},
-                {"name": "set_reminder", "arguments": {"message": "Bring a coat tomorrow!"}},
+                {"name": "get_weather", "arguments": {"location": "Berlin"}, "turn": 1},
+                {
+                    "name": "set_reminder",
+                    "arguments": {"message": "Bring a coat tomorrow!"},
+                    "turn": 2,
+                },
             ],
             tool_results=[
                 {"name": "get_weather", "result": {"temperature": 5, "condition": "Clear"}},

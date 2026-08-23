@@ -845,7 +845,7 @@ class TestTC61AsyncPolling:
 
 
 # ===================================================================
-# TC-62: 6-Turn Research Chain (Category I)
+# TC-62: 5-Turn Research Chain (Category I)
 # ===================================================================
 
 
@@ -860,6 +860,7 @@ class TestTC62DeepResearch:
                 {"name": "read_file", "arguments": {"file_id": "q3_latest"}, "turn": 3},
                 {"name": "web_search", "arguments": {"query": "Acme Corp Q3 revenue"}, "turn": 4},
                 {"name": "calculator", "arguments": {"expression": "4150000 - 3800000"}, "turn": 5},
+                {"name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 5},
                 {
                     "name": "send_email",
                     "arguments": {

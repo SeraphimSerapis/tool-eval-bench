@@ -41,6 +41,7 @@ class TestResolveScenarios:
 
         result = _resolve_scenarios(_resolve_args())
         assert len(result) == len(ALL_SCENARIOS)
+        assert all(s.category != Category.P for s in result)
 
     def test_short_returns_core_scenarios(self) -> None:
         from tool_eval_bench.cli.bench import _resolve_scenarios
@@ -84,6 +85,33 @@ class TestResolveScenarios:
 
         result = _resolve_scenarios(_resolve_args(scenarios=["TC-01", "TC-02"], categories=["K"]))
         assert [s.id for s in result] == ["TC-01", "TC-02"]
+
+    def test_explicit_hardmode_ids_opt_in_without_hardmode_flag(self) -> None:
+        from tool_eval_bench.cli.bench import _resolve_scenarios
+
+        result = _resolve_scenarios(_resolve_args(scenarios=["TC-85", "TC-88"]))
+
+        assert [s.id for s in result] == ["TC-85", "TC-88"]
+        assert all(s.category == Category.P for s in result)
+
+    def test_explicit_ids_override_short_pool(self) -> None:
+        from tool_eval_bench.cli.bench import _resolve_scenarios
+
+        result = _resolve_scenarios(_resolve_args(short=True, scenarios=["TC-70"]))
+
+        assert [s.id for s in result] == ["TC-70"]
+
+    def test_unknown_explicit_id_fails_at_resolution(self) -> None:
+        from tool_eval_bench.cli.bench import _resolve_scenarios
+
+        with pytest.raises(ValueError, match=r"Unknown scenarios: NOPE-99"):
+            _resolve_scenarios(_resolve_args(scenarios=["TC-01", "NOPE-99"]))
+
+    def test_hardmode_only_stays_restrictive_for_explicit_ids(self) -> None:
+        from tool_eval_bench.cli.bench import _resolve_scenarios
+
+        with pytest.raises(ValueError, match=r"Unknown scenarios: TC-01"):
+            _resolve_scenarios(_resolve_args(hardmode_only=True, scenarios=["TC-01"]))
 
     def test_hardmode_only_with_categories_filters_within_hardmode(self) -> None:
         from tool_eval_bench.cli.bench import _resolve_scenarios
@@ -129,6 +157,56 @@ class TestResolveAllScenariosForIds:
 
         result = _resolve_all_scenarios_for_ids([])
         assert result == []
+
+
+class TestScenarioSelectorDispatch:
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["--scenarios", "TC-85"],
+            ["run", "--scenarios", "TC-85"],
+        ],
+    )
+    def test_legacy_and_subcommand_parsers_preserve_hardmode_id(self, argv: list[str]) -> None:
+        from tool_eval_bench.cli.bench import _make_parser
+        from tool_eval_bench.cli.parser import parse_cli_args
+
+        _, args = parse_cli_args(_make_parser, argv)
+
+        assert args.scenarios == ["TC-85"]
+
+    def test_run_rejects_unknown_id_before_model_discovery(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        from tool_eval_bench.cli import dispatch
+
+        monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
+        monkeypatch.setattr(
+            dispatch,
+            "_detect_model",
+            lambda *args, **kwargs: pytest.fail("model discovery should not run"),
+        )
+        monkeypatch.setattr(
+            dispatch,
+            "_discover_server",
+            lambda *args, **kwargs: pytest.fail("server discovery should not run"),
+        )
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "tool-eval-bench",
+                "--scenarios",
+                "NOPE-99",
+            ],
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            dispatch.main()
+
+        assert exc_info.value.code == 2
 
 
 # ---------------------------------------------------------------------------

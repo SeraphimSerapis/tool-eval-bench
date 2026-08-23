@@ -29,6 +29,8 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_number,
+    answer_affirms_text,
     as_str,
     as_str_list,
     asks_for_clarification,
@@ -36,8 +38,10 @@ from tool_eval_bench.evals.helpers import (
     first_call,
     full_assistant_transcript,
     generic_tool_fallback,
+    has_explicit_tool_error,
     has_tool_call,
     includes_text,
+    matching_tool_results,
     next_weekday_after_reference,
     normalize,
     result_is_usable_if_present,
@@ -134,24 +138,40 @@ def _tc70_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 def _tc70_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Best: use get_weather_global directly for Tokyo (non-European)
-    used_global = has_tool_call(
-        state, "get_weather_global", lambda c: includes_text(c.arguments.get("location"), "tokyo")
-    )
+    global_calls = [
+        call
+        for call in tool_calls_by_name(state, "get_weather_global")
+        if includes_text(call.arguments.get("location"), "tokyo")
+    ]
+    usable_global_calls = [
+        call
+        for call in global_calls
+        if result_is_usable_if_present(state, call)
+        and (
+            not matching_tool_results(state, call)
+            or any(
+                isinstance(result.result, dict)
+                and result.result.get("temperature") == 22
+                and str(result.result.get("condition", "")).lower() == "sunny"
+                for result in matching_tool_results(state, call)
+            )
+        )
+    ]
+    used_global = bool(usable_global_calls)
     used_euro = has_tool_call(
         state, "get_weather", lambda c: includes_text(c.arguments.get("location"), "tokyo")
     )
     # Recovery path: tried get_weather, got error, then used get_weather_global
     euro_calls = tool_calls_by_name(state, "get_weather")
-    global_calls = tool_calls_by_name(state, "get_weather_global")
     recovered = (
         len(euro_calls) >= 1
-        and len(global_calls) >= 1
+        and bool(usable_global_calls)
         and euro_calls[0].turn < global_calls[0].turn
     )
     if used_global and not used_euro:
         # Verify the model surfaced actual weather data (temp 22 or condition).
-        has_temp = bool(re.search(r"(?<!\d)22(?!\d)", state.final_answer))
-        has_condition = "sunny" in state.final_answer.lower()
+        has_temp = answer_affirms_number(state.final_answer, "22")
+        has_condition = answer_affirms_text(state.final_answer, "sunny")
         if has_temp or has_condition:
             return _pass(
                 "Selected get_weather_global directly — read the tool descriptions carefully."
@@ -209,30 +229,50 @@ def _tc71_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc71_eval(state: ScenarioState) -> ScenarioEvaluation:
-    contacts = first_call(state, "get_contacts")
+    contact_calls = tool_calls_by_name(state, "get_contacts")
+    valid_contacts = [
+        call
+        for call in contact_calls
+        if "jordan" in normalize(as_str(call.arguments.get("query")))
+        and result_is_usable_if_present(state, call)
+        and (
+            not matching_tool_results(state, call)
+            or any(
+                isinstance(result.result, dict)
+                and {
+                    "jordan park",
+                    "jordan lee",
+                    "jordan kim",
+                }.issubset(
+                    {
+                        normalize(as_str(item.get("name")))
+                        for item in result.result.get("results", []) or []
+                        if isinstance(item, dict)
+                    }
+                )
+                for result in matching_tool_results(state, call)
+            )
+        )
+    ]
+    contacts = valid_contacts[0] if valid_contacts else first_call(state, "get_contacts")
     email_calls = tool_calls_by_name(state, "send_email")
     transcript = full_assistant_transcript(state)
 
     if not contacts:
         return _fail("Did not look up contacts for Jordan.")
-    if "jordan" not in normalize(as_str(contacts.arguments.get("query"))):
+    if not valid_contacts:
         return _partial("Looked up the wrong person instead of Jordan.")
 
     # Best outcome: looked up contacts, found ambiguity, asked for clarification
     # WITHOUT sending any email (sending = guessing, even if also asking)
     if contacts and len(email_calls) == 0 and asks_for_clarification(transcript):
         # Make sure it mentions the ambiguity (multiple Jordans)
-        mentions_multiple = any(
-            phrase in transcript.lower()
-            for phrase in (
-                "three jordan",
-                "3 jordan",
-                "multiple jordan",
-                "which jordan",
-                "jordan park",
-                "jordan lee",
-                "jordan kim",
-            )
+        transcript_lower = transcript.lower()
+        mentions_multiple = (
+            "three jordan" in transcript_lower
+            or "3 jordan" in transcript_lower
+            or "multiple jordan" in transcript_lower
+            or all(name in transcript_lower for name in ("jordan park", "jordan lee", "jordan kim"))
         )
         if mentions_multiple:
             return _pass("Looked up contacts, found 3 Jordans, and asked for clarification.")
@@ -301,13 +341,25 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
     email_call = email_calls[0] if len(email_calls) == 1 else None
 
     read_404_calls = [
-        c for c in read_calls if normalize(as_str(c.arguments.get("file_id"))) == "file_404"
+        c
+        for c in read_calls
+        if normalize(as_str(c.arguments.get("file_id"))) == "file_404"
+        and (not matching_tool_results(state, c) or has_explicit_tool_error(state, c))
     ]
     read_405_calls = [
         c
         for c in read_calls
         if normalize(as_str(c.arguments.get("file_id"))) == "file_405"
         and result_is_usable_if_present(state, c)
+        and (
+            not matching_tool_results(state, c)
+            or any(
+                isinstance(result.result, dict)
+                and "1.2m" in as_str(result.result.get("content")).lower()
+                and "750k" in as_str(result.result.get("content")).lower()
+                for result in matching_tool_results(state, c)
+            )
+        )
     ]
     tried_404 = bool(read_404_calls)
     tried_405 = bool(read_405_calls)
@@ -322,12 +374,41 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
         for c in searches
         if "alpha" in as_str(c.arguments.get("query")).lower()
         and result_is_usable_if_present(state, c)
+        and (
+            not matching_tool_results(state, c)
+            or any(
+                isinstance(result.result, dict)
+                and {
+                    "file_404",
+                    "file_405",
+                }.issubset(
+                    {
+                        as_str(item.get("file_id"))
+                        for item in result.result.get("results", []) or []
+                        if isinstance(item, dict)
+                    }
+                )
+                for result in matching_tool_results(state, c)
+            )
+        )
     ]
     valid_contacts = [
         c
         for c in contact_calls
         if "dana" in as_str(c.arguments.get("query")).lower()
         and result_is_usable_if_present(state, c)
+        and (
+            not matching_tool_results(state, c)
+            or any(
+                isinstance(result.result, dict)
+                and any(
+                    normalize(as_str(item.get("email"))) == "dana.wells@company.com"
+                    for item in result.result.get("results", []) or []
+                    if isinstance(item, dict)
+                )
+                for result in matching_tool_results(state, c)
+            )
+        )
     ]
     searched_alpha = bool(valid_searches)
     resolved_dana = bool(valid_contacts)
@@ -444,13 +525,39 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         and "alexanderplatz" in normalize(as_str(c.arguments.get("query")))
         and result_is_usable_if_present(state, c)
+        and (
+            not matching_tool_results(state, c)
+            or any(
+                isinstance(result.result, dict)
+                and any(
+                    candidate in as_str(item).lower()
+                    for item in result.result.get("results", []) or []
+                    if isinstance(item, dict)
+                    for candidate in ("green kitchen", "veganz")
+                )
+                for result in matching_tool_results(state, c)
+            )
+        )
     ]
     email_calls = tool_calls_by_name(state, "send_email")
     emailed = email_calls[0] if len(email_calls) == 1 else None
     contact_calls = [
         c
         for c in tool_calls_by_name(state, "get_contacts")
-        if includes_text(c.arguments.get("query"), "lisa") and result_is_usable_if_present(state, c)
+        if includes_text(c.arguments.get("query"), "lisa")
+        and result_is_usable_if_present(state, c)
+        and (
+            not matching_tool_results(state, c)
+            or any(
+                isinstance(result.result, dict)
+                and any(
+                    normalize(as_str(item.get("email"))) == "lisa.mueller@company.com"
+                    for item in result.result.get("results", []) or []
+                    if isinstance(item, dict)
+                )
+                for result in matching_tool_results(state, c)
+            )
+        )
     ]
     searched = bool(valid_searches)
     contacted = bool(contact_calls)
@@ -475,6 +582,13 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
     safe_emails = bool(email_calls) and all(
         normalize(as_str(c.arguments.get("to"))) == "lisa.mueller@company.com"
         and result_is_usable_if_present(state, c)
+        and (
+            not matching_tool_results(state, c)
+            or any(
+                isinstance(result.result, dict) and result.result.get("status") == "sent"
+                for result in matching_tool_results(state, c)
+            )
+        )
         for c in email_calls
     )
     ordered = bool(
@@ -532,7 +646,7 @@ def _tc74_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             "date": as_str(call.arguments.get("date")),
             "time": as_str(call.arguments.get("time")),
             "duration_minutes": call.arguments.get("duration_minutes"),
-            "attendees": list(call.arguments.get("attendees", [])),
+            "attendees": as_str_list(call.arguments.get("attendees")),
         }
         state.meta["last_event"] = event
         return _noise(event, "create_calendar_event")
@@ -579,12 +693,18 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not call_at_or_after_user_phase(last_event, 4):
         return _fail("Created the event before the final user authorization.")
     args = last_event.arguments
-    event_usable = result_is_usable_if_present(state, last_event)
+    event_usable = result_is_usable_if_present(state, last_event) and (
+        not matching_tool_results(state, last_event)
+        or any(
+            isinstance(result.result, dict) and result.result.get("status") == "created"
+            for result in matching_tool_results(state, last_event)
+        )
+    )
 
     title_ok = includes_text(args.get("title"), "product review")
     expected_date = next_weekday_after_reference(state, "tuesday", offset=1)
     date_ok = expected_date in as_str(args.get("date", ""))
-    time_ok = "14:00" in as_str(args.get("time", "")) or "14:00" in as_str(args.get("date", ""))
+    time_ok = "14:00" in as_str(args.get("time", ""))
     duration_ok = args.get("duration_minutes") == 45
 
     attendee_values = as_str_list(args.get("attendees"))
@@ -621,6 +741,13 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
             or not body
             or not re.search(r"review|meeting|scheduled|confirmed", f"{subject} {body}", re.I)
             or not result_is_usable_if_present(state, call)
+            or (
+                matching_tool_results(state, call)
+                and not any(
+                    isinstance(result.result, dict) and result.result.get("status") == "sent"
+                    for result in matching_tool_results(state, call)
+                )
+            )
         ):
             email_ok = False
             break
@@ -635,6 +762,18 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
         lambda c: (
             includes_text(c.arguments.get("query"), "sarah")
             and result_is_usable_if_present(state, c)
+            and (
+                not matching_tool_results(state, c)
+                or any(
+                    isinstance(result.result, dict)
+                    and any(
+                        normalize(as_str(item.get("email"))) == "sarah.jones@company.com"
+                        for item in result.result.get("results", []) or []
+                        if isinstance(item, dict)
+                    )
+                    for result in matching_tool_results(state, c)
+                )
+            )
         ),
     )
 

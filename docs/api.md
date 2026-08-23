@@ -67,7 +67,7 @@ result = asyncio.run(run_benchmark(
     backend="vllm",
     api_key=None,
     scenarios=None,       # explicit list, or use short=True/False
-    short=False,          # True = core 15, False = full 69
+    short=False,          # True = core 15, False = standard 69
     temperature=0.0,
     timeout_seconds=60.0,
     max_turns=8,
@@ -78,6 +78,7 @@ result = asyncio.run(run_benchmark(
     alpha=0.7,
     extra_params=None,    # e.g. {"chat_template_kwargs": {"enable_thinking": False}}
     weight_by_difficulty=False,  # weight scores by difficulty tier
+    wire_format=None,      # auto, openai, or gemini
     on_scenario_start=None,
     on_scenario_result=None,
     persist=True,         # False = skip SQLite + Markdown
@@ -101,6 +102,10 @@ result = asyncio.run(run_benchmark(
 ```
 
 ## Selecting Scenarios
+
+The Python API does not have a separate `hardmode` boolean. Pass the desired
+definitions through `scenarios`. The standard registry contains 69 scenarios,
+and `ALL_SCENARIOS_WITH_HARDMODE` contains all 88.
 
 ```python
 from tool_eval_bench.evals.scenarios import SCENARIOS, ALL_SCENARIOS
@@ -129,6 +134,17 @@ result = asyncio.run(run_benchmark(
 result = asyncio.run(run_benchmark(
     model="my-model", base_url="http://localhost:8000",
     scenarios=list(ALL_SCENARIOS_WITH_HARDMODE),
+))
+
+# Hard Mode only, or a selected Hard Mode subset
+result = asyncio.run(run_benchmark(
+    model="my-model", base_url="http://localhost:8000",
+    scenarios=list(HARDMODE_SCENARIOS),
+))
+selected = [s for s in ALL_SCENARIOS_WITH_HARDMODE if s.id in {"TC-85", "TC-88"}]
+result = asyncio.run(run_benchmark(
+    model="my-model", base_url="http://localhost:8000",
+    scenarios=selected,
 ))
 ```
 
@@ -244,8 +260,9 @@ with RunRepository() as repo:
 
 ## Notes
 
-- The `backend` parameter is a **label** for reports — all backends use the
-  same OpenAI-compatible HTTP adapter internally.
+- The `backend` parameter is a **label** for reports. OpenAI-compatible
+  backends use the OpenAI adapter; Gemini can use its native adapter when
+  `wire_format="gemini"` or the URL selects it.
 - The `base_url` should be the server root **without** `/v1`
   (e.g. `http://localhost:8080`). The adapter appends `/v1/chat/completions`
   automatically. If you include `/v1`, it will be detected and not duplicated.

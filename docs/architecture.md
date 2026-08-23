@@ -75,6 +75,7 @@ external dependencies.
 | `adapters.py` | Backend adapter port and provider-neutral chat result/tool-call types |
 | `scenarios.py` | `ScenarioDefinition`, `ScenarioEvaluation`, `ScenarioState`, `Category` enum, scoring functions, safety gating |
 | `models.py` | `BenchmarkConfig` dataclass |
+| `measurement.py` | `MeasurementClient` port and raw streaming response types |
 | `plugin.py` | `BenchmarkPlugin` ABC + `BenchmarkResult` dataclass for pluggable benchmarks |
 | `tools.py` | Universal tool definitions (12 tools), system prompt |
 | `tools_large.py` | Extended 52-tool definitions for Category L |
@@ -99,6 +100,7 @@ Each scenario is a self-contained `ScenarioDefinition` with:
 | `scenarios_hardmode.py` | P (opt-in registry) | TC-70 – TC-74 |
 | `scenarios_hardmode_expanded.py` | P (opt-in expansion) | TC-75 – TC-84 |
 | `scenarios_hardmode_transactional.py` | P (transactional and reasoning continuity) | TC-85 – TC-88 |
+| `packs.py` | none | Held-out YAML scenario-pack loading and content attestations |
 | `helpers.py` | — | Shared evaluator utilities (datetime matching, text scanning, safe math) |
 | `noise.py` | — | Deterministic payload enrichment for realistic API noise |
 
@@ -106,6 +108,20 @@ Registries:
 - `SCENARIOS` — core 15 (used by `--short`)
 - `ALL_SCENARIOS` — full 69
 - `ALL_SCENARIOS_WITH_HARDMODE` — full 88
+
+The CLI's public scenario selection follows these rules:
+
+- The default pool is the standard 69 scenarios.
+- `--hardmode` adds all 19 Category P scenarios. `--hardmode-only` selects
+  Category P alone.
+- Explicit IDs resolve against all 88 public scenarios, so
+  `--scenarios TC-85` selects a Hard Mode scenario without `--hardmode`.
+  Explicit IDs take precedence over `--short` and `--categories`.
+  Unknown IDs fail before model discovery.
+- To select Category P by category, use `--hardmode --categories P` or
+  `--hardmode-only`.
+- `--scenario-pack` appends held-out scenarios, while `--pack-only` makes the
+  pack the only pool. Pack IDs cannot collide with public IDs.
 
 #### Declarative YAML scenarios (pilot)
 
@@ -120,7 +136,7 @@ canonical source for now.
 
 | Module | Purpose |
 |---|---|
-| `orchestrator.py` | Multi-turn tool-call loop (up to 8 turns per scenario) |
+| `orchestrator.py` | Multi-turn tool-call loop, with a default of 8 turns and per-scenario overrides |
 | `service.py` | Compatibility re-export of the application-owned `BenchmarkService` |
 | `throughput.py` | Built-in streaming pp/tg measurement |
 | `speculative.py` | Spec-decode / MTP benchmarking (acceptance rate, effective t/s) |
@@ -135,6 +151,7 @@ canonical source for now.
 | Module | Purpose |
 |---|---|
 | `base.py` | Compatibility re-export of the domain-owned `BackendAdapter` port and result types |
+| `measurement.py` | HTTP implementation of the domain-owned measurement port, including raw SSE arrival timing |
 | `openai_compat.py` | `OpenAICompatibleAdapter` — vLLM, LiteLLM, llama.cpp, SGLang, and Google's OpenAI compatibility layer |
 | `gemini.py` | `GeminiAdapter` — the native Gemini `:generateContent` API |
 | `http_retry.py` | Shared retry, backoff, and rate-limit pacing for both adapters |
@@ -165,6 +182,7 @@ Shared infrastructure:
 | Module | Purpose |
 |---|---|
 | `service.py` | `BenchmarkService` — composes concrete adapters, scenario orchestration, SQLite persistence, and Markdown reporting |
+| `finalization.py` | Completes interrupted or checkpointed runs and builds the final persisted summary |
 
 ### `storage/` — Persistence
 
@@ -178,10 +196,15 @@ Shared infrastructure:
 | Module | Purpose |
 |---|---|
 | `bench.py` | Thin CLI entry point and compatibility re-export shell |
+| `command_registry.py` | Discoverable subcommand metadata and translation rules |
 | `parser.py` | Subcommand discovery and translation into the legacy runtime namespace |
 | `legacy_parser.py` | Permanent flat-flag parser used by legacy invocations and translated subcommands |
 | `dispatch.py` | Runtime command routing and tool-call benchmark flow |
+| `compare_report.py` | HTML comparison command for Markdown reports |
+| `local_commands.py` | Dry-run and local command rendering |
+| `model_probe.py` | Model discovery and availability probing |
 | `plugin_runners.py` | Shared persistence/progress lifecycle and plugin-specific execution |
+| `plugin_lifecycle.py` | Shared plugin run lifecycle and result persistence |
 | `probe.py` | Model/server detection, preflight checks, and warmup |
 | `commands.py` | Scenario resolution (`resolve_scenarios`, `resolve_all_scenarios_for_ids`) |
 | `resolve.py` | Compatibility exports for scenario/sweep resolution helpers |
@@ -197,12 +220,21 @@ Shared infrastructure:
 | `spec_live_display.py` | Live spec-decode Textual dashboard |
 | `spec_live_rendering.py` | Rich component rendering for spec-live |
 
+### `compare_reports/` Report comparisons
+
+| Module | Purpose |
+|---|---|
+| `summary.py` | Compare summary-style reports |
+| `tool_eval.py` | Compare tool-evaluation reports and scenario traces |
+
 ### `utils/` — Shared Helpers
 
 | Module | Purpose |
 |---|---|
 | `ids.py` | Unique run IDs and deterministic configuration fingerprints |
 | `metadata.py` | System/backend metadata collection (engine probing) |
+| `openai_compat.py` | OpenAI-compatible request and response helpers |
+| `tokenizers.py` | Local tokenizer discovery for throughput prompts |
 | `urls.py` | URL construction, redaction, header helpers |
 
 ---
@@ -219,13 +251,13 @@ CLI
   │
   └─ service.run_benchmark()
        │
-       ├─ create OpenAICompatibleAdapter
+       ├─ build the adapter selected by the endpoint wire format
        ├─ for each scenario in resolved list:
        │    │
        │    ├─ orchestrator.run_scenario(scenario, adapter, config)
        │    │    │
        │    │    ├─ build messages: system + context + user + [pressure filler]
-       │    │    ├─ loop (up to max_turns):
+       │    │    ├─ loop (up to configured max_turns, with scenario overrides):
        │    │    │    ├─ adapter.chat_completion(messages, tools)
        │    │    │    ├─ if tool_calls: execute via scenario.handle_tool_call()
        │    │    │    ├─ noise.enrich_payload(result)
@@ -274,13 +306,16 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-new-scenario).
 1. Create `plugins/<name>/` with `dataset.py`, `evaluator.py`, `plugin.py`
 2. Implement `BenchmarkPlugin` from `domain/plugin.py` using the backend port in `domain/adapters.py`
 3. Register in `plugins/registry.py`
-4. Add CLI flags in `cli/bench.py`
+4. Add CLI flags in `cli/legacy_parser.py` and register them in `schema.py`
 
 ### Adding a New Backend
-All backends use `OpenAICompatibleAdapter`. To support a new backend:
+OpenAI-compatible backends use `OpenAICompatibleAdapter`. To support a new backend:
 1. Ensure it exposes `/v1/chat/completions` with `tools` support
-2. Add a port to auto-discovery in `cli/bench.py`
-3. Add backend name to the `--backend` choices
+2. Add a port to auto-discovery in `cli/server.py`
+3. Add the backend label to `application/service.py` and backend detection mappings
+
+For a native wire format, add a provider adapter and register it through
+`adapters/factory.py` and `adapters/wire_format.py` instead.
 
 ---
 
@@ -289,7 +324,7 @@ All backends use `OpenAICompatibleAdapter`. To support a new backend:
 | Layer | Test Files | Count |
 |---|---|---|
 | Evaluator contract | `test_evaluator_contract.py` | Golden-trace PASS/FAIL/PARTIAL for TC-01–TC-15 |
-| Evaluator coverage | `test_evaluators_extended.py`, `test_hardmode.py`, `test_structured_output.py`, `test_planning_scenarios.py` | Extended scenarios F–P |
+| Evaluator coverage | `test_evaluators_extended.py`, `test_hardmode.py`, `test_hardmode_expanded.py`, `test_hardmode_transactional.py`, `test_structured_output.py`, `test_planning_scenarios.py` | Extended scenarios F through P |
 | Evaluator robustness | `test_evaluator_robustness.py` | Crash resistance, edge cases |
 | Plugin evaluators | `test_gsm8k_evaluator.py`, `test_mmlu_evaluator.py`, `test_ifeval_checkers.py` | Answer extraction, constraint checking |
 | Runner | `test_orchestrator.py`, `test_throughput.py`, `test_speculative.py`, `test_spec_live.py` | Orchestration, measurement |
