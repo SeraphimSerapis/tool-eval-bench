@@ -39,7 +39,7 @@ async def test_speculative_measurement_prometheus_and_llamacpp_fallback(
         spec_info=speculative.SpecDecodeInfo(has_prometheus=True, method="mtp"),
     )
     assert sample.acceptance_rate == 0.7
-    assert sample.acceptance_length == 3.5
+    assert sample.acceptance_length == 4.5
 
     monkeypatch.setattr(speculative, "scrape_spec_metrics", lambda *args, **kwargs: None)
     fallback = await speculative.measure_spec_single(

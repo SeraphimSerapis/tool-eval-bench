@@ -433,9 +433,7 @@ async def run_llama_benchy(
                     "llama-benchy was killed — likely out of memory (OOM).\n"
                     "This can happen when the HuggingFace transformers library "
                     "loads tokenizer data for large models, consuming excessive "
-                    "RAM in the subprocess.\n"
-                    "If this persists, try --perf-legacy-only for the built-in "
-                    "throughput benchmark that does not spawn a subprocess."
+                    "RAM in the subprocess."
                 )
 
             # Detect offline tokenizer failure: llama-benchy always needs a
@@ -470,9 +468,7 @@ async def run_llama_benchy(
                     "  - Pass --tokenizer /path/to/tokenizer.json (or a directory "
                     "containing tokenizer.json) to use a local tokenizer.\n"
                     "  - Or fetch just the tokenizer once with network access:\n"
-                    '      hf download <org>/<model> --include "tokenizer*" "*config.json"\n'
-                    "  - Or use --perf-legacy for the built-in throughput benchmark, "
-                    "which needs no tokenizer."
+                    '      hf download <org>/<model> --include "tokenizer*" "*config.json"'
                 )
             output_text = "\n".join(output_lines[-20:])  # last 20 lines
             raise RuntimeError(f"llama-benchy exited with code {returncode}:\n{output_text}")

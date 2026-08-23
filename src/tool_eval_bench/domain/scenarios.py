@@ -131,6 +131,10 @@ class ScenarioState:
     assistant_messages: list[str] = field(default_factory=list)
     final_answer: str = ""
     meta: dict[str, Any] = field(default_factory=dict)
+    # Provider-exposed reasoning, aligned with ``assistant_messages`` by turn.
+    # Most evaluators must not inspect this. It exists for targeted transport
+    # continuity scenarios where the reasoning channel is the behavior under test.
+    assistant_reasoning: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +212,10 @@ class ScenarioDefinition:
     # Optional tool choice to use after at least one tool call has completed.
     # Kept last to preserve positional construction compatibility.
     tool_choice_after_first_call: str | dict[str, Any] | None = None
+    # Replay provider-exposed reasoning across user follow-ups for scenarios
+    # that explicitly test preserved-reasoning transport. The default remains
+    # false because ordinary completed no-tool turns do not require replay.
+    preserve_reasoning_across_follow_ups: bool = False
 
 
 # ---------------------------------------------------------------------------

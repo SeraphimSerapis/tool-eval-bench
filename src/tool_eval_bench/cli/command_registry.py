@@ -40,8 +40,6 @@ SCENARIOS = ("scenarios", "categories", "short", "hardmode", "hardmode_only")
 PERF = (
     "perf",
     "perf_only",
-    "perf_legacy",
-    "perf_legacy_only",
     "pp",
     "tg",
     "depth",

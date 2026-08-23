@@ -98,13 +98,14 @@ Each scenario is a self-contained `ScenarioDefinition` with:
 | `scenarios_structured.py` | O | TC-64 – TC-69 |
 | `scenarios_hardmode.py` | P (opt-in registry) | TC-70 – TC-74 |
 | `scenarios_hardmode_expanded.py` | P (opt-in expansion) | TC-75 – TC-84 |
+| `scenarios_hardmode_transactional.py` | P (transactional and reasoning continuity) | TC-85 – TC-88 |
 | `helpers.py` | — | Shared evaluator utilities (datetime matching, text scanning, safe math) |
 | `noise.py` | — | Deterministic payload enrichment for realistic API noise |
 
 Registries:
 - `SCENARIOS` — core 15 (used by `--short`)
 - `ALL_SCENARIOS` — full 69
-- `ALL_SCENARIOS_WITH_HARDMODE` — full 84
+- `ALL_SCENARIOS_WITH_HARDMODE` — full 88
 
 #### Declarative YAML scenarios (pilot)
 
@@ -112,7 +113,7 @@ A small set of scenarios can also be authored as YAML data files under
 `evals/yaml_scenarios/`, loaded by `evals/yaml_loader.py`. This is a
 low-risk pilot for a future "YAML-first" direction — simple scenarios
 (declarative expected tool calls and response rules) can be written without
-Python evaluator functions. The existing 84 Python scenarios are the
+Python evaluator functions. The existing 88 Python scenarios are the
 canonical source for now.
 
 ### `runner/` — Orchestration

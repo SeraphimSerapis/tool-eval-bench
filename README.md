@@ -1,8 +1,8 @@
 # tool-eval-bench
 
-A **tool-calling quality benchmark** for evaluating LLM tool-use in agentic workflows across open-weight model serving stacks (**vLLM**, **LiteLLM**, **llama.cpp**). Also includes pluggable accuracy benchmarks (**GSM8K**, **MMLU**, **IFEval**) via the same OpenAI-compatible endpoints.
+A **tool-calling quality benchmark** for evaluating LLM tool-use in agentic workflows across open-weight model serving stacks (**vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**). Also includes pluggable accuracy benchmarks (**GSM8K**, **MMLU**, **IFEval**) via the same OpenAI-compatible endpoints.
 
-Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool runs **69 deterministic scenarios** (+ 15 opt-in Hard Mode) through OpenAI-compatible `/chat/completions` endpoints, scores each result as **pass**, **partial**, or **fail**, and produces detailed trace reports. Mock tool responses include realistic payload noise (extra metadata, timestamps, nested objects) to test whether models can extract relevant fields from noisy API responses. It also includes an integrated **throughput benchmark** (llama-bench style) for measuring prefill and token generation speed.
+Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool runs **69 standard deterministic scenarios** across categories A–O, plus **19 opt-in Hard Mode scenarios**, through OpenAI-compatible `/v1/chat/completions` endpoints. It scores each result as **pass**, **partial**, or **fail**, and produces detailed trace reports. Mock tool responses include realistic payload noise (extra metadata, timestamps, nested objects) to test whether models can extract relevant fields from noisy API responses. It also includes an integrated **throughput benchmark** (llama-bench style) for measuring prefill and token generation speed.
 
 ![tool-eval-bench benchmark output](docs/images/benchmark-output.png)
 
@@ -10,7 +10,7 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 
 ## What It Measures
 
-### Tool-Call Quality (69 scenarios across 15 categories)
+### Tool-Call Quality (69 standard scenarios, plus 19 opt-in Hard Mode scenarios)
 
 | Category | Scenarios | What It Tests |
 |---|---|---|
@@ -29,7 +29,7 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 | **M — Autonomous Planning** | TC-51 – TC-53 | Goal decomposition, open-ended research, conditional workflows |
 | **N — Creative Composition** | TC-54 – TC-56 | Cross-tool synthesis, data pipelines, notification workflows |
 | **O — Structured Output** | TC-64 – TC-69 | JSON schema compliance, tool→schema chaining, nested schemas, enum constraints, violation resistance |
-| **P — Hard Mode** _(opt-in)_ | TC-70 – TC-84 | Ceiling-breaking adversarial, stateful, recovery, relevance, and parallel-call scenarios |
+| **P — Hard Mode** _(opt-in)_ | TC-70 – TC-88 | Ceiling-breaking adversarial, stateful, transactional, recovery, and reasoning-continuity scenarios |
 
 ### Throughput Performance (optional)
 
@@ -172,17 +172,17 @@ pip install --upgrade git+https://github.com/SeraphimSerapis/tool-eval-bench.git
 
 # Development setup (pull + reinstall)
 git pull
-pip install -e '.[dev,perf,hf]'
+pip install -e '.[dev,perf]'
 ```
 
 ### Configuration
 
-**Zero-config mode** — if a server is running on localhost at a standard port,
-no configuration is needed:
+**Local discovery mode** scans common localhost ports for a successful model-list
+response. Port numbers are hints only. Use `--base-url`, `--backend`, and
+`TOOL_EVAL_API_KEY` when discovery is ambiguous or the endpoint is protected:
 
 ```bash
-# Just run it — auto-discovers vLLM (:8000), llama.cpp (:8080), SGLang (:30000),
-# LiteLLM (:4000), Ollama (:11434), or TGI (:5000)
+# Scans common ports used by vLLM, llama.cpp, SGLang, LiteLLM, Ollama, and TGI
 tool-eval-bench run --short
 ```
 
@@ -196,7 +196,7 @@ TOOL_EVAL_BASE_URL=http://your-server:8080
 TOOL_EVAL_HOST=your-server
 TOOL_EVAL_PORT=8080
 
-TOOL_EVAL_MODEL=         # optional: auto-detected from /v1/models
+TOOL_EVAL_MODEL=         # optional: auto-detected from /v1/models or /models
 TOOL_EVAL_API_KEY=       # optional
 ```
 
@@ -207,7 +207,7 @@ TOOL_EVAL_API_KEY=       # optional
 ### Run the benchmark
 
 ```bash
-# Zero-config — auto-discovers server and model on localhost
+# Local discovery scans common localhost ports for a model-list response
 tool-eval-bench run --short
 
 # Check server readiness first (useful in CI/sparkrun recipes)
@@ -222,7 +222,7 @@ tool-eval-bench run --short --seed 42
 # Full 69 — the standard benchmark
 tool-eval-bench run --seed 42
 
-# Full + Hard Mode — 84 scenarios for top-performing models
+# Full + Hard Mode: 88 scenarios for top-performing models
 tool-eval-bench run --seed 42 --hardmode
 
 # Full + throughput — quality + speed (recommended)
@@ -241,7 +241,7 @@ tool-eval-bench run --categories K A
 tool-eval-bench run --fail-on-safety
 
 # Tag an execution so every report it generates is identifiable
-tool-eval-bench run --label "tonyd2wild tool hardening 646c55f" --trials 3
+tool-eval-bench run --label "nightly qwen3 2026-08" --trials 3
 
 # Run coding-focused categories with thinking enabled
 tool-eval-bench run --categories J G M --backend-kwargs '{"chat_template_kwargs": {"enable_thinking": true}}'
@@ -297,8 +297,8 @@ ID. Start a new run when you want another scored attempt.
 
 Use `tool-eval-bench COMMAND --help` for command-specific options. Existing
 flat invocations such as `tool-eval-bench --short`, `--history`, and
-`compare-report A.md B.md -o out.html` remain supported silently for permanent
-backward compatibility.
+`compare-report A.md B.md -o out.html` remain supported silently. Removed
+interfaces, including the former built-in throughput flags, are rejected.
 
 Before a benchmark, the CLI sends a minimal model-availability request using
 the configured `--timeout` and the same merged backend parameters used by the
@@ -317,7 +317,7 @@ Pluggable accuracy benchmarks evaluate model knowledge and instruction-following
 **Recommended:** Install the `datasets` library for fast, rate-limit-free downloads directly from the HuggingFace git repo:
 
 ```bash
-pip install tool-eval-bench[hf]
+pip install 'tool-eval-bench[hf]'
 ```
 
 Without it, the tool falls back to the HuggingFace REST API (which has rate limits and may fail with HTTP 429 on large datasets like MMLU). Downloads are resumable either way — if interrupted, re-running picks up where it stopped.
@@ -356,7 +356,7 @@ tool-eval-bench bench --mmlu --ifeval --gsm8k        # all three after tool-eval
 
 ### Throughput benchmark
 
-Throughput measurement uses [llama-benchy](https://github.com/eugr/llama-benchy) — a dedicated benchmarking tool that provides multi-run statistics with mean ± std, proper latency estimation, and cache-busting. Install with `pip install tool-eval-bench[perf]` or ensure `uvx` is on PATH. Progress is shown via a live Rich progress bar. For authenticated endpoints, the regular `--api-key` value is forwarded to llama-benchy's supported CLI option and redacted from logs. Because llama-benchy 0.4.x does not support environment-based credentials, the key may still be visible to process inspection by other users on the same host while the benchmark is running.
+Throughput measurement uses [llama-benchy](https://github.com/eugr/llama-benchy) — a dedicated benchmarking tool that provides multi-run statistics with mean ± std, proper latency estimation, and cache-busting. Install with `pip install 'tool-eval-bench[perf]'` or ensure `uvx` is on PATH. Progress is shown via a live Rich progress bar. For authenticated endpoints, the regular `--api-key` value is forwarded to llama-benchy's supported CLI option and redacted from logs. Because llama-benchy 0.4.x does not support environment-based credentials, the key may still be visible to process inspection by other users on the same host while the benchmark is running.
 
 ```bash
 # Throughput only (skip tool-call scenarios)
@@ -388,8 +388,6 @@ tool-eval-bench bench --perf --tokenizer /models/Qwen3.6/tokenizer.json
 > hf download <org>/<model> --include "tokenizer*" "*config.json"
 > ```
 >
-> Alternatively use `--perf-legacy`, which needs no tokenizer.
-
 | Flag | Default | Purpose |
 |---|---|---|
 | `--perf` | off | Run llama-benchy throughput before scenarios |
@@ -402,20 +400,6 @@ tool-eval-bench bench --perf --tokenizer /models/Qwen3.6/tokenizer.json
 | `--benchy-latency-mode` | `generation` | Latency mode: `api`, `generation`, `none` |
 | `--benchy-args` | — | Pass-through for arbitrary llama-benchy flags |
 | `--tokenizer` | auto | Local tokenizer.json path; overrides HF-cache auto-detection |
-
-### Legacy built-in throughput
-
-A simpler built-in throughput benchmark with no external dependencies is also available:
-
-```bash
-tool-eval-bench bench --perf-legacy-only --pp 2048 --tg 128
-tool-eval-bench bench --perf-legacy --seed 42
-```
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `--perf-legacy` | off | Run built-in throughput before scenarios |
-| `--perf-legacy-only` | off | Run ONLY built-in throughput |
 
 ### Speculative decoding / MTP benchmark
 
@@ -438,7 +422,7 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 | Spec-Decode Flag | Default | Purpose |
 |---|---|---|
 | `--spec-bench` | off | Run speculative decoding benchmark |
-| `--spec-method` | `auto` | Method hint: `auto`, `mtp`, `draft`, `dflash`, `ngram`, `eagle` |
+| `--spec-method` | `auto` | Method hint for MTP/NEXTN, draft/STANDALONE, DFlash, DSpark, n-gram, EAGLE/EAGLE3, Medusa, MLP speculators, suffix, and custom proposers |
 | `--baseline-tgs` | — | Known baseline tg t/s for speedup calculation |
 | `--spec-prompts` | `filler,code,structured` | Prompt types to test |
 | `--metrics-url` | auto | Direct URL to Prometheus `/metrics` (e.g. `http://vllm:8080/metrics`) |
@@ -448,10 +432,12 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > | Backend | Acceptance Rate Source | What You Get |
 > |---|---|---|
 > | **vLLM** | Prometheus `/metrics` (`spec_decode_*` counters) | α %, acceptance length (τ), draft window, per-position waterfall, waste ratio |
-> | **llama.cpp** | Per-request `timings` JSON (`draft_n` / `draft_n_accepted`) | α %, waste ratio. _No_ acceptance length or draft window (upstream limitation) |
-> | **SGLang** | Prometheus `/metrics` | Same as vLLM |
+> | **llama.cpp** | Current Prometheus counters, with per-request `timings` fallback | Full counter metrics on current builds; α % and waste ratio from response timings on older builds |
+> | **SGLang** | No request-local counter contract | Effective t/s remains available; use `spec-live` for the server's current acceptance gauges |
 >
-> For **llama.cpp**, use `--spec-method=mtp` (or `draft`, `ngram`, `eagle`) to explicitly enable spec decode measurement — the backend is auto-detected from the `llamacpp:` metric prefix, but spec decode activity can't be confirmed from `/metrics` alone:
+> For **llama.cpp**, use `--spec-method=mtp` or the matching configured method
+> when a build only exposes per-request timings. Current builds also expose
+> cumulative speculative counters for `spec-live` when metrics are enabled:
 > ```bash
 > # llama.cpp with MTP speculative decoding
 > tool-eval-bench --spec-bench --spec-method mtp
@@ -470,7 +456,10 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 
 ### Live speculative decoding monitor
 
-Keep a **real-time terminal dashboard** open while working — `--spec-live` continuously polls the server's Prometheus `/metrics` endpoint and renders a Rich Live display with acceptance rate gauges, per-position acceptance waterfall, throughput sparklines, draft efficiency analysis, and engine status.
+Keep a **real-time terminal dashboard** open while working. `spec-live`
+continuously polls the server's Prometheus `/metrics` endpoint and renders
+acceptance, throughput, draft efficiency, and engine status when the selected
+backend exports those metric families.
 
 The dashboard runs in the terminal's **alternate screen buffer** (like htop or vim), giving a clean full-terminal canvas without disturbing previous output. On exit, your original terminal content is restored.
 
@@ -489,17 +478,21 @@ tool-eval-bench spec-live --metrics-url http://vllm:8080/metrics
 ```
 
 The dashboard shows:
-- **Acceptance rate gauge** — color-coded 0–100% bar with efficiency rating
-- **Draft efficiency gauge** — τ/window utilization with auto-tuning hints
-- **Method detection badge** — shows the speculative decoding method in the header (`⟨ Draft Flash ⟩`, `⟨ MTP ⟩`, `⟨ EAGLE ⟩`, etc.).  Auto-detects from `/v1/models` and `/version` API probing at startup, with Prometheus text scanning as fallback.  Use `--spec-method` to override.
-- **Draft model name in header** — when the server lists multiple models in `/v1/models` (target + draft), the draft model name is shown: `▸ Qwen3-35B  ← Qwen3-0.6B`.  If vLLM's `/version` endpoint exposes `speculative_config`, the method and `num_speculative_tokens` are also extracted.
-- **Per-position acceptance bars** — full-width horizontal chart showing per-position acceptance rate decay (`p0 ████ 83%  p1 ███ 64% ...`) with decay analysis.  Supports up to 64 positions and auto-wraps to multiple rows on narrow terminals.
+- **Acceptance rate gauge** — color-coded 0–100% bar when the backend exposes supported speculative metrics
+- **Draft efficiency gauge** — τ/window utilization with tuning hints when both values are available
+- **Method badge** — uses explicit configuration or metric labels only. Generic speculative counters report `unknown`; use `--spec-method` to label a known configuration.
+- **Draft model name** — shown only when an explicit server configuration identifies it. Multiple `/v1/models` entries are not treated as a drafter relationship.
+- **Per-position acceptance bars** — shown for vLLM and current llama.cpp builds when their per-position counters are exported
 - **Throughput sparklines** — rolling 60-second history of accept rate, gen t/s, accepted t/s, and waste ratio with min/max annotations
 - **Rolling averages** — session-level mean α, gen t/s, and accepted t/s (visible immediately with 0.0 initial values)
 - **Engine status** — GPU KV cache, prefix cache hit rate, running/waiting requests, prompt t/s
 - **Session totals** — cumulative accepted/drafted tokens and session-wide acceptance rate
 
-All metrics are **session-relative** — they start from zero when the dashboard opens and show only what happened during the current monitoring session, letting you observe how different workloads actually perform.
+Cumulative counter history and token totals are session-relative. Throughput,
+KV-cache, queue, and SGLang acceptance gauges show the server's current state.
+Prometheus counter series are server-wide, so other clients and concurrent
+requests contribute to session deltas. Use an isolated server when you need a
+request-local comparison.
 
 Press **Ctrl+R** to reset all session counters and history without restarting.  This lets you switch workloads and measure each independently.  Press **Ctrl+C** to exit; a session summary panel shows aggregate statistics.
 
@@ -507,19 +500,24 @@ Press **Ctrl+R** to reset all session counters and history without restarting.  
 |---|---|---|
 | `--spec-live` | off | Start live speculative decoding monitor |
 | `--spec-live-interval` | `1.0` | Seconds between metric scrapes |
-| `--spec-method` | `auto` | Method hint: `auto`, `mtp`, `draft`, `dflash`, `ngram`, `eagle` |
+| `--spec-method` | `auto` | Method hint. Use `--help` for the current cross-engine choices. |
 | `--metrics-url` | auto | Direct URL to Prometheus `/metrics` endpoint |
 
-> **Implementation note.** vLLM updates its Prometheus gauge metrics (gen t/s, prompt t/s, KV cache) on a ~10-second internal interval. `--spec-live` handles this by retaining the last non-zero reading for throughput gauges so the dashboard doesn't flicker to zero between updates. Per-position acceptance rates are parsed from `spec_decode_num_accepted_tokens_per_pos_total` counters (vLLM v1) and converted to rates; gauge-format rates are also supported as a fallback.
->
-> **llama.cpp note.** The dashboard auto-detects `llamacpp:` prefixed Prometheus counters and displays throughput (gen t/s, prompt t/s), engine status (running/waiting requests), and KV cache usage. Speculative decoding sparklines (acceptance rate, waste ratio) are **not** available on the `--spec-live` dashboard for llama.cpp because the server doesn't expose draft acceptance counters via Prometheus — use `--spec-bench --spec-method mtp` instead, which extracts per-request stats from the SSE response timings.
+> **Backend contracts.** vLLM publishes cumulative `spec_decode_*` counters,
+> one series per engine; the monitor sums those series. SGLang publishes direct
+> `sglang:spec_*` gauges; the monitor selects a stable rank-zero series instead
+> of summing replicas. Current llama.cpp builds publish cumulative
+> `llamacpp:spec_decode_*` counters and per-position counters. Older llama.cpp
+> builds fall back to engine and throughput data when those counters are absent.
+> Acceptance length follows each upstream contract and includes the verifier's
+> bonus token.
 
 ### Hard Mode
 
 The standard 69-scenario benchmark covers *breadth* of tool-calling capabilities. Once a model scores 100% on the standard suite, `--hardmode` adds ceiling-breaking scenarios (Category P) designed to separate truly excellent models from merely good ones.
 
 ```bash
-# Standard benchmark + Hard Mode scenarios (69 + 15 = 84 scenarios)
+# Standard benchmark + Hard Mode scenarios (69 + 19 = 88 scenarios)
 tool-eval-bench run --hardmode
 
 # Run only Hard Mode scenarios
@@ -530,7 +528,7 @@ tool-eval-bench run --hardmode --categories P  # equivalent
 tool-eval-bench run --hardmode --context-pressure 0.75
 ```
 
-Hard Mode focuses on fifteen ceiling-breaking scenarios:
+Hard Mode focuses on nineteen ceiling-breaking scenarios:
 
 | Scenario | Focus Area | What it tests |
 |---|---|---|
@@ -549,6 +547,17 @@ Hard Mode focuses on fifteen ceiling-breaking scenarios:
 | TC-82 | Stale memory conflict | Prefer authoritative current directory state over stale memory |
 | TC-83 | Format-sensitive chaining | Return exact JSON after noisy lookups while allowing independent work in parallel |
 | TC-84 | Long-horizon recovery | Recover from a booking race and complete equivalent valid notification workflows |
+| TC-85 | Ambiguous mutation | Wait through pending replication, confirm one least-privilege credential, and avoid duplicate creation |
+| TC-86 | Optimistic concurrency | Re-read after two consecutive conflicts and preserve both concurrent field changes |
+| TC-87 | Pagination integrity | Follow four cursors, reject a stale-count shortcut, deduplicate, resolve routing, and delay notification |
+| TC-88 | Preserved reasoning | Carry three linked, privately planned constrained values across two user follow-ups |
+
+TC-88 opts into replaying the provider's `reasoning_content` field across its
+follow-up turns. It does not ask the model to print its reasoning to the user.
+A pass requires the first reasoning payload to contain all three exact values;
+valid outputs from a backend that keeps reasoning opaque receive partial credit.
+Other scenarios keep the default behavior and do not replay completed no-tool
+reasoning across user turns.
 
 Hard Mode scenarios are scored identically (pass=2, partial=1, fail=0) and appear in the standard report under Category P. They are excluded from the base benchmark score by default to maintain comparability with existing results.
 
@@ -626,7 +635,9 @@ tool-eval-bench bench --context-pressure-sweep 0.5-1.0 --categories O
 
 The sweep runs each selected scenario at every pressure level, displays a compact summary panel with pass/fail status per level, and reports the **breaking point** (highest pressure where all scenarios still pass). It early-stops after 2 consecutive all-fail levels.
 
-The context window size is auto-detected from the `/v1/models` endpoint (`max_model_len` on vLLM). If auto-detection fails, use `--context-size` to specify it manually.
+The context window size is auto-detected from model metadata when the backend
+exposes a recognized context-length field, including vLLM's `max_model_len`.
+If auto-detection fails, use `--context-size` to specify it manually.
 
 The filler is designed to defeat server-side prefix caching (vLLM, llama.cpp):
 - **Diverse content**: 12 distinct paragraph styles (tech docs, meeting notes, code reviews, incident reports, API docs, etc.)
@@ -635,9 +646,10 @@ The filler is designed to defeat server-side prefix caching (vLLM, llama.cpp):
 - **Unique nonces**: each chunk gets a unique session/chunk identifier prefix
 - **Per-scenario isolation**: each scenario gets a unique nonce injected into the filler to prevent cross-scenario prefix cache reuse
 
-This ensures that every run produces a completely unique token sequence, forcing full KV cache computation rather than hitting cached prefixes.
-
-When `--seed` is set, filler generation is fully deterministic per pressure level — the same seed + context size + sweep ratio always produces identical filler content. This makes sweep results reproducible across runs.
+Unseeded filler uses nonces to reduce prefix-cache reuse. When `--seed` is set,
+filler generation is deterministic per pressure level. The same seed, context
+size, and sweep ratio can therefore reuse identical filler content, which makes
+sweeps reproducible but changes the cache-busting guarantee.
 
 ## Programmatic API
 
@@ -666,7 +678,7 @@ The returned dict includes a versioned envelope with top-level Spark Arena field
 | Field | Type | Description |
 |---|---|---|
 | `schema_version` | str | Output schema version (currently `"1"`) |
-| `tool_eval_bench_version` | str | Package version (e.g. `"1.8.0"`) |
+| `tool_eval_bench_version` | str | Package version, such as `"2.5.0"` or an identifiable development version |
 | `final_score` | int | 0–100 composite score |
 | `rating` | str | Star rating string |
 | `safety_warnings` | list | Safety-critical failures (empty when clean) |
@@ -680,7 +692,7 @@ External tools can validate benchmark configuration against the published schema
 ```python
 from tool_eval_bench.schema import get_schema
 
-schema = get_schema()  # {"schema_version": "6", "args": [...], "commands": {...}}
+schema = get_schema()  # {"schema_version": "7", "args": [...], "commands": {...}}
 for arg in schema["args"]:
     print(f"{arg['name']}: {arg['type']} = {arg['default']}")
 
@@ -713,7 +725,7 @@ For every scenario, the model receives:
 5. Realistic payload noise on all mock responses (extra metadata, timestamps, IDs)
 
 The orchestrator then:
-1. Calls the model via `/chat/completions` with `tools` in the OpenAI wire format
+1. Calls the model via `/v1/chat/completions` with `tools` in the OpenAI wire format
 2. Executes any requested tool calls against **deterministic mock handlers**
 3. Appends tool results back into the conversation
 4. Repeats for up to 8 assistant turns
@@ -731,13 +743,15 @@ AGENTS.md             # Contributor conventions (architecture, quality bar, git 
 src/tool_eval_bench/
   api.py              # Public programmatic API (run_benchmark, format_result)
   schema.py           # Machine-readable args schema for external validators
-  adapters/           # OpenAI-compatible adapter (vllm, litellm, llamacpp) + native Gemini
+  adapters/           # OpenAI-compatible adapters (vLLM, SGLang, LiteLLM, llama.cpp) + native Gemini
+  application/
+    service.py        # Benchmark orchestration, persistence, and public application service
   cli/
     bench.py          # Main CLI entry point (tool-eval-bench)
     commands.py       # Scenario resolution helpers
     helpers.py        # Small CLI helpers (dotenv, redaction, JSON output, etc.)
     server.py         # Server discovery and backend detection
-    perf.py           # Throughput runners (built-in + llama-benchy)
+    perf.py           # External llama-benchy throughput integration
     spec_bench.py     # Speculative-decoding / MTP benchmark runner
     pressure.py       # Context-pressure sweep runner
     display.py        # Zero-flicker streaming display
@@ -762,12 +776,14 @@ src/tool_eval_bench/
     scenarios_large_toolset.py  # Large-toolset scenarios (L)
     scenarios_planning.py   # Planning + creative scenarios (M–N)
     scenarios_structured.py # Structured output scenarios (O)
-    scenarios_hardmode.py   # Hard Mode scenarios (P) — opt-in ceiling-breakers
+    scenarios_hardmode.py   # Hard Mode registry and TC-70 through TC-74
+    scenarios_hardmode_expanded.py      # TC-75 through TC-84
+    scenarios_hardmode_transactional.py # TC-85 through TC-88
     yaml_loader.py    # Declarative YAML scenario loader (pilot)
     yaml_scenarios/   # Sample YAML-defined scenarios
   runner/
     orchestrator.py   # Multi-turn tool-call loop
-    service.py        # Benchmark service (orchestration + persistence)
+    service.py        # Compatibility re-export of application/service.py
     throughput.py     # Streaming pp/tg measurement
     speculative.py    # Spec-decode / MTP benchmarking (acceptance rate, effective t/s)
     spec_live.py      # Live monitor data layer (Prometheus scraping, delta computation)
@@ -807,7 +823,7 @@ come from different benchmark cohorts, they remain visible but receive no
 misleading global rank.
 
 The version is derived from git by setuptools-scm, so a build installed straight
-from a commit reports which commit it came from (`2.2.1.dev11+g528272d`) rather
+from a commit reports which commit it came from (`<tag-or-dev-version>`) rather
 than claiming to be the last tagged release. `git_sha` is resolved against the
 installed package's own checkout, is `None` for wheel installs, and gains a
 `-dirty` suffix when the working tree has uncommitted changes.
@@ -828,8 +844,8 @@ spec-decode / pressure-sweep reports, and the persisted metadata (shown in
 the label, so all files from one execution end with the same marker:
 
 ```
-runs/2026/08/<run_id>--tonyd2wild-tool-hardening-646c55f.md
-runs/2026/08/<run_id>--tonyd2wild-tool-hardening-646c55f_summary.md
+runs/2026/08/<run_id>--nightly-qwen3-2026-08.md
+runs/2026/08/<run_id>--nightly-qwen3-2026-08_summary.md
 ```
 
 The full label is persisted unchanged. Reports render it as inert inline code;
@@ -842,9 +858,11 @@ is purely an annotation — it does not affect the run ID or
 
 ## Backends
 
-Any OpenAI-compatible `/v1/chat/completions` endpoint works:
+OpenAI-compatible backends must expose `/v1/chat/completions` and support the
+`tools` and `tool_choice` request fields used by the tool-call scenarios:
 
 - **vLLM** — primary target
+- **SGLang** — OpenAI-compatible model server
 - **LiteLLM** — proxy for multiple backends
 - **llama.cpp** — lightweight local inference
 
@@ -873,25 +891,28 @@ tool-eval-bench compare --report runs/.../model_a_summary.md runs/.../model_b_su
 
 ### Backend Compatibility Notes
 
-| Behavior | vLLM | LiteLLM | llama.cpp |
-|---|---|---|---|
-| `/v1/models` discovery | ✅ | ✅ | ⚠️ May be at `/models` |
-| `parallel_tool_calls` | ✅ | ✅ | ❌ Not supported |
-| Streaming `usage` stats | ✅ | Varies | ❌ |
-| `tool_choice: "required"` | ✅ | ✅ | ⚠️ Version-dependent |
-| Large toolsets (52 tools) | ✅ | ✅ | ⚠️ May exceed context window |
-| `--spec-bench` acceptance rate | ✅ Prometheus | ✅ via backend | ✅ Per-request timings |
-| `--spec-live` dashboard | ✅ Full | ✅ via backend | ⚠️ Throughput + engine only |
+| Behavior | vLLM | SGLang | LiteLLM | llama.cpp |
+|---|---|---|---|---|
+| `/v1/models` discovery | ✅ | ✅ | ✅ | ⚠️ May be at `/models` |
+| `parallel_tool_calls` | ✅ | ✅ | ✅ | ❌ Not supported |
+| Streaming `usage` stats | ✅ | Varies | Varies | ❌ |
+| `tool_choice: "required"` | ✅ | ✅ | ✅ | ⚠️ Version-dependent |
+| Large toolsets (52 tools) | ✅ | ✅ | ✅ | ⚠️ May exceed context window |
+| `--spec-bench` acceptance rate | ✅ Prometheus | ⚠️ Live gauges are not request-local | ✅ when backend metrics are reachable | ✅ Counters or per-request timings |
+| `--spec-live` dashboard | ✅ Counters | ✅ Gauges | ✅ when backend metrics are separately reachable | ✅ Counters on current builds; engine-only fallback |
 
-> **Note:** All backends are accessed through a single `OpenAICompatibleAdapter`. If you encounter backend-specific issues, please [open an issue](https://github.com/SeraphimSerapis/tool-eval-bench/issues).
+> **Note:** OpenAI-compatible backends use `OpenAICompatibleAdapter`. Native
+> Gemini uses its dedicated adapter. If you encounter backend-specific issues,
+> please [open an issue](https://github.com/SeraphimSerapis/tool-eval-bench/issues).
 
 ## CI
 
 ```bash
-ruff check .       # lint
-.venv/bin/mypy --no-incremental  # full package type check
-.venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py
-                   # scenario evaluators, plugins, storage, CLI, adapter
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .
+.venv/bin/mypy
+env -u FORCE_COLOR .venv/bin/python -m pytest tests/ \
+  --ignore=tests/test_llama_benchy.py -m "not live" --randomly-seed=104729
 ```
 
 ### Optional live canary
@@ -899,7 +920,7 @@ ruff check .       # lint
 The repository includes a deployment-relevant live canary covering ordinary
 tool use, required-parameter enforcement, sleeper-injection resistance, and
 tool-output injection handling. Run it locally with
-`TOOL_EVAL_CANARY_BASE_URL=http://host:port/v1 pytest -m live tests/test_live_canary.py`.
+`TOOL_EVAL_CANARY_BASE_URL=http://host:port/v1 .venv/bin/python -m pytest -m live tests/test_live_canary.py`.
 GitHub Actions exposes the same check through **Run workflow** inputs; set the
 optional `TOOL_EVAL_CANARY_API_KEY` secret when the endpoint requires auth.
 
@@ -912,7 +933,7 @@ and completing the real task while ignoring the injection PASSes. For TC-34
 credentials, or "confidential data" — is reading it, not leaking it, and never
 downgrades the verdict by itself.
 
-Public CLI compatibility is protected by committed schema-v4 and legacy-parser
+Public CLI compatibility is protected by committed argument-schema and legacy-parser
 snapshots. After an intentional interface change, regenerate them with
 `.venv/bin/python scripts/update_compat_snapshots.py`. CI also enforces targeted
 coverage floors for critical CLI, report-comparison, and benchmark-runner modules.
@@ -925,7 +946,7 @@ coverage floors for critical CLI, report-comparison, and benchmark-runner module
 | [ToolBench](https://github.com/OpenBMB/ToolBench) | API discovery across 16K+ real-world APIs | We use deterministic mock tools with realistic payload noise for reproducible scoring. No external API dependencies. |
 | [NexusRaven](https://nexusflow.ai/blogs/ravenv2) | Function-calling via fine-tuned models | We're model-agnostic — any OpenAI-compatible endpoint works. We also measure throughput (pp/tg) alongside correctness. |
 | [API-Bank](https://github.com/AlibabaResearch/DAMO-ConvAI/tree/main/api-bank) | Multi-turn API usage (73 APIs) | We add safety/boundary testing (Category K with 13 scenarios including prompt injection resistance), large-toolset scale testing (52 tools), and statistical rigor via `--trials`. |
-| [ToolCall-15](https://github.com/stevibe/ToolCall-15) | 15-scenario quick assessment | Our direct ancestor. We extended it to 69 scenarios across 15 categories (+ 15 opt-in Hard Mode), added multi-turn orchestration, autonomous planning, creative composition, structured output evaluation, throughput benchmarking, and production-grade persistence. |
+| [ToolCall-15](https://github.com/stevibe/ToolCall-15) | 15-scenario quick assessment | Our direct ancestor. We extended it to 69 standard scenarios across categories A–O, plus 19 opt-in Hard Mode scenarios in Category P, and added multi-turn orchestration, autonomous planning, creative composition, structured output evaluation, throughput benchmarking, and production-grade persistence. |
 | [PinchBench (OpenClaw)](https://github.com/open-claw/PinchBench) | Agentic task completion in real environments | PinchBench tests end-to-end task completion. We focus on the tool-calling substrate: does the model pick the right tool, pass the right params, and chain correctly? Complementary benchmarks. |
 
 **Key differentiators:** Local-first (no cloud APIs required), deterministic scoring, multi-trial statistics with Pass@k/Pass^k, integrated throughput measurement, token efficiency tracking, and safety-critical failure detection with rating caps.

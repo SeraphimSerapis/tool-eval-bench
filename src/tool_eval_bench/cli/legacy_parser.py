@@ -267,14 +267,6 @@ def _make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run ONLY throughput benchmark (skip tool-call scenarios)",
     )
-    perf_grp.add_argument(
-        "--perf-legacy",
-        action="store_true",
-        help="Use built-in throughput benchmark (no external deps)",
-    )
-    perf_grp.add_argument(
-        "--perf-legacy-only", action="store_true", help="Run ONLY built-in throughput benchmark"
-    )
     perf_grp.add_argument("--pp", type=int, default=2048, help="Prompt tokens (default: 2048)")
     perf_grp.add_argument("--tg", type=int, default=128, help="Generation tokens (default: 128)")
     perf_grp.add_argument(
@@ -421,7 +413,23 @@ def _make_parser() -> argparse.ArgumentParser:
     spec_grp.add_argument(
         "--spec-method",
         default="auto",
-        choices=["auto", "mtp", "draft", "dflash", "ngram", "eagle"],
+        choices=[
+            "auto",
+            "mtp",
+            "nextn",
+            "draft",
+            "standalone",
+            "dflash",
+            "dspark",
+            "ngram",
+            "ngram_gpu",
+            "eagle",
+            "eagle3",
+            "medusa",
+            "mlp_speculator",
+            "suffix",
+            "custom_class",
+        ],
         help="Spec-decode method hint (default: auto-detect)",
     )
     spec_grp.add_argument(
@@ -514,7 +522,7 @@ def _make_parser() -> argparse.ArgumentParser:
         "--resume",
         metavar="RUN_ID",
         default=None,
-        help="Resume a previous run — skip scenarios that already passed",
+        help="Resume an interrupted run, preserving completed outcomes",
     )
 
     # -- Scoring options ---------------------------------------------------

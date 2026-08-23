@@ -293,18 +293,6 @@
       "type": "bool"
     },
     {
-      "default": false,
-      "description": "Use built-in throughput benchmark (no external deps)",
-      "name": "perf_legacy",
-      "type": "bool"
-    },
-    {
-      "default": false,
-      "description": "Run ONLY built-in throughput benchmark",
-      "name": "perf_legacy_only",
-      "type": "bool"
-    },
-    {
       "default": 2048,
       "description": "Prompt tokens for throughput benchmark",
       "name": "pp",
@@ -385,10 +373,19 @@
       "choices": [
         "auto",
         "mtp",
+        "nextn",
         "draft",
+        "standalone",
         "dflash",
+        "dspark",
         "ngram",
-        "eagle"
+        "ngram_gpu",
+        "eagle",
+        "eagle3",
+        "medusa",
+        "mlp_speculator",
+        "suffix",
+        "custom_class"
       ],
       "default": "auto",
       "description": "Spec-decode method hint",
@@ -559,7 +556,7 @@
     },
     {
       "default": null,
-      "description": "Resume a previous run \u2014 skip scenarios that already passed",
+      "description": "Resume an interrupted run, preserving completed outcomes",
       "name": "resume",
       "type": "string"
     },
@@ -648,5 +645,5 @@
       ]
     }
   },
-  "schema_version": "6"
+  "schema_version": "7"
 }

@@ -1,10 +1,7 @@
 """Throughput benchmark runners for the CLI.
 
-Extracted from the monolithic ``cli/bench.py``. Both functions follow the
-same pattern: display a header panel, run the benchmark with progress, render
-a summary table. They are kept together because they share the same CLI
-options (``--perf``, ``--perf-only``, ``--perf-legacy``) and similar
-display conventions.
+Extracted from the monolithic ``cli/bench.py``. The CLI runner invokes the
+external llama-benchy benchmark and renders its progress and results.
 """
 
 from __future__ import annotations
@@ -81,134 +78,6 @@ class _BenchyProgressTracker:
         if remaining <= 0 and matched_run not in self._completed_keys:
             self._completed_keys.add(matched_run)
             self.completed_runs = len(self._completed_keys)
-
-
-def run_throughput(
-    console: Console,
-    model: str,
-    display_name: str,
-    base_url: str,
-    api_key: str | None,
-    *,
-    pp: int,
-    tg: int,
-    depths: list[int],
-    concurrency_levels: list[int],
-) -> list:
-    """Run llama-bench style throughput sweep and display results.
-
-    Returns a list of ThroughputSample objects for report persistence.
-    """
-    from rich.panel import Panel
-    from rich.table import Table
-
-    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
-    from tool_eval_bench.runner.throughput import ThroughputSample, run_throughput_matrix
-
-    console.print()
-    console.print(
-        Panel(
-            f"[bold]{display_name}[/]\n"
-            f"[dim]pp={pp}  tg={tg}  depth={depths}  concurrency={concurrency_levels}[/]",
-            title="[bold]⚡ Throughput Benchmark[/]",
-            border_style="bright_cyan",
-        )
-    )
-
-    completed: list[ThroughputSample] = []
-
-    async def on_sample(sample: ThroughputSample, idx: int, total: int) -> None:
-        completed.append(sample)
-        label = f"pp{sample.label_pp} @ d{sample.label_depth} c{sample.concurrency}"
-        if sample.error:
-            console.print(f"  [red]✗[/] {label} — {sample.error}")
-        else:
-            console.print(
-                f"  [green]✓[/] {label}  "
-                f"[bold]{sample.pp_tps:,.0f}[/] pp t/s  "
-                f"[bold]{sample.tg_tps:,.1f}[/] tg t/s  "
-                f"[dim]ttft={sample.ttft_ms:,.0f}ms  total={sample.total_ms:,.0f}ms[/]"
-            )
-
-    matrix_result_holder: list[Any] = []
-
-    async def _run() -> None:
-        result = await run_throughput_matrix(
-            base_url,
-            model,
-            pp=pp,
-            tg=tg,
-            depths=depths,
-            concurrency_levels=concurrency_levels,
-            api_key=api_key,
-            client_factory=HTTPMeasurementClient,
-            on_sample=on_sample,
-        )
-        matrix_result_holder.append(result)
-
-    try:
-        asyncio.run(_run())
-    except KeyboardInterrupt:
-        console.print("\n[bold red]Interrupted.[/]")
-        sys.exit(1)
-    except Exception as exc:
-        console.print(f"\n[bold red]Error: {exc}[/]")
-        sys.exit(1)
-
-    # Summary table
-    ok_samples = [s for s in completed if not s.error]
-    if ok_samples:
-        console.print()
-        table = Table(
-            title="[bold]Throughput Results[/]",
-            show_header=True,
-            header_style="bold",
-            border_style="bright_cyan",
-            expand=True,
-        )
-        table.add_column("Test", min_width=20, no_wrap=True)
-        table.add_column("pp t/s", justify="right", width=10)
-        table.add_column("tg t/s", justify="right", width=10)
-        table.add_column("TTFT (ms)", justify="right", width=10)
-        table.add_column("Total (ms)", justify="right", width=10)
-        table.add_column("Tokens", justify="right", width=12)
-
-        for s in ok_samples:
-            conc_label = f"  c{s.concurrency}" if s.concurrency > 1 else ""
-            label = f"pp{s.label_pp} tg{s.tg_tokens} @ d{s.label_depth}{conc_label}"
-            table.add_row(
-                label,
-                f"{s.pp_tps:,.0f}",
-                f"{s.tg_tps:,.1f}",
-                f"{s.ttft_ms:,.0f}",
-                f"{s.total_ms:,.0f}",
-                f"{s.pp_tokens}+{s.tg_tokens}",
-            )
-
-        console.print(table)
-
-    # Post-run hints
-    matrix_result = matrix_result_holder[0] if matrix_result_holder else None
-    if matrix_result is not None and matrix_result.spec_decoding_detected:
-        method_label = (
-            f" ({matrix_result.spec_decoding_method})" if matrix_result.spec_decoding_method else ""
-        )
-        console.print(
-            Panel(
-                f"[bold yellow]⚡ Speculative decoding detected{method_label}[/]\n"
-                "Standard [cyan]tg t/s[/] under-reports real throughput for spec-decode models.\n"
-                "Re-run with [bold cyan]--spec-bench[/] for acceptance rate (α) and effective t/s.",
-                border_style="yellow",
-            )
-        )
-    if ok_samples and ok_samples[0].calibration_confidence == "heuristic":
-        console.print(
-            "[dim yellow]⚠ Token counts use 4 chars/token heuristic — pp t/s may be "
-            "inaccurate for non-English or multilingual models.[/]"
-        )
-
-    console.print()
-    return completed
 
 
 def _probe_llamacpp_model_path(base_url: str) -> str | None:

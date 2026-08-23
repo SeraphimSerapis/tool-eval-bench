@@ -454,8 +454,17 @@ async def run_scenario(
                 total_completion_tokens += result.completion_tokens
 
             state.assistant_messages.append(result.content)
+            state.assistant_reasoning.append(result.reasoning or "")
             phase_has_tool_calls = any(call.user_phase == user_phase for call in state.tool_calls)
-            messages.append(_assistant_message(result, preserve_reasoning=phase_has_tool_calls))
+            preserve_follow_up_reasoning = scenario.preserve_reasoning_across_follow_ups and bool(
+                follow_ups
+            )
+            messages.append(
+                _assistant_message(
+                    result,
+                    preserve_reasoning=phase_has_tool_calls or preserve_follow_up_reasoning,
+                )
+            )
             trace_lines.append(f"assistant_turn_{turn}={result.content or '[tool_calls_only]'}")
             if result.reasoning:
                 trace_lines.append(f"assistant_reasoning_{turn}={result.reasoning}")

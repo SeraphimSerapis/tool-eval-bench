@@ -1077,7 +1077,7 @@ class TestRunLlamaBenchy:
 
         message = str(exc_info.value)
         assert "--tokenizer" in message
-        assert "--perf-legacy" in message
+        assert "perf-legacy" not in message
 
     async def test_non_oom_exit_preserves_original_error(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1311,11 +1311,11 @@ class TestCLIFlags:
         assert "--perf " in help_text
         assert "--perf-only" in help_text
 
-    def test_perf_legacy_flags_registered(self):
-        """--perf-legacy and --perf-legacy-only should exist in CLI help."""
+    def test_perf_legacy_flags_removed(self):
+        """Removed legacy throughput flags should not appear in CLI help."""
         help_text = self._get_help_text()
-        assert "--perf-legacy " in help_text
-        assert "--perf-legacy-only" in help_text
+        assert "--perf-legacy " not in help_text
+        assert "--perf-legacy-only" not in help_text
 
     def test_benchy_tuning_flags_registered(self):
         """--benchy-runs, --benchy-latency-mode, --benchy-args should exist."""

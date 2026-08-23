@@ -125,7 +125,7 @@ result = asyncio.run(run_benchmark(
     scenarios=selected,
 ))
 
-# All 84 including Hard Mode
+# All 88 including Hard Mode
 result = asyncio.run(run_benchmark(
     model="my-model", base_url="http://localhost:8000",
     scenarios=list(ALL_SCENARIOS_WITH_HARDMODE),
@@ -194,7 +194,7 @@ External tools can validate benchmark configuration:
 ```python
 from tool_eval_bench.schema import get_schema
 
-schema = get_schema()  # {"schema_version": "6", "args": [...]}
+schema = get_schema()  # {"schema_version": "7", "args": [...]}
 for arg in schema["args"]:
     print(f"{arg['name']}: {arg['type']} = {arg['default']}")
 ```

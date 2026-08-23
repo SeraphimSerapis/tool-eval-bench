@@ -7,14 +7,14 @@ t/s metrics fail to capture.
 Key metrics:
 - Effective t/s:      output tokens ÷ wall-clock time (user-perceived speed)
 - Acceptance rate (α): % of draft tokens accepted by the verifier
-- Acceptance length:   avg tokens accepted per speculative step
+- Acceptance length:   avg output tokens per speculative step, including the verifier token
 - Speedup ratio:       effective t/s ÷ baseline t/s
 - Goodput:             accepted tokens ÷ wall-clock time
 
 Data sources:
 - vLLM:     Prometheus counters at /metrics
 - llama.cpp: /metrics endpoint (if --metrics flag enabled)
-- SGLang:   Prometheus counters at /metrics
+- SGLang:   live gauges are available to spec-live, but are not request-local here
 - Fallback: wall-clock effective t/s only (always available)
 """
 
@@ -61,9 +61,9 @@ class SpecDecodeCounters:
 
     @property
     def acceptance_length(self) -> float | None:
-        """Average tokens accepted per speculative step."""
+        """Average output tokens per speculative step, including the verifier token."""
         if self.num_drafts > 0:
-            return self.accepted_tokens / self.num_drafts
+            return 1.0 + self.accepted_tokens / self.num_drafts
         return None
 
 
@@ -75,17 +75,17 @@ class SpecDecodeCounters:
 _NUM = r"(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
 
 _PROM_PATTERNS = {
-    # vLLM metrics (supports both vllm: and vllm_ prefix variants)
+    # vLLM metrics (both prefix variants) and current llama.cpp counters.
     "accepted_tokens": re.compile(
-        rf"^(?:vllm[:_])?spec_decode_num_accepted_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|llamacpp:)?spec_decode_num_accepted_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "draft_tokens": re.compile(
-        rf"^(?:vllm[:_])?spec_decode_num_draft_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|llamacpp:)?spec_decode_num_draft_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "num_drafts": re.compile(
-        rf"^(?:vllm[:_])?spec_decode_num_drafts(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|llamacpp:)?spec_decode_num_drafts(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
 }
@@ -94,15 +94,15 @@ _PROM_PATTERNS = {
 def parse_prometheus_spec_metrics(text: str) -> SpecDecodeCounters:
     """Parse speculative decoding counters from Prometheus text format.
 
-    Works with vLLM, SGLang, and any server exposing counters with
+    Works with vLLM and compatible servers exposing counters with
     the ``spec_decode_`` prefix.
     """
     counters = SpecDecodeCounters(timestamp=time.time())
 
     for field_name, pattern in _PROM_PATTERNS.items():
-        match = pattern.search(text)
-        if match:
-            setattr(counters, field_name, float(match.group(1)))
+        matches = list(pattern.finditer(text))
+        if matches:
+            setattr(counters, field_name, sum(float(match.group(1)) for match in matches))
 
     return counters
 
@@ -177,13 +177,14 @@ async def detect_spec_decoding(
         if resp.status_code == 200:
             text = resp.text
 
-            # vLLM / SGLang: look for spec_decode counters
+            # vLLM and compatible exporters: look for spec_decode counters.
             if "spec_decode" in text:
                 info.active = True
                 info.has_prometheus = True
                 info.detail = "Detected via Prometheus /metrics (spec_decode counters present)"
 
-                # Try to infer method from metric names
+                # Only trust an explicit method token. Generic counters prove
+                # activity, but do not identify the configured proposer.
                 if "eagle" in text.lower():
                     info.method = "eagle"
                 elif "ngram" in text.lower():
@@ -191,7 +192,7 @@ async def detect_spec_decoding(
                 elif "mtp" in text.lower() or "multi_token" in text.lower():
                     info.method = "mtp"
                 else:
-                    info.method = "draft_model"  # generic default for vLLM spec decode
+                    info.method = "unknown"
 
             # llama.cpp: no spec_decode counters, but we can detect the backend
             # and know that draft stats will come from per-request timings
@@ -207,7 +208,22 @@ async def detect_spec_decoding(
 
     # Accept user hint
     if backend_hint not in ("auto", ""):
-        if backend_hint in ("mtp", "draft", "ngram", "eagle"):
+        if backend_hint in {
+            "mtp",
+            "nextn",
+            "draft",
+            "standalone",
+            "dflash",
+            "dspark",
+            "ngram",
+            "ngram_gpu",
+            "eagle",
+            "eagle3",
+            "medusa",
+            "mlp_speculator",
+            "suffix",
+            "custom_class",
+        }:
             info.method = backend_hint
             if not info.active:
                 info.active = True
@@ -496,7 +512,7 @@ async def measure_spec_single(
             if dt and dt > 0:
                 spec_sample.acceptance_rate = at / dt if at is not None else None
             if nd and nd > 0 and at is not None:
-                spec_sample.acceptance_length = at / nd
+                spec_sample.acceptance_length = 1.0 + at / nd
 
     # Fallback: llama.cpp per-request timings (draft_n / draft_n_accepted)
     # These are embedded in the SSE response by llama-server and extracted

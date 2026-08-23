@@ -169,7 +169,7 @@ async def test_detect_spec_decoding_via_prometheus():
         info = await detect_spec_decoding(client, "http://host:8000/v1")
     assert info.active is True
     assert info.has_prometheus is True
-    assert info.method == "draft_model"
+    assert info.method == "unknown"
 
 
 @pytest.mark.asyncio

@@ -184,6 +184,34 @@ vllm:gpu_cache_usage_perc{engine="0"} 0.034
         after = time.time()
         assert before <= snap.timestamp <= after
 
+    def test_vllm_counter_series_are_aggregated_across_engines(self):
+        """Cumulative counters are additive, including per-position totals."""
+        text = """\
+vllm:spec_decode_num_accepted_tokens_total{engine="0"} 100
+vllm:spec_decode_num_accepted_tokens_total{engine="1"} 50
+vllm:spec_decode_num_draft_tokens_total{engine="0"} 200
+vllm:spec_decode_num_draft_tokens_total{engine="1"} 100
+vllm:spec_decode_num_drafts_total{engine="0"} 20
+vllm:spec_decode_num_drafts_total{engine="1"} 10
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="0",position="0"} 80
+vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="1",position="0"} 40
+"""
+        snap = _parse_snapshot(text)
+        assert snap.accepted_tokens == pytest.approx(150)
+        assert snap.draft_tokens == pytest.approx(300)
+        assert snap.num_drafts == pytest.approx(30)
+        assert snap.per_position_counters == {0: pytest.approx(120)}
+
+    def test_generic_counters_do_not_claim_a_method(self):
+        snap = _parse_snapshot("vllm:spec_decode_num_draft_tokens_total 100\n")
+        assert snap.spec_method == "unknown"
+
+    def test_empty_or_unrelated_metrics_remain_graceful(self):
+        snap = _parse_snapshot('python_gc_collections_total{generation="0"} 3\n')
+        assert snap.has_spec_decode is False
+        assert snap.has_llamacpp_metrics is False
+        assert snap.has_sglang_metrics is False
+
 
 # ---------------------------------------------------------------------------
 # compute_delta
@@ -232,14 +260,14 @@ class TestComputeDelta:
         # Interval rates
         assert delta.acceptance_rate == pytest.approx(100 / 400)
         assert delta.waste_ratio == pytest.approx(1.0 - 100 / 400)
-        assert delta.acceptance_length == pytest.approx(100 / 50)
+        assert delta.acceptance_length == pytest.approx(1 + 100 / 50)
         assert delta.draft_window == pytest.approx(400 / 50)
         assert delta.accepted_tps == pytest.approx(100 / 10.0)
         assert delta.drafted_tps == pytest.approx(400 / 10.0)
 
         # Cumulative rates
         assert delta.cumulative_acceptance_rate == pytest.approx(200 / 800)
-        assert delta.cumulative_acceptance_length == pytest.approx(200 / 100)
+        assert delta.cumulative_acceptance_length == pytest.approx(1 + 200 / 100)
         assert delta.cumulative_draft_window == pytest.approx(800 / 100)
 
         # Gauges from current snapshot
@@ -274,7 +302,7 @@ class TestComputeDelta:
 
         # But cumulative rates are still valid
         assert delta.cumulative_acceptance_rate == pytest.approx(500 / 2000)
-        assert delta.cumulative_acceptance_length == pytest.approx(500 / 250)
+        assert delta.cumulative_acceptance_length == pytest.approx(1 + 500 / 250)
 
     def test_counter_reset_never_produces_negative_rates(self):
         """Engine restarts reset counters and must not create negative rates."""
@@ -863,6 +891,125 @@ class TestComputeDeltaLlamaCpp:
 
 
 # ---------------------------------------------------------------------------
+# SGLang direct gauges and current llama.cpp spec counters
+# ---------------------------------------------------------------------------
+
+
+class TestSGLangSpecGauges:
+    """Test the current SGLang gauge contract without inventing counters."""
+
+    METRICS = """\
+sglang:spec_accept_rate{tp_rank="1",pp_rank="0"} 0.80
+sglang:spec_accept_rate{tp_rank="0",pp_rank="0"} 0.40
+sglang:spec_accept_length{tp_rank="1",pp_rank="0"} 2.80
+sglang:spec_accept_length{tp_rank="0",pp_rank="0"} 1.40
+sglang:spec_cap_length{tp_rank="0",pp_rank="0"} 4.0
+sglang:spec_block_accept_length{tp_rank="0",pp_rank="0"} 3.2
+sglang:spec_num_steps{tp_rank="0",pp_rank="0"} 2
+sglang:spec_num_draft_tokens{tp_rank="0",pp_rank="0"} 6
+sglang:gen_throughput{tp_rank="0",pp_rank="0"} 42.0
+sglang:token_usage{tp_rank="0",pp_rank="0"} 0.25
+sglang:num_running_reqs{tp_rank="0",pp_rank="0"} 1
+sglang:num_queue_reqs{tp_rank="0",pp_rank="0"} 2
+"""
+
+    def test_rank_zero_is_selected_for_replicated_gauges(self):
+        snap = _parse_snapshot(self.METRICS)
+        assert snap.sglang_acceptance_rate == pytest.approx(0.40)
+        assert snap.sglang_acceptance_length == pytest.approx(1.40)
+        assert snap.sglang_spec_metrics_present is True
+        assert snap.spec_backend == "sglang"
+        assert snap.generation_tps == pytest.approx(42.0)
+        assert snap.kv_cache_usage == pytest.approx(0.25)
+        assert snap.running_reqs == pytest.approx(1.0)
+        assert snap.waiting_reqs == pytest.approx(2.0)
+
+    def test_gauges_feed_delta_without_fake_token_totals(self):
+        snap = _parse_snapshot(self.METRICS)
+        delta = compute_delta(
+            MetricsSnapshot(timestamp=100.0),
+            MetricsSnapshot(**{**snap.__dict__, "timestamp": 101.0}),
+        )
+        assert delta.counter_metrics_available is False
+        assert delta.spec_metrics_source == "sglang"
+        assert delta.cumulative_acceptance_rate == pytest.approx(0.40)
+        assert delta.cumulative_acceptance_length == pytest.approx(1.40)
+        assert delta.cumulative_draft_window == pytest.approx(6.0)
+        assert delta.spec_num_steps == 2
+        assert delta.spec_cap_length == pytest.approx(4.0)
+        assert delta.spec_block_accept_length == pytest.approx(3.2)
+        assert delta.total_accepted == 0
+        assert delta.total_drafted == 0
+
+    def test_zero_gauges_are_present_but_not_summed(self):
+        text = (
+            'sglang:spec_accept_rate{tp_rank="0"} 0\n'
+            'sglang:spec_accept_length{tp_rank="0"} 0\n'
+            'sglang:spec_num_steps{tp_rank="0"} 0\n'
+            'sglang:spec_num_draft_tokens{tp_rank="0"} 0\n'
+        )
+        snap = _parse_snapshot(text)
+        assert snap.has_spec_decode is True
+        assert snap.sglang_acceptance_rate == pytest.approx(0.0)
+        assert snap.sglang_acceptance_length == pytest.approx(0.0)
+
+
+class TestLlamaCppSpecCounters:
+    """Test llama.cpp's current Prometheus spec counters and positions."""
+
+    METRICS = """\
+llamacpp:spec_decode_num_draft_tokens_total 300
+llamacpp:spec_decode_num_accepted_tokens_total 90
+llamacpp:spec_decode_num_drafts_total 30
+llamacpp:spec_decode_num_accepted_tokens_per_pos_total{position="0"} 30
+llamacpp:spec_decode_num_accepted_tokens_per_pos_total{position="1"} 20
+"""
+
+    def test_current_spec_metrics_are_parsed(self):
+        snap = _parse_snapshot(self.METRICS)
+        assert snap.spec_backend == "llamacpp"
+        assert snap.has_spec_decode is True
+        assert snap.accepted_tokens == pytest.approx(90)
+        assert snap.draft_tokens == pytest.approx(300)
+        assert snap.num_drafts == pytest.approx(30)
+        assert snap.per_position_counters == {0: 30.0, 1: 20.0}
+        assert snap.per_position_rates[0] == pytest.approx(1.0)
+        assert snap.per_position_rates[1] == pytest.approx(2 / 3)
+
+    def test_current_spec_counters_use_bonus_token_length(self):
+        snap = _parse_snapshot(self.METRICS)
+        delta = compute_delta(MetricsSnapshot(timestamp=100.0), snap)
+        assert delta.spec_metrics_source == "llamacpp"
+        assert delta.cumulative_acceptance_rate == pytest.approx(0.3)
+        assert delta.cumulative_acceptance_length == pytest.approx(4.0)
+        assert delta.cumulative_draft_window == pytest.approx(10.0)
+
+    def test_spec_counter_reset_is_non_negative(self):
+        prev = _parse_snapshot(
+            """\
+llamacpp:spec_decode_num_draft_tokens_total 300
+llamacpp:spec_decode_num_accepted_tokens_total 90
+llamacpp:spec_decode_num_drafts_total 30
+"""
+        )
+        curr = _parse_snapshot(
+            """\
+llamacpp:spec_decode_num_draft_tokens_total 20
+llamacpp:spec_decode_num_accepted_tokens_total 8
+llamacpp:spec_decode_num_drafts_total 2
+"""
+        )
+        prev.timestamp = 100.0
+        curr.timestamp = 101.0
+        delta = compute_delta(prev, curr)
+        assert delta.acceptance_rate == pytest.approx(0.4)
+        assert delta.accepted_tps == pytest.approx(8.0)
+        assert delta.drafted_tps == pytest.approx(20.0)
+        assert delta.accepted_tps >= 0
+        assert delta.drafted_tps >= 0
+
+
+# ---------------------------------------------------------------------------
 # Spec method detection
 # ---------------------------------------------------------------------------
 
@@ -893,7 +1040,7 @@ vllm:spec_decode_num_draft_tokens_total{engine="0",spec_method="mtp"} 3000.0
     def test_multi_token_detection(self):
         from tool_eval_bench.runner.spec_live import _detect_spec_method
 
-        text = "# Multi-token prediction spec decode counters\nspec_decode_num_draft_tokens 100\n"
+        text = 'spec_decode_num_draft_tokens{spec_method="mtp"} 100\n'
         assert _detect_spec_method(text) == "mtp"
 
     def test_eagle3_detection(self):
@@ -911,21 +1058,36 @@ vllm:spec_decode_num_draft_tokens_total{engine="0",spec_method="mtp"} 3000.0
     def test_ngram_detection(self):
         from tool_eval_bench.runner.spec_live import _detect_spec_method
 
-        text = "# Using ngram speculative decoding\nspec_decode_num_draft_tokens 100\n"
+        text = 'spec_decode_num_draft_tokens{spec_method="ngram"} 100\n'
         assert _detect_spec_method(text) == "ngram"
 
     def test_prompt_lookup_detection(self):
         from tool_eval_bench.runner.spec_live import _detect_spec_method
 
-        text = "# prompt_lookup spec method\nspec_decode_num_draft_tokens 100\n"
-        assert _detect_spec_method(text) == "ngram"
+        text = 'spec_decode_num_draft_tokens{spec_method="ngram_gpu"} 100\n'
+        assert _detect_spec_method(text) == "ngram_gpu"
+
+    @pytest.mark.parametrize(
+        ("reported", "canonical"),
+        [
+            ("NEXTN", "mtp"),
+            ("STANDALONE", "draft_model"),
+            ("draft_flash", "dflash"),
+            ("prompt_lookup", "ngram"),
+        ],
+    )
+    def test_engine_specific_method_aliases(self, reported, canonical):
+        from tool_eval_bench.runner.spec_live import _detect_spec_method
+
+        text = f'spec_decode_num_draft_tokens{{spec_method="{reported}"}} 100\n'
+        assert _detect_spec_method(text) == canonical
 
     def test_generic_draft_model_detection(self):
         from tool_eval_bench.runner.spec_live import _detect_spec_method
 
-        # spec_decode counters present but no specific method keyword
+        # Generic counters prove activity but not the configured method.
         text = "spec_decode_num_draft_tokens 100\n"
-        assert _detect_spec_method(text) == "draft_model"
+        assert _detect_spec_method(text) == "unknown"
 
     def test_unknown_when_no_spec_decode(self):
         from tool_eval_bench.runner.spec_live import _detect_spec_method
@@ -1220,17 +1382,20 @@ class TestDraftModelDetection:
     def test_draft_flash_detected(self):
         from tool_eval_bench.runner.spec_live import _detect_spec_method
 
-        assert _detect_spec_method("method: draft_flash") == "dflash"
+        text = 'vllm:spec_decode_num_draft_tokens_total{spec_method="dflash"} 100\n'
+        assert _detect_spec_method(text) == "dflash"
 
     def test_dflash_detected(self):
         from tool_eval_bench.runner.spec_live import _detect_spec_method
 
-        assert _detect_spec_method("using dflash speculator") == "dflash"
+        text = 'vllm:spec_decode_num_draft_tokens_total{method="dflash"} 100\n'
+        assert _detect_spec_method(text) == "dflash"
 
     def test_mlp_speculator_detected(self):
         from tool_eval_bench.runner.spec_live import _detect_spec_method
 
-        assert _detect_spec_method("mlp_speculator active") == "mlp_speculator"
+        text = 'vllm:spec_decode_num_draft_tokens_total{spec_method="mlp_speculator"} 100\n'
+        assert _detect_spec_method(text) == "mlp_speculator"
 
     def test_model_names_extracted(self):
         from tool_eval_bench.runner.spec_live import _extract_model_names
@@ -1484,8 +1649,8 @@ class TestServerSpecInfo:
 class TestProbeServerSpecInfo:
     """Test probe_server_spec_info against mock HTTP responses."""
 
-    async def test_detects_draft_from_v1_models(self):
-        """When /v1/models returns 2 models, the non-primary is detected as draft."""
+    async def test_models_do_not_claim_a_draft_model(self):
+        """A second /v1/models item is not proof of a drafter relationship."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from tool_eval_bench.runner.spec_live import probe_server_spec_info
@@ -1520,9 +1685,9 @@ class TestProbeServerSpecInfo:
                 primary_model="Qwen/Qwen3-35B",
             )
 
-        assert info.draft_model_name == "Qwen/Qwen3-0.6B"
+        assert info.draft_model_name is None
         assert info.target_model_name == "Qwen/Qwen3-35B"
-        assert info.spec_method == "draft_model"
+        assert info.spec_method is None
 
     async def test_probe_handles_connection_failure(self):
         """probe_server_spec_info should not raise on connection errors."""

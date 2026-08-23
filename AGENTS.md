@@ -7,7 +7,7 @@ This file defines project-local conventions for all files in this repo.
 Build and evolve a local benchmark platform that evaluates **LLM quality** for agentic multi-agent systems. The core benchmark uses deterministic scenarios with mock tools, multi-turn conversation loops, and 3-tier scoring (pass/partial/fail). A pluggable architecture allows adding external benchmarks (GSM8K, MMLU, IFEval, future HumanEval, etc.) alongside the tool-call evaluation.
 
 Primary focus:
-1. **Tool-use effectiveness** — 69 standard scenarios plus 15 opt-in Hard Mode scenarios across 16 categories
+1. **Tool-use effectiveness** — 69 standard scenarios plus 19 opt-in Hard Mode scenarios across 16 categories
 2. **Multi-turn orchestration** — chained reasoning, conditional branching, error recovery
 3. **Throughput benchmarking** — llama-bench style pp/tg measurement with depth/concurrency sweeps
 4. **Pluggable benchmarks** — external accuracy benchmarks (GSM8K, MMLU, IFEval) via `BenchmarkPlugin` interface

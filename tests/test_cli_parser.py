@@ -69,13 +69,26 @@ def test_plugin_translation_preserves_shared_legacy_options() -> None:
 
 
 def test_perf_tokenizer_flag_parses() -> None:
-    """--tokenizer should flow through the legacy perf path."""
+    """--tokenizer should flow through the flat parser compatibility path."""
     _, args = parse_cli_args(
         _make_parser,
         ["bench", "--perf-only", "--tokenizer", "/models/tokenizer.json"],
     )
     assert args.perf_only is True
     assert args.tokenizer == "/models/tokenizer.json"
+
+
+@pytest.mark.parametrize(
+    ("argv", "destination"),
+    [
+        (["bench", "--perf"], "perf"),
+        (["bench", "--perf-only"], "perf_only"),
+        (["spec-live"], "spec_live"),
+    ],
+)
+def test_preserved_benchmark_flags_parse(argv: list[str], destination: str) -> None:
+    _, args = parse_cli_args(_make_parser, argv)
+    assert getattr(args, destination) is True
 
 
 def test_compare_run_subcommand() -> None:
@@ -111,11 +124,15 @@ def test_removed_noop_flags_are_rejected() -> None:
         parse_cli_args(_make_parser, ["--llm-judge"])
     with pytest.raises(SystemExit):
         parse_cli_args(_make_parser, ["--experimental-async"])
+    with pytest.raises(SystemExit):
+        parse_cli_args(_make_parser, ["--perf-legacy"])
+    with pytest.raises(SystemExit):
+        parse_cli_args(_make_parser, ["--perf-legacy-only"])
 
 
-def test_schema_v6_describes_every_command() -> None:
+def test_schema_v7_describes_every_command() -> None:
     schema = get_schema()
-    assert schema["schema_version"] == "6"
+    assert schema["schema_version"] == "7"
     assert schema["commands"] is COMMANDS_SCHEMA
     assert set(COMMANDS_SCHEMA) == KNOWN_COMMANDS
 

@@ -889,13 +889,10 @@ def test_dispatch_preflight_can_be_skipped_and_receives_merged_config(
     assert len(warmup_calls) == 2
 
 
-def test_dispatch_legacy_spec_and_sweep_modes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_dispatch_spec_and_sweep_modes(monkeypatch: pytest.MonkeyPatch) -> None:
     import sys
 
     from tool_eval_bench.cli import dispatch, plugin_runners
-    from tool_eval_bench.storage import reports
     from tool_eval_bench.utils import metadata
 
     async def context(**kwargs):
@@ -906,27 +903,6 @@ def test_dispatch_legacy_spec_and_sweep_modes(
     monkeypatch.setattr(dispatch, "_do_warmup", lambda *a, **k: None)
     monkeypatch.setattr(metadata, "collect_run_context", context)
     monkeypatch.setattr(plugin_runners, "run_selected_plugins", lambda *a, **k: False)
-    monkeypatch.setattr(
-        reports.MarkdownReporter, "write_throughput_report", lambda *a, **k: tmp_path / "r.md"
-    )
-    monkeypatch.setattr(dispatch, "_persist_plugin_run", lambda value: None)
-    monkeypatch.setattr(dispatch, "_run_throughput", lambda *a, **k: [_sample()])
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "tool-eval-bench",
-            "--model",
-            "m",
-            "--base-url",
-            "url",
-            "--perf-legacy-only",
-            "--no-warmup",
-            "--output-dir",
-            str(tmp_path),
-        ],
-    )
-    dispatch.main()
 
     called: list[tuple[str, dict]] = []
     monkeypatch.setattr(

@@ -10,12 +10,11 @@ from rich.console import Console
 from tool_eval_bench.cli.perf import (
     _BenchyProgressTracker,
     run_llama_benchy,
-    run_throughput,
 )
 from tool_eval_bench.cli.spec_bench import run_spec_bench as run_spec_bench_cli
 from tool_eval_bench.compare_reports import summary, tool_eval
 from tool_eval_bench.runner.speculative import SpecDecodeSample
-from tool_eval_bench.runner.throughput import ThroughputMatrixResult, ThroughputSample
+from tool_eval_bench.runner.throughput import ThroughputSample
 
 
 def test_tool_eval_parser_and_helpers_cover_complete_report(tmp_path: Path) -> None:
@@ -191,44 +190,6 @@ def _sample(**overrides: object) -> ThroughputSample:
     }
     values.update(overrides)
     return ThroughputSample(**values)
-
-
-def test_perf_cli_renders_success_error_and_spec_hint(monkeypatch: pytest.MonkeyPatch) -> None:
-    import tool_eval_bench.runner.throughput as throughput
-
-    ok = _sample()
-    failed = _sample(error="boom")
-
-    async def fake_matrix(*args: object, on_sample=None, **kwargs: object):
-        await on_sample(ok, 0, 2)
-        await on_sample(failed, 1, 2)
-        return ThroughputMatrixResult(
-            samples=[ok, failed],
-            spec_decoding_detected=True,
-            spec_decoding_method="mtp",
-        )
-
-    monkeypatch.setattr(throughput, "run_throughput_matrix", fake_matrix)
-    console = Console(record=True, width=140)
-
-    result = run_throughput(
-        console,
-        "model",
-        "Display",
-        "http://test/v1",
-        None,
-        pp=100,
-        tg=20,
-        depths=[1024],
-        concurrency_levels=[2],
-    )
-
-    output = console.export_text()
-    assert result == [ok, failed]
-    assert "Throughput Results" in output
-    assert "boom" in output
-    assert "Speculative decoding detected (mtp)" in output
-    assert "heuristic" in output
 
 
 def test_llama_benchy_cli_success_and_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:

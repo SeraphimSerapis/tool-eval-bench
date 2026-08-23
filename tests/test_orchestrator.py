@@ -316,6 +316,59 @@ async def test_no_tool_turn_reasoning_is_not_replayed_on_follow_up() -> None:
 
 
 @pytest.mark.asyncio
+async def test_opt_in_no_tool_reasoning_round_trips_across_follow_up() -> None:
+    observed_reasoning: list[str] = []
+
+    def evaluate(state: ScenarioState) -> ScenarioEvaluation:
+        observed_reasoning.extend(state.assistant_reasoning)
+        return ScenarioEvaluation(ScenarioStatus.PASS, 2, "reasoning captured")
+
+    scenario = ScenarioDefinition(
+        id="TEST-PRESERVE-NO-TOOL-REASONING",
+        title="Preserved no-tool reasoning",
+        category=Category.P,
+        user_message="Privately choose two values and give me the first.",
+        description="Replay exposed reasoning for the follow-up",
+        handle_tool_call=_simple_handler,
+        evaluate=evaluate,
+        follow_up_messages=["Now give me the second."],
+        tools_override=[],
+        preserve_reasoning_across_follow_ups=True,
+    )
+    adapter = MockAdapter(
+        [
+            ChatCompletionResult(
+                content="11111111111111111111",
+                reasoning="The pair is 11111111111111111111 and 22222222222222222222.",
+            ),
+            ChatCompletionResult(
+                content="22222222222222222222",
+                reasoning="Return the second preserved value.",
+            ),
+        ]
+    )
+
+    await run_scenario(
+        adapter,
+        model="test",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=scenario,
+    )
+
+    assistant = [
+        message
+        for message in adapter.captured_payloads[1]["messages"]
+        if message["role"] == "assistant"
+    ]
+    assert assistant[0]["reasoning_content"].startswith("The pair is")
+    assert observed_reasoning == [
+        "The pair is 11111111111111111111 and 22222222222222222222.",
+        "Return the second preserved value.",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_multi_turn_tool_chain() -> None:
     """Model makes two sequential tool calls across turns."""
 

@@ -31,7 +31,7 @@ from tool_eval_bench.cli.command_registry import commands_schema
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 # Argument schema version — bump when adding/removing/renaming args.
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 
 COMMANDS_SCHEMA: dict[str, dict[str, Any]] = commands_schema()
 
@@ -311,18 +311,6 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Run ONLY llama-benchy throughput benchmark (skip tool-call scenarios)",
     },
     {
-        "name": "perf_legacy",
-        "type": "bool",
-        "default": False,
-        "description": "Use built-in throughput benchmark (no external deps)",
-    },
-    {
-        "name": "perf_legacy_only",
-        "type": "bool",
-        "default": False,
-        "description": "Run ONLY built-in throughput benchmark",
-    },
-    {
         "name": "pp",
         "type": "int",
         "default": 2048,
@@ -400,7 +388,23 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "spec_method",
         "type": "string",
         "default": "auto",
-        "choices": ["auto", "mtp", "draft", "dflash", "ngram", "eagle"],
+        "choices": [
+            "auto",
+            "mtp",
+            "nextn",
+            "draft",
+            "standalone",
+            "dflash",
+            "dspark",
+            "ngram",
+            "ngram_gpu",
+            "eagle",
+            "eagle3",
+            "medusa",
+            "mlp_speculator",
+            "suffix",
+            "custom_class",
+        ],
         "description": "Spec-decode method hint",
     },
     {
@@ -571,7 +575,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "resume",
         "type": "string",
         "default": None,
-        "description": "Resume a previous run — skip scenarios that already passed",
+        "description": "Resume an interrupted run, preserving completed outcomes",
     },
     # -- Scoring --
     {

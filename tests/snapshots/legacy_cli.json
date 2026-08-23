@@ -435,26 +435,6 @@
   },
   {
     "choices": null,
-    "default": false,
-    "dest": "perf_legacy",
-    "flags": [
-      "--perf-legacy"
-    ],
-    "nargs": 0,
-    "required": false
-  },
-  {
-    "choices": null,
-    "default": false,
-    "dest": "perf_legacy_only",
-    "flags": [
-      "--perf-legacy-only"
-    ],
-    "nargs": 0,
-    "required": false
-  },
-  {
-    "choices": null,
     "default": 2048,
     "dest": "pp",
     "flags": [
@@ -711,10 +691,19 @@
     "choices": [
       "auto",
       "mtp",
+      "nextn",
       "draft",
+      "standalone",
       "dflash",
+      "dspark",
       "ngram",
-      "eagle"
+      "ngram_gpu",
+      "eagle",
+      "eagle3",
+      "medusa",
+      "mlp_speculator",
+      "suffix",
+      "custom_class"
     ],
     "default": "auto",
     "dest": "spec_method",

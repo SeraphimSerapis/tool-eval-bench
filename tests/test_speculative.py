@@ -28,7 +28,7 @@ class TestSpecDecodeCounters:
 
     def test_acceptance_length_basic(self):
         c = SpecDecodeCounters(accepted_tokens=120, num_drafts=40)
-        assert c.acceptance_length == pytest.approx(3.0)
+        assert c.acceptance_length == pytest.approx(4.0)
 
     def test_acceptance_length_zero_drafts(self):
         c = SpecDecodeCounters(accepted_tokens=50, num_drafts=0)
@@ -37,7 +37,7 @@ class TestSpecDecodeCounters:
     def test_all_metrics_together(self):
         c = SpecDecodeCounters(accepted_tokens=200, draft_tokens=300, num_drafts=80)
         assert c.acceptance_rate == pytest.approx(200 / 300)
-        assert c.acceptance_length == pytest.approx(200 / 80)
+        assert c.acceptance_length == pytest.approx(1 + 200 / 80)
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ vllm:spec_decode_num_drafts_total 525
         assert counters.draft_tokens == pytest.approx(2100)
         assert counters.num_drafts == pytest.approx(525)
         assert counters.acceptance_rate == pytest.approx(1542 / 2100)
-        assert counters.acceptance_length == pytest.approx(1542 / 525)
+        assert counters.acceptance_length == pytest.approx(1 + 1542 / 525)
 
     def test_without_vllm_prefix(self):
         """Parse metrics without the vllm: prefix."""
@@ -98,7 +98,32 @@ vllm:spec_decode_num_drafts_total{engine="0",model_name="Qwen3.6-35B"} 3608.0
         assert counters.draft_tokens == pytest.approx(7216.0)
         assert counters.num_drafts == pytest.approx(3608.0)
         assert counters.acceptance_rate == pytest.approx(6086.0 / 7216.0)
-        assert counters.acceptance_length == pytest.approx(6086.0 / 3608.0)
+        assert counters.acceptance_length == pytest.approx(1 + 6086.0 / 3608.0)
+
+    def test_vllm_sums_multiple_engine_series(self):
+        text = """\
+vllm:spec_decode_num_accepted_tokens_total{engine="0"} 40
+vllm:spec_decode_num_accepted_tokens_total{engine="1"} 60
+vllm:spec_decode_num_draft_tokens_total{engine="0"} 50
+vllm:spec_decode_num_draft_tokens_total{engine="1"} 100
+vllm:spec_decode_num_drafts_total{engine="0"} 10
+vllm:spec_decode_num_drafts_total{engine="1"} 20
+"""
+        counters = parse_prometheus_spec_metrics(text)
+        assert counters.accepted_tokens == pytest.approx(100)
+        assert counters.draft_tokens == pytest.approx(150)
+        assert counters.num_drafts == pytest.approx(30)
+        assert counters.acceptance_length == pytest.approx(1 + 100 / 30)
+
+    def test_current_llamacpp_counter_names(self):
+        text = """\
+llamacpp:spec_decode_num_accepted_tokens_total 90
+llamacpp:spec_decode_num_draft_tokens_total 300
+llamacpp:spec_decode_num_drafts_total 30
+"""
+        counters = parse_prometheus_spec_metrics(text)
+        assert counters.acceptance_rate == pytest.approx(0.3)
+        assert counters.acceptance_length == pytest.approx(4.0)
 
     def test_with_total_suffix(self):
         """Parse metrics with _total suffix (standard Prometheus convention)."""
@@ -331,16 +356,16 @@ class TestSpecDecodeSample:
         """Window and τ together reveal utilization."""
         s = SpecDecodeSample(
             draft_tokens_delta=315,  # 15 tokens drafted per step
-            accepted_tokens_delta=70,  # ~3.33 accepted per step
+            accepted_tokens_delta=70,  # ~3.33 accepted drafts per step
             num_drafts_delta=21,
             acceptance_rate=70 / 315,
-            acceptance_length=70 / 21,  # set by measure_spec_single
+            acceptance_length=1 + 70 / 21,  # verifier token + accepted drafts
         )
         assert s.draft_window == pytest.approx(15.0)
-        assert s.acceptance_length == pytest.approx(70 / 21, rel=0.01)
-        # Window utilization: τ/window = 3.33/15 = 22% — poor
+        assert s.acceptance_length == pytest.approx(1 + 70 / 21, rel=0.01)
+        # Window utilization: τ/window = 4.33/15 = 29% — poor
         utilization = s.acceptance_length / s.draft_window
-        assert utilization == pytest.approx(0.222, rel=0.01)
+        assert utilization == pytest.approx(0.289, rel=0.01)
 
 
 # ---------------------------------------------------------------------------

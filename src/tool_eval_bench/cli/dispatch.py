@@ -59,9 +59,6 @@ from tool_eval_bench.cli.local_commands import handle_local_command as _handle_l
 from tool_eval_bench.cli.perf import (
     run_llama_benchy as _run_llama_benchy,
 )
-from tool_eval_bench.cli.perf import (
-    run_throughput as _run_throughput,
-)
 from tool_eval_bench.cli.plugin_runners import (
     _run_gsm8k_benchmark,
     _run_ifeval_benchmark,
@@ -485,7 +482,11 @@ def main() -> None:
     # -- spec-live: standalone live monitor (exits after session) --
     if args.spec_live:
         # Map CLI choice names to internal method identifiers
-        _method_map = {"draft": "draft_model"}
+        _method_map = {
+            "draft": "draft_model",
+            "standalone": "draft_model",
+            "nextn": "mtp",
+        }
         raw_method = args.spec_method
         spec_method_hint = _method_map.get(raw_method, raw_method) if raw_method != "auto" else None
 
@@ -643,56 +644,6 @@ def main() -> None:
                     "status": "completed",
                     "config": run_config,
                     "scores": {"samples": len(throughput_samples)},
-                    "metadata": _metadata_for_storage(run_context),
-                    "report_path": str(report_path),
-                }
-            )
-            console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
-            return
-
-    # -- Legacy built-in throughput benchmark --
-    if args.perf_legacy or args.perf_legacy_only:
-        depths = _parse_int_list(args.depth)
-        conc_levels = _parse_int_list(args.concurrency)
-        legacy_samples = _run_throughput(
-            console,
-            model,
-            display_name,
-            base_url,
-            api_key,
-            pp=args.pp,
-            tg=args.tg,
-            depths=depths,
-            concurrency_levels=conc_levels,
-        )
-        throughput_samples.extend(legacy_samples)
-
-        if args.perf_legacy_only:
-            from tool_eval_bench.utils.ids import build_run_id
-
-            run_config = _with_config_fingerprint(
-                {
-                    "model": model,
-                    "backend": backend,
-                    "base_url": base_url,
-                    "mode": "perf-legacy-only",
-                }
-            )
-            run_id = build_run_id(run_config)
-            reporter = MarkdownReporter(root=args.output_dir)
-            report_path = reporter.write_throughput_report(
-                run_id,
-                display_name,
-                legacy_samples,
-                run_context=run_context,
-            )
-            _persist_plugin_run(
-                {
-                    "run_id": run_id,
-                    "run_type": "perf-legacy",
-                    "status": "completed",
-                    "config": run_config,
-                    "scores": {"samples": len(legacy_samples)},
                     "metadata": _metadata_for_storage(run_context),
                     "report_path": str(report_path),
                 }

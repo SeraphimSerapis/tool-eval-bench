@@ -65,7 +65,7 @@ Where `max_points = num_scenarios_in_category × 2`.
 
 > **Hard Mode (Category P)** is excluded from the standard benchmark by default.
 > Enable with `--hardmode` to include these 15 scenarios, raising the total from
-> 69 to 84. Category P scores are tracked separately and do not affect the base
+> 69 to 88. Category P scores are tracked separately and do not affect the base
 > score unless explicitly included. This preserves comparability with existing results.
 
 ---
@@ -240,6 +240,7 @@ Each evaluator has unit tests covering at minimum:
 | `tests/test_evaluators_extended.py` | Extended/agentic/adversarial scenario evaluators (F–O) |
 | `tests/test_hardmode.py` | Original Hard Mode scenarios and Category P registry integration |
 | `tests/test_hardmode_expanded.py` | Expanded Hard Mode scenarios (Category P, TC-75–TC-84) |
+| `tests/test_hardmode_transactional.py` | Transactional and preserved-reasoning Hard Mode scenarios (Category P, TC-85–TC-88) |
 | `tests/test_adversarial_pass_traces.py` | Shared side-effect mutation matrix; dangerous mutations must turn every targeted PASS trace into FAIL |
 | `tests/test_evaluator_robustness.py` | Crash-resistance: empty state, 50-call floods, unicode, very long answers |
 
@@ -371,7 +372,7 @@ metrics, you can't tell whether your MTP configuration is actually helping.
 | **Effective t/s** | Output tokens ÷ wall-clock generation time | Always available (stream timing) |
 | **Acceptance rate (α)** | Accepted tokens ÷ drafted tokens | Prometheus `/metrics` (vLLM/SGLang) |
 | **Waste ratio** | 1 − α (fraction of drafted tokens rejected) | Computed from α |
-| **Acceptance length (τ)** | Accepted tokens ÷ speculative steps | Prometheus `/metrics` |
+| **Acceptance length (τ)** | 1 + accepted draft tokens ÷ speculative steps for counter backends; direct gauge for SGLang | Prometheus `/metrics` |
 | **Draft window** | Drafted tokens ÷ speculative steps (configured draft size) | Prometheus `/metrics` |
 | **Draft t/s** | Drafted tokens ÷ wall-clock generation time | Prometheus `/metrics` + timing |
 | **Speedup ratio** | Effective t/s ÷ baseline t/s | Requires `--baseline-tgs` |
@@ -380,27 +381,70 @@ metrics, you can't tell whether your MTP configuration is actually helping.
 ### Data Collection
 
 Acceptance rate is collected by scraping **Prometheus counters before and
-after** each generation request:
+after** each generation request when the backend exposes counters:
 
-- `spec_decode_num_accepted_tokens` (counter)
-- `spec_decode_num_draft_tokens` (counter)
-- `spec_decode_num_drafts` (counter)
+- `vllm:spec_decode_num_accepted_tokens_total`
+- `vllm:spec_decode_num_draft_tokens_total`
+- `vllm:spec_decode_num_drafts_total`
+- `llamacpp:spec_decode_num_accepted_tokens_total`
+- `llamacpp:spec_decode_num_draft_tokens_total`
+- `llamacpp:spec_decode_num_drafts_total`
 
 The delta between before/after gives per-request acceptance metrics.
+The acceptance-length convention includes the verifier's bonus token, so it
+is `1 + accepted draft tokens ÷ speculative steps`. vLLM also exposes
+`spec_decode_num_accepted_tokens_per_pos_total{position="..."}` and the
+llama.cpp exporter exposes the matching `llamacpp:` counter. The monitor sums
+counter series across engine workers before calculating rates.
 This requires `concurrency=1` for accurate isolation.
 
 ### Backend Support
 
 | Backend | Effective t/s | Acceptance Rate | Method |
 |---|---|---|---|
-| vLLM | ✅ Always | ✅ Via `/metrics` | Prometheus scraping |
-| SGLang | ✅ Always | ✅ Via `/metrics` | Prometheus scraping |
-| llama.cpp | ✅ Always | ⚠️ If `--metrics` enabled | Prometheus scraping |
+| vLLM | ✅ Always | ✅ Via `/metrics` | Prometheus counters |
+| SGLang | ✅ Always | `spec-live` only | Direct gauges are server state, not request-local counters |
+| llama.cpp | ✅ Always | ✅ On current builds with `--metrics` | Prometheus counters |
 | Other | ✅ Always | ❌ Not available | — |
 
 When acceptance rate metrics are unavailable, the benchmark still reports
 effective t/s (wall-clock based), which captures the user-perceived benefit
 of any speculative decoding technique.
+
+### Live monitor contract
+
+`--spec-live` uses the same Prometheus endpoint without starting a generation
+request. It keeps a rolling dashboard for acceptance, throughput, cache use,
+request queues, and per-position acceptance where the backend publishes it.
+
+The monitor follows the backend contracts maintained upstream:
+
+- [vLLM `SpecDecodingProm`](https://github.com/vllm-project/vllm/blob/main/vllm/v1/spec_decode/metrics.py)
+  publishes cumulative draft, accepted, and per-position counters. The
+  monitor adds the bonus token when it calculates τ and sums counter series
+  across engine labels.
+- [SGLang scheduler metrics](https://github.com/sgl-project/sglang/blob/main/python/sglang/srt/observability/metrics_collector.py)
+  publishes `sglang:spec_accept_rate`, `sglang:spec_accept_length`,
+  `sglang:spec_num_steps`, and `sglang:spec_num_draft_tokens` as gauges. The
+  monitor selects a rank-zero series when replicas are present. It does not
+  add replicated gauges together, and it does not display invented cumulative
+  token totals. `spec_num_steps` and `spec_num_draft_tokens` remain separate,
+  because SGLang can decouple them for top-k drafting. DSpark `spec_cap_length`
+  and `spec_block_accept_length` gauges are retained when present.
+- [llama.cpp server metrics](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/server-task.cpp)
+  publishes cumulative speculative counters, including
+  `llamacpp:spec_decode_num_accepted_tokens_per_pos_total{position="..."}`.
+  The monitor sums counter series and applies the same bonus-token τ formula.
+  Older builds that expose only general throughput metrics remain useful, but
+  report no acceptance data.
+
+Method and drafter names are shown only when the server reports an explicit
+method or speculative configuration. Generic metric names prove that
+speculation is active, but they do not prove whether the server uses a draft
+model, MTP, EAGLE, n-gram, Medusa, DFlash, DSpark, suffix decoding, or a
+custom proposer. Multiple `/v1/models` entries are not treated as proof of a
+draft model. If `/metrics` is unavailable or contains none of these metric
+families, the monitor stays in its waiting state and does not fail the run.
 
 ### Prompt-Type Variation
 
@@ -434,7 +478,7 @@ drops below 50%.
 
 | Feature | tool-eval-bench | BFCL | ToolBench | Claw-Eval |
 |---|---|---|---|---|
-| Scenarios | 69 (+15 Hard Mode; 84 combined) | 2000+ | 16000+ | 300 |
+| Scenarios | 69 (+19 Hard Mode; 88 combined) | 2000+ | 16000+ | 300 |
 | Mock tools | ✓ (deterministic) | ✗ (real APIs) | Partial | ✓ (Docker sandbox) |
 | Multi-turn | ✓ (10+ scenarios) | Limited | ✓ | ✓ (38 dialogue) |
 | Safety testing | ✓ (Category K) | ✗ | ✗ | ✓ (multiplicative gate) |

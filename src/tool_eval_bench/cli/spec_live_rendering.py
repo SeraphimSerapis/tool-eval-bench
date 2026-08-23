@@ -238,12 +238,22 @@ def _spec_method_label(method: str) -> tuple[str, str]:
     """Return a human-readable label and Rich style for a spec decode method."""
     labels: dict[str, tuple[str, str]] = {
         "dflash": ("Draft Flash", "bold bright_cyan"),
+        "dspark": ("DSpark", "bold bright_cyan"),
         "mtp": ("Multi-Token Prediction", "bold bright_yellow"),
         "eagle": ("EAGLE", "bold bright_green"),
         "eagle3": ("EAGLE-3", "bold bright_green"),
+        "extract_hidden_states": ("Extract Hidden States", "bold bright_green"),
         "mlp_speculator": ("MLP Speculator", "bold bright_cyan"),
         "ngram": ("N-Gram", "bold bright_magenta"),
+        "ngram_gpu": ("N-Gram (GPU)", "bold bright_magenta"),
+        "medusa": ("Medusa", "bold bright_yellow"),
+        "suffix": ("Suffix Decoding", "bold bright_magenta"),
+        "custom_class": ("Custom Speculator", "bold bright_cyan"),
         "draft_model": ("Draft Model", "bold bright_cyan"),
+        "draft_model_parallel": ("Draft Model (parallel)", "bold bright_cyan"),
+        "draft_model_dynamic": ("Draft Model (dynamic)", "bold bright_cyan"),
+        "eagle_parallel": ("EAGLE (parallel)", "bold bright_green"),
+        "eagle_dynamic": ("EAGLE (dynamic)", "bold bright_green"),
         "unknown": ("Speculative Decoding", "bold dim"),
     }
     label, style = labels.get(method, (method.upper(), "dim"))

@@ -44,6 +44,7 @@ from tool_eval_bench.runner.spec_live import (
     ServerSpecInfo,
     SpecLiveDelta,
     compute_delta,
+    counter_delta,
     probe_server_spec_info,
     scrape_snapshot,
 )
@@ -111,16 +112,12 @@ def _build_dashboard(
     left_text.append(" ▸ ", style="dim cyan")
     left_text.append(model_name, style="bold cyan")
 
-    # Show draft model name — prefer ServerSpecInfo (probed from /v1/models at
-    # startup) over Prometheus label heuristic (rarely contains draft model)
+    # Show a draft model only when the server explicitly reports it in its
+    # speculative configuration.  A second model_name label or /v1/models
+    # entry is not enough to establish a drafter relationship.
     draft_name: str | None = None
     if server_spec_info and server_spec_info.draft_model_name:
         draft_name = server_spec_info.draft_model_name
-    elif delta is not None and delta.model_names:
-        # Fallback: look for a model_name label different from primary
-        other_models = {m for m in delta.model_names if m != model_name}
-        if other_models:
-            draft_name = sorted(other_models)[0]
 
     if draft_name:
         left_text.append("  ← ", style="dim")
@@ -285,22 +282,36 @@ def _build_dashboard(
     session_table.add_column("label", no_wrap=True, width=15)
     session_table.add_column("value", no_wrap=True)
 
-    if baseline_snap is not None:
-        session_accepted = delta.total_accepted - int(baseline_snap.accepted_tokens)
-        session_drafted = delta.total_drafted - int(baseline_snap.draft_tokens)
+    if delta.counter_metrics_available:
+        if baseline_snap is not None:
+            session_accepted = counter_delta(
+                baseline_snap.accepted_tokens,
+                float(delta.total_accepted),
+            )
+            session_drafted = counter_delta(
+                baseline_snap.draft_tokens,
+                float(delta.total_drafted),
+            )
+        else:
+            session_accepted = float(delta.total_accepted)
+            session_drafted = float(delta.total_drafted)
+        accepted_text = f"{int(session_accepted):,}"
+        drafted_text = f"{int(session_drafted):,}"
+        session_ar = session_accepted / session_drafted if session_drafted > 0 else 0.0
     else:
-        session_accepted = delta.total_accepted
-        session_drafted = delta.total_drafted
+        # SGLang's current Prometheus contract exposes gauges, not cumulative
+        # accepted/drafted totals.  Do not display unknown totals as zero.
+        accepted_text = drafted_text = "—"
+        session_ar = ar
 
     session_table.add_row(
         Text("Accepted", style="dim"),
-        Text(f"{session_accepted:,}", style="bold"),
+        Text(accepted_text, style="bold"),
     )
     session_table.add_row(
         Text("Drafted", style="dim"),
-        Text(f"{session_drafted:,}", style="bold"),
+        Text(drafted_text, style="bold"),
     )
-    session_ar = session_accepted / session_drafted if session_drafted > 0 else 0.0
     session_table.add_row(
         Text("Session α", style="dim"),
         Text(f"{session_ar * 100:.1f}%", style=f"bold {_ar_color(session_ar)}"),
@@ -683,10 +694,23 @@ async def run_spec_live(
                             # ── Make everything session-relative ──
                             # All cumulative metrics should reflect only what
                             # happened while the dashboard is open.
-                            if baseline_snap is not None:
-                                sess_accepted = snap.accepted_tokens - baseline_snap.accepted_tokens
-                                sess_drafted = snap.draft_tokens - baseline_snap.draft_tokens
-                                sess_drafts = snap.num_drafts - baseline_snap.num_drafts
+                            if (
+                                baseline_snap is not None
+                                and delta.counter_metrics_available
+                                and snap.has_counter_spec_decode
+                            ):
+                                sess_accepted = counter_delta(
+                                    baseline_snap.accepted_tokens,
+                                    snap.accepted_tokens,
+                                )
+                                sess_drafted = counter_delta(
+                                    baseline_snap.draft_tokens,
+                                    snap.draft_tokens,
+                                )
+                                sess_drafts = counter_delta(
+                                    baseline_snap.num_drafts,
+                                    snap.num_drafts,
+                                )
 
                                 # Session acceptance rate
                                 if sess_drafted > 0:
@@ -696,22 +720,23 @@ async def run_spec_live(
 
                                 # Session acceptance length (τ)
                                 if sess_drafts > 0:
-                                    delta.cumulative_acceptance_length = sess_accepted / sess_drafts
+                                    delta.cumulative_acceptance_length = (
+                                        1.0 + sess_accepted / sess_drafts
+                                    )
                                 else:
                                     delta.cumulative_acceptance_length = None
 
                                 # Session per-position rates from counters
-                                if (
-                                    snap.per_position_counters
-                                    and baseline_snap.per_position_counters
-                                ):
+                                if snap.per_position_counters:
                                     if sess_drafts > 0:
                                         sess_rates: dict[int, float] = {}
                                         for pos, count in snap.per_position_counters.items():
                                             base_count = baseline_snap.per_position_counters.get(
                                                 pos, 0.0
                                             )
-                                            sess_rates[pos] = (count - base_count) / sess_drafts
+                                            sess_rates[pos] = (
+                                                counter_delta(base_count, count) / sess_drafts
+                                            )
                                         delta.per_position_rates = sess_rates
                                     else:
                                         # No new drafts yet — don't show stale all-time rates
@@ -913,15 +938,15 @@ async def run_spec_live(
             console.print()
 
             # Session-relative totals for exit summary
-            if last_delta and baseline_snap:
-                sess_accepted = last_delta.total_accepted - int(baseline_snap.accepted_tokens)
-                sess_drafted = last_delta.total_drafted - int(baseline_snap.draft_tokens)
-            elif last_delta:
-                sess_accepted = last_delta.total_accepted
-                sess_drafted = last_delta.total_drafted
+            if last_delta and last_delta.counter_metrics_available:
+                if baseline_snap:
+                    sess_accepted_text = f"{int(counter_delta(baseline_snap.accepted_tokens, last_delta.total_accepted)):,}"
+                    sess_drafted_text = f"{int(counter_delta(baseline_snap.draft_tokens, last_delta.total_drafted)):,}"
+                else:
+                    sess_accepted_text = f"{last_delta.total_accepted:,}"
+                    sess_drafted_text = f"{last_delta.total_drafted:,}"
             else:
-                sess_accepted = 0
-                sess_drafted = 0
+                sess_accepted_text = sess_drafted_text = "—"
 
             console.print(
                 Panel(
@@ -943,9 +968,9 @@ async def run_spec_live(
                         (f"{max_gen:.1f}", "bold"),
                         ("\n", ""),
                         ("  Session tokens:  ", "dim"),
-                        (f"{sess_accepted:,}", "bold"),
+                        (sess_accepted_text, "bold"),
                         (" accepted  / ", "dim"),
-                        (f"{sess_drafted:,}", "bold"),
+                        (sess_drafted_text, "bold"),
                         (" drafted", "dim"),
                     ),
                     title="[bold]Session Summary[/]",
