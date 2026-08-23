@@ -21,6 +21,20 @@ from tool_eval_bench.application.finalization import finalize_completed_run
 logger = logging.getLogger(__name__)
 
 
+async def _run_pressure_level(
+    adapter: Any,
+    run_scenarios: Any,
+    **scenario_kwargs: Any,
+) -> Any:
+    """Run one sweep level and always release its adapter."""
+    try:
+        return await run_scenarios(adapter, **scenario_kwargs)
+    finally:
+        aclose = getattr(adapter, "aclose", None)
+        if callable(aclose):
+            await aclose()
+
+
 def _write_pressure_sweep_report(
     *,
     run_id: str,
@@ -237,14 +251,11 @@ def run_pressure_sweep(
 
             adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
 
-            async def _run_level(
-                adapter: Any = adapter,
-                effective_timeout: float = effective_timeout,
-                pressure_messages: Any = pressure_messages,
-            ) -> Any:
-                try:
-                    return await run_all_scenarios(
+            try:
+                summary = asyncio.run(
+                    _run_pressure_level(
                         adapter,
+                        run_all_scenarios,
                         model=model,
                         base_url=base_url,
                         api_key=api_key,
@@ -254,13 +265,7 @@ def run_pressure_sweep(
                         extra_params=extra_params,
                         context_pressure_messages=pressure_messages,
                     )
-                finally:
-                    aclose = getattr(adapter, "aclose", None)
-                    if callable(aclose):
-                        await aclose()
-
-            try:
-                summary = asyncio.run(_run_level())
+                )
 
                 results_map: dict[str, str] = {}
                 for sr in summary.scenario_results:

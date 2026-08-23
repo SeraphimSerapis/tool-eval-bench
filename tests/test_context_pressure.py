@@ -1364,6 +1364,43 @@ class TestPressureSweepIntegration:
             total_tokens=0,
         )
 
+    @pytest.mark.asyncio
+    async def test_pressure_level_closes_adapter_after_success(self) -> None:
+        """Each sweep level releases its adapter after returning its summary."""
+        from tool_eval_bench.cli.pressure import _run_pressure_level
+
+        adapter = AsyncMock()
+        run_scenarios = AsyncMock(return_value="summary")
+
+        result = await _run_pressure_level(adapter, run_scenarios, model="test-model")
+
+        assert result == "summary"
+        run_scenarios.assert_awaited_once_with(adapter, model="test-model")
+        adapter.aclose.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_pressure_level_closes_adapter_after_failure(self) -> None:
+        """Adapter cleanup still runs when a sweep level fails."""
+        from tool_eval_bench.cli.pressure import _run_pressure_level
+
+        adapter = AsyncMock()
+        run_scenarios = AsyncMock(side_effect=RuntimeError("level failed"))
+
+        with pytest.raises(RuntimeError, match="level failed"):
+            await _run_pressure_level(adapter, run_scenarios)
+
+        adapter.aclose.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_pressure_level_accepts_adapter_without_close(self) -> None:
+        """Compatibility adapters without a close hook remain supported."""
+        from tool_eval_bench.cli.pressure import _run_pressure_level
+
+        adapter = object()
+        run_scenarios = AsyncMock(return_value="summary")
+
+        assert await _run_pressure_level(adapter, run_scenarios) == "summary"
+
     @patch("tool_eval_bench.cli.commands.resolve_scenarios")
     @patch("tool_eval_bench.cli.pressure.asyncio")
     def test_sweep_runs_all_levels(self, mock_asyncio, mock_resolve) -> None:
