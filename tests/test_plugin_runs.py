@@ -21,8 +21,9 @@ from tool_eval_bench.plugins.mmlu.plugin import MMLUPlugin
 class MockAdapter(BackendAdapter):
     """Simple mock adapter that returns pre-packaged model responses."""
 
-    def __init__(self, response_content: str) -> None:
+    def __init__(self, response_content: str, *, fail_after: int | None = None) -> None:
         self.response_content = response_content
+        self.fail_after = fail_after
         self.calls: list[dict] = []
 
     async def chat_completion(
@@ -59,6 +60,8 @@ class MockAdapter(BackendAdapter):
                 "parallel_tool_calls": parallel_tool_calls,
             }
         )
+        if self.fail_after is not None and len(self.calls) > self.fail_after:
+            raise TimeoutError("synthetic timeout")
         return ChatCompletionResult(
             content=self.response_content,
             tool_calls=[],
@@ -113,6 +116,134 @@ async def test_gsm8k_plugin_run() -> None:
     # 1 out of 2 correct (both adapter calls return 6)
     assert result_par.score == 50.0
     assert len(adapter_par.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_plugin_errors_use_total_denominator_and_mark_incomplete() -> None:
+    """A partial request must not become a perfect answered-only score."""
+    gsm_items = [
+        GSM8KItem(0, "Q1", "#### 1", 1.0),
+        GSM8KItem(1, "Q2", "#### 1", 1.0),
+    ]
+    gsm_result = await GSM8KPlugin().run(
+        MockAdapter("#### 1", fail_after=1),
+        model="m",
+        base_url="http://localhost:8000",
+        _preloaded_items=gsm_items,
+        concurrency=1,
+    )
+    assert gsm_result.score == 50.0
+    assert gsm_result.details["status"] == "incomplete"
+    assert gsm_result.details["answered"] == 1
+
+    mmlu_items = [
+        MMLUItem(0, "Q1", "abstract_algebra", ["a", "b", "c", "d"], 0),
+        MMLUItem(1, "Q2", "abstract_algebra", ["a", "b", "c", "d"], 0),
+    ]
+    mmlu_result = await MMLUPlugin().run(
+        MockAdapter("A", fail_after=1),
+        model="m",
+        base_url="http://localhost:8000",
+        _preloaded_items={"test": mmlu_items, "dev": []},
+        n_shots=0,
+        concurrency=1,
+    )
+    assert mmlu_result.score == 50.0
+    assert mmlu_result.details["status"] == "incomplete"
+
+    ifeval_items = [
+        IFEvalItem(0, "P1", ["punctuation:no_comma"], [{}]),
+        IFEvalItem(1, "P2", ["punctuation:no_comma"], [{}]),
+    ]
+    ifeval_result = await IFEvalPlugin().run(
+        MockAdapter("No commas here.", fail_after=1),
+        model="m",
+        base_url="http://localhost:8000",
+        _preloaded_items=ifeval_items,
+        concurrency=1,
+    )
+    assert ifeval_result.score == 50.0
+    assert ifeval_result.details["status"] == "incomplete"
+
+
+@pytest.mark.asyncio
+async def test_plugins_forward_seed_and_reject_invalid_concurrency() -> None:
+    items = [GSM8KItem(0, "Q", "#### 1", 1.0)]
+    gsm_adapter = MockAdapter("#### 1")
+    await GSM8KPlugin().run(
+        gsm_adapter,
+        model="m",
+        base_url="http://localhost:8000",
+        seed=17,
+        _preloaded_items=items,
+    )
+    assert gsm_adapter.calls[0]["extra_params"] == {"seed": 17}
+
+    mmlu_adapter = MockAdapter("A")
+    await MMLUPlugin().run(
+        mmlu_adapter,
+        model="m",
+        base_url="http://localhost:8000",
+        seed=17,
+        n_shots=0,
+        _preloaded_items={"test": [MMLUItem(0, "Q", "anatomy", ["a"] * 4, 0)], "dev": []},
+    )
+    assert mmlu_adapter.calls[0]["extra_params"] == {"seed": 17}
+
+    ifeval_adapter = MockAdapter("No commas")
+    await IFEvalPlugin().run(
+        ifeval_adapter,
+        model="m",
+        base_url="http://localhost:8000",
+        seed=17,
+        _preloaded_items=[IFEvalItem(0, "P", ["punctuation:no_comma"], [{}])],
+    )
+    assert ifeval_adapter.calls[0]["extra_params"] == {"seed": 17}
+
+    with pytest.raises(ValueError, match="concurrency"):
+        await GSM8KPlugin().run(
+            MockAdapter("#### 1"),
+            model="m",
+            base_url="http://localhost:8000",
+            concurrency=0,
+            _preloaded_items=items,
+        )
+    with pytest.raises(ValueError, match="concurrency"):
+        await MMLUPlugin().run(
+            MockAdapter("A"),
+            model="m",
+            base_url="http://localhost:8000",
+            concurrency=0,
+            _preloaded_items={"test": [], "dev": []},
+        )
+    with pytest.raises(ValueError, match="concurrency"):
+        await IFEvalPlugin().run(
+            MockAdapter("No commas"),
+            model="m",
+            base_url="http://localhost:8000",
+            concurrency=0,
+            _preloaded_items=[],
+        )
+
+
+@pytest.mark.asyncio
+async def test_mmlu_empty_preloaded_data_does_not_download(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench.plugins.mmlu import plugin as mmlu_plugin
+
+    def fail_download(*args: Any, **kwargs: Any) -> list[MMLUItem]:
+        raise AssertionError("empty preloaded MMLU should not download")
+
+    monkeypatch.setattr(mmlu_plugin, "load_dataset", fail_download)
+    result = await MMLUPlugin().run(
+        MockAdapter("A"),
+        model="m",
+        base_url="http://localhost:8000",
+        _preloaded_items={"test": [], "dev": []},
+    )
+    assert result.details["total"] == 0
+    assert result.item_results == []
 
 
 @pytest.mark.asyncio

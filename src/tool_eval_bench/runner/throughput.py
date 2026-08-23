@@ -19,14 +19,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
-
+from tool_eval_bench.domain.measurement import MeasurementClient, MeasurementClientFactory
 from tool_eval_bench.utils.openai_compat import (
     max_tokens_retry_payload,
     output_token_limit_reached,
 )
-from tool_eval_bench.utils.urls import chat_completions_url as _chat_url
-from tool_eval_bench.utils.urls import models_url as models_url_fn
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +71,10 @@ class TokenizerConfig:
     # Per-run flag: ensures MTP detection is logged once per calibration
     # context instead of using module-level mutable state.
     mtp_warned: bool = False
+    # ``return_token_ids`` is a useful vLLM/SGLang extension, but strict
+    # OpenAI-compatible servers reject unknown request fields with 400/422.
+    # ``None`` means capability is unknown and the field is probed once.
+    supports_return_token_ids: bool | None = None
 
     def get_filler_pool(self, min_chars: int) -> str:
         """Return a cached filler text pool of at least min_chars length."""
@@ -85,28 +86,13 @@ class TokenizerConfig:
         return self._filler_pool
 
 
-def _tokenize_url(base_url: str) -> str:
-    """vLLM exposes /tokenize at the root, not under /v1."""
-    b = base_url.rstrip("/")
-    if b.endswith("/v1"):
-        b = b[:-3]
-    return f"{b}/tokenize"
-
-
-def _headers(api_key: str | None) -> dict[str, str]:
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    return headers
-
-
 # ---------------------------------------------------------------------------
 # Exact prompt building via /tokenize
 # ---------------------------------------------------------------------------
 
 
 async def _tokenize_text(
-    client: httpx.AsyncClient,
+    client: MeasurementClient,
     base_url: str,
     model: str,
     text: str,
@@ -114,11 +100,8 @@ async def _tokenize_text(
 ) -> int | None:
     """Count tokens via server's /tokenize endpoint. Returns None if unavailable."""
     try:
-        resp = await client.post(
-            _tokenize_url(base_url),
-            json={"model": model, "prompt": text},
-            headers=_headers(api_key),
-        )
+        measurement = client
+        resp = await measurement.tokenize(model=model, text=text)
         if resp.status_code == 200:
             data = resp.json()
             count = data.get("count") or len(data.get("tokens", []))
@@ -129,7 +112,7 @@ async def _tokenize_text(
 
 
 async def _build_exact_prompt(
-    client: httpx.AsyncClient,
+    client: MeasurementClient,
     base_url: str,
     model: str,
     target_tokens: int,
@@ -192,7 +175,7 @@ def _build_filler_heuristic(target_tokens: int, tok_cfg: TokenizerConfig | None 
 
 
 async def calibrate(
-    client: httpx.AsyncClient,
+    client: MeasurementClient,
     base_url: str,
     model: str,
     api_key: str | None = None,
@@ -231,19 +214,12 @@ async def calibrate(
         "temperature": 0.0,
     }
     try:
-        resp = await client.post(
-            _chat_url(base_url),
-            json=payload,
-            headers=_headers(api_key),
-        )
+        measurement = client
+        resp = await measurement.completion(payload)
         retry_payload = max_tokens_retry_payload(payload, resp.status_code, resp.text)
         if retry_payload is not None:
             cfg.output_token_field = "max_completion_tokens"
-            resp = await client.post(
-                _chat_url(base_url),
-                json=retry_payload,
-                headers=_headers(api_key),
-            )
+            resp = await measurement.completion(retry_payload)
         resp.raise_for_status()
         data = resp.json()
         prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
@@ -385,7 +361,7 @@ OnThroughputSample = Callable[[ThroughputSample, int, int], Awaitable[None]]
 
 
 async def estimate_latency(
-    client: httpx.AsyncClient,
+    client: MeasurementClient,
     base_url: str,
     api_key: str | None = None,
     rounds: int = 3,
@@ -394,14 +370,13 @@ async def estimate_latency(
 
     Returns median latency in milliseconds.
     """
-    url = models_url_fn(base_url)
-    hdrs = _headers(api_key)
+    measurement = client
     times: list[float] = []
 
     for _ in range(rounds):
         t0 = time.perf_counter()
         try:
-            resp = await client.get(url, headers=hdrs)
+            resp = await measurement.models()
             resp.raise_for_status()
         except Exception:
             logger.debug("Latency probe round failed, skipping")
@@ -450,6 +425,7 @@ async def warmup(
     api_key: str | None = None,
     timeout: float = 120.0,
     *,
+    client_factory: MeasurementClientFactory,
     request: tuple[str, dict[str, Any], dict[str, str]] | None = None,
     tok_cfg: TokenizerConfig | None = None,
 ) -> float:
@@ -463,8 +439,8 @@ async def warmup(
     optional speed hints before giving up.
     """
     if request is None:
-        url = _chat_url(base_url)
-        headers = _headers(api_key)
+        completion_url = None
+        completion_headers = None
         payload: dict[str, Any] = {
             "model": model,
             "messages": [
@@ -476,12 +452,19 @@ async def warmup(
             **WARMUP_EXTRA_PARAMS,
         }
     else:
-        url, payload, headers = request
+        completion_url, payload, completion_headers = request
 
     t0 = time.perf_counter()
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with client_factory(
+        base_url=base_url,
+        api_key=api_key,
+        timeout=timeout,
+        completion_url=completion_url,
+        completion_headers=completion_headers,
+    ) as client:
+        measurement = client
         for _ in range(3):
-            resp = await client.post(url, json=payload, headers=headers)
+            resp = await measurement.completion(payload)
             if output_token_limit_reached(resp.status_code, resp.text):
                 logger.debug("Warm-up reached the model's output-token limit")
                 break
@@ -534,26 +517,45 @@ def _count_chunk_tokens(
     return 1
 
 
+def _sse_payload(line: str) -> str | None:
+    """Return the payload from an SSE data line, with or without a space."""
+    if not line.startswith("data:"):
+        return None
+    payload = line[5:]
+    return payload[1:] if payload.startswith(" ") else payload
+
+
+async def _completion_lines(response: Any) -> Any:
+    """Yield SSE lines, or normalize a non-streaming JSON response once."""
+    content_type = response.headers.get("content-type", "").lower()
+    if "text/event-stream" not in content_type:
+        yield f"data: {json.dumps(response.json())}"
+        return
+    async for line in response.aiter_lines():
+        yield line
+
+
 # ---------------------------------------------------------------------------
 # Single streaming measurement
 # ---------------------------------------------------------------------------
 
 
 async def _stream_one(
-    client: httpx.AsyncClient,
+    client: MeasurementClient,
     base_url: str,
     model: str,
     messages: list[dict[str, Any]],
     tg: int,
     api_key: str | None,
     tok_cfg: TokenizerConfig | None = None,
+    _include_token_ids: bool | None = None,
 ) -> ThroughputSample:
     """Execute a single streaming request and collect timing data.
 
     Timing strategy:
-    - **first_byte_time**: captured right after HTTP headers arrive
-      (``response.raise_for_status()``).  This marks the end of prefill /
-      beginning of generation — i.e. true TTFT.
+    - **first_usable_time**: timestamp of the first SSE delta carrying generated
+      content, reasoning, or a tool call.  HTTP headers can arrive before model
+      output and are intentionally not used as TTFT.
     - **first_content_time / last_content_time**: timestamps of the first and
       last SSE chunks that carry ``delta.content``.  When the server streams
       token-by-token, ``last - first`` gives accurate inter-token generation
@@ -569,9 +571,14 @@ async def _stream_one(
       ``tg_tps`` and ``peak_tg_tps`` reflect the true generation speed.
 
     The generation speed (``tg_tps``) prefers inter-content-chunk timing, then
-    falls back to ``end_of_stream - first_byte`` minus TTFT, ensuring a
-    non-zero measurement even when the server flushes everything in one burst.
+    falls back to ``end_of_stream - first_usable_time``, ensuring a non-zero
+    measurement even when the server flushes everything in one burst.
     """
+    include_token_ids = (
+        _include_token_ids
+        if _include_token_ids is not None
+        else tok_cfg is None or tok_cfg.supports_return_token_ids is not False
+    )
     payload = {
         "model": model,
         "messages": messages,
@@ -579,14 +586,15 @@ async def _stream_one(
         "temperature": 0.0,
         "stream": True,
         "stream_options": {"include_usage": True},
-        # Request token IDs for accurate MTP counting.  Ignored by servers
-        # that don't support it — harmless extra field.
-        "return_token_ids": True,
     }
+    if include_token_ids:
+        # Request token IDs for accurate MTP counting.  This is a vLLM/SGLang
+        # extension, so strict OpenAI-compatible servers may reject it.
+        payload["return_token_ids"] = True
 
     sample = ThroughputSample()
     t0 = time.perf_counter()
-    first_byte_time: float | None = None
+    first_usable_time: float | None = None
     first_content_time: float | None = None
     last_content_time: float = t0
     end_of_stream_time: float = t0
@@ -596,21 +604,16 @@ async def _stream_one(
     token_timestamps: list[float] = []
     mtp_detected = False
 
+    measurement = client
     try:
-        async with client.stream(
-            "POST",
-            _chat_url(base_url),
-            json=payload,
-            headers=_headers(api_key),
-        ) as response:
+        async with measurement.stream_completion(payload) as response:
             response.raise_for_status()
-            # HTTP headers have arrived — server has finished prefill
-            first_byte_time = time.perf_counter()
 
-            async for raw_line in response.aiter_lines():
-                if not raw_line.startswith("data: "):
+            async for raw_line in _completion_lines(response):
+                data_payload = _sse_payload(raw_line)
+                if data_payload is None:
                     continue
-                data_str = raw_line[6:].strip()
+                data_str = data_payload.strip()
                 if data_str == "[DONE]":
                     end_of_stream_time = time.perf_counter()
                     break
@@ -640,16 +643,24 @@ async def _stream_one(
                 if not choices:
                     continue
 
-                delta = choices[0].get("delta", {})
+                # Some OpenAI-compatible endpoints accept ``stream=true``
+                # but return a normal JSON completion. Treat its ``message``
+                # as one generated event instead of scoring zero tokens.
+                delta = choices[0].get("delta") or choices[0].get("message", {})
                 content = delta.get("content")
-                if content:
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                tool_delta = delta.get("tool_calls")
+                generated_text = content or reasoning
+                if first_usable_time is None and (generated_text or tool_delta):
+                    first_usable_time = time.perf_counter()
+                if generated_text:
                     now = time.perf_counter()
                     if first_content_time is None:
                         first_content_time = now
                     last_content_time = now
 
                     # Count actual tokens in this chunk (MTP-aware)
-                    chunk_tokens = _count_chunk_tokens(choices, content)
+                    chunk_tokens = _count_chunk_tokens(choices, generated_text)
                     stream_token_count += chunk_tokens
 
                     if chunk_tokens > 1:
@@ -675,20 +686,40 @@ async def _stream_one(
             if end_of_stream_time == t0:
                 end_of_stream_time = time.perf_counter()
 
-    except httpx.HTTPStatusError as exc:
-        await exc.response.aread()
+    except Exception as exc:
+        # The measurement port deliberately does not expose a concrete HTTP
+        # exception type. Adapters may surface native errors that carry a
+        # response with the standard status/body facts below.
+        error_response: Any = getattr(exc, "response", None)
+        if error_response is None:
+            elapsed = (time.perf_counter() - t0) * 1000
+            return ThroughputSample(error=str(exc), total_ms=elapsed)
+        await error_response.aread()
         retry_payload = max_tokens_retry_payload(
-            payload, exc.response.status_code, exc.response.text
+            payload, error_response.status_code, error_response.text
         )
         if retry_payload is not None and tok_cfg is not None:
             tok_cfg.output_token_field = "max_completion_tokens"
             return await _stream_one(client, base_url, model, messages, tg, api_key, tok_cfg)
+        # ``return_token_ids`` is not part of the OpenAI API contract.  Probe
+        # it once, then remember the endpoint cannot accept it for this run.
+        # Retry the same request without the extension on strict 4xx responses,
+        # even when the server's error body does not name the rejected field.
+        if include_token_ids and error_response.status_code in _REJECTION_STATUS_CODES:
+            if tok_cfg is not None:
+                tok_cfg.supports_return_token_ids = False
+            return await _stream_one(
+                client,
+                base_url,
+                model,
+                messages,
+                tg,
+                api_key,
+                tok_cfg,
+                _include_token_ids=False,
+            )
         elapsed = (time.perf_counter() - t0) * 1000
         return ThroughputSample(error=str(exc), total_ms=elapsed)
-    except Exception as exc:
-        elapsed = (time.perf_counter() - t0) * 1000
-        return ThroughputSample(error=str(exc), total_ms=elapsed)
-
     total_ms = (time.perf_counter() - t0) * 1000
 
     # Log MTP detection once per run (via tok_cfg to avoid module-level state)
@@ -699,12 +730,11 @@ async def _stream_one(
             "multiple token_ids. Token counts and timing are MTP-aware."
         )
 
-    # TTFT: prefer HTTP first-byte (most accurate prefill measurement),
-    # fall back to first content chunk timestamp.
-    if first_byte_time is not None:
-        ttft_ms = (first_byte_time - t0) * 1000
-    elif first_content_time is not None:
-        ttft_ms = (first_content_time - t0) * 1000
+    # TTFT must end at the first generated content, reasoning, or tool delta.
+    # HTTP headers can arrive before the server flushes any model output, so
+    # measuring them understates prefill latency on buffered or delayed streams.
+    if first_usable_time is not None:
+        ttft_ms = (first_usable_time - t0) * 1000
     else:
         ttft_ms = total_ms
 
@@ -723,11 +753,11 @@ async def _stream_one(
     elif first_content_time is not None and last_content_time > first_content_time:
         gen_ms = (last_content_time - first_content_time) * 1000
 
-    # Fallback: use the window from first-byte (or first-content) to end of
+    # Fallback: use the window from first usable output to end of
     # stream.  This captures generation time even when all content arrives in
     # a single SSE chunk.
     if gen_ms <= 0 and generated_tokens > 0:
-        ref_time = first_byte_time or first_content_time or t0
+        ref_time = first_usable_time or first_content_time or t0
         gen_ms = (end_of_stream_time - ref_time) * 1000
 
     sample.pp_tokens = prompt_tokens
@@ -747,7 +777,7 @@ async def _stream_one(
 
 
 async def _build_messages(
-    client: httpx.AsyncClient,
+    client: MeasurementClient,
     base_url: str,
     model: str,
     pp: int,
@@ -798,7 +828,7 @@ async def _build_messages(
 
 
 async def measure_single(
-    client: httpx.AsyncClient,
+    client: MeasurementClient,
     base_url: str,
     model: str,
     *,
@@ -820,7 +850,7 @@ async def measure_single(
 
 
 async def measure_concurrent(
-    client: httpx.AsyncClient,
+    client: MeasurementClient,
     base_url: str,
     model: str,
     *,
@@ -909,6 +939,7 @@ async def run_throughput_matrix(
     concurrency_levels: list[int] | None = None,
     api_key: str | None = None,
     timeout: float = 180.0,
+    client_factory: MeasurementClientFactory,
     on_sample: OnThroughputSample | None = None,
 ) -> ThroughputMatrixResult:
     """Run the full depth × concurrency sweep.
@@ -927,12 +958,17 @@ async def run_throughput_matrix(
 
     # Warm up first and retain any endpoint capability learned from its response.
     tok_cfg = TokenizerConfig()
-    warmup_ms = await warmup(base_url, model, api_key, tok_cfg=tok_cfg)
+    warmup_ms = await warmup(
+        base_url, model, api_key, client_factory=client_factory, tok_cfg=tok_cfg
+    )
 
     # Shared client for all throughput measurements
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(timeout),
-        limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+    async with client_factory(
+        base_url=base_url,
+        api_key=api_key,
+        timeout=timeout,
+        max_connections=50,
+        max_keepalive_connections=20,
     ) as client:
         # Calibrate tokenizer ratio + detect /tokenize
         tok_cfg = await calibrate(client, base_url, model, api_key, tok_cfg)

@@ -14,6 +14,16 @@ _ANSWER_IS_RE = re.compile(
 )
 _ANSWER_COLON_RE = re.compile(r"answer\s*:\s*\(?([A-D])\)?", re.IGNORECASE)
 _STANDALONE_LETTER_RE = re.compile(r"\b([A-D])\b")
+_FINAL_ANSWER_RE = re.compile(
+    r"(?:final\s+answer|i\s+(?:choose|select|pick))"
+    r"\s*(?:is|:)?\s*\(?([A-D])\)?",
+    re.IGNORECASE,
+)
+_SELECTION_RE = re.compile(
+    r"(?:(?:choose|select|pick)\s+|(?:option|choice|letter)\s*(?:is|:)\s*)"
+    r"\(?([A-D])\)?",
+    re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -42,19 +52,35 @@ def extract_answer(response: str) -> tuple[str | None, str]:
     if cleaned.upper() in _VALID_LETTERS and len(cleaned) == 1:
         return cleaned.upper(), "exact"
 
-    # 2. "The answer is B" / "Answer: C"
-    m = _ANSWER_IS_RE.search(text)
-    if m:
-        return m.group(1).upper(), "answer_pattern"
+    # 2. Prefer an explicit final-answer/selection cue.  Use the last match
+    # because a response may discuss an earlier candidate before committing
+    # to its final choice.
+    matches = list(_FINAL_ANSWER_RE.finditer(text))
+    if matches:
+        return matches[-1].group(1).upper(), "answer_pattern"
 
-    m = _ANSWER_COLON_RE.search(text)
-    if m:
-        return m.group(1).upper(), "answer_pattern"
+    # 3. "The answer is B" / "Answer: C".  Again, the final explicit answer
+    # wins when the response contains a quoted earlier answer.
+    matches = list(_ANSWER_IS_RE.finditer(text))
+    if matches:
+        return matches[-1].group(1).upper(), "answer_pattern"
 
-    # 3. First standalone A/B/C/D letter in the response
-    m = _STANDALONE_LETTER_RE.search(text)
-    if m:
-        return m.group(1).upper(), "first_letter"
+    matches = list(_ANSWER_COLON_RE.finditer(text))
+    if matches:
+        return matches[-1].group(1).upper(), "answer_pattern"
+
+    matches = list(_SELECTION_RE.finditer(text))
+    if matches:
+        return matches[-1].group(1).upper(), "answer_pattern"
+
+    # 4. Without an explicit cue, use the last standalone answer letter.  A
+    # first-letter fallback incorrectly returns A for option lists such as
+    # "A, B, C, D ... final choice D".  Preserve the historical method name
+    # for the common single-candidate case.
+    candidates = list(_STANDALONE_LETTER_RE.finditer(text))
+    if candidates:
+        method = "first_letter" if len(candidates) == 1 else "last_letter"
+        return candidates[-1].group(1).upper(), method
 
     return None, "none"
 

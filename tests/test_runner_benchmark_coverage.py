@@ -63,7 +63,9 @@ async def test_speculative_full_sweep_invokes_callback(monkeypatch: pytest.Monke
         async def __aexit__(self, *args: object):
             return None
 
-    monkeypatch.setattr(speculative.httpx, "AsyncClient", lambda **kwargs: Client())
+    def client_factory(**kwargs: object) -> Client:
+        return Client()
+
     monkeypatch.setattr(
         speculative,
         "calibrate",
@@ -85,7 +87,12 @@ async def test_speculative_full_sweep_invokes_callback(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(speculative, "measure_spec_single", measure)
     samples = await speculative.run_spec_bench(
-        "url", "model", depths=[0, 1024], prompt_types=["filler", "code"], on_sample=callback
+        "url",
+        "model",
+        client_factory=client_factory,
+        depths=[0, 1024],
+        prompt_types=["filler", "code"],
+        on_sample=callback,
     )
 
     assert len(samples) == 4
@@ -120,7 +127,9 @@ async def test_throughput_matrix_sweep_and_exact_prompt(monkeypatch: pytest.Monk
         async def __aexit__(self, *args: object):
             return None
 
-    monkeypatch.setattr(throughput.httpx, "AsyncClient", lambda **kwargs: Client())
+    def client_factory(**kwargs: object) -> Client:
+        return Client()
+
     monkeypatch.setattr(throughput, "warmup", async_return(1.0))
     monkeypatch.setattr(throughput, "calibrate", async_return(cfg))
     monkeypatch.setattr(throughput, "estimate_latency", async_return(2.0))
@@ -140,7 +149,12 @@ async def test_throughput_matrix_sweep_and_exact_prompt(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(throughput, "measure_concurrent", measure)
     result = await throughput.run_throughput_matrix(
-        "url", "model", depths=[0, 10], concurrency_levels=[2, 1], on_sample=callback
+        "url",
+        "model",
+        client_factory=client_factory,
+        depths=[0, 10],
+        concurrency_levels=[2, 1],
+        on_sample=callback,
     )
 
     assert result.spec_decoding_detected is True

@@ -493,6 +493,25 @@ class TestStreamParsing:
         assert result.completion_tokens == 3
         assert result.ttft_ms is not None
 
+    def test_thought_only_stream_starts_ttft(self) -> None:
+        """A thought chunk is generated output for TTFT purposes."""
+        client = _StreamClient(
+            [
+                'data: {"candidates":[{"content":{"parts":[{"text":"thinking","thought":true}]}}]}',
+                "data: [DONE]",
+            ]
+        )
+
+        result = asyncio.run(
+            GeminiAdapter()._stream_request(  # type: ignore[arg-type]  # noqa: SLF001
+                client, "http://x", {}, {}
+            )
+        )
+
+        assert result.content == ""
+        assert result.reasoning == "thinking"
+        assert result.ttft_ms is not None
+
     def test_malformed_chunks_are_skipped(self) -> None:
         adapter = GeminiAdapter()
         client = _StreamClient(
@@ -505,6 +524,54 @@ class TestStreamParsing:
 
         result = asyncio.run(
             adapter._stream_request(client, "http://x", {}, {})  # type: ignore[arg-type]  # noqa: SLF001
+        )
+
+        assert result.content == "ok"
+
+    def test_sse_data_without_space_is_valid(self) -> None:
+        adapter = GeminiAdapter()
+        client = _StreamClient(
+            [
+                'data:{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}',
+                "data:[DONE]",
+            ]
+        )
+
+        result = asyncio.run(
+            adapter._stream_request(client, "http://x", {}, {})  # type: ignore[arg-type]  # noqa: SLF001
+        )
+
+        assert result.content == "ok"
+
+    def test_json_200_is_parsed_when_stream_is_ignored(self) -> None:
+        class _JsonResponse:
+            headers = {"content-type": "application/json"}
+
+            def raise_for_status(self) -> None:
+                return None
+
+            async def aread(self) -> bytes:
+                return b'{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}'
+
+            async def aiter_lines(self):
+                raise AssertionError("ordinary JSON must not be iterated as SSE")
+                yield ""
+
+        class _JsonClient:
+            def stream(self, method: str, url: str, **kwargs: Any):
+                class _Ctx:
+                    async def __aenter__(self):
+                        return _JsonResponse()
+
+                    async def __aexit__(self, *args: object) -> None:
+                        return None
+
+                return _Ctx()
+
+        result = asyncio.run(
+            GeminiAdapter()._stream_request(  # type: ignore[arg-type]  # noqa: SLF001
+                _JsonClient(), "http://x", {}, {}
+            )
         )
 
         assert result.content == "ok"

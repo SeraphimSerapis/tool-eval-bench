@@ -235,6 +235,30 @@ class TestSpecDecodeSample:
         assert spec.acceptance_rate is None
         assert spec.effective_tg_tps > 0
 
+    @pytest.mark.asyncio
+    async def test_fixed_prompt_does_not_claim_requested_context_depth(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Code/structured prompts ignore the filler depth sweep parameter."""
+        import tool_eval_bench.runner.speculative as speculative
+
+        async def fake_stream_one(*args, **kwargs):
+            return ThroughputSample(pp_tokens=42, tg_tokens=4, total_ms=100, ttft_ms=10)
+
+        monkeypatch.setattr(speculative, "_stream_one", fake_stream_one)
+        sample = await speculative.measure_spec_single(
+            None,  # type: ignore[arg-type]
+            "http://localhost:8000/v1",
+            "model",
+            pp=8192,
+            tg=4,
+            depth=4096,
+            prompt_type="code",
+        )
+
+        assert sample.depth == 0
+        assert sample.pp_tokens == 42
+
     # -- draft_tps --
 
     def test_draft_tps_basic(self):

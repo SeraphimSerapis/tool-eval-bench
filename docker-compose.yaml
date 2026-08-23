@@ -5,6 +5,10 @@ services:
       dockerfile: Dockerfile
     image: tool-eval-bench:local
     container_name: tool-eval-bench
+    # Keep bind-mounted files owned by the invoking host user. These are
+    # required instead of guessing a host-specific default. The image never
+    # runs a root ownership-fixing entrypoint.
+    user: "${LOCAL_UID:?set LOCAL_UID to id -u}:${LOCAL_GID:?set LOCAL_GID to id -g}"
     # Copy .env.example to .env and set TOOL_EVAL_HOST/TOOL_EVAL_PORT (or
     # TOOL_EVAL_BASE_URL) and TOOL_EVAL_API_KEY to the target endpoint's
     # IP/port and access token.
@@ -16,6 +20,7 @@ services:
     # passing --output-dir.
     volumes:
       - ./runs:/app/runs
+      - ./data:/app/data
     # Default: verify the endpoint is reachable and exit (0 = ready, 1 = not found).
     # Override with `docker compose run --rm tool-eval-bench <args>` for a real benchmark run, e.g.:
     #   docker compose run --rm tool-eval-bench --short --seed 42

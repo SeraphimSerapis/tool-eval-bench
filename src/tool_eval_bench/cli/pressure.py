@@ -88,6 +88,7 @@ def run_pressure_sweep(
     from rich.panel import Panel
 
     from tool_eval_bench.adapters.factory import build_adapter
+    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
     from tool_eval_bench.runner.context_pressure import (
         ContextPressureConfig,
         build_pressure_messages,
@@ -128,7 +129,9 @@ def run_pressure_sweep(
     try:
         context_size: int | None = args.context_size
         if context_size is None:
-            context_size = asyncio.run(detect_context_size(base_url, model, api_key))
+            context_size = asyncio.run(
+                detect_context_size(base_url, model, api_key, client_factory=HTTPMeasurementClient)
+            )
         if context_size is None:
             console.print(
                 "[bold red]Error:[/] Could not auto-detect context size. "
@@ -139,7 +142,10 @@ def run_pressure_sweep(
         if args.context_size is None:
             kv_info = asyncio.run(
                 detect_kv_capacity(
-                    base_url, api_key, metrics_url=getattr(args, "metrics_url", None)
+                    base_url,
+                    api_key,
+                    metrics_url=getattr(args, "metrics_url", None),
+                    client_factory=HTTPMeasurementClient,
                 )
             )
             if kv_info is not None and kv_info.is_hybrid:
@@ -196,6 +202,7 @@ def run_pressure_sweep(
                         base_url,
                         model,
                         api_key,
+                        client_factory=HTTPMeasurementClient,
                         seed=level_seed,
                     )
                 )
@@ -229,9 +236,14 @@ def run_pressure_sweep(
             )
 
             adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
-            try:
-                summary = asyncio.run(
-                    run_all_scenarios(
+
+            async def _run_level(
+                adapter: Any = adapter,
+                effective_timeout: float = effective_timeout,
+                pressure_messages: Any = pressure_messages,
+            ) -> Any:
+                try:
+                    return await run_all_scenarios(
                         adapter,
                         model=model,
                         base_url=base_url,
@@ -242,7 +254,13 @@ def run_pressure_sweep(
                         extra_params=extra_params,
                         context_pressure_messages=pressure_messages,
                     )
-                )
+                finally:
+                    aclose = getattr(adapter, "aclose", None)
+                    if callable(aclose):
+                        await aclose()
+
+            try:
+                summary = asyncio.run(_run_level())
 
                 results_map: dict[str, str] = {}
                 for sr in summary.scenario_results:
@@ -278,7 +296,6 @@ def run_pressure_sweep(
                 if consecutive_all_fail >= 2:
                     console.print("  [dim]··· stopped (2 consecutive all-fail levels)[/]")
                     break
-
             except Exception as exc:
                 console.print(f"[red]error: {exc}[/]")
                 level_results.append(

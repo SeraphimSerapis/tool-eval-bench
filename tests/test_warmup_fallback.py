@@ -49,21 +49,36 @@ class _RecordingClient:
             return _Response(self._status_code, text)
         return _Response(200)
 
+    async def completion(self, payload: dict[str, Any]) -> _Response:
+        return await self.post(
+            getattr(self, "completion_url", "http://server/v1/chat/completions"),
+            json=payload,
+            headers=getattr(self, "completion_headers", {}),
+        )
+
 
 @pytest.fixture
-def client_factory(monkeypatch):
-    def install(client: _RecordingClient) -> _RecordingClient:
-        monkeypatch.setattr(throughput.httpx, "AsyncClient", lambda **kwargs: client)
-        return client
+def client_factory():
+    def install(client: _RecordingClient):
+        def factory(**kwargs: Any) -> _RecordingClient:
+            client.completion_url = (
+                kwargs.get("completion_url") or "http://server/v1/chat/completions"
+            )
+            client.completion_headers = kwargs.get("completion_headers") or {}
+            return client
+
+        return client, factory
 
     return install
 
 
 class TestWarmupHintFallback:
     def test_retries_without_chat_template_kwargs_on_400(self, client_factory):
-        client = client_factory(_RecordingClient("chat_template_kwargs"))
+        client, factory = client_factory(_RecordingClient("chat_template_kwargs"))
 
-        elapsed = asyncio.run(throughput.warmup("http://server/v1", "m", "key"))
+        elapsed = asyncio.run(
+            throughput.warmup("http://server/v1", "m", "key", client_factory=factory)
+        )
 
         assert elapsed >= 0
         assert len(client.calls) == 2
@@ -74,17 +89,19 @@ class TestWarmupHintFallback:
         assert client.calls[1][1]["max_tokens"] == throughput.WARMUP_MAX_TOKENS
 
     def test_retries_on_422(self, client_factory):
-        client = client_factory(_RecordingClient("chat_template_kwargs", status_code=422))
+        client, factory = client_factory(_RecordingClient("chat_template_kwargs", status_code=422))
 
-        asyncio.run(throughput.warmup("http://server/v1", "m"))
+        asyncio.run(throughput.warmup("http://server/v1", "m", client_factory=factory))
 
         assert len(client.calls) == 2
 
     def test_retries_with_max_completion_tokens(self, client_factory):
-        client = client_factory(_RecordingClient("max_tokens"))
+        client, factory = client_factory(_RecordingClient("max_tokens"))
         tok_cfg = throughput.TokenizerConfig()
 
-        asyncio.run(throughput.warmup("http://server/v1", "m", tok_cfg=tok_cfg))
+        asyncio.run(
+            throughput.warmup("http://server/v1", "m", tok_cfg=tok_cfg, client_factory=factory)
+        )
 
         assert len(client.calls) == 2
         assert client.calls[0][1]["max_tokens"] == throughput.WARMUP_MAX_TOKENS
@@ -105,9 +122,9 @@ class TestWarmupHintFallback:
                     )
                 return _Response(200)
 
-        client = client_factory(RejectBoth(None))
+        client, factory = client_factory(RejectBoth(None))
 
-        asyncio.run(throughput.warmup("http://server/v1", "m"))
+        asyncio.run(throughput.warmup("http://server/v1", "m", client_factory=factory))
 
         assert len(client.calls) == 3
         assert "chat_template_kwargs" not in client.calls[1][1]
@@ -131,43 +148,45 @@ class TestWarmupHintFallback:
                     "was reached. Please try again with higher max_tokens.",
                 )
 
-        client = client_factory(ExhaustedReasoningBudget(None))
+        client, factory = client_factory(ExhaustedReasoningBudget(None))
 
-        elapsed = asyncio.run(throughput.warmup("http://server/v1", "reasoning-model"))
+        elapsed = asyncio.run(
+            throughput.warmup("http://server/v1", "reasoning-model", client_factory=factory)
+        )
 
         assert elapsed >= 0
         assert len(client.calls) == 3
 
     def test_failure_still_raises_after_the_retry(self, client_factory):
         """A 400 the hints did not cause is a real failure and must surface."""
-        client = client_factory(_RecordingClient("model"))
+        client, factory = client_factory(_RecordingClient("model"))
 
         with pytest.raises(RuntimeError, match="HTTP 400"):
-            asyncio.run(throughput.warmup("http://server/v1", "m"))
+            asyncio.run(throughput.warmup("http://server/v1", "m", client_factory=factory))
 
         assert len(client.calls) == 2  # first attempt, then the stripped retry
 
     def test_no_second_attempt_when_nothing_can_be_stripped(self, client_factory):
-        client = client_factory(_RecordingClient("contents"))
+        client, factory = client_factory(_RecordingClient("contents"))
         request = ("http://gemini/models/m:generateContent", {"contents": []}, {})
 
         with pytest.raises(RuntimeError, match="HTTP 400"):
-            asyncio.run(throughput.warmup("ignored", "m", request=request))
+            asyncio.run(throughput.warmup("ignored", "m", request=request, client_factory=factory))
 
         assert len(client.calls) == 1
 
     def test_success_sends_one_request(self, client_factory):
-        client = client_factory(_RecordingClient(None))
+        client, factory = client_factory(_RecordingClient(None))
 
-        asyncio.run(throughput.warmup("http://server/v1", "m"))
+        asyncio.run(throughput.warmup("http://server/v1", "m", client_factory=factory))
 
         assert len(client.calls) == 1
 
     def test_other_error_statuses_are_not_retried(self, client_factory):
-        client = client_factory(_RecordingClient("chat_template_kwargs", status_code=500))
+        client, factory = client_factory(_RecordingClient("chat_template_kwargs", status_code=500))
 
         with pytest.raises(RuntimeError, match="HTTP 500"):
-            asyncio.run(throughput.warmup("http://server/v1", "m"))
+            asyncio.run(throughput.warmup("http://server/v1", "m", client_factory=factory))
 
         assert len(client.calls) == 1
 
@@ -206,14 +225,16 @@ class TestWarmupRequestOverride:
         assert payload["chat_template_kwargs"] == {"thinking": True}
 
     def test_supplied_request_is_used_verbatim(self, client_factory):
-        client = client_factory(_RecordingClient(None))
+        client, factory = client_factory(_RecordingClient(None))
         request = (
             "http://gemini/v1beta/models/m:generateContent",
             {"contents": [{"role": "user", "parts": [{"text": "Say hello."}]}]},
             {"x-goog-api-key": "k"},
         )
 
-        asyncio.run(throughput.warmup("ignored", "m", "ignored", request=request))
+        asyncio.run(
+            throughput.warmup("ignored", "m", "ignored", request=request, client_factory=factory)
+        )
 
         url, payload, headers = client.calls[0]
         assert url == request[0]

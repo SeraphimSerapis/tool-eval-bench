@@ -6,6 +6,7 @@ calibration logic, and latency estimation — all without a real server.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -17,8 +18,6 @@ from tool_eval_bench.runner.throughput import (
     ThroughputSample,
     TokenizerConfig,
     _build_filler_heuristic,
-    _headers,
-    _tokenize_url,
 )
 
 # ---------------------------------------------------------------------------
@@ -78,32 +77,6 @@ class TestBuildFillerHeuristic:
     def test_zero_tokens(self) -> None:
         result = _build_filler_heuristic(0)
         assert result == ""
-
-
-# ---------------------------------------------------------------------------
-# URL helpers
-# ---------------------------------------------------------------------------
-
-
-class TestUrlHelpers:
-    def test_tokenize_url_strips_v1(self) -> None:
-        assert _tokenize_url("http://localhost:8000/v1") == "http://localhost:8000/tokenize"
-
-    def test_tokenize_url_no_v1(self) -> None:
-        assert _tokenize_url("http://localhost:8000") == "http://localhost:8000/tokenize"
-
-    def test_tokenize_url_trailing_slash(self) -> None:
-        assert _tokenize_url("http://localhost:8000/") == "http://localhost:8000/tokenize"
-
-    def test_headers_with_key(self) -> None:
-        h = _headers("mykey")
-        assert h["Authorization"] == "Bearer mykey"
-        assert "Content-Type" in h
-
-    def test_headers_without_key(self) -> None:
-        h = _headers(None)
-        assert "Authorization" not in h
-        assert "Content-Type" in h
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +367,126 @@ async def test_stream_one_no_token_ids() -> None:
     assert sample.tg_tokens == 5
     assert sample.mtp_chunks_detected is False
     assert len(sample.token_timestamps) == 5
+
+
+@pytest.mark.asyncio
+async def test_stream_one_retries_without_return_token_ids_on_strict_endpoint() -> None:
+    """Strict OpenAI endpoints may reject the vLLM-only token_ids extension."""
+    from tool_eval_bench.runner.throughput import _stream_one
+
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "return_token_ids" in body:
+            return httpx.Response(400, json={"error": "unknown field"})
+        return httpx.Response(
+            200,
+            content=(
+                _make_sse_line({"choices": [{"delta": {"content": "ok"}}]}) + "data: [DONE]\n\n"
+            ).encode(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    cfg = TokenizerConfig()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await _stream_one(
+            client,
+            "http://localhost:8000/v1",
+            "test-model",
+            [{"role": "user", "content": "hi"}],
+            5,
+            None,
+            cfg,
+        )
+
+    assert sample.error is None
+    assert cfg.supports_return_token_ids is False
+    assert "return_token_ids" in bodies[0]
+    assert "return_token_ids" not in bodies[1]
+
+
+class _DelayedSSEStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes], delay_seconds: float) -> None:
+        self._chunks = chunks
+        self._delay_seconds = delay_seconds
+
+    async def __aiter__(self):
+        for chunk in self._chunks:
+            await asyncio.sleep(self._delay_seconds)
+            yield chunk
+
+
+@pytest.mark.asyncio
+async def test_stream_one_ttft_waits_for_first_content_not_headers() -> None:
+    """TTFT must include a delayed first usable SSE event after headers."""
+    from tool_eval_bench.runner.throughput import _stream_one
+
+    first = _make_sse_line({"choices": [{"delta": {"content": "ok"}}]}).encode()
+    done = b"data: [DONE]\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=_DelayedSSEStream([first, done], 0.025),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await _stream_one(
+            client,
+            "http://localhost:8000/v1",
+            "test-model",
+            [{"role": "user", "content": "hi"}],
+            1,
+            None,
+        )
+
+    assert sample.error is None
+    assert sample.ttft_ms >= 20.0
+
+
+@pytest.mark.parametrize("reasoning_field", ["reasoning", "reasoning_content"])
+@pytest.mark.asyncio
+async def test_stream_one_counts_reasoning_as_generated_output(reasoning_field: str) -> None:
+    """Reasoning-model TTFT starts at the first generated reasoning token."""
+    from tool_eval_bench.runner.throughput import _stream_one
+
+    first = _make_sse_line(
+        {
+            "choices": [
+                {
+                    "delta": {reasoning_field: "thinking"},
+                    "token_ids": [42],
+                }
+            ]
+        }
+    ).encode()
+    done = b"data: [DONE]\n\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=_DelayedSSEStream([first, done], 0.025),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await _stream_one(
+            client,
+            "http://localhost:8000/v1",
+            "test-model",
+            [{"role": "user", "content": "hi"}],
+            1,
+            None,
+        )
+
+    assert sample.error is None
+    assert sample.ttft_ms >= 20.0
+    assert sample.ttft_ms < sample.total_ms
+    assert sample.tg_tokens == 1
+    assert len(sample.token_timestamps) == 1
 
 
 # ---------------------------------------------------------------------------

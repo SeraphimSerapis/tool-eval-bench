@@ -112,6 +112,7 @@ def warmup_server(
     extra_params: dict[str, Any] | None = None,
 ) -> None:
     """Prime the model server before measuring benchmark behavior."""
+    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
     from tool_eval_bench.runner.throughput import (
         WARMUP_EXTRA_PARAMS,
         WARMUP_MAX_TOKENS,
@@ -136,7 +137,14 @@ def warmup_server(
     ):
         try:
             milliseconds = asyncio.run(
-                warmup(base_url, model, api_key, timeout=120.0, request=request)
+                warmup(
+                    base_url,
+                    model,
+                    api_key,
+                    timeout=120.0,
+                    client_factory=HTTPMeasurementClient,
+                    request=request,
+                )
             )
             if milliseconds > 10_000:
                 console.print(

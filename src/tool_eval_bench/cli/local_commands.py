@@ -10,7 +10,28 @@ from typing import Any
 
 from rich.console import Console
 
-from tool_eval_bench.domain.scenarios import CATEGORY_LABELS
+from tool_eval_bench.domain.scenarios import CATEGORY_LABELS, Category
+
+
+def _validate_dry_run_selection(args: argparse.Namespace, scenarios: list[Any]) -> None:
+    """Reject selectors that would otherwise make a dry run deceptively empty."""
+    if args.categories:
+        valid_categories = {category.value for category in Category}
+        invalid = sorted({category.upper() for category in args.categories} - valid_categories)
+        if invalid:
+            raise ValueError(
+                f"Unknown categories: {', '.join(invalid)}. "
+                f"Valid: {', '.join(sorted(valid_categories))}"
+            )
+
+    if args.scenarios:
+        resolved_ids = {scenario.id for scenario in scenarios}
+        unknown = sorted(set(args.scenarios) - resolved_ids)
+        if unknown:
+            raise ValueError(f"Unknown scenarios: {', '.join(unknown)}")
+
+    if not scenarios:
+        raise ValueError("No scenarios matched the selected filters")
 
 
 def _render_dry_run(
@@ -20,6 +41,7 @@ def _render_dry_run(
 ) -> None:
     try:
         scenarios = resolve_scenarios(args)
+        _validate_dry_run_selection(args, scenarios)
     except ValueError as exc:
         console.print(f"\n[bold red]Error:[/] {exc}\n")
         raise SystemExit(2) from None

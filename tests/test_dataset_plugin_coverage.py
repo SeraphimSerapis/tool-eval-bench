@@ -135,7 +135,13 @@ def test_plugin_runners_complete_cached_lifecycles(
             50,
             "50%",
             "Weak",
-            details={"total": 3, "correct": 1, "errors": 1},
+            details={
+                "total": 3,
+                "correct": 1,
+                "errors": 1,
+                "answered": 2,
+                "completion_rate": 66.67,
+            },
             duration_seconds=1,
             total_tokens=10,
         )
@@ -163,6 +169,8 @@ def test_plugin_runners_complete_cached_lifecycles(
                 "total": 3,
                 "correct": 1,
                 "errors": 1,
+                "answered": 2,
+                "completion_rate": 66.67,
                 "categories": {"STEM": {"accuracy": 50.0}},
             },
             duration_seconds=1,
@@ -195,6 +203,8 @@ def test_plugin_runners_complete_cached_lifecycles(
                 "total": 3,
                 "prompts_passed": 1,
                 "errors": 1,
+                "answered": 2,
+                "completion_rate": 66.67,
                 "prompt_accuracy": 50.0,
                 "instructions_passed": 3,
                 "instructions_total": 4,
@@ -241,7 +251,11 @@ def test_plugin_runners_complete_cached_lifecycles(
     )
 
     assert [item["run_type"] for item in persisted] == ["gsm8k", "mmlu", "ifeval"]
-    assert "IFEval Prompt Accuracy" in console.export_text()
+    output = console.export_text()
+    assert "IFEval Prompt Accuracy" in output
+    assert output.count("counted in accuracy; 2/3 answered") == 3
+    assert "excluded from accuracy" not in output
+    assert all(item["scores"]["completion_rate"] == 66.67 for item in persisted)
 
 
 def test_gsm8k_rest_download_and_load_dataset(

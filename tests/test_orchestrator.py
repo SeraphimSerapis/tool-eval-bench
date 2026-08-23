@@ -23,7 +23,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioStatus,
     ToolCallRecord,
 )
-from tool_eval_bench.runner.orchestrator import run_scenario
+from tool_eval_bench.runner.orchestrator import _repair_json_str, run_all_scenarios, run_scenario
 
 # ---------------------------------------------------------------------------
 # Mock adapter
@@ -601,6 +601,52 @@ async def test_parallel_tool_turns_records_same_turn_batch() -> None:
     )
 
     assert result.parallel_tool_turns == [1]
+
+
+def test_repair_json_str_tracks_nested_arrays_and_string_punctuation() -> None:
+    """Conversation replay uses the same structural repair rules as streaming."""
+    repaired = _repair_json_str('{"items": [{"text": "a ] }", "n": 1')
+    assert json.loads(repaired) == {"items": [{"text": "a ] }", "n": 1}]}
+
+
+@pytest.mark.asyncio
+async def test_parallel_runs_invoke_scenario_start_callback() -> None:
+    scenarios = [
+        ScenarioDefinition(
+            id=f"PAR-{index}",
+            title=f"parallel {index}",
+            category=Category.A,
+            user_message="Answer directly.",
+            description="Respond directly.",
+            handle_tool_call=_simple_handler,
+            evaluate=lambda state: ScenarioEvaluation(
+                status=ScenarioStatus.PASS,
+                points=2,
+                summary="ok",
+            ),
+            tools_override=[],
+        )
+        for index in range(3)
+    ]
+    adapter = MockAdapter([{"content": "ok"} for _ in scenarios])
+    started: list[tuple[str, int, int]] = []
+
+    async def on_start(scenario: ScenarioDefinition, index: int, total: int) -> None:
+        started.append((scenario.id, index, total))
+
+    summary = await run_all_scenarios(
+        adapter,
+        model="test",
+        base_url="http://localhost:8000",
+        scenarios=scenarios,
+        concurrency=2,
+        on_scenario_start=on_start,
+    )
+
+    assert summary.final_score == 100
+    assert {scenario_id for scenario_id, _, _ in started} == {s.id for s in scenarios}
+    assert {index for _, index, _ in started} == {0, 1, 2}
+    assert {total for _, _, total in started} == {3}
 
 
 @pytest.mark.asyncio

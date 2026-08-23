@@ -276,6 +276,36 @@ class TestComputeDelta:
         assert delta.cumulative_acceptance_rate == pytest.approx(500 / 2000)
         assert delta.cumulative_acceptance_length == pytest.approx(500 / 250)
 
+    def test_counter_reset_never_produces_negative_rates(self):
+        """Engine restarts reset counters and must not create negative rates."""
+        prev = self._make_snap(
+            timestamp=100.0,
+            accepted_tokens=1_000,
+            draft_tokens=2_000,
+            num_drafts=500,
+            generation_tokens_total=10_000,
+            prompt_tokens_total=20_000,
+        )
+        curr = self._make_snap(
+            timestamp=110.0,
+            accepted_tokens=20,
+            draft_tokens=40,
+            num_drafts=10,
+            generation_tokens_total=100,
+            prompt_tokens_total=200,
+        )
+
+        delta = compute_delta(prev, curr)
+
+        assert delta.had_activity is True
+        assert delta.acceptance_rate == pytest.approx(0.5)
+        assert delta.accepted_tps == pytest.approx(2.0)
+        assert delta.drafted_tps == pytest.approx(4.0)
+        assert delta.generation_tps == pytest.approx(10.0)
+        assert delta.prompt_tps == pytest.approx(20.0)
+        assert delta.accepted_tps >= 0
+        assert delta.drafted_tps >= 0
+
     def test_cumulative_rates_with_zero_totals(self):
         """Before any spec decode activity, cumulative rates are None."""
         prev = self._make_snap(timestamp=100.0)

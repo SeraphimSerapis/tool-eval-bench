@@ -646,6 +646,7 @@ class TestMcNemarSignificance:
 
         output = console.file.getvalue()
         assert "not significant" in output
+        assert "p=1.0000" in output
 
     def test_partial_to_pass_counts_as_discordant(self) -> None:
         """Partial is not-pass, so partial→pass should be discordant."""

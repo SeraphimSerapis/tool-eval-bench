@@ -111,7 +111,10 @@ def check_number_sentences(response: str, kwargs: dict) -> bool:
 @register("length_constraints:number_paragraphs")
 def check_number_paragraphs(response: str, kwargs: dict) -> bool:
     num_paragraphs = kwargs.get("num_paragraphs")
-    relation = kwargs.get("relation", "at least")
+    # IFEval's paragraph prompts use an exact count unless a relation is
+    # explicitly supplied.  Treating the default as "at least" lets an
+    # answer with extra sections pass prompts that say "exactly N".
+    relation = kwargs.get("relation") or "exactly"
     if num_paragraphs is None:
         return True
     return _relation_check(_count_paragraphs(response), num_paragraphs, relation)
@@ -195,8 +198,12 @@ def check_bullet_lists(response: str, kwargs: dict) -> bool:
     num = kwargs.get("num_bullets")
     if num is None:
         return True
-    bullets = re.findall(r"^\s*[-*•]\s+", response, re.MULTILINE)
-    return len(bullets) >= num
+    bullets = re.findall(r"^\s*[-*+•]\s+", response, re.MULTILINE)
+    # The dataset does not carry a relation for this instruction.  Its
+    # prompts consistently ask for exactly N Markdown bullets, so extra
+    # bullets are a violation rather than harmless surplus.
+    relation = kwargs.get("relation") or "exactly"
+    return _relation_check(len(bullets), num, relation)
 
 
 @register("detectable_format:number_placeholders")
@@ -263,9 +270,92 @@ def check_multiple_sections(response: str, kwargs: dict) -> bool:
 
 @register("detectable_format:constrained_response")
 def check_constrained_response(response: str, kwargs: dict) -> bool:
-    """Response should be very short — one of a few possible answers."""
-    # The constraint is that the response is constrained; we just check length
-    return len(response.strip().split()) <= 50
+    """Check that a response selects one of the options named by the prompt.
+
+    The cached IFEval rows leave the options in ``prompt`` rather than in the
+    instruction kwargs.  A length-only check therefore accepts arbitrary
+    answers such as ``"banana"``.  Callers that have a structured contract
+    may provide ``allowed_responses`` (or ``options``/``choices``) directly;
+    otherwise we extract the quoted or line-separated options from the prompt.
+    """
+
+    allowed = _allowed_responses(kwargs)
+    if not allowed:
+        return False
+
+    response_text = response.strip()
+    if not response_text:
+        return False
+
+    folded_response = response_text.casefold()
+    matched = {option.casefold() for option in allowed if option.casefold() in folded_response}
+    # A response that repeats the complete list is not a constrained choice.
+    return len(matched) == 1
+
+
+def _allowed_responses(kwargs: dict[str, Any]) -> list[str]:
+    """Return normalized constrained-response options from kwargs or prompt."""
+
+    for key in ("allowed_responses", "allowed_answers", "options", "choices"):
+        values = kwargs.get(key)
+        if isinstance(values, str):
+            values = [values]
+        if isinstance(values, (list, tuple, set)):
+            structured_options = [
+                _normalize_option(value) for value in values if isinstance(value, str)
+            ]
+            structured_options = [option for option in structured_options if option]
+            if structured_options:
+                return list(dict.fromkeys(structured_options))
+
+    prompt = kwargs.get("prompt") or kwargs.get("prompt_text")
+    if not isinstance(prompt, str):
+        return []
+
+    # The local IFEval snapshot uses the same constrained answer family in
+    # both quoted and line-separated forms.  Keep this extraction generic
+    # enough for future rows without treating arbitrary quoted source text as
+    # an answer option.
+    cue = re.search(
+        r"(?:one of the following|choose from the following|following options|following phrases)",
+        prompt,
+        re.IGNORECASE,
+    )
+    candidate_text = prompt[cue.end() :] if cue else prompt
+    options: list[str] = []
+
+    # Handle straight quotes, curly quotes, and the malformed opening quote
+    # found in a few cached prompts (``”option\",``).
+    quoted_pattern = re.compile(
+        r'"([^"\n]+)"|“([^”\n]+)”|”([^"\n]+)"|\'([^\'\n]+)\'',
+        re.IGNORECASE,
+    )
+    for match in quoted_pattern.finditer(candidate_text):
+        option = _normalize_option(next(group for group in match.groups() if group is not None))
+        if option:
+            options.append(option)
+
+    # A number of rows put each permitted phrase on its own line without
+    # quotes.  Restrict these to the common explicit-answer wording so that
+    # the question itself is not mistaken for an option.
+    for line in candidate_text.splitlines():
+        option = _normalize_option(line)
+        if re.match(r"my\s+answer\s+is\b", option, re.IGNORECASE):
+            options.append(option)
+
+    # Also support the compact ``My answer is yes/no/maybe`` contract even
+    # when the prompt uses prose rather than a recognizable cue.
+    options.extend(
+        _normalize_option(match.group(0))
+        for match in re.finditer(r"my\s+answer\s+is\s+(?:yes|no|maybe)\.?", prompt, re.IGNORECASE)
+    )
+    return list(dict.fromkeys(option for option in options if option))
+
+
+def _normalize_option(option: str) -> str:
+    """Normalize punctuation used to enumerate an allowed response."""
+
+    return re.sub(r"^\s*(?:[-*+•]|\d+[.)])\s*", "", option).strip(" \t\"'“”(),")
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +416,18 @@ def check_capitalize(response: str, kwargs: dict) -> bool:
     return all(w[0].isupper() for w in words if w and w[0].isalpha())
 
 
+@register("change_case:capital_word_frequency")
+def check_capital_word_frequency(response: str, kwargs: dict) -> bool:
+    """Check the requested number of all-uppercase words."""
+
+    frequency = kwargs.get("capital_frequency")
+    relation = kwargs.get("capital_relation", "at least")
+    if frequency is None:
+        return True
+    capital_words = re.findall(r"\b[A-Z]+\b", response)
+    return _relation_check(len(capital_words), frequency, relation)
+
+
 # ---------------------------------------------------------------------------
 # Combination / misc constraints
 # ---------------------------------------------------------------------------
@@ -353,30 +455,145 @@ def check_two_responses(response: str, kwargs: dict) -> bool:
 
 @register("language:response_language")
 def check_response_language(response: str, kwargs: dict) -> bool:
-    """Heuristic check for response language."""
+    """Heuristically check that the response uses the requested script.
+
+    Unicode scripts cannot distinguish every language that shares an alphabet
+    (for example German and English), but they can still reject a response in
+    an unrelated script.  Unknown language codes fail closed instead of being
+    treated as passing constraints.
+    """
+
     language = kwargs.get("language")
     if not language:
         return True
-    # Simple heuristic: check for language-specific character sets
-    lang = language.lower()
-    if lang in ("en", "english"):
-        # Most characters should be ASCII
-        ascii_count = sum(1 for c in response if ord(c) < 128)
-        return ascii_count / max(len(response), 1) > 0.8
-    if lang in ("zh", "chinese"):
-        cjk = sum(1 for c in response if "\u4e00" <= c <= "\u9fff")
-        return cjk > 10
-    if lang in ("ja", "japanese"):
-        jp = sum(1 for c in response if "\u3040" <= c <= "\u309f" or "\u30a0" <= c <= "\u30ff")
-        return jp > 5
-    if lang in ("ko", "korean"):
-        kr = sum(1 for c in response if "\uac00" <= c <= "\ud7a3")
-        return kr > 5
-    # For other languages, accept by default
-    return True
+    lang = str(language).lower().replace("_", "-")
+    aliases = {
+        "english": "en",
+        "german": "de",
+        "italian": "it",
+        "portuguese": "pt",
+        "finnish": "fi",
+        "swahili": "sw",
+        "vietnamese": "vi",
+        "russian": "ru",
+        "bulgarian": "bg",
+        "arabic": "ar",
+        "persian": "fa",
+        "farsi": "fa",
+        "urdu": "ur",
+        "bengali": "bn",
+        "gujarati": "gu",
+        "hindi": "hi",
+        "marathi": "mr",
+        "nepali": "ne",
+        "punjabi": "pa",
+        "kannada": "kn",
+        "tamil": "ta",
+        "telugu": "te",
+        "thai": "th",
+        "korean": "ko",
+        "japanese": "ja",
+        "chinese": "zh",
+    }
+    lang = aliases.get(lang, lang)
+
+    letters = [char for char in response if char.isalpha()]
+    if not letters:
+        return False
+
+    def ratio(predicate: Any) -> bool:
+        matching = sum(1 for char in letters if predicate(char))
+        return matching > 0 and matching / len(letters) >= 0.5
+
+    def latin(char: str) -> bool:
+        return "A" <= char <= "Z" or "a" <= char <= "z"
+
+    def cyrillic(char: str) -> bool:
+        return "\u0400" <= char <= "\u04ff"
+
+    def arabic(char: str) -> bool:
+        return "\u0600" <= char <= "\u06ff" or "\u0750" <= char <= "\u077f"
+
+    def devanagari(char: str) -> bool:
+        return "\u0900" <= char <= "\u097f"
+
+    def gurmukhi(char: str) -> bool:
+        return "\u0a00" <= char <= "\u0a7f"
+
+    def gujarati(char: str) -> bool:
+        return "\u0a80" <= char <= "\u0aff"
+
+    def bengali(char: str) -> bool:
+        return "\u0980" <= char <= "\u09ff"
+
+    def tamil(char: str) -> bool:
+        return "\u0b80" <= char <= "\u0bff"
+
+    def telugu(char: str) -> bool:
+        return "\u0c00" <= char <= "\u0c7f"
+
+    def kannada(char: str) -> bool:
+        return "\u0c80" <= char <= "\u0cff"
+
+    def thai(char: str) -> bool:
+        return "\u0e00" <= char <= "\u0e7f"
+
+    def hangul(char: str) -> bool:
+        return "\uac00" <= char <= "\ud7af"
+
+    def kana_or_cjk(char: str) -> bool:
+        return "\u3040" <= char <= "\u30ff" or "\u3400" <= char <= "\u9fff"
+
+    def cjk(char: str) -> bool:
+        return "\u3400" <= char <= "\u9fff"
+
+    latin_markers = {
+        "de": {"aber", "das", "der", "die", "eine", "ist", "nicht", "und"},
+        "fi": {"että", "ja", "joka", "kun", "mutta", "myös", "olla", "on"},
+        "it": {"che", "con", "della", "il", "non", "per", "sono", "una"},
+        "pt": {"com", "dos", "está", "não", "para", "que", "são", "uma"},
+        "sw": {"hii", "katika", "kwa", "lakini", "na", "ni", "wa", "ya"},
+        "vi": {"cho", "có", "của", "không", "là", "những", "trong", "và"},
+    }
+    if lang in latin_markers:
+        if not ratio(latin):
+            return False
+        words = set(re.findall(r"[^\W\d_]+", response.casefold(), re.UNICODE))
+        return len(words & latin_markers[lang]) >= 2
+
+    predicates = {
+        "en": latin,
+        "bg": cyrillic,
+        "ru": cyrillic,
+        "ar": arabic,
+        "fa": arabic,
+        "ur": arabic,
+        "bn": bengali,
+        "gu": gujarati,
+        "hi": devanagari,
+        "mr": devanagari,
+        "ne": devanagari,
+        "pa": gurmukhi,
+        "kn": kannada,
+        "ta": tamil,
+        "te": telugu,
+        "th": thai,
+        "ko": hangul,
+        "ja": kana_or_cjk,
+        "zh": cjk,
+    }
+    predicate = predicates.get(lang)
+    return predicate is not None and ratio(predicate)
 
 
 @register("detectable_content:postscript")
 def check_postscript(response: str, kwargs: dict) -> bool:
-    marker = kwargs.get("postscript_marker", "P.S.")
-    return marker in response or "P.S." in response or "PS:" in response
+    """Require the requested, exact marker to start the final non-empty line."""
+
+    marker = kwargs.get("postscript_marker") or "P.S."
+    if not isinstance(marker, str) or not marker.strip():
+        return False
+    lines = [line.strip() for line in response.splitlines() if line.strip()]
+    if not lines:
+        return False
+    return lines[-1].startswith(marker)

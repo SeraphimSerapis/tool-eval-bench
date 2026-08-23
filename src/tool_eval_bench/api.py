@@ -91,6 +91,7 @@ async def run_benchmark(
     concurrency: int = 1,
     error_rate: float = 0.0,
     alpha: float = 0.7,
+    weight_by_difficulty: bool = False,
     extra_params: dict[str, Any] | None = None,
     on_scenario_start: OnScenarioStart | None = None,
     on_scenario_result: OnScenarioResult | None = None,
@@ -121,6 +122,7 @@ async def run_benchmark(
         concurrency: Number of scenarios to run in parallel.
         error_rate: Inject random tool errors at this rate (0.0–1.0).
         alpha: Quality/speed weight for deployability (0.0–1.0).
+        weight_by_difficulty: Also calculate the difficulty-weighted score.
         extra_params: Additional parameters merged into the API payload.
         on_scenario_start: Async callback ``(scenario, idx, total) -> None``.
         on_scenario_result: Async callback ``(scenario, result, idx, total) -> None``.
@@ -168,6 +170,7 @@ async def run_benchmark(
         concurrency=concurrency,
         error_rate=error_rate,
         alpha=alpha,
+        weight_by_difficulty=weight_by_difficulty,
         extra_params=extra_params,
         wire_format=wire_format,
     )

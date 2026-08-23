@@ -195,8 +195,8 @@ def _run_gsm8k_benchmark(
                 else:
                     wrong_so_far += 1
 
-                answered = correct_so_far + wrong_so_far
-                pct = (correct_so_far / answered * 100) if answered > 0 else 0
+                processed = correct_so_far + wrong_so_far + errors_so_far
+                pct = (correct_so_far / processed * 100) if processed > 0 else 0
                 elapsed = time.monotonic() - t_start
                 speed = current / elapsed * 60 if elapsed > 0 else 0  # questions/min
 
@@ -286,14 +286,15 @@ def _run_gsm8k_benchmark(
     # Display summary
     console.print()
     errs = details.get("errors", 0)
-    answered = details["total"] - errs
+    total = details["total"]
+    answered = details.get("answered", total - errs)
     console.print(
         f"  [bold]GSM8K Accuracy:[/] [bold magenta]{result.score:.1f}%[/] "
-        f"({details['correct']}/{answered})"
+        f"({details['correct']}/{total})"
     )
     if errs > 0:
         console.print(
-            f"  [bold yellow]⚠ {errs} errors[/] (server timeouts/failures — excluded from accuracy)"
+            f"  [bold yellow]⚠ {errs} errors[/] (counted in accuracy; {answered}/{total} answered)"
         )
     console.print(f"  [bold]Rating:[/] {result.rating}")
     console.print(
@@ -316,7 +317,10 @@ def _run_gsm8k_benchmark(
             "seed": seed,
             "shuffle": shuffle,
         },
-        report_metrics=[f"- **Accuracy**: **{result.score:.1f}%**"],
+        report_metrics=[
+            f"- **Accuracy**: **{result.score:.1f}%**",
+            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
+        ],
         report_lines=report_lines,
         output_dir=output_dir,
         run_context=run_context,
@@ -500,8 +504,8 @@ def _run_mmlu_benchmark(
                 else:
                     wrong_so_far += 1
 
-                answered = correct_so_far + wrong_so_far
-                pct = (correct_so_far / answered * 100) if answered > 0 else 0
+                processed = correct_so_far + wrong_so_far + errors_so_far
+                pct = (correct_so_far / processed * 100) if processed > 0 else 0
                 elapsed = time.monotonic() - t_start
                 speed = current / elapsed * 60 if elapsed > 0 else 0
 
@@ -588,14 +592,15 @@ def _run_mmlu_benchmark(
 
     console.print()
     errs = details.get("errors", 0)
-    answered = details["total"] - errs
+    total = details["total"]
+    answered = details.get("answered", total - errs)
     console.print(
         f"  [bold]MMLU Accuracy:[/] [bold blue]{result.score:.1f}%[/] "
-        f"({details['correct']}/{answered})"
+        f"({details['correct']}/{total})"
     )
     if errs > 0:
         console.print(
-            f"  [bold yellow]⚠ {errs} errors[/] (server timeouts/failures — excluded from accuracy)"
+            f"  [bold yellow]⚠ {errs} errors[/] (counted in accuracy; {answered}/{total} answered)"
         )
     console.print(f"  [bold]Rating:[/] {result.rating}")
     # Show category breakdown
@@ -623,7 +628,10 @@ def _run_mmlu_benchmark(
             "seed": seed,
             "subjects": subjects_str,
         },
-        report_metrics=[f"- **Accuracy**: **{result.score:.1f}%**"],
+        report_metrics=[
+            f"- **Accuracy**: **{result.score:.1f}%**",
+            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
+        ],
         report_lines=report_lines,
         output_dir=output_dir,
         run_context=run_context,
@@ -781,8 +789,8 @@ def _run_ifeval_benchmark(
                 instructions_passed += item_info.get("instructions_passed", 0)
                 instructions_total += item_info.get("instructions_total", 0)
 
-                answered = prompts_passed + prompts_failed
-                prompt_pct = (prompts_passed / answered * 100) if answered > 0 else 0
+                processed = prompts_passed + prompts_failed + errors_so_far
+                prompt_pct = (prompts_passed / processed * 100) if processed > 0 else 0
                 inst_pct = (
                     (instructions_passed / instructions_total * 100)
                     if instructions_total > 0
@@ -872,14 +880,15 @@ def _run_ifeval_benchmark(
 
     console.print()
     errs = details.get("errors", 0)
-    answered = details["total"] - errs
+    total = details["total"]
+    answered = details.get("answered", total - errs)
     console.print(
         f"  [bold]IFEval Prompt Accuracy:[/] [bold green]{details.get('prompt_accuracy', 0):.1f}%[/] "
-        f"({details['prompts_passed']}/{answered})"
+        f"({details['prompts_passed']}/{total})"
     )
     if errs > 0:
         console.print(
-            f"  [bold yellow]⚠ {errs} errors[/] (server timeouts/failures — excluded from accuracy)"
+            f"  [bold yellow]⚠ {errs} errors[/] (counted in accuracy; {answered}/{total} answered)"
         )
     console.print(
         f"  [bold]IFEval Instruction Accuracy:[/] [bold cyan]"
@@ -908,6 +917,7 @@ def _run_ifeval_benchmark(
         report_metrics=[
             f"- **Prompt Accuracy**: **{details.get('prompt_accuracy', 0):.1f}%**",
             f"- **Instruction Accuracy**: **{details.get('instruction_accuracy', 0):.1f}%**",
+            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
         ],
         report_lines=report_lines,
         output_dir=output_dir,

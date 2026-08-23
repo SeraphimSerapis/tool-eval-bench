@@ -148,6 +148,38 @@ def _shorten_model_name(name: str) -> str:
     return name
 
 
+def _cohort_fingerprint(config: dict[str, Any]) -> str:
+    """Fingerprint benchmark conditions shared across different models."""
+    comparable = {
+        key: value
+        for key, value in config.items()
+        if key not in {"model", "base_url", "endpoint_id", "config_fingerprint"}
+    }
+    return build_config_fingerprint(comparable)
+
+
+def _is_rank_eligible(run: dict[str, Any], config: dict[str, Any], scores: dict[str, Any]) -> bool:
+    """Reject explicit partial, interrupted, and incomplete persisted runs."""
+    # Records written before run status existed remain exportable.  New records
+    # must explicitly be completed and contain every configured scenario.
+    status = run.get("status")
+    if status is None:
+        return True
+    if status != "completed":
+        return False
+    completion_rate = scores.get("completion_rate")
+    if isinstance(completion_rate, (int, float)) and completion_rate < 100:
+        return False
+    expected = config.get("scenario_count")
+    results = scores.get("scenario_results")
+    if not isinstance(expected, int) or expected <= 0 or not isinstance(results, list):
+        return False
+    return (
+        len({result.get("scenario_id") for result in results if result.get("scenario_id")})
+        == expected
+    )
+
+
 # ---------------------------------------------------------------------------
 # Data extraction from stored runs
 # ---------------------------------------------------------------------------
@@ -169,8 +201,9 @@ def _extract_leaderboard_rows(
         scores = run.get("scores") or {}
         run_type = run.get("run_type", "tool_eval")
 
-        # Skip non-tool-eval runs (plugins have their own display)
-        if run_type != "tool_eval":
+        # Skip non-tool-eval runs (plugins have their own display), incomplete
+        # records, and rows that have not reached a completed reportable state.
+        if run_type != "tool_eval" or not _is_rank_eligible(run, config, scores):
             continue
 
         scenario_count = config.get("scenario_count", len(scores.get("scenario_results", [])))
@@ -186,11 +219,14 @@ def _extract_leaderboard_rows(
 
     rows: list[dict[str, Any]] = []
     for (model, fingerprint), group_runs in by_config.items():
-        # Take the best run (highest final score)
-        best = max(
-            group_runs,
-            key=lambda r: (r.get("scores") or {}).get("final_score", 0),
-        )
+        # A retry must not silently become a best-of score.  Persisted modern
+        # runs select the latest declared execution.  The score-max fallback is
+        # retained only for status-less legacy imports that cannot distinguish
+        # trials from historical duplicates.
+        if all(run.get("status") is None for run in group_runs):
+            best = max(group_runs, key=lambda r: (r.get("scores") or {}).get("final_score", 0))
+        else:
+            best = max(group_runs, key=lambda r: (r.get("created_at", ""), r.get("run_id", "")))
         scores = best.get("scores") or {}
         config = best.get("config") or {}
         scenario_count = config.get("scenario_count", len(scores.get("scenario_results", [])))
@@ -222,10 +258,14 @@ def _extract_leaderboard_rows(
                 "passes": passes,
                 "partials": partials,
                 "fails": fails,
+                "completion_count": len(
+                    {r.get("scenario_id") for r in results if r.get("scenario_id")}
+                ),
                 "cat_scores": cat_scores,
                 "scenario_count": scenario_count,
                 "backend": backend,
                 "config_fingerprint": fingerprint,
+                "cohort_fingerprint": _cohort_fingerprint(config),
                 "total_tokens": scores.get("total_tokens", 0),
                 "token_efficiency": scores.get("token_efficiency"),
                 "median_turn_ms": scores.get("median_turn_ms"),
@@ -243,8 +283,8 @@ def _extract_leaderboard_rows(
             }
         )
 
-    # Sort by final score descending
-    rows.sort(key=lambda r: r["final_score"], reverse=True)
+    # Never imply a global ordering across different benchmark conditions.
+    rows.sort(key=lambda r: (r["cohort_fingerprint"], -r["final_score"], r["model"]))
     return rows
 
 
@@ -296,7 +336,7 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
     table.add_column("Config", justify="center", width=12, no_wrap=True)
     table.add_column("Score", justify="center", width=7, style="bold")
     table.add_column("Rating", justify="center", width=7)
-    table.add_column("P/F", justify="center", width=9, no_wrap=True)
+    table.add_column("P/F/C", justify="center", width=14, no_wrap=True)
 
     # Per-category heatmap columns
     for cat in cat_order:
@@ -312,9 +352,12 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
     table.add_column("Tokens", justify="right", width=8)
     table.add_column("Runs", justify="center", width=4)
 
+    comparable_globally = len({row["cohort_fingerprint"] for row in rows}) == 1
     for idx, row in enumerate(rows, 1):
         # Rank medal
-        if idx == 1:
+        if not comparable_globally:
+            rank = "[dim]—[/]"
+        elif idx == 1:
             rank = "[bold bright_yellow]🥇[/]"
         elif idx == 2:
             rank = "[bold white]🥈[/]"
@@ -340,7 +383,10 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
 
         # Pass/Fail summary
         p, pt, f = row["passes"], row["partials"], row["fails"]
-        pf_str = f"[green]{p}[/]/[yellow]{pt}[/]/[red]{f}[/]"
+        complete = row["completion_count"]
+        pf_str = (
+            f"[green]{p}[/]/[yellow]{pt}[/]/[red]{f}[/] [dim]{complete}/{row['scenario_count']}[/]"
+        )
 
         # Category heatmap cells
         cat_cells = []
@@ -392,11 +438,16 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
         Panel(
             "  ".join(legend_parts)
             + "\n\n"
-            + "  [dim]P/F = ✅pass / ⚠️partial / ❌fail   │   "
+            + "  [dim]P/F/C = ✅pass / ⚠️partial / ❌fail / completed scenarios   │   "
             + "Config = backend/scenarios   │   "
             + "Scores: [bold green]90+[/] [green]75+[/] [yellow]60+[/] [red]40+[/] [bold red]<40[/]   │   "
             + "★★★ⓢ = safety-capped[/]"
-            + partial_note,
+            + partial_note
+            + (
+                "\n  [dim]Different benchmark cohorts are shown together but are not globally ranked.[/]"
+                if not comparable_globally
+                else ""
+            ),
             border_style="dim",
             padding=(0, 1),
         )

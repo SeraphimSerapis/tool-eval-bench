@@ -37,6 +37,8 @@ def evaluate_prompt(
     response: str,
     instruction_ids: list[str],
     kwargs_list: list[dict[str, Any]],
+    *,
+    prompt: str | None = None,
 ) -> PromptResult:
     """Evaluate a model response against all constraints for a prompt.
 
@@ -48,6 +50,10 @@ def evaluate_prompt(
         List of instruction IDs (e.g. ``["punctuation:no_comma", ...]``).
     kwargs_list
         List of kwargs dicts, one per instruction.
+    prompt
+        Optional source prompt.  Some IFEval constraints, such as
+        ``detectable_format:constrained_response``, keep their contract in
+        the prompt instead of in the kwargs payload.
     """
     results: list[InstructionResult] = []
 
@@ -55,6 +61,8 @@ def evaluate_prompt(
         kw = kwargs_list[i] if i < len(kwargs_list) else {}
         # Filter out None values from kwargs
         kw = {k: v for k, v in kw.items() if v is not None}
+        if prompt is not None:
+            kw.setdefault("prompt", prompt)
 
         try:
             passed = check_instruction(inst_id, response, kw)
@@ -65,12 +73,13 @@ def evaluate_prompt(
                 )
             )
         except KeyError:
-            # Unknown instruction — treat as pass (don't penalize for
-            # constraint types we haven't implemented yet)
+            # Unknown instructions are unsupported constraints, not
+            # successful evaluations.  Passing them would inflate benchmark
+            # scores and hide gaps in the checker registry.
             results.append(
                 InstructionResult(
                     instruction_id=inst_id,
-                    passed=True,
+                    passed=False,
                     error=f"Unknown instruction: {inst_id}",
                 )
             )

@@ -249,6 +249,17 @@ class TestRunBenchmark:
         assert call_kwargs["on_scenario_start"] is start_cb
         assert call_kwargs["on_scenario_result"] is result_cb
 
+    @pytest.mark.asyncio
+    async def test_weight_by_difficulty_is_forwarded(self, mock_service):
+        with patch("tool_eval_bench.api.BenchmarkService", return_value=mock_service):
+            await run_benchmark(
+                model="test-model",
+                base_url="http://localhost:8000",
+                weight_by_difficulty=True,
+                persist=False,
+            )
+        assert mock_service.run_benchmark.call_args.kwargs["weight_by_difficulty"] is True
+
 
 # ---------------------------------------------------------------------------
 # JSONL progress callbacks (from cli/bench.py)
@@ -380,7 +391,7 @@ class TestHeadlessModelDetection:
         console = Console(file=StringIO(), width=200, no_color=True)
 
         with patch("tool_eval_bench.cli.bench.asyncio") as mock_asyncio:
-            mock_asyncio.run.return_value = (mock_response, False)
+            mock_asyncio.run.side_effect = lambda coro: (coro.close(), (mock_response, False))[1]
             api_id, display = _detect_model(
                 "http://localhost:8000",
                 None,
@@ -415,7 +426,7 @@ class TestHeadlessModelDetection:
         console = Console(file=StringIO(), width=200, no_color=True)
 
         with patch("tool_eval_bench.cli.bench.asyncio") as mock_asyncio:
-            mock_asyncio.run.return_value = (mock_response, False)
+            mock_asyncio.run.side_effect = lambda coro: (coro.close(), (mock_response, False))[1]
             api_id, display = _detect_model(
                 "http://localhost:8000",
                 None,
@@ -476,12 +487,11 @@ class TestServerDiscovery:
 
         with patch("tool_eval_bench.cli.server.asyncio") as mock_asyncio:
             # Inner _probe returns (url, backend, server_name, port)
-            mock_asyncio.run.return_value = (
-                "http://localhost:8000",
-                "vllm",
-                "vLLM",
-                8000,
-            )
+            discovered = ("http://localhost:8000", "vllm", "vLLM", 8000)
+            mock_asyncio.run.side_effect = lambda coro: (
+                coro.close(),
+                discovered,
+            )[1]
 
             result = _discover_server(headless=True)
 
@@ -501,7 +511,7 @@ class TestServerDiscovery:
         from tool_eval_bench.cli.bench import _discover_server
 
         with patch("tool_eval_bench.cli.server.asyncio") as mock_asyncio:
-            mock_asyncio.run.return_value = None
+            mock_asyncio.run.side_effect = lambda coro: (coro.close(), None)[1]
 
             result = _discover_server(headless=True)
 
@@ -544,7 +554,7 @@ class TestProbeServer:
         console = Console(file=StringIO(), width=200, no_color=True)
 
         with patch("tool_eval_bench.cli.bench.asyncio") as mock_asyncio:
-            mock_asyncio.run.return_value = mock_resp
+            mock_asyncio.run.side_effect = lambda coro: (coro.close(), mock_resp)[1]
             with pytest.raises(SystemExit) as exc_info:
                 _probe_server(console, "http://localhost:8000", None, headless=True)
 
@@ -566,7 +576,12 @@ class TestProbeServer:
         console = Console(file=StringIO(), width=200, no_color=True)
 
         with patch("tool_eval_bench.cli.bench.asyncio") as mock_asyncio:
-            mock_asyncio.run.side_effect = Exception("Connection refused")
+
+            def fail(coro):
+                coro.close()
+                raise Exception("Connection refused")
+
+            mock_asyncio.run.side_effect = fail
             with pytest.raises(SystemExit) as exc_info:
                 _probe_server(console, "http://localhost:8000", None, headless=True)
 

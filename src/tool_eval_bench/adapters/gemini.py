@@ -41,6 +41,20 @@ from tool_eval_bench.utils.urls import redact_url as _redact_url
 
 logger = logging.getLogger(__name__)
 
+
+def _sse_payload(line: str) -> str | None:
+    """Return the payload from an SSE data line.
+
+    The optional space after ``data:`` is part of the SSE grammar, not a
+    requirement.  Google and compatible gateways have emitted both
+    ``data: {...}`` and ``data:{...}`` forms.
+    """
+    if not line.startswith("data:"):
+        return None
+    payload = line[5:]
+    return payload[1:] if payload.startswith(" ") else payload
+
+
 # Keys of the OpenAPI-derived ``Schema`` the API accepts in a function
 # declaration.  Anything else (``additionalProperties``, ``$schema``,
 # ``default``, ``exclusiveMinimum``, …) is a 400, so it is dropped.
@@ -483,10 +497,30 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
                     raise
                 return graceful
 
+            # A native endpoint or gateway may ignore the streaming request
+            # and return a regular JSON completion with HTTP 200.  Parse it as
+            # a valid non-streamed response instead of dropping the body.
+            response_headers = getattr(response, "headers", None)
+            content_type = str(
+                response_headers.get("content-type", "text/event-stream")
+                if response_headers is not None
+                else "text/event-stream"
+            )
+            if "text/event-stream" not in content_type.lower():
+                json_body = await response.aread()
+                try:
+                    data = json.loads(json_body)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                else:
+                    elapsed_ms = (time.perf_counter() - started) * 1000
+                    return self._parse_response(data, elapsed_ms)
+
             async for line in response.aiter_lines():
-                if not line.startswith("data: "):
+                sse_data = _sse_payload(line)
+                if sse_data is None:
                     continue
-                chunk_str = line[6:].strip()
+                chunk_str = sse_data.strip()
                 if not chunk_str or chunk_str == "[DONE]":
                     continue
                 try:
@@ -502,7 +536,9 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
                     continue
                 parts = (candidates[0].get("content") or {}).get("parts") or []
                 chunk_texts, chunk_thoughts, chunk_calls = _parse_parts(parts)
-                if ttft_ms is None and (chunk_texts or chunk_calls):
+                # Native Gemini thinking chunks are generated output even
+                # though they are not visible answer text.
+                if ttft_ms is None and (chunk_texts or chunk_thoughts or chunk_calls):
                     ttft_ms = (time.perf_counter() - started) * 1000
                 texts.extend(chunk_texts)
                 thoughts.extend(chunk_thoughts)

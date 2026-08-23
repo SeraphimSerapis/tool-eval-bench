@@ -75,9 +75,12 @@ class MMLUPlugin(BenchmarkPlugin):
         concurrency: int = kwargs.get("concurrency", 1)
         preloaded: dict | None = kwargs.get("_preloaded_items")
 
+        if concurrency < 1:
+            raise ValueError("concurrency must be at least 1")
+
         # Load dataset
-        if preloaded:
-            all_items = preloaded["test"]
+        if preloaded is not None:
+            all_items = preloaded.get("test", [])
             dev_items = preloaded.get("dev", [])
         else:
             on_download = kwargs.get("on_download_progress")
@@ -127,6 +130,12 @@ class MMLUPlugin(BenchmarkPlugin):
         progress_lock = asyncio.Lock()
         t_start = time.monotonic()
 
+        extra: dict[str, Any] = {}
+        if seed is not None:
+            extra["seed"] = seed
+        if extra_params:
+            extra.update(extra_params)
+
         async def eval_one(idx: int, item: MMLUItem) -> None:
             nonlocal correct_count, total_tokens, error_count, progress_counter
             few_shots = dev_by_subject.get(item.subject, [])
@@ -143,7 +152,7 @@ class MMLUPlugin(BenchmarkPlugin):
                         timeout_seconds=timeout_seconds,
                         api_key=api_key,
                         base_url=base_url,
-                        extra_params=extra_params,
+                        extra_params=extra or None,
                     )
 
                 content = response.content or response.reasoning or ""
@@ -196,10 +205,25 @@ class MMLUPlugin(BenchmarkPlugin):
         for i, exc in enumerate(gather_results):
             if isinstance(exc, BaseException):
                 logger.error("MMLU question %d crashed: %s", i, exc)
+                if not results[i]:
+                    item = all_items[i]
+                    results[i] = {
+                        "index": item.index,
+                        "subject": item.subject,
+                        "category": item.category,
+                        "question": item.question[:200],
+                        "correct": False,
+                        "is_error": True,
+                        "extracted_answer": None,
+                        "ground_truth": item.answer,
+                        "extraction_method": "error",
+                        "model_response": "",
+                    }
+                    error_count += 1
 
         duration = time.monotonic() - t_start
         answered = total - error_count
-        accuracy = (correct_count / answered * 100) if answered > 0 else 0.0
+        accuracy = (correct_count / total * 100) if total > 0 else 0.0
 
         # Per-category breakdown
         cat_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"correct": 0, "total": 0})
@@ -224,7 +248,11 @@ class MMLUPlugin(BenchmarkPlugin):
             details={
                 "correct": correct_count,
                 "total": total,
+                "answered": answered,
                 "errors": error_count,
+                "completion_rate": round(answered / total * 100, 2) if total else 0.0,
+                "status": "incomplete" if error_count else "completed",
+                "incomplete": error_count > 0,
                 "accuracy": round(accuracy, 2),
                 "n_shots": n_shots,
                 "dataset_size": 14042,

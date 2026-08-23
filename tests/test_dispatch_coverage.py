@@ -547,10 +547,17 @@ def test_dispatch_main_context_pressure_and_resume(monkeypatch: pytest.MonkeyPat
     class Repo:
         def get(self, run_id):
             return {
+                "status": "interrupted",
                 "config": {"model": "m", "backend": "vllm"},
                 "scores": {
                     "scenario_results": [
-                        {"scenario_id": "TC-01", "status": "pass", "raw_log": "trace"}
+                        {
+                            "scenario_id": "TC-01",
+                            "status": "pass",
+                            "points": 2,
+                            "summary": "ok",
+                            "raw_log": "trace",
+                        }
                     ]
                 },
             }
@@ -561,7 +568,25 @@ def test_dispatch_main_context_pressure_and_resume(monkeypatch: pytest.MonkeyPat
         def close(self):
             pass
 
+    class ResumeService:
+        async def run_benchmark(self, **kwargs):
+            return {
+                "run_id": "r",
+                "scores": {
+                    "scenario_results": [
+                        {
+                            "scenario_id": "TC-01",
+                            "status": "pass",
+                            "points": 2,
+                            "summary": "ok",
+                            "raw_log": "trace",
+                        }
+                    ]
+                },
+            }
+
     monkeypatch.setattr(db, "RunRepository", Repo)
+    monkeypatch.setattr(dispatch, "BenchmarkService", lambda **kwargs: ResumeService())
     monkeypatch.setattr(
         sys,
         "argv",

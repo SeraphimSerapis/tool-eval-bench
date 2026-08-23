@@ -60,6 +60,14 @@ class TestLengthConstraints:
             {"num_paragraphs": 3, "relation": "at least"},
         )
 
+    def test_number_paragraphs_defaults_to_exact(self):
+        response = "Paragraph one.\n\nParagraph two.\n\nParagraph three."
+        assert not check_instruction(
+            "length_constraints:number_paragraphs",
+            response,
+            {"num_paragraphs": 2},
+        )
+
     def test_number_paragraphs_fail(self):
         response = "Just one paragraph."
         assert not check_instruction(
@@ -161,6 +169,12 @@ class TestFormatConstraints:
     def test_bullet_lists(self):
         response = "Items:\n- item one\n- item two\n- item three"
         assert check_instruction(
+            "detectable_format:number_bullet_lists", response, {"num_bullets": 3}
+        )
+
+    def test_bullet_lists_reject_extra_bullets(self):
+        response = "Items:\n- item one\n- item two\n- item three\n- item four"
+        assert not check_instruction(
             "detectable_format:number_bullet_lists", response, {"num_bullets": 3}
         )
 
@@ -319,9 +333,83 @@ class TestCombinationConstraints:
         response = "Main content only."
         assert not check_instruction("detectable_content:postscript", response, {})
 
+    def test_postscript_must_start_final_paragraph_with_requested_marker(self):
+        assert check_instruction(
+            "detectable_content:postscript",
+            "Main content.\n\nP.P.S. Extra note.",
+            {"postscript_marker": "P.P.S."},
+        )
+        assert not check_instruction(
+            "detectable_content:postscript",
+            "P.P.S. Extra note.\n\nMain content.",
+            {"postscript_marker": "P.P.S."},
+        )
+        assert not check_instruction(
+            "detectable_content:postscript",
+            "Main content.\n\nP.S. Extra note.",
+            {"postscript_marker": "P.P.S."},
+        )
+
+    def test_postscript_can_be_final_line_of_a_constrained_paragraph(self):
+        response = (
+            "First paragraph.\n\nSecond paragraph.\n\nbonding begins here.\nP.P.S Final note."
+        )
+        assert check_instruction(
+            "detectable_content:postscript",
+            response,
+            {"postscript_marker": "P.P.S"},
+        )
+
     def test_language_english(self):
         response = "This is a response in English."
         assert check_instruction("language:response_language", response, {"language": "en"})
+
+    def test_language_unsupported_code_fails_closed(self):
+        assert not check_instruction("language:response_language", "garbage", {"language": "xx"})
+
+    def test_language_script_mismatch_fails(self):
+        assert not check_instruction("language:response_language", "garbage", {"language": "kn"})
+
+    def test_language_latin_script_alone_is_not_enough(self):
+        assert not check_instruction(
+            "language:response_language",
+            "This is an ordinary English response with several words.",
+            {"language": "de"},
+        )
+        assert check_instruction(
+            "language:response_language",
+            "Das ist eine deutsche Antwort und die Aussage ist klar.",
+            {"language": "de"},
+        )
+
+    def test_language_kannada_script_passes(self):
+        assert check_instruction("language:response_language", "ಕನ್ನಡದಲ್ಲಿ ಉತ್ತರ", {"language": "kn"})
+
+    def test_constrained_response_uses_prompt_options(self):
+        prompt = (
+            "Choose from the following: ('My answer is yes.', 'My answer is no.', "
+            "'My answer is maybe.')"
+        )
+        assert check_instruction(
+            "detectable_format:constrained_response",
+            "My answer is yes.",
+            {"prompt": prompt},
+        )
+        assert not check_instruction(
+            "detectable_format:constrained_response", "banana", {"prompt": prompt}
+        )
+
+    def test_constrained_response_uses_structured_options(self):
+        assert check_instruction(
+            "detectable_format:constrained_response",
+            "I choose red.",
+            {"allowed_responses": ["red", "blue"]},
+        )
+        assert not check_instruction(
+            "detectable_format:constrained_response",
+            "red and blue",
+            {"allowed_responses": ["red", "blue"]},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -381,16 +469,26 @@ class TestEvaluatePrompt:
         assert result.prompt_pass is False
         assert result.instructions_passed == 0
 
-    def test_unknown_instruction_passes(self):
-        """Unknown instructions should pass (not penalize)."""
+    def test_unknown_instruction_fails_closed(self):
+        """Unknown instructions must not inflate a benchmark score."""
         response = "Any response."
         result = evaluate_prompt(
             response,
             ["unknown:instruction"],
             [{}],
         )
-        assert result.prompt_pass is True
+        assert result.prompt_pass is False
+        assert result.instructions_passed == 0
         assert result.instruction_results[0].error is not None
+
+    def test_prompt_context_is_available_to_constrained_checker(self):
+        result = evaluate_prompt(
+            "banana",
+            ["detectable_format:constrained_response"],
+            [{}],
+            prompt="Answer with one of the following phrases: My answer is yes. or My answer is no.",
+        )
+        assert result.prompt_pass is False
 
     def test_empty_instructions(self):
         result = evaluate_prompt("Any response.", [], [])

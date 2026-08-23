@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 from rich.console import Console
 
 from tool_eval_bench.cli.leaderboard import (
+    _extract_leaderboard_rows,
     _rating_short,
     _score_bg,
     _score_color,
@@ -331,6 +332,43 @@ class TestPrintLeaderboard:
 
             output = console.file.getvalue()
             assert "No benchmark runs found" in output or "No valid results" in output
+
+    def test_excludes_interrupted_and_incomplete_persisted_runs(self) -> None:
+        interrupted = _make_run(model="interrupted", final_score=100)
+        interrupted["status"] = "interrupted"
+        incomplete = _make_run(model="incomplete", final_score=100)
+        incomplete["status"] = "completed"
+        incomplete["config"]["scenario_count"] = 4
+        complete = _make_run(model="complete", final_score=75)
+        complete["status"] = "completed"
+        complete["config"]["scenario_count"] = 3
+
+        rows = _extract_leaderboard_rows([interrupted, incomplete, complete])
+
+        assert [row["model"] for row in rows] == ["complete"]
+        assert rows[0]["completion_count"] == 3
+
+    def test_persisted_retries_use_latest_not_best_score(self) -> None:
+        first = _make_run(model="same", final_score=99)
+        first.update({"status": "completed", "created_at": "2026-01-01T00:00:00"})
+        first["config"]["scenario_count"] = 3
+        first["config"]["config_fingerprint"] = "shared"
+        latest = _make_run(model="same", final_score=60)
+        latest.update({"status": "completed", "created_at": "2026-01-02T00:00:00"})
+        latest["config"]["scenario_count"] = 3
+        latest["config"]["config_fingerprint"] = "shared"
+
+        rows = _extract_leaderboard_rows([first, latest])
+
+        assert rows[0]["final_score"] == 60
+
+    def test_excludes_completed_run_with_infrastructure_incompletion(self) -> None:
+        incomplete = _make_run(model="incomplete", final_score=100)
+        incomplete["status"] = "completed"
+        incomplete["config"]["scenario_count"] = 3
+        incomplete["scores"]["completion_rate"] = 67
+
+        assert _extract_leaderboard_rows([incomplete]) == []
 
 
 # ===========================================================================

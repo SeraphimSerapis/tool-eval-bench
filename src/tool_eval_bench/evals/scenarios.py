@@ -12,6 +12,7 @@ Hard Mode scenarios (Category P) are available via ALL_SCENARIOS_WITH_HARDMODE
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -75,6 +76,9 @@ from tool_eval_bench.evals.helpers import (
     is_only_tool as _is_only_tool,
 )
 from tool_eval_bench.evals.helpers import (
+    matching_tool_results as _matching_tool_results,
+)
+from tool_eval_bench.evals.helpers import (
     next_weekday_after_reference as _next_weekday_after_reference,
 )
 from tool_eval_bench.evals.helpers import (
@@ -98,6 +102,38 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
+
+
+def _result_matches_if_present(
+    state: ScenarioState,
+    call: ToolCallRecord,
+    predicate: Callable[[Any], bool],
+) -> bool:
+    """Validate an explicit result while preserving old synthetic traces.
+
+    Runtime traces always contain a result for every call.  A number of direct
+    evaluator tests and imported traces intentionally contain calls only, so
+    an absent result remains unknown rather than becoming a failure.  When a
+    result is present, however, it must both be non-error and describe the
+    value that the call is meant to provide.
+    """
+    exact_results = [result for result in state.tool_results if result.call_id == call.id]
+    known_call_ids = {candidate.id for candidate in state.tool_calls}
+    if exact_results:
+        results = exact_results
+    elif any(result.call_id in known_call_ids for result in state.tool_results):
+        # Runtime traces use stable IDs.  Once a trace proves that it is
+        # ID-aware, a result from another same-named call must not be borrowed
+        # to make this call look successful.
+        return False
+    else:
+        results = _matching_tool_results(state, call)
+    if not results:
+        return True
+    return _result_is_usable_if_present(state, call) and any(
+        predicate(result.result) for result in results
+    )
+
 
 # ===================================================================
 # TC-01: Direct Specialist Match
@@ -216,33 +252,104 @@ def _tc03_time_3pm(value: str) -> bool:
     )
 
 
+def _tc03_contact_result_has_sarah(payload: Any) -> bool:
+    """Return whether a contact result identifies Sarah's company address."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and _includes_text(item.get("name"), "sarah")
+        and _normalize(_as_str(item.get("email"))) == "sarah.chen@company.com"
+        for item in payload["results"]
+    )
+
+
+def _tc03_email_result_is_sent(payload: Any) -> bool:
+    """Return whether an explicit send result confirms a successful delivery."""
+    if not isinstance(payload, dict):
+        return False
+    return _normalize(_as_str(payload.get("status"))) in {
+        "accepted",
+        "delivered",
+        "ok",
+        "queued",
+        "sent",
+        "success",
+    }
+
+
 def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
-    contact_call = _first_call(state, "get_contacts")
-    email_call = _first_call(state, "send_email")
-    if (
-        contact_call
-        and email_call
-        and contact_call.turn < email_call.turn
-        and _includes_text(contact_call.arguments.get("query"), "sarah")
-        and _normalize(_as_str(email_call.arguments.get("to"))) == "sarah.chen@company.com"
-        and bool(_as_str(email_call.arguments.get("subject")).strip())
-        and bool(_as_str(email_call.arguments.get("body")).strip())
-        and "moved" in _as_str(email_call.arguments.get("body")).lower()
-        and _tc03_time_3pm(_as_str(email_call.arguments.get("body")))
-    ):
+    contact_calls = [
+        call
+        for call in _tool_calls_by_name(state, "get_contacts")
+        if _includes_text(call.arguments.get("query"), "sarah")
+    ]
+    email_calls = _tool_calls_by_name(state, "send_email")
+    complete_email_calls = [
+        call
+        for call in email_calls
+        if (
+            _normalize(_as_str(call.arguments.get("to"))) == "sarah.chen@company.com"
+            and bool(_as_str(call.arguments.get("subject")).strip())
+            and bool(_as_str(call.arguments.get("body")).strip())
+            and "moved" in _as_str(call.arguments.get("body")).lower()
+            and _tc03_time_3pm(_as_str(call.arguments.get("body")))
+        )
+    ]
+    ordered_pairs = [
+        (contact, email)
+        for contact in contact_calls
+        for email in complete_email_calls
+        if contact.turn < email.turn
+    ]
+    usable_pairs = [
+        (contact, email)
+        for contact, email in ordered_pairs
+        if _result_matches_if_present(state, contact, _tc03_contact_result_has_sarah)
+        and _result_matches_if_present(state, email, _tc03_email_result_is_sent)
+    ]
+    if usable_pairs:
         return _pass("Looked up Sarah before sending the email.")
+
+    if ordered_pairs:
+        contact_usable = any(
+            _result_matches_if_present(state, contact, _tc03_contact_result_has_sarah)
+            for contact, _ in ordered_pairs
+        )
+        email_usable = any(
+            _result_matches_if_present(state, email, _tc03_email_result_is_sent)
+            for _, email in ordered_pairs
+        )
+        if not contact_usable and not email_usable:
+            return _partial(
+                "The contact lookup and email send did not return usable results, "
+                "so the message could not be confirmed."
+            )
+        if not contact_usable:
+            return _partial(
+                "The contact lookup did not return Sarah's address, "
+                "so the recipient could not be confirmed."
+            )
+        return _partial(
+            "send_email did not return a successful result, so delivery could not be confirmed."
+        )
+
     if (
-        not contact_call
-        and not email_call
+        not contact_calls
+        and not email_calls
         and re.search(r"email", state.final_answer, re.IGNORECASE)
         and "?" in state.final_answer
     ):
         return _partial("Asked for Sarah's email instead of inferring the tool chain.")
     if (
-        contact_call
-        and email_call
-        and contact_call.turn <= email_call.turn
-        and _normalize(_as_str(email_call.arguments.get("to"))) == "sarah.chen@company.com"
+        contact_calls
+        and email_calls
+        and any(
+            contact.turn <= email.turn
+            and _normalize(_as_str(email.arguments.get("to"))) == "sarah.chen@company.com"
+            for contact in contact_calls
+            for email in email_calls
+        )
     ):
         return _partial("Looked up Sarah and attempted the email, but the message was incomplete.")
     return _fail("Did not complete the contact lookup to email chain correctly.")
@@ -494,6 +601,39 @@ def _tc07_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc07_search_result_has_report(payload: Any) -> bool:
+    """Return whether search output identifies the requested budget report."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and (
+            _normalize(_as_str(item.get("file_id"))) == "file_091"
+            or (
+                _includes_text(item.get("name"), "q3")
+                and _includes_text(item.get("name"), "budget")
+            )
+        )
+        for item in payload["results"]
+    )
+
+
+def _tc07_read_result_has_total(payload: Any) -> bool:
+    """Return whether file output contains the report total used in the email."""
+    return isinstance(payload, dict) and _includes_text(payload.get("content"), "4.4m")
+
+
+def _tc07_contact_result_has_manager(payload: Any) -> bool:
+    """Return whether contact output identifies the requested manager."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and _normalize(_as_str(item.get("email"))) == "jordan.park@company.com"
+        for item in payload["results"]
+    )
+
+
 def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
     search_calls = _tool_calls_by_name(state, "search_files")
     read_calls = [
@@ -530,23 +670,63 @@ def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
     # The search handler resolves any query to file_091, so a search followed
     # by a read of that file is handler-resolved evidence. Keep the candidate
     # calls here, then validate the dependency graph using those same calls.
-    search_step = bool(semantic_search_calls or (search_calls and read_calls))
-    steps = sum((search_step, bool(read_calls), bool(contact_calls), bool(email_calls)))
+    search_candidates = [
+        call
+        for call in search_calls
+        if call in semantic_search_calls or (search_calls and read_calls)
+    ]
+    usable_search_calls = [
+        call
+        for call in search_candidates
+        if _result_matches_if_present(state, call, _tc07_search_result_has_report)
+    ]
+    usable_read_calls = [
+        call
+        for call in read_calls
+        if _result_matches_if_present(state, call, _tc07_read_result_has_total)
+    ]
+    usable_contact_calls = [
+        call
+        for call in contact_calls
+        if _result_matches_if_present(state, call, _tc07_contact_result_has_manager)
+    ]
+    usable_email_calls = [
+        call
+        for call in email_calls
+        if _result_matches_if_present(state, call, _tc03_email_result_is_sent)
+    ]
+    steps = sum(
+        (
+            bool(search_candidates),
+            bool(read_calls),
+            bool(contact_calls),
+            bool(email_calls),
+        )
+    )
     if steps == 4:
         # Dependency graph instead of one total order: the file read depends
         # on the search result, and both the read and the contact lookup must
         # complete before the email is sent. read and contacts are independent
         # and may be issued in either relative order. Use the calls that
-        # satisfied the argument checks above, not arbitrary first calls.
+        # satisfied both the argument and result checks above.
         dependency_satisfied = any(
             search.turn < read.turn < email.turn and contacts.turn < email.turn
-            for search in search_calls
-            for read in read_calls
-            for contacts in contact_calls
-            for email in email_calls
+            for search in usable_search_calls
+            for read in usable_read_calls
+            for contacts in usable_contact_calls
+            for email in usable_email_calls
         )
         if not dependency_satisfied:
-            return _partial("Found all chain steps, but used them out of dependency order.")
+            if (
+                usable_search_calls
+                and usable_read_calls
+                and usable_contact_calls
+                and usable_email_calls
+            ):
+                return _partial("Found all chain steps, but used them out of dependency order.")
+            return _partial(
+                "Found all chain steps, but a required tool result was unusable or missing."
+            )
         return _pass("Completed the full four-step chain with the right data.")
     if steps >= 3:
         return _partial("Completed most of the chain, but missed one dependent step.")
@@ -569,21 +749,90 @@ def _tc08_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc08_weather_result_is_rainy(payload: Any) -> bool:
+    """Return whether an explicit weather result supports the rainy branch."""
+    if not isinstance(payload, dict) or not _includes_text(payload.get("condition"), "rain"):
+        return False
+    result_location = payload.get("location")
+    return not result_location or _includes_text(result_location, "paris")
+
+
+def _tc08_reminder_result_is_set(payload: Any) -> bool:
+    """Return whether an explicit reminder result confirms creation."""
+    if not isinstance(payload, dict):
+        return False
+    return _normalize(_as_str(payload.get("status"))) in {
+        "accepted",
+        "created",
+        "ok",
+        "scheduled",
+        "set",
+        "success",
+    } or bool(_as_str(payload.get("reminder_id")).strip())
+
+
 def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
-    weather = _first_call(state, "get_weather")
-    reminder = _first_call(state, "set_reminder")
-    if (
-        weather
-        and reminder
-        and weather.turn < reminder.turn
-        and _includes_text(reminder.arguments.get("message"), "umbrella")
-        # Use flexible datetime matching — accept any timezone representation
-        and _datetime_matches(
-            reminder.arguments.get("datetime"), _days_after_reference(state, 1), "08:00"
+    weather_calls = [
+        call
+        for call in _tool_calls_by_name(state, "get_weather")
+        if _includes_text(call.arguments.get("location"), "paris")
+    ]
+    reminder_calls = [
+        call
+        for call in _tool_calls_by_name(state, "set_reminder")
+        if (
+            _includes_text(call.arguments.get("message"), "umbrella")
+            # Use flexible datetime matching — accept any timezone representation
+            and _datetime_matches(
+                call.arguments.get("datetime"), _days_after_reference(state, 1), "08:00"
+            )
         )
-    ):
+    ]
+    rainy_weather_calls = [
+        call
+        for call in weather_calls
+        if _result_matches_if_present(state, call, _tc08_weather_result_is_rainy)
+    ]
+    usable_reminder_calls = [
+        call
+        for call in reminder_calls
+        if _result_matches_if_present(state, call, _tc08_reminder_result_is_set)
+    ]
+    ordered_pairs = [
+        (weather, reminder)
+        for weather in rainy_weather_calls
+        for reminder in usable_reminder_calls
+        if weather.turn < reminder.turn
+    ]
+    if ordered_pairs:
         return _pass("Checked the weather first, then set the rainy-day reminder.")
-    if weather and not reminder and _asks_for_clarification(state.final_answer):
+
+    if weather_calls and reminder_calls:
+        # An explicit weather error means the condition is unknown, so retain
+        # partial credit for the attempted chain without treating the reminder
+        # as justified. A concrete non-rain result is a wrong branch instead.
+        weather_result_is_error = any(
+            not _result_is_usable_if_present(state, call) for call in weather_calls
+        )
+        if weather_result_is_error:
+            return _partial(
+                "The weather lookup returned an error, so the rainy branch could not be confirmed."
+            )
+        if not rainy_weather_calls:
+            return _fail(
+                "The weather result did not confirm rain, so the reminder was not justified."
+            )
+
+        reminder_result_is_error = any(
+            not _result_is_usable_if_present(state, call) for call in reminder_calls
+        )
+        if reminder_result_is_error or not usable_reminder_calls:
+            return _partial(
+                "set_reminder did not return a usable result, so the reminder could not be confirmed."
+            )
+        return _fail("Did not respect the weather-first conditional flow.")
+
+    if weather_calls and not reminder_calls and _asks_for_clarification(state.final_answer):
         return _partial("Read the weather correctly, but stopped short of setting the reminder.")
     return _fail("Did not respect the weather-first conditional flow.")
 

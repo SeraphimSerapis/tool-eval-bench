@@ -80,6 +80,9 @@ class GSM8KPlugin(BenchmarkPlugin):
         on_download_progress = kwargs.get("on_download_progress")
         preloaded = kwargs.get("_preloaded_items")
 
+        if concurrency < 1:
+            raise ValueError("concurrency must be at least 1")
+
         # Load dataset (or use preloaded items from the CLI layer)
         if preloaded is not None:
             all_items = list(preloaded)
@@ -181,7 +184,7 @@ class GSM8KPlugin(BenchmarkPlugin):
 
         elapsed = time.monotonic() - t0
         answered = total - error_count
-        accuracy = (correct_count / answered * 100) if answered > 0 else 0.0
+        accuracy = (correct_count / total * 100) if total > 0 else 0.0
 
         return BenchmarkResult(
             plugin_name=self.name,
@@ -191,7 +194,11 @@ class GSM8KPlugin(BenchmarkPlugin):
             details={
                 "correct": correct_count,
                 "total": total,
+                "answered": answered,
                 "errors": error_count,
+                "completion_rate": round(answered / total * 100, 2) if total else 0.0,
+                "status": "incomplete" if error_count else "completed",
+                "incomplete": error_count > 0,
                 "accuracy": round(accuracy, 2),
                 "n_shots": n_shots,
                 "dataset_size": len(all_items),

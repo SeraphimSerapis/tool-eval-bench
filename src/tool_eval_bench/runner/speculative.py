@@ -26,8 +26,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-import httpx
-
+from tool_eval_bench.domain.measurement import MeasurementClient, MeasurementClientFactory
 from tool_eval_bench.runner.throughput import (
     ThroughputSample,
     TokenizerConfig,
@@ -35,7 +34,6 @@ from tool_eval_bench.runner.throughput import (
     _stream_one,
     calibrate,
 )
-from tool_eval_bench.utils.urls import metrics_request_target
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +108,7 @@ def parse_prometheus_spec_metrics(text: str) -> SpecDecodeCounters:
 
 
 async def scrape_spec_metrics(
-    client: httpx.AsyncClient,
+    client: MeasurementClient,
     base_url: str,
     api_key: str | None = None,
     metrics_url: str | None = None,
@@ -120,9 +118,9 @@ async def scrape_spec_metrics(
     Returns None if the endpoint is unavailable or doesn't contain
     spec decode metrics.
     """
-    url, headers = metrics_request_target(base_url, metrics_url, api_key)
     try:
-        resp = await client.get(url, headers=headers, timeout=5.0)
+        measurement = client
+        resp = await measurement.metrics(metrics_url=metrics_url)
         if resp.status_code != 200:
             return None
         counters = parse_prometheus_spec_metrics(resp.text)
@@ -157,7 +155,7 @@ class SpecDecodeInfo:
 
 
 async def detect_spec_decoding(
-    client: httpx.AsyncClient,
+    client: MeasurementClient,
     base_url: str,
     api_key: str | None = None,
     backend_hint: str = "auto",
@@ -173,9 +171,9 @@ async def detect_spec_decoding(
     info = SpecDecodeInfo()
 
     # Try Prometheus endpoint
-    url, headers = metrics_request_target(base_url, metrics_url, api_key)
     try:
-        resp = await client.get(url, headers=headers, timeout=5.0)
+        measurement = client
+        resp = await measurement.metrics(metrics_url=metrics_url)
         if resp.status_code == 200:
             text = resp.text
 
@@ -408,7 +406,7 @@ def _get_prompt_for_type(prompt_type: str) -> str | None:
 
 
 async def measure_spec_single(
-    client: httpx.AsyncClient,
+    client: MeasurementClient,
     base_url: str,
     model: str,
     *,
@@ -457,10 +455,15 @@ async def measure_spec_single(
 
     # Run the generation
     sample = await _stream_one(client, base_url, model, messages, tg, api_key, tok_cfg)
-    sample.depth = depth
+    # Typed prompts are fixed strings and intentionally do not include the
+    # requested filler/context depth.  Keep the reported depth honest instead
+    # of labeling a fixed prompt as if it contained ``depth`` tokens.
+    effective_depth = depth if fixed_prompt is None else 0
+    sample.depth = effective_depth
     sample.concurrency = 1
-    sample.requested_pp = pp
-    sample.requested_depth = depth
+    if fixed_prompt is None:
+        sample.requested_pp = pp
+        sample.requested_depth = depth
 
     # Convert to SpecDecodeSample
     spec_sample = SpecDecodeSample.from_throughput_sample(
@@ -523,6 +526,7 @@ async def run_spec_bench(
     depths: list[int] | None = None,
     api_key: str | None = None,
     timeout: float = 180.0,
+    client_factory: MeasurementClientFactory,
     spec_method: str = "auto",
     baseline_tg_tps: float | None = None,
     prompt_types: list[str] | None = None,
@@ -557,9 +561,12 @@ async def run_spec_bench(
     depths = depths or [0]
     prompt_types = prompt_types or ["filler", "code", "structured"]
 
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(timeout),
-        limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+    async with client_factory(
+        base_url=base_url,
+        api_key=api_key,
+        timeout=timeout,
+        max_connections=10,
+        max_keepalive_connections=5,
     ) as client:
         # Calibrate tokenizer
         tok_cfg = await calibrate(client, base_url, model, api_key)

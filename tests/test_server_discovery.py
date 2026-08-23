@@ -60,10 +60,11 @@ async def test_discovery_skips_connection_errors_and_uses_models_fallback(
 
 def test_discover_server_renders_interactive_success(monkeypatch: pytest.MonkeyPatch) -> None:
     console = Console(record=True, width=100)
+    discovered = ("http://localhost:8080", "llamacpp", "llama.cpp", 8080)
     monkeypatch.setattr(
         server.asyncio,
         "run",
-        lambda coro: ("http://localhost:8080", "llamacpp", "llama.cpp", 8080),
+        lambda coro: (coro.close(), discovered)[1],
     )
 
     assert server.discover_server(console=console) == ("http://localhost:8080", "llamacpp")

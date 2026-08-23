@@ -353,9 +353,19 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
     if dt <= 0:
         dt = 1.0  # avoid division by zero
 
-    d_accepted = curr.accepted_tokens - prev.accepted_tokens
-    d_drafted = curr.draft_tokens - prev.draft_tokens
-    d_drafts = curr.num_drafts - prev.num_drafts
+    def counter_delta(previous: float, current: float) -> float:
+        """Return a non-negative delta, treating a decrease as a reset.
+
+        Prometheus counters reset when an engine restarts or a worker is
+        replaced.  Subtracting across that boundary produces negative rates
+        and bogus acceptance ratios.  The post-reset value is the activity
+        observed during the new counter epoch.
+        """
+        return current - previous if current >= previous else max(0.0, current)
+
+    d_accepted = counter_delta(prev.accepted_tokens, curr.accepted_tokens)
+    d_drafted = counter_delta(prev.draft_tokens, curr.draft_tokens)
+    d_drafts = counter_delta(prev.num_drafts, curr.num_drafts)
 
     had_activity = d_drafted > 0 or d_accepted > 0
 
@@ -366,12 +376,12 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
     prompt_tps_val = curr.prompt_tps
 
     if gen_tps == 0 and dt > 0:
-        d_gen_tokens = curr.generation_tokens_total - prev.generation_tokens_total
+        d_gen_tokens = counter_delta(prev.generation_tokens_total, curr.generation_tokens_total)
         if d_gen_tokens > 0:
             gen_tps = d_gen_tokens / dt
 
     if prompt_tps_val == 0 and dt > 0:
-        d_prompt_tokens = curr.prompt_tokens_total - prev.prompt_tokens_total
+        d_prompt_tokens = counter_delta(prev.prompt_tokens_total, curr.prompt_tokens_total)
         if d_prompt_tokens > 0:
             prompt_tps_val = d_prompt_tokens / dt
 
@@ -383,11 +393,17 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
 
     # llama.cpp counter-derived fallback for throughput
     if gen_tps == 0 and dt > 0:
-        d_lc_gen = curr.llamacpp_predicted_tokens_total - prev.llamacpp_predicted_tokens_total
+        d_lc_gen = counter_delta(
+            prev.llamacpp_predicted_tokens_total,
+            curr.llamacpp_predicted_tokens_total,
+        )
         if d_lc_gen > 0:
             gen_tps = d_lc_gen / dt
     if prompt_tps_val == 0 and dt > 0:
-        d_lc_prompt = curr.llamacpp_prompt_tokens_total - prev.llamacpp_prompt_tokens_total
+        d_lc_prompt = counter_delta(
+            prev.llamacpp_prompt_tokens_total,
+            curr.llamacpp_prompt_tokens_total,
+        )
         if d_lc_prompt > 0:
             prompt_tps_val = d_lc_prompt / dt
 

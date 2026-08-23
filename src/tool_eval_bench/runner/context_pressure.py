@@ -5,11 +5,14 @@ heavily utilized before the model needs to make tool-calling decisions.
 
 Usage::
 
-    pressure = ContextPressureConfig(ratio=0.75, context_size=32768)
-    messages = await build_pressure_messages(
-        base_url, model, api_key, pressure,
+    pressure = await prepare_context_pressure(
+        base_url, model, api_key, ratio=0.75,
+        client_factory=client_factory,
     )
+    messages = build_pressure_messages(pressure)
     # Prepend these messages before the real scenario messages.
+
+``client_factory`` is supplied by the application composition layer.
 
 Auto-detection strategy for context size:
   1. ``/v1/models`` → ``max_model_len`` (vLLM)
@@ -25,11 +28,8 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-import httpx
-
+from tool_eval_bench.domain.measurement import MeasurementClientFactory
 from tool_eval_bench.domain.models import ChatMessage
-from tool_eval_bench.utils.urls import metrics_request_target
-from tool_eval_bench.utils.urls import models_url as _models_url
 
 logger = logging.getLogger(__name__)
 
@@ -301,13 +301,6 @@ class ContextPressureConfig:
 # ---------------------------------------------------------------------------
 
 
-def _headers(api_key: str | None) -> dict[str, str]:
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    return headers
-
-
 # Regex to extract num_gpu_blocks and block_size from vllm:cache_config_info
 _CACHE_CONFIG_RE = re.compile(
     r"^vllm:cache_config_info\{[^}]*"
@@ -361,6 +354,8 @@ async def detect_kv_capacity(
     base_url: str,
     api_key: str | None = None,
     metrics_url: str | None = None,
+    *,
+    client_factory: MeasurementClientFactory,
 ) -> KvCapacityInfo | None:
     """Detect KV cache info from vLLM Prometheus /metrics.
 
@@ -377,11 +372,9 @@ async def detect_kv_capacity(
     Returns a :class:`KvCapacityInfo`, or ``None`` if detection fails
     (non-vLLM servers, metrics endpoint unavailable, etc.).
     """
-    url, hdrs = metrics_request_target(base_url, metrics_url, api_key)
-
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, headers=hdrs)
+        async with client_factory(base_url=base_url, api_key=api_key, timeout=10.0) as client:
+            resp = await client.metrics(metrics_url=metrics_url)
             if resp.status_code != 200:
                 logger.debug("KV capacity detection: /metrics returned %d", resp.status_code)
                 return None
@@ -441,6 +434,8 @@ async def detect_context_size(
     base_url: str,
     model: str,
     api_key: str | None = None,
+    *,
+    client_factory: MeasurementClientFactory,
 ) -> int | None:
     """Auto-detect context window size from /v1/models.
 
@@ -451,12 +446,9 @@ async def detect_context_size(
 
     Returns the context size in tokens, or None if detection fails.
     """
-    url = _models_url(base_url)
-    hdrs = _headers(api_key)
-
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, headers=hdrs)
+        async with client_factory(base_url=base_url, api_key=api_key, timeout=10.0) as client:
+            resp = await client.models()
             resp.raise_for_status()
             data = resp.json()
     except Exception as exc:
@@ -492,19 +484,13 @@ async def detect_context_size(
 # ---------------------------------------------------------------------------
 
 
-def _tokenize_url(base_url: str) -> str:
-    """Build the /tokenize URL."""
-    b = base_url.rstrip("/")
-    if b.endswith("/v1"):
-        b = b[:-3]
-    return f"{b}/tokenize"
-
-
 async def count_tokens(
     text: str,
     base_url: str,
     model: str,
     api_key: str | None = None,
+    *,
+    client_factory: MeasurementClientFactory,
 ) -> int | None:
     """Count tokens using the server's /tokenize endpoint.
 
@@ -513,13 +499,9 @@ async def count_tokens(
     unavailable (non-vLLM servers), in which case callers should fall
     back to character-based estimation.
     """
-    url = _tokenize_url(base_url)
-    hdrs = _headers(api_key)
-    payload = {"model": model, "prompt": text}
-
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, json=payload, headers=hdrs)
+        async with client_factory(base_url=base_url, api_key=api_key, timeout=10.0) as client:
+            resp = await client.tokenize(model=model, text=text)
             resp.raise_for_status()
             data = resp.json()
             count = data.get("count")
@@ -535,6 +517,8 @@ async def count_messages_tokens(
     base_url: str,
     model: str,
     api_key: str | None = None,
+    *,
+    client_factory: MeasurementClientFactory,
 ) -> int | None:
     """Count total tokens in a list of chat messages.
 
@@ -545,7 +529,7 @@ async def count_messages_tokens(
         return 0
     # Concatenate all content for a single tokenization call
     all_text = "\n".join(msg.get("content") or "" for msg in messages)
-    count = await count_tokens(all_text, base_url, model, api_key)
+    count = await count_tokens(all_text, base_url, model, api_key, client_factory=client_factory)
     if count is None:
         return None
     # Add ~4 tokens per message for chat template overhead (role, delimiters)
@@ -784,6 +768,7 @@ async def calibrate_pressure_messages(
     model: str,
     api_key: str | None = None,
     *,
+    client_factory: MeasurementClientFactory,
     seed: int | None = None,
 ) -> tuple[list[ChatMessage], int]:
     """Calibrate filler messages to hit the exact token target.
@@ -798,7 +783,9 @@ async def calibrate_pressure_messages(
     if not messages or target_tokens <= 0:
         return messages, 0
 
-    actual = await count_messages_tokens(messages, base_url, model, api_key)
+    actual = await count_messages_tokens(
+        messages, base_url, model, api_key, client_factory=client_factory
+    )
     if actual is None:
         # Tokenizer unavailable — return char-based estimate
         est = sum(len(m.get("content") or "") / _CHARS_PER_TOKEN_ESTIMATE for m in messages)
@@ -842,7 +829,9 @@ async def calibrate_pressure_messages(
                 break
 
         # Re-measure after trim
-        recounted = await count_messages_tokens(messages, base_url, model, api_key)
+        recounted = await count_messages_tokens(
+            messages, base_url, model, api_key, client_factory=client_factory
+        )
         final = recounted if recounted is not None else actual - delta
         logger.info(
             "Filler calibrated: %d → %d tokens (target %d, %.1f%% accuracy)",
@@ -872,7 +861,9 @@ async def calibrate_pressure_messages(
             messages[i]["content"] = (messages[i].get("content") or "") + "\n\n" + extra_text
             break
 
-    recounted = await count_messages_tokens(messages, base_url, model, api_key)
+    recounted = await count_messages_tokens(
+        messages, base_url, model, api_key, client_factory=client_factory
+    )
     final = recounted if recounted is not None else actual + shortfall
     logger.info(
         "Filler calibrated: %d → %d tokens (target %d, %.1f%% accuracy)",
@@ -896,6 +887,8 @@ async def prepare_context_pressure(
     ratio: float,
     context_size_override: int | None = None,
     metrics_url: str | None = None,
+    *,
+    client_factory: MeasurementClientFactory,
 ) -> ContextPressureConfig:
     """Detect context size and build the pressure config.
 
@@ -915,7 +908,9 @@ async def prepare_context_pressure(
         ctx_size: int = context_size_override
         logger.info("Using user-provided context size: %d", ctx_size)
     else:
-        detected_context = await detect_context_size(base_url, model, api_key)
+        detected_context = await detect_context_size(
+            base_url, model, api_key, client_factory=client_factory
+        )
         if detected_context is None:
             raise ValueError(
                 "Could not auto-detect context window size from /v1/models. "
@@ -942,6 +937,7 @@ async def prepare_context_pressure(
             base_url,
             api_key,
             metrics_url=metrics_url,
+            client_factory=client_factory,
         )
         if kv_info is not None and not kv_info.is_hybrid and kv_info.capacity < ctx_size:
             logger.info(

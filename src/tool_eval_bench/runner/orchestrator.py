@@ -14,7 +14,6 @@ import hashlib
 import json
 import logging
 import random
-import re
 import time
 from typing import Any
 
@@ -214,17 +213,37 @@ def _repair_json_str(s: str) -> str:
     except json.JSONDecodeError:
         pass
 
-    # Close unterminated strings: count unescaped quotes
     repaired = s
-    n_quotes = len(re.findall(r'(?<!\\)"', repaired))
-    if n_quotes % 2 != 0:
-        repaired += '"'
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for char in s:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
 
-    # Close brackets/braces
-    opens = repaired.count("{") - repaired.count("}")
-    repaired += "}" * max(0, opens)
-    opens_arr = repaired.count("[") - repaired.count("]")
-    repaired += "]" * max(0, opens_arr)
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            stack.append("}")
+        elif char == "[":
+            stack.append("]")
+        elif char in "}]":
+            if not stack or stack[-1] != char:
+                logger.warning("Could not repair malformed tool-call arguments: %s", s[:120])
+                return "{}"
+            stack.pop()
+
+    if in_string:
+        if escaped:
+            repaired += "\\"
+        repaired += '"'
+    repaired += "".join(reversed(stack))
 
     try:
         json.loads(repaired)
@@ -689,6 +708,8 @@ async def run_all_scenarios(
     async def _run_one(idx: int, scenario: ScenarioDefinition) -> None:
         nonlocal progress_counter
         async with sem:
+            if on_scenario_start:
+                await on_scenario_start(scenario, idx, total)
             result = await run_scenario(
                 adapter,
                 model=model,

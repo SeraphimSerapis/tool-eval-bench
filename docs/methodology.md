@@ -307,7 +307,8 @@ noise values are implementation details never seen in training data.
 Throughput benchmarking (`--perf`) is **separate from quality scoring** and
 uses a different methodology:
 
-- **Prefill speed (pp t/s):** Measured from TTFT with known prompt token count
+- **Prefill speed (pp t/s):** Measured from request start to the first usable
+  content or tool-call delta, with a known prompt token count
 - **Generation speed (tg t/s):** Measured from stream timing between first
   and last content token
 - **Effective generation speed:** `tg_tokens ÷ wall-clock generation time` —
@@ -488,7 +489,7 @@ The model is asked to show its work and end with `#### <answer>`.
 |---|---|
 | Dataset | `cais/mmlu` (14,042 test questions, 57 subjects, 4 categories) |
 | Method | 5-shot per-subject prompting using dev-split exemplars |
-| Extraction | Single letter → "the answer is X" → first standalone A/B/C/D |
+| Extraction | Single letter → explicit final answer → final standalone A/B/C/D |
 | Scoring | Exact letter match (A/B/C/D) |
 | Categories | STEM, Humanities, Social Sciences, Other |
 
@@ -507,6 +508,13 @@ same subject.  This avoids test-set contamination in few-shot examples.
 IFEval uses 25 deterministic constraint checkers (word count, keyword
 existence, JSON format, bullet lists, language detection, etc.).  Each prompt
 has 1–4 constraints; a prompt passes only if ALL its constraints are satisfied.
+Unknown instruction IDs fail closed. Exact-count, constrained-response,
+language, and postscript checks use the contract carried by each dataset row.
+
+All three plugins score against the total selected item count. Request errors
+therefore reduce the displayed score and mark the run `incomplete`; they are
+not removed from the denominator. The result also records answered items and
+completion rate so callers can distinguish wrong answers from missing work.
 
 ### Dataset Loading
 

@@ -46,6 +46,21 @@ class _ImmediateEventLoop:
         pass
 
 
+def _measurement_client_factory(client: AsyncMock):
+    """Bind one semantic fake client to a runner call."""
+
+    return lambda **kwargs: client
+
+
+def _unused_measurement_client_factory(**kwargs: object) -> AsyncMock:
+    """Factory for paths whose token-count operation is mocked."""
+
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    return client
+
+
 # ---------------------------------------------------------------------------
 # compute_fill_budget
 # ---------------------------------------------------------------------------
@@ -308,17 +323,23 @@ class TestDetectContextSize:
         mock_response = {
             "data": [{"id": "test-model", "max_model_len": 32768, "root": "test-model"}]
         }
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
             resp = MagicMock()
             resp.status_code = 200
             resp.json.return_value = mock_response
-            instance.get = AsyncMock(return_value=resp)
+            instance.models = AsyncMock(return_value=resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            result = await detect_context_size("http://localhost:8080", "test-model")
+            result = await detect_context_size(
+                "http://localhost:8080",
+                "test-model",
+                client_factory=_measurement_client_factory(instance),
+            )
             assert result == 32768
 
     @pytest.mark.asyncio
@@ -327,17 +348,23 @@ class TestDetectContextSize:
         from unittest.mock import MagicMock
 
         mock_response = {"data": [{"id": "gpt-4o", "context_window": 128000}]}
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
             resp = MagicMock()
             resp.status_code = 200
             resp.json.return_value = mock_response
-            instance.get = AsyncMock(return_value=resp)
+            instance.models = AsyncMock(return_value=resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            result = await detect_context_size("http://localhost:4000", "gpt-4o")
+            result = await detect_context_size(
+                "http://localhost:4000",
+                "gpt-4o",
+                client_factory=_measurement_client_factory(instance),
+            )
             assert result == 128000
 
     @pytest.mark.asyncio
@@ -346,30 +373,42 @@ class TestDetectContextSize:
         from unittest.mock import MagicMock
 
         mock_response = {"data": [{"id": "test-model"}]}
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
             resp = MagicMock()
             resp.status_code = 200
             resp.json.return_value = mock_response
-            instance.get = AsyncMock(return_value=resp)
+            instance.models = AsyncMock(return_value=resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            result = await detect_context_size("http://localhost:8080", "test-model")
+            result = await detect_context_size(
+                "http://localhost:8080",
+                "test-model",
+                client_factory=_measurement_client_factory(instance),
+            )
             assert result is None
 
     @pytest.mark.asyncio
     async def test_connection_error_returns_none(self) -> None:
         """Network errors should return None, not raise."""
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
-            instance.get = AsyncMock(side_effect=ConnectionError("refused"))
+            instance.models = AsyncMock(side_effect=ConnectionError("refused"))
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            result = await detect_context_size("http://localhost:8080", "test-model")
+            result = await detect_context_size(
+                "http://localhost:8080",
+                "test-model",
+                client_factory=_measurement_client_factory(instance),
+            )
             assert result is None
 
 
@@ -390,17 +429,21 @@ class TestDetectKvCapacity:
             'vllm:cache_config_info{block_size="16",engine="0",'
             'num_gpu_blocks="7338",num_cpu_blocks="None"} 1.0\n'
         )
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
             resp = MagicMock()
             resp.status_code = 200
             resp.text = metrics_text
-            instance.get = AsyncMock(return_value=resp)
+            instance.metrics = AsyncMock(return_value=resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            result = await detect_kv_capacity("http://localhost:8080")
+            result = await detect_kv_capacity(
+                "http://localhost:8080", client_factory=_measurement_client_factory(instance)
+            )
             assert result is not None
             assert result.capacity == 7338 * 16  # 117,408
             assert result.num_blocks == 7338
@@ -416,17 +459,21 @@ class TestDetectKvCapacity:
         metrics_text = (
             'vllm:cache_config_info{num_gpu_blocks="5000",block_size="32",engine="0"} 1.0\n'
         )
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
             resp = MagicMock()
             resp.status_code = 200
             resp.text = metrics_text
-            instance.get = AsyncMock(return_value=resp)
+            instance.metrics = AsyncMock(return_value=resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            result = await detect_kv_capacity("http://localhost:8080")
+            result = await detect_kv_capacity(
+                "http://localhost:8080", client_factory=_measurement_client_factory(instance)
+            )
             assert result is not None
             assert result.capacity == 5000 * 32
 
@@ -439,30 +486,38 @@ class TestDetectKvCapacity:
             "# HELP http_requests_total Total requests\n"
             'http_requests_total{handler="/v1/chat/completions"} 100.0\n'
         )
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
             resp = MagicMock()
             resp.status_code = 200
             resp.text = metrics_text
-            instance.get = AsyncMock(return_value=resp)
+            instance.metrics = AsyncMock(return_value=resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            result = await detect_kv_capacity("http://localhost:8080")
+            result = await detect_kv_capacity(
+                "http://localhost:8080", client_factory=_measurement_client_factory(instance)
+            )
             assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_on_connection_error(self) -> None:
         """Network errors should return None gracefully."""
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
-            instance.get = AsyncMock(side_effect=ConnectionError("refused"))
+            instance.metrics = AsyncMock(side_effect=ConnectionError("refused"))
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            result = await detect_kv_capacity("http://localhost:8080")
+            result = await detect_kv_capacity(
+                "http://localhost:8080", client_factory=_measurement_client_factory(instance)
+            )
             assert result is None
 
     @pytest.mark.asyncio
@@ -470,16 +525,20 @@ class TestDetectKvCapacity:
         """Servers without /metrics should return None."""
         from unittest.mock import MagicMock
 
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
             resp = MagicMock()
             resp.status_code = 404
-            instance.get = AsyncMock(return_value=resp)
+            instance.metrics = AsyncMock(return_value=resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            result = await detect_kv_capacity("http://localhost:8080")
+            result = await detect_kv_capacity(
+                "http://localhost:8080", client_factory=_measurement_client_factory(instance)
+            )
             assert result is None
 
     @pytest.mark.asyncio
@@ -490,12 +549,14 @@ class TestDetectKvCapacity:
         metrics_text = (
             'vllm:cache_config_info{block_size="16",num_gpu_blocks="4096",engine="0"} 1.0\n'
         )
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
             resp = MagicMock()
             resp.status_code = 200
             resp.text = metrics_text
-            instance.get = AsyncMock(return_value=resp)
+            instance.metrics = AsyncMock(return_value=resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
@@ -503,12 +564,14 @@ class TestDetectKvCapacity:
             result = await detect_kv_capacity(
                 "http://localhost:8080",
                 metrics_url="http://other-host:9090/metrics",
+                client_factory=_measurement_client_factory(instance),
             )
             assert result is not None
             assert result.capacity == 4096 * 16
             # Verify the custom URL was used
-            call_args = instance.get.call_args
-            assert "other-host:9090" in call_args[0][0]
+            assert (
+                instance.metrics.call_args.kwargs["metrics_url"] == "http://other-host:9090/metrics"
+            )
 
     @pytest.mark.asyncio
     async def test_detects_hybrid_model(self) -> None:
@@ -521,17 +584,21 @@ class TestDetectKvCapacity:
             'mamba_cache_mode="align",mamba_ssm_cache_dtype="float32",'
             'num_gpu_blocks="1997",num_cpu_blocks="None"} 1.0\n'
         )
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
             resp = MagicMock()
             resp.status_code = 200
             resp.text = metrics_text
-            instance.get = AsyncMock(return_value=resp)
+            instance.metrics = AsyncMock(return_value=resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            result = await detect_kv_capacity("http://localhost:8080")
+            result = await detect_kv_capacity(
+                "http://localhost:8080", client_factory=_measurement_client_factory(instance)
+            )
             assert result is not None
             assert result.capacity == 1997 * 16
             assert result.is_hybrid is True
@@ -546,17 +613,21 @@ class TestDetectKvCapacity:
             'mamba_cache_mode="none",num_gpu_blocks="7338",'
             'num_cpu_blocks="None"} 1.0\n'
         )
-        with patch("tool_eval_bench.runner.context_pressure.httpx.AsyncClient") as MockClient:
+        with patch(
+            "tool_eval_bench.runner.context_pressure.HTTPMeasurementClient", create=True
+        ) as MockClient:
             instance = AsyncMock()
             resp = MagicMock()
             resp.status_code = 200
             resp.text = metrics_text
-            instance.get = AsyncMock(return_value=resp)
+            instance.metrics = AsyncMock(return_value=resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            result = await detect_kv_capacity("http://localhost:8080")
+            result = await detect_kv_capacity(
+                "http://localhost:8080", client_factory=_measurement_client_factory(instance)
+            )
             assert result is not None
             assert result.capacity == 7338 * 16
             assert result.is_hybrid is False
@@ -577,6 +648,7 @@ class TestPrepareContextPressure:
             None,
             ratio=0.75,
             context_size_override=32768,
+            client_factory=_unused_measurement_client_factory,
         )
         assert cfg.detected_context == 32768
         assert cfg.ratio == 0.75
@@ -595,6 +667,7 @@ class TestPrepareContextPressure:
                     "test-model",
                     None,
                     ratio=0.75,
+                    client_factory=_unused_measurement_client_factory,
                 )
 
     @pytest.mark.asyncio
@@ -616,6 +689,7 @@ class TestPrepareContextPressure:
                 "test-model",
                 None,
                 ratio=0.9,
+                client_factory=_unused_measurement_client_factory,
             )
             # Should be capped to KV capacity, not max_model_len
             assert cfg.detected_context == 117408
@@ -641,6 +715,7 @@ class TestPrepareContextPressure:
                 "test-model",
                 None,
                 ratio=0.75,
+                client_factory=_unused_measurement_client_factory,
             )
             assert cfg.detected_context == 32768
 
@@ -663,6 +738,7 @@ class TestPrepareContextPressure:
                 "test-model",
                 None,
                 ratio=1.0,
+                client_factory=_unused_measurement_client_factory,
             )
             # Should trust max_model_len, NOT cap to 31,952
             assert cfg.detected_context == 262144
@@ -687,6 +763,7 @@ class TestPrepareContextPressure:
                 "test-model",
                 None,
                 ratio=0.9,
+                client_factory=_unused_measurement_client_factory,
             )
             assert cfg.detected_context == 262144
 
@@ -703,6 +780,7 @@ class TestPrepareContextPressure:
                 None,
                 ratio=0.9,
                 context_size_override=32768,
+                client_factory=_unused_measurement_client_factory,
             )
             assert cfg.detected_context == 32768
             mock_kv.assert_not_called()
@@ -865,6 +943,7 @@ class TestCalibratePressureMessages:
             1000,
             "http://localhost",
             "model",
+            client_factory=_unused_measurement_client_factory,
         )
         assert msgs == []
         assert actual == 0
@@ -880,6 +959,7 @@ class TestCalibratePressureMessages:
             0,
             "http://localhost",
             "model",
+            client_factory=_unused_measurement_client_factory,
         )
         assert actual == 0
 
@@ -898,6 +978,7 @@ class TestCalibratePressureMessages:
                 5000,
                 "http://localhost",
                 "model",
+                client_factory=_unused_measurement_client_factory,
             )
             assert len(result) == 4  # unchanged
             assert actual > 0  # char-based estimate
@@ -920,6 +1001,7 @@ class TestCalibratePressureMessages:
                 target,
                 "http://localhost",
                 "model",
+                client_factory=_unused_measurement_client_factory,
             )
             assert actual == 5050
             assert result[2]["content"] == original_content  # unchanged
@@ -941,6 +1023,7 @@ class TestCalibratePressureMessages:
                 target,
                 "http://localhost",
                 "model",
+                client_factory=_unused_measurement_client_factory,
             )
             assert len(result) == 6  # same number of messages
             assert len(result[-2]["content"]) < original_len  # trimmed
@@ -965,6 +1048,7 @@ class TestCalibratePressureMessages:
                 target,
                 "http://localhost",
                 "model",
+                client_factory=_unused_measurement_client_factory,
             )
             # Message count must NOT change
             assert len(result) == n_before
@@ -989,6 +1073,7 @@ class TestCalibratePressureMessages:
                 target,
                 "http://localhost",
                 "model",
+                client_factory=_unused_measurement_client_factory,
             )
             assert len(result) == 4  # same number of messages
             assert len(result[2]["content"]) > original_len  # extended
@@ -1012,6 +1097,7 @@ class TestCalibratePressureMessages:
                 "http://localhost",
                 "model",
                 seed=42,
+                client_factory=_unused_measurement_client_factory,
             )
             result_b, _ = await calibrate_pressure_messages(
                 msgs_b,
@@ -1019,6 +1105,7 @@ class TestCalibratePressureMessages:
                 "http://localhost",
                 "model",
                 seed=42,
+                client_factory=_unused_measurement_client_factory,
             )
             # Extended content should be identical
             assert result_a[2]["content"] == result_b[2]["content"]
@@ -1041,12 +1128,14 @@ class TestCalibratePressureMessages:
                 target,
                 "http://localhost",
                 "model",
+                client_factory=_unused_measurement_client_factory,
             )
             result_b, _ = await calibrate_pressure_messages(
                 msgs_b,
                 target,
                 "http://localhost",
                 "model",
+                client_factory=_unused_measurement_client_factory,
             )
             # Extended content should differ (different time.time_ns() seeds)
             assert result_a[2]["content"] != result_b[2]["content"]
@@ -1300,7 +1389,7 @@ class TestPressureSweepIntegration:
         mock_resolve.return_value = [scenario]
 
         summary = self._make_summary(["pass"])
-        mock_asyncio.run.return_value = summary
+        mock_asyncio.run.side_effect = lambda coro: (coro.close(), summary)[1]
 
         console = Console(file=io.StringIO(), force_terminal=False)
         args = self._make_args(sweep="0.5-1.0", steps=3, context_size=32768)
@@ -1365,7 +1454,8 @@ class TestPressureSweepIntegration:
         fail_summary = self._make_summary(["fail"])
 
         # Level 1: pass, Level 2: fail, Level 3: fail → stop
-        mock_asyncio.run.side_effect = [pass_summary, fail_summary, fail_summary]
+        summaries = iter([pass_summary, fail_summary, fail_summary])
+        mock_asyncio.run.side_effect = lambda coro: (coro.close(), next(summaries))[1]
 
         console = Console(file=io.StringIO(), force_terminal=False)
         args = self._make_args(sweep="0.5-1.0", steps=4, context_size=32768)

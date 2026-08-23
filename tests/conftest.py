@@ -7,12 +7,50 @@ duplicated across 6+ test files.
 from __future__ import annotations
 
 import json
+from contextlib import AbstractAsyncContextManager
+from typing import Any
+
+import httpx
 
 from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
     ToolResultRecord,
 )
+
+
+# Legacy runner unit tests historically passed a raw MockTransport client into
+# measurement internals. Keep that compatibility in test code while production
+# runners use only the semantic MeasurementClient port.
+async def _test_tokenize(self: httpx.AsyncClient, *, model: str, text: str) -> httpx.Response:
+    return await self.post("http://test/tokenize", json={"model": model, "prompt": text})
+
+
+async def _test_models(self: httpx.AsyncClient) -> httpx.Response:
+    return await self.get("http://test/v1/models")
+
+
+async def _test_metrics(
+    self: httpx.AsyncClient, *, metrics_url: str | None = None
+) -> httpx.Response:
+    return await self.get(metrics_url or "http://test/metrics")
+
+
+async def _test_completion(self: httpx.AsyncClient, payload: dict[str, Any]) -> httpx.Response:
+    return await self.post("http://test/v1/chat/completions", json=payload)
+
+
+def _test_stream_completion(
+    self: httpx.AsyncClient, payload: dict[str, Any]
+) -> AbstractAsyncContextManager[httpx.Response]:
+    return self.stream("POST", "http://test/v1/chat/completions", json=payload)
+
+
+httpx.AsyncClient.tokenize = _test_tokenize  # type: ignore[attr-defined]
+httpx.AsyncClient.models = _test_models  # type: ignore[attr-defined]
+httpx.AsyncClient.metrics = _test_metrics  # type: ignore[attr-defined]
+httpx.AsyncClient.completion = _test_completion  # type: ignore[attr-defined]
+httpx.AsyncClient.stream_completion = _test_stream_completion  # type: ignore[attr-defined]
 
 
 def make_state(

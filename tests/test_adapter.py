@@ -753,6 +753,50 @@ async def test_stream_reasoning_content() -> None:
 
     assert result.content == "The answer is 42"
     assert result.reasoning == "Let me think..."
+    assert result.ttft_ms is not None
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_reasoning_only_starts_ttft() -> None:
+    """A reasoning-only stream still has a first generated token."""
+    body = _sse_lines(
+        json.dumps({"choices": [{"delta": {"reasoning": "Thinking..."}}]}),
+    )
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        stream=True,
+    )
+
+    assert result.content == ""
+    assert result.reasoning == "Thinking..."
+    assert result.ttft_ms is not None
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_empty_reasoning_does_not_start_ttft() -> None:
+    """Empty reasoning metadata is not generated output."""
+    body = _sse_lines(json.dumps({"choices": [{"delta": {"reasoning": ""}}]}))
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        stream=True,
+    )
+
+    assert result.reasoning is None
+    assert result.ttft_ms is None
     await adapter.aclose()
 
 
@@ -823,6 +867,71 @@ async def test_stream_usage_extraction() -> None:
 
     assert result.prompt_tokens == 10
     assert result.completion_tokens == 5
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_requests_usage_by_default() -> None:
+    """Streaming asks compatible servers to include the final usage chunk."""
+    request_bodies: list[dict] = []
+    body = _sse_lines(
+        json.dumps({"choices": [{"delta": {"content": "ok"}}]}),
+        json.dumps({"choices": [], "usage": {"prompt_tokens": 2, "completion_tokens": 1}}),
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            content=body.encode(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        stream=True,
+    )
+
+    assert request_bodies[0]["stream_options"] == {"include_usage": True}
+    assert result.prompt_tokens == 2
+    assert result.completion_tokens == 1
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_preserves_explicit_stream_options() -> None:
+    """Caller-supplied stream options take precedence over defaults."""
+    stream_options = {"include_usage": False, "custom_option": "preserve"}
+    request_bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            content=_sse_lines(
+                json.dumps({"choices": [{"delta": {"content": "ok"}}]}),
+            ).encode(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        extra_params={"stream_options": stream_options},
+        stream=True,
+    )
+
+    assert request_bodies[0]["stream_options"] == stream_options
+    assert stream_options == {"include_usage": False, "custom_option": "preserve"}
     await adapter.aclose()
 
 
@@ -1363,3 +1472,55 @@ def test_repair_streamed_tool_args_nested() -> None:
 
     result = _repair_streamed_tool_args('{"outer": {"inner": 1')
     assert json.loads(result) == {"outer": {"inner": 1}}
+
+
+def test_repair_streamed_tool_args_tracks_nested_arrays_and_string_punctuation() -> None:
+    """Only structural delimiters outside strings should affect repair."""
+    from tool_eval_bench.adapters.openai_compat import _repair_streamed_tool_args
+
+    result = _repair_streamed_tool_args('{"items": [{"text": "a ] }", "n": 1')
+    assert json.loads(result) == {"items": [{"text": "a ] }", "n": 1}]}
+
+
+@pytest.mark.asyncio
+async def test_stream_json_200_is_parsed_when_endpoint_ignores_stream() -> None:
+    """A valid JSON 200 must not become an empty streamed completion."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["stream"] is True
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "non-streamed"}}]},
+        )
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        stream=True,
+    )
+
+    assert result.content == "non-streamed"
+    assert result.tool_calls == []
+    assert result.ttft_ms is None
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_accepts_sse_data_without_space() -> None:
+    """The optional space after the SSE ``data:`` field is not required."""
+    body = 'data:{"choices":[{"delta":{"content":"ok"}}]}\n\ndata:[DONE]\n\n'
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        stream=True,
+    )
+
+    assert result.content == "ok"
+    await adapter.aclose()

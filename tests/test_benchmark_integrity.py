@@ -130,7 +130,9 @@ async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.Mo
         raw_log="rerun trace",
     )
     rerun_summary = score_results([rerun_result], [rerun])
-    monkeypatch.setattr(service_module, "ALL_SCENARIOS", [prior, rerun])
+    # The saved definition can come from a held-out pack, so it need not be in
+    # the public scenario registry available during resume.
+    monkeypatch.setattr(service_module, "ALL_SCENARIOS", [rerun])
     monkeypatch.setattr(service_module, "run_all_scenarios", AsyncMock(return_value=rerun_summary))
 
     reporter = MagicMock()
@@ -155,6 +157,7 @@ async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.Mo
                 "raw_log": "prior trace",
             }
         ],
+        resume_scenarios=[prior, rerun],
     )
 
     merged_summary = reporter.write_scenario_report.call_args.args[2]
@@ -186,6 +189,51 @@ async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.Mo
         metadata=result["metadata"],
     )
     assert result["config"]["config_fingerprint"] == full_config["config_fingerprint"]
+
+
+@pytest.mark.asyncio
+async def test_fully_checkpointed_interruption_finalizes_without_rerunning_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench.application import service as service_module
+    from tool_eval_bench.application.service import BenchmarkService
+    from tool_eval_bench.runner.orchestrator import score_results
+
+    prior = _scenario("PRIOR-A", Category.A)
+    empty_summary = score_results([], [])
+    run_all = AsyncMock(return_value=empty_summary)
+    monkeypatch.setattr(service_module, "ALL_SCENARIOS", [])
+    monkeypatch.setattr(service_module, "run_all_scenarios", run_all)
+
+    reporter = MagicMock()
+    reporter.write_scenario_report.return_value = "report.md"
+    repo = MagicMock()
+    service = BenchmarkService(repo=repo, reporter=reporter)
+    monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
+
+    result = await service.run_benchmark(
+        model="test-model",
+        backend="vllm",
+        base_url="http://localhost:8000",
+        scenarios=[],
+        resume_run_id="checkpointed-run",
+        resume_prior_results=[
+            {
+                "scenario_id": prior.id,
+                "status": "partial",
+                "points": 1,
+                "summary": "preserved outcome",
+                "raw_log": "prior trace",
+            }
+        ],
+        resume_scenarios=[prior],
+    )
+
+    assert run_all.await_args.kwargs["scenarios"] == []
+    assert result["status"] == "completed"
+    assert result["scores"]["scenario_results"][0]["status"] == "partial"
+    assert result["config"]["scenario_ids"] == ["PRIOR-A"]
+    assert repo.upsert_scenario_run.call_args.args[0]["status"] == "completed"
 
 
 @pytest.mark.asyncio

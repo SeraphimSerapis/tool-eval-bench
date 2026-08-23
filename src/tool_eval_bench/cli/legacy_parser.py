@@ -9,6 +9,17 @@ from tool_eval_bench.cli.command_registry import COMMAND_SPECS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 
+def _positive_int(value: str) -> int:
+    """Parse a strictly positive integer for concurrency controls."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected an integer, got {value!r}") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
 def _make_parser() -> argparse.ArgumentParser:
     """Build and return the CLI argument parser.
 
@@ -165,7 +176,7 @@ def _make_parser() -> argparse.ArgumentParser:
     )
     run_ctrl.add_argument(
         "--parallel",
-        type=int,
+        type=_positive_int,
         default=1,
         metavar="N",
         help="Run N scenarios concurrently (default: 1 = sequential)",

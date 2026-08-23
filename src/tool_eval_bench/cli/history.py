@@ -552,13 +552,23 @@ def _print_mcnemar(
         )
         return
 
-    # McNemar's chi-squared with continuity correction
-    chi2 = (abs(b - c) - 1) ** 2 / (b + c) if (b + c) > 0 else 0.0
-
-    # Survival function for chi-squared with df=1 (no scipy needed)
-    # P(X > chi2) = 1 - Phi(sqrt(chi2)) + Phi(-sqrt(chi2))
-    # Using the complementary error function: erfc(x/sqrt(2))/2
-    p_value = math.erfc(math.sqrt(chi2 / 2)) if chi2 > 0 else 1.0
+    # The exact two-sided binomial test is reliable for the small paired
+    # samples common in targeted scenario runs. For larger runs, use the
+    # continuity-corrected chi-squared approximation. Clamp the correction at
+    # zero so balanced discordance produces chi²=0 and p=1.
+    corrected_difference = max(0, abs(b - c) - 1)
+    chi2 = corrected_difference**2 / n_discordant
+    if n_discordant <= 25:
+        smaller_side = min(b, c)
+        p_value = min(
+            1.0,
+            2
+            * sum(math.comb(n_discordant, idx) for idx in range(smaller_side + 1))
+            / 2**n_discordant,
+        )
+    else:
+        # Survival function for chi-squared with df=1 (no scipy needed).
+        p_value = math.erfc(math.sqrt(chi2 / 2)) if chi2 > 0 else 1.0
 
     sig = p_value < 0.05
     direction = "B" if c > b else "A" if b > c else "neither"

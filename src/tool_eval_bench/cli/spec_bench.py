@@ -13,6 +13,22 @@ from typing import Any
 
 from rich.console import Console
 
+from tool_eval_bench.application.finalization import finalize_completed_run
+
+
+def _report_then_persist_spec_bench(
+    *,
+    run_data: dict[str, Any],
+    write_report: Any,
+    persist_plugin_run: Any,
+) -> None:
+    """Write the spec report before persisting a completed run."""
+    finalize_completed_run(
+        run_data,
+        write_report=write_report,
+        persist=persist_plugin_run,
+    )
+
 
 def run_spec_bench(
     console: Console,
@@ -41,6 +57,7 @@ def run_spec_bench(
     from rich.panel import Panel
     from rich.table import Table
 
+    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
     from tool_eval_bench.runner.speculative import SpecDecodeSample, run_spec_bench
 
     prompt_types = prompt_types or ["filler", "code", "structured"]
@@ -107,6 +124,7 @@ def run_spec_bench(
             tg=tg,
             depths=depths,
             api_key=api_key,
+            client_factory=HTTPMeasurementClient,
             spec_method=spec_method,
             baseline_tg_tps=baseline_tg_tps,
             prompt_types=prompt_types,
@@ -263,22 +281,25 @@ def run_spec_bench(
         from tool_eval_bench.storage.reports import MarkdownReporter
 
         reporter = MarkdownReporter(root=output_dir)
-        report_path = reporter.write_spec_decode_report(
-            run_id, display_name, ok_samples, label=label
-        )
         metadata = metadata_for_storage(None)
         if label:
             metadata["label"] = label
-        persist_plugin_run(
-            {
-                "run_id": run_id,
-                "run_type": "spec-bench",
-                "status": "completed",
-                "config": run_config,
-                "scores": {"samples": len(ok_samples)},
-                "metadata": metadata,
-            }
+        run_data = {
+            "run_id": run_id,
+            "run_type": "spec-bench",
+            "status": "completed",
+            "config": run_config,
+            "scores": {"samples": len(ok_samples)},
+            "metadata": metadata,
+        }
+        _report_then_persist_spec_bench(
+            run_data=run_data,
+            write_report=lambda: reporter.write_spec_decode_report(
+                run_id, display_name, ok_samples, label=label
+            ),
+            persist_plugin_run=persist_plugin_run,
         )
+        report_path = run_data["report_path"]
         console.print(f"\n  [dim]📄 Report saved to {report_path}[/]")
 
     try:

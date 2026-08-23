@@ -102,6 +102,7 @@ def run_throughput(
     from rich.panel import Panel
     from rich.table import Table
 
+    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
     from tool_eval_bench.runner.throughput import ThroughputSample, run_throughput_matrix
 
     console.print()
@@ -140,6 +141,7 @@ def run_throughput(
             depths=depths,
             concurrency_levels=concurrency_levels,
             api_key=api_key,
+            client_factory=HTTPMeasurementClient,
             on_sample=on_sample,
         )
         matrix_result_holder.append(result)

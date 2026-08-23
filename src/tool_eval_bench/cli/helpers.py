@@ -13,6 +13,10 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from tool_eval_bench.utils.ids import build_config_fingerprint
+from tool_eval_bench.utils.urls import endpoint_identity
+from tool_eval_bench.utils.urls import redact_url as _redact_url
+
 
 def load_dotenv_file() -> None:
     """Load .env file into os.environ (does not overwrite existing vars)."""
@@ -21,9 +25,7 @@ def load_dotenv_file() -> None:
 
 def redact_url(url: str) -> str:
     """Mask the host in a URL for display.  e.g. http://192.168.10.5:8080 → http://***:8080"""
-    from tool_eval_bench.utils.urls import redact_url as _redact
-
-    return _redact(url)
+    return _redact_url(url)
 
 
 def metadata_for_storage(run_context: Any | None) -> dict[str, Any]:
@@ -32,10 +34,24 @@ def metadata_for_storage(run_context: Any | None) -> dict[str, Any]:
 
 
 def with_config_fingerprint(config: dict[str, Any]) -> dict[str, Any]:
-    """Attach a deterministic comparison fingerprint to plugin config."""
-    from tool_eval_bench.utils.ids import build_config_fingerprint
+    """Return persist-safe config with a stable comparison fingerprint.
 
-    return {**config, "config_fingerprint": build_config_fingerprint(config)}
+    Plugin runs receive the real endpoint so requests can authenticate, but the
+    returned mapping is written to SQLite and reports.  Do not retain endpoint
+    hosts, URL userinfo, or query-string credentials there.  The opaque endpoint
+    identity keeps distinct deployments from being accidentally compared while
+    deliberately ignoring credentials and ephemeral query parameters.
+    """
+    persisted = dict(config)
+    fingerprint_config = dict(config)
+    base_url = config.get("base_url")
+    if isinstance(base_url, str):
+        persisted["base_url"] = _redact_url(base_url)
+        fingerprint_config["base_url"] = endpoint_identity(base_url)
+    return {
+        **persisted,
+        "config_fingerprint": build_config_fingerprint(fingerprint_config),
+    }
 
 
 def persist_plugin_run(run_data: dict[str, Any]) -> None:

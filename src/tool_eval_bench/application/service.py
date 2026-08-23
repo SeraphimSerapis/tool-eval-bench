@@ -33,6 +33,7 @@ from tool_eval_bench.storage.db import (
 )
 from tool_eval_bench.storage.reports import MarkdownReporter
 from tool_eval_bench.utils.ids import build_config_fingerprint, build_run_id
+from tool_eval_bench.utils.urls import endpoint_identity
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ class BenchmarkService:
         weight_by_difficulty: bool = False,
         resume_run_id: str | None = None,
         resume_prior_results: list[dict[str, Any]] | None = None,
+        resume_scenarios: list[ScenarioDefinition] | None = None,
         scenario_packs: list[dict[str, Any]] | None = None,
         rate_limit_observer: RateLimitObserver | None = None,
         wire_format: str | None = None,
@@ -125,6 +127,8 @@ class BenchmarkService:
         When ``resume_prior_results`` is provided (a list of scenario result
         dicts from a previous run), those results are merged into the final
         summary so the stored run contains the complete result set.
+        ``resume_scenarios`` retains definitions that are not in the rerun
+        subset, including held-out pack and Hard Mode scenarios.
         """
         adapter = self._adapter_for(backend, base_url, wire_format)
         if rate_limit_observer is not None:
@@ -162,11 +166,16 @@ class BenchmarkService:
         else:
             metadata = await _collect_metadata_safe(model, backend, base_url, api_key)
 
+        # Resume executes only the unresolved subset, but the durable run
+        # configuration must keep the original complete protocol.  Otherwise a
+        # second interruption would overwrite its scenario identity and make a
+        # later resume appear incompatible.
+        config_scenarios = resume_scenarios or resolved
         run_config = _build_run_config(
             model=model,
             backend=backend,
             base_url=base_url,
-            scenarios=resolved,
+            scenarios=config_scenarios,
             temperature=temperature,
             timeout_seconds=timeout_seconds,
             max_turns=max_turns,
@@ -236,7 +245,9 @@ class BenchmarkService:
             for pr in resume_prior_results:
                 if pr.get("scenario_id") not in existing_ids:
                     merged_results.append(ScenarioResult.from_dict(pr))
-            scenario_by_id = {s.id: s for s in [*ALL_SCENARIOS, *resolved]}
+            scenario_by_id = {
+                s.id: s for s in [*(resume_scenarios or []), *ALL_SCENARIOS, *resolved]
+            }
             missing_ids = {r.scenario_id for r in merged_results} - scenario_by_id.keys()
             if missing_ids:
                 raise ValueError(
@@ -244,7 +255,11 @@ class BenchmarkService:
                 )
             result_by_id = {r.scenario_id: r for r in merged_results}
             ordered_ids = list(
-                dict.fromkeys(s.id for s in [*ALL_SCENARIOS, *resolved] if s.id in result_by_id)
+                dict.fromkeys(
+                    s.id
+                    for s in [*(resume_scenarios or []), *ALL_SCENARIOS, *resolved]
+                    if s.id in result_by_id
+                )
             )
             merged_results = [result_by_id[scenario_id] for scenario_id in ordered_ids]
             merged_scenarios = [scenario_by_id[scenario_id] for scenario_id in ordered_ids]
@@ -354,6 +369,11 @@ class BenchmarkService:
         if self.repo is None:
             return
         try:
+            existing = self.repo.get(run_id, include_traces=False)
+            if isinstance(existing, dict) and existing.get("status") == "completed":
+                raise ValueError(
+                    f"Run {run_id} is already completed and its results are immutable."
+                )
             self.repo.upsert_scenario_run(
                 {
                     "run_id": run_id,
@@ -363,6 +383,8 @@ class BenchmarkService:
                     "metadata": metadata,
                 }
             )
+        except ValueError:
+            raise
         except Exception as exc:  # noqa: BLE001 — never block a run on bookkeeping
             logger.warning("Could not claim run row %s: %s", run_id, exc)
 
@@ -425,6 +447,7 @@ def _build_run_config(
         "model": model,
         "backend": backend,
         "base_url": _redact_url(base_url),
+        "endpoint_id": endpoint_identity(base_url),
         "temperature": temperature,
         "timeout_seconds": timeout_seconds,
         "max_turns": max_turns,

@@ -76,19 +76,41 @@ def _repair_streamed_tool_args(s: str) -> str:
     except json.JSONDecodeError:
         pass
 
-    import re
-
     repaired = s
-    # Close unterminated strings
-    n_quotes = len(re.findall(r'(?<!\\)"', repaired))
-    if n_quotes % 2 != 0:
-        repaired += '"'
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for char in s:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
 
-    # Close unbalanced braces and brackets
-    opens_brace = repaired.count("{") - repaired.count("}")
-    repaired += "}" * max(0, opens_brace)
-    opens_bracket = repaired.count("[") - repaired.count("]")
-    repaired += "]" * max(0, opens_bracket)
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            stack.append("}")
+        elif char == "[":
+            stack.append("]")
+        elif char in "}]":
+            if not stack or stack[-1] != char:
+                logger.warning("Could not repair streamed tool-call arguments: %.80s", s)
+                return s
+            stack.pop()
+
+    # Close an unfinished escape before closing the JSON string.  Otherwise a
+    # trailing backslash would escape the quote we append and remain invalid.
+    if in_string:
+        if escaped:
+            repaired += "\\"
+        repaired += '"'
+    # Stack order matters for nested objects and arrays.  Closing by aggregate
+    # brace counts can produce invalid JSON such as ``{"x": [1}}]``.
+    repaired += "".join(reversed(stack))
 
     try:
         json.loads(repaired)
@@ -190,6 +212,10 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
 
         if stream:
             payload["stream"] = True
+            # Usage is emitted by OpenAI-compatible servers in a final
+            # stream chunk only when requested.  Preserve an explicit caller
+            # mapping, including an intentional ``include_usage=False``.
+            payload.setdefault("stream_options", {"include_usage": True})
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if api_key:
@@ -319,10 +345,36 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     raw_response={},
                     elapsed_ms=elapsed_ms,
                 )
+
+            # Some OpenAI-compatible endpoints ignore ``stream=true`` and
+            # return an ordinary JSON completion with HTTP 200.  Treat that as
+            # a valid non-streamed response instead of silently returning an
+            # empty completion after iterating its JSON bytes as SSE lines.
+            response_headers = getattr(response, "headers", None)
+            content_type = str(
+                response_headers.get("content-type", "text/event-stream")
+                if response_headers is not None
+                else "text/event-stream"
+            )
+            if "text/event-stream" not in content_type.lower():
+                body = await response.aread()
+                try:
+                    data = json.loads(body)
+                except (json.JSONDecodeError, TypeError):
+                    # A few servers omit the content type while still sending
+                    # SSE.  Continue through the normal line parser only when
+                    # the body is not an ordinary JSON document.
+                    pass
+                else:
+                    elapsed_ms = (time.perf_counter() - started) * 1000
+                    return self._parse_response(data, elapsed_ms)
+
             async for line in response.aiter_lines():
-                if not line.startswith("data: "):
+                if not line.startswith("data:"):
                     continue
-                payload_str = line[6:]
+                payload_str = line[5:]
+                if payload_str.startswith(" "):
+                    payload_str = payload_str[1:]
                 if payload_str.strip() == "[DONE]":
                     break
 
@@ -340,9 +392,14 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     continue
 
                 delta = choices[0].get("delta") or {}
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
 
-                # Measure TTFT on first content or tool_call delta
-                if ttft_ms is None and (delta.get("content") or delta.get("tool_calls")):
+                # Measure TTFT on the first generated reasoning, content, or
+                # tool-call delta.  Thinking tokens precede visible output on
+                # reasoning models such as Ornith.
+                if ttft_ms is None and (
+                    reasoning or delta.get("content") or delta.get("tool_calls")
+                ):
                     ttft_ms = (time.perf_counter() - started) * 1000
 
                 # Accumulate content
@@ -350,7 +407,6 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     content_parts.append(delta["content"])
 
                 # Accumulate reasoning
-                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
                 if reasoning:
                     reasoning_parts.append(reasoning)
 

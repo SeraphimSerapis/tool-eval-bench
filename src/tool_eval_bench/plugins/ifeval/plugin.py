@@ -67,6 +67,9 @@ class IFEvalPlugin(BenchmarkPlugin):
         concurrency: int = kwargs.get("concurrency", 1)
         preloaded = kwargs.get("_preloaded_items")
 
+        if concurrency < 1:
+            raise ValueError("concurrency must be at least 1")
+
         # Load dataset
         if preloaded is not None:
             all_items = list(preloaded)
@@ -101,6 +104,12 @@ class IFEvalPlugin(BenchmarkPlugin):
         progress_lock = asyncio.Lock()
         t_start = time.monotonic()
 
+        extra: dict[str, Any] = {}
+        if seed is not None:
+            extra["seed"] = seed
+        if extra_params:
+            extra.update(extra_params)
+
         async def eval_one(idx: int, item: IFEvalItem) -> None:
             nonlocal prompts_passed, instructions_passed, instructions_total
             nonlocal total_tokens, error_count, progress_counter
@@ -120,7 +129,7 @@ class IFEvalPlugin(BenchmarkPlugin):
                         timeout_seconds=timeout_seconds,
                         api_key=api_key,
                         base_url=base_url,
-                        extra_params=extra_params,
+                        extra_params=extra or None,
                     )
 
                 content = response.content or response.reasoning or ""
@@ -145,7 +154,12 @@ class IFEvalPlugin(BenchmarkPlugin):
                 }
                 instructions_total += len(item.instruction_id_list)
             else:
-                result = evaluate_prompt(content, item.instruction_id_list, item.kwargs)
+                result = evaluate_prompt(
+                    content,
+                    item.instruction_id_list,
+                    item.kwargs,
+                    prompt=item.prompt,
+                )
 
                 if result.prompt_pass:
                     prompts_passed += 1
@@ -179,10 +193,24 @@ class IFEvalPlugin(BenchmarkPlugin):
         for i, exc in enumerate(gather_results):
             if isinstance(exc, BaseException):
                 logger.error("IFEval prompt %d crashed: %s", i, exc)
+                if not results[i]:
+                    item = all_items[i]
+                    results[i] = {
+                        "key": item.key,
+                        "prompt": item.prompt[:200],
+                        "prompt_pass": False,
+                        "is_error": True,
+                        "instructions_passed": 0,
+                        "instructions_total": len(item.instruction_id_list),
+                        "instruction_details": [],
+                        "model_response": "",
+                    }
+                    error_count += 1
+                    instructions_total += len(item.instruction_id_list)
 
         duration = time.monotonic() - t_start
         answered = total - error_count
-        prompt_accuracy = (prompts_passed / answered * 100) if answered > 0 else 0.0
+        prompt_accuracy = (prompts_passed / total * 100) if total > 0 else 0.0
         instruction_accuracy = (
             instructions_passed / instructions_total * 100 if instructions_total > 0 else 0
         )
@@ -208,7 +236,11 @@ class IFEvalPlugin(BenchmarkPlugin):
             details={
                 "prompts_passed": prompts_passed,
                 "total": total,
+                "answered": answered,
                 "errors": error_count,
+                "completion_rate": round(answered / total * 100, 2) if total else 0.0,
+                "status": "incomplete" if error_count else "completed",
+                "incomplete": error_count > 0,
                 "prompt_accuracy": round(prompt_accuracy, 2),
                 "instruction_accuracy": round(instruction_accuracy, 2),
                 "instructions_passed": instructions_passed,

@@ -361,17 +361,15 @@ class TestMetricsUrlOverride:
         resp.text = (
             "spec_decode_num_accepted_tokens_total 100\nspec_decode_num_draft_tokens_total 200\n"
         )
-        client.get = AsyncMock(return_value=resp)
+        client.metrics = AsyncMock(return_value=resp)
 
         result = await scrape_spec_metrics(
             client,
             "http://litellm:4000",
             metrics_url="http://vllm:8080/metrics",
         )
-        # Should have called the override URL, not litellm:4000/metrics
-        client.get.assert_called_once()
-        called_url = client.get.call_args[0][0]
-        assert called_url == "http://vllm:8080/metrics"
+        # The semantic port receives the override, not a runner-built URL.
+        client.metrics.assert_awaited_once_with(metrics_url="http://vllm:8080/metrics")
         assert result is not None
         assert result.accepted_tokens == 100.0
 
@@ -384,7 +382,7 @@ class TestMetricsUrlOverride:
         resp = MagicMock()
         resp.status_code = 200
         resp.text = "spec_decode_num_accepted_tokens_total 50\n"
-        client.get = AsyncMock(return_value=resp)
+        client.metrics = AsyncMock(return_value=resp)
 
         info = await detect_spec_decoding(
             client,
@@ -393,5 +391,4 @@ class TestMetricsUrlOverride:
         )
         assert info.active is True
         assert info.has_prometheus is True
-        called_url = client.get.call_args[0][0]
-        assert called_url == "http://vllm:8080/metrics"
+        client.metrics.assert_awaited_once_with(metrics_url="http://vllm:8080/metrics")

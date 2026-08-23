@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
+
+from tool_eval_bench.utils.ids import build_config_fingerprint
 
 # Only plain HTTP(S) makes sense for an inference endpoint.  Anything else
 # (file://, gopher://, …) can only be an attempt to make the benchmark read
@@ -114,17 +116,38 @@ def _bearer(api_key: str | None) -> dict[str, str]:
 
 
 def redact_url(url: str) -> str:
-    """Mask the host in a URL for display.
+    """Mask the authority and remove query credentials from a persisted URL.
 
     e.g. http://192.168.10.5:8080 → http://***:8080
     """
-    from urllib.parse import urlparse, urlunparse
-
-    parsed = urlparse(url)
+    parsed = urlsplit(url)
     if not parsed.hostname:
-        return url
-    # Replace hostname with ***, keep port if present
-    redacted_netloc = "***"
-    if parsed.port:
-        redacted_netloc = f"***:{parsed.port}"
-    return urlunparse(parsed._replace(netloc=redacted_netloc))
+        return urlunsplit((parsed.scheme, "", parsed.path, "", ""))
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    redacted_netloc = "***" if port is None else f"***:{port}"
+    return urlunsplit((parsed.scheme, redacted_netloc, parsed.path, "", ""))
+
+
+def endpoint_identity(url: str) -> str:
+    """Return an opaque, credential-independent endpoint identity."""
+    parsed = urlsplit(url)
+    if not parsed.hostname:
+        return "endpoint:invalid"
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    default_ports = {"http": 80, "https": 443}
+    effective_port = port if port is not None else default_ports.get(parsed.scheme.lower())
+    canonical = "|".join(
+        (
+            parsed.scheme.lower(),
+            parsed.hostname.lower(),
+            str(effective_port or ""),
+            parsed.path.rstrip("/") or "/",
+        )
+    )
+    return f"endpoint:{build_config_fingerprint({'endpoint': canonical})}"

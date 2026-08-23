@@ -72,6 +72,18 @@ class TestExtractAnswer:
         )
         assert extract_answer(resp) == ("D", "answer_pattern")
 
+    def test_final_choice_wins_over_earlier_option_list(self):
+        resp = "The options are A, B, C, and D. I choose D."
+        assert extract_answer(resp) == ("D", "answer_pattern")
+
+    def test_described_option_does_not_override_later_explicit_answer(self):
+        resp = "Option A is plausible, but the answer is D."
+        assert extract_answer(resp) == ("D", "answer_pattern")
+
+    def test_last_standalone_letter_wins_without_answer_cue(self):
+        resp = "I considered A, then B, before settling on D"
+        assert extract_answer(resp) == ("D", "last_letter")
+
 
 # ---------------------------------------------------------------------------
 # evaluate_answer

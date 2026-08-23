@@ -48,6 +48,20 @@ def _scenario(sid: str) -> ScenarioDefinition:
     )
 
 
+def test_resume_reruns_a_checkpoint_without_required_trace_evidence() -> None:
+    from tool_eval_bench.cli.dispatch import _resume_result_requires_rerun
+
+    checkpoint = {
+        "scenario_id": "TC-01",
+        "status": "partial",
+        "points": 1,
+        "summary": "model outcome",
+        "raw_log": "",
+    }
+
+    assert _resume_result_requires_rerun(checkpoint) is True
+
+
 class TestCheckpointStorage:
     def test_roundtrip_preserves_order_and_payload(self, repo: RunRepository) -> None:
         repo.checkpoint_scenario_result("R1", {"scenario_id": "TC-01", "status": "pass"})
@@ -190,6 +204,38 @@ class TestServiceCheckpointing:
         assert repo.get_checkpoints(run_data["run_id"]) == []
 
     @pytest.mark.asyncio
+    async def test_completed_run_id_is_not_reclaimed_or_mutated(
+        self, monkeypatch: pytest.MonkeyPatch, repo: RunRepository, scenario
+    ) -> None:
+        """A retry must use a new run ID, never overwrite completed evidence."""
+        from tool_eval_bench.application import service as service_module
+
+        repo.upsert_scenario_run(
+            {
+                "run_id": "completed-run",
+                "status": RUN_STATUS_COMPLETED,
+                "config": {"model": "m"},
+                "scores": {"final_score": 0},
+            }
+        )
+        run_all = MagicMock()
+        monkeypatch.setattr(service_module, "run_all_scenarios", run_all)
+        service = BenchmarkService(repo=repo, reporter=None)
+        monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
+
+        with pytest.raises(ValueError, match="immutable"):
+            await service.run_benchmark(
+                model="m",
+                backend="vllm",
+                base_url="http://localhost:8000",
+                scenarios=[scenario],
+                resume_run_id="completed-run",
+            )
+
+        assert repo.get("completed-run")["scores"] == {"final_score": 0}
+        run_all.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_interrupted_run_keeps_partial_results_and_is_resumable(
         self, monkeypatch: pytest.MonkeyPatch, repo: RunRepository
     ) -> None:
@@ -232,6 +278,54 @@ class TestServiceCheckpointing:
         # The resume path can now rebuild the finished work from the checkpoints.
         recovered = prior_results_for_resume(interrupted[0], checkpoints)
         assert [r["scenario_id"] for r in recovered] == ["TC-01"]
+
+    @pytest.mark.asyncio
+    async def test_resumed_interruption_keeps_the_full_protocol_config(
+        self, monkeypatch: pytest.MonkeyPatch, repo: RunRepository
+    ) -> None:
+        """A second interruption must not reduce the stored scenario identity."""
+        from tool_eval_bench.application import service as service_module
+
+        prior = _scenario("TC-01")
+        rerun = _scenario("TC-02")
+        rerun_result = ScenarioResult(
+            scenario_id=rerun.id,
+            status=ScenarioStatus.FAIL,
+            points=0,
+            summary="timeout",
+            failure_kind="timeout",
+        )
+
+        async def fake_run(adapter, **kwargs):
+            await kwargs["on_scenario_result"](rerun, rerun_result, 1, 1)
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(service_module, "run_all_scenarios", fake_run)
+        service = BenchmarkService(repo=repo, reporter=None)
+        monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
+
+        with pytest.raises(KeyboardInterrupt):
+            await service.run_benchmark(
+                model="m",
+                backend="vllm",
+                base_url="http://localhost:8000",
+                scenarios=[rerun],
+                resume_run_id="interrupted-run",
+                resume_prior_results=[
+                    {
+                        "scenario_id": prior.id,
+                        "status": "pass",
+                        "points": 2,
+                        "summary": "done",
+                    }
+                ],
+                resume_scenarios=[prior, rerun],
+            )
+
+        stored = repo.get("interrupted-run")
+        assert stored is not None
+        assert stored["status"] == RUN_STATUS_INTERRUPTED
+        assert stored["config"]["scenario_ids"] == [prior.id, rerun.id]
 
     @pytest.mark.asyncio
     async def test_caller_callback_still_runs_after_checkpointing(

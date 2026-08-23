@@ -83,8 +83,39 @@ jobs:
       - name: Build image
         run: docker build -t tool-eval-bench:ci .
 
-      - name: Smoke test — CLI entrypoint
-        run: docker run --rm tool-eval-bench:ci --help
+      - name: Verify the committed dependency lock
+        run: |
+          python -m pip install --disable-pip-version-check 'uv==0.10.8'
+          uv lock --check
+
+      - name: Smoke test container provenance and CLI entrypoint
+        run: |
+          cp .env.example .env
+          trap 'rm -f .env' EXIT
+          version="$(docker run --rm tool-eval-bench:ci --version)"
+          echo "$version"
+          test "${version#*unknown}" = "$version"
+          docker run --rm tool-eval-bench:ci --help
+          docker run --rm --entrypoint sh tool-eval-bench:ci -c \
+            'test "$(id -u)" != 0 && test ! -e /build/.git && test ! -e /app/.git && touch /app/data/image-write && touch /app/runs/image-write'
+          mount_root="$(mktemp -d)"
+          mkdir -p "$mount_root/data" "$mount_root/runs"
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "$mount_root/data:/app/data" \
+            -v "$mount_root/runs:/app/runs" \
+            --entrypoint sh tool-eval-bench:ci -c \
+            'touch /app/data/mount-write && touch /app/runs/mount-write'
+          test -f "$mount_root/data/mount-write"
+          test -f "$mount_root/runs/mount-write"
+          LOCAL_UID="$(id -u)" LOCAL_GID="$(id -g)" docker compose config --quiet
+          worktree="$(mktemp -d)"
+          rmdir "$worktree"
+          git worktree add --detach "$worktree" HEAD
+          docker build \
+            --build-arg BUILD_VERSION="0.0.0+g$(git -C "$worktree" rev-parse --short HEAD)" \
+            -t tool-eval-bench:worktree "$worktree"
+          docker run --rm tool-eval-bench:worktree --version | grep -F '+g'
 
   optional-perf-tests:
     runs-on: ubuntu-latest
@@ -107,7 +138,11 @@ jobs:
           pip install -e '.[dev,perf]'
 
       - name: Test llama-benchy integration
-        run: pytest --tb=short -q tests/test_llama_benchy.py -m "not live" --randomly-seed=181081
+        run: >
+          pytest --tb=short -q tests/test_llama_benchy.py
+          -m "not live" --randomly-seed=181081
+          --cov=tool_eval_bench.runner.llama_benchy
+          --cov-config=/dev/null --cov-report=term-missing --cov-fail-under=95
 
   wheel-smoke:
     runs-on: ubuntu-latest

@@ -53,6 +53,14 @@ graph TD
 | `cli/` | everything (delivery layer) | — |
 | `utils/` | stdlib, domain | storage, adapters, runner, cli, evals |
 
+These rules describe first-party layer imports. Measurement runners such as
+throughput, speculative decoding, and context pressure use the
+`domain.measurement.MeasurementClient` port. Its HTTP adapter preserves raw
+SSE lines so runners retain exact arrival timing without importing the concrete
+HTTP client. Scenario orchestration continues to use the `BackendAdapter` port.
+`spec_live.py` remains separate because it is a long-lived Prometheus monitor,
+not a bounded benchmark measurement request.
+
 ---
 
 ## Module Reference

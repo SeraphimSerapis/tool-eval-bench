@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from tool_eval_bench.cli.helpers import with_config_fingerprint
 from tool_eval_bench.compare_reports.summary import generate_html as generate_summary_html
 from tool_eval_bench.compare_reports.summary import parse_summary
 from tool_eval_bench.compare_reports.tool_eval import generate_html as generate_tool_eval_html
@@ -19,6 +20,7 @@ from tool_eval_bench.compare_reports.tool_eval import parse_md
 from tool_eval_bench.domain.models import BenchmarkConfig
 from tool_eval_bench.utils.metadata import collect_run_metadata
 from tool_eval_bench.utils.urls import (
+    endpoint_identity,
     is_same_origin,
     metrics_request_target,
     redact_url,
@@ -196,6 +198,38 @@ class TestPersistedMetadataRedaction:
 
     def test_redact_url_drops_userinfo_and_host(self) -> None:
         assert redact_url("https://user:pw@host.internal:8443/v1") == "https://***:8443/v1"
+
+    def test_redact_url_drops_query_and_fragment_credentials(self) -> None:
+        redacted = redact_url("https://user:pw@host.internal:8443/v1?token=secret#private")
+
+        assert redacted == "https://***:8443/v1"
+        assert "secret" not in redacted
+
+    def test_endpoint_identity_ignores_credentials_but_separates_hosts(self) -> None:
+        first = endpoint_identity("https://user:one@host.internal/v1?token=one")
+        same = endpoint_identity("https://user:two@host.internal:443/v1?token=two")
+        other = endpoint_identity("https://other.internal/v1")
+
+        assert first == same
+        assert first != other
+        assert "host.internal" not in first
+
+    def test_plugin_config_drops_url_credentials_and_keeps_endpoint_identity(self) -> None:
+        original = {"base_url": "https://user:secret@one.internal:8443/v1?token=leak", "model": "m"}
+        first = with_config_fingerprint(original)
+        same_endpoint_new_token = with_config_fingerprint(
+            {"base_url": "https://other:new-secret@one.internal:8443/v1?token=fresh", "model": "m"}
+        )
+        other_endpoint = with_config_fingerprint(
+            {"base_url": "https://user:secret@two.internal:8443/v1", "model": "m"}
+        )
+
+        assert first["base_url"] == "https://***:8443/v1"
+        assert "secret" not in str(first)
+        assert "one.internal" not in str(first)
+        assert original["base_url"].endswith("token=leak")
+        assert first["config_fingerprint"] == same_endpoint_new_token["config_fingerprint"]
+        assert first["config_fingerprint"] != other_endpoint["config_fingerprint"]
 
 
 class TestMetricsUrlCredentialScope:

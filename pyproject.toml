@@ -167,12 +167,6 @@ markers = [
   "slow: takes materially longer than the default unit-test suite",
   "integration: exercises multiple project layers together",
 ]
-filterwarnings = [
-    "ignore::pytest.PytestUnraisableExceptionWarning",
-    "ignore:unclosed event loop:ResourceWarning",
-    "ignore:coroutine .* was never awaited:RuntimeWarning",
-]
-
 [tool.coverage.run]
 branch = true
 source = ["src"]

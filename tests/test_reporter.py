@@ -107,6 +107,29 @@ class TestMarkdownReporter:
         for r in summary.scenario_results:
             assert f"### {r.scenario_id}" in content
 
+    def test_hostile_trace_cannot_close_its_markdown_fence(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        summary = _make_summary(num_results=1)
+        summary.scenario_results[0].raw_log = "model output\n```\n# forged heading"
+
+        content = reporter.write_scenario_report("run_fence", "model", summary).read_text()
+
+        assert "````text" in content
+        assert "```\n# forged heading" in content
+        assert content.rstrip().endswith("````")
+
+    def test_scenario_table_escapes_hostile_model_text(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        summary = _make_summary(num_results=1)
+        result = summary.scenario_results[0]
+        result.summary = "bad | cell\n# forged heading <script>"
+        result.failure_kind = "failure | injected"
+
+        content = reporter.write_scenario_report("run_cells", "model", summary).read_text()
+
+        assert "bad &#124; cell<br># forged heading &lt;script&gt;" in content
+        assert "failure &#124; injected" in content
+
     def test_safety_warnings_rendered(self, tmp_path):
         reporter = MarkdownReporter(root=str(tmp_path))
         warnings = [

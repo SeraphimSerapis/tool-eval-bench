@@ -99,6 +99,17 @@ def _trace_block(raw_log: str) -> list[str]:
     return [f"{fence}text", raw_log or "(empty trace)", fence]
 
 
+def _markdown_table_cell(value: object) -> str:
+    """Render untrusted report text as one inert Markdown table cell."""
+    text = safe_label_text(str(value))
+    return html.escape(text, quote=False).replace("|", "&#124;").replace("\\n", "<br>")
+
+
+def _markdown_heading(value: object) -> str:
+    """Render an untrusted heading label without allowing extra Markdown lines."""
+    return html.escape(safe_label_text(str(value)), quote=False).replace("\\n", " ")
+
+
 class MarkdownReporter:
     def __init__(self, root: str | None = None) -> None:
         self.root = Path(root or _default_reports_root())
@@ -311,7 +322,7 @@ class MarkdownReporter:
                 ]
             )
             for w in summary.safety_warnings:
-                md.append(f"> - {w}")
+                md.append(f"> - {_markdown_heading(w)}")
             md.append("")
 
         # Run Context section (issue #6)
@@ -328,7 +339,9 @@ class MarkdownReporter:
         )
 
         for cs in summary.category_scores:
-            md.append(f"| {cs.label} | {cs.earned} | {cs.max_points} | {cs.percent}% |")
+            md.append(
+                f"| {_markdown_table_cell(cs.label)} | {cs.earned} | {cs.max_points} | {cs.percent}% |"
+            )
 
         md.extend(["", "## Scenario Results", ""])
         md.append("| ID | Title | Diff | Status | Points | Failure | Summary |")
@@ -352,7 +365,9 @@ class MarkdownReporter:
                 note = f" ({r.note})" if r.note else ""
                 detail = f"{r.summary}{note}"
             md.append(
-                f"| {r.scenario_id} | {title} | {diff_str} | {emoji} {r.status.value} | {r.points}/2 | {failure} | {detail} |"
+                f"| {_markdown_table_cell(r.scenario_id)} | {_markdown_table_cell(title)} | {diff_str} | "
+                f"{emoji} {_markdown_table_cell(r.status.value)} | {r.points}/2 | "
+                f"{_markdown_table_cell(failure)} | {_markdown_table_cell(detail)} |"
             )
 
         if held_out_ids:
@@ -412,7 +427,7 @@ class MarkdownReporter:
         # Trace section
         md.extend(["", "## Traces", ""])
         for r in summary.scenario_results:
-            md.append(f"### {r.scenario_id}")
+            md.append(f"### {_markdown_heading(r.scenario_id)}")
             md.append("")
             if r.scenario_id in held_out_ids:
                 md.append(
@@ -421,9 +436,7 @@ class MarkdownReporter:
                 )
                 md.append("")
                 continue
-            md.append("```text")
-            md.append(r.raw_log)
-            md.append("```")
+            md.extend(_trace_block(r.raw_log))
             md.append("")
 
         path.write_text("\n".join(md), encoding="utf-8")
