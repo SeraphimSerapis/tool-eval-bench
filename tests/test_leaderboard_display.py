@@ -243,7 +243,7 @@ class TestPrintLeaderboard:
 
             output = console.file.getvalue()
             assert "P/F" in output
-            assert "Config" in output
+            assert "Cohort" in output
             assert "Scores:" in output
             assert "safety-capped" in output
 
@@ -320,6 +320,66 @@ class TestPrintLeaderboard:
                 assert f"model-{i}" in output
             # model-0 (lowest score) should NOT appear
             assert "model-0 " not in output
+
+    def test_mixed_cohorts_are_labeled_and_sorted_within_cohort(self) -> None:
+        runs = []
+        for seed, scores in [
+            (1, [("seed-one-low", 70), ("seed-one-high", 90)]),
+            (2, [("seed-two-low", 65), ("seed-two-high", 80)]),
+        ]:
+            for model, score in scores:
+                run = _make_run(model=model, final_score=score, scenario_count=88)
+                run["config"].update(
+                    {
+                        "scenario_count": 88,
+                        "seed": seed,
+                        "weight_by_difficulty": True,
+                    }
+                )
+                runs.append(run)
+
+        with patch("tool_eval_bench.storage.db.RunRepository") as MockRepo:
+            repo = MagicMock()
+            repo.list.return_value = runs
+            MockRepo.return_value = repo
+
+            console = Console(file=StringIO(), width=240, no_color=True)
+            print_leaderboard(console)
+
+            output = console.file.getvalue()
+
+        assert "Cohort" in output
+        assert "seed=1, difficulty-weighted" in output
+        assert "seed=2, difficulty-weighted" in output
+        assert "Different benchmark cohorts are grouped and ranked separately." in output
+        assert output.index("seed-one-high") < output.index("seed-one-low")
+        assert output.index("seed-two-high") < output.index("seed-two-low")
+
+    def test_mixed_cohort_limit_is_deterministic(self) -> None:
+        runs = []
+        for seed in (1, 2):
+            for index, score in enumerate((90, 80, 70), 1):
+                run = _make_run(
+                    model=f"seed-{seed}-model-{index}", final_score=score, scenario_count=88
+                )
+                run["config"].update({"scenario_count": 88, "seed": seed})
+                runs.append(run)
+
+        with patch("tool_eval_bench.storage.db.RunRepository") as MockRepo:
+            repo = MagicMock()
+            repo.list.return_value = runs
+            MockRepo.return_value = repo
+
+            console = Console(file=StringIO(), width=240, no_color=True)
+            print_leaderboard(console, limit=2)
+
+            output = console.file.getvalue()
+
+        assert "seed=1" in output
+        assert "seed=2" not in output
+        assert "seed-1-model-1" in output
+        assert "seed-1-model-2" in output
+        assert "seed-1-model-3" not in output
 
     def test_no_valid_results_shows_message(self) -> None:
         with patch("tool_eval_bench.storage.db.RunRepository") as MockRepo:

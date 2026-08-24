@@ -158,6 +158,26 @@ def _cohort_fingerprint(config: dict[str, Any]) -> str:
     return build_config_fingerprint(comparable)
 
 
+def _cohort_label(config: dict[str, Any], cohort_fingerprint: str) -> str:
+    """Build a compact label that explains why rows are ranked separately."""
+    label = [
+        f"{config.get('backend', '?')}/{config.get('scenario_count', '?')}",
+    ]
+    seed = config.get("seed")
+    if seed is not None:
+        label.append(f"seed={seed}")
+    if config.get("weight_by_difficulty"):
+        label.append("difficulty-weighted")
+    if config.get("context_pressure"):
+        label.append("context-pressure")
+    if config.get("scenario_packs"):
+        label.append("scenario-pack")
+
+    # Keep a short stable identifier so two cohorts with the same readable
+    # settings remain visibly distinct when another comparison field differs.
+    return f"{', '.join(label)} [{cohort_fingerprint[:8]}]"
+
+
 def _is_rank_eligible(run: dict[str, Any], config: dict[str, Any], scores: dict[str, Any]) -> bool:
     """Reject explicit partial, interrupted, and incomplete persisted runs."""
     # Records written before run status existed remain exportable.  New records
@@ -242,6 +262,7 @@ def _extract_leaderboard_rows(
         passes = sum(1 for r in results if r.get("status") == "pass")
         partials = sum(1 for r in results if r.get("status") == "partial")
         fails = sum(1 for r in results if r.get("status") == "fail")
+        cohort_fingerprint = _cohort_fingerprint(config)
 
         # Extract metadata (issue #6)
         metadata = best.get("metadata") or {}
@@ -265,7 +286,8 @@ def _extract_leaderboard_rows(
                 "scenario_count": scenario_count,
                 "backend": backend,
                 "config_fingerprint": fingerprint,
-                "cohort_fingerprint": _cohort_fingerprint(config),
+                "cohort_fingerprint": cohort_fingerprint,
+                "cohort_label": _cohort_label(config, cohort_fingerprint),
                 "total_tokens": scores.get("total_tokens", 0),
                 "token_efficiency": scores.get("token_efficiency"),
                 "median_turn_ms": scores.get("median_turn_ms"),
@@ -283,8 +305,8 @@ def _extract_leaderboard_rows(
             }
         )
 
-    # Never imply a global ordering across different benchmark conditions.
-    rows.sort(key=lambda r: (r["cohort_fingerprint"], -r["final_score"], r["model"]))
+    # Keep cohorts together, then rank scores within each comparable cohort.
+    rows.sort(key=lambda r: (r["cohort_label"], -r["final_score"], r["model"]))
     return rows
 
 
@@ -333,7 +355,7 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
     # Rank column
     table.add_column("#", justify="center", width=3, style="bold")
     table.add_column("Model", min_width=20, no_wrap=True)
-    table.add_column("Config", justify="center", width=12, no_wrap=True)
+    table.add_column("Cohort", justify="center", width=32, no_wrap=True)
     table.add_column("Score", justify="center", width=7, style="bold")
     table.add_column("Rating", justify="center", width=7)
     table.add_column("P/F/C", justify="center", width=14, no_wrap=True)
@@ -352,11 +374,22 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
     table.add_column("Tokens", justify="right", width=8)
     table.add_column("Runs", justify="center", width=4)
 
-    comparable_globally = len({row["cohort_fingerprint"] for row in rows}) == 1
+    single_cohort = len({row["cohort_fingerprint"] for row in rows}) == 1
+    previous_cohort: str | None = None
+    cohort_rank = 0
     for idx, row in enumerate(rows, 1):
+        current_cohort = row["cohort_fingerprint"]
+        if current_cohort != previous_cohort:
+            if previous_cohort is not None:
+                table.add_section()
+            previous_cohort = current_cohort
+            cohort_rank = 1
+        else:
+            cohort_rank += 1
+
         # Rank medal
-        if not comparable_globally:
-            rank = "[dim]—[/]"
+        if not single_cohort:
+            rank = f"[dim]{cohort_rank}[/]"
         elif idx == 1:
             rank = "[bold bright_yellow]🥇[/]"
         elif idx == 2:
@@ -376,10 +409,8 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
         # Rating stars
         rating_str = _rating_short(row["rating"])
 
-        # Config string (backend/scenario count)
-        sc_count = row.get("scenario_count", 0)
-        backend_label = row.get("backend", "?")
-        config_str = f"[dim]{backend_label}/{sc_count}[/]"
+        # Cohort label explains the comparison conditions for this section.
+        cohort_str = f"[dim]{row['cohort_label']}[/]"
 
         # Pass/Fail summary
         p, pt, f = row["passes"], row["partials"], row["fails"]
@@ -407,7 +438,7 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
         table.add_row(
             rank,
             f"[bold]{model_name}[/]",
-            config_str,
+            cohort_str,
             score_str,
             rating_str,
             pf_str,
@@ -439,13 +470,13 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
             "  ".join(legend_parts)
             + "\n\n"
             + "  [dim]P/F/C = ✅pass / ⚠️partial / ❌fail / completed scenarios   │   "
-            + "Config = backend/scenarios   │   "
+            + "Cohort = comparable benchmark conditions   │   "
             + "Scores: [bold green]90+[/] [green]75+[/] [yellow]60+[/] [red]40+[/] [bold red]<40[/]   │   "
             + "★★★ⓢ = safety-capped[/]"
             + partial_note
             + (
-                "\n  [dim]Different benchmark cohorts are shown together but are not globally ranked.[/]"
-                if not comparable_globally
+                "\n  [dim]Different benchmark cohorts are grouped and ranked separately.[/]"
+                if not single_cohort
                 else ""
             ),
             border_style="dim",
