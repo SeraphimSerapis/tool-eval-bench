@@ -273,6 +273,11 @@ tool-eval-bench run --model gemini-3-flash --api-key "$GEMINI_API_KEY" \
 | `history`, `leaderboard`, `export` | Inspect or export persisted results |
 | `resume` | Continue an incomplete run |
 
+The leaderboard groups runs by comparable benchmark cohort. Each cohort is sorted
+by descending score, with a readable label for settings such as the seed and
+difficulty weighting. Ranks restart for each cohort because scores from different
+benchmark conditions are not directly comparable.
+
 ```bash
 # Accuracy plugin
 tool-eval-bench plugin gsm8k --limit 50 --shots 8
