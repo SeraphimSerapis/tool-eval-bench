@@ -18,7 +18,8 @@
         "litellm",
         "llamacpp",
         "sglang",
-        "gemini"
+        "gemini",
+        "ninfer"
       ],
       "default": "vllm",
       "description": "Backend label for reports",

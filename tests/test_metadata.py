@@ -350,17 +350,34 @@ class TestProbeEngine:
         from tool_eval_bench.utils.metadata import _probe_engine
 
         models_resp = _mock_response(200, {"data": [{"id": "fallback"}]})
+        ninfer_resp = _mock_response(404)  # /v1/models re-probed by _probe_ninfer (no owned_by)
         version_resp = _mock_response(404)
         health_resp = _mock_response(404)
         props_resp = _mock_response(200, {"build_number": 42})
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
-            return_value=_mock_async_client([models_resp, version_resp, health_resp, props_resp]),
+            return_value=_mock_async_client(
+                [models_resp, ninfer_resp, version_resp, health_resp, props_resp]
+            ),
         ):
             result = await _probe_engine("http://localhost:9999", None, "unknown")
 
         assert result["engine_name"] == "llama.cpp"
         assert result["server_model_id"] == "fallback"
+
+    @pytest.mark.asyncio
+    async def test_ninfer_backend_uses_owned_by_fingerprint(self) -> None:
+        from tool_eval_bench.utils.metadata import _probe_engine
+
+        models_resp = _mock_response(200, {"data": [{"id": "qwen3.8-27b", "owned_by": "ninfer"}]})
+        with patch(
+            "tool_eval_bench.utils.metadata.httpx.AsyncClient",
+            return_value=_mock_async_client([models_resp, models_resp]),
+        ):
+            result = await _probe_engine("http://localhost:8000", None, "ninfer")
+
+        assert result["engine_name"] == "NInfer"
+        assert result["owned_by"] == "ninfer"
 
     @pytest.mark.asyncio
     async def test_quantization_inferred_from_model_name(self) -> None:
@@ -471,11 +488,12 @@ class TestProbeBackendHint:
         from tool_eval_bench.utils.metadata import probe_backend_hint
 
         metrics_resp = _mock_response(404)
+        ninfer_resp = _mock_response(404)  # /v1/models probed by _probe_ninfer before /version
         version_resp = _mock_response(404)  # llama.cpp 404s vLLM's /version
         props_resp = _mock_response(200, {"build_info": "1234", "total_slots": 1})
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
-            return_value=_mock_async_client([metrics_resp, version_resp, props_resp]),
+            return_value=_mock_async_client([metrics_resp, ninfer_resp, version_resp, props_resp]),
         ):
             result = await probe_backend_hint("http://localhost:8080")
 
@@ -486,10 +504,11 @@ class TestProbeBackendHint:
         from tool_eval_bench.utils.metadata import probe_backend_hint
 
         metrics_resp = _mock_response(404)
+        ninfer_resp = _mock_response(404)  # /v1/models probed by _probe_ninfer before /version
         version_resp = _mock_response(200, {"version": "0.5.1"})
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
-            return_value=_mock_async_client([metrics_resp, version_resp]),
+            return_value=_mock_async_client([metrics_resp, ninfer_resp, version_resp]),
         ):
             result = await probe_backend_hint("http://localhost:8000")
 
@@ -505,12 +524,13 @@ class TestProbeBackendHint:
         from tool_eval_bench.utils.metadata import probe_backend_hint
 
         metrics_resp = _mock_response(404)
+        ninfer_resp = _mock_response(404)  # /v1/models probed by _probe_ninfer before /version
         version_resp = _mock_response(200, {"version": "0.11.0"})
         # Would match _probe_llamacpp if it were ever reached.
         health_resp = _mock_response(200, {"status": "ok"})
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
-            return_value=_mock_async_client([metrics_resp, version_resp, health_resp]),
+            return_value=_mock_async_client([metrics_resp, ninfer_resp, version_resp, health_resp]),
         ):
             result = await probe_backend_hint("http://localhost:8000")
 
@@ -545,7 +565,7 @@ class TestProbeBackendHint:
     async def test_returns_none_when_nothing_matches(self) -> None:
         from tool_eval_bench.utils.metadata import probe_backend_hint
 
-        responses = [_mock_response(404) for _ in range(4)]
+        responses = [_mock_response(404) for _ in range(5)]
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
             return_value=_mock_async_client(responses),
@@ -553,6 +573,24 @@ class TestProbeBackendHint:
             result = await probe_backend_hint("http://localhost:9999")
 
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_detects_ninfer_from_owned_by(self) -> None:
+        """NInfer answers /health with 200 {'status':'ok'} (the llama.cpp
+        fingerprint); its /v1/models owned_by=='ninfer' must win first."""
+        from tool_eval_bench.utils.metadata import probe_backend_hint
+
+        metrics_resp = _mock_response(404)
+        models_resp = _mock_response(200, {"data": [{"id": "qwen3.8-27b", "owned_by": "ninfer"}]})
+        # Would match _probe_llamacpp if reached.
+        health_resp = _mock_response(200, {"status": "ok"})
+        with patch(
+            "tool_eval_bench.utils.metadata.httpx.AsyncClient",
+            return_value=_mock_async_client([metrics_resp, models_resp, health_resp]),
+        ):
+            result = await probe_backend_hint("http://localhost:8000")
+
+        assert result == ("ninfer", "NInfer")
 
 
 # ---------------------------------------------------------------------------

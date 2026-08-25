@@ -136,6 +136,7 @@ async def _probe_models(
                     first = data[0] if isinstance(data[0], dict) else {}
                     probe["server_model_id"] = first.get("id")
                     probe["server_model_root"] = first.get("root")
+                    probe["owned_by"] = first.get("owned_by")  # NInfer fingerprints here
                     # vLLM exposes max_model_len in model metadata
                     if "max_model_len" in first:
                         probe["max_model_len"] = first["max_model_len"]
@@ -224,6 +225,7 @@ _METRICS_BACKEND_PREFIXES: tuple[tuple[str, str, str], ...] = (
     ("llamacpp:", "llamacpp", "llama.cpp"),
     ("sglang:", "sglang", "SGLang"),
     ("sglang_", "sglang", "SGLang"),  # SGLang >=0.5.4 renamed the metric prefix
+    ("ninfer:", "ninfer", "NInfer"),  # NInfer (if/when it serves /metrics)
 )
 
 
@@ -271,6 +273,13 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
     except (httpx.HTTPError, OSError) as exc:
         logger.debug("/metrics backend probe failed: %s", exc)
 
+    # NInfer: /v1/models entries carry owned_by == "ninfer".  Checked before
+    # the generic /health fallback, which otherwise fingerprints NInfer as
+    # llama.cpp (NInfer answers /health with 200 {"status":"ok"} and does not
+    # serve /metrics, /version, or /props).
+    if await _probe_ninfer(base_url, api_key):
+        return "ninfer", "NInfer"
+
     if await _probe_vllm_version(base_url, api_key):
         return "vllm", "vLLM"
 
@@ -314,6 +323,31 @@ def _guess_quantization(model_name: str | None) -> str | None:
     return None
 
 
+async def _probe_ninfer(base_url: str, api_key: str | None) -> dict[str, Any]:
+    """Detect NInfer from /v1/models: entries carry owned_by == 'ninfer'.
+
+    More specific than the generic /health probe that otherwise fingerprints
+    NInfer as llama.cpp (NInfer answers /health with 200 {'status':'ok'} and
+    does not serve /metrics, /version, or /props).
+    """
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    url = f"{_root_url(base_url)}/v1/models"
+    try:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                body = resp.json()
+                data = body.get("data") if isinstance(body, dict) else None
+                if isinstance(data, list) and data and isinstance(data[0], dict):
+                    if data[0].get("owned_by") == "ninfer":
+                        return {"engine_name": "NInfer"}
+    except (httpx.HTTPError, OSError, ValueError) as exc:
+        logger.debug("ninfer /v1/models probe failed: %s", exc)
+    return {}
+
+
 async def _probe_engine(
     base_url: str,
     api_key: str | None,
@@ -348,9 +382,13 @@ async def _probe_engine(
         # the metrics-based detector that produced this label already confirms
         # the engine, so just record the name.
         result.setdefault("engine_name", "SGLang")
+    elif backend_l == "ninfer":
+        ninfer_info = await _probe_ninfer(base_url, api_key)
+        result.update(ninfer_info)
     else:
         # Try all in order (vLLM first as most common)
         for prober in [
+            lambda: _probe_ninfer(base_url, api_key),
             lambda: _probe_vllm_version(base_url, api_key),
             lambda: _probe_litellm(base_url, api_key),
             lambda: _probe_llamacpp(base_url),
