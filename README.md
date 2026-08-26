@@ -1,6 +1,6 @@
 # tool-eval-bench
 
-A **tool-calling quality benchmark** for evaluating LLM tool-use in agentic workflows across open-weight model serving stacks (**vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**). It also includes pluggable accuracy benchmarks (**GSM8K**, **MMLU**, **IFEval**) through the same adapter layer.
+A **tool-calling quality benchmark** for evaluating LLM tool-use in agentic workflows across open-weight model serving stacks (**vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**, **NInfer**). It also includes pluggable accuracy benchmarks (**GSM8K**, **MMLU**, **IFEval**) through the same adapter layer.
 
 Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool runs **69 standard deterministic scenarios** across categories A–O, plus **19 opt-in Hard Mode scenarios**, through OpenAI-compatible `/v1/chat/completions` endpoints. It scores each result as **pass**, **partial**, or **fail**, and produces detailed trace reports. Mock tool responses include realistic payload noise (extra metadata, timestamps, nested objects) to test whether models can extract relevant fields from noisy API responses. It also includes an integrated **throughput benchmark** (llama-bench style) for measuring prefill and token generation speed.
 
@@ -902,6 +902,7 @@ OpenAI-compatible backends must expose `/v1/chat/completions` and support the
 - **SGLang** — OpenAI-compatible model server
 - **LiteLLM** — proxy for multiple backends
 - **llama.cpp** — lightweight local inference
+- **NInfer** — OpenAI-compatible inference engine, detected via `/v1/models`
 
 The adapter sends real `tools` + `tool_choice` in the request and parses `tool_calls` from the response. There is no prompt hacking or JSON regex matching. It accepts SSE `data:` fields with or without the optional space and also parses a normal JSON 200 response when an endpoint ignores `stream=true`. It defaults to the widely supported `max_tokens` field; if an endpoint explicitly rejects that field and requests `max_completion_tokens`, the adapter retries once and remembers the choice for that endpoint and model. This capability check is response-driven rather than tied to provider or model names.
 

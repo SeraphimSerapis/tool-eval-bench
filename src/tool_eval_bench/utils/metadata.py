@@ -225,7 +225,6 @@ _METRICS_BACKEND_PREFIXES: tuple[tuple[str, str, str], ...] = (
     ("llamacpp:", "llamacpp", "llama.cpp"),
     ("sglang:", "sglang", "SGLang"),
     ("sglang_", "sglang", "SGLang"),  # SGLang >=0.5.4 renamed the metric prefix
-    ("ninfer:", "ninfer", "NInfer"),  # NInfer (if/when it serves /metrics)
 )
 
 
@@ -253,7 +252,8 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
     1. The ``/metrics`` namespace — see :func:`detect_backend_from_metrics`.
        Unambiguous, but llama.cpp's ``--metrics`` flag is opt-in.
     2. vLLM's ``/version`` — llama.cpp 404s this, so it cannot false-positive.
-    3. llama.cpp's ``/props``/``/health``.  Deliberately last: ``/health``
+    3. NInfer's ``owned_by`` marker from ``/v1/models``.
+    4. llama.cpp's ``/props``/``/health``.  Deliberately last: ``/health``
        is generic enough that other engines answer it, and vLLM only avoids
        matching here because its ``/health`` body is empty.
 
@@ -273,15 +273,15 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
     except (httpx.HTTPError, OSError) as exc:
         logger.debug("/metrics backend probe failed: %s", exc)
 
+    if await _probe_vllm_version(base_url, api_key):
+        return "vllm", "vLLM"
+
     # NInfer: /v1/models entries carry owned_by == "ninfer".  Checked before
     # the generic /health fallback, which otherwise fingerprints NInfer as
     # llama.cpp (NInfer answers /health with 200 {"status":"ok"} and does not
     # serve /metrics, /version, or /props).
     if await _probe_ninfer(base_url, api_key):
         return "ninfer", "NInfer"
-
-    if await _probe_vllm_version(base_url, api_key):
-        return "vllm", "vLLM"
 
     if await _probe_llamacpp(base_url):
         return "llamacpp", "llama.cpp"
@@ -383,20 +383,23 @@ async def _probe_engine(
         # the engine, so just record the name.
         result.setdefault("engine_name", "SGLang")
     elif backend_l == "ninfer":
-        ninfer_info = await _probe_ninfer(base_url, api_key)
-        result.update(ninfer_info)
+        if result.get("owned_by") == "ninfer":
+            result["engine_name"] = "NInfer"
     else:
-        # Try all in order (vLLM first as most common)
+        # Try specific engine endpoints before model ownership and generic health.
         for prober in [
-            lambda: _probe_ninfer(base_url, api_key),
             lambda: _probe_vllm_version(base_url, api_key),
             lambda: _probe_litellm(base_url, api_key),
-            lambda: _probe_llamacpp(base_url),
         ]:
             info = await prober()
             if info:
                 result.update(info)
                 break
+        else:
+            if result.get("owned_by") == "ninfer":
+                result["engine_name"] = "NInfer"
+            else:
+                result.update(await _probe_llamacpp(base_url))
 
     # Infer quantization from model name
     if "quantization" not in result:
