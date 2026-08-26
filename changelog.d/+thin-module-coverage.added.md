@@ -1,0 +1,1 @@
+Test coverage for the two thinnest modules: the HuggingFace retry ladder that stands between a 429 and a failed download (65% to 91%), and the live speculative-decoding monitor's session handling, whose loop body every previous test scraped past (61% to 85%). Both now have coverage floors so they cannot drift back.
