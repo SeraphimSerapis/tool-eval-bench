@@ -314,6 +314,7 @@ throughout: scores must not move, and no long-lived refactor branch.
 | 5 | Split `MarkdownReporter` into a `storage/reports/` package and extract `compare_reports/_common.py`. Removes ~300 lines. | 2d | Low |
 | 6 | Promote `_build_run_config` to a public `RunConfig` dataclass and thread it through the 21/29/19/14 argument chain. | 2-3d | Medium |
 | 7 | Move perf, spec-bench, pressure, and plugin orchestration into `application/`. Split `dispatch.py:main` at its existing mode boundaries. Fix F1 here. Then tighten the boundary test to forbid `cli` to `storage` and `cli` to `runner`. | 3-4d | Medium |
+| | **Delivered in part.** F1 is fixed, `main` went from 760 to 577 lines, and CLI database reads moved to `application/run_queries.py` behind a test that forbids `cli` to `storage.db`. The rest was dropped: `cli` may still import `storage.reports`, which is a renderer rather than persistence and which `BenchmarkService` publishes as a constructor argument, and moving perf, spec-bench, pressure, and plugin composition into `application/` would add a layer with one caller while threading console output back through callbacks across ~1,700 lines. | | |
 | 8 | Contributor docs for scenarios, plugins, and adapters. Docstrings for the measurement port. Issue templates, CODEOWNERS, CI hardening, config tightening. | 1-2d | None |
 | 9 | One file per scenario in a category folder tree with a scanning registry. Lands after stage 8 so the docs are written once. | 3-4d | Low, but verify hard |
 
