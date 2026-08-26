@@ -20,6 +20,7 @@ import logging
 import os
 import sys
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from dotenv import load_dotenv  # noqa: F401  (re-exported via _load_dotenv)
@@ -290,6 +291,102 @@ async def _plain_on_result(
 _HIDDEN_ARGS: frozenset[str] = frozenset({"command", "help"})
 
 
+@dataclass
+class _Target:
+    """Everything the mode handlers below need about a resolved endpoint.
+
+    ``main`` resolves the endpoint once (URL cascade, wire format, backend
+    probe, model detection) and each mode reads it from here, rather than
+    threading a dozen locals through every branch.
+    """
+
+    args: argparse.Namespace
+    parser: argparse.ArgumentParser
+    console: Console
+    model: str
+    display_name: str
+    backend: str
+    base_url: str
+    display_url: str
+    api_key: str | None
+    wire_format: str
+    extra_params: dict[str, Any]
+    run_context: Any | None
+
+
+def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
+    """Run the llama-benchy throughput sweep.
+
+    Returns the samples and whether the CLI is finished; ``--perf-only`` writes
+    its own report and stops, while ``--perf`` hands its samples to the
+    tool-call run that follows.
+    """
+    args, console = target.args, target.console
+    if not (args.perf or args.perf_only):
+        return [], False
+
+    benchy_extra: list[str] | None = None
+    if args.benchy_args:
+        import shlex
+
+        benchy_extra = shlex.split(args.benchy_args)
+
+    throughput_samples = _run_llama_benchy(
+        console,
+        target.model,
+        target.display_name,
+        target.base_url,
+        target.api_key,
+        pp=[args.pp],
+        tg=[args.tg],
+        depths=_parse_int_list(args.depth),
+        concurrency_levels=_parse_int_list(args.concurrency),
+        runs=args.benchy_runs,
+        latency_mode=args.benchy_latency_mode,
+        skip_coherence=True,
+        extra_args=benchy_extra,
+        # We already warmed the server, so skip llama-benchy's own warm-up and
+        # save two requests.
+        skip_warmup=not args.no_warmup,
+        tokenizer=getattr(args, "tokenizer", None),
+    )
+
+    if not args.perf_only:
+        return throughput_samples, False
+
+    from tool_eval_bench.utils.ids import build_run_id
+
+    run_config = _with_config_fingerprint(
+        {
+            "model": target.model,
+            "backend": target.backend,
+            "base_url": target.base_url,
+            "mode": "perf-only",
+        }
+    )
+    run_id = build_run_id(run_config)
+    reporter = MarkdownReporter(root=args.output_dir)
+    report_path = reporter.write_throughput_report(
+        run_id,
+        target.display_name,
+        throughput_samples,
+        run_context=target.run_context,
+    )
+    _persist_plugin_run(
+        {
+            "run_id": run_id,
+            "run_type": "perf",
+            "status": "completed",
+            "config": run_config,
+            "scores": {"samples": len(throughput_samples)},
+            "metadata": _metadata_for_storage(target.run_context),
+            "report_path": str(report_path),
+        }
+    )
+    console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
+    return throughput_samples, True
+
+
 def _validate_scenario_selection(
     args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console
 ) -> None:
@@ -426,6 +523,76 @@ def _build_run_context(
     except Exception as exc:
         logger.warning("Failed to build RunContext: %s", exc)
         return None
+
+
+def _run_spec_bench_mode(target: _Target) -> bool:
+    """Run the speculative-decoding benchmark. Returns True when the CLI is done."""
+    args, console = target.args, target.console
+    model, base_url, api_key = target.model, target.base_url, target.api_key
+    display_name = target.display_name
+    if args.spec_bench:
+        spec_depths = _parse_int_list(args.depth)
+        spec_prompts = [p.strip() for p in args.spec_prompts.split(",") if p.strip()]
+        _run_spec_bench(
+            console,
+            model,
+            display_name,
+            base_url,
+            api_key,
+            pp=args.pp,
+            tg=args.tg,
+            depths=spec_depths,
+            spec_method=args.spec_method,
+            baseline_tg_tps=args.baseline_tgs,
+            prompt_types=spec_prompts,
+            metrics_url=args.metrics_url,
+            output_dir=args.output_dir,
+            metadata_for_storage=_metadata_for_storage,
+            with_config_fingerprint=_with_config_fingerprint,
+            persist_plugin_run=_persist_plugin_run,
+            label=args.label,
+        )
+        # If --spec-bench is the only mode, or user explicitly skipped tool-eval
+        if args.skip_tool_eval or (
+            not args.perf
+            and not args.perf_only
+            and not args.gsm8k
+            and not args.gsm8k_only
+            and not args.mmlu
+            and not args.mmlu_only
+            and not args.ifeval
+            and not args.ifeval_only
+        ):
+            return True
+    return False
+
+
+def _run_pressure_sweep_mode(target: _Target) -> bool:
+    """Run the context-pressure sweep. Returns True when the CLI is done."""
+    args, console = target.args, target.console
+    model, base_url, api_key = target.model, target.base_url, target.api_key
+    display_name, display_url = target.display_name, target.display_url
+    backend, extra_params = target.backend, target.extra_params
+    if args.context_pressure_sweep is not None:
+        _run_pressure_sweep(
+            console,
+            model,
+            display_name,
+            backend,
+            base_url,
+            api_key,
+            args,
+            display_url=display_url,
+            extra_params=extra_params or None,
+            parse_sweep_range=_parse_sweep_range,
+            resolve_scenarios=_resolve_scenarios,
+            with_config_fingerprint=_with_config_fingerprint,
+            persist_plugin_run=_persist_plugin_run,
+            metadata_for_storage=_metadata_for_storage,
+            label=args.label,
+        )
+        return True
+    return False
 
 
 def main() -> None:
@@ -647,128 +814,29 @@ def main() -> None:
         extra_params=extra_params,
     )
 
-    # -- Throughput benchmark (llama-benchy, the default) --
-    throughput_samples: list = []
-    if args.perf or args.perf_only:
-        depths = _parse_int_list(args.depth)
-        conc_levels = _parse_int_list(args.concurrency)
+    target = _Target(
+        args=args,
+        parser=parser,
+        console=console,
+        model=model,
+        display_name=display_name,
+        backend=backend,
+        base_url=base_url,
+        display_url=display_url,
+        api_key=api_key,
+        wire_format=wire_format,
+        extra_params=extra_params,
+        run_context=run_context,
+    )
 
-        # Parse extra args if provided
-        benchy_extra: list[str] | None = None
-        if args.benchy_args:
-            import shlex
+    throughput_samples, finished = _run_throughput_mode(target)
+    if finished:
+        return
 
-            benchy_extra = shlex.split(args.benchy_args)
+    if _run_spec_bench_mode(target):
+        return
 
-        throughput_samples = _run_llama_benchy(
-            console,
-            model,
-            display_name,
-            base_url,
-            api_key,
-            pp=[args.pp],
-            tg=[args.tg],
-            depths=depths,
-            concurrency_levels=conc_levels,
-            runs=args.benchy_runs,
-            latency_mode=args.benchy_latency_mode,
-            skip_coherence=True,
-            extra_args=benchy_extra,
-            # When we've already done our own warmup, tell llama-benchy to
-            # skip its redundant warmup phase (saves 2 extra requests).
-            skip_warmup=not args.no_warmup,
-            tokenizer=getattr(args, "tokenizer", None),
-        )
-
-        if args.perf_only:
-            # Write standalone throughput report
-            from tool_eval_bench.utils.ids import build_run_id
-
-            run_config = _with_config_fingerprint(
-                {
-                    "model": model,
-                    "backend": backend,
-                    "base_url": base_url,
-                    "mode": "perf-only",
-                }
-            )
-            run_id = build_run_id(run_config)
-            reporter = MarkdownReporter(root=args.output_dir)
-            report_path = reporter.write_throughput_report(
-                run_id,
-                display_name,
-                throughput_samples,
-                run_context=run_context,
-            )
-            _persist_plugin_run(
-                {
-                    "run_id": run_id,
-                    "run_type": "perf",
-                    "status": "completed",
-                    "config": run_config,
-                    "scores": {"samples": len(throughput_samples)},
-                    "metadata": _metadata_for_storage(run_context),
-                    "report_path": str(report_path),
-                }
-            )
-            console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
-            return
-
-    # -- Speculative decoding / MTP benchmark --
-    if args.spec_bench:
-        spec_depths = _parse_int_list(args.depth)
-        spec_prompts = [p.strip() for p in args.spec_prompts.split(",") if p.strip()]
-        _run_spec_bench(
-            console,
-            model,
-            display_name,
-            base_url,
-            api_key,
-            pp=args.pp,
-            tg=args.tg,
-            depths=spec_depths,
-            spec_method=args.spec_method,
-            baseline_tg_tps=args.baseline_tgs,
-            prompt_types=spec_prompts,
-            metrics_url=args.metrics_url,
-            output_dir=args.output_dir,
-            metadata_for_storage=_metadata_for_storage,
-            with_config_fingerprint=_with_config_fingerprint,
-            persist_plugin_run=_persist_plugin_run,
-            label=args.label,
-        )
-        # If --spec-bench is the only mode, or user explicitly skipped tool-eval
-        if args.skip_tool_eval or (
-            not args.perf
-            and not args.perf_only
-            and not args.gsm8k
-            and not args.gsm8k_only
-            and not args.mmlu
-            and not args.mmlu_only
-            and not args.ifeval
-            and not args.ifeval_only
-        ):
-            return
-
-    # -- Context pressure sweep --
-    if args.context_pressure_sweep is not None:
-        _run_pressure_sweep(
-            console,
-            model,
-            display_name,
-            backend,
-            base_url,
-            api_key,
-            args,
-            display_url=display_url,
-            extra_params=extra_params or None,
-            parse_sweep_range=_parse_sweep_range,
-            resolve_scenarios=_resolve_scenarios,
-            with_config_fingerprint=_with_config_fingerprint,
-            persist_plugin_run=_persist_plugin_run,
-            metadata_for_storage=_metadata_for_storage,
-            label=args.label,
-        )
+    if _run_pressure_sweep_mode(target):
         return
 
     # -- Context pressure --
