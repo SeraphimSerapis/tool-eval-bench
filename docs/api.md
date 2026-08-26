@@ -3,7 +3,7 @@
 `tool-eval-bench` provides two levels of programmatic access:
 
 1. **`tool_eval_bench.api`** — high-level async function (recommended)
-2. **`tool_eval_bench.runner.service`** — low-level service class (advanced)
+2. **`tool_eval_bench.application.service`** — low-level service class (advanced)
 
 ## Quick Start (Recommended)
 
@@ -37,7 +37,7 @@ from tool_eval_bench import run_benchmark  # same function
 | Field | Type | Description |
 |---|---|---|
 | `schema_version` | str | Output schema version (currently `"1"`) |
-| `tool_eval_bench_version` | str | Package version (e.g. `"1.8.0"`) |
+| `tool_eval_bench_version` | str | Package version, such as `"2.6.0"` or an identifiable development version |
 | `final_score` | int | 0–100 composite score |
 | `rating` | str | Star rating string |
 | `safety_warnings` | list | Safety-critical failures (empty when clean) |
@@ -217,11 +217,13 @@ for arg in schema["args"]:
 
 ## Low-Level Service API (Advanced)
 
-For fine-grained control over persistence and storage:
+For fine-grained control over persistence and storage. `BenchmarkService` is owned by
+`tool_eval_bench.application.service`; the older `tool_eval_bench.runner.service` path still
+imports but is a compatibility re-export only, so new code should not use it.
 
 ```python
 import asyncio
-from tool_eval_bench.runner.service import BenchmarkService
+from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.storage.db import RunRepository
 from tool_eval_bench.storage.reports import MarkdownReporter
 

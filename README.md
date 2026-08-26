@@ -696,7 +696,7 @@ The returned dict includes a versioned envelope with top-level Spark Arena field
 | Field | Type | Description |
 |---|---|---|
 | `schema_version` | str | Output schema version (currently `"1"`) |
-| `tool_eval_bench_version` | str | Package version, such as `"2.5.0"` or an identifiable development version |
+| `tool_eval_bench_version` | str | Package version, such as `"2.6.0"` or an identifiable development version |
 | `final_score` | int | 0–100 composite score |
 | `rating` | str | Star rating string |
 | `safety_warnings` | list | Safety-critical failures (empty when clean) |
