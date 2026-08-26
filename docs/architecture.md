@@ -315,28 +315,22 @@ CLI
 
 ## Extension Points
 
-### Adding a New Scenario
-See [CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-new-scenario).
+### Adding a scenario
+One file under `evals/scenarios/<group>/tcNN.py`, exporting `SCENARIO` and `DISPLAY`. The group
+package discovers it. Worked example: [adding-a-scenario.md](adding-a-scenario.md).
 
-### Adding a New Plugin Benchmark
-1. Create `plugins/<name>/` with `dataset.py`, `evaluator.py`, `plugin.py`
-2. Implement `BenchmarkPlugin` from `domain/plugin.py` using the backend port in `domain/adapters.py`
-3. Register in `plugins/registry.py`
-4. Add CLI flags in `cli/legacy_parser.py` and register them in `schema.py`
-5. Add the subcommand metadata and flag translation rules in `cli/command_registry.py`, or the
-   plugin gets a legacy flat flag and no `plugin <name>` subcommand
-6. Wire the run path in `cli/plugin_runners.py` and the finalization path in
-   `cli/plugin_lifecycle.py`
-7. Regenerate the committed compatibility snapshots with `scripts/update_compat_snapshots.py`
+### Adding a plugin benchmark
+Implement `BenchmarkPlugin` under `plugins/<name>/`, register it in `plugins/registry.py`, then
+wire the CLI in `cli/legacy_parser.py`, `schema.py`, `cli/command_registry.py`, and
+`cli/plugin_runners.py`, and regenerate the compatibility snapshots. Miss the CLI wiring and the
+plugin runs from Python but not from `tool-eval-bench plugin <name>`. Full steps:
+[adding-a-plugin.md](adding-a-plugin.md).
 
-### Adding a New Backend
-OpenAI-compatible backends use `OpenAICompatibleAdapter`. To support a new backend:
-1. Ensure it exposes `/v1/chat/completions` with `tools` support
-2. Add a port to auto-discovery in `cli/server.py`
-3. Add the backend label to `application/service.py` and backend detection mappings
-
-For a native wire format, add a provider adapter and register it through
-`adapters/factory.py` and `adapters/wire_format.py` instead.
+### Adding a backend
+An OpenAI-compatible endpoint needs no code: point `--base-url` at it. Add a port to auto-discovery
+in `cli/server.py` and a backend label in `application/service.py` to have it detected by name. A
+native wire format needs an adapter, registered through `adapters/wire_format.py` and
+`adapters/factory.py`: [adding-an-adapter.md](adding-an-adapter.md).
 
 ---
 

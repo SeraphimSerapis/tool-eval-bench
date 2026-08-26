@@ -1,0 +1,1 @@
+Three extension-point guides: `docs/adding-a-scenario.md` with a complete worked scenario, plus `docs/adding-a-plugin.md` and `docs/adding-an-adapter.md`. The scenario guide's example is executed by the test suite, so it cannot drift from the API.

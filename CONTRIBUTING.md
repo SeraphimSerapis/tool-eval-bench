@@ -130,6 +130,9 @@ registered by existing.
 
 Nothing else registers the scenario. `tests/test_scenario_registry.py` checks
 every file in the tree for all four of these and fails if one is missing.
+[docs/adding-a-scenario.md](docs/adding-a-scenario.md) walks through a complete
+example, including the optional fields that change how the runner drives the
+conversation.
 
 A helper used by more than one scenario in the group belongs in that group's
 `_shared.py`. Do not import one scenario module from another: helpers with the

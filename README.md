@@ -18,6 +18,9 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 - [Backends](#backends), [CI](#ci), [architecture](#architecture)
 - Something not working? [Troubleshooting](docs/troubleshooting.md)
 
+Contributing? [Add a scenario](docs/adding-a-scenario.md), [add a plugin](docs/adding-a-plugin.md),
+or [add a backend adapter](docs/adding-an-adapter.md).
+
 Reference docs live in [`docs/`](docs/): [methodology](docs/methodology.md) for the scoring
 rationale, [architecture](docs/architecture.md) for the internals, [api](docs/api.md) for the
 Python API, [cli-reference](docs/cli-reference.md) for every flag and exit code, and
