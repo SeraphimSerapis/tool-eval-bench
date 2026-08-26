@@ -697,7 +697,11 @@ def build_pressure_messages(
     if seed is not None:
         rng = random.Random(seed ^ hash(fill_tokens))
     else:
-        rng = random.Random(time.time_ns())
+        # Seeded from OS entropy, not from a clock. `time.time_ns()` advances in
+        # ~15.6ms steps on Windows, so two builds inside one tick drew the same
+        # seed and produced byte-identical filler — exactly the prefix-cache
+        # sharing this noise exists to defeat.
+        rng = random.Random()
     rng.shuffle(paragraph_order)
 
     # Unique session nonce — ensures no two runs share token prefixes.
@@ -844,12 +848,11 @@ async def calibrate_pressure_messages(
 
     # Under target — extend the last user message with more filler
     shortfall = -delta
-    import time
 
     if seed is not None:
         cal_rng = random.Random(seed ^ hash(target_tokens) ^ 0xCA1)
     else:
-        cal_rng = random.Random(time.time_ns())
+        cal_rng = random.Random()
     extra_text = _build_filler_text(
         shortfall,
         chunk_idx=999,

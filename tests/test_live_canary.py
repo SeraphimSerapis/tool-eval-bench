@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import utf8_subprocess_env
+
 
 @pytest.mark.live
 def test_live_canary_covers_tool_safety_and_artifact_paths(tmp_path: Path) -> None:
@@ -51,6 +53,8 @@ def test_live_canary_covers_tool_safety_and_artifact_paths(tmp_path: Path) -> No
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env=utf8_subprocess_env(),
         check=False,
     )
     assert completed.returncode == 0, completed.stderr[-4000:]

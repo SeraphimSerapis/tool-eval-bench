@@ -507,7 +507,7 @@ class TestEmitJsonOutput:
         _emit_json_output(data, json_file=str(out_file))
 
         assert out_file.exists()
-        parsed = json.loads(out_file.read_text())
+        parsed = json.loads(out_file.read_text(encoding="utf-8"))
         assert parsed["final_score"] == 87
         assert parsed["model"] == "test"
 

@@ -112,7 +112,7 @@ def test_plugin_runners_complete_cached_lifecycles(
     from tool_eval_bench.plugins.mmlu import plugin as mp
 
     cache = tmp_path / "cache"
-    cache.write_text("cached")
+    cache.write_text("cached", encoding="utf-8")
     monkeypatch.setattr(gd, "_find_cache_file", lambda: cache)
     monkeypatch.setattr(gd, "load_dataset", lambda **kw: [gd.GSM8KItem(0, "q", "#### 1", 1)])
     monkeypatch.setattr(md, "_find_cache_file", lambda split="test": cache)

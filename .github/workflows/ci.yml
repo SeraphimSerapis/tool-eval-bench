@@ -46,14 +46,14 @@ jobs:
             python-version: '3.13'
             random-seed: '155921'
           # storage/db.py resolves its path from Path.cwd() and runs SQLite in
-          # WAL mode, so a non-Linux runner is worth the minutes.
+          # WAL mode, and Windows opens files as cp1252 and refuses to delete
+          # one that is still open. Those are the differences that bite.
           - os: macos-latest
             python-version: '3.12'
             random-seed: '181081'
-          # Windows is not in the matrix yet: the suite has 47 failures there
-          # that assume UTF-8 by default, POSIX separators, and sub-millisecond
-          # clock resolution. Tracked in #93. It did find a real scoring bug
-          # first, which is why tzdata is now a win32 dependency.
+          - os: windows-latest
+            python-version: '3.12'
+            random-seed: '199933'
 
     steps:
       - name: Checkout

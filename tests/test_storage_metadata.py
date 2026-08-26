@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-from tool_eval_bench.storage.db import RunRepository
+from tests.conftest import open_repository
 
 
 def test_scenario_run_roundtrip(tmp_path: Path) -> None:
-    repo = RunRepository(db_path=str(tmp_path / "bench.sqlite"))
+    repo = open_repository(db_path=str(tmp_path / "bench.sqlite"))
 
     run_data = {
         "run_id": "r1",
@@ -25,7 +25,7 @@ def test_scenario_run_roundtrip(tmp_path: Path) -> None:
 
 
 def test_list_runs(tmp_path: Path) -> None:
-    repo = RunRepository(db_path=str(tmp_path / "bench.sqlite"))
+    repo = open_repository(db_path=str(tmp_path / "bench.sqlite"))
 
     for i in range(3):
         repo.upsert_scenario_run(
@@ -46,7 +46,7 @@ def test_list_runs(tmp_path: Path) -> None:
 
 
 def test_upsert_replaces_config_for_resumed_run(tmp_path: Path) -> None:
-    repo = RunRepository(db_path=str(tmp_path / "bench.sqlite"))
+    repo = open_repository(db_path=str(tmp_path / "bench.sqlite"))
     repo.upsert_scenario_run(
         {
             "run_id": "resumed",

@@ -25,13 +25,13 @@ def test_link_worktree_venv_ignores_inherited_git_dir(tmp_path: Path) -> None:
     _git("init", "-q", cwd=primary)
     _git("config", "user.email", "test@example.com", cwd=primary)
     _git("config", "user.name", "Test", cwd=primary)
-    (primary / "tracked.txt").write_text("tracked\n")
+    (primary / "tracked.txt").write_text("tracked\n", encoding="utf-8")
     _git("add", "tracked.txt", cwd=primary)
     _git("commit", "-qm", "initial", cwd=primary)
 
     python = primary / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     python.parent.mkdir(parents=True)
-    python.write_text("")
+    python.write_text("", encoding="utf-8")
     _git("worktree", "add", "-qb", "topic", str(linked), cwd=primary)
 
     polluted_env = os.environ.copy()

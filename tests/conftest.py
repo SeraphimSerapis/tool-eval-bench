@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
@@ -19,6 +20,42 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
     ToolResultRecord,
 )
+
+_open_repositories: list[Any] = []
+
+
+def open_repository(**kwargs: Any) -> Any:
+    """A `RunRepository` closed at the end of the test, whatever happens.
+
+    Windows refuses to delete a file that is still open, so a test that fails
+    before reaching its own `close()` leaves `tmp_path` un-removable and
+    reports `PermissionError` instead of the assertion that actually failed.
+    Calling `close()` yourself as well is fine; it is idempotent.
+    """
+    from tool_eval_bench.storage.db import RunRepository
+
+    repository = RunRepository(**kwargs)
+    _open_repositories.append(repository)
+    return repository
+
+
+@pytest.fixture(autouse=True)
+def _close_leaked_repositories():
+    """Close anything `open_repository` handed out during the test."""
+    yield
+    while _open_repositories:
+        _open_repositories.pop().close()
+
+
+def utf8_subprocess_env() -> dict[str, str]:
+    """Environment for a child Python that writes non-ASCII to a pipe.
+
+    The CLI prints star ratings and em dashes. A child process on Windows
+    encodes stdout as cp1252 by default and raises before the parent ever sees
+    the output.
+    """
+    return {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
 
 #: `termios` and `tty` are POSIX-only. The keypress reader returns None without
 #: them by design, so tests that drive it have nothing to assert on Windows.

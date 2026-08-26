@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from rich.console import Console
 
+from tests.conftest import utf8_subprocess_env
 from tool_eval_bench.cli.bench import _make_parser
 from tool_eval_bench.cli.parser import KNOWN_COMMANDS, parse_cli_args, translate_argv
 from tool_eval_bench.cli.plugin_runners import _finalize_plugin_run, run_selected_plugins
@@ -207,6 +208,8 @@ def test_subprocess_help_is_command_specific(command: str, included: str, exclud
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env=utf8_subprocess_env(),
     )
     assert completed.returncode == 0, completed.stderr
     assert included in completed.stdout
@@ -220,6 +223,8 @@ def test_module_execution_version_path() -> None:
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env=utf8_subprocess_env(),
     )
     assert completed.returncode == 0
     assert completed.stdout.startswith("tool-eval-bench ")
@@ -232,12 +237,16 @@ def test_subprocess_run_and_legacy_dry_run_are_equivalent() -> None:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env=utf8_subprocess_env(),
     )
     command = subprocess.run(  # noqa: S603 - fixed local module invocation
         [*base, "run", "--dry-run", "--short", "--json"],
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        env=utf8_subprocess_env(),
     )
     assert json.loads(command.stdout) == json.loads(legacy.stdout)
     assert json.loads(command.stdout)["total_scenarios"] == 15
@@ -291,7 +300,7 @@ def test_shared_plugin_finalization_writes_and_persists(
 
     reports = list(tmp_path.rglob(f"{run_id}.md"))
     assert len(reports) == 1
-    text = reports[0].read_text()
+    text = reports[0].read_text(encoding="utf-8")
     assert f"# {title} Benchmark — Display Model" in text
     assert all(metric in text for metric in metrics)
     assert "plugin-specific report" in text
@@ -368,6 +377,6 @@ def test_finalize_plugin_run_renders_label_and_slugifies_filename(
 
     reports = list(tmp_path.rglob(f"{run_id}--{SLUG}.md"))
     assert len(reports) == 1
-    text = reports[0].read_text()
+    text = reports[0].read_text(encoding="utf-8")
     assert f"- **Label**: <code>{LABEL}</code>" in text
     assert persisted[0]["metadata"]["label"] == LABEL

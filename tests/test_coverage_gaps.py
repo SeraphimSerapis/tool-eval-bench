@@ -8,7 +8,7 @@ import time
 import httpx
 import pytest
 
-from tests.conftest import MeasurementTestClient
+from tests.conftest import MeasurementTestClient, open_repository
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.scenarios import (
     Category,
@@ -45,7 +45,6 @@ from tool_eval_bench.runner.speculative import (
     detect_spec_decoding,
     scrape_spec_metrics,
 )
-from tool_eval_bench.storage.db import RunRepository
 from tool_eval_bench.storage.reports import MarkdownReporter, _render_run_context
 from tool_eval_bench.utils.urls import metrics_url as _metrics_url
 
@@ -462,17 +461,17 @@ class TestEnrichPayload:
 
 class TestRunRepositoryExtended:
     def test_get_nonexistent(self, tmp_path):
-        repo = RunRepository(db_path=str(tmp_path / "test.sqlite"))
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
         assert repo.get("no_such_id") is None
         repo.close()
 
     def test_get_latest_empty(self, tmp_path):
-        repo = RunRepository(db_path=str(tmp_path / "test.sqlite"))
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
         assert repo.get_latest() is None
         repo.close()
 
     def test_get_latest_with_data(self, tmp_path):
-        repo = RunRepository(db_path=str(tmp_path / "test.sqlite"))
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
         repo.upsert_scenario_run(
             {"run_id": "r1", "config": {"model": "m"}, "scores": {}, "metadata": {}}
         )
@@ -481,7 +480,7 @@ class TestRunRepositoryExtended:
         repo.close()
 
     def test_get_latest_filtered_by_model(self, tmp_path):
-        repo = RunRepository(db_path=str(tmp_path / "test.sqlite"))
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
         repo.upsert_scenario_run(
             {"run_id": "r1", "config": {"model": "a"}, "scores": {}, "metadata": {}}
         )
@@ -493,7 +492,7 @@ class TestRunRepositoryExtended:
         repo.close()
 
     def test_get_scenario_results(self, tmp_path):
-        repo = RunRepository(db_path=str(tmp_path / "test.sqlite"))
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
         repo.upsert_scenario_run(
             {
                 "run_id": "r1",
@@ -507,18 +506,18 @@ class TestRunRepositoryExtended:
         repo.close()
 
     def test_get_scenario_results_missing(self, tmp_path):
-        repo = RunRepository(db_path=str(tmp_path / "test.sqlite"))
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
         assert repo.get_scenario_results("missing") is None
         repo.close()
 
     def test_get_scenario_results_no_scores(self, tmp_path):
-        repo = RunRepository(db_path=str(tmp_path / "test.sqlite"))
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
         repo.upsert_scenario_run({"run_id": "r1", "config": {"model": "m"}, "metadata": {}})
         assert repo.get_scenario_results("r1") is None
         repo.close()
 
     def test_upsert_updates_existing(self, tmp_path):
-        repo = RunRepository(db_path=str(tmp_path / "test.sqlite"))
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
         repo.upsert_scenario_run(
             {"run_id": "r1", "config": {"model": "m"}, "scores": {"v": 1}, "metadata": {}}
         )
@@ -529,7 +528,7 @@ class TestRunRepositoryExtended:
         repo.close()
 
     def test_list_filter_by_model(self, tmp_path):
-        repo = RunRepository(db_path=str(tmp_path / "test.sqlite"))
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
         repo.upsert_scenario_run(
             {"run_id": "r1", "config": {"model": "a"}, "scores": {}, "metadata": {}}
         )
@@ -540,7 +539,7 @@ class TestRunRepositoryExtended:
         repo.close()
 
     def test_del_safety_net(self, tmp_path):
-        repo = RunRepository(db_path=str(tmp_path / "test.sqlite"))
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
         del repo  # should not raise
 
 
@@ -636,7 +635,7 @@ class TestSpecDecodeReport:
             ),
         ]
         path = reporter.write_spec_decode_report("spec_001", "test-model", samples)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert "Speculative Decoding Benchmark" in content
         assert "mtp" in content
         assert "Interpretation Guide" in content
@@ -656,7 +655,7 @@ class TestSpecDecodeReport:
             ),
         ]
         path = reporter.write_spec_decode_report("spec_002", "test-model", samples)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert "α (accept)" in content
         assert "85.0%" in content
         assert "Acceptance Rate by Prompt Type" in content
@@ -665,7 +664,7 @@ class TestSpecDecodeReport:
         reporter = MarkdownReporter(root=str(tmp_path))
         samples = [SpecDecodeSample(tg_tokens=64, total_ms=1000, tg_tps=30.0)]
         path = reporter.write_spec_decode_report("spec_003", "model", samples)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert "[!NOTE]" in content
         assert "not available" in content
 
@@ -694,7 +693,7 @@ class TestScenarioReportWithContext:
         reporter = MarkdownReporter(root=str(tmp_path))
         ctx = _make_run_context()
         path = reporter.write_scenario_report("r1", "m", self._make_summary(), run_context=ctx)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert "## Run Context" in content
         assert "v1.3.0" in content
 
@@ -706,7 +705,7 @@ class TestScenarioReportWithContext:
         summary.median_turn_ms = 1500.0
         summary.alpha = 0.7
         path = reporter.write_scenario_report("r2", "m", summary)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert "Deployability" in content
         assert "85" in content
 
@@ -716,7 +715,7 @@ class TestScenarioReportWithContext:
         path = reporter.write_scenario_report(
             "r3", "m", self._make_summary(), context_pressure_config=cp
         )
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert "Context Pressure" in content
         assert "50%" in content
 
@@ -739,5 +738,5 @@ class TestScenarioReportWithContext:
         reporter = MarkdownReporter(root=str(tmp_path))
         ctx = _make_run_context()
         path = reporter.write_throughput_report("tp1", "model", [FakeSample()], run_context=ctx)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert "v1.3.0" in content

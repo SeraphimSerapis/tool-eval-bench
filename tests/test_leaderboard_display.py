@@ -579,7 +579,7 @@ class TestExportRuns:
             console = Console(file=StringIO(), width=200, no_color=True)
             export_runs(console, fmt="csv", output=output_file)
 
-            with open(output_file) as f:
+            with open(output_file, encoding="utf-8") as f:
                 assert "model" in f.read()
 
     def test_export_to_file_json(self, tmp_path) -> None:
@@ -593,7 +593,7 @@ class TestExportRuns:
             console = Console(file=StringIO(), width=200, no_color=True)
             export_runs(console, fmt="json", output=output_file)
 
-            with open(output_file) as f:
+            with open(output_file, encoding="utf-8") as f:
                 data = json.loads(f.read())
             assert len(data) >= 1
 

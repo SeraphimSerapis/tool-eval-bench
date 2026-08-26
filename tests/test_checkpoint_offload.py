@@ -12,12 +12,13 @@ import time
 
 import pytest
 
+from tests.conftest import open_repository
 from tool_eval_bench.storage.db import RunRepository
 
 
 @pytest.fixture
 def repo(tmp_path) -> RunRepository:
-    repository = RunRepository(db_path=str(tmp_path / "bench.sqlite"))
+    repository = open_repository(db_path=str(tmp_path / "bench.sqlite"))
     yield repository
     repository.close()
 
@@ -82,7 +83,7 @@ async def test_concurrent_checkpoints_are_all_persisted(repo: RunRepository) -> 
 
 
 def test_close_shuts_down_the_writer_thread(tmp_path) -> None:
-    repository = RunRepository(db_path=str(tmp_path / "bench.sqlite"))
+    repository = open_repository(db_path=str(tmp_path / "bench.sqlite"))
     asyncio.run(repository.acheckpoint_scenario_result("R1", {"scenario_id": "TC-01"}))
 
     assert repository._writer is not None

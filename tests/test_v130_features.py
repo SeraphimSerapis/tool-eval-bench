@@ -249,7 +249,7 @@ class TestExportCSV:
             MockRepo.return_value = mock_repo
             export_runs(console, fmt="csv", output=tmpfile)
 
-        with open(tmpfile) as f:
+        with open(tmpfile, encoding="utf-8") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
         assert len(rows) == 1
@@ -291,7 +291,7 @@ class TestExportCSV:
             MockRepo.return_value = mock_repo
             export_runs(console, fmt="json", output=tmpfile)
 
-        with open(tmpfile) as f:
+        with open(tmpfile, encoding="utf-8") as f:
             data = json.load(f)
         assert len(data) == 1
         assert data[0]["model"] == "json-test"

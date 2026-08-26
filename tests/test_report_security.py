@@ -73,8 +73,10 @@ class TestHtmlComparisonEscaping:
     def malicious_reports(self, tmp_path: Path) -> tuple[Path, Path]:
         a = tmp_path / "a.md"
         b = tmp_path / "b.md"
-        a.write_text(_tool_eval_report(f"Model{PAYLOAD}", f"TC{PAYLOAD}", PAYLOAD))
-        b.write_text(_tool_eval_report("Clean Model", "TC-02", "clean"))
+        a.write_text(
+            _tool_eval_report(f"Model{PAYLOAD}", f"TC{PAYLOAD}", PAYLOAD), encoding="utf-8"
+        )
+        b.write_text(_tool_eval_report("Clean Model", "TC-02", "clean"), encoding="utf-8")
         return a, b
 
     def test_tool_eval_comparison_never_emits_raw_injected_markup(
@@ -113,8 +115,8 @@ class TestHtmlComparisonEscaping:
 """
         a = tmp_path / "a.md"
         b = tmp_path / "b.md"
-        a.write_text(report)
-        b.write_text(report.replace(PAYLOAD, "clean"))
+        a.write_text(report, encoding="utf-8")
+        b.write_text(report.replace(PAYLOAD, "clean"), encoding="utf-8")
         out = tmp_path / "out.html"
 
         generate_summary_html(parse_summary(str(a)), parse_summary(str(b)), str(out))
@@ -129,8 +131,8 @@ class TestHtmlComparisonEscaping:
         )
         a = tmp_path / "a.md"
         b = tmp_path / "b.md"
-        a.write_text(undated)
-        b.write_text(undated)
+        a.write_text(undated, encoding="utf-8")
+        b.write_text(undated, encoding="utf-8")
         out = tmp_path / "out.html"
 
         generate_tool_eval_html(parse_md(str(a)), parse_md(str(b)), str(out))
@@ -141,8 +143,8 @@ class TestHtmlComparisonEscaping:
         payload = '" onmouseover="alert(1)'
         a = tmp_path / "a.md"
         b = tmp_path / "b.md"
-        a.write_text(_tool_eval_report(f"M{payload}", "TC-01", "x"))
-        b.write_text(_tool_eval_report("Clean", "TC-02", "y"))
+        a.write_text(_tool_eval_report(f"M{payload}", "TC-01", "x"), encoding="utf-8")
+        b.write_text(_tool_eval_report("Clean", "TC-02", "y"), encoding="utf-8")
         out = tmp_path / "out.html"
 
         generate_tool_eval_html(parse_md(str(a)), parse_md(str(b)), str(out))

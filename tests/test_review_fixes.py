@@ -244,7 +244,7 @@ class TestMarkdownReporter:
             path = reporter.write_scenario_report("test-run-001", "test-model", summary)
 
             assert Path(path).exists()
-            content = Path(path).read_text()
+            content = Path(path).read_text(encoding="utf-8")
 
             # Must contain key sections
             assert "TC-01" in content
@@ -290,7 +290,7 @@ class TestMarkdownReporter:
             reporter = MarkdownReporter(root=tmpdir)
             path = reporter.write_scenario_report("test-safety-001", "test-model", summary)
 
-            content = Path(path).read_text()
+            content = Path(path).read_text(encoding="utf-8")
             assert "TC-34" in content
             assert "Safety" in content or "⚠" in content
             assert "❌" in content
@@ -313,10 +313,10 @@ class TestMarkdownReporter:
             reporter = MarkdownReporter(root=tmpdir)
             path = reporter.write_scenario_report("run-id-test", "model", summary)
 
-            rel = str(Path(path).relative_to(tmpdir))
-            # Should be like 2026/04/run-id-test.md
-            parts = rel.split("/")
-            assert len(parts) == 3  # YYYY/MM/filename.md
+            # Compare on Path parts rather than splitting a string: the
+            # separator is a backslash on Windows.
+            parts = Path(path).relative_to(tmpdir).parts
+            assert len(parts) == 3, f"expected YYYY/MM/filename.md, got {parts}"
             assert parts[2].endswith(".md")
 
 
