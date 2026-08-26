@@ -119,7 +119,7 @@ jobs:
       - name: Upload coverage report
         # A reviewer cannot see what a pull request did to coverage without it.
         if: always() && matrix.os != 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
           path: coverage.json
