@@ -699,15 +699,15 @@ async def run_all_scenarios(
     # Parallel path with semaphore-bounded concurrency
     import asyncio
 
-    if concurrency > 1:
-        logger.warning(
-            "Running %d scenarios concurrently (--parallel %d). "
-            "Server saturation under load can cause timeouts that are recorded as FAIL "
-            "even when the model reasoned correctly. "
-            "Use --parallel 1 for reproducible quality scores.",
-            total,
-            concurrency,
-        )
+    # `concurrency <= 1` returned above, so every run reaching here is parallel.
+    logger.warning(
+        "Running %d scenarios concurrently (--parallel %d). "
+        "Server saturation under load can cause timeouts that are recorded as FAIL "
+        "even when the model reasoned correctly. "
+        "Use --parallel 1 for reproducible quality scores.",
+        total,
+        concurrency,
+    )
 
     sem = asyncio.Semaphore(concurrency)
     ordered_results: list[ScenarioResult | None] = [None] * total
