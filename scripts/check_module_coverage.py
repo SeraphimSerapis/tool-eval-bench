@@ -24,9 +24,14 @@ MODULE_FLOORS = {
 
 
 def check_module_coverage(report_path: Path) -> list[str]:
-    """Return human-readable failures from a coverage.py JSON report."""
+    """Return human-readable failures from a coverage.py JSON report.
+
+    Keys are matched on forward slashes: coverage.py reports the separator of
+    the platform it ran on, so a Windows report would otherwise look as though
+    every floored module had vanished.
+    """
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    files = report.get("files", {})
+    files = {path.replace("\\", "/"): details for path, details in report.get("files", {}).items()}
     failures: list[str] = []
     for module, floor in MODULE_FLOORS.items():
         details = files.get(module)
