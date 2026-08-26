@@ -16,10 +16,12 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 - Deep dives: [Hard Mode](#hard-mode), [held-out packs](#held-out-scenario-packs), [context pressure](#context-pressure), [speculative decoding](#speculative-decoding-and-mtp), [accuracy and throughput](#accuracy-and-throughput-benchmarks)
 - [Programmatic API](#programmatic-api) and the full [CLI reference](docs/cli-reference.md)
 - [Backends](#backends), [CI](#ci), [architecture](#architecture)
+- Something not working? [Troubleshooting](docs/troubleshooting.md)
 
 Reference docs live in [`docs/`](docs/): [methodology](docs/methodology.md) for the scoring
 rationale, [architecture](docs/architecture.md) for the internals, [api](docs/api.md) for the
-Python API, and [cli-reference](docs/cli-reference.md) for every flag and exit code.
+Python API, [cli-reference](docs/cli-reference.md) for every flag and exit code, and
+[troubleshooting](docs/troubleshooting.md) for the failure modes that come up often.
 
 ## What it measures
 
