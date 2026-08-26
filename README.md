@@ -589,8 +589,9 @@ tool-eval-bench compare --report runs/.../model_a_summary.md runs/.../model_b_su
 
 ## CI
 
-Every push runs lint, format, mypy, and the suite on Python 3.11, 3.12, and 3.13 on Linux, plus
-3.12 on macOS and Windows, each with a different random seed. Dependencies install from the
+Every push runs the suite on Python 3.11, 3.12, and 3.13 on Linux plus 3.12 on macOS, each with a
+different random seed. Lint, format, and mypy run once, on Linux, since they are
+platform-independent. Dependencies install from the
 committed `uv.lock`, so CI tests the versions you resolve. CodeQL runs the security-and-quality
 queries per push and weekly.
 

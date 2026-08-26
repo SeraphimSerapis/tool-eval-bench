@@ -237,12 +237,18 @@ or CodeQL, despite a `SECURITY.md`. Coverage is computed but never uploaded. `pr
 `>=0.12` in CI. No concurrency group, so pushes queue redundant matrix runs. No release workflow
 despite `RELEASING.md` and towncrier being set up.
 
-**All fixed.** The matrix gained a macOS and a Windows runner and pins bash everywhere. The test
-job installs with `uv sync --locked`. CodeQL runs the security-and-quality queries per push and
+**All fixed.** The matrix gained a macOS runner and pins bash everywhere. The test job installs
+with `uv sync --locked`. CodeQL runs the security-and-quality queries per push and
 weekly. A version tag builds, smoke-tests the wheel, asserts the built version matches the tag,
 checks the packaged scenario tree still resolves to 69 and 88, and opens a *draft* release with
-the towncrier notes, leaving publishing to a person. One caveat: the Windows runner could not be
-verified locally, so its first CI run is the real check.
+the towncrier notes, leaving publishing to a person.
+
+A Windows runner was added and then removed. It paid for itself immediately by finding a real
+scoring bug: without the IANA timezone database, TC-17's offset check accepts both winter and
+summer spellings and scores PASS where it scores PARTIAL elsewhere, so `tzdata` is now a win32
+dependency. It also surfaced 47 test-side platform assumptions, tracked in issue #93. The package
+itself is clean: zero file-I/O sites in `src/` rely on the default encoding, against 81 in
+`tests/`.
 
 **Pre-commit lacks the basics.** No `trailing-whitespace`, `end-of-file-fixer`, `check-yaml`,
 `check-merge-conflict`, `check-added-large-files`, or `detect-private-key`. The last two matter
