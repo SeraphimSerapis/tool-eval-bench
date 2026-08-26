@@ -10,9 +10,11 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
     ToolResultRecord,
 )
-from tool_eval_bench.evals.scenarios_hardmode_transactional import (
-    TRANSACTIONAL_HARDMODE_DISPLAY_DETAILS,
-    TRANSACTIONAL_HARDMODE_SCENARIOS,
+from tool_eval_bench.evals.scenarios.hardmode_transactional import (
+    DISPLAY_DETAILS as TRANSACTIONAL_HARDMODE_DISPLAY_DETAILS,
+)
+from tool_eval_bench.evals.scenarios.hardmode_transactional import (
+    SCENARIOS as TRANSACTIONAL_HARDMODE_SCENARIOS,
 )
 
 

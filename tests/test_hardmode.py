@@ -11,10 +11,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioStatus,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.scenarios_hardmode import (
-    HARDMODE_DISPLAY_DETAILS,
-    HARDMODE_SCENARIOS,
-)
+from tool_eval_bench.evals.scenarios import HARDMODE_DISPLAY_DETAILS, HARDMODE_SCENARIOS
 
 # ===========================================================================
 # Registry tests

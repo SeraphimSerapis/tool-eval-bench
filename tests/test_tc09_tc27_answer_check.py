@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from conftest import make_state
 
-from tool_eval_bench.evals.scenarios import _tc09_eval
-from tool_eval_bench.evals.scenarios_agentic import _tc27_eval
+from tool_eval_bench.evals.scenarios.agentic.tc27 import _tc27_eval
+from tool_eval_bench.evals.scenarios.core.tc09 import _tc09_eval
 
 # ===================================================================
 # TC-09: Parallel Independence — answer content checks

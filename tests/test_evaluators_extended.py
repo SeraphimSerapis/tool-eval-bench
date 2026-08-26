@@ -1781,7 +1781,7 @@ class TestPayloadEnrichment:
         assert LARGE_TOOLSET_SIZE == 52
 
     def test_tools_override_on_large_scenarios(self) -> None:
-        from tool_eval_bench.evals.scenarios_large_toolset import LARGE_TOOLSET_SCENARIOS
+        from tool_eval_bench.evals.scenarios import LARGE_TOOLSET_SCENARIOS
 
         for s in LARGE_TOOLSET_SCENARIOS:
             assert s.tools_override is not None

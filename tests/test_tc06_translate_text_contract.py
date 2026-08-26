@@ -31,7 +31,8 @@ from tool_eval_bench.domain.tools import (
     TRANSLATE_TARGET_LANGUAGE_DESIGNATORS,
     UNIVERSAL_TOOLS,
 )
-from tool_eval_bench.evals.scenarios import _LANGUAGE_ALIASES, SCENARIOS
+from tool_eval_bench.evals.scenarios import SCENARIOS
+from tool_eval_bench.evals.scenarios.core._shared import _LANGUAGE_ALIASES
 
 # German designators accepted by the shared translate_text tool schema (used
 # by other scenarios' handlers) but NOT part of the TC-06 alias table: the

@@ -675,7 +675,7 @@ class TestCategoryORegistration:
         """TC-68 tests MODEL restraint (refusing extra fields).
         If response_format is set, the SERVER enforces the constraint,
         making the test trivially passable."""
-        from tool_eval_bench.evals.scenarios_structured import STRUCTURED_SCENARIOS
+        from tool_eval_bench.evals.scenarios import STRUCTURED_SCENARIOS
 
         tc68 = next(s for s in STRUCTURED_SCENARIOS if s.id == "TC-68")
         assert tc68.response_format_override is None, (
@@ -684,7 +684,7 @@ class TestCategoryORegistration:
 
     def test_other_structured_scenarios_have_response_format(self) -> None:
         """TC-64, 65, 66, 67, 69 should all have response_format_override."""
-        from tool_eval_bench.evals.scenarios_structured import STRUCTURED_SCENARIOS
+        from tool_eval_bench.evals.scenarios import STRUCTURED_SCENARIOS
 
         for s in STRUCTURED_SCENARIOS:
             if s.id == "TC-68":
@@ -696,7 +696,7 @@ class TestCategoryORegistration:
     def test_schemas_embedded_in_user_messages(self) -> None:
         """All Category O user messages should contain the actual JSON schema
         text so models see it even if the backend ignores response_format."""
-        from tool_eval_bench.evals.scenarios_structured import STRUCTURED_SCENARIOS
+        from tool_eval_bench.evals.scenarios import STRUCTURED_SCENARIOS
 
         for s in STRUCTURED_SCENARIOS:
             assert "Schema:" in s.user_message, f"{s.id} user message should embed the schema"
