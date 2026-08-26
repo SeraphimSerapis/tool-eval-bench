@@ -1,0 +1,47 @@
+name: Scenario proposal
+description: Propose a new tool-calling scenario
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Scenarios are deterministic and self-contained: a fixed prompt, mock tool handlers, and an
+        evaluator that returns PASS, PARTIAL, or FAIL. See
+        [docs/methodology.md](../blob/main/docs/methodology.md) for the scoring rationale.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What behaviour does this measure
+      description: What a good model does, and the specific way a weaker one fails.
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - "A - Tool Selection"
+        - "B - Parameter Precision"
+        - "C - Multi-Step Chains"
+        - "D - Restraint & Refusal"
+        - "E - Error Recovery"
+        - "F - Localization"
+        - "G - Structured Reasoning"
+        - "H - Instruction Following"
+        - "I - Context & State"
+        - "J - Code Patterns"
+        - "K - Safety & Boundaries"
+        - "L - Toolset Scale"
+        - "M - Autonomous Planning"
+        - "N - Creative Composition"
+        - "O - Structured Output"
+        - "P - Hard Mode"
+    validations:
+      required: true
+  - type: textarea
+    id: grading
+    attributes:
+      label: What separates PASS, PARTIAL, and FAIL
+      description: The evaluator has to decide this deterministically, with no LLM judge.
+    validations:
+      required: true

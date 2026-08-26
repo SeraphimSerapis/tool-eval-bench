@@ -3,19 +3,27 @@
 from __future__ import annotations
 
 import argparse
-import time
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
 from tool_eval_bench.cli.helpers import metadata_for_storage as _metadata_for_storage
 from tool_eval_bench.cli.helpers import persist_plugin_run as _persist_plugin_run
+from tool_eval_bench.cli.plugin_datasets import load_dataset_with_progress
 from tool_eval_bench.cli.plugin_lifecycle import (
     execute_plugin as _execute_plugin_impl,
 )
 from tool_eval_bench.cli.plugin_lifecycle import (
     finalize_plugin_run as _finalize_plugin_run_impl,
+)
+from tool_eval_bench.cli.plugin_progress import (
+    PluginProgressDisplay,
+    final_tally_line,
+    status_icon,
+    tally_line,
+    truncate,
 )
 from tool_eval_bench.cli.resolve import with_config_fingerprint as _with_config_fingerprint
 
@@ -98,139 +106,35 @@ def _run_gsm8k_benchmark(
     # -- Phase 1: Load dataset (with visible progress) --
     from tool_eval_bench.plugins.gsm8k.dataset import _find_cache_file, load_dataset
 
-    cache_path = _find_cache_file()
-    if cache_path.exists():
-        console.print("  [dim]Loading GSM8K from cache…[/]", end=" ")
-        dataset_items = load_dataset()
-        console.print(f"[bold green]✓[/] [dim]{len(dataset_items)} questions[/]")
-    else:
-        # First use — download with visible progress
-        try:
-            import datasets as _ds  # noqa: F401
-
-            method_hint = "via datasets lib"
-        except ImportError:
-            method_hint = "via REST API"
-        console.print()
-        with console.status(
-            f"[bold]Downloading GSM8K dataset from HuggingFace…[/] [dim]({method_hint})[/]",
-            spinner="dots",
-        ) as status:
-
-            def on_download(downloaded: int, total: int) -> None:
-                pct = downloaded / total * 100 if total else 0
-                status.update(
-                    f"[bold]Downloading GSM8K dataset…[/] "
-                    f"[dim]{downloaded:,}/{total:,} questions ({pct:.0f}%)[/]"
-                )
-
-            try:
-                dataset_items = load_dataset(on_progress=on_download)
-            except Exception as exc:
-                console.print(
-                    f"\n  [bold red]✗[/] Failed to download GSM8K dataset: {exc}\n"
-                    "  [dim]This is usually caused by HuggingFace rate limiting.\n"
-                    "  Tip: pip install tool-eval-bench[hf] for rate-limit-free downloads.[/]"
-                )
-                return
-
-        console.print(
-            f"  [bold green]✓[/] Downloaded [bold]{len(dataset_items)}[/] questions "
-            f"[dim](cached to data/gsm8k/test.jsonl)[/]"
-        )
+    dataset_items = load_dataset_with_progress(
+        console,
+        name="GSM8K",
+        noun="questions",
+        cache_path=_find_cache_file(),
+        load=load_dataset,
+        cache_note="data/gsm8k/test.jsonl",
+    )
+    if dataset_items is None:
+        return
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
-        from rich.live import Live
-        from rich.progress import (
-            BarColumn,
-            MofNCompleteColumn,
-            Progress,
-            SpinnerColumn,
-            TextColumn,
-            TimeElapsedColumn,
-            TimeRemainingColumn,
-        )
-
         eval_total = limit if limit > 0 else len(dataset_items)
 
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold]{task.description}"),
-            BarColumn(bar_width=40),
-            TextColumn("[bold]{task.percentage:>3.0f}%[/]"),
-            MofNCompleteColumn(),
-            TextColumn("•"),
-            TimeElapsedColumn(),
-            TextColumn("[dim]eta[/]"),
-            TimeRemainingColumn(),
-            console=console,
-        )
-
-        stats_text = TextColumn("")
-        stats_progress = Progress(stats_text, console=console)
-        last_q_text = TextColumn("")
-        last_q_progress = Progress(last_q_text, console=console)
-
-        from rich.console import Group
-
-        group = Group(progress, stats_progress, last_q_progress)
-
-        correct_so_far = 0
-        wrong_so_far = 0
-        errors_so_far = 0
-        t_start = time.monotonic()
-        stats_progress.add_task("", total=None)
-        last_q_progress.add_task("", total=None)
-
-        with Live(group, console=console, refresh_per_second=4):
-            task = progress.add_task("Evaluating…", total=eval_total)
+        with PluginProgressDisplay(console, total=eval_total) as display:
 
             async def on_progress(current: int, total: int, item_info: dict) -> None:
-                nonlocal correct_so_far, wrong_so_far, errors_so_far
-                if item_info.get("is_error"):
-                    errors_so_far += 1
-                elif item_info.get("correct"):
-                    correct_so_far += 1
-                else:
-                    wrong_so_far += 1
-
-                processed = correct_so_far + wrong_so_far + errors_so_far
-                pct = (correct_so_far / processed * 100) if processed > 0 else 0
-                elapsed = time.monotonic() - t_start
-                speed = current / elapsed * 60 if elapsed > 0 else 0  # questions/min
-
-                # Build a compact status line
-                status_parts = [
-                    f"  [bold green]✓ {correct_so_far}[/]",
-                    f"[bold red]✗ {wrong_so_far}[/]",
-                ]
-                if errors_so_far > 0:
-                    status_parts.append(f"[bold yellow]⚠ {errors_so_far}[/]")
-                status_parts += [
-                    "[dim]│[/]",
-                    f"[bold magenta]{pct:.1f}%[/] accuracy",
-                    "[dim]│[/]",
-                    f"[dim]{speed:.1f} q/min[/]",
-                ]
-                stats_text.text_format = "  ".join(status_parts)
-
-                progress.update(task, completed=current, total=total)
-
-                # Show last completed question
-                if item_info.get("is_error"):
-                    icon = "[yellow]⚠[/]"
-                elif item_info.get("correct", False):
-                    icon = "[green]✓[/]"
-                else:
-                    icon = "[red]✗[/]"
+                display.tally.record(item_info)
                 got = item_info.get("extracted_answer", "?")
                 expected = item_info.get("ground_truth", "?")
-                question = (item_info.get("question") or "").replace("\n", " ").strip()
-                if len(question) > 90:
-                    question = question[:87] + "…"
-                last_q_text.text_format = (
-                    f"  {icon} [bold]{got}[/]/{expected} [dim italic]{question}[/]"
+                display.advance(
+                    current,
+                    total,
+                    stats=tally_line(display.tally, rate=display.rate_per_minute(current)),
+                    detail=(
+                        f"  {status_icon(item_info)} [bold]{got}[/]/{expected} "
+                        f"[dim italic]{truncate(item_info.get('question'))}[/]"
+                    ),
                 )
 
             try:
@@ -253,27 +157,21 @@ def _run_gsm8k_benchmark(
                 result_holder.append(result)
 
                 # Final state
-                progress.update(
-                    task, completed=result.details["total"], description="[green]✓ Complete"
-                )
+                total_items = result.details["total"]
                 final_speed = (
-                    result.details["total"] / result.duration_seconds * 60
-                    if result.duration_seconds > 0
-                    else 0
+                    total_items / result.duration_seconds * 60 if result.duration_seconds > 0 else 0
                 )
                 errs = result.details.get("errors", 0)
-                wrong = result.details["total"] - result.details["correct"] - errs
-                parts = f"  [bold green]✓ {result.details['correct']}[/]  [bold red]✗ {wrong}[/]  "
-                if errs > 0:
-                    parts += f"[bold yellow]⚠ {errs} errors[/]  "
-                parts += (
-                    f"[dim]│[/]  "
-                    f"[bold magenta]{result.score:.1f}%[/] accuracy  "
-                    f"[dim]│[/]  "
-                    f"[dim]{final_speed:.1f} q/min[/]"
+                display.finish(
+                    completed=total_items,
+                    stats=final_tally_line(
+                        correct=result.details["correct"],
+                        wrong=total_items - result.details["correct"] - errs,
+                        errors=errs,
+                        score=result.score,
+                        rate=final_speed,
+                    ),
                 )
-                stats_text.text_format = parts
-                last_q_text.text_format = ""
             finally:
                 if hasattr(adapter, "aclose"):
                     await adapter.aclose()
@@ -380,50 +278,17 @@ def _run_mmlu_benchmark(
     # -- Phase 1: Load dataset (with visible progress) --
     from tool_eval_bench.plugins.mmlu.dataset import _find_cache_file, load_dataset
 
-    cache_path = _find_cache_file("test")
-    if cache_path.exists():
-        console.print("  [dim]Loading MMLU from cache…[/]", end=" ")
-        test_items = load_dataset("test")
-        console.print(f"[bold green]✓[/] [dim]{len(test_items)} questions[/]")
-    else:
-        from pathlib import Path as _Path
-
-        partial_path = _Path("data") / "mmlu" / "test.partial.jsonl"
-        resuming = partial_path.exists()
-        # Check which download method will be used
-        try:
-            import datasets as _ds  # noqa: F401
-
-            method_hint = "via datasets lib"
-        except ImportError:
-            method_hint = "via REST API"
-        label = "Resuming MMLU download" if resuming else "Downloading MMLU dataset"
-        console.print()
-        with console.status(
-            f"[bold]{label} from HuggingFace…[/] [dim]({method_hint})[/]",
-            spinner="dots",
-        ) as status:
-
-            def on_download(downloaded: int, total: int) -> None:
-                pct = downloaded / total * 100 if total else 0
-                status.update(
-                    f"[bold]{label}…[/] [dim]{downloaded:,}/{total:,} questions ({pct:.0f}%)[/]"
-                )
-
-            try:
-                test_items = load_dataset("test", on_progress=on_download)
-            except Exception as exc:
-                console.print(
-                    f"\n  [bold red]✗[/] Failed to download MMLU dataset: {exc}\n"
-                    "  [dim]This is usually caused by HuggingFace rate limiting.\n"
-                    "  Progress is saved — re-run to resume from where it stopped.\n"
-                    "  Tip: pip install tool-eval-bench[hf] for rate-limit-free downloads.[/]"
-                )
-                return
-        console.print(
-            f"  [bold green]✓[/] Downloaded [bold]{len(test_items)}[/] questions "
-            f"[dim](cached to data/mmlu/test.jsonl)[/]"
-        )
+    test_items = load_dataset_with_progress(
+        console,
+        name="MMLU",
+        noun="questions",
+        cache_path=_find_cache_file("test"),
+        load=lambda **kw: load_dataset("test", **kw),
+        cache_note="data/mmlu/test.jsonl",
+        partial_path=Path("data") / "mmlu" / "test.partial.jsonl",
+    )
+    if test_items is None:
+        return
 
     # Load dev split for few-shot
     dev_items = []
@@ -440,17 +305,6 @@ def _run_mmlu_benchmark(
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
-        from rich.console import Group
-        from rich.live import Live
-        from rich.progress import (
-            BarColumn,
-            MofNCompleteColumn,
-            Progress,
-            SpinnerColumn,
-            TextColumn,
-            TimeElapsedColumn,
-            TimeRemainingColumn,
-        )
 
         eval_total = limit if limit > 0 else len(test_items)
         if subjects_list:
@@ -466,79 +320,23 @@ def _run_mmlu_benchmark(
             filtered = [it for it in test_items if it.subject in expanded]
             eval_total = min(eval_total, len(filtered)) if limit > 0 else len(filtered)
 
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold]{task.description}"),
-            BarColumn(bar_width=40),
-            TextColumn("[bold]{task.percentage:>3.0f}%[/]"),
-            MofNCompleteColumn(),
-            TextColumn("•"),
-            TimeElapsedColumn(),
-            TextColumn("[dim]eta[/]"),
-            TimeRemainingColumn(),
-            console=console,
-        )
-
-        stats_text = TextColumn("")
-        stats_progress = Progress(stats_text, console=console)
-        last_q_text = TextColumn("")
-        last_q_progress = Progress(last_q_text, console=console)
-        group = Group(progress, stats_progress, last_q_progress)
-
-        correct_so_far = 0
-        wrong_so_far = 0
-        errors_so_far = 0
-        t_start = time.monotonic()
-        stats_progress.add_task("", total=None)
-        last_q_progress.add_task("", total=None)
-
-        with Live(group, console=console, refresh_per_second=4):
-            task = progress.add_task("Evaluating…", total=eval_total)
+        with PluginProgressDisplay(console, total=eval_total) as display:
 
             async def on_progress(current: int, total: int, item_info: dict) -> None:
-                nonlocal correct_so_far, wrong_so_far, errors_so_far
-                if item_info.get("is_error"):
-                    errors_so_far += 1
-                elif item_info.get("correct"):
-                    correct_so_far += 1
-                else:
-                    wrong_so_far += 1
-
-                processed = correct_so_far + wrong_so_far + errors_so_far
-                pct = (correct_so_far / processed * 100) if processed > 0 else 0
-                elapsed = time.monotonic() - t_start
-                speed = current / elapsed * 60 if elapsed > 0 else 0
-
-                status_parts = [
-                    f"  [bold green]✓ {correct_so_far}[/]",
-                    f"[bold red]✗ {wrong_so_far}[/]",
-                ]
-                if errors_so_far > 0:
-                    status_parts.append(f"[bold yellow]⚠ {errors_so_far}[/]")
-                status_parts += [
-                    "[dim]│[/]",
-                    f"[bold blue]{pct:.1f}%[/] accuracy",
-                    "[dim]│[/]",
-                    f"[dim]{speed:.1f} q/min[/]",
-                ]
-                stats_text.text_format = "  ".join(status_parts)
-                progress.update(task, completed=current, total=total)
-
-                # Show last completed question details
-                subj = item_info.get("subject", "?")
-                if item_info.get("is_error"):
-                    icon = "[yellow]⚠[/]"
-                elif item_info.get("correct", False):
-                    icon = "[green]✓[/]"
-                else:
-                    icon = "[red]✗[/]"
+                display.tally.record(item_info)
                 got = item_info.get("extracted_answer", "?")
                 expected = item_info.get("ground_truth", "?")
-                question = (item_info.get("question") or "").replace("\n", " ").strip()
-                if len(question) > 90:
-                    question = question[:87] + "…"
-                last_q_text.text_format = (
-                    f"  {icon} [bold]{got}[/]/{expected} [dim]{subj}[/]  [dim italic]{question}[/]"
+                subj = item_info.get("subject", "?")
+                display.advance(
+                    current,
+                    total,
+                    stats=tally_line(
+                        display.tally, rate=display.rate_per_minute(current), accent="blue"
+                    ),
+                    detail=(
+                        f"  {status_icon(item_info)} [bold]{got}[/]/{expected} "
+                        f"[dim]{subj}[/]  [dim italic]{truncate(item_info.get('question'))}[/]"
+                    ),
                 )
 
             try:
@@ -560,27 +358,22 @@ def _run_mmlu_benchmark(
                 )
                 result_holder.append(result)
 
-                progress.update(
-                    task, completed=result.details["total"], description="[green]✓ Complete"
-                )
+                total_items = result.details["total"]
                 final_speed = (
-                    result.details["total"] / result.duration_seconds * 60
-                    if result.duration_seconds > 0
-                    else 0
+                    total_items / result.duration_seconds * 60 if result.duration_seconds > 0 else 0
                 )
                 errs = result.details.get("errors", 0)
-                wrong = result.details["total"] - result.details["correct"] - errs
-                parts = f"  [bold green]✓ {result.details['correct']}[/]  [bold red]✗ {wrong}[/]  "
-                if errs > 0:
-                    parts += f"[bold yellow]⚠ {errs} errors[/]  "
-                parts += (
-                    f"[dim]│[/]  "
-                    f"[bold blue]{result.score:.1f}%[/] accuracy  "
-                    f"[dim]│[/]  "
-                    f"[dim]{final_speed:.1f} q/min[/]"
+                display.finish(
+                    completed=total_items,
+                    stats=final_tally_line(
+                        correct=result.details["correct"],
+                        wrong=total_items - result.details["correct"] - errs,
+                        errors=errs,
+                        score=result.score,
+                        rate=final_speed,
+                        accent="blue",
+                    ),
                 )
-                stats_text.text_format = parts
-                last_q_text.text_format = ""
             finally:
                 if hasattr(adapter, "aclose"):
                     await adapter.aclose()
@@ -686,149 +479,65 @@ def _run_ifeval_benchmark(
     # -- Phase 1: Load dataset --
     from tool_eval_bench.plugins.ifeval.dataset import _find_cache_file, load_dataset
 
-    cache_path = _find_cache_file()
-    if cache_path.exists():
-        console.print("  [dim]Loading IFEval from cache…[/]", end=" ")
-        dataset_items = load_dataset()
-        console.print(f"[bold green]✓[/] [dim]{len(dataset_items)} prompts[/]")
-    else:
-        from pathlib import Path as _Path
-
-        partial_path = _Path("data") / "ifeval" / "prompts.partial.jsonl"
-        resuming = partial_path.exists()
-        try:
-            import datasets as _ds  # noqa: F401
-
-            method_hint = "via datasets lib"
-        except ImportError:
-            method_hint = "via REST API"
-        label = "Resuming IFEval download" if resuming else "Downloading IFEval dataset"
-        console.print()
-        with console.status(
-            f"[bold]{label} from HuggingFace…[/] [dim]({method_hint})[/]",
-            spinner="dots",
-        ) as status:
-
-            def on_download(downloaded: int, total: int) -> None:
-                pct = downloaded / total * 100 if total else 0
-                status.update(
-                    f"[bold]{label}…[/] [dim]{downloaded:,}/{total:,} prompts ({pct:.0f}%)[/]"
-                )
-
-            try:
-                dataset_items = load_dataset(on_progress=on_download)
-            except Exception as exc:
-                console.print(
-                    f"\n  [bold red]✗[/] Failed to download IFEval dataset: {exc}\n"
-                    "  [dim]This is usually caused by HuggingFace rate limiting.\n"
-                    "  Progress is saved — re-run to resume from where it stopped.\n"
-                    "  Tip: pip install tool-eval-bench[hf] for rate-limit-free downloads.[/]"
-                )
-                return
-        console.print(
-            f"  [bold green]✓[/] Downloaded [bold]{len(dataset_items)}[/] prompts "
-            f"[dim](cached to data/ifeval/prompts.jsonl)[/]"
-        )
+    dataset_items = load_dataset_with_progress(
+        console,
+        name="IFEval",
+        noun="prompts",
+        cache_path=_find_cache_file(),
+        load=load_dataset,
+        cache_note="data/ifeval/prompts.jsonl",
+        partial_path=Path("data") / "ifeval" / "prompts.partial.jsonl",
+    )
+    if dataset_items is None:
+        return
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
-        from rich.console import Group
-        from rich.live import Live
-        from rich.progress import (
-            BarColumn,
-            MofNCompleteColumn,
-            Progress,
-            SpinnerColumn,
-            TextColumn,
-            TimeElapsedColumn,
-            TimeRemainingColumn,
-        )
 
         eval_total = limit if limit > 0 else len(dataset_items)
 
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold]{task.description}"),
-            BarColumn(bar_width=40),
-            TextColumn("[bold]{task.percentage:>3.0f}%[/]"),
-            MofNCompleteColumn(),
-            TextColumn("•"),
-            TimeElapsedColumn(),
-            TextColumn("[dim]eta[/]"),
-            TimeRemainingColumn(),
-            console=console,
-        )
-
-        stats_text = TextColumn("")
-        stats_progress = Progress(stats_text, console=console)
-        last_q_text = TextColumn("")
-        last_q_progress = Progress(last_q_text, console=console)
-        group = Group(progress, stats_progress, last_q_progress)
-
-        prompts_passed = 0
-        prompts_failed = 0
-        errors_so_far = 0
         instructions_passed = 0
         instructions_total = 0
-        t_start = time.monotonic()
-        stats_progress.add_task("", total=None)
-        last_q_progress.add_task("", total=None)
 
-        with Live(group, console=console, refresh_per_second=4):
-            task = progress.add_task("Evaluating…", total=eval_total)
+        with PluginProgressDisplay(console, total=eval_total) as display:
 
             async def on_progress(current: int, total: int, item_info: dict) -> None:
-                nonlocal prompts_passed, prompts_failed, errors_so_far
+                # IFEval scores whole prompts, and also reports how many
+                # individual constraints within each prompt were satisfied, so
+                # its tally carries two percentages rather than one accuracy.
                 nonlocal instructions_passed, instructions_total
-                if item_info.get("is_error"):
-                    errors_so_far += 1
-                elif item_info.get("prompt_pass"):
-                    prompts_passed += 1
-                else:
-                    prompts_failed += 1
+                display.tally.record({**item_info, "correct": item_info.get("prompt_pass")})
                 instructions_passed += item_info.get("instructions_passed", 0)
                 instructions_total += item_info.get("instructions_total", 0)
 
-                processed = prompts_passed + prompts_failed + errors_so_far
-                prompt_pct = (prompts_passed / processed * 100) if processed > 0 else 0
                 inst_pct = (
                     (instructions_passed / instructions_total * 100)
                     if instructions_total > 0
                     else 0
                 )
-                elapsed = time.monotonic() - t_start
-                speed = current / elapsed * 60 if elapsed > 0 else 0
-
                 status_parts = [
-                    f"  [bold green]✓ {prompts_passed}[/]",
-                    f"[bold red]✗ {prompts_failed}[/]",
+                    f"  [bold green]✓ {display.tally.correct}[/]",
+                    f"[bold red]✗ {display.tally.wrong}[/]",
                 ]
-                if errors_so_far > 0:
-                    status_parts.append(f"[bold yellow]⚠ {errors_so_far}[/]")
+                if display.tally.errors > 0:
+                    status_parts.append(f"[bold yellow]⚠ {display.tally.errors}[/]")
                 status_parts += [
                     "[dim]│[/]",
-                    f"[bold green]{prompt_pct:.1f}%[/] prompt",
+                    f"[bold green]{display.tally.accuracy:.1f}%[/] prompt",
                     f"[bold cyan]{inst_pct:.1f}%[/] instr",
                     "[dim]│[/]",
-                    f"[dim]{speed:.1f} p/min[/]",
+                    f"[dim]{display.rate_per_minute(current):.1f} p/min[/]",
                 ]
-                stats_text.text_format = "  ".join(status_parts)
-                progress.update(task, completed=current, total=total)
-
-                # Show last completed prompt
-                if item_info.get("is_error"):
-                    icon = "[yellow]⚠[/]"
-                elif item_info.get("prompt_pass", False):
-                    icon = "[green]✓[/]"
-                else:
-                    icon = "[red]✗[/]"
                 ip = item_info.get("instructions_passed", 0)
                 it = item_info.get("instructions_total", 0)
-                prompt = (item_info.get("prompt") or "").replace("\n", " ").strip()
-                if len(prompt) > 90:
-                    prompt = prompt[:87] + "…"
-                last_q_text.text_format = (
-                    f"  {icon} [bold]{ip}[/]/{it} constraints  [dim italic]{prompt}[/]"
+                display.advance(
+                    current,
+                    total,
+                    stats="  ".join(status_parts),
+                    detail=(
+                        f"  {status_icon(item_info, key='prompt_pass')} [bold]{ip}[/]/{it} "
+                        f"constraints  [dim italic]{truncate(item_info.get('prompt'))}[/]"
+                    ),
                 )
 
             try:
@@ -848,9 +557,6 @@ def _run_ifeval_benchmark(
                 )
                 result_holder.append(result)
 
-                progress.update(
-                    task, completed=result.details["total"], description="[green]✓ Complete"
-                )
                 d = result.details
                 final_speed = (
                     d["total"] / result.duration_seconds * 60 if result.duration_seconds > 0 else 0
@@ -867,8 +573,7 @@ def _run_ifeval_benchmark(
                     f"[dim]│[/]  "
                     f"[dim]{final_speed:.1f} p/min[/]"
                 )
-                stats_text.text_format = parts
-                last_q_text.text_format = ""
+                display.finish(completed=d["total"], stats=parts)
             finally:
                 if hasattr(adapter, "aclose"):
                     await adapter.aclose()

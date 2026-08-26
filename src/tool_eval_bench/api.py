@@ -22,6 +22,7 @@ The returned dict matches the ``--json`` output schema (see OUTPUT_SCHEMA_VERSIO
 from __future__ import annotations
 
 import logging
+from contextlib import ExitStack, closing
 from typing import Any
 
 from tool_eval_bench import __version__
@@ -146,33 +147,36 @@ async def run_benchmark(
     else:
         resolved = list(ALL_SCENARIOS)
 
-    # Build service with optional persistence
-    if persist:
-        repo = RunRepository()
-        reporter = MarkdownReporter(root=output_dir)
-        service = BenchmarkService(repo=repo, reporter=reporter)
-    else:
-        service = BenchmarkService(repo=None, reporter=None)
+    # Build service with optional persistence.  The repository owns a SQLite
+    # connection, so it is closed once the run finishes rather than left to
+    # ``__del__`` (which, in WAL mode, can strand -wal and -shm files).
+    with ExitStack() as stack:
+        if persist:
+            repo = stack.enter_context(closing(RunRepository()))
+            reporter = MarkdownReporter(root=output_dir)
+            service = BenchmarkService(repo=repo, reporter=reporter)
+        else:
+            service = BenchmarkService(repo=None, reporter=None)
 
-    run_data = await service.run_benchmark(
-        model=model,
-        backend=backend,
-        base_url=base_url,
-        api_key=api_key,
-        scenarios=resolved,
-        temperature=temperature,
-        timeout_seconds=timeout_seconds,
-        max_turns=max_turns,
-        seed=seed,
-        reference_date=reference_date,
-        on_scenario_start=on_scenario_start,
-        on_scenario_result=on_scenario_result,
-        concurrency=concurrency,
-        error_rate=error_rate,
-        alpha=alpha,
-        weight_by_difficulty=weight_by_difficulty,
-        extra_params=extra_params,
-        wire_format=wire_format,
-    )
+        run_data = await service.run_benchmark(
+            model=model,
+            backend=backend,
+            base_url=base_url,
+            api_key=api_key,
+            scenarios=resolved,
+            temperature=temperature,
+            timeout_seconds=timeout_seconds,
+            max_turns=max_turns,
+            seed=seed,
+            reference_date=reference_date,
+            on_scenario_start=on_scenario_start,
+            on_scenario_result=on_scenario_result,
+            concurrency=concurrency,
+            error_rate=error_rate,
+            alpha=alpha,
+            weight_by_difficulty=weight_by_difficulty,
+            extra_params=extra_params,
+            wire_format=wire_format,
+        )
 
     return format_result(run_data)

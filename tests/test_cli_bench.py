@@ -52,8 +52,7 @@ class TestResolveScenarios:
 
     def test_hardmode_adds_hardmode_to_all(self) -> None:
         from tool_eval_bench.cli.bench import _resolve_scenarios
-        from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
-        from tool_eval_bench.evals.scenarios_hardmode import HARDMODE_SCENARIOS
+        from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, HARDMODE_SCENARIOS
 
         result = _resolve_scenarios(_resolve_args(hardmode=True))
         assert len(result) == len(ALL_SCENARIOS) + len(HARDMODE_SCENARIOS)
@@ -61,8 +60,7 @@ class TestResolveScenarios:
 
     def test_hardmode_adds_hardmode_to_short(self) -> None:
         from tool_eval_bench.cli.bench import _resolve_scenarios
-        from tool_eval_bench.evals.scenarios import SCENARIOS
-        from tool_eval_bench.evals.scenarios_hardmode import HARDMODE_SCENARIOS
+        from tool_eval_bench.evals.scenarios import HARDMODE_SCENARIOS, SCENARIOS
 
         result = _resolve_scenarios(_resolve_args(short=True, hardmode=True))
         assert len(result) == len(SCENARIOS) + len(HARDMODE_SCENARIOS)

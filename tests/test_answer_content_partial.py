@@ -13,19 +13,20 @@ from __future__ import annotations
 
 from conftest import make_state
 
-from tool_eval_bench.evals.scenarios import (
-    _tc01_eval,
-    _tc02_eval,
-    _tc04_eval,
-    _tc06_eval,
-    _tc14_eval,
-    _tc15_eval,
-)
-from tool_eval_bench.evals.scenarios_agentic import _tc22_eval, _tc45_eval
-from tool_eval_bench.evals.scenarios_extended import _tc16_eval
-from tool_eval_bench.evals.scenarios_hardmode import _tc70_eval
-from tool_eval_bench.evals.scenarios_large_toolset import _tc37_eval, _tc40_eval
-from tool_eval_bench.evals.scenarios_planning import _tc52_eval, _tc61_eval
+from tool_eval_bench.evals.scenarios.agentic.tc22 import _tc22_eval
+from tool_eval_bench.evals.scenarios.agentic.tc45 import _tc45_eval
+from tool_eval_bench.evals.scenarios.core.tc01 import _tc01_eval
+from tool_eval_bench.evals.scenarios.core.tc02 import _tc02_eval
+from tool_eval_bench.evals.scenarios.core.tc04 import _tc04_eval
+from tool_eval_bench.evals.scenarios.core.tc06 import _tc06_eval
+from tool_eval_bench.evals.scenarios.core.tc14 import _tc14_eval
+from tool_eval_bench.evals.scenarios.core.tc15 import _tc15_eval
+from tool_eval_bench.evals.scenarios.extended.tc16 import _tc16_eval
+from tool_eval_bench.evals.scenarios.hardmode.tc70 import _tc70_eval
+from tool_eval_bench.evals.scenarios.large_toolset.tc37 import _tc37_eval
+from tool_eval_bench.evals.scenarios.large_toolset.tc40 import _tc40_eval
+from tool_eval_bench.evals.scenarios.planning.tc52 import _tc52_eval
+from tool_eval_bench.evals.scenarios.planning.tc61 import _tc61_eval
 
 
 class TestTC01PartialDowngrade:

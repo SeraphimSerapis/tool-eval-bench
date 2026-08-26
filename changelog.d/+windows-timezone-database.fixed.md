@@ -1,0 +1,1 @@
+`tzdata` is now a dependency on Windows. Without the IANA timezone database `ZoneInfo` raises, and TC-17's offset check falls back to accepting both winter and summer spellings, scoring PASS where it should score PARTIAL. A benchmark score must not depend on the host operating system.

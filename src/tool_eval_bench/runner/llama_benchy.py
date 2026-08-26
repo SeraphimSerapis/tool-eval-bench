@@ -501,17 +501,3 @@ async def run_llama_benchy(
             Path(output_file).unlink(missing_ok=True)
         except Exception:
             logger.debug("Failed to clean up temp file %s", output_file)
-
-
-# ---------------------------------------------------------------------------
-# Synchronous convenience wrapper
-# ---------------------------------------------------------------------------
-
-
-def run_llama_benchy_sync(
-    base_url: str,
-    model: str,
-    **kwargs: Any,
-) -> LlamaBenchyResult:
-    """Synchronous wrapper around :func:`run_llama_benchy`."""
-    return asyncio.run(run_llama_benchy(base_url, model, **kwargs))

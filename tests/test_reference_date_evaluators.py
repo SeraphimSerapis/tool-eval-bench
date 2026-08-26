@@ -279,3 +279,29 @@ def test_tc84_simulator_offers_the_date_the_prompt_asked_for(reference):
     payload = scenario.handle_tool_call(state, call)
 
     assert payload["slots"][0]["date"] == EXPECTED["TC-84"][reference]
+
+
+def test_offset_aliases_need_the_timezone_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without tzdata the check silently accepts both DST spellings.
+
+    Windows ships no IANA database, so `ZoneInfo` raises there unless the
+    `tzdata` package is installed. The fallback then treats "cet" and "cest" as
+    equally correct year-round, which scores TC-17 PASS where it should score
+    PARTIAL. `pyproject.toml` declares `tzdata` on win32 for exactly this
+    reason; this test says what breaks if that declaration is dropped.
+    """
+    import zoneinfo
+
+    from tool_eval_bench.evals import helpers
+
+    summer_only = helpers.utc_offset_aliases("2026-08-19", "Europe/Berlin")
+    assert summer_only == {"cest", "utc+2"}, "with a database, only summer spellings are correct"
+
+    def no_database(key: str) -> None:
+        raise zoneinfo.ZoneInfoNotFoundError(key)
+
+    monkeypatch.setattr(helpers, "ZoneInfo", no_database)
+    without = helpers.utc_offset_aliases("2026-08-19", "Europe/Berlin")
+
+    assert without == {"cet", "cest", "utc+1", "utc+2"}
+    assert without > summer_only, "the fallback is strictly more permissive"

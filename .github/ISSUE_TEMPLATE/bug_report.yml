@@ -1,0 +1,44 @@
+name: Bug report
+description: Something behaves differently from what the docs say
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: [docs/troubleshooting.md](../blob/main/docs/troubleshooting.md) covers
+        discovery failures, exit codes, timeouts, rate limits, and why two scores may not be
+        comparable.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: The command you ran
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `tool-eval-bench --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Serving stack
+      options: [vLLM, SGLang, LiteLLM, llama.cpp, NInfer, Gemini, Ollama, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The error, or the relevant part of the run. Redact hosts and keys.
+      render: shell

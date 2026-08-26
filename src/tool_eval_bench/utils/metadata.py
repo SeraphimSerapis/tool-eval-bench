@@ -14,6 +14,8 @@ import platform
 import re
 import socket
 import subprocess
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -116,102 +118,162 @@ def _tool_version() -> str:
 # ---------------------------------------------------------------------------
 
 
+class _ProbeSession:
+    """One connection pool shared across an endpoint's probes.
+
+    Two problems, one object.  Each probe used to build its own
+    ``AsyncClient``, so identifying a server cost six TCP and TLS handshakes to
+    the same host.  And the ladder is sequential by design, so an endpoint that
+    is simply not there used to burn ``_PROBE_TIMEOUT`` once per rung before
+    the run could start.  ``unreachable`` latches on the first connect-level
+    failure and every later probe returns immediately.
+    """
+
+    def __init__(self, client: Any) -> None:
+        self.client = client
+        self.unreachable = False
+
+
+@asynccontextmanager
+async def _probe_session(session: _ProbeSession | None) -> AsyncIterator[_ProbeSession]:
+    """Yield *session*, or open a short-lived one for a standalone probe."""
+    if session is not None:
+        yield session
+        return
+    async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
+        yield _ProbeSession(client)
+
+
+async def _probe_get(
+    session: _ProbeSession, url: str, *, headers: dict[str, str], what: str
+) -> Any | None:
+    """GET *url*, returning ``None`` rather than raising on any failure.
+
+    A refusal or a 404 says something about the server and leaves the session
+    usable.  A connect failure says the host is not answering at all, so it
+    latches ``unreachable`` and short-circuits the rest of the ladder.
+    """
+    if session.unreachable:
+        return None
+    try:
+        return await session.client.get(url, headers=headers)
+    except (httpx.ConnectError, httpx.ConnectTimeout, OSError) as exc:
+        session.unreachable = True
+        logger.debug("%s probe failed, endpoint unreachable: %s", what, exc)
+    except httpx.HTTPError as exc:
+        logger.debug("%s probe failed: %s", what, exc)
+    return None
+
+
+def _auth_headers(api_key: str | None) -> dict[str, str]:
+    """Return probe headers, adding bearer auth only when a key is present."""
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
 async def _probe_models(
     base_url: str,
     api_key: str | None,
+    *,
+    session: _ProbeSession | None = None,
 ) -> dict[str, Any]:
     """Probe /v1/models for model metadata."""
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
     probe: dict[str, Any] = {}
-    url = _models_url(base_url)
+    async with _probe_session(session) as active:
+        resp = await _probe_get(
+            active, _models_url(base_url), headers=_auth_headers(api_key), what="models"
+        )
+    if resp is None or resp.status_code != 200:
+        return probe
     try:
-        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code == 200:
-                body = resp.json()
-                data = body.get("data") if isinstance(body, dict) else None
-                if isinstance(data, list) and data:
-                    first = data[0] if isinstance(data[0], dict) else {}
-                    probe["server_model_id"] = first.get("id")
-                    probe["server_model_root"] = first.get("root")
-                    probe["owned_by"] = first.get("owned_by")  # NInfer fingerprints here
-                    # vLLM exposes max_model_len in model metadata
-                    if "max_model_len" in first:
-                        probe["max_model_len"] = first["max_model_len"]
-    except (httpx.HTTPError, OSError, ValueError) as exc:
-        logger.debug("models probe failed: %s", exc)
+        body = resp.json()
+    except ValueError as exc:
+        logger.debug("models probe returned non-JSON: %s", exc)
+        return probe
+    data = body.get("data") if isinstance(body, dict) else None
+    if isinstance(data, list) and data:
+        first = data[0] if isinstance(data[0], dict) else {}
+        probe["server_model_id"] = first.get("id")
+        probe["server_model_root"] = first.get("root")
+        probe["owned_by"] = first.get("owned_by")  # NInfer fingerprints here
+        # vLLM exposes max_model_len in model metadata
+        if "max_model_len" in first:
+            probe["max_model_len"] = first["max_model_len"]
     return probe
 
 
-async def _probe_vllm_version(base_url: str, api_key: str | None) -> dict[str, Any]:
+async def _probe_vllm_version(
+    base_url: str, api_key: str | None, *, session: _ProbeSession | None = None
+) -> dict[str, Any]:
     """Probe /version (vLLM-specific endpoint)."""
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    url = f"{_root_url(base_url)}/version"
+    async with _probe_session(session) as active:
+        resp = await _probe_get(
+            active,
+            f"{_root_url(base_url)}/version",
+            headers=_auth_headers(api_key),
+            what="vLLM /version",
+        )
+    if resp is None or resp.status_code != 200:
+        return {}
     try:
-        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code == 200:
+        body = resp.json()
+    except ValueError:
+        return {}
+    if isinstance(body, dict) and "version" in body:
+        return {"engine_name": "vLLM", "engine_version": body["version"]}
+    return {}
+
+
+async def _probe_llamacpp(base_url: str, *, session: _ProbeSession | None = None) -> dict[str, Any]:
+    """Probe /props or /health (llama.cpp endpoints)."""
+    async with _probe_session(session) as active:
+        for path in ("/props", "/health"):
+            resp = await _probe_get(
+                active, f"{_root_url(base_url)}{path}", headers={}, what=f"llama.cpp {path}"
+            )
+            if resp is None or resp.status_code != 200:
+                continue
+            try:
                 body = resp.json()
-                if isinstance(body, dict) and "version" in body:
-                    return {
-                        "engine_name": "vLLM",
-                        "engine_version": body["version"],
-                    }
-    except (httpx.HTTPError, OSError, ValueError) as exc:
-        logger.debug("vLLM /version probe failed: %s", exc)
+            except ValueError:
+                continue
+            if not isinstance(body, dict):
+                continue
+            result: dict[str, Any] = {"engine_name": "llama.cpp"}
+            if "build_info" in body:
+                result["engine_version"] = str(body["build_info"])
+            elif "build_number" in body:
+                result["engine_version"] = f"b{body['build_number']}"
+            if "total_slots" in body:
+                result["gpu_count"] = body.get("total_slots")
+            return result
     return {}
 
 
-async def _probe_llamacpp(base_url: str) -> dict[str, Any]:
-    """Probe /health or /props (llama.cpp endpoints)."""
-    for path in ["/props", "/health"]:
-        url = f"{_root_url(base_url)}{path}"
-        try:
-            async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
-                resp = await client.get(url)
-                if resp.status_code == 200:
-                    body = resp.json()
-                    if isinstance(body, dict):
-                        result: dict[str, Any] = {"engine_name": "llama.cpp"}
-                        if "build_info" in body:
-                            result["engine_version"] = str(body["build_info"])
-                        elif "build_number" in body:
-                            result["engine_version"] = f"b{body['build_number']}"
-                        if "total_slots" in body:
-                            result["gpu_count"] = body.get("total_slots")
-                        return result
-        except (httpx.HTTPError, OSError, ValueError) as exc:
-            logger.debug("llama.cpp %s probe failed: %s", path, exc)
-    return {}
-
-
-async def _probe_litellm(base_url: str, api_key: str | None) -> dict[str, Any]:
+async def _probe_litellm(
+    base_url: str, api_key: str | None, *, session: _ProbeSession | None = None
+) -> dict[str, Any]:
     """Detect LiteLLM from response headers or /health."""
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    url = f"{_root_url(base_url)}/health"
+    async with _probe_session(session) as active:
+        resp = await _probe_get(
+            active,
+            f"{_root_url(base_url)}/health",
+            headers=_auth_headers(api_key),
+            what="LiteLLM /health",
+        )
+    if resp is None:
+        return {}
+    # LiteLLM sets x-litellm-version header
+    version = resp.headers.get("x-litellm-version")
+    if version:
+        return {"engine_name": "LiteLLM", "engine_version": version}
+    if resp.status_code != 200:
+        return {}
     try:
-        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
-            resp = await client.get(url, headers=headers)
-            # LiteLLM sets x-litellm-version header
-            version = resp.headers.get("x-litellm-version")
-            if version:
-                return {"engine_name": "LiteLLM", "engine_version": version}
-            # Fallback: check response body
-            if resp.status_code == 200:
-                body = resp.json()
-                if isinstance(body, dict) and "litellm_version" in body:
-                    return {
-                        "engine_name": "LiteLLM",
-                        "engine_version": body["litellm_version"],
-                    }
-    except (httpx.HTTPError, OSError, ValueError) as exc:
-        logger.debug("LiteLLM /health probe failed: %s", exc)
+        body = resp.json()
+    except ValueError:
+        return {}
+    if isinstance(body, dict) and "litellm_version" in body:
+        return {"engine_name": "LiteLLM", "engine_version": body["litellm_version"]}
     return {}
 
 
@@ -257,34 +319,31 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
        is generic enough that other engines answer it, and vLLM only avoids
        matching here because its ``/health`` body is empty.
 
-    Each probe uses a tight timeout and is best-effort; returns ``None`` if
+    All four share one connection pool, and the ladder stops early once a
+    probe proves the endpoint unreachable rather than spending the timeout
+    again on each remaining rung.  Best-effort throughout; returns ``None`` if
     nothing matched.
     """
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    try:
-        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
-            resp = await client.get(_metrics_url(base_url), headers=headers)
-            if resp.status_code == 200:
-                hit = detect_backend_from_metrics(resp.text)
-                if hit:
-                    return hit
-    except (httpx.HTTPError, OSError) as exc:
-        logger.debug("/metrics backend probe failed: %s", exc)
+    async with _probe_session(None) as active:
+        headers = _auth_headers(api_key)
+        resp = await _probe_get(active, _metrics_url(base_url), headers=headers, what="/metrics")
+        if resp is not None and resp.status_code == 200:
+            hit = detect_backend_from_metrics(resp.text)
+            if hit:
+                return hit
 
-    if await _probe_vllm_version(base_url, api_key):
-        return "vllm", "vLLM"
+        if await _probe_vllm_version(base_url, api_key, session=active):
+            return "vllm", "vLLM"
 
-    # NInfer: /v1/models entries carry owned_by == "ninfer".  Checked before
-    # the generic /health fallback, which otherwise fingerprints NInfer as
-    # llama.cpp (NInfer answers /health with 200 {"status":"ok"} and does not
-    # serve /metrics, /version, or /props).
-    if await _probe_ninfer(base_url, api_key):
-        return "ninfer", "NInfer"
+        # NInfer: /v1/models entries carry owned_by == "ninfer".  Checked before
+        # the generic /health fallback, which otherwise fingerprints NInfer as
+        # llama.cpp (NInfer answers /health with 200 {"status":"ok"} and does not
+        # serve /metrics, /version, or /props).
+        if await _probe_ninfer(base_url, api_key, session=active):
+            return "ninfer", "NInfer"
 
-    if await _probe_llamacpp(base_url):
-        return "llamacpp", "llama.cpp"
+        if await _probe_llamacpp(base_url, session=active):
+            return "llamacpp", "llama.cpp"
 
     return None
 
@@ -323,28 +382,32 @@ def _guess_quantization(model_name: str | None) -> str | None:
     return None
 
 
-async def _probe_ninfer(base_url: str, api_key: str | None) -> dict[str, Any]:
+async def _probe_ninfer(
+    base_url: str, api_key: str | None, *, session: _ProbeSession | None = None
+) -> dict[str, Any]:
     """Detect NInfer from /v1/models: entries carry owned_by == 'ninfer'.
 
     More specific than the generic /health probe that otherwise fingerprints
     NInfer as llama.cpp (NInfer answers /health with 200 {'status':'ok'} and
     does not serve /metrics, /version, or /props).
     """
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    url = f"{_root_url(base_url)}/v1/models"
+    async with _probe_session(session) as active:
+        resp = await _probe_get(
+            active,
+            f"{_root_url(base_url)}/v1/models",
+            headers=_auth_headers(api_key),
+            what="ninfer /v1/models",
+        )
+    if resp is None or resp.status_code != 200:
+        return {}
     try:
-        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code == 200:
-                body = resp.json()
-                data = body.get("data") if isinstance(body, dict) else None
-                if isinstance(data, list) and data and isinstance(data[0], dict):
-                    if data[0].get("owned_by") == "ninfer":
-                        return {"engine_name": "NInfer"}
-    except (httpx.HTTPError, OSError, ValueError) as exc:
-        logger.debug("ninfer /v1/models probe failed: %s", exc)
+        body = resp.json()
+    except ValueError:
+        return {}
+    data = body.get("data") if isinstance(body, dict) else None
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        if data[0].get("owned_by") == "ninfer":
+            return {"engine_name": "NInfer"}
     return {}
 
 
@@ -353,7 +416,11 @@ async def _probe_engine(
     api_key: str | None,
     backend: str,
 ) -> dict[str, Any]:
-    """Run all engine probes and merge results. Best-effort."""
+    """Run the engine probes for *backend* and merge results. Best-effort.
+
+    Every probe shares one connection pool, and an endpoint that stops
+    answering ends the sequence rather than costing a timeout per probe.
+    """
     result: dict[str, Any] = {}
     backend_l = backend.lower()
 
@@ -363,43 +430,40 @@ async def _probe_engine(
         # round trip against Google's servers.
         return {"engine_name": "Google Gemini API"}
 
-    # Always probe /v1/models (works for all self-hosted backends)
-    models_info = await _probe_models(base_url, api_key)
-    result.update(models_info)
+    async with _probe_session(None) as active:
+        # Always probe /v1/models (works for all self-hosted backends)
+        result.update(await _probe_models(base_url, api_key, session=active))
 
-    # Backend-specific probes
-    if backend_l == "vllm":
-        vllm_info = await _probe_vllm_version(base_url, api_key)
-        result.update(vllm_info)
-    elif backend_l in ("llamacpp", "llama.cpp", "llama_cpp"):
-        llama_info = await _probe_llamacpp(base_url)
-        result.update(llama_info)
-    elif backend_l == "litellm":
-        litellm_info = await _probe_litellm(base_url, api_key)
-        result.update(litellm_info)
-    elif backend_l == "sglang":
-        # No well-documented, stable metadata endpoint for version info yet;
-        # the metrics-based detector that produced this label already confirms
-        # the engine, so just record the name.
-        result.setdefault("engine_name", "SGLang")
-    elif backend_l == "ninfer":
-        if result.get("owned_by") == "ninfer":
-            result["engine_name"] = "NInfer"
-    else:
-        # Try specific engine endpoints before model ownership and generic health.
-        for prober in [
-            lambda: _probe_vllm_version(base_url, api_key),
-            lambda: _probe_litellm(base_url, api_key),
-        ]:
-            info = await prober()
-            if info:
-                result.update(info)
-                break
-        else:
+        # Backend-specific probes
+        if backend_l == "vllm":
+            result.update(await _probe_vllm_version(base_url, api_key, session=active))
+        elif backend_l in ("llamacpp", "llama.cpp", "llama_cpp"):
+            result.update(await _probe_llamacpp(base_url, session=active))
+        elif backend_l == "litellm":
+            result.update(await _probe_litellm(base_url, api_key, session=active))
+        elif backend_l == "sglang":
+            # No well-documented, stable metadata endpoint for version info yet;
+            # the metrics-based detector that produced this label already confirms
+            # the engine, so just record the name.
+            result.setdefault("engine_name", "SGLang")
+        elif backend_l == "ninfer":
             if result.get("owned_by") == "ninfer":
                 result["engine_name"] = "NInfer"
+        else:
+            # Try specific engine endpoints before model ownership and generic health.
+            for prober in (
+                lambda: _probe_vllm_version(base_url, api_key, session=active),
+                lambda: _probe_litellm(base_url, api_key, session=active),
+            ):
+                info = await prober()
+                if info:
+                    result.update(info)
+                    break
             else:
-                result.update(await _probe_llamacpp(base_url))
+                if result.get("owned_by") == "ninfer":
+                    result["engine_name"] = "NInfer"
+                else:
+                    result.update(await _probe_llamacpp(base_url, session=active))
 
     # Infer quantization from model name
     if "quantization" not in result:

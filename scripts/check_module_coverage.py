@@ -14,8 +14,10 @@ MODULE_FLOORS = {
     "src/tool_eval_bench/cli/plugin_runners.py": 80.0,
     "src/tool_eval_bench/cli/pressure.py": 75.0,
     "src/tool_eval_bench/cli/server.py": 80.0,
+    "src/tool_eval_bench/cli/spec_live_display.py": 80.0,
     "src/tool_eval_bench/compare_reports/summary.py": 75.0,
     "src/tool_eval_bench/compare_reports/tool_eval.py": 80.0,
+    "src/tool_eval_bench/plugins/hf_utils.py": 85.0,
     "src/tool_eval_bench/runner/speculative.py": 90.0,
     "src/tool_eval_bench/runner/throughput.py": 80.0,
 }

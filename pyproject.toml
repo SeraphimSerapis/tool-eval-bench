@@ -31,6 +31,11 @@ dependencies = [
   "python-dotenv>=1.1.0",
   "pyyaml>=6.0",
   "rich>=14.0.0",
+  # Windows ships no IANA timezone database. Without it `ZoneInfo` raises,
+  # `utc_offset_aliases` falls back to accepting both winter and summer
+  # spellings, and TC-17 scores PASS where it should score PARTIAL. A score
+  # that depends on the host OS is not a score.
+  "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -106,7 +111,8 @@ warn_unused_configs = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = "tool_eval_bench.cli.plugin_runners"
+# These probe for the optional `datasets` extra, which is absent in CI.
+module = ["tool_eval_bench.cli.plugin_runners", "tool_eval_bench.cli.plugin_datasets"]
 disable_error_code = ["import-not-found"]
 
 
@@ -160,6 +166,10 @@ ignore = [
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]
 asyncio_mode = "auto"
+# A bare `pytest` used to include the live and integration tests, which need a
+# reachable inference endpoint. CI and the pre-commit hook both excluded them by
+# flag; this puts the exclusion in one place so a local run matches.
+addopts = "-m 'not live'"
 tmp_path_retention_count = 1
 tmp_path_retention_policy = "failed"
 markers = [
@@ -176,6 +186,8 @@ omit = [
 
 [tool.coverage.report]
 show_missing = true
+# Matches the CI gate, so `pytest --cov` fails locally for the same reason.
+fail_under = 80
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

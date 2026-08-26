@@ -20,6 +20,7 @@ import logging
 import os
 import sys
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from dotenv import load_dotenv  # noqa: F401  (re-exported via _load_dotenv)
@@ -290,6 +291,310 @@ async def _plain_on_result(
 _HIDDEN_ARGS: frozenset[str] = frozenset({"command", "help"})
 
 
+@dataclass
+class _Target:
+    """Everything the mode handlers below need about a resolved endpoint.
+
+    ``main`` resolves the endpoint once (URL cascade, wire format, backend
+    probe, model detection) and each mode reads it from here, rather than
+    threading a dozen locals through every branch.
+    """
+
+    args: argparse.Namespace
+    parser: argparse.ArgumentParser
+    console: Console
+    model: str
+    display_name: str
+    backend: str
+    base_url: str
+    display_url: str
+    api_key: str | None
+    wire_format: str
+    extra_params: dict[str, Any]
+    run_context: Any | None
+
+
+def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
+    """Run the llama-benchy throughput sweep.
+
+    Returns the samples and whether the CLI is finished; ``--perf-only`` writes
+    its own report and stops, while ``--perf`` hands its samples to the
+    tool-call run that follows.
+    """
+    args, console = target.args, target.console
+    if not (args.perf or args.perf_only):
+        return [], False
+
+    benchy_extra: list[str] | None = None
+    if args.benchy_args:
+        import shlex
+
+        benchy_extra = shlex.split(args.benchy_args)
+
+    throughput_samples = _run_llama_benchy(
+        console,
+        target.model,
+        target.display_name,
+        target.base_url,
+        target.api_key,
+        pp=[args.pp],
+        tg=[args.tg],
+        depths=_parse_int_list(args.depth),
+        concurrency_levels=_parse_int_list(args.concurrency),
+        runs=args.benchy_runs,
+        latency_mode=args.benchy_latency_mode,
+        skip_coherence=True,
+        extra_args=benchy_extra,
+        # We already warmed the server, so skip llama-benchy's own warm-up and
+        # save two requests.
+        skip_warmup=not args.no_warmup,
+        tokenizer=getattr(args, "tokenizer", None),
+    )
+
+    if not args.perf_only:
+        return throughput_samples, False
+
+    from tool_eval_bench.utils.ids import build_run_id
+
+    run_config = _with_config_fingerprint(
+        {
+            "model": target.model,
+            "backend": target.backend,
+            "base_url": target.base_url,
+            "mode": "perf-only",
+        }
+    )
+    run_id = build_run_id(run_config)
+    reporter = MarkdownReporter(root=args.output_dir)
+    report_path = reporter.write_throughput_report(
+        run_id,
+        target.display_name,
+        throughput_samples,
+        run_context=target.run_context,
+    )
+    _persist_plugin_run(
+        {
+            "run_id": run_id,
+            "run_type": "perf",
+            "status": "completed",
+            "config": run_config,
+            "scores": {"samples": len(throughput_samples)},
+            "metadata": _metadata_for_storage(target.run_context),
+            "report_path": str(report_path),
+        }
+    )
+    console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
+    return throughput_samples, True
+
+
+def _validate_scenario_selection(
+    args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console
+) -> None:
+    """Reject a bad pack or category before any request is made.
+
+    Packs load up front on purpose: a missing, empty, or colliding pack must
+    abort before the run starts rather than surface as a traceback partway
+    through scenario resolution.
+    """
+    try:
+        packs = _resolve_packs(args)
+        _resolve_scenarios(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if packs and not args.json:
+        total = sum(len(p.scenarios) for p in packs)
+        names = ", ".join(f"{p.name} ({p.content_hash})" for p in packs)
+        console.print(f"  [dim]🔒 Held-out packs: {names} — {total} scenario(s)[/]")
+
+    if args.categories:
+        invalid = {c.upper() for c in args.categories} - _VALID_CATEGORIES
+        if invalid:
+            parser.error(
+                f"Unknown categories: {', '.join(sorted(invalid))}. "
+                f"Valid: {', '.join(sorted(_VALID_CATEGORIES))}"
+            )
+        cats = [c.upper() for c in args.categories]
+        from tool_eval_bench.domain.scenarios import CATEGORY_LABELS
+
+        cat_names = ", ".join(f"{c} ({CATEGORY_LABELS[Category(c)]})" for c in cats)
+        resolved_count = len(_resolve_scenarios(args))
+        if not args.json:
+            console.print(f"  [dim]📋 Categories: {cat_names} ({resolved_count} scenarios)[/]")
+
+
+def _check_endpoint_ready(
+    args: argparse.Namespace,
+    console: Console,
+    *,
+    base_url: str,
+    model: str,
+    api_key: str | None,
+    wire_format: str,
+    extra_params: dict[str, Any],
+) -> None:
+    """Verify the model answers a real request, then warm the server.
+
+    Some servers list a model in ``/v1/models`` and still fail the first real
+    request.  Without this gate the benchmark scores the failure as the model's.
+    """
+    if not args.no_preflight:
+        _preflight_model_check(
+            console,
+            base_url,
+            model,
+            api_key,
+            headless=args.json,
+            wire_format=wire_format,
+            timeout_seconds=args.timeout,
+            temperature=args.temperature,
+            extra_params=extra_params or None,
+        )
+
+    if not args.no_warmup and not args.json:
+        _do_warmup(
+            console,
+            base_url,
+            model,
+            api_key,
+            wire_format=wire_format,
+            temperature=args.temperature,
+            extra_params=extra_params or None,
+        )
+
+
+def _scenario_selector_label(args: argparse.Namespace) -> str:
+    """Describe the scenario selection for the run report."""
+    resolved = _resolve_scenarios(args)
+    if args.scenarios:
+        return ", ".join(args.scenarios)
+    if args.categories:
+        return f"categories {', '.join(c.upper() for c in args.categories)} ({len(resolved)})"
+    if args.short:
+        return f"short ({len(resolved)})"
+    return f"all ({len(resolved)})"
+
+
+def _build_run_context(
+    args: argparse.Namespace,
+    console: Console,
+    *,
+    model: str,
+    backend: str,
+    base_url: str,
+    api_key: str | None,
+    extra_params: dict[str, Any],
+) -> Any | None:
+    """Collect execution-context metadata for the report.
+
+    Built before the mode branches so the throughput and spec-decode paths get
+    engine detection too.  Failure is not fatal: the run proceeds with a report
+    that lacks the context block.
+    """
+    try:
+        from tool_eval_bench.utils.metadata import collect_run_context
+
+        run_context = asyncio.run(
+            collect_run_context(
+                model=model,
+                backend=backend,
+                base_url=base_url,
+                api_key=api_key,
+                temperature=args.temperature,
+                max_turns=args.max_turns,
+                timeout_seconds=args.timeout,
+                seed=args.seed,
+                scenario_selector=_scenario_selector_label(args),
+                trials=max(1, args.trials),
+                parallel=args.parallel,
+                error_rate=args.error_rate,
+                thinking_enabled=not args.no_think,
+                extra_params=extra_params or None,
+                context_pressure=args.context_pressure,
+                label=args.label,
+                probe_engine=not args.no_probe_engine,
+            )
+        )
+        if not args.json and run_context.engine_name:
+            engine_str = run_context.engine_name
+            if run_context.engine_version:
+                engine_str += f" {run_context.engine_version}"
+            console.print(f"  [dim]🔍 Engine: {engine_str}[/]")
+        return run_context
+    except Exception as exc:
+        logger.warning("Failed to build RunContext: %s", exc)
+        return None
+
+
+def _run_spec_bench_mode(target: _Target) -> bool:
+    """Run the speculative-decoding benchmark. Returns True when the CLI is done."""
+    args, console = target.args, target.console
+    model, base_url, api_key = target.model, target.base_url, target.api_key
+    display_name = target.display_name
+    if args.spec_bench:
+        spec_depths = _parse_int_list(args.depth)
+        spec_prompts = [p.strip() for p in args.spec_prompts.split(",") if p.strip()]
+        _run_spec_bench(
+            console,
+            model,
+            display_name,
+            base_url,
+            api_key,
+            pp=args.pp,
+            tg=args.tg,
+            depths=spec_depths,
+            spec_method=args.spec_method,
+            baseline_tg_tps=args.baseline_tgs,
+            prompt_types=spec_prompts,
+            metrics_url=args.metrics_url,
+            output_dir=args.output_dir,
+            metadata_for_storage=_metadata_for_storage,
+            with_config_fingerprint=_with_config_fingerprint,
+            persist_plugin_run=_persist_plugin_run,
+            label=args.label,
+        )
+        # If --spec-bench is the only mode, or user explicitly skipped tool-eval
+        if args.skip_tool_eval or (
+            not args.perf
+            and not args.perf_only
+            and not args.gsm8k
+            and not args.gsm8k_only
+            and not args.mmlu
+            and not args.mmlu_only
+            and not args.ifeval
+            and not args.ifeval_only
+        ):
+            return True
+    return False
+
+
+def _run_pressure_sweep_mode(target: _Target) -> bool:
+    """Run the context-pressure sweep. Returns True when the CLI is done."""
+    args, console = target.args, target.console
+    model, base_url, api_key = target.model, target.base_url, target.api_key
+    display_name, display_url = target.display_name, target.display_url
+    backend, extra_params = target.backend, target.extra_params
+    if args.context_pressure_sweep is not None:
+        _run_pressure_sweep(
+            console,
+            model,
+            display_name,
+            backend,
+            base_url,
+            api_key,
+            args,
+            display_url=display_url,
+            extra_params=extra_params or None,
+            parse_sweep_range=_parse_sweep_range,
+            resolve_scenarios=_resolve_scenarios,
+            with_config_fingerprint=_with_config_fingerprint,
+            persist_plugin_run=_persist_plugin_run,
+            metadata_for_storage=_metadata_for_storage,
+            label=args.label,
+        )
+        return True
+    return False
+
+
 def main() -> None:
     _load_dotenv()
     from tool_eval_bench.cli.legacy_parser import make_parser
@@ -459,34 +764,7 @@ def main() -> None:
         except json.JSONDecodeError as exc:
             parser.error(f"--backend-kwargs is not valid JSON: {exc}")
 
-    # -- Validate --scenario-pack / --pack-only --
-    # Load packs up front: a missing, empty, or colliding pack must abort before
-    # the run starts, not surface as a traceback partway through resolution.
-    try:
-        packs = _resolve_packs(args)
-        _resolve_scenarios(args)
-    except ValueError as exc:
-        parser.error(str(exc))
-    if packs and not args.json:
-        total = sum(len(p.scenarios) for p in packs)
-        names = ", ".join(f"{p.name} ({p.content_hash})" for p in packs)
-        console.print(f"  [dim]🔒 Held-out packs: {names} — {total} scenario(s)[/]")
-
-    # -- Validate --categories --
-    if args.categories:
-        invalid = {c.upper() for c in args.categories} - _VALID_CATEGORIES
-        if invalid:
-            parser.error(
-                f"Unknown categories: {', '.join(sorted(invalid))}. "
-                f"Valid: {', '.join(sorted(_VALID_CATEGORIES))}"
-            )
-        cats = [c.upper() for c in args.categories]
-        from tool_eval_bench.domain.scenarios import CATEGORY_LABELS
-
-        cat_names = ", ".join(f"{c} ({CATEGORY_LABELS[Category(c)]})" for c in cats)
-        resolved_count = len(_resolve_scenarios(args))
-        if not args.json:
-            console.print(f"  [dim]📋 Categories: {cat_names} ({resolved_count} scenarios)[/]")
+    _validate_scenario_selection(args, parser, console)
 
     # -- spec-live: standalone live monitor (exits after session) --
     if args.spec_live:
@@ -516,205 +794,49 @@ def main() -> None:
             pass
         return
 
-    # -- Pre-flight: verify the model actually works (issue #19) --
-    # Some servers list models in /v1/models but fail on real requests.
-    # Without this check, the benchmark produces misleading scores.
-    if not args.no_preflight:
-        _preflight_model_check(
-            console,
-            base_url,
-            model,
-            api_key,
-            headless=args.json,
-            wire_format=wire_format,
-            timeout_seconds=args.timeout,
-            temperature=args.temperature,
-            extra_params=extra_params or None,
-        )
+    _check_endpoint_ready(
+        args,
+        console,
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        wire_format=wire_format,
+        extra_params=extra_params,
+    )
 
-    # -- Warm-up --
-    if not args.no_warmup and not args.json:
-        _do_warmup(
-            console,
-            base_url,
-            model,
-            api_key,
-            wire_format=wire_format,
-            temperature=args.temperature,
-            extra_params=extra_params or None,
-        )
+    run_context = _build_run_context(
+        args,
+        console,
+        model=model,
+        backend=backend,
+        base_url=base_url,
+        api_key=api_key,
+        extra_params=extra_params,
+    )
 
-    # -- Build RunContext (issue #6: full execution context metadata) --
-    # Built early so perf-only and spec-bench paths also get engine detection.
-    run_context = None
-    try:
-        from tool_eval_bench.utils.metadata import collect_run_context
+    target = _Target(
+        args=args,
+        parser=parser,
+        console=console,
+        model=model,
+        display_name=display_name,
+        backend=backend,
+        base_url=base_url,
+        display_url=display_url,
+        api_key=api_key,
+        wire_format=wire_format,
+        extra_params=extra_params,
+        run_context=run_context,
+    )
 
-        # Determine scenario selector description
-        resolved_sc = _resolve_scenarios(args)
-        if args.scenarios:
-            scenario_sel = ", ".join(args.scenarios)
-        elif args.categories:
-            scenario_sel = (
-                f"categories {', '.join(c.upper() for c in args.categories)} ({len(resolved_sc)})"
-            )
-        elif args.short:
-            scenario_sel = f"short ({len(resolved_sc)})"
-        else:
-            scenario_sel = f"all ({len(resolved_sc)})"
+    throughput_samples, finished = _run_throughput_mode(target)
+    if finished:
+        return
 
-        trials = max(1, args.trials)
-        run_context = asyncio.run(
-            collect_run_context(
-                model=model,
-                backend=backend,
-                base_url=base_url,
-                api_key=api_key,
-                temperature=args.temperature,
-                max_turns=args.max_turns,
-                timeout_seconds=args.timeout,
-                seed=args.seed,
-                scenario_selector=scenario_sel,
-                trials=trials,
-                parallel=args.parallel,
-                error_rate=args.error_rate,
-                thinking_enabled=not args.no_think,
-                extra_params=extra_params or None,
-                context_pressure=args.context_pressure,
-                label=args.label,
-                probe_engine=not args.no_probe_engine,
-            )
-        )
-        if not args.json and run_context.engine_name:
-            engine_str = run_context.engine_name
-            if run_context.engine_version:
-                engine_str += f" {run_context.engine_version}"
-            console.print(f"  [dim]🔍 Engine: {engine_str}[/]")
-    except Exception as exc:
-        logger.warning("Failed to build RunContext: %s", exc)
+    if _run_spec_bench_mode(target):
+        return
 
-    # -- Throughput benchmark (llama-benchy, the default) --
-    throughput_samples: list = []
-    if args.perf or args.perf_only:
-        depths = _parse_int_list(args.depth)
-        conc_levels = _parse_int_list(args.concurrency)
-
-        # Parse extra args if provided
-        benchy_extra: list[str] | None = None
-        if args.benchy_args:
-            import shlex
-
-            benchy_extra = shlex.split(args.benchy_args)
-
-        throughput_samples = _run_llama_benchy(
-            console,
-            model,
-            display_name,
-            base_url,
-            api_key,
-            pp=[args.pp],
-            tg=[args.tg],
-            depths=depths,
-            concurrency_levels=conc_levels,
-            runs=args.benchy_runs,
-            latency_mode=args.benchy_latency_mode,
-            skip_coherence=True,
-            extra_args=benchy_extra,
-            # When we've already done our own warmup, tell llama-benchy to
-            # skip its redundant warmup phase (saves 2 extra requests).
-            skip_warmup=not args.no_warmup,
-            tokenizer=getattr(args, "tokenizer", None),
-        )
-
-        if args.perf_only:
-            # Write standalone throughput report
-            from tool_eval_bench.utils.ids import build_run_id
-
-            run_config = _with_config_fingerprint(
-                {
-                    "model": model,
-                    "backend": backend,
-                    "base_url": base_url,
-                    "mode": "perf-only",
-                }
-            )
-            run_id = build_run_id(run_config)
-            reporter = MarkdownReporter(root=args.output_dir)
-            report_path = reporter.write_throughput_report(
-                run_id,
-                display_name,
-                throughput_samples,
-                run_context=run_context,
-            )
-            _persist_plugin_run(
-                {
-                    "run_id": run_id,
-                    "run_type": "perf",
-                    "status": "completed",
-                    "config": run_config,
-                    "scores": {"samples": len(throughput_samples)},
-                    "metadata": _metadata_for_storage(run_context),
-                    "report_path": str(report_path),
-                }
-            )
-            console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
-            return
-
-    # -- Speculative decoding / MTP benchmark --
-    if args.spec_bench:
-        spec_depths = _parse_int_list(args.depth)
-        spec_prompts = [p.strip() for p in args.spec_prompts.split(",") if p.strip()]
-        _run_spec_bench(
-            console,
-            model,
-            display_name,
-            base_url,
-            api_key,
-            pp=args.pp,
-            tg=args.tg,
-            depths=spec_depths,
-            spec_method=args.spec_method,
-            baseline_tg_tps=args.baseline_tgs,
-            prompt_types=spec_prompts,
-            metrics_url=args.metrics_url,
-            output_dir=args.output_dir,
-            metadata_for_storage=_metadata_for_storage,
-            with_config_fingerprint=_with_config_fingerprint,
-            persist_plugin_run=_persist_plugin_run,
-            label=args.label,
-        )
-        # If --spec-bench is the only mode, or user explicitly skipped tool-eval
-        if args.skip_tool_eval or (
-            not args.perf
-            and not args.perf_only
-            and not args.gsm8k
-            and not args.gsm8k_only
-            and not args.mmlu
-            and not args.mmlu_only
-            and not args.ifeval
-            and not args.ifeval_only
-        ):
-            return
-
-    # -- Context pressure sweep --
-    if args.context_pressure_sweep is not None:
-        _run_pressure_sweep(
-            console,
-            model,
-            display_name,
-            backend,
-            base_url,
-            api_key,
-            args,
-            display_url=display_url,
-            extra_params=extra_params or None,
-            parse_sweep_range=_parse_sweep_range,
-            resolve_scenarios=_resolve_scenarios,
-            with_config_fingerprint=_with_config_fingerprint,
-            persist_plugin_run=_persist_plugin_run,
-            metadata_for_storage=_metadata_for_storage,
-            label=args.label,
-        )
+    if _run_pressure_sweep_mode(target):
         return
 
     # -- Context pressure --
@@ -892,12 +1014,11 @@ def main() -> None:
     resume_prior_results: list[dict] | None = None
     resume_scenarios: list[ScenarioDefinition] | None = None
     if args.resume:
-        from tool_eval_bench.storage.db import RunRepository
+        from tool_eval_bench.application.run_queries import resume_state
 
-        resume_repo = RunRepository()
-        prev_run = resume_repo.get(args.resume)
-        prev_checkpoints = resume_repo.get_checkpoints(args.resume) if prev_run else []
-        resume_repo.close()
+        resumable = resume_state(args.resume)
+        prev_run = resumable[0] if resumable else None
+        prev_checkpoints = resumable[1] if resumable else []
         if prev_run is None:
             console.print(
                 f"\n  [bold red]✗[/] Run '{args.resume}' not found in history.\n"

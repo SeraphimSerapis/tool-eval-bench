@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 
 from tool_eval_bench.domain.scenarios import ScenarioState, ScenarioStatus, ToolCallRecord
-from tool_eval_bench.evals.scenarios_hardmode_expanded import (
-    EXPANDED_HARDMODE_DISPLAY_DETAILS,
-    EXPANDED_HARDMODE_SCENARIOS,
+from tool_eval_bench.evals.scenarios.hardmode_expanded import (
+    DISPLAY_DETAILS as EXPANDED_HARDMODE_DISPLAY_DETAILS,
+)
+from tool_eval_bench.evals.scenarios.hardmode_expanded import (
+    SCENARIOS as EXPANDED_HARDMODE_SCENARIOS,
 )
 
 

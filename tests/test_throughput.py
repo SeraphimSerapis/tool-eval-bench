@@ -12,6 +12,7 @@ import json
 import httpx
 import pytest
 
+from tests.conftest import MeasurementTestClient
 from tool_eval_bench.runner.throughput import (
     _DEFAULT_CHARS_PER_TOKEN,
     _FILLER_PARAGRAPH,
@@ -242,7 +243,7 @@ async def test_stream_one_mtp_token_counting() -> None:
 
     handler, expected_tokens = _build_mtp_mock(tokens_per_chunk=3, num_chunks=4)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(handler)) as client:
         sample = await _stream_one(
             client,
             "http://localhost:8000/v1",
@@ -267,7 +268,7 @@ async def test_stream_one_standard_ar() -> None:
 
     handler, expected_tokens = _build_mtp_mock(tokens_per_chunk=1, num_chunks=8)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(handler)) as client:
         sample = await _stream_one(
             client,
             "http://localhost:8000/v1",
@@ -311,7 +312,7 @@ async def test_stream_one_retries_with_max_completion_tokens() -> None:
         )
 
     cfg = TokenizerConfig()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(handler)) as client:
         sample = await _stream_one(
             client,
             "http://localhost:8000/v1",
@@ -353,7 +354,7 @@ async def test_stream_one_no_token_ids() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(handler)) as client:
         sample = await _stream_one(
             client,
             "http://localhost:8000/v1",
@@ -390,7 +391,7 @@ async def test_stream_one_retries_without_return_token_ids_on_strict_endpoint() 
         )
 
     cfg = TokenizerConfig()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(handler)) as client:
         sample = await _stream_one(
             client,
             "http://localhost:8000/v1",
@@ -433,7 +434,7 @@ async def test_stream_one_ttft_waits_for_first_content_not_headers() -> None:
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(handler)) as client:
         sample = await _stream_one(
             client,
             "http://localhost:8000/v1",
@@ -472,7 +473,7 @@ async def test_stream_one_counts_reasoning_as_generated_output(reasoning_field: 
             headers={"content-type": "text/event-stream"},
         )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(handler)) as client:
         sample = await _stream_one(
             client,
             "http://localhost:8000/v1",
@@ -508,7 +509,7 @@ async def test_calibrate_via_tokenize() -> None:
             return httpx.Response(200, json={"count": count})
         return httpx.Response(404)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(mock_handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(mock_handler)) as client:
         cfg = await calibrate(client, "http://localhost:8000", "test-model")
 
     assert cfg.has_tokenize_endpoint is True
@@ -533,7 +534,7 @@ async def test_calibrate_fallback_to_probe() -> None:
             )
         return httpx.Response(404)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(mock_handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(mock_handler)) as client:
         cfg = await calibrate(client, "http://localhost:8000", "test-model")
 
     assert cfg.has_tokenize_endpoint is False
@@ -548,7 +549,7 @@ async def test_calibrate_total_failure() -> None:
     def mock_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(mock_handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(mock_handler)) as client:
         cfg = await calibrate(client, "http://localhost:8000", "test-model")
 
     assert cfg.chars_per_token == _DEFAULT_CHARS_PER_TOKEN
@@ -567,7 +568,7 @@ async def test_estimate_latency() -> None:
     def mock_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": []})
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(mock_handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(mock_handler)) as client:
         latency = await estimate_latency(client, "http://localhost:8000", rounds=3)
 
     assert latency >= 0.0
@@ -581,7 +582,7 @@ async def test_estimate_latency_failure() -> None:
     def mock_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(mock_handler)) as client:
+    async with MeasurementTestClient(transport=httpx.MockTransport(mock_handler)) as client:
         latency = await estimate_latency(client, "http://localhost:8000", rounds=3)
 
     assert latency == 0.0

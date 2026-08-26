@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, RunContext
+from tool_eval_bench.domain.models import (
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    RUN_STATUS_INTERRUPTED,
+    RUN_STATUS_RUNNING,
+    RunContext,
+)
 from tool_eval_bench.domain.scenarios import (
     Category,
     ScenarioDefinition,
@@ -14,7 +19,6 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ScenarioStatus,
 )
-from tool_eval_bench.storage.db import RUN_STATUS_INTERRUPTED, RUN_STATUS_RUNNING
 
 
 def _evaluate_fail(state: ScenarioState) -> ScenarioEvaluation:
@@ -118,7 +122,11 @@ def test_scenario_result_roundtrip_preserves_hardmode_diagnostics() -> None:
 async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.MonkeyPatch) -> None:
     from tool_eval_bench.application import service as service_module
     from tool_eval_bench.runner.orchestrator import score_results
-    from tool_eval_bench.runner.service import BenchmarkService, _build_run_config
+    from tool_eval_bench.runner.service import (
+        BenchmarkService,
+        RunSettings,
+        build_run_config,
+    )
 
     prior = _scenario("PRIOR-A", Category.A)
     rerun = _scenario("RERUN-K", Category.K)
@@ -170,22 +178,24 @@ async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.Mo
     assert report_metadata["RERUN-K"].category == Category.K
     assert result["config"]["scenario_ids"] == ["PRIOR-A", "RERUN-K"]
     assert repo.upsert_scenario_run.call_args.args[0]["report_path"] == "report.md"
-    full_config = _build_run_config(
-        model="test-model",
-        backend="vllm",
-        base_url="http://localhost:8000",
+    full_config = build_run_config(
+        RunSettings(
+            model="test-model",
+            backend="vllm",
+            base_url="http://localhost:8000",
+            temperature=0.0,
+            timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            max_turns=8,
+            seed=None,
+            reference_date=None,
+            concurrency=1,
+            error_rate=0.0,
+            alpha=0.7,
+            extra_params=None,
+            context_pressure_config=None,
+            weight_by_difficulty=False,
+        ),
         scenarios=[prior, rerun],
-        temperature=0.0,
-        timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
-        max_turns=8,
-        seed=None,
-        reference_date=None,
-        concurrency=1,
-        error_rate=0.0,
-        alpha=0.7,
-        extra_params=None,
-        context_pressure_config=None,
-        weight_by_difficulty=False,
         metadata=result["metadata"],
     )
     assert result["config"]["config_fingerprint"] == full_config["config_fingerprint"]

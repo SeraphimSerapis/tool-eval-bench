@@ -1,0 +1,101 @@
+name: Release
+
+# Runs the artifact half of RELEASING.md when a version tag lands: build, smoke
+# the wheel in a clean environment, and open a draft release with the notes
+# towncrier already wrote. The draft is deliberate. Publishing stays a decision
+# a person makes, in the GitHub UI, after reading what this produced.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the leading v (e.g. 2.7.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # setuptools-scm reads the tag to set the version. Without the full
+          # history the wheel would claim the previous release plus a dev suffix.
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Check the built version matches the tag
+        # A wheel built from an untagged commit silently reports the previous
+        # release. Catch that here rather than after it is published.
+        run: |
+          expected="${{ inputs.version || github.ref_name }}"
+          expected="${expected#v}"
+          built=$(ls dist/*.whl | head -1 | sed -E 's/.*tool_eval_bench-([^-]+)-.*/\1/')
+          echo "tag=$expected built=$built"
+          test "$built" = "$expected"
+
+      - name: Smoke-test the wheel in a clean environment
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/python -m pip install --upgrade pip
+          /tmp/smoke/bin/python -m pip install dist/*.whl
+          /tmp/smoke/bin/python -m pip check
+          /tmp/smoke/bin/tool-eval-bench --version
+          /tmp/smoke/bin/tool-eval-bench --help
+          /tmp/smoke/bin/tool-eval-bench run --help
+          /tmp/smoke/bin/tool-eval-bench plugin --help
+
+      - name: Check the bundled scenarios survive packaging
+        run: |
+          /tmp/smoke/bin/python - <<'PY'
+          from importlib.resources import files
+          from tool_eval_bench.evals.scenarios import (
+              ALL_DISPLAY_DETAILS,
+              ALL_SCENARIOS,
+              ALL_SCENARIOS_WITH_HARDMODE,
+          )
+
+          assert (files("tool_eval_bench.evals.yaml_scenarios") / "weather.yaml").is_file()
+          assert len(ALL_SCENARIOS) == 69, len(ALL_SCENARIOS)
+          assert len(ALL_SCENARIOS_WITH_HARDMODE) == 88, len(ALL_SCENARIOS_WITH_HARDMODE)
+          assert set(ALL_DISPLAY_DETAILS) == {s.id for s in ALL_SCENARIOS_WITH_HARDMODE}
+          print("packaged scenarios verified")
+          PY
+
+      - name: Extract the release notes from CHANGELOG.md
+        run: |
+          version="${{ inputs.version || github.ref_name }}"
+          python scripts/release_notes.py "${version#v}" > /tmp/notes.md
+          cat /tmp/notes.md
+
+      - name: Upload the artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 30
+
+      - name: Open a draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --draft \
+            --title "${{ github.ref_name }}" \
+            --notes-file /tmp/notes.md \
+            dist/*

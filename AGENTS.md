@@ -29,10 +29,18 @@ integrations. There is no web server or TUI.
   - `application` composes concrete adapters, orchestration, storage, and reporting.
   - `cli` is the delivery layer that calls `application.service` and plugin runners.
     `runner.service` remains a compatibility re-export only.
+  - `cli` MUST NOT import `storage.db`. It may format reports through `storage.reports`, which is
+    a renderer. Database reads go through `application.run_queries`, which owns each repository's
+    lifetime; `tests/test_architecture_boundaries.py` enforces this.
 - Prefer composition over global state.
 - Keep adapters backend-specific and pluggable. OpenAI-compatible backends use the OpenAI wire
   format; Gemini also has a native adapter and wire format.
-- Scenarios are self-contained: each has its own mock handlers and evaluators.
+- Scenarios are self-contained: one file per scenario at `evals/scenarios/<group>/tcNN.py`,
+  exporting `SCENARIO` and `DISPLAY`. The group package discovers its own files, so creating the
+  file is the whole registration; there is no list to append to. Helpers shared inside a group live
+  in that group's `_shared.py`. Never import one scenario module from another: several groups
+  define helpers under the same name with deliberately different behaviour. See
+  `docs/adding-a-scenario.md`.
 - Plugins are self-contained: each owns its dataset loading, evaluation logic, and report rendering. Shared infrastructure (adapter, storage) lives outside plugins.
 
 ## Storage and reporting rules
@@ -116,7 +124,7 @@ branch conflict on the same lines.
 The VM comes with the project venv at `.venv` (created by the startup update
 script, which runs `pip install -e '.[dev,perf]'`). Always use `.venv/bin/...`
 as documented in the Quality bar section. Lint/type/test/run commands are
-unchanged from the Quality bar and `SKILL.md`; the notes below only cover
+unchanged from the Quality bar and `docs/cli-reference.md`; the notes below only cover
 non-obvious environment caveats.
 
 - **`pytest` needs `FORCE_COLOR` unset.** This VM's shell exports

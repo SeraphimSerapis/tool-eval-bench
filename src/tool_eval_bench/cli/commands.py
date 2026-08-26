@@ -48,9 +48,9 @@ def resolve_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
     from tool_eval_bench.evals.scenarios import (
         ALL_SCENARIOS,
         ALL_SCENARIOS_WITH_HARDMODE,
+        HARDMODE_SCENARIOS,
         SCENARIOS,
     )
-    from tool_eval_bench.evals.scenarios_hardmode import HARDMODE_SCENARIOS
 
     pack_scenarios = resolve_pack_scenarios(args)
 

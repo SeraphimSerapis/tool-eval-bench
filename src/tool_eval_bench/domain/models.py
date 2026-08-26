@@ -10,6 +10,13 @@ from typing import Any, TypedDict
 # scored as model failures.
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
 
+# A run's lifecycle vocabulary.  Storage persists these, the service writes
+# them, and the CLI reads them to tell a resumable run from a broken one, so
+# they belong to no single layer.
+RUN_STATUS_RUNNING = "running"
+RUN_STATUS_INTERRUPTED = "interrupted"
+RUN_STATUS_COMPLETED = "completed"
+
 
 @dataclass(slots=True)
 class BenchmarkConfig:

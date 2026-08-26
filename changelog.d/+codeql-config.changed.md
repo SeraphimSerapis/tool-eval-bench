@@ -1,0 +1,1 @@
+CodeQL runs from a config file that keeps the quality queries but excludes `py/incomplete-url-substring-sanitization`, which fires on the prompt-injection scenarios where an evaluator checks whether a model repeated the attacker's domain. There is no URL being sanitized there.

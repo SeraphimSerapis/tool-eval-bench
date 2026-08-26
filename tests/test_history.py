@@ -139,7 +139,9 @@ class TestPrintDiff:
             console = Console(file=StringIO(), width=200, no_color=True)
             print_diff(console, current_results, "latest")
 
-            repo.get_scenario_results.assert_called_once_with("2026-04-19T10-00-00Z_abc123")
+            repo.get_scenario_results.assert_called_once_with(
+                "2026-04-19T10-00-00Z_abc123", include_traces=False
+            )
 
     def test_latest_no_previous_runs(self) -> None:
         """print_diff with 'latest' when no runs exist should show message."""

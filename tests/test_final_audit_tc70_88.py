@@ -10,7 +10,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
     ToolResultRecord,
 )
-from tool_eval_bench.evals.scenarios_hardmode import HARDMODE_SCENARIOS
+from tool_eval_bench.evals.scenarios import HARDMODE_SCENARIOS
 
 _MISSING = object()
 

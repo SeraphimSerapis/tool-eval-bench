@@ -87,7 +87,11 @@ class GSM8KPlugin(BenchmarkPlugin):
         if preloaded is not None:
             all_items = list(preloaded)
         else:
-            all_items = load_dataset(
+            # A first-use download pages the HuggingFace REST API over a
+            # synchronous client.  Off the event loop, so it cannot stall
+            # anything else the caller has in flight.
+            all_items = await asyncio.to_thread(
+                load_dataset,
                 force_download=force_download,
                 on_progress=on_download_progress,
             )

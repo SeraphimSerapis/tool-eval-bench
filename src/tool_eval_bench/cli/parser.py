@@ -18,8 +18,26 @@ from tool_eval_bench.cli.command_registry import (
 )
 
 
+def _flag_action(source: argparse.Action) -> str | None:
+    """Return ``store_true``/``store_false`` for a boolean flag, else ``None``.
+
+    Read from the action's public ``nargs`` and ``const`` rather than by
+    ``isinstance`` against ``argparse._StoreTrueAction``. Those classes are
+    private and absent from ``argparse.__all__``; ``Action.const`` is part of
+    the documented interface and says the same thing.
+    """
+    if source.nargs != 0 or not isinstance(source.const, bool):
+        return None
+    return "store_true" if source.const else "store_false"
+
+
 def _copy_legacy_options(parser: argparse.ArgumentParser, destinations: tuple[str, ...]) -> None:
-    """Copy selected options from the canonical flat parser into focused help."""
+    """Copy selected options from the canonical flat parser into focused help.
+
+    Reads ``legacy._actions`` because argparse exposes no public way to
+    enumerate a parser's options. That one private access is why the flag
+    surface is pinned by ``tests/snapshots/legacy_cli.json``.
+    """
     from tool_eval_bench.cli.legacy_parser import make_parser as make_legacy_parser
 
     legacy = make_legacy_parser()
@@ -33,10 +51,9 @@ def _copy_legacy_options(parser: argparse.ArgumentParser, destinations: tuple[st
             "help": source.help,
             "required": source.required,
         }
-        if isinstance(source, argparse._StoreTrueAction):
-            kwargs["action"] = "store_true"
-        elif isinstance(source, argparse._StoreFalseAction):
-            kwargs["action"] = "store_false"
+        flag_action = _flag_action(source)
+        if flag_action is not None:
+            kwargs["action"] = flag_action
         else:
             kwargs.update(
                 {

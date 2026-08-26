@@ -1,0 +1,28 @@
+name: Backend support
+description: A serving stack that does not work, or one you would like supported
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Any server exposing `/v1/chat/completions` with `tools` support should already work.
+        Accuracy plugins need only chat completions.
+  - type: input
+    id: backend
+    attributes:
+      label: Serving stack and version
+    validations:
+      required: true
+  - type: textarea
+    id: endpoints
+    attributes:
+      label: Which endpoints does it expose
+      description: "`/v1/models`, `/v1/chat/completions`, `/metrics`, anything non-standard."
+    validations:
+      required: true
+  - type: textarea
+    id: failure
+    attributes:
+      label: Where it fails
+      description: Output of `tool-eval-bench probe`, and the first failing request if you have it.
+      render: shell

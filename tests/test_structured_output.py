@@ -10,7 +10,7 @@ from tool_eval_bench.domain.scenarios import (
 
 
 def _get_scenario(sc_id: str):
-    from tool_eval_bench.evals.scenarios_structured import STRUCTURED_SCENARIOS
+    from tool_eval_bench.evals.scenarios import STRUCTURED_SCENARIOS
 
     return next(s for s in STRUCTURED_SCENARIOS if s.id == sc_id)
 

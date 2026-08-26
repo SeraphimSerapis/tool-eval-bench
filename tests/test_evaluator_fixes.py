@@ -10,9 +10,7 @@ from conftest import make_state as _make_state
 from tool_eval_bench.domain.scenarios import (
     ScenarioStatus,
 )
-from tool_eval_bench.evals.scenarios import SCENARIOS
-from tool_eval_bench.evals.scenarios_agentic import AGENTIC_SCENARIOS
-from tool_eval_bench.evals.scenarios_extended import EXTENDED_SCENARIOS
+from tool_eval_bench.evals.scenarios import AGENTIC_SCENARIOS, EXTENDED_SCENARIOS, SCENARIOS
 
 
 def _find(scenarios, scenario_id):

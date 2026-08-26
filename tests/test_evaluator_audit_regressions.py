@@ -8,9 +8,10 @@ import pytest
 from conftest import make_state
 
 from tool_eval_bench.domain.scenarios import ScenarioState, ScenarioStatus
-from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
-from tool_eval_bench.evals.scenarios_hardmode import HARDMODE_SCENARIOS
-from tool_eval_bench.evals.scenarios_hardmode_expanded import EXPANDED_HARDMODE_SCENARIOS
+from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, HARDMODE_SCENARIOS
+from tool_eval_bench.evals.scenarios.hardmode_expanded import (
+    SCENARIOS as EXPANDED_HARDMODE_SCENARIOS,
+)
 
 _SCENARIOS = {
     scenario.id: scenario

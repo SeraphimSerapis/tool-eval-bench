@@ -8,9 +8,29 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 
 > **Scope.** tool-eval-bench measures *tool-calling quality* — whether a model picks the right tool, passes the right parameters, chains tools correctly, and handles errors and safety boundaries. It is not a full agentic system benchmark (see [Related Work](#related-work) for how it compares to BFCL, PinchBench, and Claw-Eval).
 
-## What It Measures
+## Contents
+
+- [What it measures](#what-it-measures) and [how it scores](#scoring)
+- [Quickstart](#quickstart): [install](#install), [your first run](#your-first-run), [reading your report](#reading-your-report), [configuration](#configuration)
+- [More ways to run](#more-ways-to-run) and the [command reference](#cli-commands-and-common-workflows)
+- Deep dives: [Hard Mode](docs/hard-mode.md), [held-out packs](docs/scenario-packs.md), [context pressure](docs/context-pressure.md), [speculative decoding](docs/speculative-decoding.md), [accuracy and throughput](docs/benchmarks.md)
+- [Programmatic API](#programmatic-api) and the full [CLI reference](docs/cli-reference.md)
+- [Backends](#backends), [CI](#ci), [architecture](#architecture)
+- Something not working? [Troubleshooting](docs/troubleshooting.md)
+
+Contributing? [Add a scenario](docs/adding-a-scenario.md), [add a plugin](docs/adding-a-plugin.md),
+or [add a backend adapter](docs/adding-an-adapter.md).
+
+Reference docs live in [`docs/`](docs/): [methodology](docs/methodology.md) for the scoring
+rationale, [architecture](docs/architecture.md) for the internals, [api](docs/api.md) for the
+Python API, [cli-reference](docs/cli-reference.md) for every flag and exit code, and
+[troubleshooting](docs/troubleshooting.md) for the failure modes that come up often.
+
+## What it measures
+
 
 ### Tool-Call Quality (69 standard scenarios, plus 19 opt-in Hard Mode scenarios)
+
 
 | Category | Scenarios | What It Tests |
 |---|---|---|
@@ -33,9 +53,11 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 
 ### Throughput Performance (optional)
 
+
 llama-bench-style prefill (pp) and token generation (tg) measurement via streaming, with configurable context depth and concurrency sweeps.
 
 ### Pluggable Accuracy Benchmarks
+
 
 External benchmarks run through the same `BenchmarkPlugin` interface and share the backend adapter, progress display, and reporting infrastructure. No `tools` support required — only `/v1/chat/completions`.
 
@@ -46,6 +68,7 @@ External benchmarks run through the same `BenchmarkPlugin` interface and share t
 | **IFEval** | `--ifeval` | 541 | Instruction Following Evaluation — 25 constraint types, deterministic programmatic checking (no LLM-as-judge) |
 
 ### Scoring
+
 
 - **2 points** — Pass (correct tool behavior)
 - **1 point** — Partial (functional but suboptimal)
@@ -77,7 +100,9 @@ prove result-dependent behavior such as a completed asynchronous poll.
 
 ## Quickstart
 
-### Install as a CLI tool (recommended)
+
+### Install
+
 
 ```bash
 # Install globally using uv — no venv management needed
@@ -90,92 +115,73 @@ uv tool install 'tool-eval-bench[perf] @ git+https://github.com/SeraphimSerapis/
 tool-eval-bench --help
 ```
 
-### Development setup
+Other ways to install: [development setup](#development-setup) for contributing,
+[Docker](#run-with-docker) to avoid a local Python, and [updating](#updating) for an existing
+install.
+
+### Your first run
+
+Point it at an OpenAI-compatible endpoint and run the core 15 scenarios. This takes a couple of
+minutes and needs no configuration file:
 
 ```bash
-git clone https://github.com/SeraphimSerapis/tool-eval-bench.git
-cd tool-eval-bench
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev,perf]'
+tool-eval-bench run --short --base-url http://localhost:8000
 ```
 
-For contributor setup, quality checks, scenario/evaluator guidance, and the pull
-request checklist, see [CONTRIBUTING.md](CONTRIBUTING.md). Install the optional
-`[hf]` extra only when working on the GSM8K, MMLU, or IFEval dataset plugins.
-
-### Run with Docker
-
-No local Python setup required — build once, then run against any
-OpenAI-compatible endpoint reachable from the container:
+With no `--base-url`, local discovery scans the common localhost ports used by vLLM, llama.cpp,
+SGLang, LiteLLM, Ollama, and TGI:
 
 ```bash
-git clone https://github.com/SeraphimSerapis/tool-eval-bench.git
-cd tool-eval-bench
-
-# Point it at your server: copy the config template and fill in the target
-# (same TOOL_EVAL_* variables as the Configuration section below)
-cp .env.example .env
-# edit .env: set TOOL_EVAL_BASE_URL, or set TOOL_EVAL_HOST/TOOL_EVAL_PORT;
-# also set TOOL_EVAL_API_KEY when the endpoint requires authentication
-
-# Compose validates env_file entries before any command, so .env must exist first.
-# It also requires the host identity for writable bind mounts.
-export LOCAL_UID="$(id -u)"
-export LOCAL_GID="$(id -g)"
-docker compose build
-
-# Confirm the image identifies the source commit used for the build
-docker compose run --rm tool-eval-bench --version
-
-# Check the endpoint is reachable (default command)
-docker compose run --rm tool-eval-bench --probe
-
-# Run the benchmark — any CLI flag works here too
-docker compose run --rm tool-eval-bench --short --seed 42
+tool-eval-bench run --short
 ```
 
-Reports land in `./runs/` on the host, matching the CLI's own default output
-path (`./runs/YYYY/MM/`). SQLite history lands in `./data/`. The Compose file
-mounts both directories, so reports, traces, history, and leaderboard data
-survive `--rm` cleaning up the container.
-
-The image runs as an unprivileged `tool-eval` user. Compose requires
-`LOCAL_UID` and `LOCAL_GID`, set them with `id -u` and `id -g` above, so
-bind-mounted outputs retain host ownership. Ensure `runs/` and `data/` are
-writable by that user. The container never runs a root ownership-fixing
-entrypoint. This is deliberate. Compose fails before starting if the variables
-are absent instead of silently using an incorrect host identity.
-
-Docker builds launched from a linked Git worktree need an explicit source
-version because its `.git` file points outside the build context:
+To check the endpoint is reachable before committing to a full run:
 
 ```bash
-docker build \
-  --build-arg BUILD_VERSION="0.0.0+g$(git rev-parse --short HEAD)" \
-  -t tool-eval-bench:local .
+tool-eval-bench probe
 ```
 
-That version remains commit-identifiable. A normal checkout derives the fuller
-setuptools-scm version from its in-context `.git` directory automatically.
-
-Build with the throughput/HF-dataset extras via `docker compose build --build-arg EXTRAS=perf,hf`.
-
-### Updating
+When that looks right, drop `--short` for the standard 69-scenario benchmark. Pass `--seed` so the
+run is reproducible:
 
 ```bash
-# If installed via uv tool
-uv tool upgrade tool-eval-bench
-
-# If installed via pip (global or venv)
-pip install --upgrade git+https://github.com/SeraphimSerapis/tool-eval-bench.git
-
-# Development setup (pull + reinstall)
-git pull
-pip install -e '.[dev,perf]'
+tool-eval-bench run --seed 42
 ```
+
+### Reading your report
+
+Every completed run writes two artifacts, both relative to the directory you ran from:
+
+| Artifact | Path | Contents |
+|---|---|---|
+| Markdown report | `runs/YYYY/MM/<run_id>.md` | Per-scenario verdicts with the full conversation trace |
+| SQLite record | `data/benchmarks.sqlite` | The same data, queryable, plus traces for held-out packs |
+
+The terminal summary gives you the composite score, the star rating, and per-category percentages.
+Three things are worth checking before you compare two runs:
+
+- **`completion_rate`.** Infrastructure failures (timeouts, connection errors, persistent 429s) are
+  dropped from both the numerator and the denominator rather than scored as zero, because they
+  measure the serving environment rather than the model. A run graded on 60 of 69 scenarios is not
+  comparable to one graded on all 69.
+- **Safety warnings.** If Category K scores below 50%, the rating is capped at three stars no matter
+  how strong the composite is.
+- **`config_fingerprint`.** Runs only group together on the leaderboard when their configuration
+  matches. Two scores from different flag sets are not a comparison.
+
+To read past runs back:
+
+```bash
+tool-eval-bench history          # recent runs
+tool-eval-bench leaderboard      # ranked, grouped by comparable configuration
+tool-eval-bench compare A B      # two persisted runs, side by side
+```
+
+Run IDs, the fingerprint, and the full artifact contract are documented under
+[Run ID and artifacts](#run-id-and-artifacts).
 
 ### Configuration
+
 
 **Local discovery mode** scans common localhost ports for a successful model-list
 response. Port numbers are hints only. Use `--base-url`, `--backend`, and
@@ -204,7 +210,8 @@ TOOL_EVAL_API_KEY=       # optional
 > `load_dotenv(override=False)` ensures that env vars set by a calling process
 > (e.g., an agent or sparkrun) are never overridden by a stale `.env` file.
 
-### Run the benchmark
+### More ways to run
+
 
 ```bash
 # Local discovery scans common localhost ports for a model-list response
@@ -261,6 +268,7 @@ tool-eval-bench run --model gemini-3-flash --api-key "$GEMINI_API_KEY" \
 ```
 
 ### CLI commands and common workflows
+
 
 | Command | Purpose |
 |---|---|
@@ -325,351 +333,72 @@ backend parameters and treats the same response as successful model work. Use
 `--no-preflight` when an endpoint requires provider-specific startup handling
 and you have validated it independently; this does not disable warm-up.
 
-### Accuracy benchmarks (GSM8K, MMLU, IFEval)
+### Accuracy and throughput benchmarks
 
-Pluggable accuracy benchmarks evaluate model knowledge and instruction-following capabilities. Datasets are downloaded automatically from HuggingFace on first use and cached locally under `data/`.
 
-**Recommended:** Install the `datasets` library for fast, rate-limit-free downloads directly from the HuggingFace git repo:
+Run GSM8K, MMLU, and IFEval through the same adapter, and measure prefill and generation
+speed against the same endpoint. See [docs/benchmarks.md](docs/benchmarks.md).
 
-```bash
-pip install 'tool-eval-bench[hf]'
-```
+### Speculative decoding and MTP
 
-Without it, the tool falls back to the HuggingFace REST API (which has rate limits and may fail with HTTP 429 on large datasets like MMLU). Downloads are resumable either way — if interrupted, re-running picks up where it stopped.
 
-```bash
-# GSM8K — math reasoning
-tool-eval-bench plugin gsm8k                         # 200 questions, 8-shot
-tool-eval-bench plugin gsm8k --limit 50              # quick test
-
-# MMLU — multitask knowledge
-tool-eval-bench plugin mmlu                          # 500 questions, 5-shot
-tool-eval-bench plugin mmlu --limit 50               # quick test
-tool-eval-bench plugin mmlu --subjects STEM          # only STEM subjects
-tool-eval-bench plugin mmlu --shots 0                # zero-shot
-
-# IFEval — instruction following
-tool-eval-bench plugin ifeval                        # all 541 prompts
-tool-eval-bench plugin ifeval --limit 20             # quick test
-
-# Combined with tool-eval
-tool-eval-bench bench --mmlu --ifeval --gsm8k        # all three after tool-eval
-```
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `--gsm8k` / `--gsm8k-only` | off | Run GSM8K benchmark |
-| `--gsm8k-shots` | 8 | Few-shot examples (0–8) |
-| `--gsm8k-limit` | 200 | Max questions (0 = all 1,319) |
-| `--gsm8k-shuffle` | off | Shuffle question order |
-| `--mmlu` / `--mmlu-only` | off | Run MMLU benchmark |
-| `--mmlu-shots` | 5 | Few-shot examples per subject (0–5) |
-| `--mmlu-limit` | 500 | Max questions (0 = all 14,042) |
-| `--mmlu-subjects` | all | Comma-separated subjects or categories (e.g. `STEM,philosophy`) |
-| `--ifeval` / `--ifeval-only` | off | Run IFEval benchmark |
-| `--ifeval-limit` | 0 (all) | Max prompts (0 = all 541) |
-
-### Throughput benchmark
-
-Throughput measurement uses [llama-benchy](https://github.com/eugr/llama-benchy) — a dedicated benchmarking tool that provides multi-run statistics with mean ± std, proper latency estimation, and cache-busting. Install with `pip install 'tool-eval-bench[perf]'` or ensure `uvx` is on PATH. Progress is shown via a live Rich progress bar. For authenticated endpoints, the regular `--api-key` value is forwarded to llama-benchy's supported CLI option and redacted from logs. Because llama-benchy 0.4.x does not support environment-based credentials, the key may still be visible to process inspection by other users on the same host while the benchmark is running.
-
-```bash
-# Throughput only (skip tool-call scenarios)
-tool-eval-bench bench --perf-only --pp 2048 --tg 128 --depth "0 4096 8192 16384 32768"
-
-# Throughput + tool-call scenarios
-tool-eval-bench bench --perf --depth "0 4096" --concurrency "1,2,4"
-
-# Customize measurement runs and latency mode
-tool-eval-bench bench --perf --benchy-runs 5 --benchy-latency-mode generation
-
-# Pass arbitrary flags to llama-benchy
-tool-eval-bench bench --perf --benchy-args='--no-warmup --enable-prefix-caching'
-
-# Override the auto-detected tokenizer
-tool-eval-bench bench --perf --tokenizer /models/Qwen3.6/tokenizer.json
-```
-
-> **Offline hosts:** llama-benchy always needs a tokenizer to construct prompts, and
-> tool-eval-bench runs it in offline mode. The tokenizer is now located automatically:
-> the served model id (including the vLLM `root` behind an alias) is matched against
-> your HuggingFace cache (`~/.cache/huggingface/hub`, or `HF_HOME`/`HF_HUB_CACHE`),
-> against local model directories, and against the llama.cpp `/props.model_path`.
-> Pass `--tokenizer /path/to/tokenizer.json` (a file or a directory containing one)
-> only to override that, or when nothing is found — the error then lists the
-> tokenizers your cache does have. To fetch just the tokenizer on a networked host:
->
-> ```bash
-> hf download <org>/<model> --include "tokenizer*" "*config.json"
-> ```
->
-| Flag | Default | Purpose |
-|---|---|---|
-| `--perf` | off | Run llama-benchy throughput before scenarios |
-| `--perf-only` | off | Run ONLY llama-benchy throughput |
-| `--pp` | 2048 | Prompt tokens |
-| `--tg` | 128 | Generation tokens |
-| `--depth` | `"0,4096,8192"` | Context depths (comma/space separated) |
-| `--concurrency` | `"1,2,4"` | Concurrency levels |
-| `--benchy-runs` | 3 | Measurement iterations per test point |
-| `--benchy-latency-mode` | `generation` | Latency mode: `api`, `generation`, `none` |
-| `--benchy-args` | — | Pass-through for arbitrary llama-benchy flags |
-| `--tokenizer` | auto | Local tokenizer.json path; overrides HF-cache auto-detection |
-
-### Speculative decoding / MTP benchmark
-
-Measures the **real-world effectiveness** of multi-token prediction (MTP), draft models, and n-gram speculative decoding. Standard t/s metrics don't capture these benefits — `--spec-bench` does.
-
-```bash
-# Quick spec-decode benchmark (auto-detect method)
-tool-eval-bench bench --spec-bench
-
-# Specify method + compare against known baseline
-tool-eval-bench bench --spec-bench --spec-method mtp --baseline-tgs 30.0
-
-# Custom prompt types and depths
-tool-eval-bench bench --spec-bench --spec-prompts "code,structured" --depth "0,4096"
-
-# Combined: throughput + spec-decode + tool-call quality
-tool-eval-bench bench --perf --spec-bench --seed 42
-```
-
-| Spec-Decode Flag | Default | Purpose |
-|---|---|---|
-| `--spec-bench` | off | Run speculative decoding benchmark |
-| `--spec-method` | `auto` | Method hint for MTP/NEXTN, draft/STANDALONE, DFlash, DSpark, n-gram, EAGLE/EAGLE3, Medusa, MLP speculators, suffix, and custom proposers |
-| `--baseline-tgs` | — | Known baseline tg t/s for speedup calculation |
-| `--spec-prompts` | `filler,code,structured` | Prompt types to test |
-| `--metrics-url` | auto | Direct URL to Prometheus `/metrics` (e.g. `http://vllm:8080/metrics`) |
-
-> **Acceptance rate.** The primary metric is **effective t/s** — output tokens ÷ wall-clock time — which always works. Acceptance rate and draft statistics use different extraction methods depending on the backend:
->
-> | Backend | Acceptance Rate Source | What You Get |
-> |---|---|---|
-> | **vLLM** | Prometheus `/metrics` (`spec_decode_*` counters) | α %, acceptance length (τ), draft window, per-position waterfall, waste ratio |
-> | **llama.cpp** | Current Prometheus counters, with per-request `timings` fallback | Full counter metrics on current builds; α % and waste ratio from response timings on older builds |
-> | **SGLang** | No request-local counter contract | Effective t/s remains available; use `spec-live` for the server's current acceptance gauges |
->
-> For **llama.cpp**, use `--spec-method=mtp` or the matching configured method
-> when a build only exposes per-request timings. Current builds also expose
-> cumulative speculative counters for `spec-live` when metrics are enabled:
-> ```bash
-> # llama.cpp with MTP speculative decoding
-> tool-eval-bench --spec-bench --spec-method mtp
-> ```
->
-> **Using a proxy (LiteLLM)?** The API proxy doesn't forward the backend's `/metrics`. Use `--metrics-url` to point directly at the inference server:
-> ```bash
-> # API goes through LiteLLM, but scrape metrics from vLLM directly
-> tool-eval-bench --spec-bench --base-url http://litellm:4000 --metrics-url http://vllm:8080/metrics
-> ```
->
-> Because `--metrics-url` can name a different host, `--api-key` is only sent to
-> it when its scheme, host, and port match `--base-url`. If your metrics endpoint
-> needs the same credential and lives elsewhere, expose it without auth or put it
-> behind the same origin.
-
-### Live speculative decoding monitor
-
-Keep a **real-time terminal dashboard** open while working. `spec-live`
-continuously polls the server's Prometheus `/metrics` endpoint and renders
-acceptance, throughput, draft efficiency, and engine status when the selected
-backend exports those metric families.
-
-The dashboard runs in the terminal's **alternate screen buffer** (like htop or vim), giving a clean full-terminal canvas without disturbing previous output. On exit, your original terminal content is restored.
-
-```bash
-# Start the live monitor (runs until Ctrl+C)
-tool-eval-bench spec-live
-
-# Custom poll interval (default: 1 second)
-tool-eval-bench spec-live --spec-live-interval 2
-
-# Tell the dashboard which spec method you're running
-tool-eval-bench spec-live --spec-method dflash
-
-# Point at vLLM metrics directly (when API is behind a proxy)
-tool-eval-bench spec-live --metrics-url http://vllm:8080/metrics
-```
-
-The dashboard shows:
-- **Acceptance rate gauge** — color-coded 0–100% bar when the backend exposes supported speculative metrics
-- **Draft efficiency gauge** — τ/window utilization with tuning hints when both values are available
-- **Method badge** — uses explicit configuration or metric labels only. Generic speculative counters report `unknown`; use `--spec-method` to label a known configuration.
-- **Draft model name** — shown only when an explicit server configuration identifies it. Multiple `/v1/models` entries are not treated as a drafter relationship.
-- **Per-position acceptance bars** — shown for vLLM and current llama.cpp builds when their per-position counters are exported
-- **Throughput sparklines** — rolling 60-second history of accept rate, gen t/s, accepted t/s, and waste ratio with min/max annotations
-- **Rolling averages** — session-level mean α, gen t/s, and accepted t/s (visible immediately with 0.0 initial values)
-- **Engine status** — GPU KV cache, prefix cache hit rate, running/waiting requests, prompt t/s
-- **Session totals** — cumulative accepted/drafted tokens and session-wide acceptance rate
-
-Cumulative counter history and token totals are session-relative. Throughput,
-KV-cache, queue, and SGLang acceptance gauges show the server's current state.
-Prometheus counter series are server-wide, so other clients and concurrent
-requests contribute to session deltas. Use an isolated server when you need a
-request-local comparison.
-
-Press **Ctrl+R** to reset all session counters and history without restarting.  This lets you switch workloads and measure each independently.  Press **Ctrl+C** to exit; a session summary panel shows aggregate statistics.
-
-| Flag | Default | Purpose |
-|---|---|---|
-| `--spec-live` | off | Start live speculative decoding monitor |
-| `--spec-live-interval` | `1.0` | Seconds between metric scrapes |
-| `--spec-method` | `auto` | Method hint. Use `--help` for the current cross-engine choices. |
-| `--metrics-url` | auto | Direct URL to Prometheus `/metrics` endpoint |
-
-> **Backend contracts.** vLLM publishes cumulative `spec_decode_*` counters,
-> one series per engine; the monitor sums those series. SGLang publishes direct
-> `sglang:spec_*` gauges; the monitor selects a stable rank-zero series instead
-> of summing replicas. Current llama.cpp builds publish cumulative
-> `llamacpp:spec_decode_*` counters and per-position counters. Older llama.cpp
-> builds fall back to engine and throughput data when those counters are absent.
-> Acceptance length follows each upstream contract and includes the verifier's
-> bonus token.
+Measure acceptance rate, effective tokens per second, and speedup against a baseline,
+plus a live monitor. See [docs/speculative-decoding.md](docs/speculative-decoding.md).
 
 ### Hard Mode
-
-The standard 69-scenario benchmark covers *breadth* of tool-calling capabilities. Once a model scores 100% on the standard suite, `--hardmode` adds ceiling-breaking scenarios (Category P) designed to separate truly excellent models from merely good ones.
-
-```bash
-# Standard benchmark + Hard Mode scenarios (69 + 19 = 88 scenarios)
-tool-eval-bench run --hardmode
-
-# Run only Hard Mode scenarios
-tool-eval-bench run --hardmode-only
-tool-eval-bench run --hardmode --categories P  # equivalent
-
-# Combined with context pressure for maximum difficulty
-tool-eval-bench run --hardmode --context-pressure 0.75
-```
-
-Hard Mode focuses on nineteen ceiling-breaking scenarios:
-
-| Scenario | Focus Area | What it tests |
-|---|---|---|
-| TC-70 | Adversarial tool definitions | Near-duplicate tools with subtle scope differences (Europe-only vs global) |
-| TC-71 | Ambiguous recipient | Find multiple matching contacts and ask for clarification, not guess |
-| TC-72 | Cascading error recovery | Primary summary read fails → use its backup → complete the email chain |
-| TC-73 | Multi-constraint composition | Search + filter by 3 simultaneous constraints + contact lookup + email |
-| TC-74 | Stateful multi-turn corrections | Preserve 4 rounds of draft changes, then create and notify exactly once |
-| TC-75 | Missing required parameter | Pass for requesting date and time; partial for requesting only one; fail for guessing or premature tool use |
-| TC-76 | Missing capability | Refuse unsupported mutations; a relevant read-only check remains fully valid |
-| TC-77 | Irrelevant tool trap | Answer a stable fact directly despite distractor tools |
-| TC-78 | Independent portfolio valuation | Fetch three stock prices and aggregate the result |
-| TC-79 | Dependency-aware event planning | Resolve independent inputs before conditional event creation |
-| TC-80 | Preconditioned update safety | Check an exact requested date before mutation and preserve original state |
-| TC-81 | Tool-output prompt injection | Ignore malicious instructions embedded in search results |
-| TC-82 | Stale memory conflict | Prefer authoritative current directory state over stale memory |
-| TC-83 | Format-sensitive chaining | Return exact JSON after noisy lookups while allowing independent work in parallel |
-| TC-84 | Long-horizon recovery with constraint retention | Recover from a booking race and complete equivalent valid notification workflows |
-| TC-85 | Exactly-once provisioning after ambiguous commit | Wait through pending replication, confirm one least-privilege credential, avoid duplicates, and never disclose the secret |
-| TC-86 | Optimistic concurrency without lost updates | Re-read after two consecutive conflicts and preserve both concurrent field changes |
-| TC-87 | Complete pagination with cursor integrity | Follow four cursors, reject a stale-count shortcut, deduplicate, resolve routing, and delay notification |
-| TC-88 | Preserved reasoning across follow-ups | Carry three linked, privately planned constrained values across two user follow-ups |
-
-TC-88 opts into replaying the provider's `reasoning_content` field across its
-follow-up turns. It does not ask the model to print its reasoning to the user.
-A pass requires the first reasoning payload to contain all three exact values;
-valid outputs from a backend that keeps reasoning opaque receive partial credit.
-Other scenarios keep the default behavior and do not replay completed no-tool
-reasoning across user turns.
-
-Hard Mode scenarios use the same scoring (pass=2, partial=1, fail=0) and appear
-under Category P in reports. They are absent from the default 69-scenario run;
-when selected, they contribute to that run's score. This keeps default results
-comparable across standard-suite runs.
-
-Multi-turn authorization scenarios record the active user-message phase for
-each tool call. This prevents a correct-looking mutation made before the
-authorizing follow-up from receiving credit.
-
-TC-78 and TC-79 record same-turn parallel tool calls as informational telemetry. Sequential calls receive full correctness credit so backends without parallel tool-call support, including llama.cpp, remain first-class targets.
+Nineteen opt-in adversarial, stateful, and transactional scenarios (TC-70 to TC-88) for models
+that already score well on the standard 69. See [docs/hard-mode.md](docs/hard-mode.md).
 
 ### Held-out scenario packs
-
-Every scenario in this repository is public — prompt, mock tool responses, and evaluator. That is what makes the benchmark auditable, and it is also its expiry date: a published benchmark eventually lands in training data, and a memorized answer looks exactly like a capable one.
-
-A **pack** is a directory of YAML scenarios — the declarative format loaded by `evals/yaml_loader.py`, with `scenarios/` in this repo as the worked example — kept outside the repo. Point a run at one to score against scenarios the model cannot have seen:
-
-```bash
-# Public suite + a private pack (69 + N scenarios)
-tool-eval-bench run --scenario-pack ~/private/tool-eval-holdout
-
-# Only the private pack
-tool-eval-bench run --scenario-pack ~/private/tool-eval-holdout --pack-only
-
-# Multiple packs
-tool-eval-bench run --scenario-pack ~/packs/a --scenario-pack ~/packs/b
-```
-
-Pack scenarios are scored identically to public ones — they contribute to `final_score`, category percentages, and difficulty weighting. Two things differ:
-
-- **The report withholds them.** Titles, summaries, and traces for pack scenarios are replaced with `held out` in the Markdown artifact, and therefore in any HTML comparison generated from it. Only the scenario ID, difficulty, status, points, and failure kind are published. This is a deliberate exception to the full-trace rule: publishing a held-out trace burns the scenario. Full traces are still stored in SQLite for your own inspection. Redaction is report-scoped — the live display and `--dry-run` still show pack titles locally so you can see what is running.
-- **The report attests to which pack produced the number.** Each pack is hashed by filename and file bytes, and the hash is recorded in the run config and folded into `config_fingerprint`. Readers can confirm two published scores were measured against the same held-out set — and that it was not edited in between — without seeing its contents. Editing or renaming a scenario changes the hash, so `compare` will flag the runs as non-comparable.
-
-Scenario IDs must not collide with the public suite or with another pack; a collision is an error rather than a silent override.
+Run private scenarios whose titles and traces stay out of published reports. See
+[docs/scenario-packs.md](docs/scenario-packs.md).
 
 ### Context pressure
 
-Tests tool-calling quality when the context window is already heavily utilized. This simulates real-world agentic conversations where the model must make accurate tool-call decisions with thousands of tokens of prior conversation history in its context.
+
+Pre-fill a share of the context window before each scenario to find where quality
+starts to slip. See [docs/context-pressure.md](docs/context-pressure.md).
+
+## Installing other ways
+
+### Development setup
+
 
 ```bash
-# Fill 75% of context before each scenario (recommended)
-tool-eval-bench run --seed 42 --context-pressure 0.75
-
-# Fill 50% — moderate pressure
-tool-eval-bench run --seed 42 --context-pressure 0.50
-
-# Override auto-detected context size (if /v1/models doesn't expose it)
-tool-eval-bench run --seed 42 --context-pressure 0.75 --context-size 32768
-
-# Compare baseline vs pressure
-tool-eval-bench run --seed 42                           # baseline run
-tool-eval-bench run --seed 42 --context-pressure 0.75   # pressure run
-tool-eval-bench compare <baseline_id> <pressure_id>
+git clone https://github.com/SeraphimSerapis/tool-eval-bench.git
+cd tool-eval-bench
+python -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev,perf]'
 ```
 
-| Context Pressure Flag | Default | Purpose |
-|---|---|---|
-| `--context-pressure` | off | Fill ratio (0.0–1.0) of available context |
-| `--context-size` | auto | Override context window size (tokens) |
-| `--context-pressure-sweep` | off | Sweep range (e.g. `0.5-1.0`) — find the breaking point |
-| `--sweep-steps` | 5 | Number of intervals for sweep (N+1 test levels) |
+For contributor setup, quality checks, scenario/evaluator guidance, and the pull
+request checklist, see [CONTRIBUTING.md](CONTRIBUTING.md). Install the optional
+`[hf]` extra only when working on the GSM8K, MMLU, or IFEval dataset plugins.
 
-#### Finding the breaking point
+### Run with Docker
 
-Use `--context-pressure-sweep` to gradually increase pressure and discover exactly where a model starts failing:
+
+Benchmark a server without installing Python locally. See
+[docs/docker.md](docs/docker.md).
+
+### Updating
+
 
 ```bash
-# Find breaking point between 90%–100% with fine granularity
-tool-eval-bench bench --context-pressure-sweep 0.9-1.0 --sweep-steps 10 --scenarios TC-61 TC-64
+# If installed via uv tool
+uv tool upgrade tool-eval-bench
 
-# Broad sweep across the full range
-tool-eval-bench bench --context-pressure-sweep 0.5-1.0 --scenarios TC-61
+# If installed via pip (global or venv)
+pip install --upgrade git+https://github.com/SeraphimSerapis/tool-eval-bench.git
 
-# Sweep a specific category
-tool-eval-bench bench --context-pressure-sweep 0.5-1.0 --categories O
+# Development setup (pull + reinstall)
+git pull
+pip install -e '.[dev,perf]'
 ```
-
-The sweep runs each selected scenario at every pressure level, displays a compact summary panel with pass/fail status per level, and reports the **breaking point** (highest pressure where all scenarios still pass). It early-stops after 2 consecutive all-fail levels.
-
-The context window size is auto-detected from model metadata when the backend
-exposes a recognized context-length field, including vLLM's `max_model_len`.
-If auto-detection fails, use `--context-size` to specify it manually.
-
-The filler is designed to defeat server-side prefix caching (vLLM, llama.cpp):
-- **Diverse content**: 12 distinct paragraph styles (tech docs, meeting notes, code reviews, incident reports, API docs, etc.)
-- **Shuffled order**: paragraph order is randomized per run
-- **Noise injection**: random ticket IDs, timestamps, IP addresses, and version strings are sprinkled throughout the text at sentence boundaries
-- **Unique nonces**: each chunk gets a unique session/chunk identifier prefix
-- **Per-scenario isolation**: each scenario gets a unique nonce injected into the filler to prevent cross-scenario prefix cache reuse
-
-Unseeded filler uses nonces to reduce prefix-cache reuse. When `--seed` is set,
-filler generation is deterministic per pressure level. The same seed, context
-size, and sweep ratio can therefore reuse identical filler content, which makes
-sweeps reproducible but changes the cache-busting guarantee.
 
 ## Programmatic API
+
 
 `tool-eval-bench` exposes a public Python API for headless/library invocation — useful for CI systems, orchestrators like [sparkrun](https://github.com/spark-arena/sparkrun), or any tool that needs to run benchmarks programmatically.
 
@@ -691,19 +420,12 @@ print(result["rating"])           # e.g. "★★★★ Good"
 print(result["schema_version"])   # "1"
 ```
 
-The returned dict includes a versioned envelope with top-level Spark Arena fields:
-
-| Field | Type | Description |
-|---|---|---|
-| `schema_version` | str | Output schema version (currently `"1"`) |
-| `tool_eval_bench_version` | str | Package version, such as `"2.5.0"` or an identifiable development version |
-| `final_score` | int | 0–100 composite score |
-| `rating` | str | Star rating string |
-| `safety_warnings` | list | Safety-critical failures (empty when clean) |
-| `deployability` | int/None | 0–100 composite (when latency data available) |
-| `total_scenarios` | int | Number of scenarios evaluated |
+The call returns a versioned envelope carrying `final_score`, `rating`, `safety_warnings`,
+`deployability`, and `total_scenarios`, alongside the full per-scenario detail. Every
+parameter and every returned field is documented in [docs/api.md](docs/api.md).
 
 ### Machine-readable args schema
+
 
 External tools can validate benchmark configuration against the published schema:
 
@@ -719,6 +441,7 @@ for command, metadata in schema["commands"].items():
 ```
 
 ### Subprocess mode
+
 
 For subprocess-based integration, use `--json-file` to write results to a file and parse JSONL progress events from stderr:
 
@@ -736,7 +459,8 @@ Progress events on stderr:
 The example shows a standard-suite run. A full Hard Mode run reports `total: 88`
 in its scenario progress events.
 
-## How It Works
+## How it works
+
 
 For every scenario, the model receives:
 1. A shared system prompt
@@ -754,96 +478,12 @@ The orchestrator then:
 
 ## Architecture
 
+
 For a detailed architecture reference with dependency rules, data-flow diagrams,
 and extension-point guides, see [docs/architecture.md](docs/architecture.md).
 
-```text
-SKILL.md              # Agent guide — read this to use tool-eval-bench programmatically
-AGENTS.md             # Contributor conventions (architecture, quality bar, git rules)
+## Run ID and artifacts
 
-src/tool_eval_bench/
-  api.py              # Public programmatic API (run_benchmark, format_result)
-  schema.py           # Machine-readable args schema for external validators
-  adapters/           # OpenAI-compatible adapters (vLLM, SGLang, LiteLLM, llama.cpp) + native Gemini
-  application/
-    service.py        # Benchmark orchestration, persistence, and public application service
-    finalization.py   # Completed-run finalization and checkpoint merging
-  cli/
-    bench.py          # Main CLI entry point (tool-eval-bench)
-    command_registry.py # Discoverable subcommands and translation rules
-    commands.py       # Scenario resolution helpers
-    compare_report.py # HTML comparison command for Markdown reports
-    dispatch.py       # Runtime command routing and benchmark flow
-    helpers.py        # Small CLI helpers (dotenv, redaction, JSON output, etc.)
-    local_commands.py # Dry-run and local command rendering
-    model_probe.py    # Model discovery and availability probing
-    parser.py         # Subcommand discovery and legacy translation
-    plugin_lifecycle.py # Shared plugin lifecycle and persistence
-    plugin_runners.py # Plugin-specific execution and reporting
-    server.py         # Server discovery and backend detection
-    perf.py           # External llama-benchy throughput integration
-    spec_bench.py     # Speculative-decoding / MTP benchmark runner
-    pressure.py       # Context-pressure sweep runner
-    display.py        # Zero-flicker streaming display
-    history.py        # --history, --compare, --diff rendering
-    leaderboard.py    # --leaderboard, --export rendering
-    spec_live_display.py    # Live speculative decoding dashboard (Rich Live)
-    spec_live_rendering.py  # Rich component rendering for spec-live
-  domain/
-    errors.py         # Structured error code constants
-    measurement.py    # Measurement client port and raw stream types
-    models.py         # BenchmarkConfig
-    plugin.py         # BenchmarkPlugin ABC + BenchmarkResult (pluggable benchmarks)
-    scenarios.py      # Scenario types, evaluation types, scoring
-    tools.py          # Universal tool definitions (12 tools), system prompt
-    tools_large.py    # Extended 52-tool definitions for Category L
-  evals/
-    helpers.py        # Shared evaluator utilities (safe math, text matching)
-    noise.py          # Deterministic payload enrichment (realistic API noise)
-    packs.py          # Held-out YAML scenario-pack loading and attestations
-    scenarios.py            # Core 15 scenarios (A–E) + central registry
-    scenarios_extended.py   # Extended scenarios (F–G)
-    scenarios_agentic.py    # Agentic scenarios (H–K partial)
-    scenarios_adversarial.py  # Adversarial safety scenarios (K extras)
-    scenarios_large_toolset.py  # Large-toolset scenarios (L)
-    scenarios_planning.py   # Planning + creative scenarios (M–N)
-    scenarios_structured.py # Structured output scenarios (O)
-    scenarios_hardmode.py   # Hard Mode registry and TC-70 through TC-74
-    scenarios_hardmode_expanded.py      # TC-75 through TC-84
-    scenarios_hardmode_transactional.py # TC-85 through TC-88
-    yaml_loader.py    # Declarative YAML scenario loader (pilot)
-    yaml_scenarios/   # Sample YAML-defined scenarios
-  runner/
-    orchestrator.py   # Multi-turn tool-call loop
-    service.py        # Compatibility re-export of application/service.py
-    throughput.py     # Streaming pp/tg measurement
-    speculative.py    # Spec-decode / MTP benchmarking (acceptance rate, effective t/s)
-    spec_live.py      # Live monitor data layer (Prometheus scraping, delta computation)
-    llama_benchy.py   # External llama-benchy integration (subprocess + JSON parsing)
-    context_pressure.py   # Filler generation, calibration, prefix-cache busting
-    judge.py          # LLM-as-judge for failed scenario analysis (WIP)
-    async_tools.py    # Async tool execution simulation (polling-style tools)
-  storage/
-    db.py             # SQLite persistence
-    reports.py        # Markdown report writer
-  compare_reports/
-    summary.py        # Summary report comparison
-    tool_eval.py      # Tool-evaluation report and trace comparison
-  plugins/
-    hf_utils.py       # Shared HuggingFace downloader (retry, resume, throttle)
-    registry.py       # Plugin registry (get_plugin, available_plugins)
-    gsm8k/            # GSM8K benchmark plugin (1,319 math questions)
-    mmlu/             # MMLU benchmark plugin (14,042 questions, 57 subjects)
-    ifeval/           # IFEval benchmark plugin (541 prompts, 25 constraints)
-  utils/
-    ids.py            # Run ID generation
-    metadata.py       # System/backend metadata collection (engine probing)
-    openai_compat.py  # OpenAI-compatible request and response helpers
-    tokenizers.py     # Local tokenizer discovery for throughput prompts
-    urls.py           # Shared URL helpers for OpenAI-compatible endpoints
-```
-
-## Run ID and Artifacts
 
 Each benchmark execution gets a unique ID:
 `YYYY-MM-DDTHH-MM-SS.ffffffZ_<short_hash>`. Stored tool-evaluation configs also
@@ -873,6 +513,7 @@ Artifacts:
 
 ### Labeling runs (`--label`)
 
+
 `--label "..."` attaches an arbitrary, free-form string to an execution. Every
 report that execution generates carries it: a `Label` row in the tool-eval Run
 Context table, a `- **Label**:` header line in the plugin / throughput /
@@ -895,6 +536,7 @@ is purely an annotation — it does not affect the run ID or
 
 ## Backends
 
+
 OpenAI-compatible backends must expose `/v1/chat/completions` and support the
 `tools` and `tool_choice` request fields used by the tool-call scenarios:
 
@@ -907,6 +549,7 @@ OpenAI-compatible backends must expose `/v1/chat/completions` and support the
 The adapter sends real `tools` + `tool_choice` in the request and parses `tool_calls` from the response. There is no prompt hacking or JSON regex matching. It accepts SSE `data:` fields with or without the optional space and also parses a normal JSON 200 response when an endpoint ignores `stream=true`. It defaults to the widely supported `max_tokens` field; if an endpoint explicitly rejects that field and requests `max_completion_tokens`, the adapter retries once and remembers the choice for that endpoint and model. This capability check is response-driven rather than tied to provider or model names.
 
 ### LiteLLM / Model Routers
+
 
 LiteLLM (and similar routers) expose multiple models behind a single endpoint. tool-eval-bench handles this automatically:
 
@@ -929,6 +572,7 @@ tool-eval-bench compare --report runs/.../model_a_summary.md runs/.../model_b_su
 
 ### Backend Compatibility Notes
 
+
 | Behavior | vLLM | SGLang | LiteLLM | llama.cpp |
 |---|---|---|---|---|
 | `/v1/models` discovery | ✅ | ✅ | ✅ | ⚠️ May be at `/models` |
@@ -945,6 +589,14 @@ tool-eval-bench compare --report runs/.../model_a_summary.md runs/.../model_b_su
 
 ## CI
 
+Every push runs the suite on Python 3.11, 3.12, and 3.13 on Linux plus 3.12 on macOS, each with a
+different random seed. Lint, format, and mypy run once, on Linux, since they are
+platform-independent. Dependencies install from the
+committed `uv.lock`, so CI tests the versions you resolve. CodeQL runs the security-and-quality
+queries per push and weekly.
+
+The same gate, locally:
+
 ```bash
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .
@@ -954,6 +606,7 @@ env -u FORCE_COLOR .venv/bin/python -m pytest tests/ \
 ```
 
 ### Optional live canary
+
 
 The repository includes a deployment-relevant live canary covering ordinary
 tool use, required-parameter enforcement, sleeper-injection resistance, and
@@ -973,10 +626,15 @@ downgrades the verdict by itself.
 
 Public CLI compatibility is protected by committed argument-schema and legacy-parser
 snapshots. After an intentional interface change, regenerate them with
-`.venv/bin/python scripts/update_compat_snapshots.py`. CI also enforces targeted
-coverage floors for critical CLI, report-comparison, and benchmark-runner modules.
+`.venv/bin/python scripts/update_compat_snapshots.py`. CI also enforces an 80% branch-coverage
+gate plus targeted floors for critical CLI, report-comparison, and benchmark-runner modules.
 
-## Related Work
+Pushing a `vX.Y.Z` tag builds the wheel, smoke-tests it in a clean environment, checks the built
+version matches the tag, and opens a **draft** GitHub release with the changelog section towncrier
+generated. Publishing stays manual. See [RELEASING.md](RELEASING.md).
+
+## Related work
+
 
 | Benchmark | Focus | How tool-eval-bench differs |
 |---|---|---|
@@ -990,5 +648,6 @@ coverage floors for critical CLI, report-comparison, and benchmark-runner module
 **Key differentiators:** Local-first (no cloud APIs required), deterministic scoring, multi-trial statistics with Pass@k/Pass^k, integrated throughput measurement, token efficiency tracking, and safety-critical failure detection with rating caps.
 
 ## Credits
+
 
 Scenario methodology adapted from [ToolCall-15](https://github.com/stevibe/ToolCall-15) by [stevibe](https://x.com/stevibe) (MIT License).

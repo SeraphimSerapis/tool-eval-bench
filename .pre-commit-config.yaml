@@ -4,6 +4,24 @@
 default_install_hook_types: [pre-commit, pre-push, post-checkout]
 
 repos:
+  # ── Safety nets: catch what a rushed commit adds by accident ──
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+        # compare/git/ holds committed generator output; the hook would
+        # fight the generator every time a sample is regenerated.
+        exclude: ^compare/git/
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+        exclude: ^compare/git/
+
   # ── Ruff: lint + format ─────────────────────────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.0

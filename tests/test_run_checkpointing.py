@@ -15,18 +15,18 @@ import pytest
 
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.cli.helpers import prior_results_for_resume
+from tool_eval_bench.domain.models import (
+    RUN_STATUS_COMPLETED,
+    RUN_STATUS_INTERRUPTED,
+    RUN_STATUS_RUNNING,
+)
 from tool_eval_bench.domain.scenarios import (
     Category,
     ScenarioDefinition,
     ScenarioResult,
     ScenarioStatus,
 )
-from tool_eval_bench.storage.db import (
-    RUN_STATUS_COMPLETED,
-    RUN_STATUS_INTERRUPTED,
-    RUN_STATUS_RUNNING,
-    RunRepository,
-)
+from tool_eval_bench.storage.db import RunRepository
 
 
 @pytest.fixture

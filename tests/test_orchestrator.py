@@ -968,7 +968,7 @@ async def test_budget_exhaustion_is_distinct_from_evaluator_failure() -> None:
 @pytest.mark.asyncio
 async def test_tc46_has_scenario_budget_override() -> None:
     """TC-46 declares a per-scenario budget for its deep multi-turn workflow."""
-    from tool_eval_bench.evals.scenarios_agentic import AGENTIC_SCENARIOS
+    from tool_eval_bench.evals.scenarios import AGENTIC_SCENARIOS
 
     tc46 = next(s for s in AGENTIC_SCENARIOS if s.id == "TC-46")
     assert tc46.max_turns_override is not None

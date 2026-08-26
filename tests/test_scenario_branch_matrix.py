@@ -13,9 +13,11 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
-from tool_eval_bench.evals.scenarios_agentic import AGENTIC_SCENARIOS
-from tool_eval_bench.evals.scenarios_planning import PLANNING_SCENARIOS
-from tool_eval_bench.evals.scenarios_structured import STRUCTURED_SCENARIOS
+from tool_eval_bench.evals.scenarios import (
+    AGENTIC_SCENARIOS,
+    PLANNING_SCENARIOS,
+    STRUCTURED_SCENARIOS,
+)
 
 _STRING_VALUES = {
     "query": "Q3 engineering weather revenue planning",

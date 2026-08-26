@@ -86,7 +86,7 @@ def test_tc42_still_partials_an_unexplained_non_call():
 )
 def test_tc63_reads_price_and_closing_time_as_numbers(answer, budget, late):
     """A paraphrased price or a 24-hour clock still satisfies the constraint."""
-    from tool_eval_bench.evals.scenarios_planning import _tc63_open_late, _tc63_within_budget
+    from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_open_late, _tc63_within_budget
 
     assert _tc63_within_budget(answer.lower()) is budget
     assert _tc63_open_late(answer.lower()) is late
@@ -104,12 +104,12 @@ def test_tc63_reads_price_and_closing_time_as_numbers(answer, budget, late):
 )
 def test_tc73_accepts_any_phrasing_of_the_exclusion(phrasing):
     """Naming the unsuitable option is fine when the model says why it is out."""
-    from tool_eval_bench.evals.scenarios_hardmode import _TC73_EXCLUSION
+    from tool_eval_bench.evals.scenarios.hardmode.tc73 import _TC73_EXCLUSION
 
     assert _TC73_EXCLUSION.search(phrasing.lower()), phrasing
 
 
 def test_tc73_still_flags_an_unexplained_recommendation():
-    from tool_eval_bench.evals.scenarios_hardmode import _TC73_EXCLUSION
+    from tool_eval_bench.evals.scenarios.hardmode.tc73 import _TC73_EXCLUSION
 
     assert not _TC73_EXCLUSION.search("i recommend mitte brasserie for sunday")

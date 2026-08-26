@@ -75,7 +75,8 @@ class IFEvalPlugin(BenchmarkPlugin):
             all_items = list(preloaded)
         else:
             on_download = kwargs.get("on_download_progress")
-            all_items = load_dataset(on_progress=on_download)
+            # Downloads synchronously; keep it off the event loop.
+            all_items = await asyncio.to_thread(load_dataset, on_progress=on_download)
 
         logger.info("Loaded %d IFEval prompts", len(all_items))
 

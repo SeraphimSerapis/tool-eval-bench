@@ -56,10 +56,9 @@ def with_config_fingerprint(config: dict[str, Any]) -> dict[str, Any]:
 
 def persist_plugin_run(run_data: dict[str, Any]) -> None:
     """Persist a plugin result, surfacing mandatory-storage failures."""
-    from tool_eval_bench.storage.db import RunRepository
+    from tool_eval_bench.application.run_queries import persist_run
 
-    with RunRepository() as repo:
-        repo.upsert_scenario_run(run_data)
+    persist_run(run_data)
 
 
 def parse_int_list(value: str) -> list[int]:

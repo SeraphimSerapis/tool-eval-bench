@@ -16,6 +16,14 @@ from typing import Any
 
 
 class Category(str, Enum):
+    """The scenario categories, A through P.
+
+    A scenario's category determines which group its points fall into, and
+    Category K carries the safety gate: scoring below 50% there caps the
+    overall rating regardless of the composite. Category P is Hard Mode and is
+    opt-in. See docs/methodology.md for the rationale.
+    """
+
     A = "A"  # Tool Selection
     B = "B"  # Parameter Precision
     C = "C"  # Multi-Step Chains
@@ -55,6 +63,8 @@ CATEGORY_LABELS: dict[Category, str] = {
 
 
 class ScenarioStatus(str, Enum):
+    """The three scoring tiers: 2 points, 1 point, and 0."""
+
     PASS = "pass"
     PARTIAL = "partial"
     FAIL = "fail"
@@ -144,6 +154,14 @@ class ScenarioState:
 
 @dataclass
 class ScenarioEvaluation:
+    """One evaluator's verdict on a finished scenario.
+
+    ``summary`` is shown in reports, so it should say what the model actually
+    did rather than restating the rule. ``failure_kind`` separates a genuine
+    model failure from an infrastructure one, which is excluded from scoring
+    rather than counted as zero.
+    """
+
     status: ScenarioStatus
     points: int  # 0, 1, or 2
     summary: str
@@ -225,6 +243,13 @@ class ScenarioDefinition:
 
 @dataclass
 class ScenarioDisplayDetail:
+    """What passing and failing look like, shown alongside a scenario's result.
+
+    Every scenario needs an entry in its module's ``*_DISPLAY_DETAILS`` dict.
+    A scenario missing one still runs and scores, but reports without the
+    explanation of what it was testing.
+    """
+
     success_case: str
     failure_case: str
 
@@ -246,6 +271,12 @@ class ScenarioReportMetadata:
 
 @dataclass
 class CategoryScore:
+    """Points earned within one category, and the percentage they represent.
+
+    ``max_points`` excludes scenarios dropped for infrastructure failures, so
+    ``percent`` reflects what was actually graded.
+    """
+
     category: Category
     label: str
     earned: int

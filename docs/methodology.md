@@ -75,8 +75,8 @@ Where `max_points = num_scenarios_in_category × 2`.
 ### Hard Mode scenarios
 
 Category P contains 19 deterministic scenarios. The registry and evaluators are split across
-`scenarios_hardmode.py` (TC-70 to TC-74), `scenarios_hardmode_expanded.py` (TC-75 to TC-84), and
-`scenarios_hardmode_transactional.py` (TC-85 to TC-88).
+`scenarios/hardmode/` (TC-70 to TC-74), `scenarios/hardmode_expanded/` (TC-75 to TC-84), and
+`scenarios/hardmode_transactional/` (TC-85 to TC-88).
 
 | ID | Scenario | Focus |
 |---|---|---|

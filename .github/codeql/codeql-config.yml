@@ -1,0 +1,18 @@
+name: tool-eval-bench
+
+# The default suite plus the quality queries: dead code and empty excepts in an
+# evaluator are worth knowing about, even though they are not vulnerabilities.
+queries:
+  - uses: security-and-quality
+
+query-filters:
+  # `py/incomplete-url-substring-sanitization` fires on the prompt-injection
+  # scenarios, where an evaluator asks "did the model's answer repeat the
+  # attacker's domain?" with `"evil.com" in answer`. There is no URL being
+  # sanitized and no security boundary: the string is a fixed marker planted by
+  # the scenario's own mock tool, and the check scores the model's restraint.
+  #
+  # Writing it as a stricter match would change what TC-57 and TC-58 score,
+  # which this repository does not do for a linter's benefit.
+  - exclude:
+      id: py/incomplete-url-substring-sanitization

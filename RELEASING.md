@@ -83,18 +83,22 @@ suffix.
 
 ## Release notes
 
-The notes are the changelog section `towncrier build` just wrote. Extract it
-rather than retyping it, so the GitHub release and the changelog cannot drift:
+Pushing the tag starts `.github/workflows/release.yml`, which does steps 5's
+build and smoke checks again on a clean runner, verifies the built version
+matches the tag, and opens a **draft** GitHub release with the changelog
+section `towncrier build` just wrote.
+
+Read the draft. Add anything that belongs in a release announcement but not in
+a changelog (upgrade instructions, a known-issues note, coverage gaps recorded
+in step 4), then publish it. Nothing is public until you do. Leave
+`CHANGELOG.md` as the generated record.
+
+To produce the notes locally, or if the workflow is unavailable:
 
 ```bash
 scripts/release_notes.py X.Y.Z > /tmp/notes.md
 gh release create vX.Y.Z --title "vX.Y.Z" --notes-file /tmp/notes.md
 ```
-
-Add anything that belongs in a release announcement but not in a changelog
-(upgrade instructions, a known-issues note, coverage gaps recorded in step 4) by
-editing `/tmp/notes.md` before creating the release. Leave `CHANGELOG.md` as the
-generated record.
 
 ## Post-release
 

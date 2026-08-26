@@ -50,8 +50,12 @@ graph TD
 | `storage/` | domain | adapters, runner, cli, evals |
 | `application/` | domain, evals, runner, adapters, storage, utils | cli |
 | `adapters/` | domain ports, utils | storage, application, runner, cli, evals |
-| `cli/` | everything (delivery layer) | — |
+| `cli/` | everything else (delivery layer) | `storage.db` |
 | `utils/` | stdlib, domain | storage, adapters, runner, cli, evals |
+
+`cli/` may format reports through `storage.reports`, which is a renderer, but must not open the
+database. Connection lifetime, query shape, and the write-then-persist ordering belong to
+`application/`; `application/run_queries.py` holds the reads the delivery layer needs.
 
 These rules describe first-party layer imports. Measurement runners such as
 throughput, speculative decoding, and context pressure use the
@@ -64,6 +68,15 @@ not a bounded benchmark measurement request.
 ---
 
 ## Module Reference
+
+### Package Root
+
+| Module | Purpose |
+|---|---|
+| `api.py` | The public programmatic entry point. `run_benchmark()` is the supported integration surface; see [api.md](api.md) |
+| `schema.py` | Machine-readable CLI argument schema and output schema versioning |
+| `__main__.py` | `python -m tool_eval_bench` entry point |
+| `__init__.py` | Version resolution and a convenience re-export of `run_benchmark` |
 
 ### `domain/` — Core Types
 
@@ -83,28 +96,37 @@ external dependencies.
 
 ### `evals/` — Scenarios & Evaluators
 
-Each scenario is a self-contained `ScenarioDefinition` with:
+Each scenario is one file under `evals/scenarios/<group>/tcNN.py`, holding a
+self-contained `ScenarioDefinition`:
 - A **user message** (the prompt)
 - A **mock handler** (deterministic tool responses)
 - An **evaluator** (scoring logic: pass/partial/fail)
+- A `DISPLAY` entry describing its success and failure cases
 
-| Module | Categories | Scenarios |
+A group package discovers its own `tcNN.py` files, so creating the file is the
+whole registration. Helpers used by more than one scenario in a group live in
+that group's `_shared.py`; they stay group-scoped because several groups define
+different helpers under the same name.
+
+| Group | Categories | Scenarios |
 |---|---|---|
-| `scenarios.py` | A–E (core 15) + registry | TC-01 – TC-15 |
-| `scenarios_extended.py` | F–G | TC-16 – TC-21 |
-| `scenarios_agentic.py` | H–K (partial) | TC-22 – TC-50, TC-62–TC-63 |
-| `scenarios_adversarial.py` | K (safety extras) | TC-57 – TC-60 |
-| `scenarios_large_toolset.py` | L | TC-37 – TC-40 |
-| `scenarios_planning.py` | M–N | TC-51 – TC-56 |
-| `scenarios_structured.py` | O | TC-64 – TC-69 |
-| `scenarios_hardmode.py` | P (opt-in registry) | TC-70 – TC-74 |
-| `scenarios_hardmode_expanded.py` | P (opt-in expansion) | TC-75 – TC-84 |
-| `scenarios_hardmode_transactional.py` | P (transactional and reasoning continuity) | TC-85 – TC-88 |
+| `scenarios/core/` | A–E (the original 15) | TC-01 – TC-15 |
+| `scenarios/extended/` | F–G | TC-16 – TC-21 |
+| `scenarios/agentic/` | H–K (partial) | TC-22 – TC-50, TC-62–TC-63 |
+| `scenarios/adversarial/` | K (safety extras) | TC-57 – TC-60 |
+| `scenarios/large_toolset/` | L | TC-37 – TC-40 |
+| `scenarios/planning/` | M–N | TC-51 – TC-56 |
+| `scenarios/structured/` | O | TC-64 – TC-69 |
+| `scenarios/hardmode/` | P (opt-in) | TC-70 – TC-74 |
+| `scenarios/hardmode_expanded/` | P (opt-in expansion) | TC-75 – TC-84 |
+| `scenarios/hardmode_transactional/` | P (transactional and reasoning continuity) | TC-85 – TC-88 |
 | `packs.py` | none | Held-out YAML scenario-pack loading and content attestations |
+| `yaml_loader.py` | none | The declarative scenario format, used by held-out packs |
+| `yaml_scenarios/` | none | Three worked YAML examples: a single call, a chain, and restraint |
 | `helpers.py` | — | Shared evaluator utilities (datetime matching, text scanning, safe math) |
 | `noise.py` | — | Deterministic payload enrichment for realistic API noise |
 
-Registries:
+Registries, all built by `evals/scenarios/__init__.py`:
 - `SCENARIOS` — core 15 (used by `--short`)
 - `ALL_SCENARIOS` — full 69
 - `ALL_SCENARIOS_WITH_HARDMODE` — full 88
@@ -123,14 +145,19 @@ The CLI's public scenario selection follows these rules:
 - `--scenario-pack` appends held-out scenarios, while `--pack-only` makes the
   pack the only pool. Pack IDs cannot collide with public IDs.
 
-#### Declarative YAML scenarios (pilot)
+#### Declarative YAML scenarios
 
-A small set of scenarios can also be authored as YAML data files under
-`evals/yaml_scenarios/`, loaded by `evals/yaml_loader.py`. This is a
-low-risk pilot for a future "YAML-first" direction — simple scenarios
-(declarative expected tool calls and response rules) can be written without
-Python evaluator functions. The existing 88 Python scenarios are the
-canonical source for now.
+A scenario can also be authored as a YAML data file, loaded by
+`evals/yaml_loader.py`. `evals/yaml_scenarios/` holds three worked examples: a
+single call, a two-call chain, and restraint.
+
+This exists for [held-out packs](scenario-packs.md), where a third party needs
+private scenarios without shipping executable Python. It is not a migration
+path for the 88 public scenarios: the subset matches tool calls positionally
+and cannot inspect tool results, while 77% of the Python evaluators read the
+model's free text and 33% read what a tool returned. `answer_contains` reaches
+the PARTIAL tier, which is the one gap worth closing; the rest of the
+difference is what makes Python the right language for an evaluator.
 
 ### `runner/` — Orchestration
 
@@ -183,13 +210,15 @@ Shared infrastructure:
 |---|---|
 | `service.py` | `BenchmarkService` — composes concrete adapters, scenario orchestration, SQLite persistence, and Markdown reporting |
 | `finalization.py` | Completes interrupted or checkpointed runs and builds the final persisted summary |
+| `run_config.py` | `RunSettings` and the persisted config, including the `config_fingerprint` that decides which runs are comparable |
+| `run_queries.py` | Read queries against stored runs, each owning the repository's lifetime |
 
 ### `storage/` — Persistence
 
 | Module | Purpose |
 |---|---|
 | `db.py` | `RunRepository` — SQLite persistence for run results |
-| `reports.py` | `MarkdownReporter` — generates `runs/YYYY/MM/<run_id>.md` reports |
+| `reports/` | `MarkdownReporter` — generates `runs/YYYY/MM/<run_id>.md` reports. A facade over one writer per report type (`scenario`, `summary`, `spec_decode`, `pressure`, `throughput`), with the shared substrate in `_common.py` |
 
 ### `cli/` — Delivery Layer
 
@@ -205,6 +234,8 @@ Shared infrastructure:
 | `model_probe.py` | Model discovery and availability probing |
 | `plugin_runners.py` | Shared persistence/progress lifecycle and plugin-specific execution |
 | `plugin_lifecycle.py` | Shared plugin run lifecycle and result persistence |
+| `plugin_progress.py` | The live progress layout every accuracy plugin renders: bar, running tally, last finished item |
+| `plugin_datasets.py` | Load-or-download with a progress spinner, including resuming an interrupted download |
 | `probe.py` | Model/server detection, preflight checks, and warmup |
 | `commands.py` | Scenario resolution (`resolve_scenarios`, `resolve_all_scenarios_for_ids`) |
 | `resolve.py` | Compatibility exports for scenario/sweep resolution helpers |
@@ -226,6 +257,7 @@ Shared infrastructure:
 |---|---|
 | `summary.py` | Compare summary-style reports |
 | `tool_eval.py` | Compare tool-evaluation reports and scenario traces |
+| `_common.py` | Formatting helpers both comparison reports share (rounding, escaping, signed deltas, percentage classes) |
 
 ### `utils/` — Shared Helpers
 
@@ -299,23 +331,22 @@ CLI
 
 ## Extension Points
 
-### Adding a New Scenario
-See [CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-new-scenario).
+### Adding a scenario
+One file under `evals/scenarios/<group>/tcNN.py`, exporting `SCENARIO` and `DISPLAY`. The group
+package discovers it. Worked example: [adding-a-scenario.md](adding-a-scenario.md).
 
-### Adding a New Plugin Benchmark
-1. Create `plugins/<name>/` with `dataset.py`, `evaluator.py`, `plugin.py`
-2. Implement `BenchmarkPlugin` from `domain/plugin.py` using the backend port in `domain/adapters.py`
-3. Register in `plugins/registry.py`
-4. Add CLI flags in `cli/legacy_parser.py` and register them in `schema.py`
+### Adding a plugin benchmark
+Implement `BenchmarkPlugin` under `plugins/<name>/`, register it in `plugins/registry.py`, then
+wire the CLI in `cli/legacy_parser.py`, `schema.py`, `cli/command_registry.py`, and
+`cli/plugin_runners.py`, and regenerate the compatibility snapshots. Miss the CLI wiring and the
+plugin runs from Python but not from `tool-eval-bench plugin <name>`. Full steps:
+[adding-a-plugin.md](adding-a-plugin.md).
 
-### Adding a New Backend
-OpenAI-compatible backends use `OpenAICompatibleAdapter`. To support a new backend:
-1. Ensure it exposes `/v1/chat/completions` with `tools` support
-2. Add a port to auto-discovery in `cli/server.py`
-3. Add the backend label to `application/service.py` and backend detection mappings
-
-For a native wire format, add a provider adapter and register it through
-`adapters/factory.py` and `adapters/wire_format.py` instead.
+### Adding a backend
+An OpenAI-compatible endpoint needs no code: point `--base-url` at it. Add a port to auto-discovery
+in `cli/server.py` and a backend label in `application/service.py` to have it detected by name. A
+native wire format needs an adapter, registered through `adapters/wire_format.py` and
+`adapters/factory.py`: [adding-an-adapter.md](adding-an-adapter.md).
 
 ---
 
@@ -332,6 +363,8 @@ For a native wire format, add a provider adapter and register it through
 | CLI | `test_display.py`, `test_leaderboard_display.py`, `test_e2e.py` | Display rendering, E2E flows |
 | API | `test_api.py`, `test_plugin_interface.py` | Programmatic API, schema drift |
 | Adapter | `test_adapter.py` | SSE streaming, normalize, parse, error handling (httpx mocks) |
+| Invariants | `test_architecture_boundaries.py`, `test_scenario_registry.py`, `test_documented_counts.py`, `test_documentation_examples.py` | Layer imports, that every scenario file registers itself, that prose counts match the registries, and that the guide's examples run |
+| Resource lifetime | `test_repository_lifecycle.py`, `test_checkpoint_offload.py`, `test_plugin_dataset_offload.py`, `test_probe_session.py` | No leaked connections, and nothing blocking the event loop |
 
-The authoritative test count and branch-coverage result come from the current
+This is a map, not an index: most test files are not listed. The authoritative test count and branch-coverage result come from the current
 CI run; avoid copying those fast-changing values into architecture docs.

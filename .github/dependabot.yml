@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # Dependency floors are unpinned (ruff>=0.12, mypy>=1.15), so CI can break from
+  # an upstream release with no repo change. These bump the lockfile and the
+  # actions deliberately rather than discovering the break in someone's PR.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      dev-tooling:
+        patterns: ["ruff", "mypy", "pytest*", "pre-commit", "towncrier", "types-*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"

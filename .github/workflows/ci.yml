@@ -16,19 +16,44 @@ on:
         required: false
         type: string
 
+# Pushing twice to a PR should not run two full matrices. The default branch is
+# excluded so main's history keeps a result for every commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # Windows runners default to PowerShell, where the quoting in the
+        # pytest invocation below parses differently. One shell everywhere.
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
+        # A different seed per entry, so the randomised order is exercised
+        # broadly rather than three machines repeating one permutation.
         include:
-          - python-version: '3.11'
+          - os: ubuntu-latest
+            python-version: '3.11'
             random-seed: '104729'
-          - python-version: '3.12'
+          - os: ubuntu-latest
+            python-version: '3.12'
             random-seed: '130363'
-          - python-version: '3.13'
+          - os: ubuntu-latest
+            python-version: '3.13'
             random-seed: '155921'
+          # storage/db.py resolves its path from Path.cwd() and runs SQLite in
+          # WAL mode, so a non-Linux runner is worth the minutes.
+          - os: macos-latest
+            python-version: '3.12'
+            random-seed: '181081'
+          # Windows is not in the matrix yet: the suite has 47 failures there
+          # that assume UTF-8 by default, POSIX separators, and sub-millisecond
+          # clock resolution. Tracked in #93. It did find a real scoring bug
+          # first, which is why tzdata is now a win32 dependency.
 
     steps:
       - name: Checkout
@@ -43,23 +68,32 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e '.[dev]'
+      # The lock is what the Docker image and a `uv tool install` resolve to.
+      # Installing from it here means CI tests the same versions users get, and
+      # an upstream release cannot turn a green branch red with no repo change.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.10.8'
+
+      - name: Install from the committed lock
+        run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
 
       - name: Ruff lint
-        run: ruff check .
+        if: matrix.os == 'ubuntu-latest'
+        run: uv run ruff check .
 
       - name: Ruff format
-        run: ruff format --check .
+        if: matrix.os == 'ubuntu-latest'
+        run: uv run ruff format --check .
 
       - name: Mypy
-        run: mypy
+        if: matrix.os == 'ubuntu-latest'
+        run: uv run mypy
 
       - name: Pytest
         run: >
-          pytest --tb=short -q
+          uv run pytest --tb=short -q
           --ignore=tests/test_llama_benchy.py
           -m "not live"
           --randomly-seed=${{ matrix.random-seed }}
@@ -67,7 +101,65 @@ jobs:
           --cov-fail-under=80
 
       - name: Critical module coverage
-        run: python scripts/check_module_coverage.py coverage.json
+        run: uv run python scripts/check_module_coverage.py coverage.json
+
+      - name: Upload coverage report
+        # A reviewer cannot see what a pull request did to coverage without it.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: coverage.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  pre-commit:
+    # The hooks are the local feedback loop; without this they rot silently and
+    # only bite the next contributor who installs them.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Run hooks that do not need the project venv
+        uses: pre-commit/action@v3.0.1
+        with:
+          # Every default-stage hook. The mypy and pytest hooks declare
+          # `stages: [pre-push]` and need the project venv, so they skip here.
+          extra_args: --all-files
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.10.8'
+
+      - name: Audit dependencies for known vulnerabilities
+        # Audits the locked dependency set rather than an installed environment.
+        # That is what users resolve, and it sidesteps --strict failing on the
+        # project itself, which is not published to PyPI.
+        run: |
+          uv export --frozen --no-emit-project --no-dev \
+            --format requirements.txt -o requirements-audit.txt
+          python -m pip install --upgrade pip pip-audit
+          pip-audit --strict --desc -r requirements-audit.txt
 
   docker-build:
     runs-on: ubuntu-latest

@@ -202,11 +202,6 @@ def call_at_or_after_user_phase(call: ToolCallRecord, minimum_phase: int) -> boo
     return True
 
 
-def has_matching_tool_result(state: ScenarioState, call: ToolCallRecord) -> bool:
-    """Return whether a concrete result record exists for ``call``."""
-    return bool(matching_tool_results(state, call))
-
-
 def has_tool_call(
     state: ScenarioState,
     name: str,

@@ -119,10 +119,10 @@ def print_history(console: Console) -> None:
     """List recent benchmark runs from SQLite."""
     from rich.table import Table
 
-    from tool_eval_bench.storage.db import RUN_STATUS_COMPLETED, RunRepository
+    from tool_eval_bench.application.run_queries import recent_runs
+    from tool_eval_bench.domain.models import RUN_STATUS_COMPLETED
 
-    repo = RunRepository()
-    runs = repo.list(limit=15)
+    runs = recent_runs(limit=15)
 
     if not runs:
         console.print("\n  [dim]No previous runs found.[/]\n")
@@ -175,19 +175,16 @@ def print_diff(
     from rich.panel import Panel
     from rich.table import Table
 
-    from tool_eval_bench.storage.db import RunRepository
+    from tool_eval_bench.application.run_queries import resolve_run, scenario_results
 
-    repo = RunRepository()
+    resolved = resolve_run(diff_run_id)
+    if resolved is None and diff_run_id.lower() == "latest":
+        console.print("\n  [yellow]No previous runs found for comparison.[/]\n")
+        return
+    if resolved is not None:
+        diff_run_id = resolved[0]
 
-    # Resolve 'latest' to actual run ID
-    if diff_run_id.lower() == "latest":
-        latest = repo.get_latest()
-        if not latest:
-            console.print("\n  [yellow]No previous runs found for comparison.[/]\n")
-            return
-        diff_run_id = latest["run_id"]
-
-    prev_results = repo.get_scenario_results(diff_run_id)
+    prev_results = scenario_results(diff_run_id)
     if prev_results is None:
         console.print(f"\n  [yellow]Run '{diff_run_id}' not found in database.[/]\n")
         return
@@ -314,23 +311,18 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
     from rich.panel import Panel
     from rich.table import Table
 
-    from tool_eval_bench.storage.db import RunRepository
-
-    repo = RunRepository()
+    from tool_eval_bench.application.run_queries import resolve_run
 
     def _resolve(rid: str) -> tuple[str, dict]:
+        resolved = resolve_run(rid)
+        if resolved is not None:
+            return resolved
         if rid.lower() == "latest":
-            run = repo.get_latest()
-            if not run:
-                console.print("\n  [red]No runs found in database.[/]\n")
-                sys.exit(1)
-            return run["run_id"], run
-        run = repo.get(rid)
-        if not run:
-            console.print(f"\n  [red]Run '{rid}' not found in database.[/]\n")
-            console.print("  [dim]Use --history to list available runs.[/]\n")
+            console.print("\n  [red]No runs found in database.[/]\n")
             sys.exit(1)
-        return rid, run
+        console.print(f"\n  [red]Run '{rid}' not found in database.[/]\n")
+        console.print("  [dim]Use --history to list available runs.[/]\n")
+        sys.exit(1)
 
     id_a, run_a = _resolve(run_id_a)
     id_b, run_b = _resolve(run_id_b)
@@ -502,7 +494,6 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
     _print_mcnemar(console, map_a, map_b, all_ids)
 
     console.print()
-    repo.close()
 
 
 def _print_mcnemar(

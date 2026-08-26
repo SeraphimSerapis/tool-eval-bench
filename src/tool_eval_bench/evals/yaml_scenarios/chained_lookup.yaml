@@ -1,0 +1,30 @@
+id: YAML-02
+title: Contact lookup then email
+category: C
+difficulty: 2
+description: >
+  Two calls in order: resolve the contact, then send to the resolved address.
+  Shows positional matching, and answer_contains scoring the report rather than
+  the work.
+user_message: Email the Q3 summary to Priya.
+expected_tool_calls:
+  - tool: find_contact
+    arguments:
+      name: Priya
+  - tool: send_email
+    arguments:
+      to: priya@example.com
+      subject: Q3 summary
+tool_responses:
+  find_contact:
+    - match:
+        name: Priya
+      response:
+        name: Priya Raman
+        email: priya@example.com
+  send_email:
+    - response:
+        status: sent
+        id: msg_4471
+answer_contains:
+  - priya@example.com

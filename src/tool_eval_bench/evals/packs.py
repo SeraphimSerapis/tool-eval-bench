@@ -21,11 +21,12 @@ the scenarios are not public, a score against them needs two extra guarantees:
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 from tool_eval_bench.domain.scenarios import ScenarioDefinition
-from tool_eval_bench.evals.yaml_loader import load_yaml_scenarios
+from tool_eval_bench.evals.yaml_loader import load_yaml_scenarios_with_bytes
 
 
 @dataclass(frozen=True)
@@ -55,11 +56,21 @@ def pack_content_hash(directory: str | Path) -> str:
     bytes are unchanged.
     """
     root = Path(directory)
+    return _digest_files((path.name, path.read_bytes()) for path in sorted(root.glob("*.yaml")))
+
+
+def _digest_files(files: Iterable[tuple[str, bytes]]) -> str:
+    """Hash ``(name, bytes)`` pairs, which must already be in sorted order.
+
+    Shared so that hashing bytes a caller already read produces exactly the
+    same digest as re-reading the directory.  The pack content hash is an
+    attestation, so the two paths must not be allowed to drift apart.
+    """
     digest = hashlib.sha256()
-    for path in sorted(root.glob("*.yaml")):
-        digest.update(path.name.encode("utf-8"))
+    for name, payload in files:
+        digest.update(name.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(path.read_bytes())
+        digest.update(payload)
         digest.update(b"\0")
     return digest.hexdigest()[:16]
 
@@ -74,7 +85,10 @@ def load_scenario_pack(directory: str | Path, *, held_out: bool = True) -> Scena
     root = Path(directory)
     if not root.is_dir():
         raise ValueError(f"Scenario pack directory not found: {root}")
-    scenarios = load_yaml_scenarios(root, held_out=held_out)
+    # One directory walk and one read per file: the bytes hashed below are the
+    # same bytes the scenarios were parsed from.
+    loaded = load_yaml_scenarios_with_bytes(root, held_out=held_out)
+    scenarios = [scenario for scenario, _, _ in loaded]
     if not scenarios:
         raise ValueError(f"Scenario pack contains no *.yaml scenarios: {root}")
     seen: set[str] = set()
@@ -89,7 +103,7 @@ def load_scenario_pack(directory: str | Path, *, held_out: bool = True) -> Scena
         name=root.name,
         path=root,
         scenarios=tuple(scenarios),
-        content_hash=pack_content_hash(root),
+        content_hash=_digest_files((path.name, raw) for _, path, raw in loaded),
     )
 
 

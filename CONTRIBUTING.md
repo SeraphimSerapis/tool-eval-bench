@@ -108,19 +108,49 @@ from a misleading or hallucinated answer.
 
 ## Changing scenarios and evaluators
 
-Scenario definitions live in `src/tool_eval_bench/evals/` and are composed into
-the public registry by `scenarios.py`. Put new behavior in the most relevant
-scenario module rather than growing one monolithic file. Existing modules cover
-core, extended, agentic, large-toolset, planning, adversarial, structured, and
-YAML-backed scenarios.
+Scenario definitions live in `src/tool_eval_bench/evals/scenarios/`, one file
+per scenario, grouped by pack: `core/`, `extended/`, `agentic/`,
+`large_toolset/`, `planning/`, `adversarial/`, `structured/`, and the three
+Hard Mode groups. Each group package discovers its own files, so a scenario is
+registered by existing.
 
-Each scenario should have:
+### Adding a new scenario
 
-1. A deterministic user prompt and mock tool handler.
-2. A clear evaluator with PASS, PARTIAL, and FAIL outcomes.
-3. A registration path in the public scenario registry.
-4. Tests for the expected pass case, failure case, and important near-misses.
-5. A description that explains what the scenario measures.
+1. Create `evals/scenarios/<group>/tcNN.py` in the group that best matches what
+   the scenario measures. The file name and the scenario ID must agree, and the
+   ID must be `TC-NN`: every registry sorts on `int(s.id.split("-")[1])`.
+2. Define a module-level `SCENARIO = ScenarioDefinition(...)` with a
+   deterministic user prompt, a mock tool handler, and an evaluator returning
+   PASS, PARTIAL, or FAIL. Set `difficulty` to a tier from 1 (trivial) to 5
+   (very hard); a scenario without one is unrated and drops out of
+   `--weight-by-difficulty` scoring.
+3. Define a module-level `DISPLAY = ScenarioDisplayDetail(...)` describing the
+   success and failure cases. Reports show these next to the score.
+4. Set `max_turns_override` if the scenario needs more than the default 8 turns.
+
+Nothing else registers the scenario. `tests/test_scenario_registry.py` checks
+every file in the tree for all four of these and fails if one is missing.
+[docs/adding-a-scenario.md](docs/adding-a-scenario.md) walks through a complete
+example, including the optional fields that change how the runner drives the
+conversation.
+
+A helper used by more than one scenario in the group belongs in that group's
+`_shared.py`. Do not import one scenario module from another: helpers with the
+same name behave differently across groups on purpose, and a sibling import
+would let one scenario's edit change another's score.
+
+Then add tests for the expected pass case, the failure case, and the important
+near-misses, plus a description that explains what the scenario measures.
+
+`ScenarioDefinition` carries several optional fields that change how the runner
+drives the conversation: `tool_choice_after_first_call`,
+`preserve_reasoning_across_follow_ups`, `checkpoint`, and `held_out`. Read the
+dataclass in `domain/scenarios.py` before reaching for one.
+
+Simple lookup-shaped scenarios can skip Python entirely and be written as YAML
+under `evals/yaml_scenarios/`, which holds three worked examples. The subset is
+intentionally narrower than the Python API; see
+[docs/adding-a-scenario.md](docs/adding-a-scenario.md) for what it covers.
 
 For evaluator changes in particular:
 

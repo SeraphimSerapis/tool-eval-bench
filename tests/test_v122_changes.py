@@ -258,7 +258,7 @@ class TestResolveScenarios:
     def test_hardmode_only_returns_only_category_p(self) -> None:
         """--hardmode-only should return only hardmode scenarios."""
         from tool_eval_bench.cli.bench import _resolve_scenarios
-        from tool_eval_bench.evals.scenarios_hardmode import HARDMODE_SCENARIOS
+        from tool_eval_bench.evals.scenarios import HARDMODE_SCENARIOS
 
         result = _resolve_scenarios(self._args(hardmode_only=True))
         assert len(result) == len(HARDMODE_SCENARIOS)
@@ -267,7 +267,7 @@ class TestResolveScenarios:
     def test_hardmode_only_ignores_short(self) -> None:
         """--hardmode-only takes precedence over --short."""
         from tool_eval_bench.cli.bench import _resolve_scenarios
-        from tool_eval_bench.evals.scenarios_hardmode import HARDMODE_SCENARIOS
+        from tool_eval_bench.evals.scenarios import HARDMODE_SCENARIOS
 
         result = _resolve_scenarios(self._args(hardmode_only=True, short=True))
         assert len(result) == len(HARDMODE_SCENARIOS)

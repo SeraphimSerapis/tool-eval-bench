@@ -6,11 +6,13 @@ duplicated across 6+ test files.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 import httpx
+import pytest
 
 from tool_eval_bench.domain.scenarios import (
     ScenarioState,
@@ -18,39 +20,43 @@ from tool_eval_bench.domain.scenarios import (
     ToolResultRecord,
 )
 
-
-# Legacy runner unit tests historically passed a raw MockTransport client into
-# measurement internals. Keep that compatibility in test code while production
-# runners use only the semantic MeasurementClient port.
-async def _test_tokenize(self: httpx.AsyncClient, *, model: str, text: str) -> httpx.Response:
-    return await self.post("http://test/tokenize", json={"model": model, "prompt": text})
-
-
-async def _test_models(self: httpx.AsyncClient) -> httpx.Response:
-    return await self.get("http://test/v1/models")
+#: `termios` and `tty` are POSIX-only. The keypress reader returns None without
+#: them by design, so tests that drive it have nothing to assert on Windows.
+requires_termios = pytest.mark.skipif(
+    importlib.util.find_spec("termios") is None,
+    reason="termios and tty are POSIX-only",
+)
 
 
-async def _test_metrics(
-    self: httpx.AsyncClient, *, metrics_url: str | None = None
-) -> httpx.Response:
-    return await self.get(metrics_url or "http://test/metrics")
+class MeasurementTestClient(httpx.AsyncClient):
+    """An ``httpx.AsyncClient`` that also satisfies the measurement port.
 
+    Some runner tests hand a ``MockTransport`` client straight to measurement
+    internals, which call the port's methods rather than raw ``get``/``post``.
+    This used to be done by attaching those five methods to
+    ``httpx.AsyncClient`` itself at import time, for the whole session: a
+    future httpx release adding a same-named method would have been silently
+    overridden, in every test, with no failure pointing at the cause.
 
-async def _test_completion(self: httpx.AsyncClient, payload: dict[str, Any]) -> httpx.Response:
-    return await self.post("http://test/v1/chat/completions", json=payload)
+    Subclassing keeps the convenience and confines it to the tests that opt in.
+    """
 
+    async def tokenize(self, *, model: str, text: str) -> httpx.Response:
+        return await self.post("http://test/tokenize", json={"model": model, "prompt": text})
 
-def _test_stream_completion(
-    self: httpx.AsyncClient, payload: dict[str, Any]
-) -> AbstractAsyncContextManager[httpx.Response]:
-    return self.stream("POST", "http://test/v1/chat/completions", json=payload)
+    async def models(self) -> httpx.Response:
+        return await self.get("http://test/v1/models")
 
+    async def metrics(self, *, metrics_url: str | None = None) -> httpx.Response:
+        return await self.get(metrics_url or "http://test/metrics")
 
-httpx.AsyncClient.tokenize = _test_tokenize  # type: ignore[attr-defined]
-httpx.AsyncClient.models = _test_models  # type: ignore[attr-defined]
-httpx.AsyncClient.metrics = _test_metrics  # type: ignore[attr-defined]
-httpx.AsyncClient.completion = _test_completion  # type: ignore[attr-defined]
-httpx.AsyncClient.stream_completion = _test_stream_completion  # type: ignore[attr-defined]
+    async def completion(self, payload: dict[str, Any]) -> httpx.Response:
+        return await self.post("http://test/v1/chat/completions", json=payload)
+
+    def stream_completion(
+        self, payload: dict[str, Any]
+    ) -> AbstractAsyncContextManager[httpx.Response]:
+        return self.stream("POST", "http://test/v1/chat/completions", json=payload)
 
 
 def make_state(
@@ -127,3 +133,17 @@ def make_tool_call(
         turn=turn,
         user_phase=user_phase,
     )
+
+
+def disable_rate_limit_pacing(adapter: Any) -> None:
+    """Pin the adapter's rate-limit spacing at zero for tests.
+
+    Patching ``_rate_limit_delay`` only zeroes the post-429 pause.  The shared
+    ``RateLimitCoordinator`` separately widens ``_min_interval`` on every 429
+    (0.5s, 1s, 2s, 4s, ...) and enforces it with a real ``asyncio.sleep`` in
+    ``acquire()``.  Tests that drive repeated 429s therefore burn wall-clock
+    time proportional to the retry budget unless the pacing is neutralised too.
+    """
+    coordinator = adapter._rate_limits
+    coordinator._max_interval = 0.0
+    coordinator._min_interval = 0.0

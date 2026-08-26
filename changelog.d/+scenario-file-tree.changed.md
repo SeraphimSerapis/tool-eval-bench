@@ -1,0 +1,1 @@
+Scenarios now live one per file under `evals/scenarios/<group>/tcNN.py`, replacing six monolithic modules. Each group discovers its own files, so creating the file is the whole registration — a scenario can no longer half-land by being appended to the scenario list but not the display dict.
