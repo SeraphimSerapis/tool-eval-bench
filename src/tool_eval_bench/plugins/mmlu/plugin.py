@@ -84,8 +84,9 @@ class MMLUPlugin(BenchmarkPlugin):
             dev_items = preloaded.get("dev", [])
         else:
             on_download = kwargs.get("on_download_progress")
-            all_items = load_dataset("test", on_progress=on_download)
-            dev_items = load_dataset("dev") if n_shots > 0 else []
+            # Downloads synchronously; keep it off the event loop.
+            all_items = await asyncio.to_thread(load_dataset, "test", on_progress=on_download)
+            dev_items = await asyncio.to_thread(load_dataset, "dev") if n_shots > 0 else []
 
         logger.info("Loaded %d MMLU test questions", len(all_items))
 
