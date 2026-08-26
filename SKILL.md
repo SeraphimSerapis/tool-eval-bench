@@ -6,7 +6,7 @@
 ## What this tool does
 
 `tool-eval-bench` evaluates LLM tool-calling quality using 69 deterministic
-scenarios across 15 categories.  It produces a 0–100 score with per-category
+scenarios across 16 categories.  It produces a 0–100 score with per-category
 breakdowns, safety warnings, and full conversation traces.
 
 ## Quick start (zero-config)
@@ -104,7 +104,7 @@ tool-eval-bench --json --short
 | `--timeout F` | Per-request timeout in seconds (default: 60) |
 | `--no-think` | Disable thinking/reasoning (critical for Qwen3/DeepSeek) |
 | `--no-warmup` | Skip server warm-up request |
-| `--hardmode` | Include 15 Hard Mode scenarios (Category P) |
+| `--hardmode` | Include 19 Hard Mode scenarios (Category P) |
 | `--categories A B K` | Run only specific categories (A–P) |
 | `--scenarios TC-01 TC-07` | Run specific scenario IDs |
 | `--perf` | Also run throughput benchmark |
