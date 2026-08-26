@@ -161,7 +161,6 @@ class MMLUPlugin(BenchmarkPlugin):
                 is_error = False
             except Exception as exc:
                 logger.debug("Error on question %d: %s", item.index, exc)
-                content = ""
                 is_error = True
                 error_count += 1
 
