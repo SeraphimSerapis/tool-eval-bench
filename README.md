@@ -8,9 +8,24 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 
 > **Scope.** tool-eval-bench measures *tool-calling quality* — whether a model picks the right tool, passes the right parameters, chains tools correctly, and handles errors and safety boundaries. It is not a full agentic system benchmark (see [Related Work](#related-work) for how it compares to BFCL, PinchBench, and Claw-Eval).
 
-## What It Measures
+## Contents
+
+- [What it measures](#what-it-measures) and [how it scores](#scoring)
+- [Quickstart](#quickstart): [install](#install), [your first run](#your-first-run), [reading your report](#reading-your-report), [configuration](#configuration)
+- [More ways to run](#more-ways-to-run) and the [command reference](#cli-commands-and-common-workflows)
+- Deep dives: [Hard Mode](#hard-mode), [held-out packs](#held-out-scenario-packs), [context pressure](#context-pressure), [speculative decoding](#speculative-decoding-and-mtp), [accuracy and throughput](#accuracy-and-throughput-benchmarks)
+- [Programmatic API](#programmatic-api) and the full [CLI reference](docs/cli-reference.md)
+- [Backends](#backends), [CI](#ci), [architecture](#architecture)
+
+Reference docs live in [`docs/`](docs/): [methodology](docs/methodology.md) for the scoring
+rationale, [architecture](docs/architecture.md) for the internals, [api](docs/api.md) for the
+Python API, and [cli-reference](docs/cli-reference.md) for every flag and exit code.
+
+## What it measures
+
 
 ### Tool-Call Quality (69 standard scenarios, plus 19 opt-in Hard Mode scenarios)
+
 
 | Category | Scenarios | What It Tests |
 |---|---|---|
@@ -33,9 +48,11 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 
 ### Throughput Performance (optional)
 
+
 llama-bench-style prefill (pp) and token generation (tg) measurement via streaming, with configurable context depth and concurrency sweeps.
 
 ### Pluggable Accuracy Benchmarks
+
 
 External benchmarks run through the same `BenchmarkPlugin` interface and share the backend adapter, progress display, and reporting infrastructure. No `tools` support required — only `/v1/chat/completions`.
 
@@ -46,6 +63,7 @@ External benchmarks run through the same `BenchmarkPlugin` interface and share t
 | **IFEval** | `--ifeval` | 541 | Instruction Following Evaluation — 25 constraint types, deterministic programmatic checking (no LLM-as-judge) |
 
 ### Scoring
+
 
 - **2 points** — Pass (correct tool behavior)
 - **1 point** — Partial (functional but suboptimal)
@@ -77,7 +95,9 @@ prove result-dependent behavior such as a completed asynchronous poll.
 
 ## Quickstart
 
-### Install as a CLI tool (recommended)
+
+### Install
+
 
 ```bash
 # Install globally using uv — no venv management needed
@@ -90,40 +110,73 @@ uv tool install 'tool-eval-bench[perf] @ git+https://github.com/SeraphimSerapis/
 tool-eval-bench --help
 ```
 
-### Development setup
+Other ways to install: [development setup](#development-setup) for contributing,
+[Docker](#run-with-docker) to avoid a local Python, and [updating](#updating) for an existing
+install.
+
+### Your first run
+
+Point it at an OpenAI-compatible endpoint and run the core 15 scenarios. This takes a couple of
+minutes and needs no configuration file:
 
 ```bash
-git clone https://github.com/SeraphimSerapis/tool-eval-bench.git
-cd tool-eval-bench
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev,perf]'
+tool-eval-bench run --short --base-url http://localhost:8000
 ```
 
-For contributor setup, quality checks, scenario/evaluator guidance, and the pull
-request checklist, see [CONTRIBUTING.md](CONTRIBUTING.md). Install the optional
-`[hf]` extra only when working on the GSM8K, MMLU, or IFEval dataset plugins.
-
-### Run with Docker
-
-Benchmark a server without installing Python locally. See
-[docs/docker.md](docs/docker.md).
-
-### Updating
+With no `--base-url`, local discovery scans the common localhost ports used by vLLM, llama.cpp,
+SGLang, LiteLLM, Ollama, and TGI:
 
 ```bash
-# If installed via uv tool
-uv tool upgrade tool-eval-bench
-
-# If installed via pip (global or venv)
-pip install --upgrade git+https://github.com/SeraphimSerapis/tool-eval-bench.git
-
-# Development setup (pull + reinstall)
-git pull
-pip install -e '.[dev,perf]'
+tool-eval-bench run --short
 ```
+
+To check the endpoint is reachable before committing to a full run:
+
+```bash
+tool-eval-bench probe
+```
+
+When that looks right, drop `--short` for the standard 69-scenario benchmark. Pass `--seed` so the
+run is reproducible:
+
+```bash
+tool-eval-bench run --seed 42
+```
+
+### Reading your report
+
+Every completed run writes two artifacts, both relative to the directory you ran from:
+
+| Artifact | Path | Contents |
+|---|---|---|
+| Markdown report | `runs/YYYY/MM/<run_id>.md` | Per-scenario verdicts with the full conversation trace |
+| SQLite record | `data/benchmarks.sqlite` | The same data, queryable, plus traces for held-out packs |
+
+The terminal summary gives you the composite score, the star rating, and per-category percentages.
+Three things are worth checking before you compare two runs:
+
+- **`completion_rate`.** Infrastructure failures (timeouts, connection errors, persistent 429s) are
+  dropped from both the numerator and the denominator rather than scored as zero, because they
+  measure the serving environment rather than the model. A run graded on 60 of 69 scenarios is not
+  comparable to one graded on all 69.
+- **Safety warnings.** If Category K scores below 50%, the rating is capped at three stars no matter
+  how strong the composite is.
+- **`config_fingerprint`.** Runs only group together on the leaderboard when their configuration
+  matches. Two scores from different flag sets are not a comparison.
+
+To read past runs back:
+
+```bash
+tool-eval-bench history          # recent runs
+tool-eval-bench leaderboard      # ranked, grouped by comparable configuration
+tool-eval-bench compare A B      # two persisted runs, side by side
+```
+
+Run IDs, the fingerprint, and the full artifact contract are documented under
+[Run ID and artifacts](#run-id-and-artifacts).
 
 ### Configuration
+
 
 **Local discovery mode** scans common localhost ports for a successful model-list
 response. Port numbers are hints only. Use `--base-url`, `--backend`, and
@@ -152,7 +205,8 @@ TOOL_EVAL_API_KEY=       # optional
 > `load_dotenv(override=False)` ensures that env vars set by a calling process
 > (e.g., an agent or sparkrun) are never overridden by a stale `.env` file.
 
-### Run the benchmark
+### More ways to run
+
 
 ```bash
 # Local discovery scans common localhost ports for a model-list response
@@ -209,6 +263,7 @@ tool-eval-bench run --model gemini-3-flash --api-key "$GEMINI_API_KEY" \
 ```
 
 ### CLI commands and common workflows
+
 
 | Command | Purpose |
 |---|---|
@@ -275,15 +330,18 @@ and you have validated it independently; this does not disable warm-up.
 
 ### Accuracy and throughput benchmarks
 
+
 Run GSM8K, MMLU, and IFEval through the same adapter, and measure prefill and generation
 speed against the same endpoint. See [docs/benchmarks.md](docs/benchmarks.md).
 
 ### Speculative decoding and MTP
 
+
 Measure acceptance rate, effective tokens per second, and speedup against a baseline,
 plus a live monitor. See [docs/speculative-decoding.md](docs/speculative-decoding.md).
 
 ### Hard Mode
+
 
 The standard 69-scenario benchmark covers *breadth* of tool-calling capabilities. Once a model scores 100% on the standard suite, `--hardmode` adds ceiling-breaking scenarios (Category P) designed to separate truly excellent models from merely good ones.
 
@@ -343,6 +401,7 @@ TC-78 and TC-79 record same-turn parallel tool calls as informational telemetry.
 
 ### Held-out scenario packs
 
+
 Every scenario in this repository is public — prompt, mock tool responses, and evaluator. That is what makes the benchmark auditable, and it is also its expiry date: a published benchmark eventually lands in training data, and a memorized answer looks exactly like a capable one.
 
 A **pack** is a directory of YAML scenarios — the declarative format loaded by `evals/yaml_loader.py`, with `scenarios/` in this repo as the worked example — kept outside the repo. Point a run at one to score against scenarios the model cannot have seen:
@@ -367,10 +426,50 @@ Scenario IDs must not collide with the public suite or with another pack; a coll
 
 ### Context pressure
 
+
 Pre-fill a share of the context window before each scenario to find where quality
 starts to slip. See [docs/context-pressure.md](docs/context-pressure.md).
 
+## Installing other ways
+
+### Development setup
+
+
+```bash
+git clone https://github.com/SeraphimSerapis/tool-eval-bench.git
+cd tool-eval-bench
+python -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev,perf]'
+```
+
+For contributor setup, quality checks, scenario/evaluator guidance, and the pull
+request checklist, see [CONTRIBUTING.md](CONTRIBUTING.md). Install the optional
+`[hf]` extra only when working on the GSM8K, MMLU, or IFEval dataset plugins.
+
+### Run with Docker
+
+
+Benchmark a server without installing Python locally. See
+[docs/docker.md](docs/docker.md).
+
+### Updating
+
+
+```bash
+# If installed via uv tool
+uv tool upgrade tool-eval-bench
+
+# If installed via pip (global or venv)
+pip install --upgrade git+https://github.com/SeraphimSerapis/tool-eval-bench.git
+
+# Development setup (pull + reinstall)
+git pull
+pip install -e '.[dev,perf]'
+```
+
 ## Programmatic API
+
 
 `tool-eval-bench` exposes a public Python API for headless/library invocation — useful for CI systems, orchestrators like [sparkrun](https://github.com/spark-arena/sparkrun), or any tool that needs to run benchmarks programmatically.
 
@@ -398,6 +497,7 @@ parameter and every returned field is documented in [docs/api.md](docs/api.md).
 
 ### Machine-readable args schema
 
+
 External tools can validate benchmark configuration against the published schema:
 
 ```python
@@ -412,6 +512,7 @@ for command, metadata in schema["commands"].items():
 ```
 
 ### Subprocess mode
+
 
 For subprocess-based integration, use `--json-file` to write results to a file and parse JSONL progress events from stderr:
 
@@ -429,7 +530,8 @@ Progress events on stderr:
 The example shows a standard-suite run. A full Hard Mode run reports `total: 88`
 in its scenario progress events.
 
-## How It Works
+## How it works
+
 
 For every scenario, the model receives:
 1. A shared system prompt
@@ -447,10 +549,12 @@ The orchestrator then:
 
 ## Architecture
 
+
 For a detailed architecture reference with dependency rules, data-flow diagrams,
 and extension-point guides, see [docs/architecture.md](docs/architecture.md).
 
-## Run ID and Artifacts
+## Run ID and artifacts
+
 
 Each benchmark execution gets a unique ID:
 `YYYY-MM-DDTHH-MM-SS.ffffffZ_<short_hash>`. Stored tool-evaluation configs also
@@ -480,6 +584,7 @@ Artifacts:
 
 ### Labeling runs (`--label`)
 
+
 `--label "..."` attaches an arbitrary, free-form string to an execution. Every
 report that execution generates carries it: a `Label` row in the tool-eval Run
 Context table, a `- **Label**:` header line in the plugin / throughput /
@@ -502,6 +607,7 @@ is purely an annotation — it does not affect the run ID or
 
 ## Backends
 
+
 OpenAI-compatible backends must expose `/v1/chat/completions` and support the
 `tools` and `tool_choice` request fields used by the tool-call scenarios:
 
@@ -514,6 +620,7 @@ OpenAI-compatible backends must expose `/v1/chat/completions` and support the
 The adapter sends real `tools` + `tool_choice` in the request and parses `tool_calls` from the response. There is no prompt hacking or JSON regex matching. It accepts SSE `data:` fields with or without the optional space and also parses a normal JSON 200 response when an endpoint ignores `stream=true`. It defaults to the widely supported `max_tokens` field; if an endpoint explicitly rejects that field and requests `max_completion_tokens`, the adapter retries once and remembers the choice for that endpoint and model. This capability check is response-driven rather than tied to provider or model names.
 
 ### LiteLLM / Model Routers
+
 
 LiteLLM (and similar routers) expose multiple models behind a single endpoint. tool-eval-bench handles this automatically:
 
@@ -536,6 +643,7 @@ tool-eval-bench compare --report runs/.../model_a_summary.md runs/.../model_b_su
 
 ### Backend Compatibility Notes
 
+
 | Behavior | vLLM | SGLang | LiteLLM | llama.cpp |
 |---|---|---|---|---|
 | `/v1/models` discovery | ✅ | ✅ | ✅ | ⚠️ May be at `/models` |
@@ -552,6 +660,7 @@ tool-eval-bench compare --report runs/.../model_a_summary.md runs/.../model_b_su
 
 ## CI
 
+
 ```bash
 .venv/bin/ruff check .
 .venv/bin/ruff format --check .
@@ -561,6 +670,7 @@ env -u FORCE_COLOR .venv/bin/python -m pytest tests/ \
 ```
 
 ### Optional live canary
+
 
 The repository includes a deployment-relevant live canary covering ordinary
 tool use, required-parameter enforcement, sleeper-injection resistance, and
@@ -583,7 +693,8 @@ snapshots. After an intentional interface change, regenerate them with
 `.venv/bin/python scripts/update_compat_snapshots.py`. CI also enforces targeted
 coverage floors for critical CLI, report-comparison, and benchmark-runner modules.
 
-## Related Work
+## Related work
+
 
 | Benchmark | Focus | How tool-eval-bench differs |
 |---|---|---|
@@ -597,5 +708,6 @@ coverage floors for critical CLI, report-comparison, and benchmark-runner module
 **Key differentiators:** Local-first (no cloud APIs required), deterministic scoring, multi-trial statistics with Pass@k/Pass^k, integrated throughput measurement, token efficiency tracking, and safety-critical failure detection with rating caps.
 
 ## Credits
+
 
 Scenario methodology adapted from [ToolCall-15](https://github.com/stevibe/ToolCall-15) by [stevibe](https://x.com/stevibe) (MIT License).
