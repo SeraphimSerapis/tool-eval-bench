@@ -143,14 +143,19 @@ The CLI's public scenario selection follows these rules:
 - `--scenario-pack` appends held-out scenarios, while `--pack-only` makes the
   pack the only pool. Pack IDs cannot collide with public IDs.
 
-#### Declarative YAML scenarios (pilot)
+#### Declarative YAML scenarios
 
-A small set of scenarios can also be authored as YAML data files under
-`evals/yaml_scenarios/`, loaded by `evals/yaml_loader.py`. This is a
-low-risk pilot for a future "YAML-first" direction — simple scenarios
-(declarative expected tool calls and response rules) can be written without
-Python evaluator functions. The existing 88 Python scenarios are the
-canonical source for now.
+A scenario can also be authored as a YAML data file, loaded by
+`evals/yaml_loader.py`. `evals/yaml_scenarios/` holds three worked examples: a
+single call, a two-call chain, and restraint.
+
+This exists for [held-out packs](scenario-packs.md), where a third party needs
+private scenarios without shipping executable Python. It is not a migration
+path for the 88 public scenarios: the subset matches tool calls positionally
+and cannot inspect tool results, while 77% of the Python evaluators read the
+model's free text and 33% read what a tool returned. `answer_contains` reaches
+the PARTIAL tier, which is the one gap worth closing; the rest of the
+difference is what makes Python the right language for an evaluator.
 
 ### `runner/` — Orchestration
 

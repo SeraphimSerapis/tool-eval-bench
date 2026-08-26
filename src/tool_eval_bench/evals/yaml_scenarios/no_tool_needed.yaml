@@ -1,0 +1,15 @@
+id: YAML-03
+title: Answer without a tool
+category: E
+difficulty: 1
+description: >
+  Restraint. An empty expected_tool_calls list means any tool call fails, and
+  answer_contains checks the model actually answered.
+user_message: How many minutes are in a day? Answer with the number only.
+expected_tool_calls: []
+tool_responses:
+  calculator:
+    - response:
+        result: 1440
+answer_contains:
+  - "1440"

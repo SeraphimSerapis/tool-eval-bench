@@ -148,9 +148,33 @@ tool-eval-bench run --scenarios TC-89 --dry-run
 ## The YAML alternative
 
 A lookup-shaped scenario can skip Python entirely. `evals/yaml_loader.py` loads a declarative
-subset, and `evals/yaml_scenarios/weather.yaml` is the worked example. The subset is deliberately
-narrow: it matches tool calls positionally, cannot inspect the model's free text or the tool
-results, and scores only pass or fail, so it cannot express the middle tier.
+subset; `evals/yaml_scenarios/` holds three worked examples covering a single call, a two-call
+chain, and restraint.
+
+```yaml
+id: YAML-04
+title: Stock price lookup
+category: A
+difficulty: 1
+user_message: What is AAPL trading at?
+expected_tool_calls:
+  - tool: get_stock_price
+    arguments:
+      ticker: AAPL
+tool_responses:
+  get_stock_price:
+    - match:
+        ticker: AAPL
+      response:
+        price: 214.30
+answer_contains:
+  - "214.30"
+```
+
+`answer_contains` reaches the middle tier: right tool calls but an answer that never states the
+result scores PARTIAL. Everything else about the subset is deliberately narrow. It matches tool
+calls positionally, cannot inspect tool results, and has no conditionals, so a scenario that needs
+to react to what a tool returned belongs in Python.
 
 Its real job is [held-out packs](scenario-packs.md), where a third party needs to author private
 scenarios without shipping executable Python.

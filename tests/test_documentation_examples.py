@@ -19,6 +19,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioStatus,
     ToolCallRecord,
 )
+from tool_eval_bench.evals.yaml_loader import load_yaml_scenarios
 
 GUIDE = Path(__file__).resolve().parents[1] / "docs" / "adding-a-scenario.md"
 
@@ -30,6 +31,37 @@ def example() -> dict:
     namespace: dict = {}
     exec(compile(block.group(1), str(GUIDE), "exec"), namespace)  # noqa: S102
     return namespace
+
+
+@pytest.fixture
+def yaml_example(tmp_path: Path) -> ScenarioDefinition:
+    block = re.search(r"```yaml\n(.*?)```", GUIDE.read_text(encoding="utf-8"), re.S)
+    assert block is not None, "the guide must keep a YAML example"
+    (tmp_path / "example.yaml").write_text(block.group(1), encoding="utf-8")
+    return load_yaml_scenarios(tmp_path)[0]
+
+
+def test_the_yaml_example_loads(yaml_example: ScenarioDefinition) -> None:
+    assert yaml_example.difficulty in {1, 2, 3, 4, 5}
+    assert yaml_example.category is not None
+
+
+def test_the_yaml_example_shows_the_partial_tier(yaml_example: ScenarioDefinition) -> None:
+    """The guide claims answer_contains reaches PARTIAL. Prove it does."""
+    priced = ToolCallRecord(
+        id="c1", name="get_stock_price", arguments={"ticker": "AAPL"}, raw_arguments="{}", turn=1
+    )
+
+    complete = ScenarioState()
+    complete.tool_calls.append(priced)
+    complete.final_answer = "AAPL is at 214.30."
+
+    silent = ScenarioState()
+    silent.tool_calls.append(priced)
+    silent.final_answer = "I checked."
+
+    assert yaml_example.evaluate(complete).status is ScenarioStatus.PASS
+    assert yaml_example.evaluate(silent).status is ScenarioStatus.PARTIAL
 
 
 @pytest.fixture

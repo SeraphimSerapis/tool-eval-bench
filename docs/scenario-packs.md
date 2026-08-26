@@ -7,7 +7,7 @@ summaries, and traces are withheld, so publishing a number does not burn the pac
 
 Every scenario in this repository is public — prompt, mock tool responses, and evaluator. That is what makes the benchmark auditable, and it is also its expiry date: a published benchmark eventually lands in training data, and a memorized answer looks exactly like a capable one.
 
-A **pack** is a directory of YAML scenarios — the declarative format loaded by `evals/yaml_loader.py`, with `scenarios/` in this repo as the worked example — kept outside the repo. Point a run at one to score against scenarios the model cannot have seen:
+A **pack** is a directory of YAML scenarios — the declarative format loaded by `evals/yaml_loader.py`, with `evals/yaml_scenarios/` in this repo as three worked examples — kept outside the repo. Point a run at one to score against scenarios the model cannot have seen:
 
 ```bash
 # Public suite + a private pack (69 + N scenarios)

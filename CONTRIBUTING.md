@@ -148,8 +148,9 @@ drives the conversation: `tool_choice_after_first_call`,
 dataclass in `domain/scenarios.py` before reaching for one.
 
 Simple lookup-shaped scenarios can skip Python entirely and be written as YAML
-under `evals/yaml_scenarios/`. See `evals/yaml_loader.py` for the supported
-subset, which is intentionally narrower than the Python API.
+under `evals/yaml_scenarios/`, which holds three worked examples. The subset is
+intentionally narrower than the Python API; see
+[docs/adding-a-scenario.md](docs/adding-a-scenario.md) for what it covers.
 
 For evaluator changes in particular:
 
