@@ -50,8 +50,12 @@ graph TD
 | `storage/` | domain | adapters, runner, cli, evals |
 | `application/` | domain, evals, runner, adapters, storage, utils | cli |
 | `adapters/` | domain ports, utils | storage, application, runner, cli, evals |
-| `cli/` | everything (delivery layer) | — |
+| `cli/` | everything else (delivery layer) | `storage.db` |
 | `utils/` | stdlib, domain | storage, adapters, runner, cli, evals |
+
+`cli/` may format reports through `storage.reports`, which is a renderer, but must not open the
+database. Connection lifetime, query shape, and the write-then-persist ordering belong to
+`application/`; `application/run_queries.py` holds the reads the delivery layer needs.
 
 These rules describe first-party layer imports. Measurement runners such as
 throughput, speculative decoding, and context pressure use the
@@ -199,6 +203,8 @@ Shared infrastructure:
 |---|---|
 | `service.py` | `BenchmarkService` — composes concrete adapters, scenario orchestration, SQLite persistence, and Markdown reporting |
 | `finalization.py` | Completes interrupted or checkpointed runs and builds the final persisted summary |
+| `run_config.py` | `RunSettings` and the persisted config, including the `config_fingerprint` that decides which runs are comparable |
+| `run_queries.py` | Read queries against stored runs, each owning the repository's lifetime |
 
 ### `storage/` — Persistence
 

@@ -1,0 +1,1 @@
+Six CLI modules opened their own `RunRepository` to read stored runs, two of them without `try`/`finally`, so an early return leaked a WAL connection. Those reads now go through `application/run_queries.py`, and the architecture test forbids `cli` from importing `storage.db` at all.
