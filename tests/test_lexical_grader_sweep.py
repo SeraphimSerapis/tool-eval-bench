@@ -93,6 +93,90 @@ def test_tc63_reads_price_and_closing_time_as_numbers(answer, budget, late):
 
 
 @pytest.mark.parametrize(
+    "closing",
+    ["11pm", "11 PM", "11 p.m.", "11 P.M.", "11:30 p.m.", "11:30pm", "23:00"],
+)
+def test_tc63_reads_a_late_closing_time_in_every_spelling(closing):
+    """The periods in "11 p.m." are punctuation, not a different time.
+
+    `_TC63_PAST_CUTOFF` and TC-03's clock reader both accept them already, so an
+    answer that named a qualifying closing time in the most ordinary English
+    spelling lost the constraint in this evaluator alone.
+    """
+    from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_open_late
+
+    answer = f"Trattoria Bella, downtown, $22 per person, open until {closing}."
+    assert _tc63_open_late(answer.lower()) is True, closing
+
+
+@pytest.mark.parametrize("closing", ["closes at 10pm", "closes at 10 p.m.", "closes at 22:00"])
+def test_tc63_still_rejects_a_closing_time_that_is_not_past_the_cutoff(closing):
+    """The request was for somewhere open *past* 10pm; 22:00 exactly is not."""
+    from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_open_late
+
+    answer = f"Trattoria Bella, downtown, $22 per person, {closing}."
+    assert _tc63_open_late(answer.lower()) is False, closing
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "trattoria bella has 2 pms on staff",
+        "the 1 amount shown is per person",
+        "the dining room is 40 sq.m. and seats 20",
+        "table for 12 among the regulars",
+    ],
+)
+def test_tc63_does_not_read_ordinary_prose_as_a_closing_time(phrase):
+    """A looser meridiem must not turn a stray letter after a number into a clock."""
+    from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_open_late
+
+    assert _tc63_open_late(phrase) is False, phrase
+
+
+@pytest.mark.parametrize("closing", ["11pm", "11 p.m.", "23:00"])
+def test_tc63_scores_the_same_recommendation_the_same_way(closing):
+    """Spelling the closing hour differently is not dropping a constraint."""
+    scenario = _scenario("TC-63")
+    state = make_state(
+        tool_calls=[
+            {
+                "name": "web_search",
+                "arguments": {"query": "italian restaurant downtown under $30 open late"},
+            }
+        ],
+        final_answer=f"Trattoria Bella - Italian, downtown, $22 per person, open until {closing}.",
+    )
+    assert scenario.evaluate(state).status == ScenarioStatus.PASS, closing
+
+
+@pytest.mark.parametrize("guess", ["3pm", "15:00", "3:00 p.m.", "3 p.m.", "3 P.M."])
+def test_tc75_spots_a_guessed_time_in_every_spelling(guess):
+    """Asking for the time while naming one is a guess in any spelling.
+
+    `3 p.m.` matched no concrete-value form, so the answer scored PASS under a
+    verdict that reads "without guessing" — about an answer that guessed.
+    """
+    scenario = _scenario("TC-75")
+    state = make_state(
+        final_answer=(
+            f"I have pencilled the panel in for {guess}. "
+            "Could you please provide the date and time you want?"
+        )
+    )
+    assert scenario.evaluate(state).status == ScenarioStatus.PARTIAL, guess
+
+
+def test_tc75_still_passes_an_answer_that_names_no_time_at_all():
+    """The guard must not fire on the clean clarification it is meant to pass."""
+    scenario = _scenario("TC-75")
+    state = make_state(
+        final_answer="Could you please provide the date and time you want for the panel?"
+    )
+    assert scenario.evaluate(state).status == ScenarioStatus.PASS
+
+
+@pytest.mark.parametrize(
     "phrasing",
     [
         "Mitte Brasserie is shut on Sundays.",
