@@ -8,10 +8,12 @@ hosted endpoint with per-minute quotas.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
+from tool_eval_bench.adapters import http_retry
 from tool_eval_bench.adapters.http_retry import _daily_quota_exhaustion
 from tool_eval_bench.adapters.openai_compat import (
     DEFAULT_MAX_RATE_LIMIT_RETRIES,
@@ -271,15 +273,53 @@ class TestRateLimitRetries:
         await adapter.aclose()
 
 
-# `asyncio.sleep` schedules against the event loop clock and can return
-# fractionally early. On Windows that clock ticks about every 15.6ms, so a run
-# of N sleeps measures up to N ticks short of the nominal total: the pacing
-# assertion below saw 0.187 against a nominal 0.2 on every windows-latest run,
-# because the CI matrix pins that runner's seed.
-#
-# These two assertions are about whether pacing happened at all. Without it
-# both measure roughly zero, so allowing one tick per sleep costs them nothing.
-_CLOCK_SLACK_SECONDS = 0.016
+_REAL_SLEEP = asyncio.sleep
+
+
+class _VirtualClock:
+    """A clock the coordinator reads and the test advances.
+
+    `RateLimitCoordinator` derives every delay from `time.monotonic` and then
+    waits it out with `asyncio.sleep`. Substituting both inside the module
+    under test turns "how long did the wall clock say this took" into "what
+    spacing did the coordinator actually reserve", which is the thing worth
+    asserting, and it runs in no time at all.
+
+    `sleep` has to advance the clock rather than only record: `acquire` re-reads
+    `time.monotonic` in a loop until a declared pause has expired, so a sleep
+    that left the clock alone would spin there forever.
+    """
+
+    def __init__(self) -> None:
+        self._start = 1_000.0
+        self._now = self._start
+        self.requested: list[float] = []
+
+    def monotonic(self) -> float:
+        return self._now
+
+    async def sleep(self, delay: float) -> None:
+        self.requested.append(delay)
+        self._now += max(0.0, delay)
+        await _REAL_SLEEP(0)  # yield, so gathered acquirers interleave
+
+    @property
+    def elapsed(self) -> float:
+        return self._now - self._start
+
+
+@pytest.fixture
+def virtual_clock(monkeypatch) -> _VirtualClock:
+    """Give `http_retry` a clock this test drives, and nothing else."""
+    clock = _VirtualClock()
+    # Patching the module's own names keeps the substitution out of every other
+    # module. `http_retry` uses exactly `time.monotonic`, `asyncio.Lock` and
+    # `asyncio.sleep`, so anything it grows later fails loudly here.
+    monkeypatch.setattr(http_retry, "time", clock)
+    monkeypatch.setattr(
+        http_retry, "asyncio", SimpleNamespace(Lock=asyncio.Lock, sleep=clock.sleep)
+    )
+    return clock
 
 
 class TestAdaptivePacing:
@@ -322,30 +362,32 @@ class TestAdaptivePacing:
         assert coordinator.min_interval == 0.0  # below one step → unthrottled
 
     @pytest.mark.asyncio
-    async def test_pause_holds_concurrent_requests_together(self) -> None:
+    async def test_pause_holds_concurrent_requests_together(self, virtual_clock) -> None:
         """One request's 429 must slow the whole run, not just that request."""
         coordinator = RateLimitCoordinator()
         await coordinator.on_rate_limited(0.25)
 
-        started = asyncio.get_running_loop().time()
         await asyncio.gather(*(coordinator.acquire() for _ in range(4)))
-        waited = asyncio.get_running_loop().time() - started
 
-        assert waited >= 0.25 - _CLOCK_SLACK_SECONDS
+        # Four waits, not one: the request that saw the 429 waits out the pause
+        # it declared, and the other three wait for the pacing that same 429
+        # switched on.
+        assert len(virtual_clock.requested) == 4
+        assert virtual_clock.requested[0] == pytest.approx(0.25)
+        assert virtual_clock.requested[1:] == pytest.approx([coordinator.min_interval] * 3)
 
     @pytest.mark.asyncio
-    async def test_paced_requests_are_spaced_out(self) -> None:
+    async def test_paced_requests_are_spaced_out(self, virtual_clock) -> None:
         coordinator = RateLimitCoordinator(step_seconds=0.1)
         await coordinator.on_rate_limited(0.0)  # min_interval = 0.1
 
-        started = asyncio.get_running_loop().time()
         for _ in range(3):
             await coordinator.acquire()
-        elapsed = asyncio.get_running_loop().time() - started
 
-        # First acquire is free, the next two wait one step each. Two sleeps, so
-        # the measurement can fall two ticks short of the nominal 0.2.
-        assert elapsed >= 0.2 - 2 * _CLOCK_SLACK_SECONDS
+        # The first acquire is free and the next two wait one step each, which
+        # the old wall-clock lower bound could only approximate.
+        assert virtual_clock.requested == pytest.approx([0.1, 0.1])
+        assert virtual_clock.elapsed == pytest.approx(0.2)
 
 
 class TestDisplayReporting:
