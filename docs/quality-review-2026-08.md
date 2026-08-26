@@ -138,7 +138,7 @@ the oversized functions and the duplication below, and it is why `dispatch.py:ma
 |---|---|---|
 | ~550 lines | `cli/plugin_runners.py`: `_run_gsm8k_benchmark` (273), `_run_mmlu_benchmark` (304), `_run_ifeval_benchmark` (280) | Pairwise line similarity of 77%, 71%, and 67%. All three follow build adapter, nested `async def run()`, progress display, collect, finalize. Each takes 9 parameters and holds a nested `run()` of about 140 lines. |
 | ~300 lines | `compare_reports/summary.py` against `tool_eval.py` | 61 duplicated 8-line blocks, seven identical runs of 15 lines or more. Both independently define `_r`, `_tv`, `esc`, `sign`, `pct_cls`, `diff_display`, `short_label`, `dname`, and a byte-identical 10-line `km()`. |
-| moderate | `plugins/{gsm8k,mmlu,ifeval}/plugin.py` `render_report_section` (154, 150, 143) | Shared Markdown table scaffolding |
+| ~~moderate~~ | `plugins/{gsm8k,mmlu,ifeval}/plugin.py` `render_report_section` (154, 150, 143) | **Reassessed: leave alone.** Measured at 28% to 56% pairwise, against 67% to 77% for the runners. Each renders genuinely different content (a single accuracy figure, per-category tables, constraint breakdowns). A shared abstraction here would cost more than the duplication does. |
 
 The plugin triplication is the highest-value fix in the codebase. `domain/plugin.py` already
 defines the `BenchmarkPlugin` ABC and `plugins/registry.py` already dispatches on it. The CLI layer
