@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from tests.conftest import requires_termios
 from tool_eval_bench.cli import spec_live_display as display
 
 
@@ -151,6 +152,7 @@ async def test_second_signal_forces_nonzero_exit(monkeypatch):
 
 
 @pytest.mark.asyncio
+@requires_termios
 async def test_signal_during_idle_wait_exits_promptly(monkeypatch):
     """A signal arriving during the idle poll wait (not during a scrape) must
     unblock ``_check_stdin`` via the ``stop_event`` watcher within the loop

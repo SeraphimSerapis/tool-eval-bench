@@ -52,10 +52,17 @@ async def test_the_loader_runs_off_the_event_loop(
 async def test_a_slow_download_does_not_stall_other_tasks(
     module: Any, name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A short task started alongside the download must finish on its own schedule.
+
+    Measured on when the ticker finishes rather than on total wall clock: a
+    blocked loop cannot run the ticker until the download returns, so the two
+    outcomes differ by the whole download rather than by a fraction of it.
+    That margin is what keeps this from flaking on a loaded CI runner.
+    """
     import time
 
-    download_seconds = 0.3
-    tick_seconds = 0.2
+    download_seconds = 0.4
+    tick_seconds = 0.05
 
     def slow(*args: object, **kwargs: object) -> list:
         time.sleep(download_seconds)
@@ -63,18 +70,22 @@ async def test_a_slow_download_does_not_stall_other_tasks(
 
     monkeypatch.setattr(module, "load_dataset", slow)
     plugin = module_plugin(module)
+    started = time.monotonic()
+    ticker_finished: list[float] = []
 
     async def loading() -> None:
         with pytest.raises(_Stop):
             await plugin.run(_UnusedAdapter(), model="m", base_url="http://localhost:1")
 
-    started = time.monotonic()
-    await asyncio.gather(loading(), asyncio.sleep(tick_seconds))
-    elapsed = time.monotonic() - started
+    async def ticker() -> None:
+        await asyncio.sleep(tick_seconds)
+        ticker_finished.append(time.monotonic() - started)
 
-    assert elapsed < (download_seconds + tick_seconds) * 0.8, (
-        f"{name} blocked the loop: {elapsed:.3f}s for a {download_seconds}s download "
-        f"alongside {tick_seconds}s of other work"
+    await asyncio.gather(loading(), ticker())
+
+    assert ticker_finished[0] < download_seconds, (
+        f"{name} blocked the loop: a {tick_seconds}s task finished after "
+        f"{ticker_finished[0]:.3f}s, held up by a {download_seconds}s download"
     )
 
 

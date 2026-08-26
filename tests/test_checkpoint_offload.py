@@ -37,29 +37,34 @@ async def test_async_checkpoint_round_trips_like_the_sync_one(repo: RunRepositor
 async def test_a_slow_write_overlaps_with_other_work(
     repo: RunRepository, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A blocking write would serialise against the ticker instead of overlapping."""
-    write_seconds = 0.3
-    tick_seconds = 0.2
+    """A short task started alongside the write must finish on its own schedule.
+
+    Measured on when the ticker finishes rather than on total wall clock: a
+    blocked loop cannot run it until the write returns, so the two outcomes
+    differ by the whole write rather than by a fraction of it.
+    """
+    write_seconds = 0.4
+    tick_seconds = 0.05
 
     def slow_write(run_id: str, result: dict) -> None:
         time.sleep(write_seconds)
 
     monkeypatch.setattr(repo, "checkpoint_scenario_result", slow_write)
+    started = time.monotonic()
+    ticker_finished: list[float] = []
 
     async def ticker() -> None:
         await asyncio.sleep(tick_seconds)
+        ticker_finished.append(time.monotonic() - started)
 
-    started = time.monotonic()
     await asyncio.gather(
         repo.acheckpoint_scenario_result("R1", {"scenario_id": "TC-01"}),
         ticker(),
     )
-    elapsed = time.monotonic() - started
 
-    # Overlapped, this takes about max(0.3, 0.2). Blocking, it takes their sum.
-    assert elapsed < (write_seconds + tick_seconds) * 0.8, (
-        f"the write blocked the loop: {elapsed:.3f}s for a {write_seconds}s write "
-        f"alongside {tick_seconds}s of other work"
+    assert ticker_finished[0] < write_seconds, (
+        f"the write blocked the loop: a {tick_seconds}s task finished after "
+        f"{ticker_finished[0]:.3f}s, held up by a {write_seconds}s write"
     )
 
 

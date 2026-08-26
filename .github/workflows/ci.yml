@@ -80,12 +80,15 @@ jobs:
         run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
 
       - name: Ruff lint
+        if: matrix.os == 'ubuntu-latest'
         run: uv run ruff check .
 
       - name: Ruff format
+        if: matrix.os == 'ubuntu-latest'
         run: uv run ruff format --check .
 
       - name: Mypy
+        if: matrix.os == 'ubuntu-latest'
         run: uv run mypy
 
       - name: Pytest
@@ -127,7 +130,9 @@ jobs:
       - name: Run hooks that do not need the project venv
         uses: pre-commit/action@v3.0.1
         with:
-          extra_args: --all-files ruff ruff-format
+          # Every default-stage hook. The mypy and pytest hooks declare
+          # `stages: [pre-push]` and need the project venv, so they skip here.
+          extra_args: --all-files
 
   dependency-audit:
     runs-on: ubuntu-latest
@@ -141,11 +146,20 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.10.8'
+
       - name: Audit dependencies for known vulnerabilities
+        # Audits the locked dependency set rather than an installed environment.
+        # That is what users resolve, and it sidesteps --strict failing on the
+        # project itself, which is not published to PyPI.
         run: |
+          uv export --frozen --no-emit-project --no-dev \
+            --format requirements.txt -o requirements-audit.txt
           python -m pip install --upgrade pip pip-audit
-          python -m pip install -e .
-          pip-audit --strict --desc
+          pip-audit --strict --desc -r requirements-audit.txt
 
   docker-build:
     runs-on: ubuntu-latest
@@ -217,7 +231,7 @@ jobs:
 
       - name: Test llama-benchy integration
         run: >
-          uv run pytest --tb=short -q tests/test_llama_benchy.py
+          pytest --tb=short -q tests/test_llama_benchy.py
           -m "not live" --randomly-seed=181081
           --cov=tool_eval_bench.runner.llama_benchy
           --cov-config=/dev/null --cov-report=term-missing --cov-fail-under=95

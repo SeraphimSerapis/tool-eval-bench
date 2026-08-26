@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from rich.console import Console
 
+from tests.conftest import requires_termios
 from tool_eval_bench.cli import spec_live_display as display
 from tool_eval_bench.runner.spec_live import MetricsSnapshot
 
@@ -230,6 +231,7 @@ class _FakeStdin:
         return self._char
 
 
+@requires_termios
 class TestReadKeypress:
     """Ctrl+R resets the session counters, but only where a tty exists."""
 

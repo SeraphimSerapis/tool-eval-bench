@@ -6,16 +6,25 @@ duplicated across 6+ test files.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 import httpx
+import pytest
 
 from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
     ToolResultRecord,
+)
+
+#: `termios` and `tty` are POSIX-only. The keypress reader returns None without
+#: them by design, so tests that drive it have nothing to assert on Windows.
+requires_termios = pytest.mark.skipif(
+    importlib.util.find_spec("termios") is None,
+    reason="termios and tty are POSIX-only",
 )
 
 
