@@ -65,6 +65,15 @@ not a bounded benchmark measurement request.
 
 ## Module Reference
 
+### Package Root
+
+| Module | Purpose |
+|---|---|
+| `api.py` | The public programmatic entry point. `run_benchmark()` is the supported integration surface; see [api.md](api.md) |
+| `schema.py` | Machine-readable CLI argument schema and output schema versioning |
+| `__main__.py` | `python -m tool_eval_bench` entry point |
+| `__init__.py` | Version resolution and a convenience re-export of `run_benchmark` |
+
 ### `domain/` — Core Types
 
 The domain layer defines all data structures and contracts. It has zero
@@ -307,6 +316,11 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md#adding-a-new-scenario).
 2. Implement `BenchmarkPlugin` from `domain/plugin.py` using the backend port in `domain/adapters.py`
 3. Register in `plugins/registry.py`
 4. Add CLI flags in `cli/legacy_parser.py` and register them in `schema.py`
+5. Add the subcommand metadata and flag translation rules in `cli/command_registry.py`, or the
+   plugin gets a legacy flat flag and no `plugin <name>` subcommand
+6. Wire the run path in `cli/plugin_runners.py` and the finalization path in
+   `cli/plugin_lifecycle.py`
+7. Regenerate the committed compatibility snapshots with `scripts/update_compat_snapshots.py`
 
 ### Adding a New Backend
 OpenAI-compatible backends use `OpenAICompatibleAdapter`. To support a new backend:
