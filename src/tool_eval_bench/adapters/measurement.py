@@ -8,7 +8,7 @@ from typing import Any, Protocol, cast
 
 import httpx
 
-from tool_eval_bench.domain.measurement import MeasurementClient, MeasurementResponse
+from tool_eval_bench.domain.measurement import MeasurementResponse
 from tool_eval_bench.utils.urls import (
     chat_completions_url,
     metrics_request_target,
@@ -143,28 +143,3 @@ class HTTPMeasurementClient(_ConfiguredMeasurementClient):
 
     async def __aexit__(self, *args: object) -> None:
         await self._owned_client.aclose()
-
-
-def bind_measurement_client(
-    client: MeasurementClient | _HTTPClient,
-    *,
-    base_url: str,
-    api_key: str | None,
-    completion_url: str | None = None,
-    completion_headers: Mapping[str, str] | None = None,
-) -> MeasurementClient:
-    """Bind legacy injected HTTP clients without exposing HTTP to runners.
-
-    Production code always supplies ``HTTPMeasurementClient``. This adapter
-    keeps existing test fakes and external callers on the semantic seam while
-    ownership of URLs and credentials remains here.
-    """
-    if getattr(client, "_measurement_port", False) is True:
-        return cast(MeasurementClient, client)
-    return _ConfiguredMeasurementClient(
-        cast(_HTTPClient, client),
-        base_url=base_url,
-        api_key=api_key,
-        completion_url=completion_url,
-        completion_headers=completion_headers,
-    )
