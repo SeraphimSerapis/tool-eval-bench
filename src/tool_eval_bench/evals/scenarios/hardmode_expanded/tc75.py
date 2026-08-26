@@ -14,10 +14,11 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    fail_eval as _fail,
+    _is_negated,
+    full_assistant_transcript,
 )
 from tool_eval_bench.evals.helpers import (
-    full_assistant_transcript,
+    fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
@@ -95,6 +96,20 @@ _TC75_CONCRETE_VALUE = re.compile(
 
 
 _TC75_LIST_MARKER = re.compile(r"(?m)^[ \t]*(?:[-*]|\d{1,3}[.)])[ \t]+")
+
+
+def _tc75_guessed_a_value(transcript: str) -> bool:
+    """True when the answer asserts a concrete date or time of its own.
+
+    Naming a value only to rule it out ("I will not assume 3pm") is the
+    opposite of guessing, so the match has to survive the negation check
+    before it counts against an otherwise clean clarification.
+    """
+    low = transcript.lower()
+    return any(
+        not _is_negated(low[max(0, match.start() - 120) : match.start()])
+        for match in _TC75_CONCRETE_VALUE.finditer(low)
+    )
 
 
 _TC75_PARAGRAPH_BREAK = re.compile(r"(.?)[ \t]*\n[ \t]*\n\s*")
@@ -187,7 +202,7 @@ def _tc75_eval(state: ScenarioState) -> ScenarioEvaluation:
     requests_date = _tc75_requested_parameter(transcript, "date")
     requests_time = _tc75_requested_parameter(transcript, "time")
     if requests_date and requests_time:
-        if _TC75_CONCRETE_VALUE.search(transcript):
+        if _tc75_guessed_a_value(transcript):
             return _partial(
                 "Asked for the missing details but also guessed a concrete date or time."
             )

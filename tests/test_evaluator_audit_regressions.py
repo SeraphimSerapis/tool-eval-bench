@@ -1432,3 +1432,108 @@ def test_tc13_retry_accepts_exact_document_name_without_file_id():
     result = scenario.evaluate(state)
     assert result.status == ScenarioStatus.PASS
     assert result.summary == "Retried after the empty result and recovered."
+
+
+# ---------------------------------------------------------------------------
+# Negation scope
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "the reading is not ",
+        "it never reached ",
+        "it doesn't equal ",
+        "i could not find a price of ",
+        "we found no price of ",
+        "neither option costs ",
+    ],
+)
+def test_is_negated_still_catches_a_negation_that_governs_the_value(prefix):
+    """Clausal negation carries across the predicate; a determiner over its own noun."""
+    from tool_eval_bench.evals.helpers import _is_negated
+
+    assert _is_negated(prefix) is True, prefix
+
+
+@pytest.mark.parametrize(
+    ("prefix", "why"),
+    [
+        ("500 k is already kelvin, and without rounding it is ", "without governs rounding"),
+        ("there are no conflicts at ", "no governs conflicts"),
+        ("the price without tax is ", "without governs tax"),
+        ("there is no rain today berlin is ", "no governs rain"),
+    ],
+)
+def test_is_negated_ignores_a_negation_that_governs_something_else(prefix, why):
+    """A determiner or preposition reaches only its own complement.
+
+    Counting any negation token in the window made "without rounding it is
+    440.33 F" read as a denial of the conversion it states.
+    """
+    from tool_eval_bench.evals.helpers import _is_negated
+
+    assert _is_negated(prefix) is False, why
+
+
+def test_tc35_reads_a_conversion_stated_without_rounding_as_a_conversion():
+    """The wrong-unit detector must see a conversion its own sentence asserts."""
+    scenario = _SCENARIOS["TC-35"]
+    state = make_state(final_answer="500 K is already Kelvin, and without rounding it is 440.33 F.")
+
+    assert scenario.evaluate(state).status is not ScenarioStatus.PASS
+
+
+# ---------------------------------------------------------------------------
+# TC-75: naming a value to rule it out is not guessing
+# ---------------------------------------------------------------------------
+
+
+_TC75_REQUEST = " Could you please provide the date and time you want?"
+
+
+@pytest.mark.parametrize(
+    "ruled_out",
+    [
+        "I will not assume 3pm.",
+        "I will not assume 3 p.m.",
+        "I won't guess 3pm.",
+        "I am not assuming 2026-01-05.",
+    ],
+)
+def test_tc75_naming_a_value_only_to_rule_it_out_is_not_a_guess(ruled_out):
+    """Refusing to assume a time is the opposite of guessing one."""
+    scenario = _SCENARIOS["TC-75"]
+    state = make_state(final_answer=ruled_out + _TC75_REQUEST)
+
+    result = scenario.evaluate(state)
+    assert result.status is ScenarioStatus.PASS, ruled_out
+    assert result.summary == "Asked for the missing interview date and time without guessing."
+
+
+@pytest.mark.parametrize(
+    "guess",
+    [
+        "I have pencilled the panel in for 3pm.",
+        "I have pencilled the panel in for 3 p.m.",
+        "The interview is on 2026-01-05.",
+        # The negation here governs "conflicts". The answer still picked a time.
+        "There are no conflicts at 3pm, so I have pencilled the panel in there.",
+        "There are no conflicts at 3 p.m., so I have pencilled it in there.",
+    ],
+)
+def test_tc75_still_spots_a_guess_a_neighbouring_negation_does_not_govern(guess):
+    """Routing the match through the negation check must not open this hole.
+
+    A negation token sitting in the same clause as the guess is exactly the
+    case that made this change look unsafe before the scope rule landed.
+    """
+    scenario = _SCENARIOS["TC-75"]
+    state = make_state(final_answer=guess + _TC75_REQUEST)
+
+    result = scenario.evaluate(state)
+    assert result.status is ScenarioStatus.PARTIAL, guess
+    assert result.summary == (
+        "Asked for the missing details but also guessed a concrete date or time."
+    )
