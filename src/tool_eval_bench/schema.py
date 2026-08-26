@@ -53,7 +53,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "backend",
         "type": "string",
         "default": "vllm",
-        "choices": ["vllm", "litellm", "llamacpp", "sglang", "gemini"],
+        "choices": ["vllm", "litellm", "llamacpp", "sglang", "gemini", "ninfer"],
         "description": "Backend label for reports",
     },
     {

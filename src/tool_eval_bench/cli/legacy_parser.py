@@ -47,7 +47,7 @@ def _make_parser() -> argparse.ArgumentParser:
     conn.add_argument(
         "--backend",
         default=None,
-        help="Backend label for reports: vllm, litellm, llamacpp, sglang, gemini "
+        help="Backend label for reports: vllm, litellm, llamacpp, sglang, gemini, ninfer "
         "(the request format follows the endpoint, not this label — see --format; "
         "default: auto-detected via /metrics, falling back to env/vllm)",
     )
