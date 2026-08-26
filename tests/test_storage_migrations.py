@@ -3,7 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from tool_eval_bench.storage.db import _SCHEMA_VERSION, RunRepository
+from tests.conftest import open_repository
+from tool_eval_bench.storage.db import _SCHEMA_VERSION
 
 
 def test_old_database_is_migrated_to_current_schema(tmp_path: Path) -> None:
@@ -24,7 +25,7 @@ def test_old_database_is_migrated_to_current_schema(tmp_path: Path) -> None:
         )
         conn.execute("PRAGMA user_version = 0")
 
-    repo = RunRepository(db_path=str(db_path))
+    repo = open_repository(db_path=str(db_path))
     try:
         with sqlite3.connect(db_path) as conn:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(scenario_runs)")}

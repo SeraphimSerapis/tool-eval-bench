@@ -22,7 +22,7 @@ def test_count_lines_empty(tmp_path: Path) -> None:
     from tool_eval_bench.plugins.hf_utils import _count_lines
 
     f = tmp_path / "empty.jsonl"
-    f.write_text("")
+    f.write_text("", encoding="utf-8")
     assert _count_lines(f) == 0
 
 
@@ -31,7 +31,7 @@ def test_count_lines_with_data(tmp_path: Path) -> None:
     from tool_eval_bench.plugins.hf_utils import _count_lines
 
     f = tmp_path / "data.jsonl"
-    f.write_text('{"a":1}\n\n{"b":2}\n')
+    f.write_text('{"a":1}\n\n{"b":2}\n', encoding="utf-8")
     assert _count_lines(f) == 2
 
 
@@ -40,7 +40,7 @@ def test_append_and_read_rows(tmp_path: Path) -> None:
     from tool_eval_bench.plugins.hf_utils import _append_rows_to_file, _read_rows_from_file
 
     f = tmp_path / "rows.jsonl"
-    f.write_text("")  # create empty
+    f.write_text("", encoding="utf-8")  # create empty
 
     _append_rows_to_file(f, [{"x": 1}, {"x": 2}])
     _append_rows_to_file(f, [{"x": 3}])
@@ -56,7 +56,7 @@ def test_read_rows_skips_blank_lines(tmp_path: Path) -> None:
     from tool_eval_bench.plugins.hf_utils import _read_rows_from_file
 
     f = tmp_path / "rows.jsonl"
-    f.write_text('{"a":1}\n\n\n{"b":2}\n\n')
+    f.write_text('{"a":1}\n\n\n{"b":2}\n\n', encoding="utf-8")
     rows = _read_rows_from_file(f)
     assert len(rows) == 2
 
@@ -166,7 +166,9 @@ def test_download_rows_paginated_with_partial_resume(tmp_path: Path) -> None:
 
     partial = tmp_path / "test.partial.jsonl"
     # Write 2 already-downloaded rows
-    partial.write_text(json.dumps({"q": "a"}) + "\n" + json.dumps({"q": "b"}) + "\n")
+    partial.write_text(
+        json.dumps({"q": "a"}) + "\n" + json.dumps({"q": "b"}) + "\n", encoding="utf-8"
+    )
 
     # Mock should only be called for the remaining 1 row
     mock = _mock_fetch_factory(
@@ -204,7 +206,8 @@ def test_download_rows_paginated_complete_partial(tmp_path: Path) -> None:
         + json.dumps({"q": "b"})
         + "\n"
         + json.dumps({"q": "c"})
-        + "\n"
+        + "\n",
+        encoding="utf-8",
     )
 
     # The mock_fetch should NOT be called — partial cache is already complete

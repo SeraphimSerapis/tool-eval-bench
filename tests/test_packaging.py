@@ -70,6 +70,7 @@ def test_lockfile_is_tracked_and_not_ignored(monkeypatch) -> None:  # type: igno
         capture_output=True,
         env=_git_env_without_repository(),
         text=True,
+        encoding="utf-8",
     )
     assert tracked.returncode == 0, tracked.stderr
 

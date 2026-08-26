@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from tests.conftest import open_repository
 from tool_eval_bench.storage.db import RunRepository
 
 TRACE_A = "USER: what is the weather\nASSISTANT: get_weather(Berlin)\nTOOL: 21C"
@@ -51,7 +52,7 @@ def _run(run_id: str = "run-1", *, traces: bool = True) -> dict[str, Any]:
 
 @pytest.fixture
 def repo(tmp_path: Path):
-    repository = RunRepository(db_path=str(tmp_path / "b.sqlite"))
+    repository = open_repository(db_path=str(tmp_path / "b.sqlite"))
     yield repository
     repository.close()
 

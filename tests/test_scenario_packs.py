@@ -45,7 +45,7 @@ def _pack_yaml(scenario_id: str, *, title: str = SECRET_TITLE) -> str:
 def _write_pack(root: Path, *ids: str) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     for scenario_id in ids:
-        (root / f"{scenario_id.lower()}.yaml").write_text(_pack_yaml(scenario_id))
+        (root / f"{scenario_id.lower()}.yaml").write_text(_pack_yaml(scenario_id), encoding="utf-8")
     return root
 
 
@@ -107,7 +107,9 @@ class TestPackContentHash:
         pack = _write_pack(tmp_path / "a", "HO-1")
         before = pack_content_hash(pack)
 
-        (pack / "ho-1.yaml").write_text(_pack_yaml("HO-1", title="Different task"))
+        (pack / "ho-1.yaml").write_text(
+            _pack_yaml("HO-1", title="Different task"), encoding="utf-8"
+        )
 
         assert pack_content_hash(pack) != before
 
@@ -183,7 +185,9 @@ class TestPackSelection:
 
         # A pack edited mid-run must not make the attestation disagree with the
         # scenarios that were actually executed.
-        (tmp_path / "p" / "ho-1.yaml").write_text(_pack_yaml("HO-1", title="Swapped"))
+        (tmp_path / "p" / "ho-1.yaml").write_text(
+            _pack_yaml("HO-1", title="Swapped"), encoding="utf-8"
+        )
 
         assert resolve_packs(args) is first
         assert [s.title for s in resolve_pack_scenarios(args)] == [SECRET_TITLE]

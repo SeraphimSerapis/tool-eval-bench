@@ -17,9 +17,9 @@ from typing import Any
 
 import pytest
 
+from tests.conftest import open_repository
 from tool_eval_bench.adapters.base import BackendAdapter, ChatCompletionResult, ProviderToolCall
 from tool_eval_bench.runner.service import BenchmarkService
-from tool_eval_bench.storage.db import RunRepository
 from tool_eval_bench.storage.reports import MarkdownReporter
 
 pytestmark = pytest.mark.integration
@@ -72,7 +72,7 @@ async def test_e2e_single_scenario_pipeline() -> None:
         db_path = str(Path(tmpdir) / "test.sqlite")
         reports_root = str(Path(tmpdir) / "runs")
 
-        repo = RunRepository(db_path=db_path)
+        repo = open_repository(db_path=db_path)
         reporter = MarkdownReporter(root=reports_root)
         service = BenchmarkService(repo=repo, reporter=reporter)
 
@@ -108,7 +108,7 @@ async def test_e2e_single_scenario_pipeline() -> None:
         # --- Verify Markdown report ---
         report_path = result["report_path"]
         assert Path(report_path).exists()
-        report_content = Path(report_path).read_text()
+        report_content = Path(report_path).read_text(encoding="utf-8")
         assert "TC-01" in report_content
         assert "smoke-test-model" in report_content
 
@@ -128,7 +128,7 @@ async def test_e2e_fail_scenario_persists() -> None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "test.sqlite")
-        repo = RunRepository(db_path=db_path)
+        repo = open_repository(db_path=db_path)
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
         service._adapter_for = lambda *_args, **_kwargs: FailMockAdapter()
@@ -171,7 +171,7 @@ async def test_e2e_multiple_scenarios() -> None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = str(Path(tmpdir) / "test.sqlite")
-        repo = RunRepository(db_path=db_path)
+        repo = open_repository(db_path=db_path)
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
         service._adapter_for = lambda *_args, **_kwargs: MultiMockAdapter()
@@ -191,7 +191,7 @@ async def test_e2e_multiple_scenarios() -> None:
         assert scores["total_points"] == 0
 
         # Report should list all 3 scenarios
-        report = Path(result["report_path"]).read_text()
+        report = Path(result["report_path"]).read_text(encoding="utf-8")
         for sc_id in ("TC-01", "TC-02", "TC-03"):
             assert sc_id in report
 
@@ -214,7 +214,7 @@ async def test_e2e_callbacks_invoked() -> None:
         finished.append(scenario.id)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
+        repo = open_repository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
         service._adapter_for = lambda *_args, **_kwargs: SmokeMockAdapter()
@@ -272,7 +272,7 @@ async def test_e2e_random_tool_model_scores_low() -> None:
             return ChatCompletionResult(content="The result is 2.", elapsed_ms=10.0)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
+        repo = open_repository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
         service._adapter_for = lambda *_args, **_kwargs: RandomToolAdapter()
@@ -314,7 +314,7 @@ async def test_e2e_text_only_model_fails_all_tool_scenarios() -> None:
             )
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
+        repo = open_repository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
         service._adapter_for = lambda *_args, **_kwargs: TextOnlyAdapter()
@@ -341,7 +341,7 @@ async def test_e2e_report_includes_tool_overhead() -> None:
     tc01 = next(s for s in SCENARIOS if s.id == "TC-01")
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
+        repo = open_repository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
         service._adapter_for = lambda *_args, **_kwargs: SmokeMockAdapter()
@@ -353,7 +353,7 @@ async def test_e2e_report_includes_tool_overhead() -> None:
             scenarios=[tc01],
         )
 
-        report = Path(result["report_path"]).read_text()
+        report = Path(result["report_path"]).read_text(encoding="utf-8")
         assert "Tool Definition Overhead" in report
         assert "tokens" in report
         repo.close()
@@ -389,7 +389,7 @@ async def test_e2e_no_think_threaded_to_adapter() -> None:
             return ChatCompletionResult(content="Berlin is 8°C.", elapsed_ms=10.0)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
+        repo = open_repository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
         service._adapter_for = lambda *_args, **_kwargs: CapturingAdapter()
@@ -440,7 +440,7 @@ async def test_e2e_sampling_params_threaded_to_adapter() -> None:
             return ChatCompletionResult(content="Berlin is 8°C.", elapsed_ms=10.0)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        repo = RunRepository(db_path=str(Path(tmpdir) / "test.sqlite"))
+        repo = open_repository(db_path=str(Path(tmpdir) / "test.sqlite"))
         reporter = MarkdownReporter(root=str(Path(tmpdir) / "runs"))
         service = BenchmarkService(repo=repo, reporter=reporter)
         service._adapter_for = lambda *_args, **_kwargs: CapturingAdapter()

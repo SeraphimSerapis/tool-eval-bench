@@ -6,6 +6,7 @@ by constructing ScenarioState objects manually.
 
 from conftest import make_state as _make_state
 
+from tests.conftest import open_repository
 from tool_eval_bench.domain.scenarios import (
     Category,
     ScenarioStatus,
@@ -611,20 +612,24 @@ class TestSQLitePath:
     """ARCH-05: SQLite path is resolved relative to project root."""
 
     def test_default_path_is_absolute(self) -> None:
+        from pathlib import Path
+
         from tool_eval_bench.storage.db import _default_db_path
 
-        path = _default_db_path()
-        assert path.startswith("/")
-        assert "data/benchmarks.sqlite" in path
+        # An absolute path starts with a drive letter on Windows, and the
+        # separator differs, so ask Path rather than inspecting the string.
+        path = Path(_default_db_path())
+        assert path.is_absolute()
+        assert path.parts[-2:] == ("data", "benchmarks.sqlite")
 
     def test_custom_path_accepted(self) -> None:
         import tempfile
 
-        from tool_eval_bench.storage.db import RunRepository
-
         with tempfile.TemporaryDirectory() as tmp:
-            custom = f"{tmp}/test.db"
-            repo = RunRepository(db_path=custom)
+            from pathlib import Path
+
+            custom = str(Path(tmp) / "test.db")
+            repo = open_repository(db_path=custom)
             assert str(repo.db_path) == custom
             repo.close()
 

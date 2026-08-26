@@ -338,7 +338,7 @@ async def run_scenario(
     context_pressure_messages: list[ChatMessage] | None = None,
 ) -> ScenarioResult:
     """Run a single scenario through the multi-turn orchestration loop."""
-    t0 = time.monotonic()
+    t0 = time.perf_counter()
     state = ScenarioState()
     # Meta must match the reference date actually injected into the prompt:
     # _initial_messages falls back to the benchmark default when None.
@@ -527,7 +527,7 @@ async def run_scenario(
                         trace_lines.append(f"state_checkpoint={diagnostic}")
 
     except Exception as exc:
-        elapsed = time.monotonic() - t0
+        elapsed = time.perf_counter() - t0
         summary = str(exc)
         trace_lines.append(f"error={summary}")
         return ScenarioResult(
@@ -565,7 +565,7 @@ async def run_scenario(
 
         tb_str = traceback.format_exc()
         logger.error("Evaluator error in scenario %s:\n%s", scenario.id, tb_str)
-        elapsed = time.monotonic() - t0
+        elapsed = time.perf_counter() - t0
         summary = f"Evaluator error: {eval_exc}"
         trace_lines.append(f"eval_error={summary}\n{tb_str}")
         return ScenarioResult(
@@ -592,7 +592,7 @@ async def run_scenario(
     ]
     expected = scenario.description
 
-    elapsed = time.monotonic() - t0
+    elapsed = time.perf_counter() - t0
 
     return ScenarioResult(
         scenario_id=scenario.id,

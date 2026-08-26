@@ -16,6 +16,7 @@ from tool_eval_bench.api import (
 )
 from tool_eval_bench.schema import ARGS_SCHEMA as SCHEMA_DIRECT
 from tool_eval_bench.schema import get_schema
+from tool_eval_bench.storage.db import RunRepository
 
 # ---------------------------------------------------------------------------
 # format_result tests
@@ -343,7 +344,7 @@ class TestEmitJsonOutput:
         assert captured.out == ""
 
         # Should write to file
-        content = json.loads(Path(out_file).read_text())
+        content = json.loads(Path(out_file).read_text(encoding="utf-8"))
         assert content["run_id"] == "file-test"
         assert content["schema_version"] == OUTPUT_SCHEMA_VERSION
 
@@ -766,10 +767,13 @@ class TestErrorConstants:
 
 
 class TestRunRepositoryContextManager:
-    """Verify RunRepository supports 'with' usage."""
+    """Verify RunRepository supports 'with' usage.
+
+    Constructs the class directly rather than through `open_repository`: the
+    protocol under test is what guarantees the close.
+    """
 
     def test_context_manager_protocol(self, tmp_path):
-        from tool_eval_bench.storage.db import RunRepository
 
         db_path = tmp_path / "test.sqlite"
         with RunRepository(str(db_path)) as repo:
@@ -778,7 +782,6 @@ class TestRunRepositoryContextManager:
             assert repo._conn is not None
 
     def test_context_manager_closes_on_exit(self, tmp_path):
-        from tool_eval_bench.storage.db import RunRepository
 
         db_path = tmp_path / "test.sqlite"
         with RunRepository(str(db_path)) as repo:

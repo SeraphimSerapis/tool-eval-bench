@@ -55,7 +55,7 @@ def test_pressure_sweep_report_contains_every_level_and_full_trace(tmp_path: Pat
     )
 
     assert path == next(tmp_path.rglob("pressure-run.md"))
-    markdown = path.read_text()
+    markdown = path.read_text(encoding="utf-8")
     assert "## Level 1 — 50%" in markdown
     assert "## Level 2 — 75%" in markdown
     assert markdown.count("### TC-01") == 2

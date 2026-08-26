@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.conftest import open_repository
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.cli.helpers import prior_results_for_resume
 from tool_eval_bench.domain.models import (
@@ -31,7 +32,7 @@ from tool_eval_bench.storage.db import RunRepository
 
 @pytest.fixture
 def repo(tmp_path: Path):
-    r = RunRepository(db_path=str(tmp_path / "bench.sqlite"))
+    r = open_repository(db_path=str(tmp_path / "bench.sqlite"))
     yield r
     r.close()
 

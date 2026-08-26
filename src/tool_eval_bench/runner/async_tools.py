@@ -102,7 +102,7 @@ class AsyncToolExecutor:
         """Start an async tool execution. Returns immediately with a handle."""
         self._handle_counter += 1
         handle = f"async_{tool_name}_{self._handle_counter}"
-        self._started_at[handle] = time.monotonic()
+        self._started_at[handle] = time.perf_counter()
 
         if tool_name not in self._tasks:
             return AsyncToolResult(
@@ -143,7 +143,7 @@ class AsyncToolExecutor:
                 result={"error": f"No spec for tool {tool_name}."},
             )
 
-        elapsed_ms = (time.monotonic() - start) * 1000
+        elapsed_ms = (time.perf_counter() - start) * 1000
         progress = min(1.0, elapsed_ms / spec.duration_ms)
 
         # Check for simulated failure

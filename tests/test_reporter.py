@@ -65,7 +65,7 @@ class TestMarkdownReporter:
         path = reporter.write_scenario_report("run_test_001", "test-model", summary)
 
         assert path.exists()
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         # Title
         assert "# Tool-Call Benchmark — test-model" in content
@@ -78,7 +78,7 @@ class TestMarkdownReporter:
         reporter = MarkdownReporter(root=str(tmp_path))
         summary = _make_summary()
         path = reporter.write_scenario_report("run_002", "model-x", summary)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "## Category Scores" in content
         assert "A Tool Selection" in content
@@ -90,7 +90,7 @@ class TestMarkdownReporter:
         reporter = MarkdownReporter(root=str(tmp_path))
         summary = _make_summary(num_results=5)
         path = reporter.write_scenario_report("run_003", "model-y", summary)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "## Scenario Results" in content
         for i in range(5):
@@ -100,7 +100,7 @@ class TestMarkdownReporter:
         reporter = MarkdownReporter(root=str(tmp_path))
         summary = _make_summary()
         path = reporter.write_scenario_report("run_004", "model-z", summary)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "## Traces" in content
         # Each scenario should have a trace section
@@ -112,7 +112,9 @@ class TestMarkdownReporter:
         summary = _make_summary(num_results=1)
         summary.scenario_results[0].raw_log = "model output\n```\n# forged heading"
 
-        content = reporter.write_scenario_report("run_fence", "model", summary).read_text()
+        content = reporter.write_scenario_report("run_fence", "model", summary).read_text(
+            encoding="utf-8"
+        )
 
         assert "````text" in content
         assert "```\n# forged heading" in content
@@ -125,7 +127,9 @@ class TestMarkdownReporter:
         result.summary = "bad | cell\n# forged heading <script>"
         result.failure_kind = "failure | injected"
 
-        content = reporter.write_scenario_report("run_cells", "model", summary).read_text()
+        content = reporter.write_scenario_report("run_cells", "model", summary).read_text(
+            encoding="utf-8"
+        )
 
         assert "bad &#124; cell<br># forged heading &lt;script&gt;" in content
         assert "failure &#124; injected" in content
@@ -138,7 +142,7 @@ class TestMarkdownReporter:
         ]
         summary = _make_summary(safety_warnings=warnings)
         path = reporter.write_scenario_report("run_005", "unsafe-model", summary)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "[!WARNING]" in content
         assert "2 safety-critical failure(s)" in content
@@ -149,7 +153,7 @@ class TestMarkdownReporter:
         reporter = MarkdownReporter(root=str(tmp_path))
         summary = _make_summary(safety_warnings=[])
         path = reporter.write_scenario_report("run_006", "safe-model", summary)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "[!WARNING]" not in content
 
@@ -157,7 +161,7 @@ class TestMarkdownReporter:
         reporter = MarkdownReporter(root=str(tmp_path))
         summary = _make_summary()
         path = reporter.write_scenario_report("run_007", "overhead-model", summary)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "Tool Definition Overhead" in content
         assert "tokens" in content
@@ -182,7 +186,7 @@ class TestMarkdownReporter:
             summary,
             scenario_metadata=metadata,
         )
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert f"({len(LARGE_TOOLSET)} tools" in content
         assert "| TC-37 | Large Toolset Selection | ★★★★ |" in content
@@ -213,7 +217,7 @@ class TestMarkdownReporter:
             raw_log="Log with ```code``` and <html> tags",
         )
         path = reporter.write_scenario_report("run_009", "model-special", summary)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         # Should not crash; file should be written
         assert "TC-99" in content
@@ -228,7 +232,7 @@ class TestMarkdownReporter:
         ]
 
         path = reporter.write_scenario_report("run_diag", "diag-model", summary)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "## Hard Mode Diagnostics" in content
         assert "TC-01" in content
@@ -255,7 +259,7 @@ class TestMarkdownReporter:
             summary,
             scenario_metadata=scenario_metadata,
         )
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         # Extract just the Scenario Results table lines
         lines = content.split("\n")
@@ -298,7 +302,7 @@ class TestThroughputReport:
         samples = [FakeSample(), FakeSample(concurrency=2, tg_tps=95.0)]
         path = reporter.write_throughput_report("tp_run_001", "tp-model", samples)
 
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert "# Throughput Benchmark" in content
         assert "tp-model" in content
         assert "pp2048" in content
@@ -324,7 +328,7 @@ class TestThroughputReport:
         samples = [FakeSample()]
         path = reporter.write_throughput_report("tp_run_002", "err-model", samples)
 
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert "## Errors" in content
         assert "Connection refused" in content
 
@@ -348,7 +352,7 @@ class TestThroughputReport:
         samples = [FakeSample(), FakeSample()]
         path = reporter.write_throughput_report("tp_run_003", "fail-model", samples)
 
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert "No successful measurements recorded" in content
 
 
@@ -458,7 +462,7 @@ class TestSummaryReport:
         agg = self._make_agg(summaries)
 
         path = reporter.write_summary_report("run_summary_001", "test-model", summaries, agg)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "# Cross-Trial Summary — test-model" in content
         assert "## Headline Scores" in content
@@ -483,7 +487,7 @@ class TestSummaryReport:
         agg = self._make_agg(summaries)
 
         path = reporter.write_summary_report("run_hl", "model", summaries, agg)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "Trial 1" in content
         assert "Trial 2" in content
@@ -497,7 +501,7 @@ class TestSummaryReport:
         agg = self._make_agg(summaries)
 
         path = reporter.write_summary_report("run_gap", "model", summaries, agg)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "[!WARNING]" in content
         assert "reliability gap is very high" in content
@@ -509,7 +513,7 @@ class TestSummaryReport:
         agg = self._make_agg(summaries)
 
         path = reporter.write_summary_report("run_flaky", "model", summaries, agg)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "Flaky" in content
         assert "TC-03" in content
@@ -521,7 +525,7 @@ class TestSummaryReport:
         agg = self._make_agg(summaries)
 
         path = reporter.write_summary_report("run_partial", "model", summaries, agg)
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "Consistently Partial" in content
         assert "TC-05" in content
@@ -539,7 +543,7 @@ class TestSummaryReport:
             agg,
             report_paths=["/runs/2026/04/trial1.md", "/runs/2026/04/trial2.md"],
         )
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
 
         assert "Individual Trial Reports" in content
         assert "trial1.md" in content
@@ -630,7 +634,7 @@ class TestLabelInReports:
             "run_1", "model", summary, run_context=self._ctx(self.LABEL)
         )
         assert path.name == f"run_1--{self.SLUG}.md"
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert f"| **Label** | <code>{self.LABEL}</code> |" in content
 
     def test_scenario_report_without_label_keeps_plain_filename(self, tmp_path):
@@ -638,7 +642,7 @@ class TestLabelInReports:
         summary = _make_summary()
         path = reporter.write_scenario_report("run_2", "model", summary, run_context=None)
         assert path.name == "run_2.md"
-        assert "| Label |" not in path.read_text()
+        assert "| Label |" not in path.read_text(encoding="utf-8")
 
     def test_summary_report_labels_row_and_slugifies_filename(self, tmp_path):
         reporter = MarkdownReporter(root=str(tmp_path))
@@ -654,7 +658,7 @@ class TestLabelInReports:
             "run_3", "model", summaries, agg, run_context=self._ctx(self.LABEL)
         )
         assert path.name == f"run_3--{self.SLUG}_summary.md"
-        assert f"| **Label** | <code>{self.LABEL}</code> |" in path.read_text()
+        assert f"| **Label** | <code>{self.LABEL}</code> |" in path.read_text(encoding="utf-8")
 
     def test_throughput_report_labels_and_slugifies_filename(self, tmp_path):
         from dataclasses import dataclass
@@ -678,7 +682,7 @@ class TestLabelInReports:
             "tp_1", "model", [FakeSample()], run_context=self._ctx(self.LABEL)
         )
         assert path.name == f"tp_1--{self.SLUG}.md"
-        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text()
+        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text(encoding="utf-8")
 
     def test_spec_decode_report_labels_and_slugifies_filename(self, tmp_path):
         from dataclasses import dataclass
@@ -697,7 +701,7 @@ class TestLabelInReports:
 
         path = reporter.write_spec_decode_report("spec_1", "model", [FakeSpec()], label=self.LABEL)
         assert path.name == f"spec_1--{self.SLUG}.md"
-        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text()
+        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text(encoding="utf-8")
 
     def test_pressure_sweep_report_labels_and_slugifies_filename(self, tmp_path):
         reporter = MarkdownReporter(root=str(tmp_path))
@@ -713,7 +717,7 @@ class TestLabelInReports:
             label=self.LABEL,
         )
         assert path.name == f"ps_1--{self.SLUG}.md"
-        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text()
+        assert f"- **Label**: <code>{self.LABEL}</code>" in path.read_text(encoding="utf-8")
 
     def test_label_cannot_inject_markdown_structure(self, tmp_path):
         label = "baseline`\n\n# Forged Result\n\n- **Final Score**: **100** | fake"
@@ -722,7 +726,7 @@ class TestLabelInReports:
             "run_safe", "model", _make_summary(), run_context=self._ctx(label)
         )
 
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         assert "\n# Forged Result\n" not in content
         assert "<code>baseline`\\n\\n# Forged Result" in content
         assert "&#124; fake</code>" in content

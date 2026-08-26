@@ -46,14 +46,14 @@ jobs:
             python-version: '3.13'
             random-seed: '155921'
           # storage/db.py resolves its path from Path.cwd() and runs SQLite in
-          # WAL mode, so a non-Linux runner is worth the minutes.
+          # WAL mode, and Windows opens files as cp1252 and refuses to delete
+          # one that is still open. Those are the differences that bite.
           - os: macos-latest
             python-version: '3.12'
             random-seed: '181081'
-          # Windows is not in the matrix yet: the suite has 47 failures there
-          # that assume UTF-8 by default, POSIX separators, and sub-millisecond
-          # clock resolution. Tracked in #93. It did find a real scoring bug
-          # first, which is why tzdata is now a win32 dependency.
+          - os: windows-latest
+            python-version: '3.12'
+            random-seed: '199933'
 
     steps:
       - name: Checkout
@@ -92,6 +92,7 @@ jobs:
         run: uv run mypy
 
       - name: Pytest
+        if: matrix.os != 'windows-latest'
         run: >
           uv run pytest --tb=short -q
           --ignore=tests/test_llama_benchy.py
@@ -100,12 +101,24 @@ jobs:
           --cov=tool_eval_bench --cov-report=term-missing --cov-report=json
           --cov-fail-under=80
 
+      # The keypress reader is POSIX-only and its tests skip here, so Windows
+      # coverage is structurally lower and not comparable to the floors. What
+      # this runner is for is whether the tests pass, not what they cover.
+      - name: Pytest (no coverage gate)
+        if: matrix.os == 'windows-latest'
+        run: >
+          uv run pytest --tb=short -q
+          --ignore=tests/test_llama_benchy.py
+          -m "not live"
+          --randomly-seed=${{ matrix.random-seed }}
+
       - name: Critical module coverage
+        if: matrix.os != 'windows-latest'
         run: uv run python scripts/check_module_coverage.py coverage.json
 
       - name: Upload coverage report
         # A reviewer cannot see what a pull request did to coverage without it.
-        if: always()
+        if: always() && matrix.os != 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}

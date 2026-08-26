@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -88,7 +89,8 @@ class TestYamlLoader:
         path = tmp_path / "restraint.yaml"
         path.write_text(
             "id: YAML-R\ntitle: Restraint\ncategory: A\nuser_message: Answer directly\n"
-            "expected_tool_calls: []\n"
+            "expected_tool_calls: []\n",
+            encoding="utf-8",
         )
 
         evaluation = _load_yaml_file(path).evaluate(ScenarioState())
@@ -100,7 +102,8 @@ class TestYamlLoader:
         path = tmp_path / "restraint.yaml"
         path.write_text(
             "id: YAML-R\ntitle: Restraint\ncategory: A\nuser_message: Answer directly\n"
-            "expected_tool_calls: []\n"
+            "expected_tool_calls: []\n",
+            encoding="utf-8",
         )
         state = ScenarioState()
         state.tool_calls.append(_record("get_weather", {"location": "Berlin"}))
@@ -132,29 +135,29 @@ tool_responses: {}
 """
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            (root / "b.yaml").write_text(yaml_b)
-            (root / "a.yaml").write_text(yaml_a)
+            (root / "b.yaml").write_text(yaml_b, encoding="utf-8")
+            (root / "a.yaml").write_text(yaml_a, encoding="utf-8")
             scenarios = load_yaml_scenarios(root)
             assert [s.id for s in scenarios] == ["YAML-A", "YAML-B"]
 
     def test_invalid_yaml_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "bad.yaml"
-            path.write_text("not a mapping")
+            path.write_text("not a mapping", encoding="utf-8")
             with pytest.raises(ValueError):
                 _load_yaml_file(path)
 
     def test_missing_id_field_raises_with_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "noid.yaml"
-            path.write_text("title: No ID\ncategory: A\nuser_message: hi\n")
+            path.write_text("title: No ID\ncategory: A\nuser_message: hi\n", encoding="utf-8")
             with pytest.raises(ValueError, match="'id'"):
                 _load_yaml_file(path)
 
     def test_missing_category_field_raises_with_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "nocat.yaml"
-            path.write_text("id: X\ntitle: No Cat\nuser_message: hi\n")
+            path.write_text("id: X\ntitle: No Cat\nuser_message: hi\n", encoding="utf-8")
             with pytest.raises(ValueError, match="'category'"):
                 _load_yaml_file(path)
 
@@ -170,32 +173,39 @@ tool_responses: {}
         }
         values.pop(field)
         path = tmp_path / "missing.yaml"
-        path.write_text("\n".join(f"{key}: {value}" for key, value in values.items()))
+        path.write_text(
+            "\n".join(f"{key}: {value}" for key, value in values.items()), encoding="utf-8"
+        )
 
-        with pytest.raises(ValueError, match=rf"{field!r}.*{path}"):
+        with pytest.raises(ValueError, match=rf"{field!r}.*{re.escape(str(path))}"):
             _load_yaml_file(path)
 
     @pytest.mark.parametrize("field", ["id", "title", "category", "user_message"])
     def test_required_fields_must_be_non_empty_strings(self, tmp_path: Path, field: str) -> None:
         path = tmp_path / "invalid.yaml"
         path.write_text(
-            "id: X\ntitle: Required fields\ncategory: A\nuser_message: hi\n" + f"{field}: []\n"
+            "id: X\ntitle: Required fields\ncategory: A\nuser_message: hi\n" + f"{field}: []\n",
+            encoding="utf-8",
         )
 
-        with pytest.raises(ValueError, match=rf"{field!r}.*non-empty string.*{path}"):
+        with pytest.raises(
+            ValueError, match=rf"{field!r}.*non-empty string.*{re.escape(str(path))}"
+        ):
             _load_yaml_file(path)
 
     def test_invalid_category_raises_with_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "badcat.yaml"
-            path.write_text("id: X\ntitle: Bad Cat\ncategory: Z\nuser_message: hi\n")
+            path.write_text(
+                "id: X\ntitle: Bad Cat\ncategory: Z\nuser_message: hi\n", encoding="utf-8"
+            )
             with pytest.raises(ValueError, match="Invalid category"):
                 _load_yaml_file(path)
 
     def test_yaml_parse_error_includes_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "syntax.yaml"
-            path.write_text("id: X\n  bad: : : indent\n")
+            path.write_text("id: X\n  bad: : : indent\n", encoding="utf-8")
             with pytest.raises(ValueError, match="YAML parse error"):
                 _load_yaml_file(path)
 
