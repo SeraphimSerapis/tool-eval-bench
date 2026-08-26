@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List
@@ -84,14 +87,23 @@ class RunRepository:
     def __init__(self, db_path: str | None = None) -> None:
         self.db_path = Path(db_path or _default_db_path())
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: sqlite3.Connection = sqlite3.connect(self.db_path)
+        # ``check_same_thread=False`` lets ``acheckpoint_scenario_result`` run a
+        # write on a worker thread instead of stalling the event loop.  That is
+        # only safe while access stays serialised, which ``_write_lock`` and the
+        # single-worker executor below guarantee.
+        self._conn: sqlite3.Connection = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._write_lock = threading.Lock()
+        self._writer: ThreadPoolExecutor | None = None
         # WAL mode: crash-safe and allows concurrent reads during active runs
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
         self._init_db()
 
     def close(self) -> None:
-        """Close the underlying SQLite connection."""
+        """Close the underlying SQLite connection and any writer thread."""
+        if self._writer is not None:
+            self._writer.shutdown(wait=True)
+            self._writer = None
         if self._conn:
             self._conn.close()
 
@@ -240,7 +252,9 @@ class RunRepository:
         scenario_id = result.get("scenario_id")
         if not scenario_id:
             return
-        with self._conn as conn:
+        # Held across the write because the async path runs this on a worker
+        # thread while the main thread may also be using the connection.
+        with self._write_lock, self._conn as conn:
             conn.execute(
                 """
                 INSERT INTO run_checkpoints(run_id, scenario_id, created_at, result_json)
@@ -256,6 +270,20 @@ class RunRepository:
                     json.dumps(result),
                 ),
             )
+
+    async def acheckpoint_scenario_result(self, run_id: str, result: dict[str, Any]) -> None:
+        """Checkpoint a result without blocking the event loop.
+
+        ``checkpoint_scenario_result`` is a synchronous INSERT that fsyncs.  At
+        ``--parallel 1`` that is invisible, but with several scenarios in flight
+        it stalls every pending HTTP request for the duration of the commit, and
+        a contended write can hold the loop for the full busy timeout.  The work
+        runs on one dedicated thread, so writes stay ordered.
+        """
+        loop = asyncio.get_running_loop()
+        if self._writer is None:
+            self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="run-repo-write")
+        await loop.run_in_executor(self._writer, self.checkpoint_scenario_result, run_id, result)
 
     def get_checkpoints(self, run_id: str) -> List[dict[str, Any]]:
         """Return checkpointed scenario results for a run, oldest first."""

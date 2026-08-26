@@ -405,7 +405,9 @@ class BenchmarkService:
             total: int,
         ) -> None:
             try:
-                repo.checkpoint_scenario_result(run_id, result.to_dict())
+                # Offloaded to a worker thread: a synchronous fsync here stalls
+                # every scenario in flight once --parallel is above 1.
+                await repo.acheckpoint_scenario_result(run_id, result.to_dict())
             except Exception as exc:  # noqa: BLE001 — a lost checkpoint is not fatal
                 logger.warning("Failed to checkpoint %s: %s", result.scenario_id, exc)
             if inner is not None:
