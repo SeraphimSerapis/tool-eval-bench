@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -16,6 +15,13 @@ from tool_eval_bench.cli.plugin_lifecycle import (
 )
 from tool_eval_bench.cli.plugin_lifecycle import (
     finalize_plugin_run as _finalize_plugin_run_impl,
+)
+from tool_eval_bench.cli.plugin_progress import (
+    PluginProgressDisplay,
+    final_tally_line,
+    status_icon,
+    tally_line,
+    truncate,
 )
 from tool_eval_bench.cli.resolve import with_config_fingerprint as _with_config_fingerprint
 
@@ -141,96 +147,22 @@ def _run_gsm8k_benchmark(
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
-        from rich.live import Live
-        from rich.progress import (
-            BarColumn,
-            MofNCompleteColumn,
-            Progress,
-            SpinnerColumn,
-            TextColumn,
-            TimeElapsedColumn,
-            TimeRemainingColumn,
-        )
-
         eval_total = limit if limit > 0 else len(dataset_items)
 
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold]{task.description}"),
-            BarColumn(bar_width=40),
-            TextColumn("[bold]{task.percentage:>3.0f}%[/]"),
-            MofNCompleteColumn(),
-            TextColumn("•"),
-            TimeElapsedColumn(),
-            TextColumn("[dim]eta[/]"),
-            TimeRemainingColumn(),
-            console=console,
-        )
-
-        stats_text = TextColumn("")
-        stats_progress = Progress(stats_text, console=console)
-        last_q_text = TextColumn("")
-        last_q_progress = Progress(last_q_text, console=console)
-
-        from rich.console import Group
-
-        group = Group(progress, stats_progress, last_q_progress)
-
-        correct_so_far = 0
-        wrong_so_far = 0
-        errors_so_far = 0
-        t_start = time.monotonic()
-        stats_progress.add_task("", total=None)
-        last_q_progress.add_task("", total=None)
-
-        with Live(group, console=console, refresh_per_second=4):
-            task = progress.add_task("Evaluating…", total=eval_total)
+        with PluginProgressDisplay(console, total=eval_total) as display:
 
             async def on_progress(current: int, total: int, item_info: dict) -> None:
-                nonlocal correct_so_far, wrong_so_far, errors_so_far
-                if item_info.get("is_error"):
-                    errors_so_far += 1
-                elif item_info.get("correct"):
-                    correct_so_far += 1
-                else:
-                    wrong_so_far += 1
-
-                processed = correct_so_far + wrong_so_far + errors_so_far
-                pct = (correct_so_far / processed * 100) if processed > 0 else 0
-                elapsed = time.monotonic() - t_start
-                speed = current / elapsed * 60 if elapsed > 0 else 0  # questions/min
-
-                # Build a compact status line
-                status_parts = [
-                    f"  [bold green]✓ {correct_so_far}[/]",
-                    f"[bold red]✗ {wrong_so_far}[/]",
-                ]
-                if errors_so_far > 0:
-                    status_parts.append(f"[bold yellow]⚠ {errors_so_far}[/]")
-                status_parts += [
-                    "[dim]│[/]",
-                    f"[bold magenta]{pct:.1f}%[/] accuracy",
-                    "[dim]│[/]",
-                    f"[dim]{speed:.1f} q/min[/]",
-                ]
-                stats_text.text_format = "  ".join(status_parts)
-
-                progress.update(task, completed=current, total=total)
-
-                # Show last completed question
-                if item_info.get("is_error"):
-                    icon = "[yellow]⚠[/]"
-                elif item_info.get("correct", False):
-                    icon = "[green]✓[/]"
-                else:
-                    icon = "[red]✗[/]"
+                display.tally.record(item_info)
                 got = item_info.get("extracted_answer", "?")
                 expected = item_info.get("ground_truth", "?")
-                question = (item_info.get("question") or "").replace("\n", " ").strip()
-                if len(question) > 90:
-                    question = question[:87] + "…"
-                last_q_text.text_format = (
-                    f"  {icon} [bold]{got}[/]/{expected} [dim italic]{question}[/]"
+                display.advance(
+                    current,
+                    total,
+                    stats=tally_line(display.tally, rate=display.rate_per_minute(current)),
+                    detail=(
+                        f"  {status_icon(item_info)} [bold]{got}[/]/{expected} "
+                        f"[dim italic]{truncate(item_info.get('question'))}[/]"
+                    ),
                 )
 
             try:
@@ -253,27 +185,21 @@ def _run_gsm8k_benchmark(
                 result_holder.append(result)
 
                 # Final state
-                progress.update(
-                    task, completed=result.details["total"], description="[green]✓ Complete"
-                )
+                total_items = result.details["total"]
                 final_speed = (
-                    result.details["total"] / result.duration_seconds * 60
-                    if result.duration_seconds > 0
-                    else 0
+                    total_items / result.duration_seconds * 60 if result.duration_seconds > 0 else 0
                 )
                 errs = result.details.get("errors", 0)
-                wrong = result.details["total"] - result.details["correct"] - errs
-                parts = f"  [bold green]✓ {result.details['correct']}[/]  [bold red]✗ {wrong}[/]  "
-                if errs > 0:
-                    parts += f"[bold yellow]⚠ {errs} errors[/]  "
-                parts += (
-                    f"[dim]│[/]  "
-                    f"[bold magenta]{result.score:.1f}%[/] accuracy  "
-                    f"[dim]│[/]  "
-                    f"[dim]{final_speed:.1f} q/min[/]"
+                display.finish(
+                    completed=total_items,
+                    stats=final_tally_line(
+                        correct=result.details["correct"],
+                        wrong=total_items - result.details["correct"] - errs,
+                        errors=errs,
+                        score=result.score,
+                        rate=final_speed,
+                    ),
                 )
-                stats_text.text_format = parts
-                last_q_text.text_format = ""
             finally:
                 if hasattr(adapter, "aclose"):
                     await adapter.aclose()
@@ -440,17 +366,6 @@ def _run_mmlu_benchmark(
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
-        from rich.console import Group
-        from rich.live import Live
-        from rich.progress import (
-            BarColumn,
-            MofNCompleteColumn,
-            Progress,
-            SpinnerColumn,
-            TextColumn,
-            TimeElapsedColumn,
-            TimeRemainingColumn,
-        )
 
         eval_total = limit if limit > 0 else len(test_items)
         if subjects_list:
@@ -466,79 +381,23 @@ def _run_mmlu_benchmark(
             filtered = [it for it in test_items if it.subject in expanded]
             eval_total = min(eval_total, len(filtered)) if limit > 0 else len(filtered)
 
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold]{task.description}"),
-            BarColumn(bar_width=40),
-            TextColumn("[bold]{task.percentage:>3.0f}%[/]"),
-            MofNCompleteColumn(),
-            TextColumn("•"),
-            TimeElapsedColumn(),
-            TextColumn("[dim]eta[/]"),
-            TimeRemainingColumn(),
-            console=console,
-        )
-
-        stats_text = TextColumn("")
-        stats_progress = Progress(stats_text, console=console)
-        last_q_text = TextColumn("")
-        last_q_progress = Progress(last_q_text, console=console)
-        group = Group(progress, stats_progress, last_q_progress)
-
-        correct_so_far = 0
-        wrong_so_far = 0
-        errors_so_far = 0
-        t_start = time.monotonic()
-        stats_progress.add_task("", total=None)
-        last_q_progress.add_task("", total=None)
-
-        with Live(group, console=console, refresh_per_second=4):
-            task = progress.add_task("Evaluating…", total=eval_total)
+        with PluginProgressDisplay(console, total=eval_total) as display:
 
             async def on_progress(current: int, total: int, item_info: dict) -> None:
-                nonlocal correct_so_far, wrong_so_far, errors_so_far
-                if item_info.get("is_error"):
-                    errors_so_far += 1
-                elif item_info.get("correct"):
-                    correct_so_far += 1
-                else:
-                    wrong_so_far += 1
-
-                processed = correct_so_far + wrong_so_far + errors_so_far
-                pct = (correct_so_far / processed * 100) if processed > 0 else 0
-                elapsed = time.monotonic() - t_start
-                speed = current / elapsed * 60 if elapsed > 0 else 0
-
-                status_parts = [
-                    f"  [bold green]✓ {correct_so_far}[/]",
-                    f"[bold red]✗ {wrong_so_far}[/]",
-                ]
-                if errors_so_far > 0:
-                    status_parts.append(f"[bold yellow]⚠ {errors_so_far}[/]")
-                status_parts += [
-                    "[dim]│[/]",
-                    f"[bold blue]{pct:.1f}%[/] accuracy",
-                    "[dim]│[/]",
-                    f"[dim]{speed:.1f} q/min[/]",
-                ]
-                stats_text.text_format = "  ".join(status_parts)
-                progress.update(task, completed=current, total=total)
-
-                # Show last completed question details
-                subj = item_info.get("subject", "?")
-                if item_info.get("is_error"):
-                    icon = "[yellow]⚠[/]"
-                elif item_info.get("correct", False):
-                    icon = "[green]✓[/]"
-                else:
-                    icon = "[red]✗[/]"
+                display.tally.record(item_info)
                 got = item_info.get("extracted_answer", "?")
                 expected = item_info.get("ground_truth", "?")
-                question = (item_info.get("question") or "").replace("\n", " ").strip()
-                if len(question) > 90:
-                    question = question[:87] + "…"
-                last_q_text.text_format = (
-                    f"  {icon} [bold]{got}[/]/{expected} [dim]{subj}[/]  [dim italic]{question}[/]"
+                subj = item_info.get("subject", "?")
+                display.advance(
+                    current,
+                    total,
+                    stats=tally_line(
+                        display.tally, rate=display.rate_per_minute(current), accent="blue"
+                    ),
+                    detail=(
+                        f"  {status_icon(item_info)} [bold]{got}[/]/{expected} "
+                        f"[dim]{subj}[/]  [dim italic]{truncate(item_info.get('question'))}[/]"
+                    ),
                 )
 
             try:
@@ -560,27 +419,22 @@ def _run_mmlu_benchmark(
                 )
                 result_holder.append(result)
 
-                progress.update(
-                    task, completed=result.details["total"], description="[green]✓ Complete"
-                )
+                total_items = result.details["total"]
                 final_speed = (
-                    result.details["total"] / result.duration_seconds * 60
-                    if result.duration_seconds > 0
-                    else 0
+                    total_items / result.duration_seconds * 60 if result.duration_seconds > 0 else 0
                 )
                 errs = result.details.get("errors", 0)
-                wrong = result.details["total"] - result.details["correct"] - errs
-                parts = f"  [bold green]✓ {result.details['correct']}[/]  [bold red]✗ {wrong}[/]  "
-                if errs > 0:
-                    parts += f"[bold yellow]⚠ {errs} errors[/]  "
-                parts += (
-                    f"[dim]│[/]  "
-                    f"[bold blue]{result.score:.1f}%[/] accuracy  "
-                    f"[dim]│[/]  "
-                    f"[dim]{final_speed:.1f} q/min[/]"
+                display.finish(
+                    completed=total_items,
+                    stats=final_tally_line(
+                        correct=result.details["correct"],
+                        wrong=total_items - result.details["correct"] - errs,
+                        errors=errs,
+                        score=result.score,
+                        rate=final_speed,
+                        accent="blue",
+                    ),
                 )
-                stats_text.text_format = parts
-                last_q_text.text_format = ""
             finally:
                 if hasattr(adapter, "aclose"):
                     await adapter.aclose()
@@ -732,103 +586,51 @@ def _run_ifeval_benchmark(
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
-        from rich.console import Group
-        from rich.live import Live
-        from rich.progress import (
-            BarColumn,
-            MofNCompleteColumn,
-            Progress,
-            SpinnerColumn,
-            TextColumn,
-            TimeElapsedColumn,
-            TimeRemainingColumn,
-        )
 
         eval_total = limit if limit > 0 else len(dataset_items)
 
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold]{task.description}"),
-            BarColumn(bar_width=40),
-            TextColumn("[bold]{task.percentage:>3.0f}%[/]"),
-            MofNCompleteColumn(),
-            TextColumn("•"),
-            TimeElapsedColumn(),
-            TextColumn("[dim]eta[/]"),
-            TimeRemainingColumn(),
-            console=console,
-        )
-
-        stats_text = TextColumn("")
-        stats_progress = Progress(stats_text, console=console)
-        last_q_text = TextColumn("")
-        last_q_progress = Progress(last_q_text, console=console)
-        group = Group(progress, stats_progress, last_q_progress)
-
-        prompts_passed = 0
-        prompts_failed = 0
-        errors_so_far = 0
         instructions_passed = 0
         instructions_total = 0
-        t_start = time.monotonic()
-        stats_progress.add_task("", total=None)
-        last_q_progress.add_task("", total=None)
 
-        with Live(group, console=console, refresh_per_second=4):
-            task = progress.add_task("Evaluating…", total=eval_total)
+        with PluginProgressDisplay(console, total=eval_total) as display:
 
             async def on_progress(current: int, total: int, item_info: dict) -> None:
-                nonlocal prompts_passed, prompts_failed, errors_so_far
+                # IFEval scores whole prompts, and also reports how many
+                # individual constraints within each prompt were satisfied, so
+                # its tally carries two percentages rather than one accuracy.
                 nonlocal instructions_passed, instructions_total
-                if item_info.get("is_error"):
-                    errors_so_far += 1
-                elif item_info.get("prompt_pass"):
-                    prompts_passed += 1
-                else:
-                    prompts_failed += 1
+                display.tally.record({**item_info, "correct": item_info.get("prompt_pass")})
                 instructions_passed += item_info.get("instructions_passed", 0)
                 instructions_total += item_info.get("instructions_total", 0)
 
-                processed = prompts_passed + prompts_failed + errors_so_far
-                prompt_pct = (prompts_passed / processed * 100) if processed > 0 else 0
                 inst_pct = (
                     (instructions_passed / instructions_total * 100)
                     if instructions_total > 0
                     else 0
                 )
-                elapsed = time.monotonic() - t_start
-                speed = current / elapsed * 60 if elapsed > 0 else 0
-
                 status_parts = [
-                    f"  [bold green]✓ {prompts_passed}[/]",
-                    f"[bold red]✗ {prompts_failed}[/]",
+                    f"  [bold green]✓ {display.tally.correct}[/]",
+                    f"[bold red]✗ {display.tally.wrong}[/]",
                 ]
-                if errors_so_far > 0:
-                    status_parts.append(f"[bold yellow]⚠ {errors_so_far}[/]")
+                if display.tally.errors > 0:
+                    status_parts.append(f"[bold yellow]⚠ {display.tally.errors}[/]")
                 status_parts += [
                     "[dim]│[/]",
-                    f"[bold green]{prompt_pct:.1f}%[/] prompt",
+                    f"[bold green]{display.tally.accuracy:.1f}%[/] prompt",
                     f"[bold cyan]{inst_pct:.1f}%[/] instr",
                     "[dim]│[/]",
-                    f"[dim]{speed:.1f} p/min[/]",
+                    f"[dim]{display.rate_per_minute(current):.1f} p/min[/]",
                 ]
-                stats_text.text_format = "  ".join(status_parts)
-                progress.update(task, completed=current, total=total)
-
-                # Show last completed prompt
-                if item_info.get("is_error"):
-                    icon = "[yellow]⚠[/]"
-                elif item_info.get("prompt_pass", False):
-                    icon = "[green]✓[/]"
-                else:
-                    icon = "[red]✗[/]"
                 ip = item_info.get("instructions_passed", 0)
                 it = item_info.get("instructions_total", 0)
-                prompt = (item_info.get("prompt") or "").replace("\n", " ").strip()
-                if len(prompt) > 90:
-                    prompt = prompt[:87] + "…"
-                last_q_text.text_format = (
-                    f"  {icon} [bold]{ip}[/]/{it} constraints  [dim italic]{prompt}[/]"
+                display.advance(
+                    current,
+                    total,
+                    stats="  ".join(status_parts),
+                    detail=(
+                        f"  {status_icon(item_info, key='prompt_pass')} [bold]{ip}[/]/{it} "
+                        f"constraints  [dim italic]{truncate(item_info.get('prompt'))}[/]"
+                    ),
                 )
 
             try:
@@ -848,9 +650,6 @@ def _run_ifeval_benchmark(
                 )
                 result_holder.append(result)
 
-                progress.update(
-                    task, completed=result.details["total"], description="[green]✓ Complete"
-                )
                 d = result.details
                 final_speed = (
                     d["total"] / result.duration_seconds * 60 if result.duration_seconds > 0 else 0
@@ -867,8 +666,7 @@ def _run_ifeval_benchmark(
                     f"[dim]│[/]  "
                     f"[dim]{final_speed:.1f} p/min[/]"
                 )
-                stats_text.text_format = parts
-                last_q_text.text_format = ""
+                display.finish(completed=d["total"], stats=parts)
             finally:
                 if hasattr(adapter, "aclose"):
                     await adapter.aclose()
