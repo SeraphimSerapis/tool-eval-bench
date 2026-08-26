@@ -271,6 +271,17 @@ class TestRateLimitRetries:
         await adapter.aclose()
 
 
+# `asyncio.sleep` schedules against the event loop clock and can return
+# fractionally early. On Windows that clock ticks about every 15.6ms, so a run
+# of N sleeps measures up to N ticks short of the nominal total: the pacing
+# assertion below saw 0.187 against a nominal 0.2 on every windows-latest run,
+# because the CI matrix pins that runner's seed.
+#
+# These two assertions are about whether pacing happened at all. Without it
+# both measure roughly zero, so allowing one tick per sleep costs them nothing.
+_CLOCK_SLACK_SECONDS = 0.016
+
+
 class TestAdaptivePacing:
     @pytest.mark.asyncio
     async def test_pacing_stays_off_until_a_rate_limit_is_seen(self) -> None:
@@ -320,7 +331,7 @@ class TestAdaptivePacing:
         await asyncio.gather(*(coordinator.acquire() for _ in range(4)))
         waited = asyncio.get_running_loop().time() - started
 
-        assert waited >= 0.25
+        assert waited >= 0.25 - _CLOCK_SLACK_SECONDS
 
     @pytest.mark.asyncio
     async def test_paced_requests_are_spaced_out(self) -> None:
@@ -332,7 +343,9 @@ class TestAdaptivePacing:
             await coordinator.acquire()
         elapsed = asyncio.get_running_loop().time() - started
 
-        assert elapsed >= 0.2  # first is free, the next two wait one step each
+        # First acquire is free, the next two wait one step each. Two sleeps, so
+        # the measurement can fall two ticks short of the nominal 0.2.
+        assert elapsed >= 0.2 - 2 * _CLOCK_SLACK_SECONDS
 
 
 class TestDisplayReporting:
