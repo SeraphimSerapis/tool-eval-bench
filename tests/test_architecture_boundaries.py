@@ -159,3 +159,23 @@ def test_no_test_module_patches_methods_onto_the_httpx_client_class() -> None:
     ]
 
     assert violations == []
+
+
+def test_no_module_reaches_for_a_private_argparse_action_class() -> None:
+    """`argparse._StoreTrueAction` and friends are absent from `argparse.__all__`.
+
+    `cli/parser.py` used to branch on them to decide how to recreate a flag in
+    a focused help parser. `Action.const` is documented and says the same
+    thing, so nothing needs the private classes any more.
+    """
+    violations = [
+        f"{path.relative_to(PACKAGE_ROOT).as_posix()}:{node.lineno}"
+        for path in sorted(PACKAGE_ROOT.rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "argparse"
+        and node.attr.startswith("_")
+    ]
+
+    assert violations == []

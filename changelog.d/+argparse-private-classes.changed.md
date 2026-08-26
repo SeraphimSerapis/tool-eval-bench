@@ -1,0 +1,1 @@
+The subcommand parser branched on `argparse._StoreTrueAction` and `argparse._StoreFalseAction`, private classes absent from `argparse.__all__`, to decide how to recreate a flag in a focused help parser. It now reads the documented `Action.const` instead. Every focused help output is unchanged.
