@@ -290,6 +290,144 @@ async def _plain_on_result(
 _HIDDEN_ARGS: frozenset[str] = frozenset({"command", "help"})
 
 
+def _validate_scenario_selection(
+    args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console
+) -> None:
+    """Reject a bad pack or category before any request is made.
+
+    Packs load up front on purpose: a missing, empty, or colliding pack must
+    abort before the run starts rather than surface as a traceback partway
+    through scenario resolution.
+    """
+    try:
+        packs = _resolve_packs(args)
+        _resolve_scenarios(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if packs and not args.json:
+        total = sum(len(p.scenarios) for p in packs)
+        names = ", ".join(f"{p.name} ({p.content_hash})" for p in packs)
+        console.print(f"  [dim]🔒 Held-out packs: {names} — {total} scenario(s)[/]")
+
+    if args.categories:
+        invalid = {c.upper() for c in args.categories} - _VALID_CATEGORIES
+        if invalid:
+            parser.error(
+                f"Unknown categories: {', '.join(sorted(invalid))}. "
+                f"Valid: {', '.join(sorted(_VALID_CATEGORIES))}"
+            )
+        cats = [c.upper() for c in args.categories]
+        from tool_eval_bench.domain.scenarios import CATEGORY_LABELS
+
+        cat_names = ", ".join(f"{c} ({CATEGORY_LABELS[Category(c)]})" for c in cats)
+        resolved_count = len(_resolve_scenarios(args))
+        if not args.json:
+            console.print(f"  [dim]📋 Categories: {cat_names} ({resolved_count} scenarios)[/]")
+
+
+def _check_endpoint_ready(
+    args: argparse.Namespace,
+    console: Console,
+    *,
+    base_url: str,
+    model: str,
+    api_key: str | None,
+    wire_format: str,
+    extra_params: dict[str, Any],
+) -> None:
+    """Verify the model answers a real request, then warm the server.
+
+    Some servers list a model in ``/v1/models`` and still fail the first real
+    request.  Without this gate the benchmark scores the failure as the model's.
+    """
+    if not args.no_preflight:
+        _preflight_model_check(
+            console,
+            base_url,
+            model,
+            api_key,
+            headless=args.json,
+            wire_format=wire_format,
+            timeout_seconds=args.timeout,
+            temperature=args.temperature,
+            extra_params=extra_params or None,
+        )
+
+    if not args.no_warmup and not args.json:
+        _do_warmup(
+            console,
+            base_url,
+            model,
+            api_key,
+            wire_format=wire_format,
+            temperature=args.temperature,
+            extra_params=extra_params or None,
+        )
+
+
+def _scenario_selector_label(args: argparse.Namespace) -> str:
+    """Describe the scenario selection for the run report."""
+    resolved = _resolve_scenarios(args)
+    if args.scenarios:
+        return ", ".join(args.scenarios)
+    if args.categories:
+        return f"categories {', '.join(c.upper() for c in args.categories)} ({len(resolved)})"
+    if args.short:
+        return f"short ({len(resolved)})"
+    return f"all ({len(resolved)})"
+
+
+def _build_run_context(
+    args: argparse.Namespace,
+    console: Console,
+    *,
+    model: str,
+    backend: str,
+    base_url: str,
+    api_key: str | None,
+    extra_params: dict[str, Any],
+) -> Any | None:
+    """Collect execution-context metadata for the report.
+
+    Built before the mode branches so the throughput and spec-decode paths get
+    engine detection too.  Failure is not fatal: the run proceeds with a report
+    that lacks the context block.
+    """
+    try:
+        from tool_eval_bench.utils.metadata import collect_run_context
+
+        run_context = asyncio.run(
+            collect_run_context(
+                model=model,
+                backend=backend,
+                base_url=base_url,
+                api_key=api_key,
+                temperature=args.temperature,
+                max_turns=args.max_turns,
+                timeout_seconds=args.timeout,
+                seed=args.seed,
+                scenario_selector=_scenario_selector_label(args),
+                trials=max(1, args.trials),
+                parallel=args.parallel,
+                error_rate=args.error_rate,
+                thinking_enabled=not args.no_think,
+                extra_params=extra_params or None,
+                context_pressure=args.context_pressure,
+                label=args.label,
+                probe_engine=not args.no_probe_engine,
+            )
+        )
+        if not args.json and run_context.engine_name:
+            engine_str = run_context.engine_name
+            if run_context.engine_version:
+                engine_str += f" {run_context.engine_version}"
+            console.print(f"  [dim]🔍 Engine: {engine_str}[/]")
+        return run_context
+    except Exception as exc:
+        logger.warning("Failed to build RunContext: %s", exc)
+        return None
+
+
 def main() -> None:
     _load_dotenv()
     from tool_eval_bench.cli.legacy_parser import make_parser
@@ -459,34 +597,7 @@ def main() -> None:
         except json.JSONDecodeError as exc:
             parser.error(f"--backend-kwargs is not valid JSON: {exc}")
 
-    # -- Validate --scenario-pack / --pack-only --
-    # Load packs up front: a missing, empty, or colliding pack must abort before
-    # the run starts, not surface as a traceback partway through resolution.
-    try:
-        packs = _resolve_packs(args)
-        _resolve_scenarios(args)
-    except ValueError as exc:
-        parser.error(str(exc))
-    if packs and not args.json:
-        total = sum(len(p.scenarios) for p in packs)
-        names = ", ".join(f"{p.name} ({p.content_hash})" for p in packs)
-        console.print(f"  [dim]🔒 Held-out packs: {names} — {total} scenario(s)[/]")
-
-    # -- Validate --categories --
-    if args.categories:
-        invalid = {c.upper() for c in args.categories} - _VALID_CATEGORIES
-        if invalid:
-            parser.error(
-                f"Unknown categories: {', '.join(sorted(invalid))}. "
-                f"Valid: {', '.join(sorted(_VALID_CATEGORIES))}"
-            )
-        cats = [c.upper() for c in args.categories]
-        from tool_eval_bench.domain.scenarios import CATEGORY_LABELS
-
-        cat_names = ", ".join(f"{c} ({CATEGORY_LABELS[Category(c)]})" for c in cats)
-        resolved_count = len(_resolve_scenarios(args))
-        if not args.json:
-            console.print(f"  [dim]📋 Categories: {cat_names} ({resolved_count} scenarios)[/]")
+    _validate_scenario_selection(args, parser, console)
 
     # -- spec-live: standalone live monitor (exits after session) --
     if args.spec_live:
@@ -516,82 +627,25 @@ def main() -> None:
             pass
         return
 
-    # -- Pre-flight: verify the model actually works (issue #19) --
-    # Some servers list models in /v1/models but fail on real requests.
-    # Without this check, the benchmark produces misleading scores.
-    if not args.no_preflight:
-        _preflight_model_check(
-            console,
-            base_url,
-            model,
-            api_key,
-            headless=args.json,
-            wire_format=wire_format,
-            timeout_seconds=args.timeout,
-            temperature=args.temperature,
-            extra_params=extra_params or None,
-        )
+    _check_endpoint_ready(
+        args,
+        console,
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        wire_format=wire_format,
+        extra_params=extra_params,
+    )
 
-    # -- Warm-up --
-    if not args.no_warmup and not args.json:
-        _do_warmup(
-            console,
-            base_url,
-            model,
-            api_key,
-            wire_format=wire_format,
-            temperature=args.temperature,
-            extra_params=extra_params or None,
-        )
-
-    # -- Build RunContext (issue #6: full execution context metadata) --
-    # Built early so perf-only and spec-bench paths also get engine detection.
-    run_context = None
-    try:
-        from tool_eval_bench.utils.metadata import collect_run_context
-
-        # Determine scenario selector description
-        resolved_sc = _resolve_scenarios(args)
-        if args.scenarios:
-            scenario_sel = ", ".join(args.scenarios)
-        elif args.categories:
-            scenario_sel = (
-                f"categories {', '.join(c.upper() for c in args.categories)} ({len(resolved_sc)})"
-            )
-        elif args.short:
-            scenario_sel = f"short ({len(resolved_sc)})"
-        else:
-            scenario_sel = f"all ({len(resolved_sc)})"
-
-        trials = max(1, args.trials)
-        run_context = asyncio.run(
-            collect_run_context(
-                model=model,
-                backend=backend,
-                base_url=base_url,
-                api_key=api_key,
-                temperature=args.temperature,
-                max_turns=args.max_turns,
-                timeout_seconds=args.timeout,
-                seed=args.seed,
-                scenario_selector=scenario_sel,
-                trials=trials,
-                parallel=args.parallel,
-                error_rate=args.error_rate,
-                thinking_enabled=not args.no_think,
-                extra_params=extra_params or None,
-                context_pressure=args.context_pressure,
-                label=args.label,
-                probe_engine=not args.no_probe_engine,
-            )
-        )
-        if not args.json and run_context.engine_name:
-            engine_str = run_context.engine_name
-            if run_context.engine_version:
-                engine_str += f" {run_context.engine_version}"
-            console.print(f"  [dim]🔍 Engine: {engine_str}[/]")
-    except Exception as exc:
-        logger.warning("Failed to build RunContext: %s", exc)
+    run_context = _build_run_context(
+        args,
+        console,
+        model=model,
+        backend=backend,
+        base_url=base_url,
+        api_key=api_key,
+        extra_params=extra_params,
+    )
 
     # -- Throughput benchmark (llama-benchy, the default) --
     throughput_samples: list = []
