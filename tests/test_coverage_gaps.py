@@ -8,6 +8,7 @@ import time
 import httpx
 import pytest
 
+from tests.conftest import MeasurementTestClient
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.scenarios import (
     Category,
@@ -113,7 +114,7 @@ class TestSpecDecodeSampleEdges:
 async def test_scrape_spec_metrics_active():
     body = "spec_decode_num_accepted_tokens 100\nspec_decode_num_draft_tokens 200\nspec_decode_num_drafts 50\n"
     transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         c = await scrape_spec_metrics(client, "http://host:8000/v1")
     assert c is not None
     assert c.accepted_tokens == pytest.approx(100)
@@ -123,7 +124,7 @@ async def test_scrape_spec_metrics_active():
 async def test_scrape_spec_metrics_no_counters():
     body = "some_other_metric 42\n"
     transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         c = await scrape_spec_metrics(client, "http://host:8000/v1")
     assert c is None
 
@@ -131,7 +132,7 @@ async def test_scrape_spec_metrics_no_counters():
 @pytest.mark.asyncio
 async def test_scrape_spec_metrics_non_200():
     transport = httpx.MockTransport(lambda r: httpx.Response(404))
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         c = await scrape_spec_metrics(client, "http://host:8000/v1")
     assert c is None
 
@@ -142,7 +143,7 @@ async def test_scrape_spec_metrics_exception():
         raise ConnectionError("down")
 
     transport = httpx.MockTransport(explode)
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         c = await scrape_spec_metrics(client, "http://host:8000/v1")
     assert c is None
 
@@ -151,7 +152,7 @@ async def test_scrape_spec_metrics_exception():
 async def test_scrape_spec_metrics_zero_but_present():
     body = "spec_decode_num_accepted_tokens 0\nspec_decode_num_draft_tokens 0\n"
     transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         c = await scrape_spec_metrics(client, "http://host:8000/v1")
     assert c is not None  # metric names present
 
@@ -165,7 +166,7 @@ async def test_scrape_spec_metrics_zero_but_present():
 async def test_detect_spec_decoding_via_prometheus():
     body = "spec_decode_num_accepted_tokens 100\nspec_decode_num_draft_tokens 200\n"
     transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         info = await detect_spec_decoding(client, "http://host:8000/v1")
     assert info.active is True
     assert info.has_prometheus is True
@@ -176,7 +177,7 @@ async def test_detect_spec_decoding_via_prometheus():
 async def test_detect_spec_decoding_eagle():
     body = "spec_decode_eagle_accepted 100\nspec_decode_num_draft_tokens 200\n"
     transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         info = await detect_spec_decoding(client, "http://host:8000/v1")
     assert info.method == "eagle"
 
@@ -185,7 +186,7 @@ async def test_detect_spec_decoding_eagle():
 async def test_detect_spec_decoding_ngram():
     body = "spec_decode_ngram_accepted 100\nspec_decode_num_draft_tokens 200\n"
     transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         info = await detect_spec_decoding(client, "http://host:8000/v1")
     assert info.method == "ngram"
 
@@ -194,7 +195,7 @@ async def test_detect_spec_decoding_ngram():
 async def test_detect_spec_decoding_mtp():
     body = "spec_decode_mtp_accepted 100\nspec_decode_num_draft_tokens 200\n"
     transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         info = await detect_spec_decoding(client, "http://host:8000/v1")
     assert info.method == "mtp"
 
@@ -202,7 +203,7 @@ async def test_detect_spec_decoding_mtp():
 @pytest.mark.asyncio
 async def test_detect_spec_decoding_user_hint():
     transport = httpx.MockTransport(lambda r: httpx.Response(404))
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         info = await detect_spec_decoding(client, "http://host:8000/v1", backend_hint="mtp")
     assert info.active is True
     assert info.method == "mtp"
@@ -211,7 +212,7 @@ async def test_detect_spec_decoding_user_hint():
 @pytest.mark.asyncio
 async def test_detect_spec_decoding_no_metrics():
     transport = httpx.MockTransport(lambda r: httpx.Response(404))
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         info = await detect_spec_decoding(client, "http://host:8000/v1")
     assert info.active is False
 
@@ -222,7 +223,7 @@ async def test_detect_spec_decoding_connection_error():
         raise ConnectionError("down")
 
     transport = httpx.MockTransport(explode)
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with MeasurementTestClient(transport=transport) as client:
         info = await detect_spec_decoding(client, "http://host:8000/v1")
     assert info.active is False
 

@@ -1,0 +1,1 @@
+The test suite attached five methods to `httpx.AsyncClient` itself at import time, for the whole session, so a future httpx release adding a same-named method would have been silently overridden. The tests that need those methods now use a subclass, and an architecture test rejects the old pattern.

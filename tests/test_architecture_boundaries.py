@@ -137,3 +137,25 @@ def test_first_party_dispatch_uses_application_service_directly() -> None:
 
     assert "tool_eval_bench.application.service" in imports
     assert "tool_eval_bench.runner.service" not in imports
+
+
+def test_no_test_module_patches_methods_onto_the_httpx_client_class() -> None:
+    """Attaching to `httpx.AsyncClient` itself would silently shadow a future release.
+
+    `tests/conftest.py` used to do this at import time for the whole session,
+    so an httpx version adding a same-named method would have been overridden
+    everywhere with nothing pointing at the cause.
+    """
+    tests_root = Path(__file__).parent
+    violations = [
+        f"{path.relative_to(tests_root)}:{node.lineno}"
+        for path in sorted(tests_root.rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Attribute)
+        and target.value.attr == "AsyncClient"
+    ]
+
+    assert violations == []

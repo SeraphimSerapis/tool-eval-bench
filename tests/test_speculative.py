@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.conftest import MeasurementTestClient
 from tool_eval_bench.runner.speculative import (
     SpecDecodeCounters,
     SpecDecodeInfo,
@@ -467,7 +468,7 @@ class TestDetectSpecDecodingVLLMNonRegression:
 
         body = "spec_decode_num_accepted_tokens 100\nspec_decode_num_draft_tokens 200\n"
         transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-        async with httpx.AsyncClient(transport=transport) as client:
+        async with MeasurementTestClient(transport=transport) as client:
             from tool_eval_bench.runner.speculative import detect_spec_decoding
 
             info = await detect_spec_decoding(client, "http://host:8000/v1")
@@ -482,7 +483,7 @@ class TestDetectSpecDecodingVLLMNonRegression:
 
         body = "spec_decode_mtp_tokens 100\nspec_decode_num_draft_tokens 200\n"
         transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-        async with httpx.AsyncClient(transport=transport) as client:
+        async with MeasurementTestClient(transport=transport) as client:
             from tool_eval_bench.runner.speculative import detect_spec_decoding
 
             info = await detect_spec_decoding(client, "http://host:8000/v1", backend_hint="mtp")
@@ -501,7 +502,7 @@ class TestDetectSpecDecodingVLLMNonRegression:
         import httpx
 
         transport = httpx.MockTransport(lambda r: httpx.Response(404))
-        async with httpx.AsyncClient(transport=transport) as client:
+        async with MeasurementTestClient(transport=transport) as client:
             from tool_eval_bench.runner.speculative import detect_spec_decoding
 
             info = await detect_spec_decoding(client, "http://host:8000/v1", backend_hint="mtp")
@@ -518,7 +519,7 @@ class TestDetectSpecDecodingVLLMNonRegression:
         # vLLM metrics without spec_decode counters
         body = "vllm:prompt_tokens_total 50000\nvllm:generation_tokens_total 12000\n"
         transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-        async with httpx.AsyncClient(transport=transport) as client:
+        async with MeasurementTestClient(transport=transport) as client:
             from tool_eval_bench.runner.speculative import detect_spec_decoding
 
             info = await detect_spec_decoding(client, "http://host:8000/v1")
@@ -533,7 +534,7 @@ class TestDetectSpecDecodingVLLMNonRegression:
 
         body = "llamacpp:prompt_tokens_total 19345\nllamacpp:tokens_predicted_total 1157\n"
         transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-        async with httpx.AsyncClient(transport=transport) as client:
+        async with MeasurementTestClient(transport=transport) as client:
             from tool_eval_bench.runner.speculative import detect_spec_decoding
 
             info = await detect_spec_decoding(client, "http://host:8000/v1", backend_hint="mtp")
@@ -549,7 +550,7 @@ class TestDetectSpecDecodingVLLMNonRegression:
 
         body = "llamacpp:prompt_tokens_total 19345\nllamacpp:tokens_predicted_total 1157\n"
         transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-        async with httpx.AsyncClient(transport=transport) as client:
+        async with MeasurementTestClient(transport=transport) as client:
             from tool_eval_bench.runner.speculative import detect_spec_decoding
 
             info = await detect_spec_decoding(client, "http://host:8000/v1")
