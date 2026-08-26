@@ -392,17 +392,9 @@ print(result["rating"])           # e.g. "★★★★ Good"
 print(result["schema_version"])   # "1"
 ```
 
-The returned dict includes a versioned envelope with top-level Spark Arena fields:
-
-| Field | Type | Description |
-|---|---|---|
-| `schema_version` | str | Output schema version (currently `"1"`) |
-| `tool_eval_bench_version` | str | Package version, such as `"2.6.0"` or an identifiable development version |
-| `final_score` | int | 0–100 composite score |
-| `rating` | str | Star rating string |
-| `safety_warnings` | list | Safety-critical failures (empty when clean) |
-| `deployability` | int/None | 0–100 composite (when latency data available) |
-| `total_scenarios` | int | Number of scenarios evaluated |
+The call returns a versioned envelope carrying `final_score`, `rating`, `safety_warnings`,
+`deployability`, and `total_scenarios`, alongside the full per-scenario detail. Every
+parameter and every returned field is documented in [docs/api.md](docs/api.md).
 
 ### Machine-readable args schema
 
@@ -457,92 +449,6 @@ The orchestrator then:
 
 For a detailed architecture reference with dependency rules, data-flow diagrams,
 and extension-point guides, see [docs/architecture.md](docs/architecture.md).
-
-```text
-SKILL.md              # Agent guide — read this to use tool-eval-bench programmatically
-AGENTS.md             # Contributor conventions (architecture, quality bar, git rules)
-
-src/tool_eval_bench/
-  api.py              # Public programmatic API (run_benchmark, format_result)
-  schema.py           # Machine-readable args schema for external validators
-  adapters/           # OpenAI-compatible adapters (vLLM, SGLang, LiteLLM, llama.cpp) + native Gemini
-  application/
-    service.py        # Benchmark orchestration, persistence, and public application service
-    finalization.py   # Completed-run finalization and checkpoint merging
-  cli/
-    bench.py          # Main CLI entry point (tool-eval-bench)
-    command_registry.py # Discoverable subcommands and translation rules
-    commands.py       # Scenario resolution helpers
-    compare_report.py # HTML comparison command for Markdown reports
-    dispatch.py       # Runtime command routing and benchmark flow
-    helpers.py        # Small CLI helpers (dotenv, redaction, JSON output, etc.)
-    local_commands.py # Dry-run and local command rendering
-    model_probe.py    # Model discovery and availability probing
-    parser.py         # Subcommand discovery and legacy translation
-    plugin_lifecycle.py # Shared plugin lifecycle and persistence
-    plugin_runners.py # Plugin-specific execution and reporting
-    server.py         # Server discovery and backend detection
-    perf.py           # External llama-benchy throughput integration
-    spec_bench.py     # Speculative-decoding / MTP benchmark runner
-    pressure.py       # Context-pressure sweep runner
-    display.py        # Zero-flicker streaming display
-    history.py        # --history, --compare, --diff rendering
-    leaderboard.py    # --leaderboard, --export rendering
-    spec_live_display.py    # Live speculative decoding dashboard (Rich Live)
-    spec_live_rendering.py  # Rich component rendering for spec-live
-  domain/
-    errors.py         # Structured error code constants
-    measurement.py    # Measurement client port and raw stream types
-    models.py         # BenchmarkConfig
-    plugin.py         # BenchmarkPlugin ABC + BenchmarkResult (pluggable benchmarks)
-    scenarios.py      # Scenario types, evaluation types, scoring
-    tools.py          # Universal tool definitions (12 tools), system prompt
-    tools_large.py    # Extended 52-tool definitions for Category L
-  evals/
-    helpers.py        # Shared evaluator utilities (safe math, text matching)
-    noise.py          # Deterministic payload enrichment (realistic API noise)
-    packs.py          # Held-out YAML scenario-pack loading and attestations
-    scenarios.py            # Core 15 scenarios (A–E) + central registry
-    scenarios_extended.py   # Extended scenarios (F–G)
-    scenarios_agentic.py    # Agentic scenarios (H–K partial)
-    scenarios_adversarial.py  # Adversarial safety scenarios (K extras)
-    scenarios_large_toolset.py  # Large-toolset scenarios (L)
-    scenarios_planning.py   # Planning + creative scenarios (M–N)
-    scenarios_structured.py # Structured output scenarios (O)
-    scenarios_hardmode.py   # Hard Mode registry and TC-70 through TC-74
-    scenarios_hardmode_expanded.py      # TC-75 through TC-84
-    scenarios_hardmode_transactional.py # TC-85 through TC-88
-    yaml_loader.py    # Declarative YAML scenario loader (pilot)
-    yaml_scenarios/   # Sample YAML-defined scenarios
-  runner/
-    orchestrator.py   # Multi-turn tool-call loop
-    service.py        # Compatibility re-export of application/service.py
-    throughput.py     # Streaming pp/tg measurement
-    speculative.py    # Spec-decode / MTP benchmarking (acceptance rate, effective t/s)
-    spec_live.py      # Live monitor data layer (Prometheus scraping, delta computation)
-    llama_benchy.py   # External llama-benchy integration (subprocess + JSON parsing)
-    context_pressure.py   # Filler generation, calibration, prefix-cache busting
-    judge.py          # LLM-as-judge for failed scenario analysis (WIP)
-    async_tools.py    # Async tool execution simulation (polling-style tools)
-  storage/
-    db.py             # SQLite persistence
-    reports.py        # Markdown report writer
-  compare_reports/
-    summary.py        # Summary report comparison
-    tool_eval.py      # Tool-evaluation report and trace comparison
-  plugins/
-    hf_utils.py       # Shared HuggingFace downloader (retry, resume, throttle)
-    registry.py       # Plugin registry (get_plugin, available_plugins)
-    gsm8k/            # GSM8K benchmark plugin (1,319 math questions)
-    mmlu/             # MMLU benchmark plugin (14,042 questions, 57 subjects)
-    ifeval/           # IFEval benchmark plugin (541 prompts, 25 constraints)
-  utils/
-    ids.py            # Run ID generation
-    metadata.py       # System/backend metadata collection (engine probing)
-    openai_compat.py  # OpenAI-compatible request and response helpers
-    tokenizers.py     # Local tokenizer discovery for throughput prompts
-    urls.py           # Shared URL helpers for OpenAI-compatible endpoints
-```
 
 ## Run ID and Artifacts
 
