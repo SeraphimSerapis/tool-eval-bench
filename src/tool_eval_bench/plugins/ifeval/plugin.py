@@ -138,7 +138,6 @@ class IFEvalPlugin(BenchmarkPlugin):
                 is_error = False
             except Exception as exc:
                 logger.debug("Error on prompt %d: %s", item.key, exc)
-                content = ""
                 is_error = True
                 error_count += 1
 
