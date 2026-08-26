@@ -16,5 +16,6 @@ runs/
 .coverage
 htmlcov/
 .opencode/
+.claude/
 .worktrees/
 src/tool_eval_bench/_version.py
