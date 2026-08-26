@@ -1,0 +1,1 @@
+Identifying a server used to open a fresh HTTP client per probe, so six TCP and TLS handshakes went to the same host, and the fallback ladder ran to the end even when nothing was listening, spending the probe timeout once per rung. Probes now share one connection pool and stop at the first connect failure, so a wrong `--base-url` costs one timeout instead of six.
