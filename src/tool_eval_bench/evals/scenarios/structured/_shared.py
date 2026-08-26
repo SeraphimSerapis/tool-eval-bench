@@ -51,10 +51,6 @@ def _result_matches_if_present(
     )
 
 
-def _call_index(state: ScenarioState, target: ToolCallRecord) -> int:
-    return next(index for index, call in enumerate(state.tool_calls) if call is target)
-
-
 def _extract_json_answer(answer: str) -> str:
     json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", answer, re.DOTALL)
     return json_match.group(1).strip() if json_match else answer.strip()
