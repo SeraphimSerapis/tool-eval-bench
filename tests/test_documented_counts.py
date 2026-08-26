@@ -19,7 +19,7 @@ ROOT = Path(__file__).parents[1]
 
 #: Prose files that quote registry sizes.  Update when a document moves.
 DOCUMENTED_SOURCES = (
-    ROOT / "SKILL.md",
+    ROOT / "docs" / "cli-reference.md",
     ROOT / "README.md",
     ROOT / "AGENTS.md",
 )

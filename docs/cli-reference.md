@@ -1,7 +1,8 @@
-# SKILL.md — Agent Guide for tool-eval-bench
+# CLI reference
 
-> This file helps AI agents use tool-eval-bench correctly in automated
-> workflows.  Read this before invoking the tool.
+Every flag, exit code, and JSON field, for scripting `tool-eval-bench` in CI or driving it from an
+agent. If you are running the benchmark by hand for the first time, start with the
+[README](../README.md) instead.
 
 ## What this tool does
 

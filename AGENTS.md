@@ -116,7 +116,7 @@ branch conflict on the same lines.
 The VM comes with the project venv at `.venv` (created by the startup update
 script, which runs `pip install -e '.[dev,perf]'`). Always use `.venv/bin/...`
 as documented in the Quality bar section. Lint/type/test/run commands are
-unchanged from the Quality bar and `SKILL.md`; the notes below only cover
+unchanged from the Quality bar and `docs/cli-reference.md`; the notes below only cover
 non-obvious environment caveats.
 
 - **`pytest` needs `FORCE_COLOR` unset.** This VM's shell exports
