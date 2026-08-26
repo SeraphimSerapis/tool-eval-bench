@@ -17,7 +17,13 @@ from tool_eval_bench.adapters.openai_compat import RateLimitObserver
 from tool_eval_bench.application.finalization import finalize_completed_run
 from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.domain.adapters import BackendAdapter
-from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage, RunContext
+from tool_eval_bench.domain.models import (
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    RUN_STATUS_INTERRUPTED,
+    RUN_STATUS_RUNNING,
+    ChatMessage,
+    RunContext,
+)
 from tool_eval_bench.domain.scenarios import (
     OnScenarioResult,
     OnScenarioStart,
@@ -28,8 +34,6 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 from tool_eval_bench.runner.orchestrator import run_all_scenarios, score_results
 from tool_eval_bench.storage.db import (
-    RUN_STATUS_INTERRUPTED,
-    RUN_STATUS_RUNNING,
     RunRepository,
 )
 from tool_eval_bench.storage.reports import MarkdownReporter

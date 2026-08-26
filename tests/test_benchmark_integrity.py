@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, RunContext
+from tool_eval_bench.domain.models import (
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    RUN_STATUS_INTERRUPTED,
+    RUN_STATUS_RUNNING,
+    RunContext,
+)
 from tool_eval_bench.domain.scenarios import (
     Category,
     ScenarioDefinition,
@@ -14,7 +19,6 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ScenarioStatus,
 )
-from tool_eval_bench.storage.db import RUN_STATUS_INTERRUPTED, RUN_STATUS_RUNNING
 
 
 def _evaluate_fail(state: ScenarioState) -> ScenarioEvaluation:

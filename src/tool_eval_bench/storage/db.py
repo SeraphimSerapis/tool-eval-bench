@@ -14,13 +14,6 @@ from typing import Any, List
 
 _SCHEMA_VERSION = 4
 
-# Long runs (69+ scenarios, minutes each) used to lose everything on Ctrl-C or a
-# dropped connection.  Scenario results are checkpointed as they complete so an
-# interrupted run can be resumed instead of restarted.
-RUN_STATUS_RUNNING = "running"
-RUN_STATUS_INTERRUPTED = "interrupted"
-RUN_STATUS_COMPLETED = "completed"
-
 # Wait rather than fail when another process holds the write lock (concurrent
 # runs against different endpoints share one database file).
 _BUSY_TIMEOUT_MS = 10_000
