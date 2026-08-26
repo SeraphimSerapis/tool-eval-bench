@@ -187,7 +187,9 @@ def print_diff(
                 return
             diff_run_id = latest["run_id"]
 
-        prev_results = repo.get_scenario_results(diff_run_id)
+        # The diff reads points, status, and duration only, so skip the
+        # multi-megabyte trace rehydration.
+        prev_results = repo.get_scenario_results(diff_run_id, include_traces=False)
         if prev_results is None:
             console.print(f"\n  [yellow]Run '{diff_run_id}' not found in database.[/]\n")
             return

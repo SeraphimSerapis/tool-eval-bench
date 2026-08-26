@@ -176,7 +176,7 @@ decorator-registered into `_CHECKERS` and dispatched by string ID.
 | F5 | P2 | `load_scenario_pack` reads every YAML file twice, once via `load_yaml_scenarios(root)` at `packs.py:77` and again via `pack_content_hash(root)` at `:92`, which does its own glob and `read_bytes`. Cheap today with one shipped pack file, linear in pack size, and fixable by hashing the bytes already read. |
 | F6 | P3 | No caching anywhere. Zero uses of `lru_cache` or `functools.cache` in `src/`. `load_yaml_scenarios` re-globs and re-parses on every call. The Python scenario registry is the opposite and correct, built once at import, measured at 0.07s to import 12k lines of scenario definitions. |
 | F7 | P3 | Redundant serialization. Each tool result is `json.dumps`'d twice per turn, once for the trace line and again in `orchestrator.py:288`. `_repair_json_str` at `orchestrator.py:195-249` parses, discards the result, and re-parses, and the caller parses a third time. |
-| F8 | P3 | `BenchmarkService()` opens a SQLite connection as a constructor side effect, creating `./data/benchmarks.sqlite` with `mkdir -p` even when the run never persists, at a `Path.cwd()`-relative location that silently depends on the invocation directory. |
+| F8 | ~~P3~~ | **Withdrawn on verification.** `BenchmarkService()` was reported to create `./data/benchmarks.sqlite` even when a run never persists. It does not: every call site either passes an explicit repository (so the database is wanted) or an explicit `None` (which creates nothing), and `--dry-run` writes no files at all. The eager connect in `RunRepository.__init__` also carries a tested contract, since constructing a repository is what migrates an old schema. |
 
 Sequential-by-default execution dominates wall-clock time, since `concurrency` defaults to 1 and
 the parallel path logs a warning steering users back to `--parallel 1`. That is a deliberate
@@ -309,7 +309,7 @@ throughout: scores must not move, and no long-lived refactor branch.
 |---|---|---|---|
 | 1 | Fix A1 to A5, A9, A10, and delete the dead code. Add a test asserting documented scenario counts match the registries so A1 cannot recur. | 0.5d | None |
 | 2 | README to under 450 lines with a table of contents and a first run inside 40 lines. Extract Docker, benchmarks, spec-decode, and context-pressure sections to `docs/`. Delete the duplicated source tree. Move `SKILL.md` to `docs/cli-reference.md`. | 1d | None |
-| 3 | Fix G1, G2, F2, F5, F8. Takes the suite from 24s to roughly 8s. | 1d | Low |
+| 3 | Fix G1, G2, F2, F5. Takes the suite from 24s to roughly 8s. | 1d | Low |
 | 4 | Collapse the plugin-runner triplication onto the existing `BenchmarkPlugin` ABC. Removes ~550 lines. | 1-2d | Low |
 | 5 | Split `MarkdownReporter` into a `storage/reports/` package and extract `compare_reports/_common.py`. Removes ~300 lines. | 2d | Low |
 | 6 | Promote `_build_run_config` to a public `RunConfig` dataclass and thread it through the 21/29/19/14 argument chain. | 2-3d | Medium |

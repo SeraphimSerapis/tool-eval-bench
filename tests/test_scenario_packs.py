@@ -277,3 +277,34 @@ class TestReportRedaction:
 
         assert "deadbeefdeadbeef" in report
         assert "pack `private`" in report
+
+
+def test_pack_hash_matches_an_independent_directory_hash(tmp_path) -> None:
+    """The pack hashes bytes it already read; that must equal re-reading them.
+
+    ``content_hash`` is an attestation, so the single-read path used by
+    ``load_scenario_pack`` and the standalone ``pack_content_hash`` must not be
+    allowed to drift apart.
+    """
+    (tmp_path / "a.yaml").write_text(
+        "id: TC-901\ntitle: A\ncategory: A\nuser_message: hi\n", encoding="utf-8"
+    )
+    (tmp_path / "b.yaml").write_text(
+        "id: TC-902\ntitle: B\ncategory: A\nuser_message: yo\n", encoding="utf-8"
+    )
+
+    pack = load_scenario_pack(tmp_path)
+
+    assert pack.content_hash == pack_content_hash(tmp_path)
+
+
+def test_pack_hash_is_stable_for_crlf_files(tmp_path) -> None:
+    """Hashing reads bytes, so CRLF must not be normalised away before hashing."""
+    (tmp_path / "crlf.yaml").write_bytes(
+        b"id: TC-903\r\ntitle: C\r\ncategory: A\r\nuser_message: hi\r\n"
+    )
+
+    pack = load_scenario_pack(tmp_path)
+
+    assert pack.content_hash == pack_content_hash(tmp_path)
+    assert [s.id for s in pack.scenarios] == ["TC-903"]

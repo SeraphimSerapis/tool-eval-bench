@@ -361,9 +361,17 @@ class RunRepository:
             return None
         return self.get(runs[0]["run_id"])
 
-    def get_scenario_results(self, run_id: str) -> List[dict[str, Any]] | None:
-        """Extract per-scenario results from a stored run."""
-        run = self.get(run_id)
+    def get_scenario_results(
+        self, run_id: str, *, include_traces: bool = True
+    ) -> List[dict[str, Any]] | None:
+        """Extract per-scenario results from a stored run.
+
+        Traces are rehydrated by default.  A 69-scenario run's traces come to
+        megabytes, so callers that only read scores (the run diff, for one)
+        should pass ``include_traces=False`` and skip both the second query and
+        the merge that rebuilds every result dict.
+        """
+        run = self.get(run_id, include_traces=include_traces)
         if not run or not run.get("scores"):
             return None
         return run["scores"].get("scenario_results", [])

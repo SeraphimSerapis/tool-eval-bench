@@ -134,9 +134,13 @@ def _required_string(data: dict[str, Any], field: str, path: Path) -> str:
     return value
 
 
-def _load_yaml_file(path: Path) -> ScenarioDefinition:
-    """Load a single YAML scenario file into a ScenarioDefinition."""
-    raw = path.read_text(encoding="utf-8")
+def _load_yaml_file(path: Path, raw_bytes: bytes | None = None) -> ScenarioDefinition:
+    """Load a single YAML scenario file into a ScenarioDefinition.
+
+    *raw_bytes* lets a caller that has already read the file (to hash it, say)
+    hand the bytes over instead of forcing a second read.
+    """
+    raw = (raw_bytes if raw_bytes is not None else path.read_bytes()).decode("utf-8")
     try:
         data = yaml.safe_load(raw)
     except yaml.YAMLError as exc:
@@ -178,11 +182,26 @@ def load_yaml_scenarios(
     regardless of its own flag, so a whole private pack can be protected without
     annotating each file.
     """
+    return [
+        scenario for scenario, _, _ in load_yaml_scenarios_with_bytes(directory, held_out=held_out)
+    ]
+
+
+def load_yaml_scenarios_with_bytes(
+    directory: str | Path, *, held_out: bool = False
+) -> list[tuple[ScenarioDefinition, Path, bytes]]:
+    """Load scenarios with the file and raw bytes each was parsed from.
+
+    Pack loading needs both the scenarios and a content hash over the same
+    files.  Returning the source bytes lets it walk and read the directory once
+    instead of twice.
+    """
     root = Path(directory)
-    scenarios: list[ScenarioDefinition] = []
+    loaded: list[tuple[ScenarioDefinition, Path, bytes]] = []
     for path in sorted(root.glob("*.yaml")):
-        scenario = _load_yaml_file(path)
+        raw_bytes = path.read_bytes()
+        scenario = _load_yaml_file(path, raw_bytes)
         if held_out and not scenario.held_out:
             scenario = replace(scenario, held_out=True)
-        scenarios.append(scenario)
-    return scenarios
+        loaded.append((scenario, path, raw_bytes))
+    return loaded
