@@ -5,6 +5,13 @@ name: tool-eval-bench
 queries:
   - uses: security-and-quality
 
+# Every filter below was checked against the alerts it suppresses, and each one
+# is a rule this repository's own conventions make structurally wrong rather
+# than a finding being waved through. The quality queries earn their place: the
+# same audit that produced these filters found dead assignments in
+# `cli/leaderboard.py` and an always-true guard in `runner/orchestrator.py`.
+# The point is to keep those visible instead of burying them under a hundred
+# results nobody can act on.
 query-filters:
   # `py/incomplete-url-substring-sanitization` fires on the prompt-injection
   # scenarios, where an evaluator asks "did the model's answer repeat the
@@ -16,3 +23,60 @@ query-filters:
   # which this repository does not do for a linter's benefit.
   - exclude:
       id: py/incomplete-url-substring-sanitization
+
+  # The `...` body of a `Protocol` method is the way to declare a structural
+  # type, not a statement someone forgot to finish. Every alert was one of
+  # these, in `domain/measurement.py`, `domain/adapters.py`, `domain/plugin.py`
+  # and `adapters/measurement.py`.
+  - exclude:
+      id: py/ineffectual-statement
+
+  # Private module constants shared between sibling modules. `_STRING` in
+  # `hardmode_expanded/_shared.py` has 84 uses; the query counts none of them,
+  # because it does not follow `from ._shared import _STRING`. It also cannot
+  # see through `cli/bench.py`, which rebinds itself to `cli/dispatch` via
+  # `sys.modules`, so `_HIDDEN_ARGS` reads as dead while a drift-detection test
+  # imports it, or through test-only readers like `_SCHEMA_VERSION`.
+  - exclude:
+      id: py/unused-global-variable
+
+  # `ruff format` wraps a long string literal across lines, which is exactly
+  # the shape this query reports. Every alert was a wrapped Markdown line in a
+  # report writer, each with its trailing space intact.
+  - exclude:
+      id: py/implicit-string-concatenation-in-list
+
+  # Import placement, duplicate imports, and re-exports. `ruff` already
+  # enforces this (I001, F401) and understands the conventions this repository
+  # uses to re-export a name: `# noqa: F401 — public re-export`, the PEP 484
+  # `as` alias form, and `__all__`. CodeQL reads all three as unused.
+  - exclude:
+      id: py/unused-import
+  - exclude:
+      id: py/import-and-import-from
+  - exclude:
+      id: py/repeated-import
+
+  # Every alert was a narrow, typed `except` with the fallback assigned before
+  # the `try` or supplied by the branch below it: `except (KeyError, IndexError)`
+  # over a response shape, `except json.JSONDecodeError` falling through to a
+  # FAIL verdict, `except KeyboardInterrupt` before a return. None are bare
+  # `except:`. Turn on ruff's S110 if this should be enforced as policy.
+  - exclude:
+      id: py/empty-except
+
+  # Iterating an `Enum` class (`for cat in Category`) is not iterating a
+  # non-iterable; the query does not model `EnumMeta.__iter__`.
+  - exclude:
+      id: py/non-iterable-in-for-loop
+
+  # `argparse.ArgumentParser.error` is `NoReturn`, which typeshed knows and
+  # this query does not, so the assignment after it reads as skippable.
+  - exclude:
+      id: py/uninitialized-local-variable
+
+  # Directly contradicts the type checker. Both alerts are the final `return`
+  # of a function whose earlier branches happen to be exhaustive; deleting
+  # either one makes mypy fail with "Missing return statement".
+  - exclude:
+      id: py/unreachable-statement

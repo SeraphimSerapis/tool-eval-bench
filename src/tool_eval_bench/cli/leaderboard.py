@@ -226,8 +226,6 @@ def _extract_leaderboard_rows(
         if run_type != "tool_eval" or not _is_rank_eligible(run, config, scores):
             continue
 
-        scenario_count = config.get("scenario_count", len(scores.get("scenario_results", [])))
-        backend = config.get("backend", "?")
         fingerprint = config.get("config_fingerprint") or build_config_fingerprint(
             {
                 "config": config,
