@@ -109,7 +109,10 @@ _TC63_PAST_CUTOFF = re.compile(r"\b(?:past|after|later than|beyond)\s+10(?!\d)\s
 _TC63_PRICE = re.compile(r"\$\s?(\d{1,3})")
 
 
-_TC63_CLOCK = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b|\b(\d{1,2}):(\d{2})\b")
+# `p.m.` is the same time as `pm`. `_TC63_PAST_CUTOFF` above already accepts
+# the periods and so does TC-03's clock reader, so an answer that wrote
+# "open until 11 p.m." lost the constraint here and nowhere else.
+_TC63_CLOCK = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\b|\b(\d{1,2}):(\d{2})\b")
 
 
 def _tc63_within_budget(answer: str) -> bool:
@@ -137,9 +140,10 @@ def _tc63_affirms_phrase(answer: str, phrase: str) -> bool:
 def _tc63_open_late(answer: str) -> bool:
     """True when the answer names a closing time at or after the late cutoff.
 
-    Accepts "11pm", "11 PM", "23:00", and "open until 11:30pm" alike, plus the
-    user's own phrasing ("open past 10"). Closing at 22:00 exactly does not
-    count, since the request was for somewhere open *past* 10pm.
+    Accepts "11pm", "11 PM", "11 p.m.", "23:00", and "open until 11:30pm"
+    alike, plus the user's own phrasing ("open past 10"). Closing at 22:00
+    exactly does not count, since the request was for somewhere open *past*
+    10pm.
     """
     cutoff = _TC63_PAST_CUTOFF.search(answer)
     if cutoff:
@@ -152,7 +156,7 @@ def _tc63_open_late(answer: str) -> bool:
         if re.search(r"\b(?:not|never|no|without)\b(?:\W+\w+){0,4}\W*$", prefix):
             continue
         if meridiem:
-            hour, minute = int(hour12) % 12 + (12 if meridiem == "pm" else 0), int(minute12 or 0)
+            hour, minute = int(hour12) % 12 + (12 if meridiem == "p" else 0), int(minute12 or 0)
         else:
             hour, minute = int(hour24), int(minute24 or 0)
         if (hour, minute) > (_TC63_LATE_HOUR, 0):

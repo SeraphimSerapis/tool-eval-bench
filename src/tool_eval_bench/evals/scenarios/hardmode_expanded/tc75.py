@@ -85,8 +85,11 @@ _TC75_REQUEST_MARKER = (
 )
 
 
+# The periods in "3 p.m." are punctuation, not a different time. Without them
+# a model that pencilled a slot in *and* asked for the real one read as though
+# it had guessed nothing.
 _TC75_CONCRETE_VALUE = re.compile(
-    r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}|\d{1,2}\s?(?:am|pm))\b",
+    r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}|\d{1,2}\s?[ap]\.?m\.?)\b",
     re.IGNORECASE,
 )
 
