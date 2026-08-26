@@ -108,31 +108,33 @@ from a misleading or hallucinated answer.
 
 ## Changing scenarios and evaluators
 
-Scenario definitions live in `src/tool_eval_bench/evals/` and are composed into
-the public registry by `scenarios.py`. Put new behavior in the most relevant
-scenario module rather than growing one monolithic file. Existing modules cover
-core, extended, agentic, large-toolset, planning, adversarial, structured, and
-YAML-backed scenarios.
+Scenario definitions live in `src/tool_eval_bench/evals/scenarios/`, one file
+per scenario, grouped by pack: `core/`, `extended/`, `agentic/`,
+`large_toolset/`, `planning/`, `adversarial/`, `structured/`, and the three
+Hard Mode groups. Each group package discovers its own files, so a scenario is
+registered by existing.
 
 ### Adding a new scenario
 
-Six steps, two of which are easy to miss because forgetting them fails silently
-rather than raising:
+1. Create `evals/scenarios/<group>/tcNN.py` in the group that best matches what
+   the scenario measures. The file name and the scenario ID must agree, and the
+   ID must be `TC-NN`: every registry sorts on `int(s.id.split("-")[1])`.
+2. Define a module-level `SCENARIO = ScenarioDefinition(...)` with a
+   deterministic user prompt, a mock tool handler, and an evaluator returning
+   PASS, PARTIAL, or FAIL. Set `difficulty` to a tier from 1 (trivial) to 5
+   (very hard); a scenario without one is unrated and drops out of
+   `--weight-by-difficulty` scoring.
+3. Define a module-level `DISPLAY = ScenarioDisplayDetail(...)` describing the
+   success and failure cases. Reports show these next to the score.
+4. Set `max_turns_override` if the scenario needs more than the default 8 turns.
 
-1. Define the `ScenarioDefinition` in the most relevant `scenarios_*.py` module:
-   a deterministic user prompt, a mock tool handler, and an evaluator returning
-   PASS, PARTIAL, or FAIL.
-2. Append it to that module's `*_SCENARIOS` list.
-3. Add a matching entry to that module's `*_DISPLAY_DETAILS` dict, keyed by
-   scenario ID. `scenarios.py` merges both into `ALL_SCENARIOS` and
-   `ALL_DISPLAY_DETAILS`. A scenario missing from the display dict runs but
-   reports without its success and failure descriptions.
-4. Set `difficulty` to a tier from 1 (trivial) to 5 (very hard). A scenario
-   without one is treated as unrated and drops out of `--weight-by-difficulty`
-   scoring without any warning.
-5. Use a `TC-NN` ID. Both registries sort with
-   `int(s.id.split("-")[1])`, so an ID in another shape raises at import time.
-6. Set `max_turns_override` if the scenario needs more than the default 8 turns.
+Nothing else registers the scenario. `tests/test_scenario_registry.py` checks
+every file in the tree for all four of these and fails if one is missing.
+
+A helper used by more than one scenario in the group belongs in that group's
+`_shared.py`. Do not import one scenario module from another: helpers with the
+same name behave differently across groups on purpose, and a sibling import
+would let one scenario's edit change another's score.
 
 Then add tests for the expected pass case, the failure case, and the important
 near-misses, plus a description that explains what the scenario measures.

@@ -110,7 +110,7 @@ and `ALL_SCENARIOS_WITH_HARDMODE` contains all 88.
 ```python
 from tool_eval_bench.evals.scenarios import SCENARIOS, ALL_SCENARIOS
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
-from tool_eval_bench.evals.scenarios_hardmode import HARDMODE_SCENARIOS
+from tool_eval_bench.evals.scenarios import HARDMODE_SCENARIOS
 
 # Core 15 (equivalent to --short)
 result = asyncio.run(run_benchmark(

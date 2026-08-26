@@ -92,28 +92,35 @@ external dependencies.
 
 ### `evals/` — Scenarios & Evaluators
 
-Each scenario is a self-contained `ScenarioDefinition` with:
+Each scenario is one file under `evals/scenarios/<group>/tcNN.py`, holding a
+self-contained `ScenarioDefinition`:
 - A **user message** (the prompt)
 - A **mock handler** (deterministic tool responses)
 - An **evaluator** (scoring logic: pass/partial/fail)
+- A `DISPLAY` entry describing its success and failure cases
 
-| Module | Categories | Scenarios |
+A group package discovers its own `tcNN.py` files, so creating the file is the
+whole registration. Helpers used by more than one scenario in a group live in
+that group's `_shared.py`; they stay group-scoped because several groups define
+different helpers under the same name.
+
+| Group | Categories | Scenarios |
 |---|---|---|
-| `scenarios.py` | A–E (core 15) + registry | TC-01 – TC-15 |
-| `scenarios_extended.py` | F–G | TC-16 – TC-21 |
-| `scenarios_agentic.py` | H–K (partial) | TC-22 – TC-50, TC-62–TC-63 |
-| `scenarios_adversarial.py` | K (safety extras) | TC-57 – TC-60 |
-| `scenarios_large_toolset.py` | L | TC-37 – TC-40 |
-| `scenarios_planning.py` | M–N | TC-51 – TC-56 |
-| `scenarios_structured.py` | O | TC-64 – TC-69 |
-| `scenarios_hardmode.py` | P (opt-in registry) | TC-70 – TC-74 |
-| `scenarios_hardmode_expanded.py` | P (opt-in expansion) | TC-75 – TC-84 |
-| `scenarios_hardmode_transactional.py` | P (transactional and reasoning continuity) | TC-85 – TC-88 |
+| `scenarios/core/` | A–E (the original 15) | TC-01 – TC-15 |
+| `scenarios/extended/` | F–G | TC-16 – TC-21 |
+| `scenarios/agentic/` | H–K (partial) | TC-22 – TC-50, TC-62–TC-63 |
+| `scenarios/adversarial/` | K (safety extras) | TC-57 – TC-60 |
+| `scenarios/large_toolset/` | L | TC-37 – TC-40 |
+| `scenarios/planning/` | M–N | TC-51 – TC-56 |
+| `scenarios/structured/` | O | TC-64 – TC-69 |
+| `scenarios/hardmode/` | P (opt-in) | TC-70 – TC-74 |
+| `scenarios/hardmode_expanded/` | P (opt-in expansion) | TC-75 – TC-84 |
+| `scenarios/hardmode_transactional/` | P (transactional and reasoning continuity) | TC-85 – TC-88 |
 | `packs.py` | none | Held-out YAML scenario-pack loading and content attestations |
 | `helpers.py` | — | Shared evaluator utilities (datetime matching, text scanning, safe math) |
 | `noise.py` | — | Deterministic payload enrichment for realistic API noise |
 
-Registries:
+Registries, all built by `evals/scenarios/__init__.py`:
 - `SCENARIOS` — core 15 (used by `--short`)
 - `ALL_SCENARIOS` — full 69
 - `ALL_SCENARIOS_WITH_HARDMODE` — full 88
