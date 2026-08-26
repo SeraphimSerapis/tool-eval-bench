@@ -114,13 +114,37 @@ scenario module rather than growing one monolithic file. Existing modules cover
 core, extended, agentic, large-toolset, planning, adversarial, structured, and
 YAML-backed scenarios.
 
-Each scenario should have:
+### Adding a new scenario
 
-1. A deterministic user prompt and mock tool handler.
-2. A clear evaluator with PASS, PARTIAL, and FAIL outcomes.
-3. A registration path in the public scenario registry.
-4. Tests for the expected pass case, failure case, and important near-misses.
-5. A description that explains what the scenario measures.
+Six steps, two of which are easy to miss because forgetting them fails silently
+rather than raising:
+
+1. Define the `ScenarioDefinition` in the most relevant `scenarios_*.py` module:
+   a deterministic user prompt, a mock tool handler, and an evaluator returning
+   PASS, PARTIAL, or FAIL.
+2. Append it to that module's `*_SCENARIOS` list.
+3. Add a matching entry to that module's `*_DISPLAY_DETAILS` dict, keyed by
+   scenario ID. `scenarios.py` merges both into `ALL_SCENARIOS` and
+   `ALL_DISPLAY_DETAILS`. A scenario missing from the display dict runs but
+   reports without its success and failure descriptions.
+4. Set `difficulty` to a tier from 1 (trivial) to 5 (very hard). A scenario
+   without one is treated as unrated and drops out of `--weight-by-difficulty`
+   scoring without any warning.
+5. Use a `TC-NN` ID. Both registries sort with
+   `int(s.id.split("-")[1])`, so an ID in another shape raises at import time.
+6. Set `max_turns_override` if the scenario needs more than the default 8 turns.
+
+Then add tests for the expected pass case, the failure case, and the important
+near-misses, plus a description that explains what the scenario measures.
+
+`ScenarioDefinition` carries several optional fields that change how the runner
+drives the conversation: `tool_choice_after_first_call`,
+`preserve_reasoning_across_follow_ups`, `checkpoint`, and `held_out`. Read the
+dataclass in `domain/scenarios.py` before reaching for one.
+
+Simple lookup-shaped scenarios can skip Python entirely and be written as YAML
+under `evals/yaml_scenarios/`. See `evals/yaml_loader.py` for the supported
+subset, which is intentionally narrower than the Python API.
 
 For evaluator changes in particular:
 
