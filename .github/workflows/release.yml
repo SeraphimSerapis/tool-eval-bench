@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # setuptools-scm reads the tag to set the version. Without the full
           # history the wheel would claim the previous release plus a dev suffix.
