@@ -127,3 +127,17 @@ def make_tool_call(
         turn=turn,
         user_phase=user_phase,
     )
+
+
+def disable_rate_limit_pacing(adapter: Any) -> None:
+    """Pin the adapter's rate-limit spacing at zero for tests.
+
+    Patching ``_rate_limit_delay`` only zeroes the post-429 pause.  The shared
+    ``RateLimitCoordinator`` separately widens ``_min_interval`` on every 429
+    (0.5s, 1s, 2s, 4s, ...) and enforces it with a real ``asyncio.sleep`` in
+    ``acquire()``.  Tests that drive repeated 429s therefore burn wall-clock
+    time proportional to the retry budget unless the pacing is neutralised too.
+    """
+    coordinator = adapter._rate_limits
+    coordinator._max_interval = 0.0
+    coordinator._min_interval = 0.0

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from conftest import disable_rate_limit_pacing
 
 from tool_eval_bench.adapters.openai_compat import (
     OpenAICompatibleAdapter,
@@ -278,6 +279,7 @@ class TestRetryBackoff:
         monkeypatch.setattr(
             "tool_eval_bench.adapters.http_retry._rate_limit_delay", lambda *a, **k: 0.0
         )
+        disable_rate_limit_pacing(adapter)
 
         with pytest.raises(httpx.HTTPStatusError):
             await adapter.chat_completion(model="m", messages=[], base_url="http://x", tools=None)
