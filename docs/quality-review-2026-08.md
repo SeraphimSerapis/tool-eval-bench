@@ -171,11 +171,11 @@ decorator-registered into `_CHECKERS` and dispatched by string ID.
 |---|---|---|
 | F1 | P1 | Blocking SQLite writes inside the async event loop. `application/service.py:410-421` calls the synchronous `repo.checkpoint_scenario_result(...)`, an INSERT with an fsync, directly inside an `async def` callback. There are zero uses of `to_thread` or `run_in_executor` anywhere in `src/`. Harmless at `--parallel 1`. With `--parallel N` it stalls every in-flight request for the duration of each commit, and under contention the 10-second `busy_timeout` blocks the whole loop. |
 | F2 | P2 | `get_scenario_results` in `storage/db.py` calls `self.get(run_id)` with the default `include_traces=True`, rehydrating every `raw_log`, then returns only `scores["scenario_results"]` and discards the traces. `cli/history.py:190`, the run-diff path, hits exactly this. Passing `include_traces=False` skips a multi-megabyte read and a full `_merge_traces` rebuild. |
-| F3 | P2 | `utils/metadata.py` creates a fresh `AsyncClient` per probe, 6 or more of them, each doing its own TCP and TLS handshake. `probe_backend_hint` and `_probe_engine` then run the fallback ladder (`/metrics`, `/version`, `/v1/models`, `/props`, `/health`) strictly sequentially. Against an unreachable endpoint that is 6 times `_PROBE_TIMEOUT` of dead time before the run starts. |
-| F4 | P2 | Blocking synchronous HTTP inside async paths. `plugins/gsm8k/dataset.py:161` opens a sync `httpx.Client` and pages the HuggingFace REST API in a `while True` loop, called from inside `async def GSM8KPlugin.run()`. `cli/perf.py:89` has the same shape. |
+| F3 | P2 | `utils/metadata.py` creates a fresh `AsyncClient` per probe, 6 or more of them, each doing its own TCP and TLS handshake. `probe_backend_hint` and `_probe_engine` then run the fallback ladder (`/metrics`, `/version`, `/v1/models`, `/props`, `/health`) strictly sequentially. Against an unreachable endpoint that is 6 times `_PROBE_TIMEOUT` of dead time before the run starts. **Fixed:** probes share one session, and a connect failure latches it unreachable so the ladder stops. |
+| F4 | P2 | Blocking synchronous HTTP inside async paths. `plugins/gsm8k/dataset.py:161` opens a sync `httpx.Client` and pages the HuggingFace REST API in a `while True` loop, called from inside `async def GSM8KPlugin.run()`. **Partly wrong on inspection:** `cli/perf.py`'s sync probe runs before `asyncio.run`, not inside it. The plugin half is real and is **fixed**: all three loaders now run through `asyncio.to_thread`. |
 | F5 | P2 | `load_scenario_pack` reads every YAML file twice, once via `load_yaml_scenarios(root)` at `packs.py:77` and again via `pack_content_hash(root)` at `:92`, which does its own glob and `read_bytes`. Cheap today with one shipped pack file, linear in pack size, and fixable by hashing the bytes already read. |
-| F6 | P3 | No caching anywhere. Zero uses of `lru_cache` or `functools.cache` in `src/`. `load_yaml_scenarios` re-globs and re-parses on every call. The Python scenario registry is the opposite and correct, built once at import, measured at 0.07s to import 12k lines of scenario definitions. |
-| F7 | P3 | Redundant serialization. Each tool result is `json.dumps`'d twice per turn, once for the trace line and again in `orchestrator.py:288`. `_repair_json_str` at `orchestrator.py:195-249` parses, discards the result, and re-parses, and the caller parses a third time. |
+| F6 | P3 | No caching anywhere. Zero uses of `lru_cache` or `functools.cache` in `src/`. `load_yaml_scenarios` re-globs and re-parses on every call. The Python scenario registry is the opposite and correct, built once at import, measured at 0.07s to import 12k lines of scenario definitions. ~~P3~~ **Declined on measurement.** `load_scenario_pack` runs once per pack per run, so there is no repeated call to cache. A path-keyed cache would add a staleness hazard for no gain. |
+| F7 | P3 | Redundant serialization. Each tool result is `json.dumps`'d twice per turn, once for the trace line and again in `orchestrator.py:288`. `_repair_json_str` at `orchestrator.py:195-249` parses, discards the result, and re-parses, and the caller parses a third time. ~~P3~~ **Declined on measurement.** `json.dumps` on a representative tool result is 2.3 microseconds, so the duplicate costs about 0.35 ms across a 69-scenario run measured in minutes. The two calls also differ for a string result, where the trace quotes and the message does not, so sharing one value would need a branch that reads worse than the duplication. |
 | F8 | ~~P3~~ | **Withdrawn on verification.** `BenchmarkService()` was reported to create `./data/benchmarks.sqlite` even when a run never persists. It does not: every call site either passes an explicit repository (so the database is wanted) or an explicit `None` (which creates nothing), and `--dry-run` writes no files at all. The eager connect in `RunRepository.__init__` also carries a tested contract, since constructing a repository is what migrates an old schema. |
 
 Sequential-by-default execution dominates wall-clock time, since `concurrency` defaults to 1 and
@@ -190,7 +190,7 @@ reproducibility tradeoff rather than a defect. Fixing F1 is a precondition for e
 |---|---|---|
 | G1 | P1 | One test accounts for 65% of total suite runtime. `tests/test_infra_failure_scoring.py:270` monkeypatches `_rate_limit_delay` to `0.0`, but the 429 handler also calls `RateLimitCoordinator.on_rate_limited()`, which widens `_min_interval` through 0.5, 1, 2, 4, 8, 10 seconds, enforced by a real `asyncio.sleep` in `acquire()` that the test never patches. Measured at 15.51s of a 23.6s suite. The test patches the wrong knob. |
 | G2 | P2 | Unclosed `RunRepository` connections. `cli/history.py` constructs repositories at lines 124, 180, and 319 with a single `close()` at line 505. Line 124 never closes at all, and every early return above 505 leaks. `api.py:151` constructs one and never closes it. All fall back on `__del__`, which is non-deterministic and, in WAL mode, leaves `-wal` and `-shm` files behind. |
-| G3 | P3 | `tests/conftest.py:48-52` monkeypatches the real `httpx.AsyncClient` class at import time for the whole session, attaching `tokenize`, `models`, `metrics`, `completion`, and `stream_completion`. Any future httpx version adding a method of the same name collides. The docstring admits it is legacy. |
+| G3 | P3 | `tests/conftest.py:48-52` monkeypatches the real `httpx.AsyncClient` class at import time for the whole session, attaching `tokenize`, `models`, `metrics`, `completion`, and `stream_completion`. Any future httpx version adding a method of the same name collides. The docstring admits it is legacy. **Fixed:** the three test modules that need those methods use a `MeasurementTestClient` subclass, and an architecture test rejects the old pattern. |
 
 ---
 
@@ -217,6 +217,12 @@ the worst in the tree. `plugins/hf_utils.py` at 65%, with the whole `datasets` l
 untested. `cli/dispatch.py` at 74% against a module floor of only 70%, so it can regress further
 before CI notices.
 
+**Fixed.** `spec_live_display.py` is at 85% and `hf_utils.py` at 91%, both with floors so they
+cannot drift back. The gaps were the parts that matter most: every previous `run_spec_live` test
+scraped `None`, so the loop that computes deltas and renders the dashboard never ran, and the
+entire HuggingFace retry ladder, which is what stands between a 429 and a failed download, was
+untested. `dispatch.py` still sits just above its floor.
+
 **Test names describe incidents, not units.** `test_critical_fixes.py`, `test_review_fixes.py`,
 `test_v122_changes.py`, `test_v130_features.py`, `test_coverage_gaps.py`, and
 `test_final_audit_tc01_30.py` through `tc70_88` come to roughly 4k lines whose scope is a date.
@@ -230,6 +236,13 @@ or CodeQL, despite a `SECURITY.md`. Coverage is computed but never uploaded. `pr
 --all-files` is absent from CI, and ruff is pinned to `v0.16.0` in pre-commit but floats at
 `>=0.12` in CI. No concurrency group, so pushes queue redundant matrix runs. No release workflow
 despite `RELEASING.md` and towncrier being set up.
+
+**All fixed.** The matrix gained a macOS and a Windows runner and pins bash everywhere. The test
+job installs with `uv sync --locked`. CodeQL runs the security-and-quality queries per push and
+weekly. A version tag builds, smoke-tests the wheel, asserts the built version matches the tag,
+checks the packaged scenario tree still resolves to 69 and 88, and opens a *draft* release with
+the towncrier notes, leaving publishing to a person. One caveat: the Windows runner could not be
+verified locally, so its first CI run is the real check.
 
 **Pre-commit lacks the basics.** No `trailing-whitespace`, `end-of-file-fixer`, `check-yaml`,
 `check-merge-conflict`, `check-added-large-files`, or `detect-private-key`. The last two matter
@@ -317,6 +330,26 @@ throughout: scores must not move, and no long-lived refactor branch.
 | | **Delivered in part.** F1 is fixed, `main` went from 760 to 577 lines, and CLI database reads moved to `application/run_queries.py` behind a test that forbids `cli` to `storage.db`. The rest was dropped: `cli` may still import `storage.reports`, which is a renderer rather than persistence and which `BenchmarkService` publishes as a constructor argument, and moving perf, spec-bench, pressure, and plugin composition into `application/` would add a layer with one caller while threading console output back through callbacks across ~1,700 lines. | | |
 | 8 | Contributor docs for scenarios, plugins, and adapters. Docstrings for the measurement port. Issue templates, CODEOWNERS, CI hardening, config tightening. | 1-2d | None |
 | 9 | One file per scenario in a category folder tree with a scanning registry. Lands after stage 8 so the docs are written once. | 3-4d | Low, but verify hard |
+
+### Beyond the nine stages
+
+The plan scheduled findings A through E, F1, F2, F5, G1, G2, H, I's config gaps, J, and K's
+docstrings. These were in the report but in no stage, and were done afterwards:
+
+| Finding | Outcome |
+|---|---|
+| F3 | Fixed. One connection pool per probing session, and the ladder stops at the first connect failure, so a wrong `--base-url` costs one timeout instead of six. |
+| F4 | Fixed for the plugins. The `cli/perf.py` half of the finding was wrong: that probe runs before `asyncio.run`, not inside it. |
+| F6 | Declined. `load_scenario_pack` runs once per pack per run, so there is nothing to cache. |
+| F7 | Declined. Measured at 0.35 ms across a run, and sharing the value needs a branch that reads worse than the duplication. |
+| G3 | Fixed. A `MeasurementTestClient` subclass replaces patching the real httpx class, with an architecture test against a relapse. |
+| I, coverage | Fixed. The two thinnest modules went to 85% and 91%, with floors. |
+| I, CI | Fixed. Lockfile install, macOS and Windows runners, CodeQL, and a tag-triggered draft release. |
+| K, parser | Partly fixed. The private `argparse._StoreTrueAction` branch is gone; `parser._actions` stays, because argparse offers no public way to enumerate a parser's options. |
+
+Still open, and deliberately: `cli/dispatch.py` sits just above its 70% floor, and the
+incident-named test files keep their names because renaming 4k lines would wreck `git blame` for
+no behaviour change.
 
 Verification that applies to every stage, beyond the standard quality bar: `config_fingerprint`
 must be unchanged for identical inputs, generated Markdown reports must be byte-identical against a
