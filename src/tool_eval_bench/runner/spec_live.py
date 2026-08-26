@@ -205,7 +205,12 @@ _MODEL_NAME_LABEL = re.compile(
 )
 
 
-_LABEL_PATTERN = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:\\.|[^"])*)"')
+# `[^"]` also matches a backslash, so `(?:\\.|[^"])*` gave the engine two ways
+# to consume every escape and exponential backtracking to work through on a
+# label that never closes its quote. Excluding the backslash from the negated
+# class leaves exactly one parse. Metrics text comes off the wire from whatever
+# server the run points at, so this is reachable input.
+_LABEL_PATTERN = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:[^"\\]|\\.)*)"')
 
 
 def _parse_labels(raw_labels: str | None) -> dict[str, str]:

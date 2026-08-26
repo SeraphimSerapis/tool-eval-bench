@@ -15,6 +15,7 @@ import pytest
 from tool_eval_bench.runner.spec_live import (
     MetricsSnapshot,
     SpecLiveDelta,
+    _parse_labels,
     _parse_snapshot,
     compute_delta,
     metrics_url_from_base,
@@ -1948,3 +1949,39 @@ class TestHighKPositionScaling:
         assert "p0" in text
         assert "p19" in text
         assert "Per-Position" in text
+
+
+# ---------------------------------------------------------------------------
+# Label parsing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('model_name="gpt-4", method="eagle"', {"model_name": "gpt-4", "method": "eagle"}),
+        (r'a="x\"y"', {"a": 'x"y'}),  # the escape is unwrapped
+        ('a=""', {"a": ""}),
+        ('a="unclosed', {}),
+        ("", {}),
+    ],
+)
+def test_parse_labels_reads_prometheus_label_sets(raw, expected):
+    assert _parse_labels(raw) == expected
+
+
+def test_parse_labels_does_not_backtrack_exponentially_on_an_unclosed_label():
+    """A label that opens a quote and never closes it must not hang the monitor.
+
+    `[^"]` also matched a backslash, so every escape had two possible parses and
+    a non-matching tail took exponential time. Metrics text arrives from
+    whatever server the run points at, so this input is reachable. The old
+    pattern needed roughly half a second at 22 repetitions and doubled with
+    each one after that; the ceiling here is loose enough to be stable on a
+    loaded CI runner while still failing outright on exponential behaviour.
+    """
+    hostile = 'A="' + "\\!" * 64
+
+    start = time.perf_counter()
+    assert _parse_labels(hostile) == {}
+    assert time.perf_counter() - start < 1.0
