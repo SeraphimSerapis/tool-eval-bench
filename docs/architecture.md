@@ -121,6 +121,8 @@ different helpers under the same name.
 | `scenarios/hardmode_expanded/` | P (opt-in expansion) | TC-75 – TC-84 |
 | `scenarios/hardmode_transactional/` | P (transactional and reasoning continuity) | TC-85 – TC-88 |
 | `packs.py` | none | Held-out YAML scenario-pack loading and content attestations |
+| `yaml_loader.py` | none | The declarative scenario format, used by held-out packs |
+| `yaml_scenarios/` | none | Three worked YAML examples: a single call, a chain, and restraint |
 | `helpers.py` | — | Shared evaluator utilities (datetime matching, text scanning, safe math) |
 | `noise.py` | — | Deterministic payload enrichment for realistic API noise |
 
@@ -216,7 +218,7 @@ Shared infrastructure:
 | Module | Purpose |
 |---|---|
 | `db.py` | `RunRepository` — SQLite persistence for run results |
-| `reports.py` | `MarkdownReporter` — generates `runs/YYYY/MM/<run_id>.md` reports |
+| `reports/` | `MarkdownReporter` — generates `runs/YYYY/MM/<run_id>.md` reports. A facade over one writer per report type (`scenario`, `summary`, `spec_decode`, `pressure`, `throughput`), with the shared substrate in `_common.py` |
 
 ### `cli/` — Delivery Layer
 
@@ -232,6 +234,8 @@ Shared infrastructure:
 | `model_probe.py` | Model discovery and availability probing |
 | `plugin_runners.py` | Shared persistence/progress lifecycle and plugin-specific execution |
 | `plugin_lifecycle.py` | Shared plugin run lifecycle and result persistence |
+| `plugin_progress.py` | The live progress layout every accuracy plugin renders: bar, running tally, last finished item |
+| `plugin_datasets.py` | Load-or-download with a progress spinner, including resuming an interrupted download |
 | `probe.py` | Model/server detection, preflight checks, and warmup |
 | `commands.py` | Scenario resolution (`resolve_scenarios`, `resolve_all_scenarios_for_ids`) |
 | `resolve.py` | Compatibility exports for scenario/sweep resolution helpers |
@@ -253,6 +257,7 @@ Shared infrastructure:
 |---|---|
 | `summary.py` | Compare summary-style reports |
 | `tool_eval.py` | Compare tool-evaluation reports and scenario traces |
+| `_common.py` | Formatting helpers both comparison reports share (rounding, escaping, signed deltas, percentage classes) |
 
 ### `utils/` — Shared Helpers
 
@@ -358,6 +363,8 @@ native wire format needs an adapter, registered through `adapters/wire_format.py
 | CLI | `test_display.py`, `test_leaderboard_display.py`, `test_e2e.py` | Display rendering, E2E flows |
 | API | `test_api.py`, `test_plugin_interface.py` | Programmatic API, schema drift |
 | Adapter | `test_adapter.py` | SSE streaming, normalize, parse, error handling (httpx mocks) |
+| Invariants | `test_architecture_boundaries.py`, `test_scenario_registry.py`, `test_documented_counts.py`, `test_documentation_examples.py` | Layer imports, that every scenario file registers itself, that prose counts match the registries, and that the guide's examples run |
+| Resource lifetime | `test_repository_lifecycle.py`, `test_checkpoint_offload.py`, `test_plugin_dataset_offload.py`, `test_probe_session.py` | No leaked connections, and nothing blocking the event loop |
 
-The authoritative test count and branch-coverage result come from the current
+This is a map, not an index: most test files are not listed. The authoritative test count and branch-coverage result come from the current
 CI run; avoid copying those fast-changing values into architecture docs.

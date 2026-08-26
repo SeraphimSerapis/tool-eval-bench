@@ -589,6 +589,12 @@ tool-eval-bench compare --report runs/.../model_a_summary.md runs/.../model_b_su
 
 ## CI
 
+Every push runs lint, format, mypy, and the suite on Python 3.11, 3.12, and 3.13 on Linux, plus
+3.12 on macOS and Windows, each with a different random seed. Dependencies install from the
+committed `uv.lock`, so CI tests the versions you resolve. CodeQL runs the security-and-quality
+queries per push and weekly.
+
+The same gate, locally:
 
 ```bash
 .venv/bin/ruff check .
@@ -619,8 +625,12 @@ downgrades the verdict by itself.
 
 Public CLI compatibility is protected by committed argument-schema and legacy-parser
 snapshots. After an intentional interface change, regenerate them with
-`.venv/bin/python scripts/update_compat_snapshots.py`. CI also enforces targeted
-coverage floors for critical CLI, report-comparison, and benchmark-runner modules.
+`.venv/bin/python scripts/update_compat_snapshots.py`. CI also enforces an 80% branch-coverage
+gate plus targeted floors for critical CLI, report-comparison, and benchmark-runner modules.
+
+Pushing a `vX.Y.Z` tag builds the wheel, smoke-tests it in a clean environment, checks the built
+version matches the tag, and opens a **draft** GitHub release with the changelog section towncrier
+generated. Publishing stays manual. See [RELEASING.md](RELEASING.md).
 
 ## Related work
 
