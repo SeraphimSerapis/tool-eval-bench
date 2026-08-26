@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from tool_eval_bench.application.service import _build_run_config
+from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.cli.commands import resolve_pack_scenarios, resolve_packs, resolve_scenarios
 from tool_eval_bench.domain.scenarios import (
     Category,
@@ -121,28 +121,27 @@ class TestPackContentHash:
 
     def test_hash_is_folded_into_config_fingerprint(self, tmp_path: Path) -> None:
         pack = load_scenario_pack(_write_pack(tmp_path / "private", "HO-1"))
-        common: dict[str, object] = {
-            "model": "m",
-            "backend": "vllm",
-            "base_url": "http://localhost:8000/v1",
-            "scenarios": list(pack.scenarios),
-            "temperature": 0.0,
-            "timeout_seconds": 120.0,
-            "max_turns": 8,
-            "seed": None,
-            "reference_date": None,
-            "concurrency": 1,
-            "error_rate": 0.0,
-            "alpha": 0.7,
-            "extra_params": None,
-            "context_pressure_config": None,
-            "weight_by_difficulty": False,
-            "metadata": {},
-        }
-        attested = _build_run_config(**common, scenario_packs=[pack.to_dict()])  # type: ignore[arg-type]
+        settings = RunSettings(
+            model="m",
+            backend="vllm",
+            base_url="http://localhost:8000/v1",
+            temperature=0.0,
+            timeout_seconds=120.0,
+            max_turns=8,
+            seed=None,
+            reference_date=None,
+            concurrency=1,
+            error_rate=0.0,
+            alpha=0.7,
+            extra_params=None,
+            context_pressure_config=None,
+            weight_by_difficulty=False,
+        )
+        common = {"scenarios": list(pack.scenarios), "metadata": {}}
+        attested = build_run_config(settings, **common, scenario_packs=[pack.to_dict()])  # type: ignore[arg-type]
         edited = dict(pack.to_dict())
         edited["content_hash"] = "0" * 16
-        rehashed = _build_run_config(**common, scenario_packs=[edited])  # type: ignore[arg-type]
+        rehashed = build_run_config(settings, **common, scenario_packs=[edited])  # type: ignore[arg-type]
 
         assert attested["config_fingerprint"] != rehashed["config_fingerprint"]
         assert attested["scenario_packs"][0]["content_hash"] == pack.content_hash

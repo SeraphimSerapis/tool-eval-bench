@@ -15,6 +15,7 @@ import httpx
 from tool_eval_bench.adapters.factory import build_adapter
 from tool_eval_bench.adapters.openai_compat import RateLimitObserver
 from tool_eval_bench.application.finalization import finalize_completed_run
+from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.domain.adapters import BackendAdapter
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage, RunContext
 from tool_eval_bench.domain.scenarios import (
@@ -32,9 +33,7 @@ from tool_eval_bench.storage.db import (
     RunRepository,
 )
 from tool_eval_bench.storage.reports import MarkdownReporter
-from tool_eval_bench.utils.ids import build_config_fingerprint, build_run_id
-from tool_eval_bench.utils.urls import endpoint_identity
-from tool_eval_bench.utils.urls import redact_url as _redact_url
+from tool_eval_bench.utils.ids import build_run_id
 
 logger = logging.getLogger(__name__)
 
@@ -172,11 +171,12 @@ class BenchmarkService:
         # second interruption would overwrite its scenario identity and make a
         # later resume appear incompatible.
         config_scenarios = resume_scenarios or resolved
-        run_config = _build_run_config(
+        # Captured once: the resume path below rebuilds the config against a
+        # different scenario list, and the fingerprint must not otherwise move.
+        settings = RunSettings(
             model=model,
             backend=backend,
             base_url=base_url,
-            scenarios=config_scenarios,
             temperature=temperature,
             timeout_seconds=timeout_seconds,
             max_turns=max_turns,
@@ -188,6 +188,10 @@ class BenchmarkService:
             extra_params=extra_params,
             context_pressure_config=context_pressure_config,
             weight_by_difficulty=weight_by_difficulty,
+        )
+        run_config = build_run_config(
+            settings,
+            scenarios=config_scenarios,
             metadata=metadata,
             scenario_packs=scenario_packs,
         )
@@ -271,22 +275,9 @@ class BenchmarkService:
                 alpha=alpha,
                 weight_by_difficulty=weight_by_difficulty,
             )
-            run_config = _build_run_config(
-                model=model,
-                backend=backend,
-                base_url=base_url,
+            run_config = build_run_config(
+                settings,
                 scenarios=merged_scenarios,
-                temperature=temperature,
-                timeout_seconds=timeout_seconds,
-                max_turns=max_turns,
-                seed=seed,
-                reference_date=reference_date,
-                concurrency=concurrency,
-                error_rate=error_rate,
-                alpha=alpha,
-                extra_params=extra_params,
-                context_pressure_config=context_pressure_config,
-                weight_by_difficulty=weight_by_difficulty,
                 metadata=metadata,
                 scenario_packs=scenario_packs,
             )
@@ -421,79 +412,6 @@ class BenchmarkService:
                 await inner(scenario, result, index, total)
 
         return on_result
-
-
-def _build_run_config(
-    *,
-    model: str,
-    backend: str,
-    base_url: str,
-    scenarios: list[ScenarioDefinition],
-    temperature: float,
-    timeout_seconds: float,
-    max_turns: int,
-    seed: int | None,
-    reference_date: str | None,
-    concurrency: int,
-    error_rate: float,
-    alpha: float,
-    extra_params: dict[str, Any] | None,
-    context_pressure_config: dict[str, Any] | None,
-    weight_by_difficulty: bool,
-    metadata: dict[str, Any],
-    scenario_packs: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    """Build persisted config and its deterministic comparison fingerprint."""
-    config: dict[str, Any] = {
-        "model": model,
-        "backend": backend,
-        "base_url": _redact_url(base_url),
-        "endpoint_id": endpoint_identity(base_url),
-        "temperature": temperature,
-        "timeout_seconds": timeout_seconds,
-        "max_turns": max_turns,
-        "seed": seed,
-        "reference_date": reference_date,
-        "scenario_count": len(scenarios),
-        "scenario_ids": [s.id for s in scenarios],
-        "concurrency": concurrency,
-        "error_rate": error_rate,
-        "alpha": alpha,
-        "extra_params": extra_params,
-        "weight_by_difficulty": weight_by_difficulty,
-    }
-    if context_pressure_config:
-        config["context_pressure"] = context_pressure_config
-    if scenario_packs:
-        config["scenario_packs"] = scenario_packs
-    comparison_context = {
-        key: metadata.get(key)
-        for key in (
-            "server_model_id",
-            "server_model_root",
-            "engine_name",
-            "engine_version",
-            "quantization",
-            "gpu_count",
-            "spec_decoding",
-        )
-        if metadata.get(key) is not None
-    }
-    fingerprint_config = {**config, "scenario_ids": sorted(config["scenario_ids"])}
-    from tool_eval_bench import __version__
-
-    # The fingerprint answers "are these two runs comparable?".  The scenarios and
-    # evaluators are code, so two runs from different commits are not comparable
-    # even when every CLI flag matches — include the code identity.
-    config["config_fingerprint"] = build_config_fingerprint(
-        {
-            "config": fingerprint_config,
-            "deployment": comparison_context,
-            "tool_version": __version__,
-            "git_sha": metadata.get("git_sha"),
-        }
-    )
-    return config
 
 
 async def _collect_metadata_safe(

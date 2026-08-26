@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from tool_eval_bench.application.service import _build_run_config
+from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
 from tool_eval_bench.utils.metadata import _git_env_without_repository, _git_sha
 
@@ -31,12 +31,11 @@ def _scenario(sid: str) -> ScenarioDefinition:
     )
 
 
-def _config(metadata: dict) -> dict:
-    return _build_run_config(
+def _settings() -> RunSettings:
+    return RunSettings(
         model="m",
         backend="vllm",
         base_url="http://localhost:8000",
-        scenarios=[_scenario("TC-01")],
         temperature=0.0,
         timeout_seconds=120.0,
         max_turns=8,
@@ -48,8 +47,11 @@ def _config(metadata: dict) -> dict:
         extra_params=None,
         context_pressure_config=None,
         weight_by_difficulty=False,
-        metadata=metadata,
     )
+
+
+def _config(metadata: dict) -> dict:
+    return build_run_config(_settings(), scenarios=[_scenario("TC-01")], metadata=metadata)
 
 
 class TestGitShaProvenance:
