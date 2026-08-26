@@ -104,13 +104,43 @@ _NEGATION_STOPWORDS = frozenset(
     "a an the of any some that this it its is are was were be been to in at on for".split()
 )
 _NEGATION_WINDOW_WORDS = 4
+# "not", "never" and "n't" negate the verb, so they carry across the rest of the
+# predicate: "could not find a price of 187" denies the 187.  The rest are
+# determiners and prepositions, which reach only their own complement.  "There
+# are no conflicts at 3pm" denies conflicts, not 3pm, and "without rounding it
+# is 440.33 F" denies rounding, not the conversion.
+_CONSTITUENT_NEGATION = frozenset({"no", "neither", "nor", "without"})
+# A constituent negation stops at the first word that opens a new phrase: any
+# preposition other than "of", which stays inside the noun phrase ("no price of
+# 187"), or a verb, which starts a new predicate.
+_SCOPE_BREAKERS = frozenset(
+    "at in on for to from by with near around before after until past over under into onto than as "
+    "is are was were be been being am has have had will would shall should can could may might must "
+    "do does did".split()
+)
 
 
 def _is_negated(prefix: str) -> bool:
-    """Return whether text immediately following ``prefix`` sits under a negation."""
+    """Return whether text immediately following ``prefix`` sits under a negation.
+
+    Walks back from the value to the nearest clause boundary. A negation counts
+    only when its scope actually reaches the value, which for a determiner or
+    preposition means no new phrase has opened in between.
+    """
     clause = _CLAUSE_BOUNDARY.split(prefix.lower())[-1]
-    words = [word for word in clause.split() if word.strip("'\"") not in _NEGATION_STOPWORDS]
-    return any(_NEGATION.search(word) for word in words[-_NEGATION_WINDOW_WORDS:])
+    content_words = 0
+    phrase_opened = False
+    for token in reversed(clause.split()):
+        bare = token.strip("'\"")
+        if _NEGATION.search(token) and not (bare in _CONSTITUENT_NEGATION and phrase_opened):
+            return True
+        if bare in _SCOPE_BREAKERS:
+            phrase_opened = True
+        if bare not in _NEGATION_STOPWORDS:
+            content_words += 1
+            if content_words >= _NEGATION_WINDOW_WORDS:
+                return False
+    return False
 
 
 def answer_affirms_number(answer: str, value: str) -> bool:
