@@ -31,6 +31,11 @@ dependencies = [
   "python-dotenv>=1.1.0",
   "pyyaml>=6.0",
   "rich>=14.0.0",
+  # Windows ships no IANA timezone database. Without it `ZoneInfo` raises,
+  # `utc_offset_aliases` falls back to accepting both winter and summer
+  # spellings, and TC-17 scores PASS where it should score PARTIAL. A score
+  # that depends on the host OS is not a score.
+  "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
