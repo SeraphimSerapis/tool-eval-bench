@@ -249,6 +249,35 @@ def test_tc63_all_constraints_without_search_are_not_perfect() -> None:
     assert _scenario("TC-63").evaluate(state).status != ScenarioStatus.PASS
 
 
+def test_tc63_all_constraints_without_search_are_partial_not_a_blank_miss() -> None:
+    """4/4 without a search kept every constraint; it just never looked them up.
+
+    The two PASS branches both require the search, so this answer used to fall
+    past every count branch to the closing _fail, whose summary says it
+    reflected none of the constraints.
+    """
+    state = make_state(
+        final_answer="An Italian restaurant downtown costs $22 per person and is open until 11pm."
+    )
+    evaluation = _scenario("TC-63").evaluate(state)
+    assert evaluation.status is ScenarioStatus.PARTIAL
+    assert "never searched" in evaluation.summary
+
+
+def test_tc63_meeting_more_constraints_without_a_search_never_scores_lower() -> None:
+    """Meeting three more constraints must not cost a point."""
+    answers = [
+        "You should eat something Italian tonight.",
+        "An Italian restaurant downtown is a good pick.",
+        "An Italian restaurant downtown costs $22 per person.",
+        "An Italian restaurant downtown costs $22 per person and is open until 11pm.",
+    ]
+    points = [
+        _scenario("TC-63").evaluate(make_state(final_answer=answer)).points for answer in answers
+    ]
+    assert points == sorted(points), points
+
+
 def test_tc65_explicit_weather_result_mismatch_is_not_perfect() -> None:
     payload = {
         "location": "Tokyo",

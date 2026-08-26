@@ -209,6 +209,13 @@ def _tc63_eval(state: ScenarioState) -> ScenarioEvaluation:
         if _has_unexpected_tools(state, {"web_search"}):
             return _partial("Found a matching restaurant but also called an unrelated tool.")
         return _pass("Final recommendation satisfies all 4 accumulated constraints.")
+    # Both PASS branches above require a qualifying search, and without one a
+    # 4/4 answer would otherwise fall past every count branch to the closing
+    # _fail — scoring 0 against 1 for a 1/4 answer, under a summary saying it
+    # reflected none of the constraints. It kept all four; it just never looked
+    # them up.
+    if constraints_met == 4:
+        return _partial("Satisfies all 4 constraints but never searched for a match.")
     if constraints_met == 3:
         return _partial(f"Met {constraints_met}/4 constraints — close but dropped one.")
     if constraints_met == 2:
