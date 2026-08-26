@@ -106,7 +106,8 @@ warn_unused_configs = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = "tool_eval_bench.cli.plugin_runners"
+# These probe for the optional `datasets` extra, which is absent in CI.
+module = ["tool_eval_bench.cli.plugin_runners", "tool_eval_bench.cli.plugin_datasets"]
 disable_error_code = ["import-not-found"]
 
 

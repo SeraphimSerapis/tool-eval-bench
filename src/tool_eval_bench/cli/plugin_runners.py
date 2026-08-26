@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
 from tool_eval_bench.cli.helpers import metadata_for_storage as _metadata_for_storage
 from tool_eval_bench.cli.helpers import persist_plugin_run as _persist_plugin_run
+from tool_eval_bench.cli.plugin_datasets import load_dataset_with_progress
 from tool_eval_bench.cli.plugin_lifecycle import (
     execute_plugin as _execute_plugin_impl,
 )
@@ -104,46 +106,16 @@ def _run_gsm8k_benchmark(
     # -- Phase 1: Load dataset (with visible progress) --
     from tool_eval_bench.plugins.gsm8k.dataset import _find_cache_file, load_dataset
 
-    cache_path = _find_cache_file()
-    if cache_path.exists():
-        console.print("  [dim]Loading GSM8K from cache…[/]", end=" ")
-        dataset_items = load_dataset()
-        console.print(f"[bold green]✓[/] [dim]{len(dataset_items)} questions[/]")
-    else:
-        # First use — download with visible progress
-        try:
-            import datasets as _ds  # noqa: F401
-
-            method_hint = "via datasets lib"
-        except ImportError:
-            method_hint = "via REST API"
-        console.print()
-        with console.status(
-            f"[bold]Downloading GSM8K dataset from HuggingFace…[/] [dim]({method_hint})[/]",
-            spinner="dots",
-        ) as status:
-
-            def on_download(downloaded: int, total: int) -> None:
-                pct = downloaded / total * 100 if total else 0
-                status.update(
-                    f"[bold]Downloading GSM8K dataset…[/] "
-                    f"[dim]{downloaded:,}/{total:,} questions ({pct:.0f}%)[/]"
-                )
-
-            try:
-                dataset_items = load_dataset(on_progress=on_download)
-            except Exception as exc:
-                console.print(
-                    f"\n  [bold red]✗[/] Failed to download GSM8K dataset: {exc}\n"
-                    "  [dim]This is usually caused by HuggingFace rate limiting.\n"
-                    "  Tip: pip install tool-eval-bench[hf] for rate-limit-free downloads.[/]"
-                )
-                return
-
-        console.print(
-            f"  [bold green]✓[/] Downloaded [bold]{len(dataset_items)}[/] questions "
-            f"[dim](cached to data/gsm8k/test.jsonl)[/]"
-        )
+    dataset_items = load_dataset_with_progress(
+        console,
+        name="GSM8K",
+        noun="questions",
+        cache_path=_find_cache_file(),
+        load=load_dataset,
+        cache_note="data/gsm8k/test.jsonl",
+    )
+    if dataset_items is None:
+        return
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
@@ -306,50 +278,17 @@ def _run_mmlu_benchmark(
     # -- Phase 1: Load dataset (with visible progress) --
     from tool_eval_bench.plugins.mmlu.dataset import _find_cache_file, load_dataset
 
-    cache_path = _find_cache_file("test")
-    if cache_path.exists():
-        console.print("  [dim]Loading MMLU from cache…[/]", end=" ")
-        test_items = load_dataset("test")
-        console.print(f"[bold green]✓[/] [dim]{len(test_items)} questions[/]")
-    else:
-        from pathlib import Path as _Path
-
-        partial_path = _Path("data") / "mmlu" / "test.partial.jsonl"
-        resuming = partial_path.exists()
-        # Check which download method will be used
-        try:
-            import datasets as _ds  # noqa: F401
-
-            method_hint = "via datasets lib"
-        except ImportError:
-            method_hint = "via REST API"
-        label = "Resuming MMLU download" if resuming else "Downloading MMLU dataset"
-        console.print()
-        with console.status(
-            f"[bold]{label} from HuggingFace…[/] [dim]({method_hint})[/]",
-            spinner="dots",
-        ) as status:
-
-            def on_download(downloaded: int, total: int) -> None:
-                pct = downloaded / total * 100 if total else 0
-                status.update(
-                    f"[bold]{label}…[/] [dim]{downloaded:,}/{total:,} questions ({pct:.0f}%)[/]"
-                )
-
-            try:
-                test_items = load_dataset("test", on_progress=on_download)
-            except Exception as exc:
-                console.print(
-                    f"\n  [bold red]✗[/] Failed to download MMLU dataset: {exc}\n"
-                    "  [dim]This is usually caused by HuggingFace rate limiting.\n"
-                    "  Progress is saved — re-run to resume from where it stopped.\n"
-                    "  Tip: pip install tool-eval-bench[hf] for rate-limit-free downloads.[/]"
-                )
-                return
-        console.print(
-            f"  [bold green]✓[/] Downloaded [bold]{len(test_items)}[/] questions "
-            f"[dim](cached to data/mmlu/test.jsonl)[/]"
-        )
+    test_items = load_dataset_with_progress(
+        console,
+        name="MMLU",
+        noun="questions",
+        cache_path=_find_cache_file("test"),
+        load=lambda **kw: load_dataset("test", **kw),
+        cache_note="data/mmlu/test.jsonl",
+        partial_path=Path("data") / "mmlu" / "test.partial.jsonl",
+    )
+    if test_items is None:
+        return
 
     # Load dev split for few-shot
     dev_items = []
@@ -540,49 +479,17 @@ def _run_ifeval_benchmark(
     # -- Phase 1: Load dataset --
     from tool_eval_bench.plugins.ifeval.dataset import _find_cache_file, load_dataset
 
-    cache_path = _find_cache_file()
-    if cache_path.exists():
-        console.print("  [dim]Loading IFEval from cache…[/]", end=" ")
-        dataset_items = load_dataset()
-        console.print(f"[bold green]✓[/] [dim]{len(dataset_items)} prompts[/]")
-    else:
-        from pathlib import Path as _Path
-
-        partial_path = _Path("data") / "ifeval" / "prompts.partial.jsonl"
-        resuming = partial_path.exists()
-        try:
-            import datasets as _ds  # noqa: F401
-
-            method_hint = "via datasets lib"
-        except ImportError:
-            method_hint = "via REST API"
-        label = "Resuming IFEval download" if resuming else "Downloading IFEval dataset"
-        console.print()
-        with console.status(
-            f"[bold]{label} from HuggingFace…[/] [dim]({method_hint})[/]",
-            spinner="dots",
-        ) as status:
-
-            def on_download(downloaded: int, total: int) -> None:
-                pct = downloaded / total * 100 if total else 0
-                status.update(
-                    f"[bold]{label}…[/] [dim]{downloaded:,}/{total:,} prompts ({pct:.0f}%)[/]"
-                )
-
-            try:
-                dataset_items = load_dataset(on_progress=on_download)
-            except Exception as exc:
-                console.print(
-                    f"\n  [bold red]✗[/] Failed to download IFEval dataset: {exc}\n"
-                    "  [dim]This is usually caused by HuggingFace rate limiting.\n"
-                    "  Progress is saved — re-run to resume from where it stopped.\n"
-                    "  Tip: pip install tool-eval-bench[hf] for rate-limit-free downloads.[/]"
-                )
-                return
-        console.print(
-            f"  [bold green]✓[/] Downloaded [bold]{len(dataset_items)}[/] prompts "
-            f"[dim](cached to data/ifeval/prompts.jsonl)[/]"
-        )
+    dataset_items = load_dataset_with_progress(
+        console,
+        name="IFEval",
+        noun="prompts",
+        cache_path=_find_cache_file(),
+        load=load_dataset,
+        cache_note="data/ifeval/prompts.jsonl",
+        partial_path=Path("data") / "ifeval" / "prompts.partial.jsonl",
+    )
+    if dataset_items is None:
+        return
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
