@@ -24,17 +24,36 @@ concurrency:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # Windows runners default to PowerShell, where the quoting in the
+        # pytest invocation below parses differently. One shell everywhere.
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
+        # A different seed per entry, so the randomised order is exercised
+        # broadly rather than three machines repeating one permutation.
         include:
-          - python-version: '3.11'
+          - os: ubuntu-latest
+            python-version: '3.11'
             random-seed: '104729'
-          - python-version: '3.12'
+          - os: ubuntu-latest
+            python-version: '3.12'
             random-seed: '130363'
-          - python-version: '3.13'
+          - os: ubuntu-latest
+            python-version: '3.13'
             random-seed: '155921'
+          # storage/db.py resolves its path from Path.cwd() and runs SQLite in
+          # WAL mode. File locking and path handling are exactly where those two
+          # differ off Linux, so one non-Linux runner each is worth the minutes.
+          - os: macos-latest
+            python-version: '3.12'
+            random-seed: '181081'
+          - os: windows-latest
+            python-version: '3.12'
+            random-seed: '199933'
 
     steps:
       - name: Checkout
@@ -49,23 +68,29 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e '.[dev]'
+      # The lock is what the Docker image and a `uv tool install` resolve to.
+      # Installing from it here means CI tests the same versions users get, and
+      # an upstream release cannot turn a green branch red with no repo change.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: '0.10.8'
+
+      - name: Install from the committed lock
+        run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
 
       - name: Ruff lint
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Ruff format
-        run: ruff format --check .
+        run: uv run ruff format --check .
 
       - name: Mypy
-        run: mypy
+        run: uv run mypy
 
       - name: Pytest
         run: >
-          pytest --tb=short -q
+          uv run pytest --tb=short -q
           --ignore=tests/test_llama_benchy.py
           -m "not live"
           --randomly-seed=${{ matrix.random-seed }}
@@ -73,14 +98,14 @@ jobs:
           --cov-fail-under=80
 
       - name: Critical module coverage
-        run: python scripts/check_module_coverage.py coverage.json
+        run: uv run python scripts/check_module_coverage.py coverage.json
 
       - name: Upload coverage report
         # A reviewer cannot see what a pull request did to coverage without it.
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-py${{ matrix.python-version }}
+          name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
           path: coverage.json
           if-no-files-found: ignore
           retention-days: 14
@@ -192,7 +217,7 @@ jobs:
 
       - name: Test llama-benchy integration
         run: >
-          pytest --tb=short -q tests/test_llama_benchy.py
+          uv run pytest --tb=short -q tests/test_llama_benchy.py
           -m "not live" --randomly-seed=181081
           --cov=tool_eval_bench.runner.llama_benchy
           --cov-config=/dev/null --cov-report=term-missing --cov-fail-under=95

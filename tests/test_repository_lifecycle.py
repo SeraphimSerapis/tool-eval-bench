@@ -8,6 +8,7 @@ tests pin the close to the code path rather than to garbage collection.
 
 from __future__ import annotations
 
+from io import StringIO
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,7 +18,8 @@ from tool_eval_bench.cli import history
 
 
 def _console() -> Console:
-    return Console(file=open("/dev/null", "w"), width=100)
+    """A console that renders and discards, without leaking a file handle."""
+    return Console(file=StringIO(), width=100)
 
 
 def test_print_history_closes_the_repository_when_there_are_no_runs() -> None:
