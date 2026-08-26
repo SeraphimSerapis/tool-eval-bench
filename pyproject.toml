@@ -161,6 +161,10 @@ ignore = [
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]
 asyncio_mode = "auto"
+# A bare `pytest` used to include the live and integration tests, which need a
+# reachable inference endpoint. CI and the pre-commit hook both excluded them by
+# flag; this puts the exclusion in one place so a local run matches.
+addopts = "-m 'not live'"
 tmp_path_retention_count = 1
 tmp_path_retention_policy = "failed"
 markers = [
@@ -177,6 +181,8 @@ omit = [
 
 [tool.coverage.report]
 show_missing = true
+# Matches the CI gate, so `pytest --cov` fails locally for the same reason.
+fail_under = 80
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

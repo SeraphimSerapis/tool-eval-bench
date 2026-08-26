@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/SeraphimSerapis/tool-eval-bench/security/advisories/new
+    about: Report privately rather than in a public issue. See SECURITY.md.

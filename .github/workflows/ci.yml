@@ -16,6 +16,12 @@ on:
         required: false
         type: string
 
+# Pushing twice to a PR should not run two full matrices. The default branch is
+# excluded so main's history keeps a result for every commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
@@ -68,6 +74,53 @@ jobs:
 
       - name: Critical module coverage
         run: python scripts/check_module_coverage.py coverage.json
+
+      - name: Upload coverage report
+        # A reviewer cannot see what a pull request did to coverage without it.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-py${{ matrix.python-version }}
+          path: coverage.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  pre-commit:
+    # The hooks are the local feedback loop; without this they rot silently and
+    # only bite the next contributor who installs them.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Run hooks that do not need the project venv
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: --all-files ruff ruff-format
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Audit dependencies for known vulnerabilities
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          python -m pip install -e .
+          pip-audit --strict --desc
 
   docker-build:
     runs-on: ubuntu-latest
