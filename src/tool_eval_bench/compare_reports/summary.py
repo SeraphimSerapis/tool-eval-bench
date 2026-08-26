@@ -5,11 +5,21 @@ Usage:
     python compare_summary.py <summary_a.md> <summary_b.md> <output.html>
 """
 
-import html
 import re
 import sys
 from pathlib import Path
 from typing import Any
+
+from tool_eval_bench.compare_reports._common import (
+    _r,
+    _tv,
+    diff_display,
+    dname,
+    esc,
+    pct_cls,
+    sign,
+    turn_time_display,
+)
 
 # ─── Parser ─────────────────────────────────────────────────────────────────
 
@@ -76,19 +86,6 @@ def parse_summary(fp: str) -> dict:
     d["median_turn"] = _r(r"\*\*Median Turn\*\*.*?\|\s*([\d.]+)s", txt)
 
     return d
-
-
-def _r(pat, txt, group=1, fl=0):
-    m = re.search(pat, txt, fl)
-    return m.group(group).strip() if m else ""
-
-
-def _tv(field, txt, strip_bt=False):
-    m = re.search(rf"\*\*{re.escape(field)}\*\*\s*\|\s*(.+)", txt)
-    if not m:
-        return ""
-    v = m.group(1).strip()
-    return v.strip("`") if strip_bt else v
 
 
 def _parse_cat_var(txt):
@@ -217,49 +214,6 @@ def short_label(name: str, api: str) -> tuple:
         return short, name
     short = api.split("/")[-1] if api else name
     return short, name
-
-
-def dname(d: dict) -> str:
-    return d["model_api"] or d["model_name"]
-
-
-def esc(s: str) -> str:
-    """Escape a value for HTML text or double-quoted attribute context.
-
-    Every string that originates in a parsed Markdown report must pass through
-    here: the reports are shared between people, so an attacker-authored report
-    must not be able to inject markup into the comparison page.
-    """
-    return html.escape(str(s), quote=True)
-
-
-def sign(v: int) -> str:
-    return f"{'+' if v >= 0 else ''}{v}"
-
-
-def pct_cls(w, r):
-    if w > r:
-        return "font-semibold text-emerald-700"
-    if w < r:
-        return "text-rose-600"
-    return ""
-
-
-def diff_display(wp, rp):
-    dv = round(wp - rp)
-    if dv > 0:
-        return f"+{dv}", "diff-positive"
-    if dv < 0:
-        return f"{dv}", "diff-negative"
-    return "\u2014", "text-slate-500"
-
-
-def turn_time_display(wmt, rmt, winner_raw, runner_raw):
-    if wmt is not None and rmt is not None:
-        delta = wmt - rmt
-        cls = "diff-positive" if delta <= 0 else "diff-negative"
-        return f"{wmt:.1f}s", f"{rmt:.1f}s", f"{delta:+.1f}s", cls
-    return winner_raw or "\u2014", runner_raw or "\u2014", "\u2014", "text-slate-500"
 
 
 def _pct_or_dash(value: str | None) -> str:
