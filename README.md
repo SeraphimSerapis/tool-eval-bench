@@ -13,7 +13,7 @@ Inspired by [ToolCall-15](https://github.com/stevibe/ToolCall-15), this tool run
 - [What it measures](#what-it-measures) and [how it scores](#scoring)
 - [Quickstart](#quickstart): [install](#install), [your first run](#your-first-run), [reading your report](#reading-your-report), [configuration](#configuration)
 - [More ways to run](#more-ways-to-run) and the [command reference](#cli-commands-and-common-workflows)
-- Deep dives: [Hard Mode](#hard-mode), [held-out packs](#held-out-scenario-packs), [context pressure](#context-pressure), [speculative decoding](#speculative-decoding-and-mtp), [accuracy and throughput](#accuracy-and-throughput-benchmarks)
+- Deep dives: [Hard Mode](docs/hard-mode.md), [held-out packs](docs/scenario-packs.md), [context pressure](docs/context-pressure.md), [speculative decoding](docs/speculative-decoding.md), [accuracy and throughput](docs/benchmarks.md)
 - [Programmatic API](#programmatic-api) and the full [CLI reference](docs/cli-reference.md)
 - [Backends](#backends), [CI](#ci), [architecture](#architecture)
 - Something not working? [Troubleshooting](docs/troubleshooting.md)
@@ -343,88 +343,12 @@ Measure acceptance rate, effective tokens per second, and speedup against a base
 plus a live monitor. See [docs/speculative-decoding.md](docs/speculative-decoding.md).
 
 ### Hard Mode
-
-
-The standard 69-scenario benchmark covers *breadth* of tool-calling capabilities. Once a model scores 100% on the standard suite, `--hardmode` adds ceiling-breaking scenarios (Category P) designed to separate truly excellent models from merely good ones.
-
-```bash
-# Standard benchmark + Hard Mode scenarios (69 + 19 = 88 scenarios)
-tool-eval-bench run --hardmode
-
-# Run only Hard Mode scenarios
-tool-eval-bench run --hardmode-only
-tool-eval-bench run --hardmode --categories P  # equivalent
-
-# Combined with context pressure for maximum difficulty
-tool-eval-bench run --hardmode --context-pressure 0.75
-```
-
-Hard Mode focuses on nineteen ceiling-breaking scenarios:
-
-| Scenario | Focus Area | What it tests |
-|---|---|---|
-| TC-70 | Adversarial tool definitions | Near-duplicate tools with subtle scope differences (Europe-only vs global) |
-| TC-71 | Ambiguous recipient | Find multiple matching contacts and ask for clarification, not guess |
-| TC-72 | Cascading error recovery | Primary summary read fails → use its backup → complete the email chain |
-| TC-73 | Multi-constraint composition | Search + filter by 3 simultaneous constraints + contact lookup + email |
-| TC-74 | Stateful multi-turn corrections | Preserve 4 rounds of draft changes, then create and notify exactly once |
-| TC-75 | Missing required parameter | Pass for requesting date and time; partial for requesting only one; fail for guessing or premature tool use |
-| TC-76 | Missing capability | Refuse unsupported mutations; a relevant read-only check remains fully valid |
-| TC-77 | Irrelevant tool trap | Answer a stable fact directly despite distractor tools |
-| TC-78 | Independent portfolio valuation | Fetch three stock prices and aggregate the result |
-| TC-79 | Dependency-aware event planning | Resolve independent inputs before conditional event creation |
-| TC-80 | Preconditioned update safety | Check an exact requested date before mutation and preserve original state |
-| TC-81 | Tool-output prompt injection | Ignore malicious instructions embedded in search results |
-| TC-82 | Stale memory conflict | Prefer authoritative current directory state over stale memory |
-| TC-83 | Format-sensitive chaining | Return exact JSON after noisy lookups while allowing independent work in parallel |
-| TC-84 | Long-horizon recovery with constraint retention | Recover from a booking race and complete equivalent valid notification workflows |
-| TC-85 | Exactly-once provisioning after ambiguous commit | Wait through pending replication, confirm one least-privilege credential, avoid duplicates, and never disclose the secret |
-| TC-86 | Optimistic concurrency without lost updates | Re-read after two consecutive conflicts and preserve both concurrent field changes |
-| TC-87 | Complete pagination with cursor integrity | Follow four cursors, reject a stale-count shortcut, deduplicate, resolve routing, and delay notification |
-| TC-88 | Preserved reasoning across follow-ups | Carry three linked, privately planned constrained values across two user follow-ups |
-
-TC-88 opts into replaying the provider's `reasoning_content` field across its
-follow-up turns. It does not ask the model to print its reasoning to the user.
-A pass requires the first reasoning payload to contain all three exact values;
-valid outputs from a backend that keeps reasoning opaque receive partial credit.
-Other scenarios keep the default behavior and do not replay completed no-tool
-reasoning across user turns.
-
-Hard Mode scenarios use the same scoring (pass=2, partial=1, fail=0) and appear
-under Category P in reports. They are absent from the default 69-scenario run;
-when selected, they contribute to that run's score. This keeps default results
-comparable across standard-suite runs.
-
-Multi-turn authorization scenarios record the active user-message phase for
-each tool call. This prevents a correct-looking mutation made before the
-authorizing follow-up from receiving credit.
-
-TC-78 and TC-79 record same-turn parallel tool calls as informational telemetry. Sequential calls receive full correctness credit so backends without parallel tool-call support, including llama.cpp, remain first-class targets.
+Nineteen opt-in adversarial, stateful, and transactional scenarios (TC-70 to TC-88) for models
+that already score well on the standard 69. See [docs/hard-mode.md](docs/hard-mode.md).
 
 ### Held-out scenario packs
-
-
-Every scenario in this repository is public — prompt, mock tool responses, and evaluator. That is what makes the benchmark auditable, and it is also its expiry date: a published benchmark eventually lands in training data, and a memorized answer looks exactly like a capable one.
-
-A **pack** is a directory of YAML scenarios — the declarative format loaded by `evals/yaml_loader.py`, with `scenarios/` in this repo as the worked example — kept outside the repo. Point a run at one to score against scenarios the model cannot have seen:
-
-```bash
-# Public suite + a private pack (69 + N scenarios)
-tool-eval-bench run --scenario-pack ~/private/tool-eval-holdout
-
-# Only the private pack
-tool-eval-bench run --scenario-pack ~/private/tool-eval-holdout --pack-only
-
-# Multiple packs
-tool-eval-bench run --scenario-pack ~/packs/a --scenario-pack ~/packs/b
-```
-
-Pack scenarios are scored identically to public ones — they contribute to `final_score`, category percentages, and difficulty weighting. Two things differ:
-
-- **The report withholds them.** Titles, summaries, and traces for pack scenarios are replaced with `held out` in the Markdown artifact, and therefore in any HTML comparison generated from it. Only the scenario ID, difficulty, status, points, and failure kind are published. This is a deliberate exception to the full-trace rule: publishing a held-out trace burns the scenario. Full traces are still stored in SQLite for your own inspection. Redaction is report-scoped — the live display and `--dry-run` still show pack titles locally so you can see what is running.
-- **The report attests to which pack produced the number.** Each pack is hashed by filename and file bytes, and the hash is recorded in the run config and folded into `config_fingerprint`. Readers can confirm two published scores were measured against the same held-out set — and that it was not edited in between — without seeing its contents. Editing or renaming a scenario changes the hash, so `compare` will flag the runs as non-comparable.
-
-Scenario IDs must not collide with the public suite or with another pack; a collision is an error rather than a silent override.
+Run private scenarios whose titles and traces stay out of published reports. See
+[docs/scenario-packs.md](docs/scenario-packs.md).
 
 ### Context pressure
 
