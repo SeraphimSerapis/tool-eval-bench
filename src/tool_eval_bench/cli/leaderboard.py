@@ -317,11 +317,9 @@ def _extract_leaderboard_rows(
 
 def print_leaderboard(console: Console, limit: int = 50) -> None:
     """Print a beautiful, screenshottable leaderboard table."""
-    from tool_eval_bench.storage.db import RunRepository
+    from tool_eval_bench.application.run_queries import recent_runs
 
-    repo = RunRepository()
-    runs = repo.list(limit=500)  # Fetch many to deduplicate
-    repo.close()
+    runs = recent_runs(limit=500)  # Fetch many to deduplicate
 
     if not runs:
         console.print("\n  [dim]No benchmark runs found. Run some benchmarks first![/]\n")
@@ -498,11 +496,9 @@ def export_runs(
     limit: int = 500,
 ) -> None:
     """Export all stored runs in CSV or JSON format."""
-    from tool_eval_bench.storage.db import RunRepository
+    from tool_eval_bench.application.run_queries import recent_runs
 
-    repo = RunRepository()
-    runs = repo.list(limit=limit)
-    repo.close()
+    runs = recent_runs(limit=limit)
 
     if not runs:
         console.print("\n  [dim]No benchmark runs found.[/]\n")

@@ -1014,12 +1014,11 @@ def main() -> None:
     resume_prior_results: list[dict] | None = None
     resume_scenarios: list[ScenarioDefinition] | None = None
     if args.resume:
-        from tool_eval_bench.storage.db import RunRepository
+        from tool_eval_bench.application.run_queries import resume_state
 
-        resume_repo = RunRepository()
-        prev_run = resume_repo.get(args.resume)
-        prev_checkpoints = resume_repo.get_checkpoints(args.resume) if prev_run else []
-        resume_repo.close()
+        resumable = resume_state(args.resume)
+        prev_run = resumable[0] if resumable else None
+        prev_checkpoints = resumable[1] if resumable else []
         if prev_run is None:
             console.print(
                 f"\n  [bold red]✗[/] Run '{args.resume}' not found in history.\n"

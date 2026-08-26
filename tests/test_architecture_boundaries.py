@@ -56,6 +56,17 @@ LAYER_IMPORT_RULES: dict[str, frozenset[str]] = {
     ),
 }
 
+# Finer than the layer table: a layer may reach a package while still being
+# barred from one module inside it. Keyed by the importing layer.
+FORBIDDEN_MODULES: dict[str, frozenset[str]] = {
+    # The delivery layer formats reports (storage.reports is a renderer), but
+    # must not open the database. Connection lifetime, query shape, and the
+    # write-then-persist ordering are the application layer's to own; a CLI
+    # module that opens its own repository leaks a WAL connection on every
+    # early return, which is exactly how it went wrong before.
+    "cli": frozenset({"tool_eval_bench.storage.db"}),
+}
+
 # Compatibility modules may deliberately point against the normal dependency
 # direction. Keep each exception exact so new imports cannot hide behind a
 # broad package-level exemption.
@@ -94,6 +105,19 @@ def test_layer_import_boundaries_are_recursive_and_table_driven(layer: str) -> N
             if (relative_path, imported_layer) in COMPATIBILITY_IMPORT_ALLOWLIST:
                 continue
             violations.append(f"{relative_path}: {imported}")
+
+    assert violations == []
+
+
+@pytest.mark.parametrize("layer", sorted(FORBIDDEN_MODULES))
+def test_a_layer_cannot_reach_a_module_barred_to_it(layer: str) -> None:
+    barred = FORBIDDEN_MODULES[layer]
+    violations = [
+        f"{path.relative_to(PACKAGE_ROOT).as_posix()}: {imported}"
+        for path in sorted((PACKAGE_ROOT / layer).rglob("*.py"))
+        for imported in _internal_imports(path)
+        if imported in barred
+    ]
 
     assert violations == []
 
