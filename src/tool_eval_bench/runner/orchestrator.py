@@ -45,6 +45,7 @@ from tool_eval_bench.domain.scenarios import (
     compute_deployability,
     rating_for_score,
 )
+from tool_eval_bench.domain.timeouts import unstreamed_turn_timeout
 from tool_eval_bench.domain.tools import (
     BENCHMARK_REFERENCE_DATE,
     BENCHMARK_REFERENCE_DAY,
@@ -426,6 +427,18 @@ async def run_scenario(
             if state.tool_calls and scenario.tool_choice_after_first_call is not None:
                 active_tool_choice = scenario.tool_choice_after_first_call
 
+            # Turns after the first are not streamed, so the read timeout bounds
+            # the whole generation instead of the gap between tokens. Scale it
+            # from what turn 1 actually took. See domain.timeouts.
+            turn_timeout = (
+                timeout_seconds
+                if use_stream
+                else unstreamed_turn_timeout(
+                    timeout_seconds,
+                    turn_latencies[0] if turn_latencies else 0.0,
+                )
+            )
+
             result = await adapter.chat_completion(
                 model=model,
                 messages=messages,
@@ -433,7 +446,7 @@ async def run_scenario(
                 tool_choice=active_tool_choice if scenario_tools else None,
                 temperature=temperature,
                 max_tokens=4096,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=turn_timeout,
                 api_key=api_key,
                 base_url=base_url,
                 extra_params=extra,
