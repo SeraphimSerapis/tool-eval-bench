@@ -5,6 +5,13 @@ excluded from the default suite because its cases need the ``[perf]`` extra,
 and a security regression guard must not live in a file most runs skip. The
 module under test keeps llama-benchy a soft dependency — it shells out and
 parses JSON, never importing it — so these cases run anywhere.
+
+These assert on what the redactor returns rather than routing a fake credential
+through ``logger.info``. A test that logs one trips
+``py/clear-text-logging-sensitive-data`` itself, because CodeQL cannot tell a
+sanitized string from a raw one at the call site. The call site is covered
+anyway: that query is exactly what caught the original leak, and it re-clears
+only while ``_redact_command`` stays in front of the logger.
 """
 
 from __future__ import annotations
@@ -153,28 +160,3 @@ class TestRedactCommand:
     )
     def test_uncredentialed_urls_stay_readable(self, base_url: str) -> None:
         assert base_url in _redact_command(self._command(base_url))
-
-
-def test_logged_command_carries_no_credential_end_to_end(monkeypatch, caplog) -> None:
-    """The actual log record, not just the helper, must be clean."""
-    import logging
-
-    from tool_eval_bench.runner import llama_benchy
-
-    monkeypatch.setattr(
-        llama_benchy.shutil,
-        "which",
-        lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
-    )
-    cmd = llama_benchy._build_command(
-        f"https://admin:{SECRET}@gpu.internal:8000/v1",
-        "test-model",
-        api_key="sk-test-secret",
-    )
-    with caplog.at_level(logging.INFO, logger=llama_benchy.__name__):
-        llama_benchy.logger.info("Running llama-benchy: %s", llama_benchy._redact_command(cmd))
-
-    assert caplog.text, "expected the INFO record to be captured"
-    assert SECRET not in caplog.text
-    assert "sk-test-secret" not in caplog.text
-    assert "gpu.internal:8000" in caplog.text
