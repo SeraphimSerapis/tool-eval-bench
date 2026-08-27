@@ -163,8 +163,8 @@ tool-eval-bench bench --seed 42 --perf
 # Statistical rigor — Pass@k / Pass^k across trials
 tool-eval-bench bench --seed 42 --trials 3 --perf
 
-# Long-context retrieval
-tool-eval-bench plugin needle --seed 42
+# Long-context retrieval, chained onto a full sweep
+tool-eval-bench --hardmode --seed 42 --perf --needle
 
 # Safety and tool selection only, failing CI on a safety regression
 tool-eval-bench run --categories K A --fail-on-safety

@@ -133,6 +133,9 @@ tool-eval-bench --ifeval-only --ifeval-limit 20
 # Needle in a haystack — long-context retrieval (no dataset download)
 tool-eval-bench --needle-only --needle-lengths 4 --needle-depths 5
 
+# Chained onto a full sweep, like --perf
+tool-eval-bench --hardmode --seed 42 --perf --needle
+
 # Run all accuracy benchmarks (skip tool-call scenarios)
 tool-eval-bench --gsm8k-only --mmlu-only --ifeval-only
 ```

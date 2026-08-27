@@ -432,6 +432,85 @@ class TestNeedleRunner:
 
 
 # ---------------------------------------------------------------------------
+# Flat invocation
+# ---------------------------------------------------------------------------
+
+
+def _parse(argv: list[str]) -> Any:
+    from tool_eval_bench.cli.legacy_parser import make_parser
+    from tool_eval_bench.cli.parser import parse_cli_args
+
+    _, args = parse_cli_args(make_parser, argv)
+    return args
+
+
+def _dispatch(args: Any) -> tuple[list[str], bool]:
+    """Return which plugins ran, and whether the CLI stopped before scenarios."""
+    from rich.console import Console
+
+    from tool_eval_bench.cli.plugin_runners import run_selected_plugins
+
+    calls: list[str] = []
+
+    def runner(name: str) -> Any:
+        def run(*_a: Any, **_k: Any) -> None:
+            calls.append(name)
+
+        return run
+
+    stopped = run_selected_plugins(
+        Console(),
+        "model",
+        "display",
+        "http://server",
+        None,
+        args,
+        runners={n: runner(n) for n in ("gsm8k", "mmlu", "ifeval", "needle")},
+        extra_params=None,
+        output_dir=None,
+        run_context=None,
+    )
+    return calls, stopped
+
+
+class TestFlatInvocation:
+    """`--needle` must work without the `bench` subcommand, the way `--perf` does."""
+
+    def test_bare_flag_needs_no_subcommand(self) -> None:
+        args = _parse(["--needle"])
+        assert args.needle is True
+        assert _dispatch(args) == (["needle"], False)
+
+    def test_chains_with_the_other_top_level_flags(self) -> None:
+        args = _parse(["--hardmode", "--seed", "42", "--perf", "--needle"])
+        assert (args.hardmode, args.seed, args.perf, args.needle) == (True, 42, True, True)
+        # --perf hands its samples on rather than stopping, so needle still runs
+        # and the tool-call scenarios still follow it.
+        assert _dispatch(args) == (["needle"], False)
+
+    def test_grid_flags_work_flat(self) -> None:
+        args = _parse(["--needle", "--needle-depths", "8", "--needle-lengths", "6"])
+        assert (args.needle_depths, args.needle_lengths) == (8, 6)
+
+    def test_needle_only_stops_before_tool_scenarios(self) -> None:
+        assert _dispatch(_parse(["--needle-only"])) == (["needle"], True)
+
+    def test_runs_last_in_the_stable_plugin_order(self) -> None:
+        calls, _ = _dispatch(_parse(["--needle", "--gsm8k", "--ifeval"]))
+        assert calls == ["gsm8k", "ifeval", "needle"]
+
+    def test_bench_subcommand_remains_equivalent(self) -> None:
+        flat = _parse(["--needle", "--seed", "42"])
+        via_bench = _parse(["bench", "--needle", "--seed", "42"])
+        assert (flat.needle, flat.seed) == (via_bench.needle, via_bench.seed)
+
+    def test_defaults_off(self) -> None:
+        args = _parse(["--short"])
+        assert args.needle is False and args.needle_only is False
+        assert _dispatch(args) == ([], False)
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 

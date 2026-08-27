@@ -9,7 +9,9 @@ unrelated prose (the haystack), asks for the fact back, and repeats across a
 grid of haystack sizes and depths.
 
 ```bash
-tool-eval-bench plugin needle
+tool-eval-bench --needle-only          # just this benchmark
+tool-eval-bench --needle               # after the tool-call scenarios
+tool-eval-bench plugin needle          # the subcommand spelling
 ```
 
 ## What a run does
@@ -36,19 +38,25 @@ answer; depths run from the very start of the document to the very end.
 | `--context-size N` | auto | Override the detected context window |
 
 `--seed`, `--parallel`, `--temperature`, and `--timeout` behave as they do
-everywhere else. `plugin needle` accepts `--depths` and `--lengths` as the
-subcommand spellings of the two grid flags.
+everywhere else. Under the `plugin needle` subcommand, the two grid flags are
+spelled `--depths` and `--lengths`.
 
 ```bash
 # A denser grid on a known 128K window
-tool-eval-bench plugin needle --depths 10 --lengths 8 --context-size 131072 --seed 42
+tool-eval-bench --needle-only --needle-depths 10 --needle-lengths 8 \
+  --context-size 131072 --seed 42
 
-# Alongside the tool-call suite
-tool-eval-bench bench --needle --seed 42
+# Chained with the rest of a full sweep: throughput, then retrieval, then the
+# 88 tool-call scenarios
+tool-eval-bench --hardmode --seed 42 --perf --needle
 
 # Faster, at the cost of loading the server with concurrent long prompts
-tool-eval-bench plugin needle --parallel 4
+tool-eval-bench --needle-only --parallel 4
 ```
+
+`--needle` composes like `--perf` does: it needs no subcommand, and it runs
+after any throughput or accuracy benchmark and before the tool-call scenarios.
+`--needle-only` skips the scenarios entirely.
 
 ## Reading the result
 
