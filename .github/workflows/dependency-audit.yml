@@ -1,0 +1,49 @@
+name: Dependency audit
+
+# The locked dependency set only changes when the lock changes, so auditing it
+# on every pull request spends a check to re-confirm yesterday's answer. What
+# does change without any commit is the vulnerability database, and a schedule
+# is the thing that catches that.
+on:
+  schedule:
+    # Mondays, 06:00 UTC.
+    - cron: '0 6 * * 1'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'uv.lock'
+      - 'pyproject.toml'
+      - '.github/workflows/dependency-audit.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.10.8'
+
+      - name: Audit dependencies for known vulnerabilities
+        # Audits the locked dependency set rather than an installed environment.
+        # That is what users resolve, and it sidesteps --strict failing on the
+        # project itself, which is not published to PyPI.
+        run: |
+          uv export --frozen --no-emit-project --no-dev \
+            --format requirements.txt -o requirements-audit.txt
+          python -m pip install --upgrade pip pip-audit
+          pip-audit --strict --desc -r requirements-audit.txt

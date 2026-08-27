@@ -234,8 +234,8 @@ External tools can validate configuration against the published schema via
 
 ## Contributing
 
-Every push runs the suite on Python 3.11–3.13 on Linux plus 3.12 on macOS, each
-with a different random seed, against the committed `uv.lock`. The same gate,
+A pull request runs lint, type checking, and the suite on Python 3.13 against
+the committed `uv.lock`. Python 3.11 and Windows run after merge. The same gate,
 locally:
 
 ```bash
