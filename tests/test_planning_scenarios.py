@@ -1658,6 +1658,133 @@ class TestTC61EdgeCases:
         assert result.status == ScenarioStatus.FAIL
 
 
+class TestTC62PhaseDataWithoutQualifyingEmail:
+    """Regression for #111: a non-qualifying email must not crash the evaluator.
+
+    ``email_calls`` holds only sends that pass every check — CFO recipient,
+    non-empty subject and body, "sent" result. A model that misses any of those
+    leaves it empty while still producing ``user_phase`` data, which used to
+    make the revision check index an empty list.
+    """
+
+    sc = _get("TC-62")
+
+    def _state(self, email_arguments: dict | None) -> ScenarioState:
+        calls = [
+            {
+                "name": "web_search",
+                "arguments": {"query": "quarterly performance"},
+                "turn": 1,
+                "user_phase": 0,
+            }
+        ]
+        if email_arguments is not None:
+            calls.append(
+                {"name": "send_email", "arguments": email_arguments, "turn": 6, "user_phase": 4}
+            )
+        return _make_state(
+            tool_calls=calls,
+            assistant_messages=["Looked it up.", "Sent a summary."],
+            final_answer="Sent a summary.",
+        )
+
+    def test_email_to_the_wrong_recipient_is_graded_not_crashed(self) -> None:
+        result = self.sc.evaluate(
+            self._state({"to": "team@company.com", "subject": "Analysis", "body": "Revenue up."})
+        )
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_email_missing_a_subject_is_graded_not_crashed(self) -> None:
+        result = self.sc.evaluate(
+            self._state({"to": "cfo@company.com", "subject": "", "body": "Revenue up."})
+        )
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_email_missing_a_body_is_graded_not_crashed(self) -> None:
+        result = self.sc.evaluate(
+            self._state({"to": "cfo@company.com", "subject": "Analysis", "body": ""})
+        )
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_no_email_at_all_with_phase_data_is_graded_not_crashed(self) -> None:
+        assert self.sc.evaluate(self._state(None)).status == ScenarioStatus.FAIL
+
+
+class TestTC62RevisionOrdering:
+    """The revision check still discriminates once a qualifying email exists."""
+
+    sc = _get("TC-62")
+
+    def _state(self, email_phase: int) -> ScenarioState:
+        body = (
+            "Our Q3 revenue was $4.15M vs Acme's $3.8M. We outperformed by $350K. "
+            "We expect Q4 to improve further."
+        )
+        return _make_state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "Q3"}, "turn": 2, "user_phase": 1},
+                {
+                    "name": "read_file",
+                    "arguments": {"file_id": "q3_latest"},
+                    "turn": 3,
+                    "user_phase": 1,
+                },
+                {
+                    "name": "web_search",
+                    "arguments": {"query": "Acme Corp Q3 revenue"},
+                    "turn": 4,
+                    "user_phase": 2,
+                },
+                {"name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 5, "user_phase": 3},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "cfo@company.com",
+                        "subject": "Competitive Analysis",
+                        "body": body,
+                    },
+                    "turn": 6,
+                    "user_phase": email_phase,
+                },
+            ],
+            tool_results=[
+                {
+                    "call_id": "call_0",
+                    "name": "search_files",
+                    "result": {"results": [{"file_id": "q3_latest"}]},
+                },
+                {
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "result": {"content": "Q3 Report (CORRECTED) Revenue: 4150000 corrected"},
+                },
+                {
+                    "call_id": "call_2",
+                    "name": "web_search",
+                    "result": {"results": [{"snippet": "Acme Corp Q3 revenue: $3.8m"}]},
+                },
+                {
+                    "call_id": "call_3",
+                    "name": "get_contacts",
+                    "result": {"results": [{"email": "cfo@company.com"}]},
+                },
+                {"call_id": "call_4", "name": "send_email", "result": {"status": "sent"}},
+            ],
+            assistant_messages=[
+                "The corrected Q3 revenue is $4,150,000.",
+                "Acme Corp's Q3 revenue was $3.8M.",
+                "Sent the analysis to the CFO.",
+            ],
+            final_answer="Sent the analysis to the CFO.",
+        )
+
+    def test_email_sent_after_the_revision_passes(self) -> None:
+        assert self.sc.evaluate(self._state(4)).status == ScenarioStatus.PASS
+
+    def test_email_sent_before_the_revision_does_not_pass(self) -> None:
+        assert self.sc.evaluate(self._state(2)).status == ScenarioStatus.PARTIAL
+
+
 class TestTC62EdgeCases:
     sc = _get("TC-62")
 
