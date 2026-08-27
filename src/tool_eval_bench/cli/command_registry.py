@@ -71,6 +71,10 @@ PLUGIN_LEGACY = (
     "ifeval",
     "ifeval_only",
     "ifeval_limit",
+    "needle",
+    "needle_only",
+    "needle_depths",
+    "needle_lengths",
 )
 
 
@@ -149,8 +153,8 @@ COMMAND_SPECS = (
         "Run an external accuracy benchmark",
         translation="plugin",
         help_dests=CONNECTION + SAMPLING + RUN_CONTROL + OUTPUT,
-        legacy_flags=("gsm8k_only", "mmlu_only", "ifeval_only"),
-        choices=("gsm8k", "mmlu", "ifeval"),
+        legacy_flags=("gsm8k_only", "mmlu_only", "ifeval_only", "needle_only"),
+        choices=("gsm8k", "mmlu", "ifeval", "needle"),
     ),
     CommandSpec(
         "compare",

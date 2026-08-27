@@ -130,21 +130,33 @@ tool-eval-bench --mmlu-only --mmlu-limit 50
 # IFEval — instruction following (541 prompts, 25 constraints)
 tool-eval-bench --ifeval-only --ifeval-limit 20
 
+# Needle in a haystack — long-context retrieval (no dataset download)
+tool-eval-bench --needle-only --needle-lengths 4 --needle-depths 5
+
+# Chained onto a full sweep, like --perf
+tool-eval-bench --hardmode --seed 42 --perf --needle
+
 # Run all accuracy benchmarks (skip tool-call scenarios)
 tool-eval-bench --gsm8k-only --mmlu-only --ifeval-only
 ```
 
-Datasets are downloaded from HuggingFace on first use and cached locally.
-Install `pip install tool-eval-bench[hf]` for rate-limit-free downloads.
+GSM8K, MMLU, and IFEval datasets are downloaded from HuggingFace on first use
+and cached locally. Install `pip install tool-eval-bench[hf]` for rate-limit-free
+downloads. The needle benchmark generates its own cases and downloads nothing.
 
 | Flag | Purpose |
 |------|---------|
 | `--gsm8k-only` | GSM8K math reasoning |
 | `--mmlu-only` | MMLU multitask knowledge |
 | `--ifeval-only` | IFEval instruction following |
+| `--needle-only` | Needle-in-a-haystack retrieval |
 | `--gsm8k-limit N` | Limit questions (default: 200) |
 | `--mmlu-limit N` | Limit questions (default: 500) |
 | `--ifeval-limit N` | Limit prompts (default: all 541) |
+| `--needle-lengths N` | Haystack sizes to probe (default: 4) |
+| `--needle-depths N` | Needle depths to probe (default: 5) |
+
+See [needle.md](needle.md) for the retrieval grid and how to read it.
 
 ## Understanding the JSON output
 

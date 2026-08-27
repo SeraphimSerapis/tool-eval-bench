@@ -64,6 +64,7 @@ from tool_eval_bench.cli.plugin_runners import (
     _run_gsm8k_benchmark,
     _run_ifeval_benchmark,
     _run_mmlu_benchmark,
+    _run_needle_benchmark,
 )
 from tool_eval_bench.cli.pressure import (
     run_pressure_sweep as _run_pressure_sweep,
@@ -562,6 +563,8 @@ def _run_spec_bench_mode(target: _Target) -> bool:
             and not args.mmlu_only
             and not args.ifeval
             and not args.ifeval_only
+            and not args.needle
+            and not args.needle_only
         ):
             return True
     return False
@@ -975,6 +978,7 @@ def main() -> None:
             "gsm8k": _run_gsm8k_benchmark,
             "mmlu": _run_mmlu_benchmark,
             "ifeval": _run_ifeval_benchmark,
+            "needle": _run_needle_benchmark,
         },
         extra_params=extra_params or None,
         output_dir=args.output_dir,
@@ -995,11 +999,14 @@ def main() -> None:
             or args.mmlu_only
             or args.ifeval
             or args.ifeval_only
+            or args.needle
+            or args.needle_only
         )
         if not any_benchmark:
             console.print(
                 "\n  [yellow]⚠ --skip-tool-eval has no effect without "
-                "--perf, --perf-only, --spec-bench, --gsm8k, --mmlu, or --ifeval.[/]\n"
+                "--perf, --perf-only, --spec-bench, --gsm8k, --mmlu, --ifeval, "
+                "or --needle.[/]\n"
             )
         return
 

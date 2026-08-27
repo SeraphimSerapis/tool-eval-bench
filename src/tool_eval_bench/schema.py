@@ -533,6 +533,31 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "default": 0,
         "description": "Max IFEval prompts to evaluate (0 = all 541)",
     },
+    # -- Needle in a haystack --
+    {
+        "name": "needle",
+        "type": "bool",
+        "default": False,
+        "description": "Run needle-in-a-haystack retrieval after tool-call scenarios",
+    },
+    {
+        "name": "needle_only",
+        "type": "bool",
+        "default": False,
+        "description": "Run ONLY the needle-in-a-haystack benchmark (skip tool-call scenarios)",
+    },
+    {
+        "name": "needle_depths",
+        "type": "int",
+        "default": 5,
+        "description": "Needle depths to probe, evenly spaced 0-100% of the haystack",
+    },
+    {
+        "name": "needle_lengths",
+        "type": "int",
+        "default": 4,
+        "description": "Haystack sizes to probe, up to the context window",
+    },
     # -- History & comparison --
     {
         "name": "diff",

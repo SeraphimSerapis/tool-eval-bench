@@ -516,6 +516,30 @@
       "type": "int"
     },
     {
+      "default": false,
+      "description": "Run needle-in-a-haystack retrieval after tool-call scenarios",
+      "name": "needle",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run ONLY the needle-in-a-haystack benchmark (skip tool-call scenarios)",
+      "name": "needle_only",
+      "type": "bool"
+    },
+    {
+      "default": 5,
+      "description": "Needle depths to probe, evenly spaced 0-100% of the haystack",
+      "name": "needle_depths",
+      "type": "int"
+    },
+    {
+      "default": 4,
+      "description": "Haystack sizes to probe, up to the context window",
+      "name": "needle_lengths",
+      "type": "int"
+    },
+    {
       "default": null,
       "description": "Compare against a previous run (use 'latest' for most recent)",
       "name": "diff",
@@ -614,13 +638,15 @@
       "choices": [
         "gsm8k",
         "mmlu",
-        "ifeval"
+        "ifeval",
+        "needle"
       ],
       "description": "Run an external accuracy benchmark",
       "legacy_flags": [
         "gsm8k_only",
         "mmlu_only",
-        "ifeval_only"
+        "ifeval_only",
+        "needle_only"
       ]
     },
     "probe": {

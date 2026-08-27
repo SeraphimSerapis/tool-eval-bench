@@ -391,6 +391,33 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Max prompts to evaluate (default: 0 = all 541)",
     )
 
+    # -- Needle in a haystack -------------------------------------------
+    needle_grp = parser.add_argument_group("needle-in-a-haystack benchmark")
+    needle_grp.add_argument(
+        "--needle",
+        action="store_true",
+        help="Run needle-in-a-haystack retrieval after tool-call scenarios",
+    )
+    needle_grp.add_argument(
+        "--needle-only",
+        action="store_true",
+        help="Run ONLY the needle-in-a-haystack benchmark (skip tool-call scenarios)",
+    )
+    needle_grp.add_argument(
+        "--needle-depths",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Needle depths to probe, evenly spaced 0%%–100%% (default: 5)",
+    )
+    needle_grp.add_argument(
+        "--needle-lengths",
+        type=int,
+        default=4,
+        metavar="N",
+        help="Haystack sizes to probe, up to the context window (default: 4)",
+    )
+
     # -- Speculative decoding benchmark ------------------------------------
     spec_grp = parser.add_argument_group("speculative decoding benchmark")
     spec_grp.add_argument(
