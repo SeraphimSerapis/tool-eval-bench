@@ -632,6 +632,275 @@ def _run_ifeval_benchmark(
     console.print("\n  [dim]Report saved to runs/[/]\n")
 
 
+# ---------------------------------------------------------------------------
+# Needle in a haystack (--needle / --needle-only)
+# ---------------------------------------------------------------------------
+
+# The prompt scaffolding, the question, and the answer budget all live inside
+# the context window alongside the haystack.  Sizing haystacks against the raw
+# window would push the largest cells past it and score a context overflow as a
+# retrieval failure.
+_NEEDLE_PROMPT_OVERHEAD = 2048
+
+# The shallowest haystack worth probing.  Below this a miss says nothing about
+# long-context retrieval.
+_NEEDLE_MIN_TOKENS = 1024
+
+
+def _needle_context_lengths(context_size: int, steps: int) -> list[int]:
+    """Evenly spaced haystack sizes from ``_NEEDLE_MIN_TOKENS`` to the window."""
+    usable = context_size - _NEEDLE_PROMPT_OVERHEAD
+    if usable <= _NEEDLE_MIN_TOKENS:
+        return [max(1, usable)]
+    if steps < 2:
+        return [usable]
+    span = usable - _NEEDLE_MIN_TOKENS
+    return [int(_NEEDLE_MIN_TOKENS + span * i / (steps - 1)) for i in range(steps)]
+
+
+def _needle_depths(steps: int) -> list[float]:
+    """Evenly spaced depths across the haystack, inclusive of both ends."""
+    if steps < 2:
+        return [0.5]
+    return [round(i / (steps - 1), 4) for i in range(steps)]
+
+
+def _resolve_needle_context_size(
+    console: Console,
+    base_url: str,
+    model: str,
+    api_key: str | None,
+    args: argparse.Namespace,
+) -> int | None:
+    """Return the effective context window, or ``None`` when it cannot be found."""
+    import asyncio
+
+    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
+    from tool_eval_bench.runner.context_pressure import detect_context_size, detect_kv_capacity
+
+    if args.context_size:
+        return int(args.context_size)
+
+    context_size = asyncio.run(
+        detect_context_size(base_url, model, api_key, client_factory=HTTPMeasurementClient)
+    )
+    if context_size is None:
+        console.print(
+            "\n[bold red]Error:[/] Could not auto-detect the context window. "
+            "Use --context-size to specify it."
+        )
+        return None
+
+    # Same cap the pressure sweep applies: a server may have allocated far less
+    # KV cache than the model architecture allows, and a haystack it cannot hold
+    # measures the deployment rather than the model.
+    kv_info = asyncio.run(
+        detect_kv_capacity(
+            base_url,
+            api_key,
+            metrics_url=getattr(args, "metrics_url", None),
+            client_factory=HTTPMeasurementClient,
+        )
+    )
+    if kv_info is not None and not kv_info.is_hybrid and kv_info.capacity < context_size:
+        console.print(
+            f"  [dim]⚠ KV cache capacity ({kv_info.capacity:,} tokens) < "
+            f"max_model_len ({context_size:,}) — capping[/]"
+        )
+        context_size = kv_info.capacity
+    return context_size
+
+
+def _run_needle_benchmark(
+    console: Console,
+    model: str,
+    display_name: str,
+    base_url: str,
+    api_key: str | None,
+    args: argparse.Namespace,
+    *,
+    extra_params: dict[str, Any] | None = None,
+    output_dir: str | None = None,
+    run_context: Any | None = None,
+) -> None:
+    """Run needle-in-a-haystack retrieval and display the grid."""
+    from rich.panel import Panel
+
+    from tool_eval_bench.adapters.factory import build_adapter
+    from tool_eval_bench.plugins.needle.haystack import build_cases
+    from tool_eval_bench.plugins.needle.plugin import NeedlePlugin
+
+    seed = getattr(args, "seed", None)
+
+    context_size = _resolve_needle_context_size(console, base_url, model, api_key, args)
+    if context_size is None:
+        return
+
+    lengths = _needle_context_lengths(context_size, max(1, args.needle_lengths))
+    depths = _needle_depths(max(1, args.needle_depths))
+    cases = build_cases(lengths, depths, seed=seed)
+
+    parallel = args.parallel
+    parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]{display_name}[/]\n"
+            f"[dim]{len(lengths)} haystack sizes × {len(depths)} depths = "
+            f"{len(cases)} needles · up to {lengths[-1]:,} tokens"
+            f"{parallel_label}[/]",
+            title="[bold]🪡 Needle in a Haystack — Retrieval[/]",
+            border_style="bright_yellow",
+        )
+    )
+
+    plugin = NeedlePlugin()
+    adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
+    result_holder: list = []
+
+    # A 100K-token prompt takes far longer to prefill than a scenario turn, so
+    # the per-request timeout scales with the largest haystack in the grid.
+    effective_timeout = max(args.timeout, 120.0 + lengths[-1] / 50_000 * 60.0)
+
+    async def run() -> None:
+        with PluginProgressDisplay(console, total=len(cases)) as display:
+
+            async def on_progress(current: int, total: int, item_info: dict) -> None:
+                display.tally.record({**item_info, "correct": item_info.get("found")})
+                display.advance(
+                    current,
+                    total,
+                    stats=tally_line(
+                        display.tally,
+                        rate=display.rate_per_minute(current),
+                        unit="n/min",
+                        accent="yellow",
+                    ),
+                    detail=(
+                        f"  {status_icon(item_info, key='found')} "
+                        f"[bold]{item_info.get('cell_id')}[/]  "
+                        f"[dim italic]{truncate(item_info.get('model_response'))}[/]"
+                    ),
+                )
+
+            try:
+                result = await plugin.run(
+                    adapter,
+                    model=model,
+                    base_url=base_url,
+                    api_key=api_key,
+                    temperature=args.temperature,
+                    timeout_seconds=effective_timeout,
+                    seed=seed,
+                    extra_params=extra_params,
+                    on_progress=on_progress,
+                    cases=cases,
+                    concurrency=parallel,
+                    context_size=context_size,
+                )
+                result_holder.append(result)
+                d = result.details
+                display.finish(
+                    completed=d["total"],
+                    stats=final_tally_line(
+                        correct=d["retrieved"],
+                        wrong=d["total"] - d["retrieved"] - d.get("errors", 0),
+                        errors=d.get("errors", 0),
+                        score=d["accuracy"],
+                        rate=(
+                            d["total"] / result.duration_seconds * 60
+                            if result.duration_seconds > 0
+                            else 0
+                        ),
+                        unit="n/min",
+                        accent="yellow",
+                    ),
+                )
+            finally:
+                if hasattr(adapter, "aclose"):
+                    await adapter.aclose()
+
+    result = _execute_plugin(console, "Needle", run, result_holder)
+    if result is None:
+        return
+    details = result.details
+
+    console.print()
+    _print_needle_grid(console, result)
+    console.print()
+    console.print(
+        f"  [bold]Retrieval Accuracy:[/] [bold green]{details['accuracy']:.1f}%[/] "
+        f"({details['retrieved']}/{details['total']})"
+    )
+    effective = details.get("effective_context")
+    if effective:
+        console.print(
+            f"  [bold]Effective context:[/] [bold cyan]{effective:,}[/] tokens "
+            f"[dim](largest haystack retrieved at every depth)[/]"
+        )
+    else:
+        console.print(
+            "  [bold yellow]Effective context:[/] none — every haystack size missed a needle"
+        )
+    errs = details.get("errors", 0)
+    if errs > 0:
+        console.print(f"  [bold yellow]⚠ {errs} errors[/] (counted as misses)")
+    console.print(f"  [bold]Rating:[/] {result.rating}")
+    console.print(
+        f"  [dim]Duration: {result.duration_seconds:.1f}s · Tokens: {result.total_tokens:,}[/]"
+    )
+
+    _finalize_plugin_run(
+        mode="needle",
+        title="Needle in a Haystack",
+        display_name=display_name,
+        result=result,
+        config={
+            "model": model,
+            "base_url": base_url,
+            "mode": "needle",
+            "context_size": context_size,
+            "lengths": lengths,
+            "depths": depths,
+            "temperature": args.temperature,
+            "seed": seed,
+        },
+        report_metrics=[
+            f"- **Retrieval Accuracy**: **{details['accuracy']:.1f}%**",
+            f"- **Effective Context**: {f'{effective:,} tokens' if effective else 'none'}",
+            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
+        ],
+        report_lines=plugin.render_report_section(result),
+        output_dir=output_dir,
+        run_context=run_context,
+    )
+
+    console.print("\n  [dim]Report saved to runs/[/]\n")
+
+
+def _print_needle_grid(console: Console, result: Any) -> None:
+    """Print the retrieval grid as depth rows against haystack-size columns."""
+    from rich.table import Table
+
+    details = result.details
+    lengths: list[int] = details.get("context_lengths", [])
+    depths: list[float] = details.get("depths", [])
+    if not lengths or not depths:
+        return
+
+    found = {(r["context_tokens"], r["depth_percent"]): r["found"] for r in result.item_results}
+
+    table = Table(title="Retrieval grid", title_style="bold", border_style="bright_yellow")
+    table.add_column("Depth", justify="right", style="dim")
+    for length in lengths:
+        table.add_column(f"{length // 1024}K", justify="center")
+    for depth in depths:
+        cells = ["[green]●[/]" if found.get((length, depth)) else "[red]○[/]" for length in lengths]
+        table.add_row(f"{depth:.0%}", *cells)
+    console.print(table)
+
+
 PluginRunner = Callable[..., None]
 
 
@@ -654,7 +923,7 @@ def run_selected_plugins(
     and rendering.  This function owns the common selection/invocation/stop
     lifecycle so combined and plugin-only modes cannot drift apart.
     """
-    for name in ("gsm8k", "mmlu", "ifeval"):
+    for name in ("gsm8k", "mmlu", "ifeval", "needle"):
         selected = getattr(args, name) or getattr(args, f"{name}_only")
         if not selected:
             continue

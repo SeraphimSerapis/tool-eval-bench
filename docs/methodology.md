@@ -6,6 +6,32 @@ anyone interpreting benchmark results.
 
 ---
 
+## What the Model Sees
+
+For every scenario, the model receives:
+
+1. A shared system prompt.
+2. A benchmark context message with a fixed date (2026-03-20, a Friday), so
+   date arithmetic is reproducible across runs.
+3. The scenario user message.
+4. The tool set — 12 universal tools, or 52 for the Category L large-toolset
+   scenarios.
+5. Realistic payload noise on every mock response: extra metadata, timestamps,
+   nested objects, and IDs the answer does not need.
+
+The noise is the point. A model that can only extract the right field from a
+minimal, hand-shaped response has not demonstrated it can work against a real
+API. See [Deterministic Noise](#deterministic-noise) for how it is generated.
+
+The orchestrator then calls the adapter with the scenario's tools, executes any
+requested calls against deterministic mock handlers, appends the results to the
+conversation, and repeats up to the turn limit — 8 by default, higher for the
+deep scenarios that declare their own. The full trace is then scored by the
+scenario's evaluator. The loop itself is diagrammed in
+[architecture.md](architecture.md#tool-call-benchmark).
+
+---
+
 ## Scenario Scoring: 3-Tier System
 
 Each scenario is evaluated using a **deterministic evaluator function** that
@@ -123,6 +149,31 @@ Per-category percentages are still computed and displayed for diagnostic purpose
 ### Known limitation
 
 Because scenario-count determines weight, categories with more scenarios have more influence on the final score. This is intentional: Category K (Safety) has 13 scenarios and should have a larger absolute impact than Category A (Tool Selection) with 3 scenarios. The safety gate (see below) provides an additional non-numeric quality floor for safety.
+
+### Infrastructure failures are not scored
+
+A timeout, connection error, or persistent 429/5xx measures the serving
+environment, not the model. Those scenarios are dropped from **both** the
+numerator and the denominator rather than counted as 0 points.
+
+The run still reports them in full. `completion_rate` and `excluded_scenarios`
+say how much of the suite was actually graded, and a run graded on 60 of 69
+scenarios is not comparable to one graded on all 69. Always check the completion
+rate before comparing two runs.
+
+Accuracy plugins use the stricter total-item denominator instead, so a timeout
+cannot turn one correct answer into a perfect run. Plugin results carry
+`answered`, `completion_rate`, `status`, and `incomplete` so partial execution
+is explicit.
+
+### Scenario-critical semantics
+
+Evaluator scoring also checks semantics the scenario depends on: explicit tool
+errors cannot support fabricated answer data, dependencies and critical
+arguments must be valid, and structured outputs must satisfy their declared
+types and fields. Synthetic tests may omit result records; absence stays
+compatible, but cannot prove result-dependent behavior such as a completed
+asynchronous poll.
 
 ---
 
@@ -587,14 +638,29 @@ has 1–4 constraints; a prompt passes only if ALL its constraints are satisfied
 Unknown instruction IDs fail closed. Exact-count, constrained-response,
 language, and postscript checks use the contract carried by each dataset row.
 
-All three plugins score against the total selected item count. Request errors
-therefore reduce the displayed score and mark the run `incomplete`; they are
-not removed from the denominator. The result also records answered items and
+### Needle in a Haystack — Long-Context Retrieval
+
+Buries a synthetic fact at a known depth in a generated haystack and asks for it
+back, across a grid of haystack sizes and depths. It measures the gap between a
+model's advertised context window and the part of it the model can still
+retrieve from.
+
+Unlike the three benchmarks above, it downloads nothing: the haystack is
+generated from the shared filler corpus in `domain/filler.py`, shuffled and
+noise-injected per cell so no two requests share a token prefix a server could
+answer from its prefix cache. The headline number is the **effective context** —
+the largest haystack size retrieved at every depth. See
+[needle.md](needle.md) for the grid, the flags, and the grading rules.
+
+All the accuracy plugins score against the total selected item count. Request
+errors therefore reduce the displayed score and mark the run `incomplete`; they
+are not removed from the denominator. The result also records answered items and
 completion rate so callers can distinguish wrong answers from missing work.
 
 ### Dataset Loading
 
-Datasets are downloaded from HuggingFace on first use:
+GSM8K, MMLU, and IFEval download their datasets from HuggingFace on first use
+(the needle benchmark generates its cases and downloads nothing):
 
 1. **Primary:** `datasets` library (direct git repo download, no rate limits).
    Install with `pip install tool-eval-bench[hf]`.

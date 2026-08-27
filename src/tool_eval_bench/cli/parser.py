@@ -79,6 +79,8 @@ def _command_help(command: str, *, include_legacy_options: bool = True) -> argpa
         parser.add_argument("--limit", type=int, metavar="N")
         parser.add_argument("--shuffle", action="store_true")
         parser.add_argument("--subjects", metavar="LIST")
+        parser.add_argument("--depths", type=int, metavar="N")
+        parser.add_argument("--lengths", type=int, metavar="N")
     elif command == "compare":
         parser.add_argument("--report", action="store_true")
         parser.add_argument("left", help="Run ID, or Markdown report with --report")
@@ -126,6 +128,8 @@ def _plugin_argv(argv: list[str]) -> list[str]:
             parser.error("--shots is not supported by the IFEval plugin")
         translated.extend((f"{prefix}-shots", str(args.shots)))
     if args.limit is not None:
+        if args.benchmark == "needle":
+            parser.error("--limit is not supported by the needle plugin; use --lengths/--depths")
         translated.extend((f"{prefix}-limit", str(args.limit)))
     if args.shuffle:
         if args.benchmark != "gsm8k":
@@ -135,6 +139,12 @@ def _plugin_argv(argv: list[str]) -> list[str]:
         if args.benchmark != "mmlu":
             parser.error("--subjects is only supported by the MMLU plugin")
         translated.extend(("--mmlu-subjects", args.subjects))
+    for name, value in (("depths", args.depths), ("lengths", args.lengths)):
+        if value is None:
+            continue
+        if args.benchmark != "needle":
+            parser.error(f"--{name} is only supported by the needle plugin")
+        translated.extend((f"--needle-{name}", str(value)))
     return translated + remainder
 
 

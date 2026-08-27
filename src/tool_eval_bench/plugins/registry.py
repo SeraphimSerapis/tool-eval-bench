@@ -10,11 +10,13 @@ def _load_builtin_plugins() -> dict[str, type[BenchmarkPlugin]]:
     from tool_eval_bench.plugins.gsm8k.plugin import GSM8KPlugin
     from tool_eval_bench.plugins.ifeval.plugin import IFEvalPlugin
     from tool_eval_bench.plugins.mmlu.plugin import MMLUPlugin
+    from tool_eval_bench.plugins.needle.plugin import NeedlePlugin
 
     return {
         "gsm8k": GSM8KPlugin,
         "ifeval": IFEvalPlugin,
         "mmlu": MMLUPlugin,
+        "needle": NeedlePlugin,
     }
 
 

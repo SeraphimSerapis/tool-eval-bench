@@ -660,6 +660,46 @@
   {
     "choices": null,
     "default": false,
+    "dest": "needle",
+    "flags": [
+      "--needle"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "needle_only",
+    "flags": [
+      "--needle-only"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 5,
+    "dest": "needle_depths",
+    "flags": [
+      "--needle-depths"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 4,
+    "dest": "needle_lengths",
+    "flags": [
+      "--needle-lengths"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
     "dest": "spec_bench",
     "flags": [
       "--spec-bench"
