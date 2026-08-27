@@ -29,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from tool_eval_bench.runner.throughput import ThroughputSample
 
@@ -79,8 +80,52 @@ def is_available() -> bool:
     return _find_llama_benchy() is not None
 
 
+def _strip_url_credentials(url: str) -> str:
+    """Return *url* with userinfo, query, and fragment removed.
+
+    A base URL carries credentials by two routes that ``--api-key`` redaction
+    does not cover: ``https://user:password@host`` and a query parameter such
+    as ``?api_key=…``. Both are dropped.
+
+    Scheme, host, port, and path survive, because the reason to log the command
+    at all is to show which server was addressed. That is a deliberate contrast
+    with :func:`~tool_eval_bench.utils.urls.redact_url`, which masks the whole
+    authority for URLs that get *persisted* into run records.
+    """
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        # A malformed authority (bad port, unbalanced brackets). Withhold the
+        # whole value rather than guess which part was the credential.
+        return "<unparsable-url>"
+    if not host:
+        return url
+    # urlsplit strips the brackets from an IPv6 literal; put them back or the
+    # rebuilt netloc runs the address and the port together.
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = host if port is None else f"{host}:{port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+
+
+def _redact_argument(arg: str) -> str:
+    """Strip credentials from an argument that is, or carries, an http(s) URL."""
+    if arg.startswith(("http://", "https://")):
+        return _strip_url_credentials(arg)
+    flag, separator, value = arg.partition("=")
+    if separator and value.startswith(("http://", "https://")):
+        return f"{flag}={_strip_url_credentials(value)}"
+    return arg
+
+
 def _redact_command(cmd: list[str]) -> str:
-    """Render a command for logging without exposing API-key values."""
+    """Render a command for logging without exposing credentials.
+
+    Covers both channels an endpoint credential can travel by: an explicit
+    ``--api-key`` value, and anything embedded in a URL argument.
+    """
     redacted: list[str] = []
     redact_next = False
 
@@ -94,7 +139,7 @@ def _redact_command(cmd: list[str]) -> str:
         elif arg.startswith("--api-key="):
             redacted.append("--api-key=<redacted>")
         else:
-            redacted.append(arg)
+            redacted.append(_redact_argument(arg))
 
     return shlex.join(redacted)
 
