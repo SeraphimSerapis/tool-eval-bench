@@ -21,8 +21,10 @@ from rich.table import Table
 from rich.text import Text
 
 from tool_eval_bench.adapters.openai_compat import RateLimitStatus
+from tool_eval_bench.cli.timeout_advice import infrastructure_note, timeout_advice
 from tool_eval_bench.domain.scenarios import (
     Category,
+    FailureKind,
     ModelScoreSummary,
     ScenarioDefinition,
     ScenarioResult,
@@ -42,6 +44,17 @@ STATUS_LABELS = {
     ScenarioStatus.PARTIAL: ("⚠️  PARTIAL", "yellow"),
     ScenarioStatus.FAIL: ("❌ FAIL", "red"),
 }
+
+# Infrastructure failures carry their own labels because they are not verdicts.
+# Rendering a timeout as "FAIL 0/2" states two things that are untrue: that the
+# model got it wrong, and that it scored zero. The scenario is dropped from the
+# numerator and the denominator, so it scored nothing at all.
+INFRA_LABELS = {
+    FailureKind.TIMEOUT: ("⏱  TIMEOUT", "yellow"),
+    FailureKind.CONNECTION_ERROR: ("🔌 NO CONN", "yellow"),
+    FailureKind.SERVER_ERROR: ("🛑 SERVER", "yellow"),
+}
+INFRA_FALLBACK_LABEL = ("⚠  INFRA", "yellow")
 
 CATEGORY_COLORS = {
     Category.A: "cyan",
@@ -205,7 +218,14 @@ class BenchmarkDisplay:
     def _format_result_line(self, scenario: ScenarioDefinition, result: ScenarioResult) -> str:
         """Format a single scenario result as a compact one-line log entry."""
         cat_color = CATEGORY_COLORS.get(scenario.category, "white")
-        label, status_color = STATUS_LABELS.get(result.status, ("?", "white"))
+        infrastructure = result.is_infrastructure_failure
+        if infrastructure:
+            label, status_color = INFRA_LABELS.get(result.failure_kind or "", INFRA_FALLBACK_LABEL)
+            # An en dash, not 0: the scenario left the denominator too.
+            points = "–"
+        else:
+            label, status_color = STATUS_LABELS.get(result.status, ("?", "white"))
+            points = str(result.points)
         dur = f"{result.duration_seconds:.1f}s"
 
         # Latency info
@@ -220,13 +240,17 @@ class BenchmarkDisplay:
         line = (
             f"  [{cat_color}]●[/] {scenario.id}  {scenario.title:<30s}"
             f"  [{status_color}]{label}[/]"
-            f"  [bold]{result.points}[/]/2"
+            f"  [bold]{points}[/]/2"
             f"  [dim]{dur:>5s}[/]"
             f"{latency_str}"
         )
 
         # Append summary for non-pass results
-        if result.status != ScenarioStatus.PASS:
+        if infrastructure:
+            # The evaluator never ran, so there is no summary to show. Say why
+            # the line is here instead of leaving it to trail off blank.
+            line += f"  [{status_color}]{infrastructure_note(result)}[/]"
+        elif result.status != ScenarioStatus.PASS:
             line += f"  [{status_color}]{result.summary}[/]"
         else:
             line += f"  [dim]{result.summary}[/]"
@@ -358,10 +382,17 @@ def _print_final_panel(
     )
 
     if summary.excluded_scenarios:
+        excluded = ", ".join(summary.excluded_scenarios)
         content += (
             f"\n  [yellow]⚠  {len(summary.excluded_scenarios)} scenario(s) excluded "
-            f"(infrastructure failure) — completion rate {summary.completion_rate}%[/]"
+            f"(infrastructure failure), completion rate {summary.completion_rate}%[/]"
+            f"\n  [dim]     {excluded}[/]"
         )
+        for advice in timeout_advice(
+            summary,
+            timeout_seconds=getattr(run_context, "timeout_seconds", None),
+        ):
+            content += f"\n  [yellow]   {advice}[/]"
 
     # Deployability composite (only when latency data is present)
     if summary.deployability is not None and summary.responsiveness is not None:

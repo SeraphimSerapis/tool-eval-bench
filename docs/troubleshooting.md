@@ -50,18 +50,45 @@ tool-eval-bench run --no-preflight
 
 ## Timeouts on thinking models
 
-Models with reasoning enabled routinely exceed the 60-second default. Raise it:
+A timed-out scenario shows as `⏱  TIMEOUT` with `–/2` points, not as a failure. It is excluded from
+both the numerator and the denominator, so the run says nothing about the model on that scenario.
+Check `completion_rate` before comparing the score to anything.
+
+The run prints what to change, computed from the slowest turn it actually measured. Take that
+suggestion first.
+
+Reasoning models routinely exceed the 120-second default. Raise it:
 
 ```bash
-tool-eval-bench run --timeout 120
+tool-eval-bench run --timeout 600
 ```
 
-Thinking is also worth disabling outright for a first check, since it changes both the latency and
-the tool-calling behavior you are measuring:
+Or shorten what the model generates, which fixes the cause rather than the symptom:
 
 ```bash
-tool-eval-bench run --no-think
+tool-eval-bench run --no-think                                    # reasoning off entirely
+tool-eval-bench run --backend-kwargs '{"reasoning_effort": "low"}'  # if your server honours it
+tool-eval-bench run --backend-kwargs '{"max_tokens": 1024}'         # hard cap on generation
 ```
+
+`--no-think` changes both the latency and the tool-calling behavior you are measuring, so it is a
+diagnostic rather than a setting to keep. Scenarios that score provider-exposed reasoning, such as
+TC-88, cannot reach a pass without it.
+
+### Why a later turn times out when the first one did not
+
+Only the first turn of a scenario is streamed. On a streamed turn the read timeout measures the gap
+between tokens, so a long generation never trips it. Every later turn arrives as one response, which
+makes the same number bound the whole generation instead.
+
+A model that comfortably finished turn 1 in 150 seconds under a 120-second timeout will therefore
+die on turn 2 without having slowed down at all. To stop that, later turns are given a multiple of
+what turn 1 actually took, so a model that has demonstrated it is slow gets room while a hung
+endpoint still fails at the configured timeout. Raising `--timeout` further is still the fix when
+even that is not enough.
+
+Eleven of the 88 scenarios have follow-up turns, so on a slow deployment this shows up as a handful
+of exclusions rather than a whole-run failure.
 
 ## Rate limits against a hosted endpoint
 
