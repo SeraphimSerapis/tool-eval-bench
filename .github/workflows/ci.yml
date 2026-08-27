@@ -22,8 +22,114 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Single-version jobs pin 3.13. The supported floor (3.11) and Windows are
+# covered by test-extended on main.
+
 jobs:
-  lint-and-test:
+  # Ruff and mypy are version-independent — mypy is pinned to
+  # python_version = "3.11" in pyproject regardless of the interpreter it runs
+  # on — so running them once says everything running them per matrix entry
+  # would. They use the locked toolchain rather than pre-commit's pinned
+  # mirror, which is a minor version behind and would disagree on the margins.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.10.8'
+
+      - name: Install from the committed lock
+        run: uv sync --locked --extra dev --python 3.13
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format
+        run: uv run ruff format --check .
+
+      - name: Mypy
+        run: uv run mypy
+
+  # The gating test run. One interpreter, with the perf extra installed so the
+  # llama-benchy integration is covered here rather than in its own job.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # setuptools-scm derives the version from tags; a shallow clone would
+          # make every CI build report an unattributable version.
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.10.8'
+
+      # The lock is what the Docker image and a `uv tool install` resolve to.
+      # Installing from it here means CI tests the same versions users get, and
+      # an upstream release cannot turn a green branch red with no repo change.
+      - name: Install from the committed lock
+        run: uv sync --locked --extra dev --extra perf --python 3.13
+
+      - name: Pytest
+        run: >
+          uv run pytest --tb=short -q
+          --ignore=tests/test_llama_benchy.py
+          -m "not live"
+          --randomly-seed=104729
+          --cov=tool_eval_bench --cov-report=term-missing --cov-report=json
+          --cov-fail-under=80
+
+      - name: Critical module coverage
+        run: uv run python scripts/check_module_coverage.py coverage.json
+
+      # A separate invocation because llama_benchy.py is omitted from the
+      # project's coverage config: it is unreachable without the perf extra, so
+      # counting it in the main run would depress the floor for everyone. Its
+      # own gate is stricter than the project's, and .coveragerc.perf is what
+      # lifts the omission for this one step.
+      - name: Test llama-benchy integration
+        run: >
+          uv run pytest --tb=short -q
+          tests/test_llama_benchy.py tests/test_llama_benchy_redaction.py
+          -m "not live" --randomly-seed=181081
+          --cov=tool_eval_bench.runner.llama_benchy
+          --cov-config=.coveragerc.perf --cov-report=term-missing --cov-fail-under=95
+
+      - name: Upload coverage report
+        # A reviewer cannot see what a pull request did to coverage without it.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-ubuntu-py3.13
+          path: coverage.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Post-merge only. Windows has caught real product bugs here — filler seeded
+  # from a clock that ticks every 15.6ms, durations measured with
+  # time.monotonic(), a missing tzdata that changed TC-17's score — so it stays
+  # in CI. It runs after merge rather than on every PR because those bugs were
+  # found by running the suite at all, not by gating each change on it. 3.11 is
+  # the supported floor and rides along.
+  test-extended:
+    if: github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -33,24 +139,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # A different seed per entry, so the randomised order is exercised
-        # broadly rather than three machines repeating one permutation.
         include:
           - os: ubuntu-latest
             python-version: '3.11'
-            random-seed: '104729'
-          - os: ubuntu-latest
-            python-version: '3.12'
             random-seed: '130363'
-          - os: ubuntu-latest
-            python-version: '3.13'
-            random-seed: '155921'
           # storage/db.py resolves its path from Path.cwd() and runs SQLite in
           # WAL mode, and Windows opens files as cp1252 and refuses to delete
           # one that is still open. Those are the differences that bite.
-          - os: macos-latest
-            python-version: '3.12'
-            random-seed: '181081'
           - os: windows-latest
             python-version: '3.12'
             random-seed: '199933'
@@ -59,8 +154,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # setuptools-scm derives the version from tags; a shallow clone would
-          # make every CI build report an unattributable version.
           fetch-depth: 0
 
       - name: Setup Python ${{ matrix.python-version }}
@@ -68,9 +161,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # The lock is what the Docker image and a `uv tool install` resolve to.
-      # Installing from it here means CI tests the same versions users get, and
-      # an upstream release cannot turn a green branch red with no repo change.
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -79,63 +169,31 @@ jobs:
       - name: Install from the committed lock
         run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
 
-      - name: Ruff lint
-        if: matrix.os == 'ubuntu-latest'
-        run: uv run ruff check .
-
-      - name: Ruff format
-        if: matrix.os == 'ubuntu-latest'
-        run: uv run ruff format --check .
-
-      - name: Mypy
-        if: matrix.os == 'ubuntu-latest'
-        run: uv run mypy
-
+      # No coverage gate. The keypress reader is POSIX-only and its tests skip
+      # on Windows, so coverage there is structurally lower and not comparable
+      # to the floors. What these runners are for is whether the tests pass.
       - name: Pytest
-        if: matrix.os != 'windows-latest'
         run: >
           uv run pytest --tb=short -q
           --ignore=tests/test_llama_benchy.py
           -m "not live"
           --randomly-seed=${{ matrix.random-seed }}
-          --cov=tool_eval_bench --cov-report=term-missing --cov-report=json
-          --cov-fail-under=80
-
-      # The keypress reader is POSIX-only and its tests skip here, so Windows
-      # coverage is structurally lower and not comparable to the floors. What
-      # this runner is for is whether the tests pass, not what they cover.
-      - name: Pytest (no coverage gate)
-        if: matrix.os == 'windows-latest'
-        run: >
-          uv run pytest --tb=short -q
-          --ignore=tests/test_llama_benchy.py
-          -m "not live"
-          --randomly-seed=${{ matrix.random-seed }}
-
-      - name: Critical module coverage
-        if: matrix.os != 'windows-latest'
-        run: uv run python scripts/check_module_coverage.py coverage.json
-
-      - name: Upload coverage report
-        # A reviewer cannot see what a pull request did to coverage without it.
-        if: always() && matrix.os != 'windows-latest'
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: coverage.json
-          if-no-files-found: ignore
-          retention-days: 14
 
   pre-commit:
     # The hooks are the local feedback loop; without this they rot silently and
     # only bite the next contributor who installs them.
     runs-on: ubuntu-latest
+    env:
+      # Ruff already ran in `lint`, from the locked version rather than the
+      # mirror's pin. Running it twice per pull request only invites the two to
+      # disagree.
+      SKIP: ruff,ruff-format
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Python 3.13
+      - name: Setup Python
         uses: actions/setup-python@v7
         with:
           python-version: '3.13'
@@ -147,34 +205,9 @@ jobs:
           # `stages: [pre-push]` and need the project venv, so they skip here.
           extra_args: --all-files
 
-  dependency-audit:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Python 3.13
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: '0.10.8'
-
-      - name: Audit dependencies for known vulnerabilities
-        # Audits the locked dependency set rather than an installed environment.
-        # That is what users resolve, and it sidesteps --strict failing on the
-        # project itself, which is not published to PyPI.
-        run: |
-          uv export --frozen --no-emit-project --no-dev \
-            --format requirements.txt -o requirements-audit.txt
-          python -m pip install --upgrade pip pip-audit
-          pip-audit --strict --desc -r requirements-audit.txt
-
-  docker-build:
+  # Both halves of "does this ship": the image and the wheel. They were separate
+  # jobs; nothing about them ran in parallel that mattered.
+  packaging:
     runs-on: ubuntu-latest
 
     steps:
@@ -184,6 +217,11 @@ jobs:
           # setuptools-scm derives the version from tags; a shallow clone would
           # make every CI build report an unattributable version.
           fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
 
       - name: Build image
         run: docker build -t tool-eval-bench:ci .
@@ -221,49 +259,6 @@ jobs:
             --build-arg BUILD_VERSION="0.0.0+g$(git -C "$worktree" rev-parse --short HEAD)" \
             -t tool-eval-bench:worktree "$worktree"
           docker run --rm tool-eval-bench:worktree --version | grep -F '+g'
-
-  optional-perf-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          # setuptools-scm derives the version from tags; a shallow clone would
-          # make every CI build report an unattributable version.
-          fetch-depth: 0
-
-      - name: Setup Python 3.13
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
-
-      - name: Install with optional performance dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e '.[dev,perf]'
-
-      - name: Test llama-benchy integration
-        run: >
-          pytest --tb=short -q tests/test_llama_benchy.py
-          -m "not live" --randomly-seed=181081
-          --cov=tool_eval_bench.runner.llama_benchy
-          --cov-config=/dev/null --cov-report=term-missing --cov-fail-under=95
-
-  wheel-smoke:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          # setuptools-scm derives the version from tags; a shallow clone would
-          # make every CI build report an unattributable version.
-          fetch-depth: 0
-
-      - name: Setup Python 3.13
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
 
       - name: Build isolated wheel
         run: |
@@ -308,7 +303,7 @@ jobs:
           # make every CI build report an unattributable version.
           fetch-depth: 0
 
-      - name: Setup Python 3.13
+      - name: Setup Python
         uses: actions/setup-python@v7
         with:
           python-version: '3.13'

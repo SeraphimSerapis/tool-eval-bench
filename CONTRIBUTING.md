@@ -73,10 +73,15 @@ it can cause Rich rendering tests to emit ANSI codes into captured output.
 The project venv is important: using system Python can silently skip async test
 support and produce misleading results.
 
-CI repeats the required suite with seeds `104729`, `130363`, and `155921` on
-Python 3.11, 3.12, and 3.13. It also builds the Docker image, runs a wheel
-smoke test, checks coverage floors, and runs the optional `llama-benchy` tests.
-Those checks do not require a live inference server.
+A pull request runs the suite once, on Python 3.13 with seed `104729`, together
+with lint, type checking, the coverage floors, the optional `llama-benchy`
+tests, and the packaging smoke tests for the Docker image and the wheel. None of
+them need a live inference server.
+
+Python 3.11 and Windows run after merge rather than on the pull request, in the
+`test-extended` job, each with its own seed. A regression that only shows up
+there lands on `main` before anyone sees it, so check the run on `main` after
+merging something that touches paths, timing, or file handling.
 
 The live canary is separate and requires an OpenAI-compatible endpoint. Use it
 only when you have an authorized test server:

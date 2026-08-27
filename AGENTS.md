@@ -71,8 +71,9 @@ Before claiming completion:
 3. `.venv/bin/mypy`
 4. `.venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py -m "not live" --randomly-seed=104729`
 
-CI repeats the required suite with seeds `104729`, `130363`, and `155921`
-across Python 3.11–3.13, and enforces the configured branch-coverage floor.
+A pull request runs the suite once, on Python 3.13 with seed `104729`, and
+enforces the branch-coverage floor plus the per-module floors. Python 3.11 and
+Windows run after merge, in `test-extended`, each with a different seed.
 
 **Pre-commit hooks** enforce both checks automatically:
 
@@ -94,7 +95,10 @@ a false sense of coverage.
 
 Tests that require the `llama-benchy` package (`test_llama_benchy.py`) should be
 excluded from the default run unless the `[perf]` optional group is installed.
-CI installs `[dev,perf]` and runs them in a dedicated Python 3.13 job.
+CI installs `[dev,perf]` in the `test` job and covers them in a second step,
+gated at 95% against `.coveragerc.perf`. That config exists because the
+project's coverage settings omit `runner/llama_benchy.py`, which is unreachable
+without the extra.
 
 Note: `test_adapter.py` uses deterministic httpx mocks and does **not** require
 a live inference server — it must be included in all test runs.

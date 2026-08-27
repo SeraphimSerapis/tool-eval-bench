@@ -1,0 +1,15 @@
+# Coverage config for the llama-benchy integration gate only.
+#
+# The project's own config omits runner/llama_benchy.py, because the module is
+# unreachable without the `perf` extra and counting it would depress the floor
+# for everyone who does not install it. This file exists so that one job can
+# measure it without that omission.
+#
+# Passing `--cov-config=/dev/null` used to serve the same purpose, and it also
+# silently broke the gate: combined with a dotted `--cov` target, pytest-cov
+# 7.1.0 printed "FAIL Required test coverage ... not reached" and still exited
+# 0, so the threshold never failed a build. A real config file keeps the exit
+# code honest.
+[run]
+branch = true
+source = src
