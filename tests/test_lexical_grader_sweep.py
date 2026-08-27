@@ -197,3 +197,206 @@ def test_tc73_still_flags_an_unexplained_recommendation():
     from tool_eval_bench.evals.scenarios.hardmode.tc73 import _TC73_EXCLUSION
 
     assert not _TC73_EXCLUSION.search("i recommend mitte brasserie for sunday")
+
+
+# Every case here FAILS at the parent revision. Cases already correct upstream are
+# regression guards and live in their own `still_`-named tests below, so this list
+# stays what its name says: the demonstration set.
+@pytest.mark.parametrize(
+    "price",
+    # `$30.001` is why the cents group is `\d+` and not `\d{1,2}`: capped at two
+    # digits it reads as `$30.00` and sits exactly on the ceiling.
+    [
+        "$1,200",
+        "$1,200.00",
+        "$1,000.50",
+        "$30.99",
+        "$30.01",
+        "$30.001",
+        "$30.99,4.5 stars",
+    ],
+)
+def test_tc63_reads_the_whole_amount_not_its_first_digits(price):
+    """An over-budget price must not clear the ceiling by being truncated.
+
+    `_TC63_PRICE` stopped its number body at the first non-digit, so `$1,200`
+    was read as `$1` and `$30.99` as `$30`. Both cleared a $30 ceiling, and
+    since `answer_affirms_number` collapses digit grouping, the stray `1` in
+    "table for 1" was what affirmed the truncated figure.
+    """
+    from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_within_budget
+
+    answer = f"Trattoria Bella,Italian,downtown,{price},table for 1,open until 11pm."
+    assert _tc63_within_budget(answer.lower()) is False, price
+
+
+# REGRESSION GUARDS — every case in the two lists that follow is already green at
+# the parent revision.
+# They are here because the plausible fixes to the above break them.
+@pytest.mark.parametrize(
+    "price",
+    [
+        "$25",
+        "$ 25",
+        "US$25",
+        "CA$25",
+        "AU$25",
+        "$30",
+        "$30.00",
+        "$29.99",
+        "$28.50",
+        "$22/person",
+        "$25.500",
+        "$30.000",
+        "$22.50,4.5 stars",
+        "$28.50,11pm",
+        "$25.50,2 blocks away",
+        "$22.50, 4.5 stars",
+    ],
+)
+def test_tc63_still_accepts_an_amount_at_or_under_the_ceiling(price):
+    """The plausible false positives of the change above.
+
+    `US$25` works today, and a lookbehind rejecting a preceding word character
+    would silently break it along with `CA$` and `AU$`. `$30.00` is the ceiling
+    exactly. The last four are the cases that killed two earlier drafts: reading
+    the amount is not enough if what gets LOOKED UP in the answer changes with
+    it, because `answer_affirms_number` strips digit-grouping commas from the
+    answer and can pull a following digit against a wider needle.
+    """
+    from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_within_budget
+
+    answer = f"Trattoria Bella,Italian,downtown,{price},open until 11pm."
+    assert _tc63_within_budget(answer.lower()) is True, price
+
+
+@pytest.mark.parametrize("price", ["$25,4.5 stars", "$28,11pm", "$007", "$٢٥"])
+def test_tc63_still_does_not_read_these_and_this_change_does_not_either(price):
+    """Known limitations, genuinely unchanged — recorded, not fixed.
+
+    `answer_affirms_number` collapses digit-grouping commas across the whole
+    answer, so in `$25,4.5` the amount is not affirmed by that occurrence, and
+    unless the answer names it again elsewhere the price is not read at all.
+    `$007` is looked up as `7`, which the lookbehind refuses inside `007`
+    itself. `$٢٥` is looked up as ASCII `25`, a string that does not occur in
+    the answer at all. For all four the value looked up is byte-identical
+    before and after, because the old three-digit cap did not change any of
+    these amounts. Named so the guard above is not read as covering a class it
+    only half covers.
+    """
+    from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_within_budget
+
+    answer = f"Trattoria Bella,Italian,downtown,{price},open until 11pm."
+    assert _tc63_within_budget(answer.lower()) is False, price
+
+
+# ⚠ THE CLASS WHERE THIS CHANGE MOVES SCORES IN BOTH DIRECTIONS, pinned in both.
+# The old lookup was built from the TRUNCATED capture, so where leading zeros push
+# the significant digits past the old three-digit cap -- `$0025`, read as `$2` -- the
+# two revisions look up different numbers and the sentence decides which one affirms.
+# Shorter amounts are unaffected: `$007`, `$025` and `$030` look up identically on
+# both. Keeping the truncated capture for the lookup would avoid the movement
+# entirely; the wider lookup is a choice, made so the affirmation half stops reading
+# a prefix too.
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        # gains the constraint: `25` is affirmed, the old `2` was not
+        (
+            "Trattoria Bella - Italian, downtown, $0025 per person - that is 25 "
+            "dollars, open until 11pm.",
+            True,
+        ),
+        (
+            "Trattoria Bella - Italian, downtown, $0030 per person, 30 total for "
+            "two, open until 11pm.",
+            True,
+        ),
+        # loses it: the old `2` was affirmed by "table for 2", `25` is not
+        (
+            "Trattoria Bella - Italian, downtown, $0025 per person, table for 2, open until 11pm.",
+            False,
+        ),
+        (
+            "Trattoria Bella - Italian, downtown, $0025, 4.5 stars, table for 2, open until 11pm.",
+            False,
+        ),
+        # over budget AND leading-zero: base reads `003`, affirmed by "table for 3"
+        (
+            "Trattoria Bella - Italian, downtown, $0035 per person, table for 3, open until 11pm.",
+            False,
+        ),
+        # `$0007`: the old lookup was `0`, from the truncated `000`; the new one is `7`
+        (
+            "Trattoria Bella - Italian, downtown, $0007 per person - that is 7 "
+            "dollars, open until 11pm.",
+            True,
+        ),
+    ],
+)
+def test_tc63_reads_a_leading_zero_amount_by_its_value_in_both_directions(answer, expected):
+    """Both directions of the leading-zero class, asserted rather than left to be found."""
+    from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_within_budget
+
+    assert _tc63_within_budget(answer.lower()) is expected, answer
+
+
+def test_tc63_still_returns_a_verdict_on_a_long_run_of_zeros():
+    """Regression guard against a defect THIS change could introduce.
+
+    Green before and after: upstream returns a verdict here only because its
+    three-digit cap truncated the string before the conversion saw it.
+
+    An answer can carry an arbitrarily long run of leading zeros whose float
+    value is still under the ceiling, so the conversion has to strip them. A
+    long NON-zero run cannot reach it: `float()` makes it `inf` and the ceiling
+    rejects it first.
+    """
+    from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_within_budget
+
+    for zero, body in (("0", "25"), ("\u0660", "\u0662\u0665"), ("\u0966", "\u0968\u096b")):
+        answer = f"trattoria bella - italian, downtown, ${zero * 5000}{body} per person, 11pm."
+        assert _tc63_within_budget(answer) is False, zero
+    # a long NON-zero run cannot reach the conversion: it is `inf`, rejected by the ceiling
+    long_nonzero = "trattoria bella - italian, downtown, $" + "1" * 5000 + " per person, 11pm."
+    assert _tc63_within_budget(long_nonzero) is False
+
+
+@pytest.mark.parametrize("price", ["$2,500", "$5,000"])
+def test_tc63_still_rejects_a_grouped_amount_that_never_affirmed(price):
+    """Regression guard, green before and after — recorded so it is not miscounted.
+
+    These already scored correctly upstream, by luck rather than design: `$2,500`
+    truncated to `$2`, and no standalone `2` appeared to affirm it. Reading the
+    whole amount reaches the same verdict for the right reason.
+    """
+    from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_within_budget
+
+    answer = f"Trattoria Bella,Italian,downtown,{price},table for 1,open until 11pm."
+    assert _tc63_within_budget(answer.lower()) is False, price
+
+
+def test_tc63_still_reads_a_negated_price_as_not_affirmed():
+    """Regression guard, green before and after: the negation window must survive."""
+    from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_within_budget
+
+    answer = "Trattoria Bella, downtown, not $25.50 per person, open until 11pm."
+    assert _tc63_within_budget(answer.lower()) is False
+
+
+def test_tc63_does_not_award_full_credit_to_a_forty_times_over_budget_answer():
+    """The scoring consequence, at the scenario boundary rather than the helper.
+
+    CONTRIBUTING: "Ensure a plausible hallucination or unsafe action cannot
+    receive full credit." A `$1,200 per person` recommendation scored PASS
+    against a `$30` ceiling, under a verdict reading "Maintained all
+    accumulated constraints".
+    """
+    scenario = next(s for s in ALL_SCENARIOS_WITH_HARDMODE if s.id == "TC-63")
+    state = make_state(
+        tool_calls=[{"name": "web_search", "arguments": {"query": "italian restaurant downtown"}}],
+        final_answer=(
+            "Trattoria Bella - Italian, downtown, $1,200 per person, table for 1, open until 11pm."
+        ),
+    )
+    assert scenario.evaluate(state).status is ScenarioStatus.PARTIAL

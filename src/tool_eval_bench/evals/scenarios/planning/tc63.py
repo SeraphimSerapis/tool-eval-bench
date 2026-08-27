@@ -106,7 +106,11 @@ _TC63_LATE_HOUR = 22
 _TC63_PAST_CUTOFF = re.compile(r"\b(?:past|after|later than|beyond)\s+10(?!\d)\s*(?:p\.?m\.?)?")
 
 
-_TC63_PRICE = re.compile(r"\$\s?(\d{1,3})")
+# The body below stopped at the first non-digit, so the pattern read a PREFIX
+# of the amount rather than the amount: `$1,200` was read as `$1` and `$30.99`
+# as `$30`, both of which clear a $30 ceiling. The currency marker stays
+# required -- without it `open until 11pm` would read as an `$11` price.
+_TC63_PRICE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?")
 
 
 # `p.m.` is the same time as `pm`. `_TC63_PAST_CUTOFF` above already accepts
@@ -118,8 +122,26 @@ _TC63_CLOCK = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\b|\b(\d{1,2}
 def _tc63_within_budget(answer: str) -> bool:
     """True when the answer names a per-person price at or under the ceiling."""
     for match in _TC63_PRICE.finditer(answer):
-        price = int(match.group(1))
-        if price > _TC63_BUDGET_CEILING or not _answer_affirms_number(answer, str(price)):
+        whole, cents = match.group(1), match.group(2)
+        digits = whole.replace(",", "")
+        price = float(f"{digits}.{cents or 0}")
+        # The value looked up in the answer is built from the amount, so removing the
+        # truncation changes it wherever the truncation changed the amount -- that is,
+        # for whole parts longer than the old three-digit cap. `$0025` was looked up as
+        # `2` and is now looked up as `25`; `$007` and `$030` are unaffected. That moves
+        # scores in BOTH directions, and both are pinned by tests. Keeping upstream's
+        # truncated capture for the lookup would avoid the movement, at the cost of
+        # leaving the same prefix bug in the affirmation half: it is a deliberate
+        # choice, not a necessity.
+        # `float()` rather than `int()` on the raw digits: CPython refuses a string->int
+        # conversion above 4300 characters, and an answer can carry an arbitrarily long
+        # run of leading zeros whose value is still under the ceiling. `\d` matches every
+        # Unicode decimal digit, so stripping ASCII "0" would leave `٠٠٠…٢٥` unguarded;
+        # `float()` accepts every one of them and has no length ceiling. A long NON-zero
+        # run cannot reach here at all -- it is `inf`, which the ceiling rejects first.
+        if price > _TC63_BUDGET_CEILING or not _answer_affirms_number(
+            answer, str(int(float(digits)))
+        ):
             continue
         prefix = answer[max(0, match.start() - 32) : match.start()].lower()
         if re.search(r"\b(?:not|never|no)\b(?:\W+\w+){0,4}\W*$", prefix):
