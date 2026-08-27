@@ -198,8 +198,12 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
         word in body_lower for word in ("optimistic", "improve", "growth", "positive", "expect")
     )
     phase_data_present = any(call.user_phase is not None for call in state.tool_calls)
-    email_after_revision = not phase_data_present or (
-        email_calls[-1].user_phase is not None and email_calls[-1].user_phase >= 4
+    # `email_calls` holds only the *qualifying* sends — right recipient, subject,
+    # body, and a "sent" result. A model that emails the wrong address, or omits
+    # a subject, leaves it empty while still producing phase data, so this must
+    # be guarded the way `email_after_research` below already is.
+    email_after_revision = not phase_data_present or bool(
+        email_calls and email_calls[-1].user_phase is not None and email_calls[-1].user_phase >= 4
     )
     research_indices = [
         *[_call_index(state, call) for call in corrected_file_calls],
