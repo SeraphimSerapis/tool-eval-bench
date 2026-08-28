@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from datetime import date, timedelta
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -14,9 +13,11 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.domain.tools import BENCHMARK_REFERENCE_DATE
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
+)
+from tool_eval_bench.evals.helpers import (
+    days_after_reference as _days_after_reference,
 )
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -91,7 +92,7 @@ def _tc26_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Did not create the calendar event.")
 
     create_call = create_calls[0]
-    expected_date = (date.fromisoformat(BENCHMARK_REFERENCE_DATE) + timedelta(days=1)).isoformat()
+    expected_date = _days_after_reference(state, 1)
     correct_event = (
         _normalize(_as_str(create_call.arguments.get("title"))) == "design review"
         and _as_str(create_call.arguments.get("date")).startswith(expected_date)
