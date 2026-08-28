@@ -350,6 +350,7 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
         # save two requests.
         skip_warmup=not args.no_warmup,
         tokenizer=getattr(args, "tokenizer", None),
+        backend=target.backend,
     )
 
     if not args.perf_only:

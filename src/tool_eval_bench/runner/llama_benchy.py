@@ -149,6 +149,26 @@ def _redact_command(cmd: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _extra_args_set_return_token_ids(extra_args: list[str] | None) -> bool:
+    """Report whether pass-through args already decide ``return_token_ids``.
+
+    ``--benchy-args`` is the escape hatch for exactly this kind of payload
+    tweak, so a value set there wins over the SGLang default below.
+    """
+    return any("return_token_ids" in arg for arg in extra_args or ())
+
+
+def _failure_hint(output_lines: list[str]) -> str:
+    """Summarise why every benchmark request failed, from llama-benchy's output."""
+    errors = [line for line in output_lines if line.startswith("HTTP ")]
+    if not errors:
+        return "Check endpoint authentication and llama-benchy output."
+    # One shared cause per run, so the distinct set is short; cap it anyway.
+    unique = list(dict.fromkeys(errors))[:3]
+    detail = "\n".join(f"  {line}" for line in unique)
+    return f"The server answered with:\n{detail}"
+
+
 def _build_command(
     base_url: str,
     model: str,
@@ -164,6 +184,7 @@ def _build_command(
     no_cache: bool = True,
     skip_coherence: bool = False,
     skip_warmup: bool = False,
+    backend: str | None = None,
     output_file: str | None = None,
     extra_args: list[str] | None = None,
 ) -> list[str]:
@@ -227,6 +248,16 @@ def _build_command(
     # that add latency without benefit.  Also reduces the tokenizer's role
     # to prompt construction only, where the gpt2 fallback is acceptable.
     cmd.append("--no-adapt-prompt")
+
+    # SGLang answers a streaming request that carries ``return_token_ids`` with
+    # a 400 (sgl-project/sglang#30917 turned the field from ignored-unknown into
+    # recognized-but-unsupported-under-streaming).  llama-benchy sends it on
+    # every generation request, so without this every sample comes back empty.
+    # ``--extra-body`` is merged into the payload after the defaults, so this
+    # switches the field off; llama-benchy then counts tokens from the stream's
+    # ``usage`` block, which SGLang does send.
+    if (backend or "").lower() == "sglang" and not _extra_args_set_return_token_ids(extra_args):
+        cmd.extend(["--extra-body", "return_token_ids=false"])
 
     # JSON output
     cmd.extend(["--format", "json"])
@@ -347,6 +378,7 @@ async def run_llama_benchy(
     no_cache: bool = True,
     skip_coherence: bool = False,
     skip_warmup: bool = False,
+    backend: str | None = None,
     extra_args: list[str] | None = None,
     on_output: Callable[[str], None] | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
@@ -396,6 +428,7 @@ async def run_llama_benchy(
             no_cache=no_cache,
             skip_coherence=skip_coherence,
             skip_warmup=skip_warmup,
+            backend=backend,
             output_file=output_file,
             extra_args=extra_args,
         )
@@ -450,12 +483,18 @@ async def run_llama_benchy(
                 return
             async for raw_line in proc.stdout:
                 line = raw_line.decode("utf-8", errors="replace").rstrip()
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    # llama-benchy prints per-request failures (``HTTP 400: …``)
+                    # to stdout, alongside the progress JSONL.  Keep them: they
+                    # are the only explanation available when a run finishes
+                    # with every metric empty.
+                    if line:
+                        output_lines.append(line)
+                    continue
                 if on_progress:
-                    try:
-                        event = json.loads(line)
-                        on_progress(event)
-                    except json.JSONDecodeError:
-                        pass  # Non-JSON line on stdout, skip
+                    on_progress(event)
 
         await asyncio.gather(_read_stderr(), _read_stdout())
 
@@ -535,8 +574,9 @@ async def run_llama_benchy(
             )
         if not any(sample.pp_tps > 0 or sample.tg_tps > 0 for sample in result.samples):
             raise RuntimeError(
-                "llama-benchy produced no usable throughput metrics. "
-                "Check endpoint authentication and llama-benchy output."
+                "llama-benchy produced no usable throughput metrics — "
+                "every benchmark request failed.\n"
+                f"{_failure_hint(output_lines)}"
             )
         return result
 

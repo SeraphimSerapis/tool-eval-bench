@@ -151,6 +151,7 @@ def run_llama_benchy(
     skip_warmup: bool = False,
     extra_args: list[str] | None = None,
     tokenizer: str | None = None,
+    backend: str | None = None,
 ) -> list:
     """Run llama-benchy externally and display results.
 
@@ -240,6 +241,7 @@ def run_llama_benchy(
                 latency_mode=latency_mode,
                 skip_coherence=skip_coherence,
                 skip_warmup=skip_warmup,
+                backend=backend,
                 extra_args=extra_args,
                 tokenizer=tokenizer,
                 on_progress=on_progress,
