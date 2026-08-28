@@ -27,6 +27,7 @@ EXPECTED: dict[str, dict[str, str]] = {
     "TC-05": {MARCH: "2026-03-23", AUGUST: "2026-08-24"},  # next Monday
     "TC-08": {MARCH: "2026-03-21", AUGUST: "2026-08-20"},  # tomorrow
     "TC-17": {MARCH: "2026-03-24", AUGUST: "2026-08-25"},  # next Tuesday
+    "TC-26": {MARCH: "2026-03-21", AUGUST: "2026-08-20"},  # tomorrow
     "TC-74": {MARCH: "2026-03-25", AUGUST: "2026-08-26"},  # next Tuesday, moved to Wednesday
     "TC-79": {MARCH: "2026-03-21", AUGUST: "2026-08-20"},  # tomorrow
     "TC-84": {MARCH: "2026-03-25", AUGUST: "2026-08-26"},  # next Wednesday
@@ -106,6 +107,16 @@ def _tc17_calls(date: str, timezone: str = "Europe/Berlin") -> list[dict]:
     ]
 
 
+def _tc26_calls(date: str) -> list[dict]:
+    return [
+        {
+            "name": "create_calendar_event",
+            "arguments": {"title": "Design Review", "date": date, "time": "15:00"},
+            "turn": 1,
+        }
+    ]
+
+
 @pytest.mark.parametrize("reference", REFERENCES)
 @pytest.mark.parametrize(("sid", "builder"), [("TC-05", _tc05_calls), ("TC-08", _tc08_calls)])
 def test_relative_date_scenarios_follow_the_reference_date(sid, builder, reference):
@@ -131,6 +142,26 @@ def test_tc17_follows_the_reference_date(reference):
 
     wrong = make_state(
         tool_calls=_tc17_calls(_other_date("TC-17", reference)),
+        meta={"reference_date": reference},
+    )
+    assert scenario.evaluate(wrong).status != ScenarioStatus.PASS
+
+
+@pytest.mark.parametrize("reference", REFERENCES)
+def test_tc26_follows_the_reference_date(reference):
+    expected = EXPECTED["TC-26"][reference]
+    scenario = _scenario("TC-26")
+
+    right = make_state(
+        tool_calls=_tc26_calls(expected),
+        final_answer="No attendees were specified for the Design Review.",
+        meta={"reference_date": reference},
+    )
+    assert scenario.evaluate(right).status == ScenarioStatus.PASS
+
+    wrong = make_state(
+        tool_calls=_tc26_calls(_other_date("TC-26", reference)),
+        final_answer="No attendees were specified for the Design Review.",
         meta={"reference_date": reference},
     )
     assert scenario.evaluate(wrong).status != ScenarioStatus.PASS
