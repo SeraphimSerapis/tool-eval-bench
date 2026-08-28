@@ -10,6 +10,7 @@ import pytest
 
 from tool_eval_bench.runner.llama_benchy import (
     _build_command,
+    _failure_hint,
     _parse_benchmark_entry,
     _redact_command,
     _stat_mean,
@@ -1333,3 +1334,56 @@ class TestCLIFlags:
         """--skip-coherence should exist in CLI help."""
         help_text = self._get_help_text()
         assert "--skip-coherence" in help_text
+
+
+class TestSglangReturnTokenIds:
+    """SGLang 400s a streaming request that carries ``return_token_ids``.
+
+    See sgl-project/sglang#30917: the field went from ignored-unknown to
+    recognized-but-rejected-under-streaming, and llama-benchy sends it on every
+    generation request.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _on_path(self, monkeypatch):
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+
+    def test_sglang_disables_return_token_ids(self):
+        cmd = _build_command("http://localhost:8888/v1", "test-model", backend="sglang")
+        assert cmd[cmd.index("--extra-body") + 1] == "return_token_ids=false"
+
+    def test_backend_label_case_is_ignored(self):
+        cmd = _build_command("http://localhost:8888/v1", "test-model", backend="SGLang")
+        assert "--extra-body" in cmd
+
+    def test_other_backends_keep_token_ids(self):
+        for backend in ("vllm", "llamacpp", None):
+            cmd = _build_command("http://localhost:8888/v1", "test-model", backend=backend)
+            assert "--extra-body" not in cmd, backend
+
+    def test_explicit_pass_through_wins(self):
+        cmd = _build_command(
+            "http://localhost:8888/v1",
+            "test-model",
+            backend="sglang",
+            extra_args=["--extra-body", "return_token_ids=true"],
+        )
+        assert cmd.count("--extra-body") == 1
+        assert cmd[cmd.index("--extra-body") + 1] == "return_token_ids=true"
+
+
+class TestFailureHint:
+    def test_quotes_the_server_error(self):
+        hint = _failure_hint(["Warmup complete.", 'HTTP 400: {"error": "no streaming token_ids"}'])
+        assert 'HTTP 400: {"error": "no streaming token_ids"}' in hint
+
+    def test_deduplicates_repeated_errors(self):
+        hint = _failure_hint(["HTTP 400: bad", "HTTP 400: bad", "HTTP 400: bad"])
+        assert hint.count("HTTP 400: bad") == 1
+
+    def test_falls_back_when_no_http_error_was_seen(self):
+        hint = _failure_hint(["Measuring latency using mode: generation..."])
+        assert "Check endpoint authentication" in hint
