@@ -141,7 +141,7 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
             "Used get_order_status + get_customer_profile — "
             "customer lookup was unnecessary but not wrong."
         )
-    if used_order and total_calls > 2:
+    if used_order and total_calls >= 2:
         extras = ", ".join(c.name for c in state.tool_calls if c.name != "get_order_status")
         return _partial(f"Found the right tool but also called: {extras}")
     if not used_order and used_shipping:

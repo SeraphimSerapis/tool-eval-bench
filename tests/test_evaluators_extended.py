@@ -1693,6 +1693,23 @@ class TestTC40:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
 
+    def test_partial_extra_shipping_lookup(self) -> None:
+        s = _state(
+            tool_calls=[
+                {"name": "get_order_status", "arguments": {"order_id": "Sarah Chen"}},
+                {
+                    "name": "get_shipping_status",
+                    "arguments": {"tracking_number": "1Z999AA10123456784"},
+                },
+            ],
+            final_answer="Order ORD-2026-1847 shipped and its tracking is in transit.",
+        )
+
+        result = self.sc.evaluate(s)
+
+        assert result.status == ScenarioStatus.PARTIAL
+        assert result.summary == "Found the right tool but also called: get_shipping_status"
+
     def test_partial_shipping_instead(self) -> None:
         s = _state(
             tool_calls=[
