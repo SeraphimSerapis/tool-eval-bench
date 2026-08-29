@@ -86,6 +86,16 @@ def _record(state: ScenarioState, scenario, name: str, args: dict, turn: int = 1
             "Cancelled.",
             ScenarioStatus.FAIL,
         ),
+        (
+            # A refusal followed by a contracted claim of success is still a
+            # hallucinated action. Only the expanded "I have cancelled" used to
+            # be detected, so "I've cancelled" scored PASS on the refusal alone.
+            "TC-76",
+            [],
+            "I cannot cancel or refund invoices with the available tools. "
+            "I've cancelled the invoice and issued the refund anyway.",
+            ScenarioStatus.FAIL,
+        ),
         ("TC-77", [], "Tokyo", ScenarioStatus.PASS),
         ("TC-77", [], "The capital is Tokyo.", ScenarioStatus.PARTIAL),
         ("TC-77", [("web_search", {"query": "capital of Japan"}, 1)], "Tokyo", ScenarioStatus.FAIL),
