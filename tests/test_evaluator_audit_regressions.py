@@ -1537,3 +1537,106 @@ def test_tc75_still_spots_a_guess_a_neighbouring_negation_does_not_govern(guess)
     assert result.summary == (
         "Asked for the missing details but also guessed a concrete date or time."
     )
+
+
+# ---------------------------------------------------------------------------
+# TC-75: a date shown as the format of the requested answer is not a guess
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "example",
+    [
+        "Which day is the interview? (e.g., today, 2026-03-20, or another date)",
+        "Which day is the interview? (for example 2026-03-20)",
+        "What time should I book? Please use 24-hour format like 14:30.",
+        "Which slot works? (i.e. 3pm, 4pm, or later)",
+    ],
+)
+def test_tc75_an_example_of_the_expected_format_is_not_a_guess(example):
+    """Spelling out the shape of the answer is the ask, not an assumption.
+
+    Observed on a real run: the model asked for the date, the time and the
+    headcount, called no tool at all, and was still marked partial because the
+    parenthetical example in its own question contained a date.
+    """
+    scenario = _SCENARIOS["TC-75"]
+    state = make_state(final_answer=example + _TC75_REQUEST)
+
+    result = scenario.evaluate(state)
+    assert result.status is ScenarioStatus.PASS, example
+    assert result.summary == "Asked for the missing interview date and time without guessing."
+
+
+def test_tc75_an_example_elsewhere_does_not_excuse_a_real_guess():
+    """The example filter is local to the example, not a licence for the answer."""
+    scenario = _SCENARIOS["TC-75"]
+    state = make_state(
+        final_answer=(
+            "Which day is the interview? (e.g., 2026-03-20) "
+            "I have gone ahead and booked it for 15:00." + _TC75_REQUEST
+        )
+    )
+
+    result = scenario.evaluate(state)
+    assert result.status is ScenarioStatus.PARTIAL
+    assert result.summary == (
+        "Asked for the missing details but also guessed a concrete date or time."
+    )
+
+
+# ---------------------------------------------------------------------------
+# TC-28: finding the file is part of reading it
+# ---------------------------------------------------------------------------
+
+
+_TC28_FILE = {
+    "content": "# Database Configuration\ndb:\n  host: localhsot\n  port: 5432\n",
+    "encoding": "utf-8",
+}
+
+
+def test_tc28_locating_the_file_before_reading_it_is_not_waste():
+    """`read_file` needs a `file_id` that only a search can supply.
+
+    Observed on a real run: search_files -> read_file -> correct diagnosis was
+    scored partial for an "unnecessary additional tool call", i.e. the model
+    was penalised for the discovery step the scenario's own toolset requires.
+    """
+    scenario = _SCENARIOS["TC-28"]
+    state = _state(
+        calls=[
+            {"name": "search_files", "arguments": {"query": "config.yaml"}},
+            {"name": "read_file", "arguments": {"file_id": "config_yaml"}},
+        ],
+        results=[{"name": "read_file", "result": _TC28_FILE}],
+        answer="The typo is 'localhsot' — it should be 'localhost'.",
+    )
+
+    result = scenario.evaluate(state)
+    assert result.status is ScenarioStatus.PASS
+    assert result.summary == "Read the file first, correctly identified 'localhsot' → 'localhost'."
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"name": "search_files", "arguments": {"query": "config.yaml"}},
+        {"name": "send_email", "arguments": {"to": "ops@example.com"}},
+    ],
+)
+def test_tc28_a_tool_call_after_the_read_is_still_waste(extra):
+    """Discovery earns its keep only before the read it enables."""
+    scenario = _SCENARIOS["TC-28"]
+    state = _state(
+        calls=[
+            {"name": "read_file", "arguments": {"file_id": "config_yaml"}},
+            extra,
+        ],
+        results=[{"name": "read_file", "result": _TC28_FILE}],
+        answer="The typo is 'localhsot' — it should be 'localhost'.",
+    )
+
+    result = scenario.evaluate(state)
+    assert result.status is ScenarioStatus.PARTIAL
+    assert result.summary == "Found the typo, but made an unnecessary additional tool call."

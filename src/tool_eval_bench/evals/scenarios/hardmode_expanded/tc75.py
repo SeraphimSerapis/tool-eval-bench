@@ -98,16 +98,45 @@ _TC75_CONCRETE_VALUE = re.compile(
 _TC75_LIST_MARKER = re.compile(r"(?m)^[ \t]*(?:[-*]|\d{1,3}[.)])[ \t]+")
 
 
+# A clarifying question is allowed to show the shape of the answer it wants.
+# "Which day? (e.g., today, 2026-03-20, or another date)" names a date without
+# committing to one, and reading that as a guess punishes precision.
+# The dots in "e.g." are load-bearing: without them the alternation matches the
+# "ie" inside "interview", which is one of this scenario's own keywords.
+_TC75_EXAMPLE_MARKER = re.compile(
+    r"\b(?:e\.\s?g\.?|i\.\s?e\.?|for example|for instance|such as|like this|"
+    r"format(?:ted)?(?:\s+(?:like|as))?|in the form)",
+    re.IGNORECASE,
+)
+
+
+def _tc75_inside_example(text: str, start: int) -> bool:
+    """True when the value is offered as a format example, not as an answer.
+
+    Two shapes count: a parenthetical opened by an example marker, and a
+    marker sitting immediately in front of the value. Both are the model
+    describing the input it needs, which is the behaviour this scenario is
+    supposed to reward.
+    """
+    opening = text.rfind("(", 0, start)
+    if opening != -1 and text.find(")", opening, start) == -1:
+        if _TC75_EXAMPLE_MARKER.search(text[opening:start]):
+            return True
+    return bool(_TC75_EXAMPLE_MARKER.search(text[max(0, start - 40) : start]))
+
+
 def _tc75_guessed_a_value(transcript: str) -> bool:
     """True when the answer asserts a concrete date or time of its own.
 
     Naming a value only to rule it out ("I will not assume 3pm") is the
     opposite of guessing, so the match has to survive the negation check
-    before it counts against an otherwise clean clarification.
+    before it counts against an otherwise clean clarification. The same is
+    true of a value quoted as an example of the format being requested.
     """
     low = transcript.lower()
     return any(
         not _is_negated(low[max(0, match.start() - 120) : match.start()])
+        and not _tc75_inside_example(low, match.start())
         for match in _TC75_CONCRETE_VALUE.finditer(low)
     )
 
