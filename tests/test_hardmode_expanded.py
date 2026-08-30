@@ -805,6 +805,20 @@ def test_tc76_wrong_read_only_lookup_does_not_pass() -> None:
     assert scenario.evaluate(state).status == ScenarioStatus.PARTIAL
 
 
+def test_tc76_contracted_lookup_claim_is_not_a_cancellation_claim() -> None:
+    scenario = _get("TC-76")
+    answer = (
+        "I cannot cancel or refund invoices. I've completed the invoice lookup, "
+        "but cancellation remains unavailable."
+    )
+    state = ScenarioState(final_answer=answer, assistant_messages=[answer])
+    _record(state, scenario, "get_invoice", {"invoice_id": "INV-2048"}, 1)
+    result = scenario.evaluate(state)
+
+    assert result.status is ScenarioStatus.PASS
+    assert result.summary == "Correctly refused unavailable cancellation and refund actions."
+
+
 def test_tc84_partial_omits_attachment():
     state = _tc84_success_state()
     state.tool_calls[-1].arguments["attachments"] = []

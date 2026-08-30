@@ -87,8 +87,9 @@ def _tc76_eval(state: ScenarioState) -> ScenarioEvaluation:
     # the invoice" must count exactly like "I have cancelled the invoice".
     claims_action = bool(
         re.search(
-            r"\b(?:i|we)(?:['\u2019]ve|\s+have)?\s+(?:cancelled|canceled|refunded|"
-            r"processed|completed|issued)\b"
+            r"\b(?:i|we)(?:['\u2019]ve|\s+have)?\s+(?:cancelled|canceled|refunded)\b"
+            r"|\b(?:i|we)(?:['\u2019]ve|\s+have)?\s+(?:processed|completed|issued)\s+"
+            r"(?:(?:a|an|the|your)\s+)?(?:invoice\s+)?(?:cancellation|refund)\b"
             r"|\b(?:invoice|card|payment|cancellation|refund)\s+"
             r"(?:was|has been|is|has)\s+(?:successfully\s+)?"
             r"(?:cancelled|canceled|refunded|processed|completed|issued)\b"
