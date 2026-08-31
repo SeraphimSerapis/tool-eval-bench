@@ -32,6 +32,9 @@ from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
 )
 from tool_eval_bench.evals.helpers import (
+    normalize as _normalize,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
@@ -93,7 +96,7 @@ def _tc14_search_result_is_usable(state: ScenarioState, call: ToolCallRecord) ->
 def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
     stock_attempts = _tool_calls_by_name(state, "get_stock_price")
     search_calls = _tool_calls_by_name(state, "web_search")
-    transcript = _full_assistant_transcript(state)
+    transcript = _normalize(_full_assistant_transcript(state))
     acknowledged = bool(
         re.search(r"temporarily unavailable|rate limit|service", transcript, re.IGNORECASE)
         or re.search(r"couldn't|get_stock_price", transcript, re.IGNORECASE)
