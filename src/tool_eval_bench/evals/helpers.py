@@ -29,11 +29,18 @@ from tool_eval_bench.domain.tools import BENCHMARK_REFERENCE_DATE
 
 _APOSTROPHE_TRANSLATION = str.maketrans(
     {
-        "‘": "'",  # LEFT SINGLE QUOTATION MARK
-        "’": "'",  # RIGHT SINGLE QUOTATION MARK
-        "‚": "'",  # SINGLE LOW-9 QUOTATION MARK
-        "‛": "'",  # SINGLE HIGH-REVERSED-9 QUOTATION MARK
-        "ʼ": "'",  # MODIFIER LETTER APOSTROPHE
+        "‘": "'",  # LEFT SINGLE QUOTATION MARK  U+2018
+        "’": "'",  # RIGHT SINGLE QUOTATION MARK U+2019
+        "‚": "'",  # SINGLE LOW-9 QUOTATION MARK U+201A
+        "‛": "'",  # SINGLE HIGH-REVERSED-9 QUOTATION MARK U+201B
+        "ʼ": "'",  # MODIFIER LETTER APOSTROPHE U+02BC
+        "′": "'",  # PRIME U+2032
+        "´": "'",  # ACUTE ACCENT U+00B4
+        "`": "'",  # GRAVE ACCENT U+0060
+        "ʹ": "'",  # MODIFIER LETTER PRIME U+02B9
+        "ʻ": "'",  # MODIFIER LETTER TURNED COMMA U+02BB
+        "ʽ": "'",  # MODIFIER LETTER REVERSED COMMA U+02BD
+        "＇": "'",  # FULLWIDTH APOSTROPHE U+FF07
     }
 )
 
