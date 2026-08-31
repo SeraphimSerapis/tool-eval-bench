@@ -71,6 +71,11 @@ _TC28_CORRECTION = re.compile(
 _TC28_DISCOVERY_TOOLS = frozenset({"search_files"})
 
 
+# One lookup for *this* file earns its keep. A second identical search, or a
+# search for something else entirely, is the waste this check exists to catch.
+_TC28_DISCOVERY_QUERY = re.compile(r"config", re.IGNORECASE)
+
+
 def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'The file config.yaml has a typo in the database host. Find and describe the fix.'
 
@@ -109,18 +114,27 @@ def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:
         ):
             return _partial("The proposed correction was not present in the recorded file content.")
         # `read_file` takes a `file_id`, and the only way to learn it is to
-        # search for the file first. Locating the file is therefore part of
-        # read-before-write, not a detour - but a search issued *after* the
-        # read still is one, and so is any unrelated tool.
+        # search for the file first. That one lookup is part of
+        # read-before-write, not a detour. Everything else is waste: a repeat
+        # search, a search for an unrelated file, a search issued after the
+        # read, or any other tool.
         first_read = next(
             index for index, call in enumerate(state.tool_calls) if call.name == "read_file"
         )
-        stray_calls = [
-            call
-            for index, call in enumerate(state.tool_calls)
-            if call.name != "read_file"
-            and (call.name not in _TC28_DISCOVERY_TOOLS or index > first_read)
-        ]
+        stray_calls = []
+        allowed_discovery = 1
+        for index, call in enumerate(state.tool_calls):
+            if call.name == "read_file":
+                continue
+            if (
+                allowed_discovery
+                and index < first_read
+                and call.name in _TC28_DISCOVERY_TOOLS
+                and _TC28_DISCOVERY_QUERY.search(_as_str(call.arguments.get("query")))
+            ):
+                allowed_discovery -= 1
+                continue
+            stray_calls.append(call)
         if stray_calls:
             return _partial("Found the typo, but made an unnecessary additional tool call.")
         return _pass("Read the file first, correctly identified 'localhsot' → 'localhost'.")

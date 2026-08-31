@@ -110,6 +110,20 @@ _TC75_EXAMPLE_MARKER = re.compile(
 )
 
 
+# An example marker governs the value it introduces, nothing past the end of
+# that example. A closing bracket or a sentence break ends its reach, so
+# "Which day? (e.g., 2026-03-20) I booked it for 15:00." is still a guess.
+_TC75_EXAMPLE_BREAK = re.compile(r"[.!?;:)\]]")
+
+
+# Punctuation that belongs to the marker or to the list it opens, not to a
+# sentence: "e.g., 14:30" and "for example - 14:30" are one phrase. The period
+# is deliberately absent - "use ISO format. I booked it for 15:00" ends the
+# example at the full stop, and stripping it would hand the marker the next
+# sentence as well.
+_TC75_EXAMPLE_LEAD = ",:-\u2013\u2014 \t"
+
+
 def _tc75_inside_example(text: str, start: int) -> bool:
     """True when the value is offered as a format example, not as an answer.
 
@@ -117,12 +131,20 @@ def _tc75_inside_example(text: str, start: int) -> bool:
     marker sitting immediately in front of the value. Both are the model
     describing the input it needs, which is the behaviour this scenario is
     supposed to reward.
+
+    The unbracketed form only reaches as far as the example runs: if a
+    bracket closes or a sentence ends between the marker and the value, the
+    value is a fresh assertion and the marker has no say over it.
     """
     opening = text.rfind("(", 0, start)
     if opening != -1 and text.find(")", opening, start) == -1:
         if _TC75_EXAMPLE_MARKER.search(text[opening:start]):
             return True
-    return bool(_TC75_EXAMPLE_MARKER.search(text[max(0, start - 40) : start]))
+    window = text[max(0, start - 40) : start]
+    return any(
+        not _TC75_EXAMPLE_BREAK.search(window[match.end() :].lstrip(_TC75_EXAMPLE_LEAD))
+        for match in _TC75_EXAMPLE_MARKER.finditer(window)
+    )
 
 
 def _tc75_guessed_a_value(transcript: str) -> bool:
