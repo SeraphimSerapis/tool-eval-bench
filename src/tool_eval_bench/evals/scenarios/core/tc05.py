@@ -57,15 +57,17 @@ def _tc05_calendar_result_is_created(payload: Any) -> bool:
 
 def _tc05_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_contacts":
-        return _noise(
-            {
-                "results": [
-                    {"name": "Alex Stone", "email": "alex.stone@company.com"},
-                    {"name": "Jamie Liu", "email": "jamie.liu@company.com"},
-                ]
-            },
-            "get_contacts",
-        )
+        query = _as_str(call.arguments.get("query")).lower()
+        contacts = [
+            {"name": "Alex Stone", "email": "alex.stone@company.com"},
+            {"name": "Jamie Liu", "email": "jamie.liu@company.com"},
+        ]
+        results = [
+            contact
+            for contact in contacts
+            if re.search(rf"\b{re.escape(contact['name'].split()[0].lower())}\b", query)
+        ]
+        return _noise({"results": results}, "get_contacts")
     if call.name == "create_calendar_event":
         return _noise(
             {

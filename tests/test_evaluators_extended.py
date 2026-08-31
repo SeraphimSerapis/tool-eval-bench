@@ -175,6 +175,29 @@ class TestTC04:
 class TestTC05:
     sc = _sc("TC-05")
 
+    def _lookup_contacts(self, query: str) -> list[dict]:
+        call = ToolCallRecord(
+            id="contacts_1",
+            name="get_contacts",
+            raw_arguments="{}",
+            arguments={"query": query},
+            turn=1,
+        )
+        return self.sc.handle_tool_call(ScenarioState(), call)["results"]
+
+    def test_contact_lookup_filters_by_name(self) -> None:
+        assert [contact["name"] for contact in self._lookup_contacts("Alex")] == ["Alex Stone"]
+        assert [contact["name"] for contact in self._lookup_contacts("Jamie")] == ["Jamie Liu"]
+
+    def test_contact_lookup_accepts_both_names(self) -> None:
+        assert [contact["name"] for contact in self._lookup_contacts("Alex and Jamie")] == [
+            "Alex Stone",
+            "Jamie Liu",
+        ]
+
+    def test_contact_lookup_returns_empty_for_unknown_name(self) -> None:
+        assert self._lookup_contacts("Pat") == []
+
     def test_pass(self) -> None:
         s = _state(
             tool_calls=[
