@@ -157,7 +157,10 @@ SCENARIO = ScenarioDefinition(
     id="TC-15",
     title="Conflicting Information",
     category=Category.E,
-    user_message="Search for the population of Iceland and calculate what 2% of it would be.",
+    user_message=(
+        "Search for the population of Iceland, then use the calculator to compute 2% "
+        "of the exact population value you find."
+    ),
     description="Carry the exact searched value into the calculator.",
     handle_tool_call=_tc15_handle,
     evaluate=_tc15_eval,

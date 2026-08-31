@@ -1093,6 +1093,12 @@ class TestTC14Contract:
 class TestTC15Contract:
     sc = _get("TC-15")
 
+    def test_prompt_states_calculator_requirement(self):
+        assert self.sc.user_message == (
+            "Search for the population of Iceland, then use the calculator to compute 2% "
+            "of the exact population value you find."
+        )
+
     def test_pass_search_then_calc(self):
         s = _state(
             tool_calls=[
