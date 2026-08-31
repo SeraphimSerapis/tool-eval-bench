@@ -47,15 +47,18 @@ from tool_eval_bench.evals.scenarios.core._shared import (
 def _tc13_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "search_files":
         query = _normalize(_as_str(call.arguments.get("query")))
+        file_type = _normalize(_as_str(call.arguments.get("file_type"))) or "any"
         attempts = int(state.meta.get("search_attempts", 0)) + 1
         state.meta["search_attempts"] = attempts
         if "johnson proposal" in query and attempts == 1:
             return _noise({"results": []}, "search_files")
         if "johnson" in query:
-            return _noise(
-                {"results": [{"file_id": "file_117", "name": "Johnson_Project_Proposal_v2.docx"}]},
-                "search_files",
+            results = (
+                [{"file_id": "file_117", "name": "Johnson_Project_Proposal_v2.docx"}]
+                if file_type in {"any", "docx"}
+                else []
             )
+            return _noise({"results": results}, "search_files")
     return _generic_tool_fallback(call)
 
 
@@ -79,6 +82,13 @@ def _tc13_result_has_document(result: Any) -> bool:
     return False
 
 
+def _tc13_search_signature(call: ToolCallRecord) -> tuple[str, str]:
+    """Return the arguments that determine a file search's result set."""
+    query = _normalize(_as_str(call.arguments.get("query")))
+    file_type = _normalize(_as_str(call.arguments.get("file_type"))) or "any"
+    return query, file_type
+
+
 def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
     searches = _tool_calls_by_name(state, "search_files")
     retried = len(searches) >= 2
@@ -87,12 +97,13 @@ def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
         explicit_results = [r for r in state.tool_results if r.name == "search_files"]
         if explicit_results and searches[0].turn >= searches[1].turn:
             return _fail("Retried search before receiving the first result.")
-        # Ensure the retry used a meaningfully different query (not just repeating)
-        queries = [_normalize(_as_str(s.arguments.get("query", ""))) for s in searches]
-        if len(queries) >= 2 and any(
-            left == right for left, right in zip(queries, queries[1:], strict=False)
+        # Changing a file-type filter changes the search even when the text stays the same.
+        signatures = [_tc13_search_signature(search) for search in searches]
+        if len(signatures) >= 2 and any(
+            left == right for left, right in zip(signatures, signatures[1:], strict=False)
         ):
-            return _partial("Retried search, but used the exact same query both times.")
+            return _partial("Retried search, but repeated the same arguments.")
+        queries = [signature[0] for signature in signatures]
         if not any(_positive_argument_contains(query, "johnson") for query in queries[1:]):
             return _fail("Retried search without preserving the Johnson document request.")
         if explicit_results:

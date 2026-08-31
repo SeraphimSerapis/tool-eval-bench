@@ -919,6 +919,48 @@ class TestTC13Contract:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
 
+    def test_pass_retry_same_query_with_different_file_types(self):
+        s = _state(
+            tool_calls=[
+                {
+                    "id": "c0",
+                    "name": "search_files",
+                    "arguments": {"query": "johnson proposal"},
+                    "turn": 1,
+                },
+                {
+                    "id": "c1",
+                    "name": "search_files",
+                    "arguments": {"query": "johnson", "file_type": "pdf"},
+                    "turn": 2,
+                },
+                {
+                    "id": "c2",
+                    "name": "search_files",
+                    "arguments": {"query": "johnson", "file_type": "docx"},
+                    "turn": 2,
+                },
+            ],
+            tool_results=[
+                {"name": "search_files", "call_id": "c0", "result": {"results": []}},
+                {"name": "search_files", "call_id": "c1", "result": {"results": []}},
+                {
+                    "name": "search_files",
+                    "call_id": "c2",
+                    "result": {
+                        "results": [
+                            {
+                                "file_id": "file_117",
+                                "name": "Johnson_Project_Proposal_v2.docx",
+                            }
+                        ]
+                    },
+                },
+            ],
+            final_answer="Found Johnson_Project_Proposal_v2.docx.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
     def test_pass_asks_clarification(self):
         s = _state(
             tool_calls=[

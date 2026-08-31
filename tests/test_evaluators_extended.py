@@ -396,6 +396,20 @@ class TestTC11:
 class TestTC13:
     sc = _sc("TC-13")
 
+    def test_mock_honors_file_type(self) -> None:
+        state = ScenarioState()
+        first = ToolCallRecord("c0", "search_files", "{}", {"query": "Johnson proposal"}, 1)
+        pdf = ToolCallRecord(
+            "c1", "search_files", "{}", {"query": "Johnson", "file_type": "pdf"}, 2
+        )
+        docx = ToolCallRecord(
+            "c2", "search_files", "{}", {"query": "Johnson", "file_type": "docx"}, 3
+        )
+
+        assert self.sc.handle_tool_call(state, first)["results"] == []
+        assert self.sc.handle_tool_call(state, pdf)["results"] == []
+        assert self.sc.handle_tool_call(state, docx)["results"][0]["file_id"] == "file_117"
+
     def test_pass_retry(self) -> None:
         s = _state(
             tool_calls=[
