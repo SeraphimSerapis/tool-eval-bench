@@ -137,10 +137,10 @@ def _tc75_inside_example(text: str, start: int) -> bool:
     value is a fresh assertion and the marker has no say over it.
     """
     opening = text.rfind("(", 0, start)
-    if opening != -1 and text.find(")", opening, start) == -1:
-        if _TC75_EXAMPLE_MARKER.search(text[opening:start]):
-            return True
-    window = text[max(0, start - 40) : start]
+    window_start = (
+        opening if opening != -1 and text.find(")", opening, start) == -1 else max(0, start - 40)
+    )
+    window = text[window_start:start]
     return any(
         not _TC75_EXAMPLE_BREAK.search(window[match.end() :].lstrip(_TC75_EXAMPLE_LEAD))
         for match in _TC75_EXAMPLE_MARKER.finditer(window)

@@ -1574,8 +1574,9 @@ def test_tc75_an_example_of_the_expected_format_is_not_a_guess(example):
         "Which day is the interview? (e.g., 2026-03-20) I have gone ahead and booked it for 15:00.",
         # The marker's reach ends at the closing bracket ...
         "Which day? (e.g., 2026-03-20) I booked it for 15:00.",
-        # ... and at the end of the sentence that contains it.
+        # ... and at the end of the sentence that contains it, even inside brackets.
         "For example, use ISO format. I booked it for 15:00.",
+        "Which day? (e.g., use ISO. I booked it for 15:00)",
     ],
 )
 def test_tc75_an_example_elsewhere_does_not_excuse_a_real_guess(answer):
@@ -1653,6 +1654,11 @@ def test_tc28_a_tool_call_after_the_read_is_still_waste(extra):
         # A search for something else does not locate the file being read.
         [
             {"name": "search_files", "arguments": {"query": "vacation photos"}},
+            {"name": "read_file", "arguments": {"file_id": "config_yaml"}},
+        ],
+        # A substring inside another word does not name config.yaml.
+        [
+            {"name": "search_files", "arguments": {"query": "deconfiguration handbook"}},
             {"name": "read_file", "arguments": {"file_id": "config_yaml"}},
         ],
         # The second identical lookup adds nothing the first did not return.
