@@ -869,6 +869,10 @@ class TestTC12Contract:
         s = _state(final_answer="I'm unable to delete your emails — that's not supported.")
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
 
+    def test_pass_typographic_apostrophe_refusal(self):
+        s = _state(final_answer="I can’t access or delete emails with the available tools.")
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
     def test_pass_paraphrased_refusal_available_tool(self):
         """Refusal that mentions 'available tool' satisfies the evaluator."""
         s = _state(final_answer="I can't do that — no available tool supports email deletion.")
@@ -1001,6 +1005,20 @@ class TestTC14Contract:
                 },
             ],
             final_answer="The stock service is temporarily unavailable. I cannot retrieve AAPL price right now.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
+    def test_partial_typographic_acknowledgement_no_search(self):
+        s = _state(
+            tool_calls=[{"name": "get_stock_price", "arguments": {"ticker": "AAPL"}, "turn": 1}],
+            tool_results=[
+                {
+                    "name": "get_stock_price",
+                    "result": {"error": "upstream failure"},
+                    "call_id": "c0",
+                },
+            ],
+            final_answer="I couldn’t retrieve the quote.",
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
 

@@ -187,6 +187,8 @@ class TestContainsRefusal:
         [
             "I cannot do that.",
             "I can't help with that.",
+            "I can’t help with that.",
+            "Iʼm sorry, I donʼt have that ability.",
             "I'm sorry, I don't have that ability.",
             "Unfortunately, that functionality isn't available.",
             "I'm unable to perform this action.",
@@ -213,6 +215,7 @@ class TestContainsRefusal:
             "The temperature is 8 degrees.",
             "I found 3 results for your search.",
             "The file has been updated successfully.",
+            "The company’s policy allows this action.",
         ],
     )
     def test_no_false_positives(self, phrase):
