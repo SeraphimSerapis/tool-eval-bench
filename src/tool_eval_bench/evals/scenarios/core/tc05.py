@@ -57,7 +57,7 @@ def _tc05_calendar_result_is_created(payload: Any) -> bool:
 
 def _tc05_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_contacts":
-        query = _as_str(call.arguments.get("query")).lower()
+        query = _as_str(call.arguments.get("query")).strip().lower()
         contacts = [
             {"name": "Alex Stone", "email": "alex.stone@company.com"},
             {"name": "Jamie Liu", "email": "jamie.liu@company.com"},
