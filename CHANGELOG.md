@@ -80,6 +80,13 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **TC-50 scans all messages for the clarification ask.** `asked_who` read only
+  `assistant_messages[0]`, so a model whose first turn was tool-calls-only (lookups,
+  no text) and then asked "Could you provide the new PM's name or email address?"
+  before sending was graded PARTIAL ("didn't explicitly ask for clarification
+  first") even though it asked explicitly. The check now scans every recorded
+  assistant message for the ask phrases. Sending without any ask still gets
+  PARTIAL, and sending before the user reveals the recipient still FAILs.
 - **TC-84 accepts a retry its own simulator invited.** `search_rooms` returned a
   fresh copy of the room fixture on every call, so a model that re-searched after
   losing the booking race saw `berlin_3a` advertised as available, reasonably

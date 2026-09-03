@@ -2681,6 +2681,31 @@ class TestTC50:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
 
+    def test_pass_ask_in_later_message_after_lookup(self) -> None:
+        """Replays the 2026-09-03 run: the first turn was tool-calls-only, the
+        ask appeared in a later pre-email message, and the email followed."""
+        s = _state(
+            tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 4},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "tom.chen@company.com",
+                        "subject": "Quarterly Review – Upcoming Meeting",
+                        "body": "Hi Tom, ...",
+                    },
+                    "turn": 5,
+                },
+            ],
+            final_answer="The email has been sent successfully to Tom Chen (tom.chen@company.com).",
+            assistant_messages=[
+                "I wasn't able to find the new PM in the contacts directory.",
+                "Could you provide the new PM's name or email address so I can send the quarterly review email?",
+                "The email has been sent successfully to Tom Chen.",
+            ],
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
     def test_partial_sent_without_asking(self) -> None:
         """Sent to Tom without explicitly asking first — still reasonable."""
         s = _state(

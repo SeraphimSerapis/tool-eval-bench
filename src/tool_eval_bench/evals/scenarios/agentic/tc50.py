@@ -120,15 +120,19 @@ def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:
         return not payloads or any(predicate(payload) for payload in payloads)
 
     # Check if model asked for clarification initially (from assistant messages)
-    initial_answer = state.assistant_messages[0].lower() if state.assistant_messages else ""
+    # The first assistant turn may be tool_calls_only (no text), so the ask can
+    # appear in a later pre-email message. Scan every recorded message rather
+    # than only messages[0]: a model that looked up contacts and then asked
+    # "Could you provide the new PM's name or email address?" has asked.
+    initial_text = " ".join(state.assistant_messages).lower() if state.assistant_messages else ""
     asked_who = bool(
-        re.search(r"\b(?:who|which)\b.{0,60}\b(?:pm|person|name|identity)\b", initial_answer)
+        re.search(r"\b(?:who|which)\b.{0,60}\b(?:pm|person|name|identity)\b", initial_text)
         or re.search(
             r"\b(?:could you|can you|please|tell me|provide|share|give me|i need(?: to know)?)\b"
             r".{0,60}\b(?:name|identity|pm|person)\b",
-            initial_answer,
+            initial_text,
         )
-        or re.search(r"\b(?:what(?:'s| is)\s+(?:their|the)|who(?:'s| is)\s+the)\b", initial_answer)
+        or re.search(r"\b(?:what(?:'s| is)\s+(?:their|the)|who(?:'s| is)\s+the)\b", initial_text)
     )
 
     looked_up_tom = any(
