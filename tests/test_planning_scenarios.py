@@ -828,6 +828,49 @@ class TestTC61AsyncPolling:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 
+    def test_pass_poll_via_generic_status_check(self) -> None:
+        """Replays the 2026-09-03 run: the model re-invoked run_code with a
+        status check, got the completed payload, and surfaced 15420/3."""
+        state = _make_state(
+            tool_calls=[
+                {
+                    "name": "run_code",
+                    "arguments": {"code": 'analyze_data(source="transactions_2026")'},
+                    "turn": 1,
+                },
+                {
+                    "name": "run_code",
+                    "arguments": {"code": '# Check status of the analysis job\nprint("Checking job status...")'},
+                    "turn": 2,
+                },
+            ],
+            tool_results=[
+                {
+                    "name": "run_code",
+                    "result": {
+                        "status": "pending",
+                        "job_id": "job_tc61_9f3a",
+                        "message": "Analysis job is still running. Please call run_code again to check if the job has completed.",
+                    },
+                },
+                {
+                    "name": "run_code",
+                    "result": {
+                        "status": "complete",
+                        "job_id": "job_tc61_9f3a",
+                        "result": {
+                            "total_records": 15420,
+                            "anomalies_found": 3,
+                            "summary": "3 anomalies detected in 15,420 records.",
+                        },
+                    },
+                },
+            ],
+            final_answer="The data analysis script has completed. Here are the results:\n\n- **Total records analyzed** | 15,420\n- **Anomalies found** | 3",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
     def test_partial_single_call(self) -> None:
         state = _make_state(
             tool_calls=[

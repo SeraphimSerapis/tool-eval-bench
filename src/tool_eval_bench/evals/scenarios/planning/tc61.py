@@ -117,10 +117,15 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
         and "analyze_data" in _as_str(first_call.arguments.get("code")).lower()
         and _result_matches_if_present(state, first_call, pending_result)
     )
+    # The poll is a second run_code call; what proves it is the returned
+    # complete payload, not the literal job id the model types into the code.
+    # A model may phrase the poll as a status check ("print('Checking job
+    # status...')") after seeing the pending response, and the stateful fixture
+    # answers it with the completed result. Requiring `job_tc61_9f3a` verbatim
+    # in the code graded a completed poll as "not proven" even though the
+    # result surfaced.
     poll_result_ok = bool(
-        poll_call
-        and "job_tc61_9f3a" in _as_str(poll_call.arguments.get("code"))
-        and _result_matches_if_present(state, poll_call, complete_result)
+        poll_call and _result_matches_if_present(state, poll_call, complete_result)
     )
     valid_poll = first_result_ok and poll_result_ok
     if len(run_calls) >= 2 and has_result and valid_poll:

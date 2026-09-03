@@ -80,6 +80,15 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **TC-61 proves a poll by its completed result, not by a typed job id.** The
+  evaluator required the literal `job_tc61_9f3a` in the code of the second
+  `run_code` call, so a model that saw the pending response, polled with a
+  generic status check (`print("Checking job status...")`), received the
+  completed payload, and surfaced `15,420 records / 3 anomalies` was graded
+  PARTIAL ("trace does not prove a completed poll"). The fixture posts only
+  one job, so any second `run_code` call after the pending result is a poll;
+  what proves completion is the returned `complete` payload. A single call
+  without a second poll still stays PARTIAL, and no attempt stays FAIL.
 - **TC-84 accepts a retry its own simulator invited.** `search_rooms` returned a
   fresh copy of the room fixture on every call, so a model that re-searched after
   losing the booking race saw `berlin_3a` advertised as available, reasonably
