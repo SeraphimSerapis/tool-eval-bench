@@ -124,11 +124,7 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     corrected_search_calls = [
         call
         for call in _tool_calls_by_name(state, "search_files")
-        if any(
-            token in _as_str(call.arguments.get("query")).lower()
-            for token in ("latest", "q3", "corrected")
-        )
-        and _result_matches_if_present(state, call, corrected_search_result)
+        if _result_matches_if_present(state, call, corrected_search_result)
     ]
     corrected_file_calls = [
         call
@@ -193,7 +189,11 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     body_lower = email_body.lower()
     body_has_corrected = "4.15" in body_lower or "4150000" in body_lower.replace(",", "")
-    body_has_competitor = "acme" in body_lower and "3.8" in body_lower
+    body_has_competitor = "acme" in body_lower and (
+        "3.8" in body_lower
+        or "3,800" in body_lower
+        or "3800000" in body_lower.replace(",", "")
+    )
     body_is_optimistic = any(
         word in body_lower for word in ("optimistic", "improve", "growth", "positive", "expect")
     )

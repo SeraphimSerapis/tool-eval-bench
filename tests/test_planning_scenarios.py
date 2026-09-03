@@ -884,6 +884,38 @@ class TestTC62DeepResearch:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 
+    def test_pass_lookup_via_generic_query_phrase(self) -> None:
+        """Replays the 2026-09-03 run: 'quarterly performance' search returns the
+        corrected fixture, so the lookup must count despite lacking q3/latest tokens."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "quarterly performance"}, "turn": 1},
+                {"name": "read_file", "arguments": {"file_id": "q3_latest"}, "turn": 2},
+                {"name": "web_search", "arguments": {"query": "Acme Corp Q3 2026 revenue performance"}, "turn": 5},
+                {"name": "calculator", "arguments": {"expression": "4150000 - 3800000"}, "turn": 6},
+                {"name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 7},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "cfo@company.com",
+                        "subject": "Q3 Competitive Position Summary vs. Acme Corp",
+                        "body": "Our Q3 revenue (corrected): $4,150,000. Acme: $3,800,000. We lead by $350,000 (~9.2%). We expect Q4 to improve.",
+                    },
+                    "turn": 8,
+                },
+            ],
+            assistant_messages=[
+                "Found the latest quarterly report.",
+                "The corrected Q3 revenue is $4,150,000.",
+                "Acme Corp's Q3 revenue was $3.8M.",
+                "The difference is $350,000 in our favor.",
+                "Email sent to the CFO with an optimistic outlook for Q4.",
+            ],
+            final_answer="Email sent to the CFO with an optimistic outlook for Q4.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
     def test_partial_missing_competitor(self) -> None:
         state = _make_state(
             tool_calls=[
