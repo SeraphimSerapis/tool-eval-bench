@@ -126,15 +126,21 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     confirmation = [
         call
         for call in all_confirmations
-        if call.turn > last_event.turn and call_at_or_after_user_phase(call, 4)
+        if call.turn >= last_event.turn and call_at_or_after_user_phase(call, 4)
     ]
     premature_confirmation = [call for call in all_confirmations if call not in confirmation]
     notified: set[str] = set()
     email_ok = bool(confirmation)
     for call in confirmation:
+        # The confirmation may address both recipients in one `to` field, or
+        # put one of them in `cc` — "to both" does not dictate which field each
+        # recipient lands in, so collect from both fields.
         recipients = {
             value.strip().lower()
-            for value in re.split(r"[,;]", as_str(call.arguments.get("to")))
+            for value in (
+                re.split(r"[,;]", as_str(call.arguments.get("to")))
+                + re.split(r"[,;]", as_str(call.arguments.get("cc")))
+            )
             if value.strip()
         }
         body = as_str(call.arguments.get("body")).strip()

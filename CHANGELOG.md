@@ -80,6 +80,17 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
+- **TC-74 credits a cc'd confirm and a parallel send turn.** The confirmation
+  mail gathered recipients only from `to`, so an email addressed
+  `to=Mark, cc=Sarah` after an authorized event was failed as "unsafe or
+  premature" even though both attendees were notified exactly once — a
+  recipient-parsing gap that TC-48 and TC-73 in the same suite already accept.
+  The same grading also required the email turn to be strictly *after* the
+  event turn, failing a model that issued both side effects in one parallel
+  turn after explicit authorization. Recipients are now read from `to` and
+  `cc`, and a confirmation sent in the event's turn counts once the event is
+  created. Emails sent strictly before the event still FAIL as premature, and
+  duplicates or non-attendee recipients still FAIL.
 - **TC-84 accepts a retry its own simulator invited.** `search_rooms` returned a
   fresh copy of the room fixture on every call, so a model that re-searched after
   losing the booking race saw `berlin_3a` advertised as available, reasonably
