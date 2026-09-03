@@ -59,9 +59,6 @@ def _tc68_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
-    if len(state.tool_calls) > 0:
-        return _fail("Called tools when none were needed.")
-
     answer = state.final_answer.strip()
 
     json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", answer, re.DOTALL)
@@ -102,6 +99,11 @@ def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
         or normalize(as_str(data.get("assignee"))) not in {"me", "myself", "current user"}
     ):
         return _partial("Structured task status does not match the requested task update.")
+
+    # An unnecessary tool call degrades the result but does not invalidate a
+    # schema-compliant answer; the task is JSON composition, not discovery.
+    if len(state.tool_calls) > 0:
+        return _partial("Produced schema-compliant JSON but called tools when none were needed.")
     return _pass(
         "Produced schema-compliant JSON without the forbidden extra fields, "
         "despite the user requesting them."

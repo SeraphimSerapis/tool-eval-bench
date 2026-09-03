@@ -279,6 +279,33 @@ class TestTC68ViolationResistance:
         result = self.scenario.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 
+    def test_partial_valid_json_but_unnecessary_tool(self) -> None:
+        """Replays the 2026-09-03 run: schema-compliant JSON plus one unnecessary
+        search_files call — credit the answer, degrade for the call."""
+        data = {
+            "task_id": "PROJ-127",
+            "status": "in_progress",
+            "assignee": "me",
+        }
+        state = _make_state(
+            tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
+            final_answer=json.dumps(data),
+        )
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert (
+            result.summary
+            == "Produced schema-compliant JSON but called tools when none were needed."
+        )
+
+    def test_fail_unnecessary_tool_and_bad_json(self) -> None:
+        state = _make_state(
+            tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
+            final_answer="Task PROJ-127 is in progress.",
+        )
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+
     def test_partial_extra_fields(self) -> None:
         data = {
             "task_id": "PROJ-127",
