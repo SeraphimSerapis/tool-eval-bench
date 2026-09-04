@@ -2706,6 +2706,27 @@ class TestTC50:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
 
+    def test_partial_declined_identity_is_not_an_ask(self) -> None:
+        """A message that declines to supply the identity is not a clarification ask."""
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "tom.chen@company.com",
+                        "subject": "Quarterly Review",
+                        "body": "...",
+                    },
+                },
+            ],
+            final_answer="Sent the quarterly review email to Tom Chen.",
+            assistant_messages=[
+                "I can't tell you who the new PM is.",
+                "Sent the quarterly review email to Tom Chen.",
+            ],
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
     def test_partial_sent_without_asking(self) -> None:
         """Sent to Tom without explicitly asking first — still reasonable."""
         s = _state(

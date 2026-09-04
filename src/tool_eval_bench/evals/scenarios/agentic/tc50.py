@@ -124,8 +124,17 @@ def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:
     # appear in a later pre-email message. Scan every recorded message rather
     # than only messages[0]: a model that looked up contacts and then asked
     # "Could you provide the new PM's name or email address?" has asked.
+    # A message explicitly declining to supply the identity ("I can't tell you
+    # who") is not a genuine clarification request.
     initial_text = " ".join(state.assistant_messages).lower() if state.assistant_messages else ""
-    asked_who = bool(
+    negated_ask = bool(
+        re.search(
+            r"\b(?:can'?t|cannot|won'?t|will\s+not|don'?t|do\s+not|never|unable)\b"
+            r".{0,30}\b(?:name|identity|pm|person)\b",
+            initial_text,
+        )
+    )
+    asked_who = not negated_ask and bool(
         re.search(r"\b(?:who|which)\b.{0,60}\b(?:pm|person|name|identity)\b", initial_text)
         or re.search(
             r"\b(?:could you|can you|please|tell me|provide|share|give me|i need(?: to know)?)\b"
