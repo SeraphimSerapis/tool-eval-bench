@@ -97,6 +97,35 @@ def _tc62_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+_TC62_COMPETITOR_AMOUNT = 3800000
+
+
+def _tc62_asserts_competitor_amount(body: str) -> bool:
+    """True only when the email asserts exactly $3,800,000 ($3.8M).
+
+    Rejects truncated/longer amounts ($3,800, $13,800,000), amounts under a
+    negation, and amounts quoted as someone else's claim.
+    """
+    text = re.sub(r'["\u201c][^"\u201d]*["\u201d]', "", body.strip()).lower()
+
+    def _not_negated(start: int) -> bool:
+        prefix = text[max(0, start - 24) : start]
+        return not re.search(r"\b(?:not|never|no|without)\b(?:[^,;.]{0,16})?$", prefix)
+
+    forms = (
+        r"(?<![\d])3,800,000\b",
+        r"(?<![\d])3800000\b",
+        r"(?<![\d])3\.8\s*m\b",
+        r"(?<![\d])3\.8\b",
+    )
+    for pattern in forms:
+        for match in re.finditer(pattern, text):
+            if not _not_negated(match.start()):
+                continue
+            return True
+    return False
+
+
 def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     """5-turn research chain testing context persistence and revision handling.
 
@@ -189,8 +218,10 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
         else ""
     )
     body_lower = email_body.lower()
-    # A stated figure under a negation ("we are NOT ahead", "Acme is not $3.8M")
-    # is evidence about the conversation, not the corrected/competitor figure.
+    # Assert the corrected figure as an exact amount, and the competitor amount
+    # via exact-number matching (rejects truncated/longer, negated, or quoted
+    # amounts). A stated figure under a negation is evidence about the
+    # conversation, not the required data.
     negated_figure = bool(
         re.search(
             r"\b(?:not|never|no|without)\b.{0,40}\b(?:corrected|4150000|3\.8|3800000|acme|lead)\b",
@@ -200,13 +231,7 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     body_has_corrected = not negated_figure and (
         "4.15" in body_lower or "4150000" in body_lower.replace(",", "")
     )
-    body_has_competitor = (
-        not negated_figure
-        and "acme" in body_lower
-        and (
-            "3.8" in body_lower or "3,800" in body_lower or "3800000" in body_lower.replace(",", "")
-        )
-    )
+    body_has_competitor = _tc62_asserts_competitor_amount(email_body)
     body_is_optimistic = any(
         word in body_lower for word in ("optimistic", "improve", "growth", "positive", "expect")
     )
