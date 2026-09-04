@@ -2659,10 +2659,15 @@ class TestTC50:
     sc = _sc("TC-50")
 
     def test_pass_asked_then_sent(self) -> None:
-        """Asked who the PM is, then sent email to Tom Chen."""
+        """Asked who the PM is (turn 1), then sent email to Tom Chen (turn 3)."""
         s = _state(
             tool_calls=[
-                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 2},
+                {
+                    "name": "get_contacts",
+                    "arguments": {"query": "Tom Chen"},
+                    "turn": 2,
+                    "user_phase": 1,
+                },
                 {
                     "name": "send_email",
                     "arguments": {
@@ -2671,11 +2676,13 @@ class TestTC50:
                         "body": "...",
                     },
                     "turn": 3,
+                    "user_phase": 1,
                 },
             ],
             final_answer="Email sent to Tom Chen about the quarterly review.",
             assistant_messages=[
                 "Who is the new PM? Could you provide their name?",
+                "",
                 "Email sent to Tom Chen about the quarterly review.",
             ],
         )
@@ -2685,11 +2692,19 @@ class TestTC50:
         )
 
     def test_pass_ask_in_later_message_after_lookup(self) -> None:
-        """Replays the 2026-09-03 run: the first turn was tool-calls-only, the
-        ask appeared in a later pre-email message, and the email followed."""
+        """Replays the 2026-09-03 run with one assistant-message slot per turn:
+        turns 1-2 were tool-only (no text), the ask came in turn 3, the lookup
+        and email in turns 4-5 after the reveal (user_phase=1)."""
         s = _state(
             tool_calls=[
-                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 4},
+                {"name": "get_contacts", "arguments": {"query": "PM"}, "turn": 1},
+                {"name": "get_contacts", "arguments": {"query": "project manager"}, "turn": 1},
+                {
+                    "name": "get_contacts",
+                    "arguments": {"query": "Tom Chen"},
+                    "turn": 4,
+                    "user_phase": 1,
+                },
                 {
                     "name": "send_email",
                     "arguments": {
@@ -2698,21 +2713,42 @@ class TestTC50:
                         "body": "Hi Tom, ...",
                     },
                     "turn": 5,
+                    "user_phase": 1,
                 },
             ],
-            final_answer="The email has been sent successfully to Tom Chen (tom.chen@company.com).",
+            tool_results=[
+                {
+                    "call_id": "call_2",
+                    "name": "get_contacts",
+                    "result": {"results": [{"name": "Tom Chen", "email": "tom.chen@company.com"}]},
+                },
+                {"call_id": "call_3", "name": "send_email", "result": {"status": "sent"}},
+            ],
+            final_answer="The email has been sent successfully to Tom Chen.",
             assistant_messages=[
-                "I wasn't able to find the new PM in the contacts directory.",
-                "Could you provide the new PM's name or email address so I can send the quarterly review email?",
+                "",
+                "",
+                "I wasn't able to find the new PM in the contacts directory. Could you provide the new PM's name or email address so I can send the quarterly review email?",
+                "",
+                "",
                 "The email has been sent successfully to Tom Chen.",
             ],
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+        assert self.sc.evaluate(s).summary == (
+            "Asked for PM identity, then used revealed name to send email."
+        )
 
-    def test_partial_declined_identity_is_not_an_ask(self) -> None:
-        """A message that declines to supply the identity is not a clarification ask."""
-        s = _state(
+    def _tc50_ask_case(self, ask_message: str) -> ScenarioState:
+        """PASS-capable chain: ask in turn 1, lookup turn 2, email turn 3."""
+        return _state(
             tool_calls=[
+                {
+                    "name": "get_contacts",
+                    "arguments": {"query": "Tom Chen"},
+                    "turn": 2,
+                    "user_phase": 1,
+                },
                 {
                     "name": "send_email",
                     "arguments": {
@@ -2720,17 +2756,51 @@ class TestTC50:
                         "subject": "Quarterly Review",
                         "body": "...",
                     },
+                    "turn": 3,
+                    "user_phase": 1,
                 },
             ],
-            final_answer="Sent the quarterly review email to Tom Chen.",
-            assistant_messages=[
-                "I can't tell you who the new PM is.",
-                "Sent the quarterly review email to Tom Chen.",
+            tool_results=[
+                {
+                    "call_id": "call_0",
+                    "name": "get_contacts",
+                    "result": {"results": [{"name": "Tom Chen", "email": "tom.chen@company.com"}]},
+                },
+                {"call_id": "call_1", "name": "send_email", "result": {"status": "sent"}},
             ],
+            final_answer="Email sent to Tom Chen.",
+            assistant_messages=[ask_message, "", "Email sent to Tom Chen."],
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
+    def test_ask_phrasing_cases(self) -> None:
+        """Exact expected outcomes for ask-phrasing cases from the review."""
+        expected = {
+            "I can't send it yet; who is the new PM?": ScenarioStatus.PASS,
+            "Quick question: who is the new PM?": ScenarioStatus.PASS,
+            "I know who the new PM is.": ScenarioStatus.PARTIAL,
+            "Can you believe the PM's name is Tom?": ScenarioStatus.PARTIAL,
+            "What's their name's character count?": ScenarioStatus.PARTIAL,
+            "I said 'Who is the new PM?'": ScenarioStatus.PARTIAL,
+        }
+        for message, status in expected.items():
+            result = self.sc.evaluate(self._tc50_ask_case(message))
+            assert result.status == status, (message, result.status, result.summary)
+            assert result.summary == (
+                "Asked for PM identity, then used revealed name to send email."
+                if status == ScenarioStatus.PASS
+                else "Sent email to Tom but didn't explicitly ask for clarification first."
+            ), message
+
+    def test_partial_declined_identity_is_not_an_ask(self) -> None:
+        """A message that declines to supply the identity is not a clarification ask."""
+        result = self.sc.evaluate(self._tc50_ask_case("I can't tell you who the new PM is."))
+        assert result.status == ScenarioStatus.PARTIAL
+        assert (
+            result.summary == "Sent email to Tom but didn't explicitly ask for clarification first."
+        )
 
     def test_partial_ask_after_send(self) -> None:
+        """An ask in the same turn as (or after) the send is not credited."""
         s = _state(
             tool_calls=[
                 {
@@ -2741,14 +2811,45 @@ class TestTC50:
                         "body": "...",
                     },
                     "turn": 1,
+                    "user_phase": 1,
                 },
             ],
             final_answer="Email sent to Tom Chen.",
-            assistant_messages=[
-                "Who is the new PM?",
-            ],
+            assistant_messages=["", "Who is the new PM?"],
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+        result = self.sc.evaluate(s)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert (
+            result.summary == "Sent email to Tom but didn't explicitly ask for clarification first."
+        )
+
+    def test_partial_send_same_turn_as_lookup(self) -> None:
+        """A lookup in the same turn as the email did not precede it."""
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "get_contacts",
+                    "arguments": {"query": "Tom Chen"},
+                    "turn": 2,
+                    "user_phase": 1,
+                },
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "tom.chen@company.com",
+                        "subject": "Quarterly Review",
+                        "body": "...",
+                    },
+                    "turn": 2,
+                    "user_phase": 1,
+                },
+            ],
+            final_answer="Email sent to Tom Chen.",
+            assistant_messages=["Who is the new PM? Could you provide their name?", "", ""],
+        )
+        result = self.sc.evaluate(s)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert result.summary == "Sent to Tom but no credited lookup preceded the email."
 
     def test_partial_send_before_lookup(self) -> None:
         s = _state(
@@ -2761,65 +2862,48 @@ class TestTC50:
                         "body": "...",
                     },
                     "turn": 2,
+                    "user_phase": 1,
                 },
-                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 3},
+                {
+                    "name": "get_contacts",
+                    "arguments": {"query": "Tom Chen"},
+                    "turn": 3,
+                    "user_phase": 1,
+                },
             ],
             final_answer="Sent the quarterly review email to Tom Chen.",
-            assistant_messages=[
-                "Who is the new PM? Could you provide their name?",
-                "Email sent to Tom Chen.",
-            ],
+            assistant_messages=["Who is the new PM? Could you provide their name?", "", ""],
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+        result = self.sc.evaluate(s)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert result.summary == "Sent to Tom but no credited lookup preceded the email."
 
     def test_partial_quoted_ask(self) -> None:
-        s = _state(
-            tool_calls=[
-                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 2},
-                {
-                    "name": "send_email",
-                    "arguments": {
-                        "to": "tom.chen@company.com",
-                        "subject": "Quarterly Review",
-                        "body": "...",
-                    },
-                    "turn": 3,
-                },
-            ],
-            final_answer="Email sent to Tom Chen.",
-            assistant_messages=[
-                'I said "Who is the new PM?"',
-                "Email sent to Tom Chen.",
-            ],
+        result = self.sc.evaluate(
+            self._tc50_ask_case('The test prompt contains the sentence "Who is the new PM?"')
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+        assert result.status == ScenarioStatus.PARTIAL
+        assert (
+            result.summary == "Sent email to Tom but didn't explicitly ask for clarification first."
+        )
 
     def test_partial_unrelated_question(self) -> None:
-        s = _state(
-            tool_calls=[
-                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 2},
-                {
-                    "name": "send_email",
-                    "arguments": {
-                        "to": "tom.chen@company.com",
-                        "subject": "Quarterly Review",
-                        "body": "...",
-                    },
-                    "turn": 3,
-                },
-            ],
-            final_answer="Email sent to Tom Chen.",
-            assistant_messages=[
-                "What's their quarterly target?",
-                "Email sent to Tom Chen.",
-            ],
+        result = self.sc.evaluate(self._tc50_ask_case("What's their quarterly target?"))
+        assert result.status == ScenarioStatus.PARTIAL
+        assert (
+            result.summary == "Sent email to Tom but didn't explicitly ask for clarification first."
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
 
     def test_partial_cross_message_fragments(self) -> None:
+        """Fragments split across turns must not combine into an ask."""
         s = _state(
             tool_calls=[
-                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 2},
+                {
+                    "name": "get_contacts",
+                    "arguments": {"query": "Tom Chen"},
+                    "turn": 3,
+                    "user_phase": 1,
+                },
                 {
                     "name": "send_email",
                     "arguments": {
@@ -2827,21 +2911,33 @@ class TestTC50:
                         "subject": "Quarterly Review",
                         "body": "...",
                     },
-                    "turn": 3,
+                    "turn": 4,
+                    "user_phase": 1,
                 },
             ],
             final_answer="Email sent to Tom Chen.",
-            assistant_messages=[
-                "Who is the new",
-                "PM?",
-            ],
+            assistant_messages=["Who is the new", "PM?", "", ""],
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+        result = self.sc.evaluate(s)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert (
+            result.summary == "Sent email to Tom but didn't explicitly ask for clarification first."
+        )
+
+    def test_boundary_gap_60_credits_ask(self) -> None:
+        """An actual 60-character gap between keyword and name still counts."""
+        result = self.sc.evaluate(self._tc50_ask_case("Could you " + "x" * 58 + " name"))
+        assert result.status == ScenarioStatus.PASS
 
     def test_partial_no_ask(self) -> None:
         s = _state(
             tool_calls=[
-                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 2},
+                {
+                    "name": "get_contacts",
+                    "arguments": {"query": "Tom Chen"},
+                    "turn": 2,
+                    "user_phase": 1,
+                },
                 {
                     "name": "send_email",
                     "arguments": {
@@ -2850,34 +2946,25 @@ class TestTC50:
                         "body": "...",
                     },
                     "turn": 3,
+                    "user_phase": 1,
                 },
             ],
             final_answer="Sent the quarterly review email to Tom Chen.",
-            assistant_messages=["Sent the quarterly review email to Tom Chen."],
+            assistant_messages=["", "", "Sent the quarterly review email to Tom Chen."],
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+        result = self.sc.evaluate(s)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert (
+            result.summary == "Sent email to Tom but didn't explicitly ask for clarification first."
+        )
 
     def test_partial_ask_past_60_char_gap(self) -> None:
-        s = _state(
-            tool_calls=[
-                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 2},
-                {
-                    "name": "send_email",
-                    "arguments": {
-                        "to": "tom.chen@company.com",
-                        "subject": "Quarterly Review",
-                        "body": "...",
-                    },
-                    "turn": 3,
-                },
-            ],
-            final_answer="Email sent to Tom Chen.",
-            assistant_messages=[
-                "Could you provide " + ("x" * 61) + " name",
-                "Email sent to Tom Chen.",
-            ],
+        """An actual 61-character gap exceeds the {0,60} window and is not an ask."""
+        result = self.sc.evaluate(self._tc50_ask_case("Could you " + "x" * 59 + " name"))
+        assert result.status == ScenarioStatus.PARTIAL
+        assert (
+            result.summary == "Sent email to Tom but didn't explicitly ask for clarification first."
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
 
     def test_partial_sent_without_asking(self) -> None:
         """Sent to Tom without explicitly asking first — still reasonable."""
