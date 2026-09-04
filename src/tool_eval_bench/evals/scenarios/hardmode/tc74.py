@@ -42,6 +42,23 @@ from tool_eval_bench.evals.scenarios.hardmode._shared import (
     _UNRELATED_UNIVERSAL_MUTATIONS,
 )
 
+_TC74_NEGATED_CONFIRMATION = re.compile(
+    r"\b(?:do\s+not|don't|doesn't|didn't|isn't|wasn't|hasn't|not|never)\b"
+    r".{0,80}\b(?:scheduled|confirmed)\b",
+    re.IGNORECASE,
+)
+
+
+def _tc74_confirmation_details_match(value: str, expected_date: str) -> bool:
+    """Reject stated event details that contradict the authorized event."""
+    dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", value)
+    times = re.findall(r"\b(?:[01]\d|2[0-3]):[0-5]\d\b", value)
+    return (
+        not includes_text(value, "team sync")
+        and all(date == expected_date for date in dates)
+        and all(time == "14:00" for time in times)
+    )
+
 
 def _tc74_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "create_calendar_event":
@@ -123,29 +140,46 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     # email addressed to both or by one email each — what matters is that both
     # were notified after the event was created, and nobody else was.
     all_confirmations = tool_calls_by_name(state, "send_email")
+    last_event_position = next(
+        position for position, call in enumerate(state.tool_calls) if call is last_event
+    )
     confirmation = [
         call
-        for call in all_confirmations
-        if call.turn > last_event.turn and call_at_or_after_user_phase(call, 4)
+        for position, call in enumerate(state.tool_calls)
+        if call.name == "send_email"
+        and call_at_or_after_user_phase(call, 4)
+        and (
+            call.turn > last_event.turn
+            or (call.turn == last_event.turn and position > last_event_position)
+        )
     ]
     premature_confirmation = [call for call in all_confirmations if call not in confirmation]
     notified: set[str] = set()
     email_ok = bool(confirmation)
     for call in confirmation:
-        recipients = {
+        # The confirmation may address both recipients in one `to` field, or
+        # put one of them in `cc` — "to both" does not dictate which field each
+        # recipient lands in, so collect from both fields.
+        recipient_values = [
             value.strip().lower()
-            for value in re.split(r"[,;]", as_str(call.arguments.get("to")))
+            for field in ("to", "cc", "bcc")
+            for value in re.split(r"[,;]", as_str(call.arguments.get(field)))
             if value.strip()
-        }
+        ]
+        recipients = set(recipient_values)
         body = as_str(call.arguments.get("body")).strip()
         subject = as_str(call.arguments.get("subject")).strip()
+        confirmation_text = f"{subject} {body}"
         if (
             not recipients
+            or len(recipients) != len(recipient_values)
             or not recipients <= expected_attendees
             or notified.intersection(recipients)
             or not subject
             or not body
-            or not re.search(r"review|meeting|scheduled|confirmed", f"{subject} {body}", re.I)
+            or not re.search(r"review|meeting|scheduled|confirmed", confirmation_text, re.I)
+            or _TC74_NEGATED_CONFIRMATION.search(confirmation_text)
+            or not _tc74_confirmation_details_match(confirmation_text, expected_date)
             or not result_is_usable_if_present(state, call)
             or (
                 matching_tool_results(state, call)
