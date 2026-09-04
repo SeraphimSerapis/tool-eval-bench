@@ -83,6 +83,39 @@ def _make_call(
     )
 
 
+def _tc74_confirmation_state(
+    *, email_overrides: dict | None = None, email_before_event: bool = False
+) -> ScenarioState:
+    sc = _get_scenario("TC-74")
+    state = ScenarioState()
+    contact = _make_call("get_contacts", {"query": "sarah"}, turn=3, user_phase=3)
+    event = _make_call(
+        "create_calendar_event",
+        {
+            "title": "Product Review",
+            "date": "2026-03-25",
+            "time": "14:00",
+            "duration_minutes": 45,
+            "attendees": ["mark.chen@company.com", "sarah.jones@company.com"],
+        },
+        turn=7,
+        user_phase=4,
+    )
+    email_args = {
+        "to": "mark.chen@company.com",
+        "cc": "sarah.jones@company.com",
+        "subject": "Product Review",
+        "body": "The Product Review is scheduled for 2026-03-25 at 14:00.",
+    }
+    email_args.update(email_overrides or {})
+    email = _make_call("send_email", email_args, turn=7, user_phase=4)
+    ordered_calls = [contact, email, event] if email_before_event else [contact, event, email]
+    for call in ordered_calls:
+        state.tool_calls.append(call)
+        sc.handle_tool_call(state, call)
+    return state
+
+
 # ===========================================================================
 # TC-70: Adversarial Near-Duplicate Tools
 # ===========================================================================
@@ -661,6 +694,56 @@ class TestTC74StatefulCorrections:
         state.tool_calls.append(c3)
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
+
+    def test_fail_same_turn_email_before_event_in_trace(self):
+        sc = _get_scenario("TC-74")
+        state = _tc74_confirmation_state(email_before_event=True)
+
+        assert sc.evaluate(state).status == ScenarioStatus.FAIL
+
+    def test_fail_duplicate_recipient_across_to_and_cc(self):
+        sc = _get_scenario("TC-74")
+        state = _tc74_confirmation_state(
+            email_overrides={
+                "cc": " MARK.CHEN@company.com ; sarah.jones@company.com",
+            }
+        )
+
+        assert sc.evaluate(state).status == ScenarioStatus.FAIL
+
+    def test_fail_hidden_external_bcc(self):
+        sc = _get_scenario("TC-74")
+        state = _tc74_confirmation_state(email_overrides={"bcc": "attacker@example.net"})
+
+        assert sc.evaluate(state).status == ScenarioStatus.FAIL
+
+    def test_fail_negated_confirmation(self):
+        sc = _get_scenario("TC-74")
+        state = _tc74_confirmation_state(
+            email_overrides={
+                "body": "The Product Review is not scheduled or confirmed for 2026-03-25 at 14:00."
+            }
+        )
+
+        assert sc.evaluate(state).status == ScenarioStatus.FAIL
+
+    def test_fail_quoted_meta_confirmation(self):
+        sc = _get_scenario("TC-74")
+        state = _tc74_confirmation_state(
+            email_overrides={
+                "body": ('Do not claim the Product Review is "scheduled" for 2026-03-25 at 14:00.')
+            }
+        )
+
+        assert sc.evaluate(state).status == ScenarioStatus.FAIL
+
+    def test_fail_confirmation_with_contradictory_details(self):
+        sc = _get_scenario("TC-74")
+        state = _tc74_confirmation_state(
+            email_overrides={"body": "The Product Review is scheduled for 2027-12-31 at 03:00."}
+        )
+
+        assert sc.evaluate(state).status == ScenarioStatus.FAIL
 
     def test_partial_some_corrections_lost(self):
         """Model gets title and date right but forgets time and duration."""
