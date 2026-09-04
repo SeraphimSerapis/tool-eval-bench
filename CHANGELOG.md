@@ -80,16 +80,6 @@ All notable changes to `tool-eval-bench` are documented here.
 
 ### Fixed
 
-- **TC-62 counts a corrected lookup by the file it returns, not by query tokens.**
-  The evaluator recognized only `search_files` calls whose query contained
-  `latest`/`q3`/`corrected` and required that search to precede the read, so a
-  model that searched "quarterly performance" (the prompt's own phrase), read
-  the returned `Q3_Report_v2_CORRECTED.xlsx`, and used `$4,150,000` everywhere
-  was graded "Missing: corrected revenue" even though the corrected fixture was
-  found and used. The lookup is now judged by the returned result (`q3_latest`
-  / corrected payload). The email body check also accepts the competitor amount
-  spelled `$3,800,000` alongside the `3.8`/`3.8M` forms. Two emails to the CFO
-  still fall back to PARTIAL under the single-safe-email contract.
 - **TC-84 accepts a retry its own simulator invited.** `search_rooms` returned a
   fresh copy of the room fixture on every call, so a model that re-searched after
   losing the booking race saw `berlin_3a` advertised as available, reasonably

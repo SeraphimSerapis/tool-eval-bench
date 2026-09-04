@@ -889,9 +889,17 @@ class TestTC62DeepResearch:
         corrected fixture, so the lookup must count despite lacking q3/latest tokens."""
         state = _make_state(
             tool_calls=[
-                {"name": "search_files", "arguments": {"query": "quarterly performance"}, "turn": 1},
+                {
+                    "name": "search_files",
+                    "arguments": {"query": "quarterly performance"},
+                    "turn": 1,
+                },
                 {"name": "read_file", "arguments": {"file_id": "q3_latest"}, "turn": 2},
-                {"name": "web_search", "arguments": {"query": "Acme Corp Q3 2026 revenue performance"}, "turn": 5},
+                {
+                    "name": "web_search",
+                    "arguments": {"query": "Acme Corp Q3 2026 revenue performance"},
+                    "turn": 5,
+                },
                 {"name": "calculator", "arguments": {"expression": "4150000 - 3800000"}, "turn": 6},
                 {"name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 7},
                 {
@@ -915,6 +923,38 @@ class TestTC62DeepResearch:
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
+
+    def test_partial_negated_figure_does_not_credit_compare(self) -> None:
+        """A body that negates the corrected/competitor figures must not pass."""
+        state = _make_state(
+            tool_calls=[
+                {
+                    "name": "search_files",
+                    "arguments": {"query": "quarterly performance"},
+                    "turn": 1,
+                },
+                {"name": "read_file", "arguments": {"file_id": "q3_latest"}, "turn": 2},
+                {"name": "web_search", "arguments": {"query": "Acme Corp Q3"}, "turn": 3},
+                {"name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 4},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "cfo@company.com",
+                        "subject": "Summary",
+                        "body": "We are NOT ahead; Acme is not $3,800,000 and our corrected figure does not lead.",
+                    },
+                    "turn": 5,
+                },
+            ],
+            assistant_messages=[
+                "Found the corrected Q3 revenue, $4,150,000.",
+                "Acme's Q3 revenue was $3.8M.",
+                "Email sent to the CFO.",
+            ],
+            final_answer="Email sent to the CFO.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
 
     def test_partial_missing_competitor(self) -> None:
         state = _make_state(

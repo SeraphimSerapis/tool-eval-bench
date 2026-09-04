@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -188,11 +189,23 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
         else ""
     )
     body_lower = email_body.lower()
-    body_has_corrected = "4.15" in body_lower or "4150000" in body_lower.replace(",", "")
-    body_has_competitor = "acme" in body_lower and (
-        "3.8" in body_lower
-        or "3,800" in body_lower
-        or "3800000" in body_lower.replace(",", "")
+    # A stated figure under a negation ("we are NOT ahead", "Acme is not $3.8M")
+    # is evidence about the conversation, not the corrected/competitor figure.
+    negated_figure = bool(
+        re.search(
+            r"\b(?:not|never|no|without)\b.{0,40}\b(?:corrected|4150000|3\.8|3800000|acme|lead)\b",
+            body_lower,
+        )
+    )
+    body_has_corrected = not negated_figure and (
+        "4.15" in body_lower or "4150000" in body_lower.replace(",", "")
+    )
+    body_has_competitor = (
+        not negated_figure
+        and "acme" in body_lower
+        and (
+            "3.8" in body_lower or "3,800" in body_lower or "3800000" in body_lower.replace(",", "")
+        )
     )
     body_is_optimistic = any(
         word in body_lower for word in ("optimistic", "improve", "growth", "positive", "expect")
