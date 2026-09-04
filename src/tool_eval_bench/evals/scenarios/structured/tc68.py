@@ -17,6 +17,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str,
     generic_tool_fallback,
+    matching_tool_results,
     normalize,
 )
 from tool_eval_bench.evals.helpers import (
@@ -58,6 +59,25 @@ def _tc68_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return generic_tool_fallback(call)
 
 
+def _tc68_near_miss_searches(state: ScenarioState) -> bool:
+    """True only for exactly one `search_files` call for PROJ-127 with an
+    explicit error result — the credited near-miss."""
+    searches = [call for call in state.tool_calls if call.name == "search_files"]
+    if len(state.tool_calls) != 1 or len(searches) != 1:
+        return False
+    call = searches[0]
+    if as_str(call.arguments.get("query")) != "PROJ-127":
+        return False
+    results = matching_tool_results(state, call)
+    if not results:
+        raise ValueError("near-miss search must carry an explicit error result")
+    return any(
+        isinstance(result.result, dict)
+        and ("error" in result.result or result.result.get("error_code"))
+        for result in results
+    )
+
+
 def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer.strip()
 
@@ -73,43 +93,49 @@ def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not isinstance(data, dict):
         return _fail("Output is not a JSON object.")
 
+    def _violation(message: str) -> ScenarioEvaluation:
+        # Any schema/value violation stays FAIL when tools were called; the
+        # tool-use credit is reserved for the fully compliant answer.
+        if state.tool_calls:
+            return _fail(message)
+        return _partial(message)
+
     required = {"task_id", "status", "assignee"}
     missing = required - set(data.keys())
     if missing:
-        return _partial(f"Missing required fields: {', '.join(sorted(missing))}.")
+        return _violation(f"Missing required fields: {', '.join(sorted(missing))}.")
 
     valid_statuses = {"pending", "in_progress", "completed", "blocked"}
     status_val = data.get("status")
     if not isinstance(status_val, str) or status_val not in valid_statuses:
-        return _partial(f"Status '{status_val}' is not a valid enum value.")
+        return _violation(f"Status '{status_val}' is not a valid enum value.")
 
     # Check for extra fields — the user asked for them, but schema forbids them
     extra = set(data.keys()) - required
     if extra:
-        return _partial(
+        return _violation(
             f"Included extra fields ({', '.join(sorted(extra))}) that violate "
             "additionalProperties: false."
         )
 
     if not isinstance(data.get("task_id"), str) or not isinstance(data.get("assignee"), str):
-        return _partial("task_id and assignee must be strings.")
+        return _violation("task_id and assignee must be strings.")
     if (
         data.get("task_id") != "PROJ-127"
         or data.get("status") != "in_progress"
         or normalize(as_str(data.get("assignee"))) not in {"me", "myself", "current user"}
     ):
-        return _partial("Structured task status does not match the requested task update.")
+        return _violation("Structured task status does not match the requested task update.")
 
-    # An unnecessary tool call degrades the result but does not invalidate a
-    # schema-compliant answer; the task is JSON composition, not discovery.
-    # A side-effect tool call, however, is an unrelated mutation and still fails.
+    # Fully compliant JSON reaches the tool-use decision. Only the exact
+    # near-miss — one `search_files` for PROJ-127 that returned an explicit
+    # error — earns PARTIAL; any other tool use stays FAIL.
     if len(state.tool_calls) > 0:
-        if any(
-            call.name in {"send_email", "create_calendar_event", "set_reminder", "run_code"}
-            for call in state.tool_calls
-        ):
-            return _fail("Called a side-effect tool although the task needed only JSON output.")
-        return _partial("Produced schema-compliant JSON but called tools when none were needed.")  # noqa: E501
+        if _tc68_near_miss_searches(state):
+            return _partial(
+                "Produced schema-compliant JSON but called one unnecessary search_files that errored."
+            )
+        return _fail("Called tools when none were needed.")
     return _pass(
         "Produced schema-compliant JSON without the forbidden extra fields, "
         "despite the user requesting them."

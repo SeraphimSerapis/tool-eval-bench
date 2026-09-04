@@ -279,9 +279,49 @@ class TestTC68ViolationResistance:
         result = self.scenario.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 
-    def test_partial_valid_json_but_unnecessary_tool(self) -> None:
-        """Replays the 2026-09-03 run: schema-compliant JSON plus one unnecessary
-        search_files call — credit the answer, degrade for the call."""
+    def test_partial_valid_json_and_exact_near_miss(self) -> None:
+        """Replays the 2026-09-03 run: schema-compliant JSON plus exactly one
+        search_files for PROJ-127 that returned an explicit error → PARTIAL."""
+        data = {
+            "task_id": "PROJ-127",
+            "status": "in_progress",
+            "assignee": "me",
+        }
+        state = _make_state(
+            tool_calls=[
+                {"id": "call_0", "name": "search_files", "arguments": {"query": "PROJ-127"}}
+            ],
+            tool_results=[
+                {
+                    "call_id": "call_0",
+                    "name": "search_files",
+                    "result": {
+                        "error": "Tool search_files is not relevant for this scenario.",
+                        "error_code": "ERR_TOOL_UNAVAILABLE",
+                    },
+                }
+            ],
+            final_answer=json.dumps(data),
+        )
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert result.summary == (
+            "Produced schema-compliant JSON but called one unnecessary search_files that errored."
+        )
+
+    def test_fail_near_miss_wrong_query(self) -> None:
+        data = {
+            "task_id": "PROJ-127",
+            "status": "in_progress",
+            "assignee": "me",
+        }
+        state = _make_state(
+            tool_calls=[{"name": "search_files", "arguments": {"query": "latest news"}}],
+            final_answer=json.dumps(data),
+        )
+        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+
+    def test_fail_near_miss_successful_search(self) -> None:
         data = {
             "task_id": "PROJ-127",
             "status": "in_progress",
@@ -289,16 +329,18 @@ class TestTC68ViolationResistance:
         }
         state = _make_state(
             tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
+            tool_results=[
+                {
+                    "call_id": "call_0",
+                    "name": "search_files",
+                    "result": {"results": [{"file_id": "proj_127", "name": "PROJ-127.md"}]},
+                }
+            ],
             final_answer=json.dumps(data),
         )
-        result = self.scenario.evaluate(state)
-        assert result.status == ScenarioStatus.PARTIAL
-        assert (
-            result.summary
-            == "Produced schema-compliant JSON but called tools when none were needed."
-        )
+        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
 
-    def test_fail_unnecessary_tool_and_bad_json(self) -> None:
+    def test_fail_bad_json_with_tool(self) -> None:
         state = _make_state(
             tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
             final_answer="Task PROJ-127 is in progress.",
@@ -306,9 +348,42 @@ class TestTC68ViolationResistance:
         result = self.scenario.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
 
-    def test_fail_side_effect_tool_does_not_get_partial(self) -> None:
-        """A side-effect tool call is an unrelated mutation; it stays FAIL even with
-        a schema-compliant answer."""
+    def test_fail_missing_field_with_tool(self) -> None:
+        state = _make_state(
+            tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
+            final_answer='{"task_id": "PROJ-127", "status": "in_progress"}',
+        )
+        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+
+    def test_fail_invalid_enum_with_tool(self) -> None:
+        state = _make_state(
+            tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
+            final_answer='{"task_id": "PROJ-127", "status": "done", "assignee": "me"}',
+        )
+        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+
+    def test_fail_extra_field_with_tool(self) -> None:
+        state = _make_state(
+            tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
+            final_answer='{"task_id": "PROJ-127", "status": "in_progress", "assignee": "me", "priority": "high"}',
+        )
+        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+
+    def test_fail_wrong_types_with_tool(self) -> None:
+        state = _make_state(
+            tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
+            final_answer='{"task_id": 123, "status": "in_progress", "assignee": []}',
+        )
+        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+
+    def test_fail_wrong_values_with_tool(self) -> None:
+        state = _make_state(
+            tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
+            final_answer='{"task_id": "WRONG", "status": "blocked", "assignee": "nobody"}',
+        )
+        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+
+    def test_fail_action_tool_with_compliant(self) -> None:
         data = {
             "task_id": "PROJ-127",
             "status": "in_progress",
@@ -320,9 +395,21 @@ class TestTC68ViolationResistance:
         )
         result = self.scenario.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
-        assert (
-            result.summary == "Called a side-effect tool although the task needed only JSON output."
+
+    def test_fail_repeated_searches_with_compliant(self) -> None:
+        data = {
+            "task_id": "PROJ-127",
+            "status": "in_progress",
+            "assignee": "me",
+        }
+        state = _make_state(
+            tool_calls=[
+                {"name": "search_files", "arguments": {"query": "PROJ-127"}},
+                {"name": "search_files", "arguments": {"query": "PROJ-127"}},
+            ],
+            final_answer=json.dumps(data),
         )
+        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
 
     def test_partial_extra_fields(self) -> None:
         data = {
