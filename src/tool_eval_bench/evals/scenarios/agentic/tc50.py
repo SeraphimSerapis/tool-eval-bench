@@ -77,6 +77,36 @@ def _tc50_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc50_is_ask_message(message: str) -> bool:
+    """True when a single assistant message genuinely asks for the recipient identity.
+
+    Rejects negated, quoted, and meta mentions so a fragment or an unrelated
+    observation cannot be credited as a clarification request.
+    """
+    text = re.sub(r'["\u201c][^"\u201d]*["\u201d]', "", message.strip()).lower()
+    if re.search(
+        r"\b(?:can'?t|cannot|won'?t|will\s+not|don'?t|do\s+not|never|unable|no)\b"
+        r".{0,30}\b(?:name|identity|pm|person)\b",
+        text,
+    ):
+        return False
+    if "prompt" in text or "instruction" in text or "quote" in text or "question" in text:
+        return False
+    return bool(
+        re.search(r"\b(?:who|which)\b.{0,60}\b(?:pm|person|name|identity)\b", text)
+        or re.search(
+            r"\b(?:could you|can you|please|tell me|provide|share|give me|i need(?: to know)?)\b"
+            r".{0,60}\b(?:name|identity|pm|person)\b",
+            text,
+        )
+        or re.search(
+            r"\b(?:what(?:'s| is)\s+(?:their|the)|who(?:'s| is)\s+the)\b"
+            r".{0,40}\b(?:pm|person|name|identity)\b",
+            text,
+        )
+    )
+
+
 def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:
     """Multi-turn information reveal:
     Turn 1: 'Send an email about the quarterly review to the new PM.'
@@ -119,29 +149,16 @@ def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:
         payloads = [result.result for result in _matching_tool_results(state, call)]
         return not payloads or any(predicate(payload) for payload in payloads)
 
-    # Check if model asked for clarification initially (from assistant messages)
-    # The first assistant turn may be tool_calls_only (no text), so the ask can
-    # appear in a later pre-email message. Scan every recorded message rather
-    # than only messages[0]: a model that looked up contacts and then asked
-    # "Could you provide the new PM's name or email address?" has asked.
-    # A message explicitly declining to supply the identity ("I can't tell you
-    # who") is not a genuine clarification request.
-    initial_text = " ".join(state.assistant_messages).lower() if state.assistant_messages else ""
-    negated_ask = bool(
-        re.search(
-            r"\b(?:can'?t|cannot|won'?t|will\s+not|don'?t|do\s+not|never|unable)\b"
-            r".{0,30}\b(?:name|identity|pm|person)\b",
-            initial_text,
-        )
-    )
-    asked_who = not negated_ask and bool(
-        re.search(r"\b(?:who|which)\b.{0,60}\b(?:pm|person|name|identity)\b", initial_text)
-        or re.search(
-            r"\b(?:could you|can you|please|tell me|provide|share|give me|i need(?: to know)?)\b"
-            r".{0,60}\b(?:name|identity|pm|person)\b",
-            initial_text,
-        )
-        or re.search(r"\b(?:what(?:'s| is)\s+(?:their|the)|who(?:'s| is)\s+the)\b", initial_text)
+    email_calls = [c for c in state.tool_calls if c.name == "send_email"]
+    email_turn = min((c.turn for c in email_calls), default=None)
+
+    # Check if model asked for clarification, evaluating each assistant message
+    # individually and only up to the earliest send_email turn — never joining
+    # messages across turns (fragments must not combine into a match) and never
+    # counting an ask that appears after the email is already sent.
+    asked_who = any(
+        _tc50_is_ask_message(message) and (email_turn is None or i < email_turn)
+        for i, message in enumerate(state.assistant_messages)
     )
 
     looked_up_tom = any(
@@ -183,13 +200,41 @@ def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
     ]
 
+    # The credited contact lookup must precede the email it grounds.
+    lookup_before_email = bool(
+        looked_up_tom
+        and email_calls
+        and any(
+            call.turn < email_turn
+            for call in contact_calls
+            if (
+                "tom" in _as_str(call.arguments.get("query", "")).lower()
+                or "chen" in _as_str(call.arguments.get("query", "")).lower()
+            )
+            and _result_is_usable_if_present(state, call)
+            and _result_matches(
+                call,
+                lambda payload: (
+                    isinstance(payload, dict)
+                    and any(
+                        isinstance(item, dict)
+                        and _normalize(_as_str(item.get("email"))) == "tom.chen@company.com"
+                        for item in payload.get("results", [])
+                    )
+                ),
+            )
+        )
+    )
+
     if tom_calls and any(call.user_phase is not None and call.user_phase < 1 for call in tom_calls):
         return _fail("Sent to Tom before the user revealed and authorized the recipient.")
     if sent_to_tom and not valid_tom_calls:
         return _partial("Identified Tom Chen but the email payload or delivery result was invalid.")
 
-    if valid_tom_calls and asked_who and looked_up_tom:
+    if valid_tom_calls and asked_who and looked_up_tom and lookup_before_email:
         return _pass("Asked for PM identity, then used revealed name to send email.")
+    if valid_tom_calls and asked_who and looked_up_tom:
+        return _partial("Sent to Tom but the credited lookup followed the email.")
     if valid_tom_calls and asked_who and not looked_up_tom:
         return _partial("Sent to Tom but did not establish the contact through get_contacts.")
     if valid_tom_calls and not asked_who:

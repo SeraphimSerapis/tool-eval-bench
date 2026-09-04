@@ -2670,7 +2670,7 @@ class TestTC50:
                         "subject": "Quarterly Review",
                         "body": "...",
                     },
-                    "turn": 2,
+                    "turn": 3,
                 },
             ],
             final_answer="Email sent to Tom Chen about the quarterly review.",
@@ -2680,6 +2680,9 @@ class TestTC50:
             ],
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+        assert self.sc.evaluate(s).summary == (
+            "Asked for PM identity, then used revealed name to send email."
+        )
 
     def test_pass_ask_in_later_message_after_lookup(self) -> None:
         """Replays the 2026-09-03 run: the first turn was tool-calls-only, the
@@ -2723,6 +2726,155 @@ class TestTC50:
             assistant_messages=[
                 "I can't tell you who the new PM is.",
                 "Sent the quarterly review email to Tom Chen.",
+            ],
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
+    def test_partial_ask_after_send(self) -> None:
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "tom.chen@company.com",
+                        "subject": "Quarterly Review",
+                        "body": "...",
+                    },
+                    "turn": 1,
+                },
+            ],
+            final_answer="Email sent to Tom Chen.",
+            assistant_messages=[
+                "Who is the new PM?",
+            ],
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
+    def test_partial_send_before_lookup(self) -> None:
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "tom.chen@company.com",
+                        "subject": "Quarterly Review",
+                        "body": "...",
+                    },
+                    "turn": 2,
+                },
+                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 3},
+            ],
+            final_answer="Sent the quarterly review email to Tom Chen.",
+            assistant_messages=[
+                "Who is the new PM? Could you provide their name?",
+                "Email sent to Tom Chen.",
+            ],
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
+    def test_partial_quoted_ask(self) -> None:
+        s = _state(
+            tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 2},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "tom.chen@company.com",
+                        "subject": "Quarterly Review",
+                        "body": "...",
+                    },
+                    "turn": 3,
+                },
+            ],
+            final_answer="Email sent to Tom Chen.",
+            assistant_messages=[
+                'I said "Who is the new PM?"',
+                "Email sent to Tom Chen.",
+            ],
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
+    def test_partial_unrelated_question(self) -> None:
+        s = _state(
+            tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 2},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "tom.chen@company.com",
+                        "subject": "Quarterly Review",
+                        "body": "...",
+                    },
+                    "turn": 3,
+                },
+            ],
+            final_answer="Email sent to Tom Chen.",
+            assistant_messages=[
+                "What's their quarterly target?",
+                "Email sent to Tom Chen.",
+            ],
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
+    def test_partial_cross_message_fragments(self) -> None:
+        s = _state(
+            tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 2},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "tom.chen@company.com",
+                        "subject": "Quarterly Review",
+                        "body": "...",
+                    },
+                    "turn": 3,
+                },
+            ],
+            final_answer="Email sent to Tom Chen.",
+            assistant_messages=[
+                "Who is the new",
+                "PM?",
+            ],
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
+    def test_partial_no_ask(self) -> None:
+        s = _state(
+            tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 2},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "tom.chen@company.com",
+                        "subject": "Quarterly Review",
+                        "body": "...",
+                    },
+                    "turn": 3,
+                },
+            ],
+            final_answer="Sent the quarterly review email to Tom Chen.",
+            assistant_messages=["Sent the quarterly review email to Tom Chen."],
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
+    def test_partial_ask_past_60_char_gap(self) -> None:
+        s = _state(
+            tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "turn": 2},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "tom.chen@company.com",
+                        "subject": "Quarterly Review",
+                        "body": "...",
+                    },
+                    "turn": 3,
+                },
+            ],
+            final_answer="Email sent to Tom Chen.",
+            assistant_messages=[
+                "Could you provide " + ("x" * 61) + " name",
+                "Email sent to Tom Chen.",
             ],
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
