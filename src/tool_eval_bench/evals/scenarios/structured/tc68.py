@@ -70,12 +70,20 @@ def _tc68_near_miss_searches(state: ScenarioState) -> bool:
         return False
     results = matching_tool_results(state, call)
     if not results:
-        raise ValueError("near-miss search must carry an explicit error result")
-    return any(
-        isinstance(result.result, dict)
-        and ("error" in result.result or result.result.get("error_code"))
-        for result in results
-    )
+        return False
+    return any(_tc68_is_error_result(result.result) for result in results)
+
+
+def _tc68_is_error_result(result: object) -> bool:
+    """True for a genuine search error: a non-empty `error` string or an
+    `ERR_...` code — not `{"error": None}` or `{"error_code": "OK"}`."""
+    if not isinstance(result, dict):
+        return False
+    error = result.get("error")
+    if isinstance(error, str) and error.strip():
+        return True
+    code = result.get("error_code")
+    return isinstance(code, str) and code.startswith("ERR_")
 
 
 def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:

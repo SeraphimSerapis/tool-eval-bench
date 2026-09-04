@@ -319,7 +319,9 @@ class TestTC68ViolationResistance:
             tool_calls=[{"name": "search_files", "arguments": {"query": "latest news"}}],
             final_answer=json.dumps(data),
         )
-        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Called tools when none were needed."
 
     def test_fail_near_miss_successful_search(self) -> None:
         data = {
@@ -338,7 +340,75 @@ class TestTC68ViolationResistance:
             ],
             final_answer=json.dumps(data),
         )
-        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Called tools when none were needed."
+
+    def test_fail_near_miss_no_result_record(self) -> None:
+        """A search call with no recorded result must FAIL, not raise."""
+        data = {
+            "task_id": "PROJ-127",
+            "status": "in_progress",
+            "assignee": "me",
+        }
+        state = _make_state(
+            tool_calls=[
+                {"id": "call_0", "name": "search_files", "arguments": {"query": "PROJ-127"}}
+            ],
+            tool_results=[],
+            final_answer=json.dumps(data),
+        )
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Called tools when none were needed."
+
+    def test_fail_near_miss_null_error(self) -> None:
+        """{"error": None} is not an errored search."""
+        data = {
+            "task_id": "PROJ-127",
+            "status": "in_progress",
+            "assignee": "me",
+        }
+        state = _make_state(
+            tool_calls=[
+                {"id": "call_0", "name": "search_files", "arguments": {"query": "PROJ-127"}}
+            ],
+            tool_results=[
+                {
+                    "call_id": "call_0",
+                    "name": "search_files",
+                    "result": {"error": None, "results": [{"name": "PROJ-127.md"}]},
+                }
+            ],
+            final_answer=json.dumps(data),
+        )
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Called tools when none were needed."
+
+    def test_fail_near_miss_error_code_ok(self) -> None:
+        """{"error_code": "OK"} is a successful search, not an error."""
+        data = {
+            "task_id": "PROJ-127",
+            "status": "in_progress",
+            "assignee": "me",
+        }
+        state = _make_state(
+            tool_calls=[
+                {"id": "call_0", "name": "search_files", "arguments": {"query": "PROJ-127"}}
+            ],
+            tool_results=[
+                {
+                    "call_id": "call_0",
+                    "name": "search_files",
+                    "result": {"error_code": "OK", "results": [{"name": "PROJ-127.md"}]},
+                }
+            ],
+            final_answer=json.dumps(data),
+        )
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Called tools when none were needed."
 
     def test_fail_bad_json_with_tool(self) -> None:
         state = _make_state(
@@ -347,41 +417,54 @@ class TestTC68ViolationResistance:
         )
         result = self.scenario.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Output is not valid JSON."
 
     def test_fail_missing_field_with_tool(self) -> None:
         state = _make_state(
             tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
             final_answer='{"task_id": "PROJ-127", "status": "in_progress"}',
         )
-        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Missing required fields: assignee."
 
     def test_fail_invalid_enum_with_tool(self) -> None:
         state = _make_state(
             tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
             final_answer='{"task_id": "PROJ-127", "status": "done", "assignee": "me"}',
         )
-        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Status 'done' is not a valid enum value."
 
     def test_fail_extra_field_with_tool(self) -> None:
         state = _make_state(
             tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
             final_answer='{"task_id": "PROJ-127", "status": "in_progress", "assignee": "me", "priority": "high"}',
         )
-        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == (
+            "Included extra fields (priority) that violate additionalProperties: false."
+        )
 
     def test_fail_wrong_types_with_tool(self) -> None:
         state = _make_state(
             tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
             final_answer='{"task_id": 123, "status": "in_progress", "assignee": []}',
         )
-        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "task_id and assignee must be strings."
 
     def test_fail_wrong_values_with_tool(self) -> None:
         state = _make_state(
             tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
             final_answer='{"task_id": "WRONG", "status": "blocked", "assignee": "nobody"}',
         )
-        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Structured task status does not match the requested task update."
 
     def test_fail_action_tool_with_compliant(self) -> None:
         data = {
@@ -395,6 +478,7 @@ class TestTC68ViolationResistance:
         )
         result = self.scenario.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Called tools when none were needed."
 
     def test_fail_repeated_searches_with_compliant(self) -> None:
         data = {
@@ -409,7 +493,9 @@ class TestTC68ViolationResistance:
             ],
             final_answer=json.dumps(data),
         )
-        assert self.scenario.evaluate(state).status == ScenarioStatus.FAIL
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Called tools when none were needed."
 
     def test_partial_extra_fields(self) -> None:
         data = {
