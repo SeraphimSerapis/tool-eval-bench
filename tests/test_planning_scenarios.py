@@ -890,19 +890,32 @@ class TestTC62DeepResearch:
         state = _make_state(
             tool_calls=[
                 {
+                    "id": "call_0",
                     "name": "search_files",
                     "arguments": {"query": "quarterly performance"},
                     "turn": 1,
                 },
-                {"name": "read_file", "arguments": {"file_id": "q3_latest"}, "turn": 2},
                 {
+                    "id": "call_1",
+                    "name": "read_file",
+                    "arguments": {"file_id": "q3_latest"},
+                    "turn": 2,
+                },
+                {
+                    "id": "call_2",
                     "name": "web_search",
                     "arguments": {"query": "Acme Corp Q3 2026 revenue performance"},
                     "turn": 5,
                 },
-                {"name": "calculator", "arguments": {"expression": "4150000 - 3800000"}, "turn": 6},
-                {"name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 7},
                 {
+                    "id": "call_3",
+                    "name": "calculator",
+                    "arguments": {"expression": "4150000 - 3800000"},
+                    "turn": 6,
+                },
+                {"id": "call_4", "name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 7},
+                {
+                    "id": "call_5",
                     "name": "send_email",
                     "arguments": {
                         "to": "cfo@company.com",
@@ -914,32 +927,33 @@ class TestTC62DeepResearch:
             ],
             tool_results=[
                 {
+                    "call_id": "call_0",
                     "name": "search_files",
                     "result": {
                         "results": [{"file_id": "q3_latest", "name": "Q3_Report_v2_CORRECTED.xlsx"}]
                     },
-                    "call_id": "call_0",
                 },
                 {
+                    "call_id": "call_1",
                     "name": "read_file",
                     "result": {
                         "content": "Q3 Report (CORRECTED)\nRevenue: $4,150,000\nNote: Previous version showed $4.4M due to accounting error."
                     },
-                    "call_id": "call_1",
                 },
                 {
+                    "call_id": "call_2",
                     "name": "web_search",
                     "result": {
                         "results": [{"snippet": "Acme Corp Q3 revenue: $3.8M. Growth rate: 12%."}]
                     },
-                    "call_id": "call_2",
                 },
+                {"call_id": "call_3", "name": "calculator", "result": {"result": 350000.0}},
                 {
+                    "call_id": "call_4",
                     "name": "get_contacts",
                     "result": {"results": [{"name": "CFO", "email": "cfo@company.com"}]},
-                    "call_id": "call_4",
                 },
-                {"name": "send_email", "result": {"status": "sent"}, "call_id": "call_5"},
+                {"call_id": "call_5", "name": "send_email", "result": {"status": "sent"}},
             ],
             assistant_messages=[
                 "Found the latest quarterly report.",
@@ -956,58 +970,67 @@ class TestTC62DeepResearch:
             "Completed 5-turn chain: corrected data → competitor → CFO email with optimistic tone."
         )
 
-    def test_partial_generic_lookup_that_returns_unrelated_file(self) -> None:
-        """The same generic query returning an unrelated file must not PASS —
-        the result-based lookup is proved by the returned payload."""
+    def test_partial_generic_search_returning_unrelated_file(self) -> None:
+        """The corrected q3_latest read is retained; only the search result is
+        changed to Lunch_Menu.txt — an always-true result matcher would pass."""
         state = _make_state(
             tool_calls=[
                 {
+                    "id": "call_0",
                     "name": "search_files",
                     "arguments": {"query": "quarterly performance"},
                     "turn": 1,
                 },
-                {"name": "read_file", "arguments": {"file_id": "menu_txt"}, "turn": 2},
                 {
+                    "id": "call_1",
+                    "name": "read_file",
+                    "arguments": {"file_id": "q3_latest"},
+                    "turn": 2,
+                },
+                {
+                    "id": "call_2",
                     "name": "web_search",
                     "arguments": {"query": "Acme Corp Q3"},
                     "turn": 3,
                 },
-                {"name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 4},
+                {"id": "call_3", "name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 4},
                 {
+                    "id": "call_4",
                     "name": "send_email",
                     "arguments": {
                         "to": "cfo@company.com",
                         "subject": "Summary",
-                        "body": "Our corrected Q3 revenue is $4,150,000, ahead of Acme's $3,800,000.",
+                        "body": "Our corrected Q3 revenue is $4,150,000; Acme reported $3,800,000. We expect Q4 to improve.",
                     },
                     "turn": 5,
                 },
             ],
             tool_results=[
                 {
+                    "call_id": "call_0",
                     "name": "search_files",
                     "result": {"results": [{"file_id": "menu_txt", "name": "Lunch_Menu.txt"}]},
-                    "call_id": "call_0",
                 },
                 {
-                    "name": "read_file",
-                    "result": {"content": "Lunch menu."},
                     "call_id": "call_1",
+                    "name": "read_file",
+                    "result": {
+                        "content": "Q3 Report (CORRECTED)\nRevenue: $4,150,000\nNote: Previous version showed $4.4M due to accounting error."
+                    },
                 },
                 {
+                    "call_id": "call_2",
                     "name": "web_search",
                     "result": {"results": [{"snippet": "Acme Corp Q3 revenue: $3.8M."}]},
-                    "call_id": "call_2",
                 },
                 {
+                    "call_id": "call_3",
                     "name": "get_contacts",
                     "result": {"results": [{"name": "CFO", "email": "cfo@company.com"}]},
-                    "call_id": "call_3",
                 },
-                {"name": "send_email", "result": {"status": "sent"}, "call_id": "call_4"},
+                {"call_id": "call_4", "name": "send_email", "result": {"status": "sent"}},
             ],
             assistant_messages=[
-                "Found a file.",
                 "The corrected Q3 revenue is $4,150,000.",
                 "Acme's revenue was $3.8M.",
                 "Email sent to the CFO.",
@@ -1016,139 +1039,137 @@ class TestTC62DeepResearch:
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
+        assert result.summary == "Partial chain completion. Missing: corrected revenue."
 
-    def test_pass_competitor_amount_exact_forms(self) -> None:
-        """Amount-format regression: exact forms are credited."""
-        for amount in ("$3,800,000", "$3.8M", "3,800,000", "3800000", "3.8"):
-            state = _make_state(
-                tool_calls=[
-                    {
-                        "name": "search_files",
-                        "arguments": {"query": "quarterly performance"},
-                        "turn": 1,
-                    },
-                    {"name": "read_file", "arguments": {"file_id": "q3_latest"}, "turn": 2},
-                    {"name": "web_search", "arguments": {"query": "Acme Corp Q3"}, "turn": 3},
-                    {"name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 4},
-                    {
-                        "name": "send_email",
-                        "arguments": {
-                            "to": "cfo@company.com",
-                            "subject": "Summary",
-                            "body": f"Our corrected revenue is $4,150,000; Acme reported {amount}. We expect Q4 to improve.",
-                        },
-                        "turn": 5,
-                    },
-                ],
-                assistant_messages=[
-                    "Found the corrected quarterly report, $4,150,000.",
-                    f"Acme reported {amount}.",
-                    "Sent to the CFO.",
-                ],
-                final_answer="Sent to the CFO.",
-            )
-            result = self.sc.evaluate(state)
-            assert result.status == ScenarioStatus.PASS
-
-    def test_partial_competitor_amount_truncated_or_longer(self) -> None:
-        """$3,800 and $13,800,000 are not the asserted competitor amount."""
-        for amount in ("$3,800", "$13,800,000"):
-            state = _make_state(
-                tool_calls=[
-                    {
-                        "name": "search_files",
-                        "arguments": {"query": "quarterly performance"},
-                        "turn": 1,
-                    },
-                    {"name": "read_file", "arguments": {"file_id": "q3_latest"}, "turn": 2},
-                    {"name": "web_search", "arguments": {"query": "Acme Corp Q3"}, "turn": 3},
-                    {"name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 4},
-                    {
-                        "name": "send_email",
-                        "arguments": {
-                            "to": "cfo@company.com",
-                            "subject": "Summary",
-                            "body": f"Acme reported {amount}. We expect Q4 to improve.",
-                        },
-                        "turn": 5,
-                    },
-                ],
-                assistant_messages=[
-                    "Found the corrected quarterly report, $4,150,000.",
-                    f"Acme reported {amount}.",
-                    "Sent to the CFO.",
-                ],
-                final_answer="Sent to the CFO.",
-            )
-            result = self.sc.evaluate(state)
-            assert result.status == ScenarioStatus.PARTIAL
-
-    def test_partial_competitor_amount_negated_or_quoted(self) -> None:
-        """Negated or quoted competitor claims must not credit the amount."""
-        for body in (
-            "Acme did not report $3,800,000.",
-            'Ignore the quoted claim "Acme: $3,800,000"; Acme actually reported $9,000,000.',
-        ):
-            state = _make_state(
-                tool_calls=[
-                    {
-                        "name": "search_files",
-                        "arguments": {"query": "quarterly performance"},
-                        "turn": 1,
-                    },
-                    {"name": "read_file", "arguments": {"file_id": "q3_latest"}, "turn": 2},
-                    {"name": "web_search", "arguments": {"query": "Acme Corp Q3"}, "turn": 3},
-                    {"name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 4},
-                    {
-                        "name": "send_email",
-                        "arguments": {
-                            "to": "cfo@company.com",
-                            "subject": "Summary",
-                            "body": body,
-                        },
-                        "turn": 5,
-                    },
-                ],
-                assistant_messages=[
-                    "Found the corrected quarterly report, $4,150,000.",
-                    "Sent to the CFO.",
-                ],
-                final_answer="Sent to the CFO.",
-            )
-            result = self.sc.evaluate(state)
-            assert result.status == ScenarioStatus.PARTIAL
-
-    def test_partial_negated_figure_does_not_credit_compare(self) -> None:
-        """A body that negates the corrected/competitor figures must not pass."""
-        state = _make_state(
+    def _tc62_body_state(self, body: str) -> ScenarioState:
+        """A fully PASS-capable chain whose only uncertainty is the email body."""
+        return _make_state(
             tool_calls=[
                 {
+                    "id": "call_0",
                     "name": "search_files",
                     "arguments": {"query": "quarterly performance"},
                     "turn": 1,
                 },
-                {"name": "read_file", "arguments": {"file_id": "q3_latest"}, "turn": 2},
-                {"name": "web_search", "arguments": {"query": "Acme Corp Q3"}, "turn": 3},
-                {"name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 4},
                 {
+                    "id": "call_1",
+                    "name": "read_file",
+                    "arguments": {"file_id": "q3_latest"},
+                    "turn": 2,
+                },
+                {
+                    "id": "call_2",
+                    "name": "web_search",
+                    "arguments": {"query": "Acme Corp Q3"},
+                    "turn": 3,
+                },
+                {"id": "call_3", "name": "get_contacts", "arguments": {"query": "CFO"}, "turn": 4},
+                {
+                    "id": "call_4",
                     "name": "send_email",
                     "arguments": {
                         "to": "cfo@company.com",
                         "subject": "Summary",
-                        "body": "We are NOT ahead; Acme is not $3,800,000 and our corrected figure does not lead.",
+                        "body": body,
                     },
                     "turn": 5,
                 },
             ],
+            tool_results=[
+                {
+                    "call_id": "call_0",
+                    "name": "search_files",
+                    "result": {
+                        "results": [{"file_id": "q3_latest", "name": "Q3_Report_v2_CORRECTED.xlsx"}]
+                    },
+                },
+                {
+                    "call_id": "call_1",
+                    "name": "read_file",
+                    "result": {"content": "Q3 Report (CORRECTED)\nRevenue: $4,150,000"},
+                },
+                {
+                    "call_id": "call_2",
+                    "name": "web_search",
+                    "result": {"results": [{"snippet": "Acme Corp Q3 revenue: $3.8M."}]},
+                },
+                {
+                    "call_id": "call_3",
+                    "name": "get_contacts",
+                    "result": {"results": [{"name": "CFO", "email": "cfo@company.com"}]},
+                },
+                {"call_id": "call_4", "name": "send_email", "result": {"status": "sent"}},
+            ],
             assistant_messages=[
-                "Found the corrected Q3 revenue, $4,150,000.",
-                "Acme's Q3 revenue was $3.8M.",
+                "The corrected Q3 revenue is $4,150,000.",
+                "Acme's revenue was compared.",
                 "Email sent to the CFO.",
             ],
             final_answer="Email sent to the CFO.",
         )
-        result = self.sc.evaluate(state)
+
+    def test_pass_competitor_amount_exact_forms(self) -> None:
+        """Amount-format regression: each exact form completes the chain."""
+        for amount in ("$3,800,000", "$3.8M", "3,800,000", "3800000", "3.8", "$3.8 million"):
+            result = self.sc.evaluate(
+                self._tc62_body_state(
+                    f"Our corrected Q3 revenue is $4,150,000; Acme reported {amount}. We expect Q4 to improve."
+                )
+            )
+            assert result.status == ScenarioStatus.PASS, amount
+            assert result.summary == (
+                "Completed 5-turn chain: corrected data → competitor → CFO email with optimistic tone."
+            ), amount
+
+    def test_partial_competitor_amount_truncated_or_longer(self) -> None:
+        """$3,800 and $13,800,000 are not the asserted competitor amount."""
+        for amount in ("$3,800", "$13,800,000"):
+            result = self.sc.evaluate(
+                self._tc62_body_state(
+                    f"Our corrected Q3 revenue is $4,150,000; Acme reported {amount}. We expect Q4 to improve."
+                )
+            )
+            assert result.status == ScenarioStatus.PARTIAL, amount
+            assert result.summary == (
+                "Sent CFO email but missed contact resolution, corrected data, competitor, or optimistic revision."
+            ), amount
+
+    def test_partial_competitor_amount_negated_or_quoted(self) -> None:
+        """Negated or quoted Acme claims must not credit the competitor amount."""
+        for body in (
+            "Our corrected Q3 revenue is $4,150,000; Acme did not report $3,800,000. We expect Q4 to improve.",
+            "Our corrected Q3 revenue is $4,150,000. Acme did not, according to its audited quarterly earnings report, report $3,800,000. We expect Q4 to improve.",
+            'Our corrected Q3 revenue is $4,150,000. Ignore the quoted claim "Acme: $3,800,000"; Acme actually reported $9,000,000. We expect Q4 to improve.',
+        ):
+            result = self.sc.evaluate(self._tc62_body_state(body))
+            assert result.status == ScenarioStatus.PARTIAL, body
+            assert result.summary == (
+                "Sent CFO email but missed contact resolution, corrected data, competitor, or optimistic revision."
+            ), body
+
+    def test_partial_competitor_amount_belongs_to_other_company(self) -> None:
+        """$3,800,000 attributed to Contoso, not Acme, must not credit the amount."""
+        result = self.sc.evaluate(
+            self._tc62_body_state(
+                "Our corrected Q3 revenue is $4,150,000. Contoso reported $3,800,000; Acme actually reported $9,000,000. We expect Q4 to improve."
+            )
+        )
         assert result.status == ScenarioStatus.PARTIAL
+        assert result.summary == (
+            "Sent CFO email but missed contact resolution, corrected data, competitor, or optimistic revision."
+        )
+
+    def test_pass_negation_outside_the_acme_claim(self) -> None:
+        """A negation in an unrelated sentence must not veto a valid comparison."""
+        result = self.sc.evaluate(
+            self._tc62_body_state(
+                "We are not behind. Our corrected Q3 revenue is $4,150,000; Acme reported $3,800,000. We expect Q4 to improve."
+            )
+        )
+        assert result.status == ScenarioStatus.PASS
+        assert result.summary == (
+            "Completed 5-turn chain: corrected data → competitor → CFO email with optimistic tone."
+        )
 
     def test_partial_missing_competitor(self) -> None:
         state = _make_state(
