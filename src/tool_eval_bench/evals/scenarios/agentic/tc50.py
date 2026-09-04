@@ -204,6 +204,7 @@ def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:
     lookup_before_email = bool(
         looked_up_tom
         and email_calls
+        and email_turn is not None
         and any(
             call.turn < email_turn
             for call in contact_calls
