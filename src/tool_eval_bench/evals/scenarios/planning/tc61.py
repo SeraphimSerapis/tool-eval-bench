@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -37,6 +38,30 @@ from tool_eval_bench.evals.scenarios.planning._shared import (
     _result_matches_if_present,
 )
 
+_POLL_ACTION_RE = re.compile(
+    r"\b(?:check(?:ing)?|poll(?:ing)?|quer(?:y|ying)|get(?:ting)?)\b"
+    r"(?:\s+\w+){0,4}\s+\b(?:job|status|result|completion)\b"
+    r"|\b(?:job|status|result|completion)\b"
+    r"(?:\s+\w+){0,4}\s+\b(?:check(?:ing)?|poll(?:ing)?|quer(?:y|ying)|get(?:ting)?)\b"
+)
+_NEGATED_POLL_RE = re.compile(r"\b(?:do\s+not|don'?t|never|not|refus\w*|won'?t|will\s+not)\b")
+_DESTRUCTIVE_CODE_RE = re.compile(r"\b(?:delete|drop|erase|remove|rmtree|truncate|unlink|wipe)\b")
+
+
+def _is_genuine_poll(call: ToolCallRecord) -> bool:
+    """Recognize an attempted poll without requiring one exact code spelling."""
+    code = _as_str(call.arguments.get("code")).strip().lower()
+    if not code:
+        return False
+    normalized = re.sub(r"[^a-z0-9]+", " ", code).strip()
+    if _DESTRUCTIVE_CODE_RE.search(normalized) or "analyze data" in normalized:
+        return False
+    if "job_tc61_9f3a" in code:
+        return True
+    if _NEGATED_POLL_RE.search(normalized):
+        return False
+    return bool(_POLL_ACTION_RE.search(normalized))
+
 
 def _tc61_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     """Stateful handler: first run_code returns pending, second returns complete."""
@@ -53,20 +78,23 @@ def _tc61_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
                 },
                 "run_code",
             )
-        else:
-            # Subsequent calls: return complete
+        if not _is_genuine_poll(call):
             return _noise(
-                {
-                    "status": "complete",
-                    "job_id": "job_tc61_9f3a",
-                    "result": {
-                        "total_records": 15420,
-                        "anomalies_found": 3,
-                        "summary": "3 anomalies detected in 15,420 records.",
-                    },
-                },
+                {"error": "The submitted code did not poll the pending analysis job."},
                 "run_code",
             )
+        return _noise(
+            {
+                "status": "complete",
+                "job_id": "job_tc61_9f3a",
+                "result": {
+                    "total_records": 15420,
+                    "anomalies_found": 3,
+                    "summary": "3 anomalies detected in 15,420 records.",
+                },
+            },
+            "run_code",
+        )
     if call.name == "web_search":
         return _noise(
             {"results": [{"snippet": "Polling pattern: retry with backoff."}]},
@@ -119,7 +147,7 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     poll_result_ok = bool(
         poll_call
-        and "job_tc61_9f3a" in _as_str(poll_call.arguments.get("code"))
+        and _is_genuine_poll(poll_call)
         and _result_matches_if_present(state, poll_call, complete_result)
     )
     valid_poll = first_result_ok and poll_result_ok

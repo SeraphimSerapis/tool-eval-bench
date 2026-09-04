@@ -9,6 +9,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ScenarioStatus,
     ToolCallRecord,
+    ToolResultRecord,
 )
 
 
@@ -896,6 +897,120 @@ class TestTC61AsyncPolling:
         )
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
+
+    def test_pass_poll_via_generic_status_check(self) -> None:
+        """Replays the 2026-09-03 run: the model re-invoked run_code with a
+        status check, got the completed payload, and surfaced 15420/3."""
+        state = _make_state(
+            tool_calls=[
+                {
+                    "name": "run_code",
+                    "arguments": {"code": 'analyze_data(source="transactions_2026")'},
+                    "turn": 1,
+                },
+                {
+                    "name": "run_code",
+                    "arguments": {
+                        "code": '# Check status of the analysis job\nprint("Checking job status...")'
+                    },
+                    "turn": 2,
+                },
+            ],
+            tool_results=[
+                {
+                    "name": "run_code",
+                    "result": {
+                        "status": "pending",
+                        "job_id": "job_tc61_9f3a",
+                        "message": "Analysis job is still running. Please call run_code again to check if the job has completed.",
+                    },
+                },
+                {
+                    "name": "run_code",
+                    "result": {
+                        "status": "complete",
+                        "job_id": "job_tc61_9f3a",
+                        "result": {
+                            "total_records": 15420,
+                            "anomalies_found": 3,
+                            "summary": "3 anomalies detected in 15,420 records.",
+                        },
+                    },
+                },
+            ],
+            final_answer="The data analysis script has completed. Here are the results:\n\n- **Total records analyzed** | 15,420\n- **Anomalies found** | 3",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
+    def test_handler_accepts_generic_status_poll(self) -> None:
+        state = _make_state(
+            tool_calls=[
+                {"name": "run_code", "arguments": {"code": "analyze_data()"}},
+                {
+                    "name": "run_code",
+                    "arguments": {"code": 'print("Checking job status...")'},
+                },
+            ]
+        )
+
+        result = self.sc.handle_tool_call(state, state.tool_calls[1])
+
+        assert result["status"] == "complete"
+        assert result["job_id"] == "job_tc61_9f3a"
+
+    def test_unrelated_second_code_is_not_a_poll(self) -> None:
+        invalid_poll_code = (
+            "",
+            "delete_everything()",
+            'delete_everything(); print("Checking job status")',
+            'print("Do not check job status")',
+            "print('The prompt says \"check status\", but I refuse')",
+            'analyze_data(source="unrelated_dataset")',
+            'analyze_data(source="unrelated_dataset"); print("Checking job status")',
+        )
+        for code in invalid_poll_code:
+            state = _make_state(
+                tool_calls=[
+                    {
+                        "id": "submit",
+                        "name": "run_code",
+                        "arguments": {"code": 'analyze_data(source="transactions_2026")'},
+                    },
+                    {"id": "second", "name": "run_code", "arguments": {"code": code}},
+                ],
+                final_answer="Analysis complete: 15,420 records, 3 anomalies.",
+            )
+            second_result = self.sc.handle_tool_call(state, state.tool_calls[1])
+            state.tool_results.extend(
+                [
+                    ToolResultRecord(
+                        call_id="submit",
+                        name="run_code",
+                        result={"status": "pending", "job_id": "job_tc61_9f3a"},
+                    ),
+                    ToolResultRecord(
+                        call_id="second",
+                        name="run_code",
+                        result=second_result,
+                    ),
+                ]
+            )
+
+            assert "error" in second_result, code
+            assert self.sc.evaluate(state).status != ScenarioStatus.PASS, code
+
+            state.tool_results[-1] = ToolResultRecord(
+                call_id="second",
+                name="run_code",
+                result={
+                    "status": "complete",
+                    "job_id": "job_tc61_9f3a",
+                    "records": 15420,
+                    "summary": "3 anomalies detected in 15,420 records.",
+                },
+            )
+            assert self.sc.evaluate(state).status != ScenarioStatus.PASS, code
 
     def test_partial_single_call(self) -> None:
         state = _make_state(
