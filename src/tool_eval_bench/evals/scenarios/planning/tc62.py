@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -96,6 +97,68 @@ def _tc62_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+_TC62_COMPETITOR_AMOUNT = 3_800_000
+
+# Candidate monetary tokens. Context below filters percentage values and bare
+# quarter/year labels before the first actual amount controls attribution.
+_TC62_AMOUNT_TOKEN = re.compile(
+    r"(?<![\w.])(?P<currency>\$\s*)?"
+    r"(?P<number>\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)"
+    r"(?:\s*(?P<scale>million|m))?(?![\w.]|,\d)",
+    re.IGNORECASE,
+)
+_TC62_SENTENCE_BREAK = re.compile(r"\.(?=\s|\Z)|[!?\n;]+")
+_TC62_NEGATION = re.compile(r"\b(?:not|never|no|without|n't)\b")
+_TC62_QUOTED_TEXT = re.compile(r'"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’')
+_TC62_STRAIGHT_SINGLE_QUOTED_TEXT = re.compile(r"(?<!\w)'[^'\n]*'(?!\w)")
+
+
+def _tc62_amount_value(match: re.Match[str]) -> float | None:
+    number = match.group("number").replace(",", "")
+    try:
+        value = float(number)
+    except ValueError:
+        return None
+    if match.group("scale") or ("." in number and not match.group("currency")):
+        # A bare decimal figure names millions in these reports.
+        value *= 1_000_000
+    return value
+
+
+def _tc62_is_monetary_candidate(sentence: str, match: re.Match[str]) -> bool:
+    if re.match(r"\s*%", sentence[match.end() :]):
+        return False
+    number = match.group("number")
+    if match.group("currency") or match.group("scale") or "," in number or "." in number:
+        return True
+    # Bare full-dollar forms are supported, unlike quarter labels and years.
+    return int(number) >= 1_000_000
+
+
+def _tc62_asserts_competitor_amount(body: str) -> bool:
+    """True only when the email asserts Acme's amount as exactly $3,800,000.
+
+    The claim is evaluated sentence-locally: the first monetary figure that
+    follows the "Acme" mention inside the same sentence is the claimed amount.
+    A figure that belongs to a different company (it precedes the Acme mention,
+    or another number follows Acme), a negation between Acme and the figure,
+    and quoted claims are all rejected.
+    """
+    text = _TC62_QUOTED_TEXT.sub("", body.lower())
+    text = _TC62_STRAIGHT_SINGLE_QUOTED_TEXT.sub("", text)
+    for sentence in _TC62_SENTENCE_BREAK.split(text):
+        acme = sentence.find("acme")
+        if acme < 0:
+            continue
+        for match in _TC62_AMOUNT_TOKEN.finditer(sentence, acme + len("acme")):
+            if not _tc62_is_monetary_candidate(sentence, match):
+                continue
+            if _TC62_NEGATION.search(sentence[acme + len("acme") : match.start()]):
+                break
+            return _tc62_amount_value(match) == _TC62_COMPETITOR_AMOUNT
+    return False
+
+
 def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     """5-turn research chain testing context persistence and revision handling.
 
@@ -108,7 +171,16 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     transcript = "\n".join(state.assistant_messages).lower()
 
     def corrected_search_result(payload: Any) -> bool:
-        return "q3_latest" in str(payload) or "corrected" in str(payload).lower()
+        if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+            return False
+        return any(
+            isinstance(item, dict)
+            and (
+                "q3_latest" in _as_str(item.get("file_id")).lower()
+                or "corrected" in _as_str(item.get("name")).lower()
+            )
+            for item in payload["results"]
+        )
 
     def corrected_file_result(payload: Any) -> bool:
         text = str(payload).lower().replace(",", "")
@@ -124,11 +196,7 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     corrected_search_calls = [
         call
         for call in _tool_calls_by_name(state, "search_files")
-        if any(
-            token in _as_str(call.arguments.get("query")).lower()
-            for token in ("latest", "q3", "corrected")
-        )
-        and _result_matches_if_present(state, call, corrected_search_result)
+        if _result_matches_if_present(state, call, corrected_search_result)
     ]
     corrected_file_calls = [
         call
@@ -192,8 +260,12 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
         else ""
     )
     body_lower = email_body.lower()
+    # The corrected figure is asserted anywhere in the body; the competitor
+    # amount is associated with Acme sentence-locally below. An unrelated
+    # negation elsewhere in the email ("we are not behind") must not veto the
+    # comparison, so no global negation gate is applied.
     body_has_corrected = "4.15" in body_lower or "4150000" in body_lower.replace(",", "")
-    body_has_competitor = "acme" in body_lower and "3.8" in body_lower
+    body_has_competitor = _tc62_asserts_competitor_amount(email_body)
     body_is_optimistic = any(
         word in body_lower for word in ("optimistic", "improve", "growth", "positive", "expect")
     )
