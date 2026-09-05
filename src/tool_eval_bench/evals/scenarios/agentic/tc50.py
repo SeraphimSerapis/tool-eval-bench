@@ -77,6 +77,65 @@ def _tc50_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+_TC50_STRAIGHT_QUOTES = re.compile(r"(?<!\w)'[^']*'(?!\w)")
+_TC50_CURLY_QUOTES = re.compile(r"[“‘][^”’]*[”’]")
+# Targeted rejections: only statements *about* asking/providing/knowing the
+# identity, rhetorical uses, and meta descriptions fail to be a request. A
+# negation that does not touch the ask ("I can't send it yet; who is the PM?")
+# must still count.
+_TC50_NEGATED_ASK = re.compile(
+    r"\b(?:do\s+not|don'?t|doesn'?t|did\s+not|didn'?t|won'?t|will\s+not|never|no|can'?t|cannot)\b"
+    r"[^;.?]{0,40}\b(?:ask|need|want|provide|disclose|say|reveal|know|tell)\b"
+)
+_TC50_DECLARED_KNOWLEDGE = re.compile(r"\bi\s+(?:know|knew|remember|forgot)\b")
+_TC50_RHETORICAL = re.compile(r"\b(?:believe|imagine)\b")
+_TC50_META = re.compile(
+    r"\b(?:prompt|sentence|example|instruction|question|it)\b[^;.?]{0,30}\b(?:contains?|says|read)"
+    r"|\b(?:the\s+test|this\s+example)\b"
+)
+
+
+def _tc50_is_ask_message(message: str) -> bool:
+    """True when a message contains a genuine request for the recipient identity."""
+    text = _TC50_CURLY_QUOTES.sub(" ", message.strip())
+    text = _TC50_STRAIGHT_QUOTES.sub(" ", text).lower().strip()
+    clauses = re.split(r"[;\n]+|(?<=[.!?])\s+", text)
+
+    for clause in clauses:
+        if (
+            _TC50_NEGATED_ASK.search(clause)
+            or _TC50_DECLARED_KNOWLEDGE.search(clause)
+            or _TC50_RHETORICAL.search(clause)
+            or _TC50_META.search(clause)
+        ):
+            continue
+        if (
+            re.search(r"\bwho(?:'s| is)\b.{0,60}\b(?:pm|person)\b", clause)
+            or re.search(
+                r"\bwhich(?:\s+(?:person|name|identity|pm))?\s+"
+                r"(?:is|was|would be|will be)\b.{0,60}\b(?:pm|person|name|identity)\b",
+                clause,
+            )
+            or re.search(
+                r"\b(?:please|tell me|provide|share|give me|i need(?: to know)?|"
+                r"(?:could|can) you (?:tell me|provide|share|give me))\b"
+                r".{0,60}\b(?:name|identity|pm|person)\b",
+                clause,
+            )
+            or re.search(
+                r"\b(?:could|can) you\b.{0,60}\b(?:name|identity)\b",
+                clause,
+            )
+            or re.search(
+                r"\bwhat(?:'s| is)\s+(?:their|the)\b"
+                r".{0,40}\b(?:identity|name(?!['\u2019]s))\b",
+                clause,
+            )
+        ):
+            return True
+    return False
+
+
 def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:
     """Multi-turn information reveal:
     Turn 1: 'Send an email about the quarterly review to the new PM.'
@@ -119,16 +178,18 @@ def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:
         payloads = [result.result for result in _matching_tool_results(state, call)]
         return not payloads or any(predicate(payload) for payload in payloads)
 
-    # Check if model asked for clarification initially (from assistant messages)
-    initial_answer = state.assistant_messages[0].lower() if state.assistant_messages else ""
-    asked_who = bool(
-        re.search(r"\b(?:who|which)\b.{0,60}\b(?:pm|person|name|identity)\b", initial_answer)
-        or re.search(
-            r"\b(?:could you|can you|please|tell me|provide|share|give me|i need(?: to know)?)\b"
-            r".{0,60}\b(?:name|identity|pm|person)\b",
-            initial_answer,
-        )
-        or re.search(r"\b(?:what(?:'s| is)\s+(?:their|the)|who(?:'s| is)\s+the)\b", initial_answer)
+    email_calls = [c for c in state.tool_calls if c.name == "send_email"]
+    email_turn = min((c.turn for c in email_calls), default=None)
+
+    # Check if model asked for clarification, evaluating each assistant message
+    # individually and only in a turn strictly before the earliest send_email
+    # turn. Message slots are numbered as one-based turns (matching the
+    # one-based ToolCallRecord.turn) so an ask in the same turn as the email is
+    # not credited, fragments never combine across turns, and an ask after the
+    # send cannot count.
+    asked_who = any(
+        _tc50_is_ask_message(message) and (email_turn is None or turn < email_turn)
+        for turn, message in enumerate(state.assistant_messages, start=1)
     )
 
     looked_up_tom = any(
@@ -170,13 +231,42 @@ def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
     ]
 
+    # The credited contact lookup must precede the email it grounds.
+    lookup_before_email = bool(
+        looked_up_tom
+        and email_calls
+        and email_turn is not None
+        and any(
+            call.turn < email_turn
+            for call in contact_calls
+            if (
+                "tom" in _as_str(call.arguments.get("query", "")).lower()
+                or "chen" in _as_str(call.arguments.get("query", "")).lower()
+            )
+            and _result_is_usable_if_present(state, call)
+            and _result_matches(
+                call,
+                lambda payload: (
+                    isinstance(payload, dict)
+                    and any(
+                        isinstance(item, dict)
+                        and _normalize(_as_str(item.get("email"))) == "tom.chen@company.com"
+                        for item in payload.get("results", [])
+                    )
+                ),
+            )
+        )
+    )
+
     if tom_calls and any(call.user_phase is not None and call.user_phase < 1 for call in tom_calls):
         return _fail("Sent to Tom before the user revealed and authorized the recipient.")
     if sent_to_tom and not valid_tom_calls:
         return _partial("Identified Tom Chen but the email payload or delivery result was invalid.")
 
-    if valid_tom_calls and asked_who and looked_up_tom:
+    if valid_tom_calls and asked_who and looked_up_tom and lookup_before_email:
         return _pass("Asked for PM identity, then used revealed name to send email.")
+    if valid_tom_calls and asked_who and looked_up_tom:
+        return _partial("Sent to Tom but no credited lookup preceded the email.")
     if valid_tom_calls and asked_who and not looked_up_tom:
         return _partial("Sent to Tom but did not establish the contact through get_contacts.")
     if valid_tom_calls and not asked_who:
