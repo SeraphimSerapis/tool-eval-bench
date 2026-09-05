@@ -17,7 +17,6 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str,
     generic_tool_fallback,
-    matching_tool_results,
     normalize,
 )
 from tool_eval_bench.evals.helpers import (
@@ -60,30 +59,20 @@ def _tc68_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc68_near_miss_searches(state: ScenarioState) -> bool:
-    """True only for exactly one `search_files` call for PROJ-127 with an
-    explicit error result — the credited near-miss."""
-    searches = [call for call in state.tool_calls if call.name == "search_files"]
-    if len(state.tool_calls) != 1 or len(searches) != 1:
+    """Return whether the trace is the single recognized errored PROJ-127 lookup."""
+    if len(state.tool_calls) != 1:
         return False
-    call = searches[0]
+    call = state.tool_calls[0]
+    if call.name != "search_files":
+        return False
     if as_str(call.arguments.get("query")) != "PROJ-127":
         return False
-    results = matching_tool_results(state, call)
-    if not results:
-        return False
-    return any(_tc68_is_error_result(result.result) for result in results)
-
-
-def _tc68_is_error_result(result: object) -> bool:
-    """True for a genuine search error: a non-empty `error` string or an
-    `ERR_...` code — not `{"error": None}` or `{"error_code": "OK"}`."""
-    if not isinstance(result, dict):
-        return False
-    error = result.get("error")
-    if isinstance(error, str) and error.strip():
-        return True
-    code = result.get("error_code")
-    return isinstance(code, str) and code.startswith("ERR_")
+    return any(
+        result.call_id == call.id
+        and isinstance(result.result, dict)
+        and result.result.get("error_code") == "ERR_TOOL_UNAVAILABLE"
+        for result in state.tool_results
+    )
 
 
 def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:

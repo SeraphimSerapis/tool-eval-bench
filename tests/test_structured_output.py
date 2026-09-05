@@ -316,7 +316,20 @@ class TestTC68ViolationResistance:
             "assignee": "me",
         }
         state = _make_state(
-            tool_calls=[{"name": "search_files", "arguments": {"query": "latest news"}}],
+            tool_calls=[
+                {
+                    "id": "call_wrong_query",
+                    "name": "search_files",
+                    "arguments": {"query": "latest news"},
+                }
+            ],
+            tool_results=[
+                {
+                    "call_id": "call_wrong_query",
+                    "name": "search_files",
+                    "result": {"error_code": "ERR_TOOL_UNAVAILABLE"},
+                }
+            ],
             final_answer=json.dumps(data),
         )
         result = self.scenario.evaluate(state)
@@ -410,6 +423,78 @@ class TestTC68ViolationResistance:
         assert result.status == ScenarioStatus.FAIL
         assert result.summary == "Called tools when none were needed."
 
+    def test_fail_near_miss_mismatched_call_id(self) -> None:
+        data = {
+            "task_id": "PROJ-127",
+            "status": "in_progress",
+            "assignee": "me",
+        }
+        state = _make_state(
+            tool_calls=[
+                {"id": "call_0", "name": "search_files", "arguments": {"query": "PROJ-127"}}
+            ],
+            tool_results=[
+                {
+                    "call_id": "different_call",
+                    "name": "search_files",
+                    "result": {"error_code": "ERR_TOOL_UNAVAILABLE"},
+                }
+            ],
+            final_answer=json.dumps(data),
+        )
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Called tools when none were needed."
+
+    def test_fail_near_miss_bare_error_prefix(self) -> None:
+        data = {
+            "task_id": "PROJ-127",
+            "status": "in_progress",
+            "assignee": "me",
+        }
+        state = _make_state(
+            tool_calls=[
+                {"id": "call_0", "name": "search_files", "arguments": {"query": "PROJ-127"}}
+            ],
+            tool_results=[
+                {
+                    "call_id": "call_0",
+                    "name": "search_files",
+                    "result": {"error": "ERR_", "error_code": "ERR_"},
+                }
+            ],
+            final_answer=json.dumps(data),
+        )
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Called tools when none were needed."
+
+    def test_fail_near_miss_unknown_error_code(self) -> None:
+        data = {
+            "task_id": "PROJ-127",
+            "status": "in_progress",
+            "assignee": "me",
+        }
+        state = _make_state(
+            tool_calls=[
+                {"id": "call_0", "name": "search_files", "arguments": {"query": "PROJ-127"}}
+            ],
+            tool_results=[
+                {
+                    "call_id": "call_0",
+                    "name": "search_files",
+                    "result": {
+                        "error": "The search was rate limited.",
+                        "error_code": "ERR_RATE_LIMITED",
+                    },
+                }
+            ],
+            final_answer=json.dumps(data),
+        )
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Called tools when none were needed."
+
     def test_fail_bad_json_with_tool(self) -> None:
         state = _make_state(
             tool_calls=[{"name": "search_files", "arguments": {"query": "PROJ-127"}}],
@@ -473,7 +558,24 @@ class TestTC68ViolationResistance:
             "assignee": "me",
         }
         state = _make_state(
-            tool_calls=[{"name": "send_email", "arguments": {"to": "x@company.com", "body": "hi"}}],
+            tool_calls=[
+                {
+                    "id": "call_action",
+                    "name": "send_email",
+                    "arguments": {
+                        "query": "PROJ-127",
+                        "to": "x@company.com",
+                        "body": "hi",
+                    },
+                }
+            ],
+            tool_results=[
+                {
+                    "call_id": "call_action",
+                    "name": "send_email",
+                    "result": {"error_code": "ERR_TOOL_UNAVAILABLE"},
+                }
+            ],
             final_answer=json.dumps(data),
         )
         result = self.scenario.evaluate(state)
@@ -488,8 +590,20 @@ class TestTC68ViolationResistance:
         }
         state = _make_state(
             tool_calls=[
-                {"name": "search_files", "arguments": {"query": "PROJ-127"}},
-                {"name": "search_files", "arguments": {"query": "PROJ-127"}},
+                {"id": "call_0", "name": "search_files", "arguments": {"query": "PROJ-127"}},
+                {"id": "call_1", "name": "search_files", "arguments": {"query": "PROJ-127"}},
+            ],
+            tool_results=[
+                {
+                    "call_id": "call_0",
+                    "name": "search_files",
+                    "result": {"error_code": "ERR_TOOL_UNAVAILABLE"},
+                },
+                {
+                    "call_id": "call_1",
+                    "name": "search_files",
+                    "result": {"error_code": "ERR_TOOL_UNAVAILABLE"},
+                },
             ],
             final_answer=json.dumps(data),
         )
