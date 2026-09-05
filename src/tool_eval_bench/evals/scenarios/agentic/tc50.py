@@ -96,34 +96,44 @@ _TC50_META = re.compile(
 
 
 def _tc50_is_ask_message(message: str) -> bool:
-    """True when a single assistant message genuinely asks for the recipient identity.
-
-    Quoted and meta mentions are stripped/rejected, statements that deny the
-    ask, declare knowing the answer, or ask rhetorically are not requests, and
-    an unrelated question ("What's their quarterly target?") never matches.
-    """
+    """True when a message contains a genuine request for the recipient identity."""
     text = _TC50_CURLY_QUOTES.sub(" ", message.strip())
     text = _TC50_STRAIGHT_QUOTES.sub(" ", text).lower().strip()
-    if (
-        _TC50_NEGATED_ASK.search(text)
-        or _TC50_DECLARED_KNOWLEDGE.search(text)
-        or _TC50_RHETORICAL.search(text)
-        or _TC50_META.search(text)
-    ):
-        return False
-    return bool(
-        re.search(r"\b(?:who|which)\b.{0,60}\b(?:pm|person|name|identity)\b", text)
-        or re.search(
-            r"\b(?:could you|can you|please|tell me|provide|share|give me|i need(?: to know)?)\b"
-            r".{0,60}\b(?:name|identity|pm|person)\b",
-            text,
-        )
-        or re.search(
-            r"\b(?:what(?:'s| is)\s+(?:their|the)\b|who(?:'s| is)\s+the\b)"
-            r".{0,40}\b(?:pm|person|identity|name(?!['\u2019]s))\b",
-            text,
-        )
-    )
+    clauses = re.split(r"[;\n]+|(?<=[.!?])\s+", text)
+
+    for clause in clauses:
+        if (
+            _TC50_NEGATED_ASK.search(clause)
+            or _TC50_DECLARED_KNOWLEDGE.search(clause)
+            or _TC50_RHETORICAL.search(clause)
+            or _TC50_META.search(clause)
+        ):
+            continue
+        if (
+            re.search(r"\bwho(?:'s| is)\b.{0,60}\b(?:pm|person)\b", clause)
+            or re.search(
+                r"\bwhich(?:\s+(?:person|name|identity|pm))?\s+"
+                r"(?:is|was|would be|will be)\b.{0,60}\b(?:pm|person|name|identity)\b",
+                clause,
+            )
+            or re.search(
+                r"\b(?:please|tell me|provide|share|give me|i need(?: to know)?|"
+                r"(?:could|can) you (?:tell me|provide|share|give me))\b"
+                r".{0,60}\b(?:name|identity|pm|person)\b",
+                clause,
+            )
+            or re.search(
+                r"\b(?:could|can) you\b.{0,60}\b(?:name|identity)\b",
+                clause,
+            )
+            or re.search(
+                r"\bwhat(?:'s| is)\s+(?:their|the)\b"
+                r".{0,40}\b(?:identity|name(?!['\u2019]s))\b",
+                clause,
+            )
+        ):
+            return True
+    return False
 
 
 def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:

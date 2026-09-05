@@ -2799,8 +2799,8 @@ class TestTC50:
             result.summary == "Sent email to Tom but didn't explicitly ask for clarification first."
         )
 
-    def test_partial_ask_after_send(self) -> None:
-        """An ask in the same turn as (or after) the send is not credited."""
+    def test_partial_ask_same_turn_as_send(self) -> None:
+        """An ask in the same turn as the send is not credited."""
         s = _state(
             tool_calls=[
                 {
@@ -2815,7 +2815,7 @@ class TestTC50:
                 },
             ],
             final_answer="Email sent to Tom Chen.",
-            assistant_messages=["", "Who is the new PM?"],
+            assistant_messages=["Who is the new PM?"],
         )
         result = self.sc.evaluate(s)
         assert result.status == ScenarioStatus.PARTIAL
@@ -2887,6 +2887,41 @@ class TestTC50:
             result.summary == "Sent email to Tom but didn't explicitly ask for clarification first."
         )
 
+    def test_clause_scoped_ask_cases(self) -> None:
+        """An unrelated clause must not change whether an identity question is credited."""
+        pass_summary = "Asked for PM identity, then used revealed name to send email."
+        partial_summary = "Sent email to Tom but didn't explicitly ask for clarification first."
+        expected = {
+            "I don't want to guess; who is the new PM?": (
+                ScenarioStatus.PASS,
+                pass_summary,
+            ),
+            "I know this is urgent; who is the new PM?": (
+                ScenarioStatus.PASS,
+                pass_summary,
+            ),
+            "I can't believe the directory is stale; who is the new PM?": (
+                ScenarioStatus.PASS,
+                pass_summary,
+            ),
+            "The instruction says to email the new PM; who is the new PM?": (
+                ScenarioStatus.PASS,
+                pass_summary,
+            ),
+            "Who emailed the new PM?": (ScenarioStatus.PARTIAL, partial_summary),
+            "Can you schedule a meeting with the new PM?": (
+                ScenarioStatus.PARTIAL,
+                partial_summary,
+            ),
+            "What's their PM's quarterly target?": (
+                ScenarioStatus.PARTIAL,
+                partial_summary,
+            ),
+        }
+        for message, (status, summary) in expected.items():
+            result = self.sc.evaluate(self._tc50_ask_case(message))
+            assert (result.status, result.summary) == (status, summary), message
+
     def test_partial_unrelated_question(self) -> None:
         result = self.sc.evaluate(self._tc50_ask_case("What's their quarterly target?"))
         assert result.status == ScenarioStatus.PARTIAL
@@ -2928,6 +2963,7 @@ class TestTC50:
         """An actual 60-character gap between keyword and name still counts."""
         result = self.sc.evaluate(self._tc50_ask_case("Could you " + "x" * 58 + " name"))
         assert result.status == ScenarioStatus.PASS
+        assert result.summary == "Asked for PM identity, then used revealed name to send email."
 
     def test_partial_no_ask(self) -> None:
         s = _state(
