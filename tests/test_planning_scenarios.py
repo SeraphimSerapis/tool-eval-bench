@@ -970,9 +970,8 @@ class TestTC62DeepResearch:
             "Completed 5-turn chain: corrected data → competitor → CFO email with optimistic tone."
         )
 
-    def test_partial_generic_search_returning_unrelated_file(self) -> None:
-        """The corrected q3_latest read is retained; only the search result is
-        changed to Lunch_Menu.txt — an always-true result matcher would pass."""
+    def test_partial_generic_search_without_corrected_result(self) -> None:
+        """Messages and unrelated entries cannot substitute for a corrected result."""
         state = _make_state(
             tool_calls=[
                 {
@@ -1037,9 +1036,17 @@ class TestTC62DeepResearch:
             ],
             final_answer="Email sent to the CFO.",
         )
-        result = self.sc.evaluate(state)
-        assert result.status == ScenarioStatus.PARTIAL
-        assert result.summary == "Partial chain completion. Missing: corrected revenue."
+        for search_result in (
+            {"results": [{"file_id": "menu_txt", "name": "Lunch_Menu.txt"}]},
+            {
+                "results": [],
+                "message": "Found q3_latest in Q3_Report_v2_CORRECTED.xlsx",
+            },
+        ):
+            state.tool_results[0].result = search_result
+            result = self.sc.evaluate(state)
+            assert result.status == ScenarioStatus.PARTIAL, search_result
+            assert result.summary == "Partial chain completion. Missing: corrected revenue."
 
     def _tc62_body_state(self, body: str) -> ScenarioState:
         """A fully PASS-capable chain whose only uncertainty is the email body."""
@@ -1121,6 +1128,44 @@ class TestTC62DeepResearch:
                 "Completed 5-turn chain: corrected data → competitor → CFO email with optimistic tone."
             ), amount
 
+    def test_partial_percentage_is_not_competitor_amount(self) -> None:
+        result = self.sc.evaluate(
+            self._tc62_body_state(
+                "Our corrected Q3 revenue is $4,150,000. Acme reported 3.8% growth. We expect Q4 to improve."
+            )
+        )
+        assert result.status == ScenarioStatus.PARTIAL
+        assert result.summary == (
+            "Sent CFO email but missed contact resolution, corrected data, competitor, or optimistic revision."
+        )
+
+    def test_pass_competitor_amount_after_quarter_and_year_labels(self) -> None:
+        for claim in (
+            "Acme's Q3 revenue was $3.8M.",
+            "Acme's 2026 Q3 revenue was $3.8M.",
+        ):
+            result = self.sc.evaluate(
+                self._tc62_body_state(
+                    f"Our corrected Q3 revenue is $4,150,000. {claim} We expect Q4 to improve."
+                )
+            )
+            assert result.status == ScenarioStatus.PASS, claim
+            assert result.summary == (
+                "Completed 5-turn chain: corrected data → competitor → CFO email with optimistic tone."
+            ), claim
+
+    def test_pass_possessive_apostrophes_are_not_quotes(self) -> None:
+        result = self.sc.evaluate(
+            self._tc62_body_state(
+                "Our corrected Q3 revenue is $4,150,000. Acme's Q3 revenue was $3.8M, "
+                "and Q4's outlook is positive."
+            )
+        )
+        assert result.status == ScenarioStatus.PASS
+        assert result.summary == (
+            "Completed 5-turn chain: corrected data → competitor → CFO email with optimistic tone."
+        )
+
     def test_partial_competitor_amount_truncated_or_longer(self) -> None:
         """$3,800 and $13,800,000 are not the asserted competitor amount."""
         for amount in ("$3,800", "$13,800,000"):
@@ -1146,6 +1191,19 @@ class TestTC62DeepResearch:
             assert result.summary == (
                 "Sent CFO email but missed contact resolution, corrected data, competitor, or optimistic revision."
             ), body
+
+    def test_partial_straight_single_quoted_competitor_amount(self) -> None:
+        result = self.sc.evaluate(
+            self._tc62_body_state(
+                "Our corrected Q3 revenue is $4,150,000. Ignore the quoted claim "
+                "'Acme: $3,800,000'; Acme actually reported $9,000,000. "
+                "We expect Q4 to improve."
+            )
+        )
+        assert result.status == ScenarioStatus.PARTIAL
+        assert result.summary == (
+            "Sent CFO email but missed contact resolution, corrected data, competitor, or optimistic revision."
+        )
 
     def test_partial_competitor_amount_belongs_to_other_company(self) -> None:
         """$3,800,000 attributed to Contoso, not Acme, must not credit the amount."""
