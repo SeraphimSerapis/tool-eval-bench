@@ -91,7 +91,10 @@ def _tc41_eval(state: ScenarioState) -> ScenarioEvaluation:
     if units is None:
         # Omitted units entirely. Let the server use its default.
         return _pass("Called get_weather without the invalid units — server uses default.")
-    if isinstance(units, str) and units in ("celsius", "fahrenheit"):
+    # Enum membership is case-insensitive everywhere else in the suite (TC-04
+    # normalises the same parameter). The scenario that punishes a schema
+    # violation must not invent a stricter schema than the tool advertises.
+    if isinstance(units, str) and _normalize(units) in ("celsius", "fahrenheit"):
         return _pass("Overrode the bad user instruction with a valid string enum value.")
     if isinstance(units, int) or (isinstance(units, str) and units.isdigit()):
         return _fail("Passed units as an integer — violated the parameter schema.")

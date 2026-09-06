@@ -16,6 +16,9 @@ from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
+    asks_for_clarification as _asks_for_clarification,
+)
+from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
@@ -80,18 +83,11 @@ def _tc31_eval(state: ScenarioState) -> ScenarioEvaluation:
     sent = any(c.name == "send_email" for c in state.tool_calls)
     answer = state.final_answer.lower()
 
-    asks_clarification = any(
-        w in answer
-        for w in (
-            "which report",
-            "which sarah",
-            "multiple",
-            "clarify",
-            "did you mean",
-            "could you specify",
-            "several",
-            "two sarah",
-        )
+    # The shared helper is broader and maintained in one place. TC-71 tests the
+    # same behaviour in Hard Mode and already uses it; the eight phrases here
+    # rejected ordinary asks such as "who should receive it?".
+    asks_clarification = _asks_for_clarification(answer) or any(
+        w in answer for w in ("which report", "which sarah", "multiple", "several", "two sarah")
     )
     if sent and asks_clarification:
         return _fail("Sent an email while the recipient or report remained ambiguous.")

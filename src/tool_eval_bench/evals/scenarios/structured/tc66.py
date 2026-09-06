@@ -173,7 +173,15 @@ def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     actual_contacts = {(c.get("name"), c.get("email"), c.get("department")) for c in contacts}
     if actual_contacts != expected_contacts:
         return _partial("Contacts don't match tool result data.")
-    if data.get("query") != "engineering" or set(data) != {"query", "total", "contacts"}:
+    # The schema types `query` as a bare string with no description, and the
+    # prompt says "all engineering contacts". "Engineering" is also the exact
+    # spelling of the department field the model is echoing, so any string
+    # naming engineering answers the schema.
+    query_field = data.get("query")
+    query_names_engineering = isinstance(query_field, str) and "engineering" in normalize(
+        query_field
+    )
+    if not query_names_engineering or set(data) != {"query", "total", "contacts"}:
         return _partial("Top-level contact fields do not match the requested schema and query.")
 
     return _pass("Produced schema-compliant nested JSON with correct contact data from tool.")

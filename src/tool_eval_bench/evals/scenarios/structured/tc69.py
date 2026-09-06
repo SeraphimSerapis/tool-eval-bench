@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import (
     as_str,
     generic_tool_fallback,
     normalize,
+    positive_argument_contains,
 )
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -128,7 +129,7 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
         call
         for call in state.tool_calls
         if call.name == "get_weather"
-        and normalize(as_str(call.arguments.get("location"))) == "san francisco"
+        and positive_argument_contains(call.arguments.get("location"), "san francisco")
         and _result_matches_if_present(state, call, weather_result_is_san_francisco)
     ]
     stock_calls = [

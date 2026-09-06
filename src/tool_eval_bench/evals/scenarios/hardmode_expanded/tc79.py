@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str,
     days_after_reference,
+    positive_argument_contains,
     result_is_usable_if_present,
     tool_calls_by_name,
 )
@@ -82,7 +83,7 @@ def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
     valid_weather_calls = [
         c
         for c in weather
-        if as_str(c.arguments.get("location")).lower() == "lisbon"
+        if positive_argument_contains(c.arguments.get("location"), "lisbon")
         and result_is_usable_if_present(state, c)
         and _result_matches_if_present(
             state,

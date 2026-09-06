@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -50,6 +51,43 @@ def _tc19_segments(answer: str) -> dict[int, str]:
     return segments
 
 
+_TC19_JSON_SPAN = re.compile(r"[{\[].*[}\]]", re.DOTALL)
+
+
+def _tc19_json_segments(answer: str) -> dict[int, str]:
+    """Map message numbers to their classification in a JSON-shaped answer.
+
+    A model asked to sort items into fixed categories often answers with JSON,
+    which the line-oriented marker scan cannot read at all: the quote before the
+    digit in ``"1": "code_help"`` hides the marker. The prompt never rules JSON
+    out, so it has to be understood rather than scored as five wrong answers.
+    """
+    span = _TC19_JSON_SPAN.search(answer.replace("```json", "```").replace("```", "\n"))
+    if not span:
+        return {}
+    try:
+        payload = json.loads(span.group())
+    except (ValueError, RecursionError):
+        return {}
+    return _tc19_flatten(payload)
+
+
+def _tc19_flatten(payload: object) -> dict[int, str]:
+    """Pull ``{number: classification}`` out of any plausible JSON layout."""
+    if isinstance(payload, list):
+        return {index: str(item) for index, item in enumerate(payload, start=1) if item is not None}
+    if not isinstance(payload, dict):
+        return {}
+    segments: dict[int, str] = {}
+    for key, value in payload.items():
+        digits = re.fullmatch(r"(?:message\s*)?([1-5])", str(key).strip(), re.IGNORECASE)
+        if digits:
+            segments[int(digits.group(1))] = str(value)
+        elif isinstance(value, (list, dict)):
+            segments.update(_tc19_flatten(value))
+    return segments
+
+
 def _tc19_label_is_asserted(segment: str, label: str) -> bool:
     """Match a category label as an assertion, not ``not <label>``."""
     return _answer_affirms_text(segment, label)
@@ -64,11 +102,13 @@ def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Used tools when direct classification was appropriate.")
 
     answer = state.final_answer.lower()
+    json_segments = _tc19_json_segments(answer)
 
     # Require structured output (numbered list, bullets, table, or per-message labeling)
     has_structure = bool(
         re.search(r"(?:^|\n)\s*(?:1[.)\]]|message\s*1)", answer, re.MULTILINE)
         or re.search(r"(?:^|\n)\s*[-•*|]", answer, re.MULTILINE)
+        or len(json_segments) >= 4
     )
 
     expected = [
@@ -94,7 +134,12 @@ def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
         any(_tc19_label_is_asserted(line, label) for label in labels)
         for line, labels in zip(bullet_lines[:5], expected, strict=False)
     )
-    correct = max(numbered_correct, bullet_correct)
+    json_correct = sum(
+        any(_tc19_label_is_asserted(json_segments[index], label) for label in labels)
+        for index, labels in enumerate(expected, start=1)
+        if index in json_segments
+    )
+    correct = max(numbered_correct, bullet_correct, json_correct)
 
     if correct >= 4 and has_structure:
         return _pass("Classified messages correctly in structured format without tool use.")

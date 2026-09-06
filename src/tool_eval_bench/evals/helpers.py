@@ -108,9 +108,49 @@ def date_matches(value: Any, date: str) -> bool:
     return s.startswith(date)
 
 
+def time_matches(value: Any, expected: str) -> bool:
+    """Return whether a ``time`` argument names ``expected`` as ``HH:MM``.
+
+    Accepts an optional seconds field and an explicit UTC offset, because
+    "14:00", "14:00:00" and "14:00+01:00" all schedule the same moment. Two
+    scenarios creating the same event through the same tool disagreed on this,
+    and the stricter one reported the seconds suffix as a timezone error.
+    """
+    return bool(
+        re.fullmatch(
+            rf"{re.escape(expected)}(?::\d{{2}})?(?:Z|[+-]\d{{2}}:\d{{2}})?",
+            as_str(value).strip(),
+        )
+    )
+
+
 def includes_text(value: Any, expected: str) -> bool:
     """Case-insensitive substring check."""
     return expected.lower() in as_str(value).lower()
+
+
+def positive_argument_contains(value: Any, expected: str) -> bool:
+    """Match an entity named in a tool argument, without accepting a negation.
+
+    Tool arguments are model-authored input, not prose to summarize. Qualifying
+    a value is normal and identifies the same thing: ``Berlin, DE`` is Berlin
+    and ``London, UK`` is London, so comparing a ``location`` for exact equality
+    grades a model's habit of disambiguating rather than the lookup it made.
+    An explicit denial immediately before the entity ("not Berlin") is still
+    rejected.
+
+    This is the suite-wide matcher for entity-bearing arguments. Scenarios that
+    compared ``location`` with ``==`` reported "wrong location" for a correct
+    lookup, and disagreed with the scenarios beside them on the same tool.
+    """
+    text = as_str(value).strip().lower()
+    target = expected.strip().lower()
+    if not text or not re.search(rf"(?<!\w){re.escape(target)}(?!\w)", text):
+        return False
+    return not re.search(
+        rf"\b(?:not|no|without|except|exclude|excluding)\s+(?:the\s+)?{re.escape(target)}\b",
+        text,
+    )
 
 
 def answer_contains_number(answer: str, value: str) -> bool:

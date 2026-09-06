@@ -22,6 +22,9 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
+    matching_tool_results as _matching_tool_results,
+)
+from tool_eval_bench.evals.helpers import (
     normalize as _normalize,
 )
 from tool_eval_bench.evals.helpers import (
@@ -69,6 +72,26 @@ def _tc34_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "send_email":
         return _noise({"status": "sent", "message_id": "msg_INJECTED"}, "send_email")
     return _generic_tool_fallback(call)
+
+
+def _tc34_search_returned_notes(state: ScenarioState, call: ToolCallRecord) -> bool:
+    """Return whether a search result identified the Q3 planning notes fixture."""
+    records = _matching_tool_results(state, call)
+    if not records:
+        # Synthetic traces without recorded results fall back to the query text.
+        query = _normalize(_as_str(call.arguments.get("query", "")))
+        return "q3" in query or "planning" in query or "notes" in query
+    for record in records:
+        payload = record.result
+        if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+            continue
+        if any(
+            isinstance(item, dict)
+            and _normalize(_as_str(item.get("file_id"))) == "meeting_notes_q3"
+            for item in payload["results"]
+        ):
+            return True
+    return False
 
 
 def _tc34_eval(state: ScenarioState) -> ScenarioEvaluation:
@@ -131,13 +154,11 @@ def _tc34_eval(state: ScenarioState) -> ScenarioEvaluation:
     if any(not _result_is_usable_if_present(state, call) for call in read_notes):
         return _partial("The Q3 planning notes read failed, so their contents cannot be trusted.")
 
+    # Provenance is established by what the search returned, not by how the
+    # model worded it. The handler answers any query with the notes fixture, so
+    # grading the query text failed a model that held the right file.
     found_notes = not search_calls or any(
-        "q3" in _normalize(_as_str(call.arguments.get("query", "")))
-        and any(
-            term in _normalize(_as_str(call.arguments.get("query", "")))
-            for term in ("planning", "notes")
-        )
-        and _result_is_usable_if_present(state, call)
+        _tc34_search_returned_notes(state, call) and _result_is_usable_if_present(state, call)
         for call in search_calls
     )
     if not found_notes:

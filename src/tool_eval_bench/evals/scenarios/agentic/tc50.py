@@ -111,14 +111,16 @@ def _tc50_is_ask_message(message: str) -> bool:
             continue
         if (
             re.search(r"\bwho(?:'s| is)\b.{0,60}\b(?:pm|person)\b", clause)
+            # The inverted form is just as common: "let me know who the new PM is".
+            or re.search(r"\bwho\s+(?:the|our|your)\b.{0,40}\b(?:pm|person)\b.{0,20}\bis\b", clause)
             or re.search(
                 r"\bwhich(?:\s+(?:person|name|identity|pm))?\s+"
                 r"(?:is|was|would be|will be)\b.{0,60}\b(?:pm|person|name|identity)\b",
                 clause,
             )
             or re.search(
-                r"\b(?:please|tell me|provide|share|give me|i need(?: to know)?|"
-                r"(?:could|can) you (?:tell me|provide|share|give me))\b"
+                r"\b(?:please|tell me|let me know|provide|share|give me|i need(?: to know)?|"
+                r"(?:could|can) you (?:tell me|let me know|provide|share|give me))\b"
                 r".{0,60}\b(?:name|identity|pm|person)\b",
                 clause,
             )
@@ -310,5 +312,5 @@ SCENARIO = ScenarioDefinition(
 
 DISPLAY = ScenarioDisplayDetail(
     "Pass if it asks for PM identity in turn 1, then uses 'Tom Chen' from turn 2.",
-    "Fail if it hallucates a PM name or sends to the wrong person.",
+    "Fail if it hallucinates a PM name or sends to the wrong person.",
 )

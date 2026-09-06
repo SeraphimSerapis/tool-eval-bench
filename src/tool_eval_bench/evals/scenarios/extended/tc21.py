@@ -32,12 +32,32 @@ def _tc21_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
-def _tc21_asserts_issue(answer: str, field: str, issue_pattern: str) -> bool:
+# Any assertion that something is wrong. Only consulted for a clause that
+# names the field *and* quotes the offending value, which is the strongest
+# evidence available that the model diagnosed this field: at that point the
+# particular verb it reached for ("exceeds the maximum", "is missing a domain
+# label", "has only 5 digits") is style, not correctness.
+_TC21_PROBLEM = (
+    r"(?:invalid|malformed|bad\b|wrong|incorrect|not\s+(?:a\s+)?(?:valid|allowed|permitted)|"
+    r"isn't\s+valid|error|issue|problem|violat|fails?\b|exceed|out\s+of\s+range|"
+    r"too\s+(?:high|low|few|short|long|large|small|many)|must\s+be|should\s+be|"
+    r"cannot|can't|do(?:es)?\s+not\s+exist|don't\s+exist|doesn't\s+exist|missing|"
+    r"only\s+\d+|negative|below\s+zero|impossible|not\s+\d+\s+digits)"
+)
+
+
+def _tc21_asserts_issue(answer: str, field: str, issue_pattern: str, value: str = "") -> bool:
     """Find an asserted validation issue, not a quoted or negated mention."""
-    for clause in re.split(r"[.!?;\n]", answer):
+    # Split on sentence punctuation only when it actually ends a sentence: the
+    # offending values include "john@.com", and splitting inside it hid the
+    # diagnosis from every check that looks for the value.
+    for clause in re.split(r"(?<=[.!?;])\s+|\n", answer):
         if not re.search(rf"\b{field}\b", clause, re.IGNORECASE):
             continue
-        match = re.search(issue_pattern, clause, re.IGNORECASE)
+        effective = issue_pattern
+        if value and re.search(re.escape(value), clause, re.IGNORECASE):
+            effective = f"(?:{issue_pattern}|{_TC21_PROBLEM})"
+        match = re.search(effective, clause, re.IGNORECASE)
         if not match:
             continue
         before = clause[: match.start()]
@@ -84,18 +104,34 @@ def _tc21_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     answer = state.final_answer.lower()
     error_checks = [
-        _tc21_asserts_issue(answer, "email", r"(?:invalid|malformed|bad)"),
-        _tc21_asserts_issue(answer, "age", r"(?:too\s+high|out\s+of\s+range|over\s+150)"),
+        _tc21_asserts_issue(
+            answer, "email", r"(?:invalid|malformed|bad|missing|incomplete)", "john@.com"
+        ),
+        _tc21_asserts_issue(
+            answer,
+            "age",
+            r"(?:too\s+high|out\s+of\s+range|over\s+150|exceed|above\s+(?:the\s+)?max|"
+            r"greater\s+than\s+150|implausible|unrealistic)",
+            "200",
+        ),
         _tc21_asserts_issue(
             answer,
             "phone",
-            r"(?:invalid|wrong|bad|too\s+few|fewer\s+than|short|format|not\s+(?:10|ten))",
+            r"(?:invalid|wrong|bad|too\s+few|fewer\s+than|short|format|not\s+(?:10|ten)|"
+            r"only\s+\d+|incomplete|truncated)",
+            "555-12",
         ),
-        _tc21_asserts_issue(answer, "date", r"(?:invalid|impossible|month\s+13|bad\s+format)"),
+        _tc21_asserts_issue(
+            answer,
+            "date",
+            r"(?:invalid|impossible|month\s+13|day\s+45|bad\s+format|do(?:es)?\s+not\s+exist)",
+            "2020-13-45",
+        ),
         _tc21_asserts_issue(
             answer,
             "amount",
             r"(?:negative|below\s+zero|less\s+than\s+zero|must\s+be\s+positive)",
+            "-50",
         ),
     ]
     found = sum(error_checks)
