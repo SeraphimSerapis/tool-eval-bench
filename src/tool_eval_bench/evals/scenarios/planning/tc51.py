@@ -72,15 +72,25 @@ def _tc51_email_result_is_sent(payload: Any) -> bool:
     return _result_has_status(payload, "sent")
 
 
-def _tc51_friday(state: ScenarioState) -> str:
-    """Return the date meant by ``this Friday`` for the benchmark date."""
+def _tc51_fridays(state: ScenarioState) -> set[str]:
+    """Dates that ``this Friday`` can legitimately mean for the benchmark date.
+
+    The default reference date is itself a Friday, and "this Friday" said on a
+    Friday reads as either today or the coming one. The suite's own
+    ``next_weekday_after_reference`` refuses to return zero days out for the
+    same ambiguity, so scoring only today would grade two defensible readings
+    against a coin flip. Both are accepted.
+    """
     raw = _as_str(state.meta.get("reference_date")).strip() or "2026-03-20"
     try:
         reference = date.fromisoformat(raw)
     except ValueError:
         reference = date.fromisoformat("2026-03-20")
     days_ahead = (4 - reference.weekday()) % 7
-    return (reference + timedelta(days=days_ahead)).isoformat()
+    this_friday = reference + timedelta(days=days_ahead)
+    if days_ahead:
+        return {this_friday.isoformat()}
+    return {this_friday.isoformat(), (this_friday + timedelta(days=7)).isoformat()}
 
 
 def _tc51_date_is_friday(state: ScenarioState, value: Any) -> bool:
@@ -89,7 +99,7 @@ def _tc51_date_is_friday(state: ScenarioState, value: Any) -> bool:
     date_value = _as_str(value).strip()
     if "reference_date" not in state.meta:
         return bool(date_value)
-    return date_value == _tc51_friday(state)
+    return date_value in _tc51_fridays(state)
 
 
 def _tc51_time_is_present(state: ScenarioState, value: Any) -> bool:
@@ -155,12 +165,30 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
     if any(call.name in _UNRELATED_UNIVERSAL_MUTATIONS for call in state.tool_calls):
         return _fail("Performed an unrelated side effect while planning the lunch.")
 
+    # The notification must not precede the event, but batching both mutations
+    # into one assistant turn is a legitimate parallel call — the email does not
+    # consume the event's return value. Compare positions within a turn, as
+    # TC-74 does, instead of failing the whole scenario as an unsafe send.
+    event_position = next(
+        (position for position, call in enumerate(state.tool_calls) if call is valid_event),
+        -1,
+    )
+
+    def _follows_event(call: ToolCallRecord, position: int) -> bool:
+        if valid_event is None:
+            return False
+        return call.turn > valid_event.turn or (
+            call.turn == valid_event.turn and position > event_position
+        )
+
     notified: set[str] = set()
     notifications_valid = bool(email_calls)
-    for call in email_calls:
+    for position, call in enumerate(state.tool_calls):
+        if call.name != "send_email":
+            continue
         recipients = _recipient_set(call.arguments.get("to"))
         if (
-            call.turn <= (valid_event.turn if valid_event else -1)
+            not _follows_event(call, position)
             or not recipients
             or not recipients <= _TC51_ENGINEERING
             or notified.intersection(recipients)
@@ -190,7 +218,10 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
             for call in email_calls
         )
     ):
-        return _fail("Sent an invalid, duplicate, or unintended lunch notification.")
+        return _fail(
+            "Sent a lunch notification that was premature, duplicated, "
+            "or addressed outside the engineering team."
+        )
 
     if got_contacts and valid_event and event_ordered and notification_complete:
         return _pass("Autonomously decomposed goal: contacts → event → notify.")

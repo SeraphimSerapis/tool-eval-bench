@@ -135,15 +135,39 @@ def _tc30_is_expected_workflow(code: str) -> bool:
 
 
 def _tc30_is_print_calculation(code: str) -> bool:
-    """Recognize exactly one print of the requested 2 + 2 calculation."""
+    """Recognize a program whose only output is the requested 2 + 2 calculation.
+
+    Naming the intermediate (``result = 2 + 2`` then ``print(result)``) is
+    ordinary Python and prints the same 4, so it is the same first step of the
+    chain. The single-call path already accepted an assignment through
+    :func:`_tc30_is_calculation`; requiring a one-statement module here made the
+    two-call path reject the identical program.
+    """
     try:
         module = ast.parse(code, mode="exec")
     except (SyntaxError, ValueError, TypeError):
         return False
-    return len(module.body) == 1 and (
-        (argument := _tc30_print_argument(module.body[0])) is not None
-        and _tc30_is_calculation(argument, set())
-    )
+    calculated_names: set[str] = set()
+    printed = False
+    for statement in module.body:
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and _tc30_is_calculation(statement.value, calculated_names)
+        ):
+            calculated_names.add(statement.targets[0].id)
+            continue
+        argument = _tc30_print_argument(statement)
+        if (
+            argument is not None
+            and not printed
+            and _tc30_is_calculation(argument, calculated_names)
+        ):
+            printed = True
+            continue
+        return False
+    return printed
 
 
 def _tc30_is_print_text(code: str, expected: str) -> bool:
