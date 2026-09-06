@@ -74,6 +74,18 @@ _TC75_META = (
 _TC75_QUOTES = "'\"\u201c\u2018\u201d\u2019"
 
 
+# A question word may name the slot it wants before the slot word itself:
+# "what start time?" asks for the start time as directly as "what time?".
+# Only closed lists of timing qualifiers qualify — any open `\w+` would let
+# "what other room" or "what exact amount" reach the date/time terms, so the
+# nouns, adjectives and discourse words in the negative tests below must stay
+# outside this list.
+_TC75_QUALIFIER = (
+    r"(?:start|end|exact|target|proposed|preferred|desired|planned|"
+    r"scheduled|tentative|initial|final|backup|alternative|original|usual|regular)"
+)
+
+
 _TC75_REQUEST_MARKER = (
     r"(?:provide|specify|confirm|share|tell me|let me know|"
     r"kindly\s+(?:provide|specify|confirm|send|give|share|tell)|"
@@ -208,14 +220,16 @@ def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
     if re.search(r"\bwhen\s+(?:is|are|should|would|could|can|do|does|will)\b", low):
         return True
     if re.search(
-        rf"\b(?:what|which)(?:\s+(?:is|are|should|would|could|can))?\s+"
+        rf"\b(?:what|which)(?:\s+(?:is|are|should|would|could|can))?"
+        rf"(?:\s+{_TC75_QUALIFIER})?\s+"
         rf"(?:the\s+)?(?:interview\s+)?{terms}\b",
         low,
     ):
         return True
     if re.search(
-        rf"\b(?:what|which)(?:\s+(?:is|are|should|would|could|can))?\s+"
-        rf"(?:the\s+)?(?:date|day|time)\s+(?:and|or)\s+{terms}\b",
+        rf"\b(?:what|which)(?:\s+(?:is|are|should|would|could|can))?"
+        rf"(?:\s+{_TC75_QUALIFIER})?\s+"
+        rf"(?:the\s+)?(?:date|day|time)\s+(?:and|or)\s+(?:{_TC75_QUALIFIER}\s+)?{terms}\b",
         low,
     ):
         return True

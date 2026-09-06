@@ -566,6 +566,57 @@ def test_tc75_request_does_not_reach_across_a_paragraph_break():
         ), answer
 
 
+def test_tc75_qualified_question_form_requests_the_time():
+    """TC-75: "what start time?" asks for the time as directly as "what time?".
+
+    Replay of a real qwen3.8-flash-next answer that split the two parameters
+    into a numbered list, naming the time slot with a qualifier the question
+    regex could not consume. A question word may name the slot ("start",
+    "exact", "target", ...) before the slot word, but only from the closed
+    qualifier list — an open word slot would let "what other room" or "what
+    exact amount" reach the date/time terms, and the coordinated-form guard
+    still requires both terms to be requested, never a statement of a value.
+    """
+    scenario = _get("TC-75")
+
+    answer = (
+        "I'd be happy to help, but I need a few details to find the right room:\n\n"
+        "1. **Date** \u2014 which day is the interview?\n"
+        "2. **Time** \u2014 what start time?\n"
+        "3. **Panel size** \u2014 how many people will be in the room?"
+    )
+    state = ScenarioState(final_answer=answer, assistant_messages=[answer])
+    result = scenario.evaluate(state)
+    assert result.status == ScenarioStatus.PASS, answer
+    assert result.summary == ("Asked for the missing interview date and time without guessing."), (
+        answer
+    )
+
+    for qualified in (
+        "What exact date and what start time?",
+        "Which preferred day and which target time?",
+        "What date and start time?",
+        "Which day and start time",
+    ):
+        state = ScenarioState(final_answer=qualified, assistant_messages=[qualified])
+        result = scenario.evaluate(state)
+        assert result.status == ScenarioStatus.PASS, qualified
+
+    for not_a_request in (
+        "What other room do you prefer?",
+        "Which amount should I charge for the room?",
+        "What does the date column of the report show?",
+        "I do not need the date or the start time.",
+        "Please do not send the date and the start time.",
+    ):
+        state = ScenarioState(final_answer=not_a_request, assistant_messages=[not_a_request])
+        result = scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL, not_a_request
+        assert result.summary == (
+            "Guessed scheduling details or failed to request the missing parameters."
+        ), not_a_request
+
+
 def _tc84_booking(date: str = "2026-03-25", **overrides) -> dict:
     args = {
         "date": date,
