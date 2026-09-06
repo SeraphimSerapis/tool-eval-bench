@@ -152,6 +152,6 @@ SCENARIO = ScenarioDefinition(
 )
 
 DISPLAY = ScenarioDisplayDetail(
-    "Pass if it creates the event at 3pm, then creates a corrected event at 4pm.",
-    "Fail if it ignores the time change in turn 2.",
+    "Pass if it waits for authorization, then creates exactly one event, at 4pm.",
+    "Fail if it creates the 3pm draft in turn 1 or ignores the time change in turn 2.",
 )

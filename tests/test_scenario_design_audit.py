@@ -22,7 +22,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolResultRecord,
 )
 from tool_eval_bench.domain.tools import BENCHMARK_REFERENCE_DATE, BENCHMARK_REFERENCE_DAY
-from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
+from tool_eval_bench.evals.scenarios import ALL_DISPLAY_DETAILS, ALL_SCENARIOS_WITH_HARDMODE
 
 _SCENARIOS: dict[str, ScenarioDefinition] = {s.id: s for s in ALL_SCENARIOS_WITH_HARDMODE}
 
@@ -787,3 +787,100 @@ def test_tc33_credits_any_admission_of_no_internal_access(answer: str) -> None:
 
 def test_tc33_still_fails_an_invented_internal_figure() -> None:
     assert replay("TC-33", [], ["Our Q3 revenue was $12.4M."]).status is ScenarioStatus.FAIL
+
+
+# ---------------------------------------------------------------------------
+# P3: display text, tolerant scalars, parallel calls, and honest summaries
+# ---------------------------------------------------------------------------
+
+
+def test_tc47_display_describes_the_behaviour_the_evaluator_passes() -> None:
+    display = ALL_DISPLAY_DETAILS["TC-47"]
+    # The evaluator fails any 3pm event, so the display must not call it a pass.
+    assert "3pm" not in display.success_case
+    assert "3pm" in display.failure_case
+
+
+@pytest.mark.parametrize("duration", [30, "30"])
+def test_tc05_accepts_a_stringified_duration(duration: object) -> None:
+    result = replay(
+        "TC-05",
+        [
+            (
+                1,
+                0,
+                "create_calendar_event",
+                {
+                    "title": "Team standup",
+                    "date": "2026-03-23",
+                    "time": "09:30",
+                    "duration_minutes": duration,
+                    "attendees": ["alex@company.com", "jamie@company.com"],
+                },
+            )
+        ],
+        ["Scheduled the standup."],
+    )
+    assert result.status is ScenarioStatus.PASS
+
+
+def test_tc70_parallel_hedge_is_reported_as_what_it_was() -> None:
+    result = replay(
+        "TC-70",
+        [
+            (1, 0, "get_weather", {"location": "Tokyo"}),
+            (1, 0, "get_weather_global", {"location": "Tokyo"}),
+        ],
+        ["Tokyo is 22°C and sunny."],
+    )
+    assert result.status is ScenarioStatus.PARTIAL
+    assert "same turn" in result.summary
+
+
+def test_tc70_still_passes_the_direct_global_call() -> None:
+    result = replay(
+        "TC-70",
+        [(1, 0, "get_weather_global", {"location": "Tokyo"})],
+        ["Tokyo is 22°C and sunny."],
+    )
+    assert result.status is ScenarioStatus.PASS
+
+
+@pytest.mark.parametrize("answer", ["1945", "1945.", "It was 1945.", "In 1945."])
+def test_tc10_accepts_a_short_sentence_around_the_year(answer: str) -> None:
+    assert replay("TC-10", [], [answer]).status is ScenarioStatus.PASS
+
+
+def test_tc10_still_fails_the_wrong_year() -> None:
+    assert replay("TC-10", [], ["1918"]).status is ScenarioStatus.FAIL
+
+
+@pytest.mark.parametrize("answer", ["Tokyo", "Tokyo."])
+def test_tc77_trailing_punctuation_is_not_a_format_violation(answer: str) -> None:
+    assert replay("TC-77", [], [answer]).status is ScenarioStatus.PASS
+
+
+def test_tc77_still_downgrades_a_full_sentence() -> None:
+    result = replay("TC-77", [], ["The capital of Japan is Tokyo."])
+    assert result.status is ScenarioStatus.PARTIAL
+
+
+def test_tc82_does_not_claim_an_unverified_manager_after_verifying_one() -> None:
+    result = replay(
+        "TC-82",
+        [(1, 0, "lookup_directory", {"query": "manager"})],
+        ["Avery Patel is your current manager."],
+    )
+    assert result.status is ScenarioStatus.PARTIAL
+    assert "did not verify the manager relationship" not in result.summary
+
+
+def test_tc50_display_has_no_typo() -> None:
+    assert "hallucates" not in ALL_DISPLAY_DETAILS["TC-50"].failure_case
+
+
+def test_registry_still_resolves_the_documented_scenario_counts() -> None:
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
+
+    assert len(ALL_SCENARIOS) == 69
+    assert len(ALL_SCENARIOS_WITH_HARDMODE) == 88

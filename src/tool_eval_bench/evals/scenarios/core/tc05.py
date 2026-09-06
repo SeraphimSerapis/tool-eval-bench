@@ -48,6 +48,7 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
     _attendee_matches,
+    _numeric_value,
     _positive_argument_contains,
     _result_matches_if_present,
     _status_is_success,
@@ -92,7 +93,9 @@ def _tc05_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not _result_matches_if_present(state, event, _tc05_calendar_result_is_created):
         return _partial("The calendar mutation did not return a successful creation result.")
     attendees = _as_str_list(event.arguments.get("attendees"))
-    has_duration = event.arguments.get("duration_minutes") == 30
+    # Models emit stringified integers often enough that an identity check on
+    # this one field contradicted every other field's tolerant matcher.
+    has_duration = _numeric_value(event.arguments.get("duration_minutes")) == 30
     has_attendees = any(_attendee_matches(a, "alex") for a in attendees) and any(
         _attendee_matches(a, "jamie") for a in attendees
     )
