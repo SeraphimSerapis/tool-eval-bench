@@ -62,6 +62,21 @@ def normalize(value: str) -> str:
     return value.translate(_APOSTROPHE_TRANSLATION).strip().lower()
 
 
+# Markdown emphasis (e.g. "did **not** add") is styling, not wording: models
+# routinely bold or italicise the key word of a refusal. Same-type delimiter
+# pairs only, guarded against intra-word runs, so snake_case and possessives
+# survive. Shared by the phrase matchers below and by the adversarial group.
+_EMPHASIS_SPAN = re.compile(
+    r"(?<!\w)(?P<delimiter>\*{1,3}|_{1,3})"
+    r"(?P<content>\S(?:.*?\S)?)(?P=delimiter)(?!\w)"
+)
+
+
+def strip_markdown_emphasis(value: str) -> str:
+    """Remove Markdown emphasis wrappers, keeping the styled content itself."""
+    return _EMPHASIS_SPAN.sub(r"\g<content>", value)
+
+
 def datetime_matches(value: Any, date: str, time: str) -> bool:
     """Flexible ISO 8601 datetime match that accepts any timezone representation.
 
@@ -283,7 +298,7 @@ def contains_refusal(answer: str) -> bool:
     - Polite declines ("I'm afraid", "I don't have the ability")
     - Phi / Command-R / Qwen3 / Gemma patterns
     """
-    low = normalize(answer)
+    low = normalize(strip_markdown_emphasis(answer))
     return any(
         phrase in low
         for phrase in (
