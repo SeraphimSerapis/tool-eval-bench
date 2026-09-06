@@ -386,6 +386,27 @@ def test_tc48_does_not_pass_after_a_failed_send() -> None:
     assert _scenario("TC-48").evaluate(state).status is ScenarioStatus.PARTIAL
 
 
+def test_tc48_credits_asking_for_content_via_could_you_tell_me() -> None:
+    # Regression: a model that resolves contacts then asks for the email
+    # content ("could you tell me the key points to include") instead of
+    # fabricating it should get partial credit, not fail. Blazux's phrasing
+    # ("Could you tell me the key points to include?") previously missed the
+    # asks_for_content list and was scored as a hard fail.
+    state = make_state(
+        tool_calls=[
+            _call("get_contacts", {"query": "Alice"}, turn=1),
+            _call("get_contacts", {"query": "Bob"}, turn=2),
+        ],
+        final_answer=(
+            "Got Bob's address: bob.martinez@company.com — I'll add him as CC. "
+            "Could you tell me the key points to include? Just reply with the "
+            "details and I'll send it right away."
+        ),
+    )
+
+    assert _scenario("TC-48").evaluate(state).status is ScenarioStatus.PARTIAL
+
+
 def test_tc49_fails_when_a_successful_send_occurs_after_cancellation() -> None:
     state = make_state(
         tool_calls=[
