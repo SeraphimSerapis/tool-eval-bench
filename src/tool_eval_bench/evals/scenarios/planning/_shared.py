@@ -20,6 +20,9 @@ from tool_eval_bench.evals.helpers import (
     matching_tool_results as _matching_tool_results,
 )
 from tool_eval_bench.evals.helpers import (
+    recipient_values as _recipient_values,
+)
+from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
 )
 
@@ -89,7 +92,8 @@ _UNRELATED_UNIVERSAL_MUTATIONS = frozenset({"set_reminder", "run_code"})
 
 
 def _recipient_set(value: Any) -> set[str]:
-    return {item.strip().lower() for item in re.split(r"[,;]", _as_str(value)) if item.strip()}
+    """Distinct addresses named by a recipient argument, string or array."""
+    return set(_recipient_values(value))
 
 
 def _is_tomorrow_morning(datetime_value: Any, state: ScenarioState) -> bool:

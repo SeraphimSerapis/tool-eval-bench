@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -17,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str,
     next_weekday_after_reference,
+    recipient_values,
     result_is_usable_if_present,
     tool_calls_by_name,
 )
@@ -299,11 +299,7 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
     email_ok = bool(emails)
     unsafe_email = False
     for email in emails:
-        recipients = {
-            value.strip().lower()
-            for value in re.split(r"[,;]", as_str(email.arguments.get("to")))
-            if value.strip()
-        }
+        recipients = set(recipient_values(email.arguments.get("to")))
         raw_attachments = email.arguments.get("attachments", [])
         attachments = (
             [as_str(value).strip().lower() for value in raw_attachments]
