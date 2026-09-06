@@ -16,6 +16,9 @@ from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
+    date_matches as _date_matches,
+)
+from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
@@ -32,6 +35,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    time_matches as _time_matches,
 )
 from tool_eval_bench.evals.helpers import (
     utc_offset_aliases as _utc_offset_aliases,
@@ -87,14 +93,16 @@ def _tc17_eval(state: ScenarioState) -> ScenarioEvaluation:
     # "nächsten Dienstag" is relative to the run's reference date.
     expected_date = _next_weekday_after_reference(state, "tuesday")
 
-    correct_time = time_val == "14:00"
+    # Same tool, same event as TC-05, so the same tolerance: "14:00:00" and
+    # "2026-03-24T00:00:00" schedule what the prompt asked for.
+    correct_time = _time_matches(time_val, "14:00")
     # Which offset spelling is correct depends on whether the target date falls
     # inside EU summer time, so derive the accepted aliases from the date rather
     # than assuming the March default.
     correct_tz = tz_val == "europe/berlin" or tz_val in _utc_offset_aliases(
         expected_date, "Europe/Berlin"
     )
-    correct_date = date_val == expected_date
+    correct_date = _date_matches(date_val, expected_date)
     has_title = any(
         _positive_argument_contains(title_val, title)
         for title in ("standup", "meeting", "besprechung")
@@ -110,7 +118,19 @@ def _tc17_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
     if correct_time and correct_tz:
         return _partial("Got the time and timezone right, but the date was wrong.")
-    return _fail("Did not respect the Europe/Berlin timezone in the scheduling request.")
+    wrong = [
+        name
+        for name, correct in (
+            ("time", correct_time),
+            ("date", correct_date),
+            ("timezone", correct_tz),
+            ("title", has_title),
+        )
+        if not correct
+    ]
+    # Naming the field that was actually wrong: the old summary blamed the
+    # timezone for every failure, including runs whose timezone was correct.
+    return _fail(f"Scheduling request was wrong on: {', '.join(wrong)}.")
 
 
 SCENARIO = ScenarioDefinition(

@@ -132,10 +132,18 @@ def _tc70_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     # Recovery path: tried get_weather, got error, then used get_weather_global
     euro_calls = tool_calls_by_name(state, "get_weather")
-    recovered = (
-        len(euro_calls) >= 1
-        and bool(usable_global_calls)
-        and euro_calls[0].turn < global_calls[0].turn
+    # Hedging by calling both tools in one turn, then answering from the global
+    # result, is a legitimate parallel call — a strict turn ordering scored it
+    # as never having used the right tool at all.
+    positions = {id(call): index for index, call in enumerate(state.tool_calls)}
+    hedged = bool(
+        euro_calls
+        and usable_global_calls
+        and euro_calls[0].turn == global_calls[0].turn
+        and positions.get(id(euro_calls[0]), -1) < positions.get(id(global_calls[0]), -1)
+    )
+    recovered = bool(
+        euro_calls and usable_global_calls and (euro_calls[0].turn < global_calls[0].turn or hedged)
     )
     if used_global and not used_euro:
         # Verify the model surfaced actual weather data (temp 22 or condition).
@@ -149,10 +157,14 @@ def _tc70_eval(state: ScenarioState) -> ScenarioEvaluation:
             "Selected the correct tool but did not surface the weather data in the answer.",
         )
     if recovered:
+        if hedged:
+            return _partial(
+                "Called both weather tools in the same turn and answered from the global one."
+            )
         return _partial("Tried the wrong tool first but recovered after the error.")
     if used_euro and not used_global:
         return _fail("Used get_weather (European only) for Tokyo and did not recover.")
-    return _fail("Did not use the correct weather tool for a non-European city.")
+    return _fail("Did not obtain Tokyo weather from a usable weather tool result.")
 
 
 SCENARIO = ScenarioDefinition(

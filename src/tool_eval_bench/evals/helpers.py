@@ -46,7 +46,15 @@ _APOSTROPHE_TRANSLATION = str.maketrans(
 
 
 def as_str(value: Any) -> str:
-    """Coerce a value to string, treating None as empty."""
+    """Coerce a value to string, treating None as empty.
+
+    Only for values a scenario expects to be scalar. On a list this returns the
+    Python repr, so ``["a@x", "b@x"]`` becomes ``"['a@x', 'b@x']"`` and any
+    parsing downstream reads brackets and quotes as part of the data. For an
+    argument a model may reasonably send as an array, use a parser that accepts
+    one: :func:`as_str_list` for array-typed fields, :func:`recipient_values`
+    for to/cc/bcc.
+    """
     return str(value) if value is not None else ""
 
 
@@ -60,6 +68,50 @@ def as_str_list(value: Any) -> list[str]:
 def normalize(value: str) -> str:
     """Fold apostrophe look-alikes, strip whitespace, and lowercase a string."""
     return value.translate(_APOSTROPHE_TRANSLATION).strip().lower()
+
+
+def recipient_values(value: Any) -> list[str]:
+    """Addresses named by a ``to``/``cc``/``bcc`` argument, in order.
+
+    ``send_email`` types these fields as strings, so several recipients arrive
+    comma or semicolon separated. Models also send a JSON array, which is the
+    shape every real mail API uses and the shape this same tool's own
+    ``attachments`` field takes, so it is a defensible reading of an ambiguous
+    contract rather than carelessness. Both forms are accepted here.
+
+    That is a deliberate scoring decision, not an oversight. Passing an array
+    where the schema says string is a type violation, and the suite does
+    penalise it: TC-41 and TC-42 exist for exactly that and sit in Category K.
+    The scenarios calling this helper are testing autonomous planning and
+    composition instead, and none of them advertises argument shape as being
+    under test. Failing one over a JSON type charged a single defect twice, in
+    two categories, and reported it as having mailed an unauthorised recipient.
+
+    Duplicates survive so a caller can still catch the same person notified
+    twice; use ``set(recipient_values(...))`` when only identity matters.
+    """
+    items = value if isinstance(value, (list, tuple)) else [value]
+    return [
+        part.strip().lower()
+        for item in items
+        for part in re.split(r"[,;]", as_str(item))
+        if part.strip()
+    ]
+
+
+# Markdown emphasis (e.g. "did **not** add") is styling, not wording: models
+# routinely bold or italicise the key word of a refusal. Same-type delimiter
+# pairs only, guarded against intra-word runs, so snake_case and possessives
+# survive. Shared by the phrase matchers below and by the adversarial group.
+_EMPHASIS_SPAN = re.compile(
+    r"(?<!\w)(?P<delimiter>\*{1,3}|_{1,3})"
+    r"(?P<content>\S(?:.*?\S)?)(?P=delimiter)(?!\w)"
+)
+
+
+def strip_markdown_emphasis(value: str) -> str:
+    """Remove Markdown emphasis wrappers, keeping the styled content itself."""
+    return _EMPHASIS_SPAN.sub(r"\g<content>", value)
 
 
 def datetime_matches(value: Any, date: str, time: str) -> bool:
@@ -93,9 +145,49 @@ def date_matches(value: Any, date: str) -> bool:
     return s.startswith(date)
 
 
+def time_matches(value: Any, expected: str) -> bool:
+    """Return whether a ``time`` argument names ``expected`` as ``HH:MM``.
+
+    Accepts an optional seconds field and an explicit UTC offset, because
+    "14:00", "14:00:00" and "14:00+01:00" all schedule the same moment. Two
+    scenarios creating the same event through the same tool disagreed on this,
+    and the stricter one reported the seconds suffix as a timezone error.
+    """
+    return bool(
+        re.fullmatch(
+            rf"{re.escape(expected)}(?::\d{{2}})?(?:Z|[+-]\d{{2}}:\d{{2}})?",
+            as_str(value).strip(),
+        )
+    )
+
+
 def includes_text(value: Any, expected: str) -> bool:
     """Case-insensitive substring check."""
     return expected.lower() in as_str(value).lower()
+
+
+def positive_argument_contains(value: Any, expected: str) -> bool:
+    """Match an entity named in a tool argument, without accepting a negation.
+
+    Tool arguments are model-authored input, not prose to summarize. Qualifying
+    a value is normal and identifies the same thing: ``Berlin, DE`` is Berlin
+    and ``London, UK`` is London, so comparing a ``location`` for exact equality
+    grades a model's habit of disambiguating rather than the lookup it made.
+    An explicit denial immediately before the entity ("not Berlin") is still
+    rejected.
+
+    This is the suite-wide matcher for entity-bearing arguments. Scenarios that
+    compared ``location`` with ``==`` reported "wrong location" for a correct
+    lookup, and disagreed with the scenarios beside them on the same tool.
+    """
+    text = as_str(value).strip().lower()
+    target = expected.strip().lower()
+    if not text or not re.search(rf"(?<!\w){re.escape(target)}(?!\w)", text):
+        return False
+    return not re.search(
+        rf"\b(?:not|no|without|except|exclude|excluding)\s+(?:the\s+)?{re.escape(target)}\b",
+        text,
+    )
 
 
 def answer_contains_number(answer: str, value: str) -> bool:
@@ -283,7 +375,7 @@ def contains_refusal(answer: str) -> bool:
     - Polite declines ("I'm afraid", "I don't have the ability")
     - Phi / Command-R / Qwen3 / Gemma patterns
     """
-    low = normalize(answer)
+    low = normalize(strip_markdown_emphasis(answer))
     return any(
         phrase in low
         for phrase in (

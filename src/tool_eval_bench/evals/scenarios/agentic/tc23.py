@@ -29,6 +29,17 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 
+# The description verb is the model's choice: "returns the current market
+# price", "looks up the price", "gives you the price" and "queries a market
+# data source" all describe the same function. An allowlist of four verbs
+# graded vocabulary, and missed "looks up" because it was spelled "look up".
+_TC23_VERB = (
+    r"\b(?:retriev\w*|returns?|returning|fetch(?:es|ing)?|looks?\s*up|lookups?|"
+    r"obtains?|obtaining|gets?\b|getting|provid\w*|gives?\b|giving|quer(?:y|ies|ying)|"
+    r"reports?\b|pulls?\b|reads?\b|shows?\b|tells?\b|finds?\b|access(?:es|ing)?|"
+    r"expos\w*|deliver\w*|surfac\w*|yields?\b)"
+)
+
 
 def _tc23_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_stock_price":
@@ -54,15 +65,15 @@ def _tc23_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Should explain what the function does
     explains = bool(
         re.search(
-            r"(?:get_stock_price|function).{0,80}(?:retriev|return|fetch|look up|obtain).{0,80}(?:stock|price|ticker)"
-            r"|(?:retriev|return|fetch|look up|obtain).{0,80}(?:stock|price|ticker).{0,80}(?:function|get_stock_price)",
+            rf"(?:get_stock_price|function).{{0,80}}(?:{_TC23_VERB}).{{0,80}}(?:stock|price|ticker)"
+            rf"|(?:{_TC23_VERB}).{{0,80}}(?:stock|price|ticker).{{0,80}}(?:function|get_stock_price)",
             answer,
         )
     ) and not re.search(
         r"(?:does not|doesn't|not|never)\s+"
         r"(?:(?:a|an|the)\s+)?"
         r"(?:function\s+(?:that|which)\s+)?"
-        r"(?:retriev|return|fetch|look up|obtain)",
+        rf"(?:{_TC23_VERB})",
         answer,
     )
     if explains:

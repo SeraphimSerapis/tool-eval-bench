@@ -74,6 +74,16 @@ _TC75_META = (
 _TC75_QUOTES = "'\"\u201c\u2018\u201d\u2019"
 
 
+# A question word may name the slot it wants before the slot word itself:
+# "what start time?" asks for the start time as directly as "what time?".
+# The list stays closed and holds only qualifiers that unambiguously name the
+# requested slot. State adjectives such as "scheduled" or "original" can
+# describe an existing value and must not read as a clarification request.
+# An open `\w+` would likewise let "what other room" or "what exact amount"
+# reach the date/time terms.
+_TC75_QUALIFIER = r"(?:start|end|exact|target|preferred|desired)"
+
+
 _TC75_REQUEST_MARKER = (
     r"(?:provide|specify|confirm|share|tell me|let me know|"
     r"kindly\s+(?:provide|specify|confirm|send|give|share|tell)|"
@@ -209,13 +219,16 @@ def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
         return True
     if re.search(
         rf"\b(?:what|which)(?:\s+(?:is|are|should|would|could|can))?\s+"
-        rf"(?:the\s+)?(?:interview\s+)?{terms}\b",
+        rf"(?:the\s+)?(?:{_TC75_QUALIFIER}\s+)?"
+        rf"(?:interview\s+)?{terms}\b",
         low,
     ):
         return True
     if re.search(
         rf"\b(?:what|which)(?:\s+(?:is|are|should|would|could|can))?\s+"
-        rf"(?:the\s+)?(?:date|day|time)\s+(?:and|or)\s+{terms}\b",
+        rf"(?:the\s+)?(?:{_TC75_QUALIFIER}\s+)?"
+        rf"(?:date|day|time)\s+(?:and|or)\s+"
+        rf"(?:the\s+)?(?:{_TC75_QUALIFIER}\s+)?{terms}\b",
         low,
     ):
         return True

@@ -211,6 +211,35 @@ class TestContainsRefusal:
     @pytest.mark.parametrize(
         "phrase",
         [
+            # Emphasis is styling, not wording: a refusal whose keyword is
+            # bolded or italicised is the same refusal. Observed on a real
+            # qwen3.8-flash-next TC-76 trace: "Here's what I *can* do" hid
+            # the "what I can do" boundary phrase from the matcher.
+            "Here's what I *can* do to help move this along.",
+            "I was **not able** to book the room.",
+            "Unfortunately, I *cannot* run code here.",
+            "I **don't have access** to internal databases.",
+        ],
+    )
+    def test_detects_emphasised_refusal(self, phrase):
+        assert contains_refusal(phrase), f"Failed to detect refusal: {phrase!r}"
+
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            # Stripping emphasis must not touch intra-word underscores.
+            "I ran get_user_data and then send_email for you.",
+            "The function _private() is internal, here is the report.",
+            # Styling a word must not invent a refusal either.
+            "The file was **updated successfully**.",
+        ],
+    )
+    def test_emphasis_stripping_adds_no_false_positives(self, phrase):
+        assert not contains_refusal(phrase), f"False positive on: {phrase!r}"
+
+    @pytest.mark.parametrize(
+        "phrase",
+        [
             "Here is the weather for Berlin.",
             "The temperature is 8 degrees.",
             "I found 3 results for your search.",

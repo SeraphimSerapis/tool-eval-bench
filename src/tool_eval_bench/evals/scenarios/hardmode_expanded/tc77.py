@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -47,7 +48,10 @@ def _tc77_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 def _tc77_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer.strip()
-    if not state.tool_calls and answer == "Tokyo":
+    # "Answer with the city only" is about content, not punctuation: a trailing
+    # full stop adds no other city. Anything beyond that is still a format
+    # violation, which is what this Hard Mode scenario measures.
+    if not state.tool_calls and re.fullmatch(r"tokyo[.!]?", answer, re.IGNORECASE):
         return _pass("Answered the stable factual question directly with the requested format.")
     if not state.tool_calls and "tokyo" in answer.lower():
         return _partial("Answered correctly but violated the city-only output format.")

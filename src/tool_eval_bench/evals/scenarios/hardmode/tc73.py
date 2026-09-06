@@ -84,30 +84,36 @@ _TC73_EXCLUSION = re.compile(
 )
 
 
+def _tc73_found_candidates(state: ScenarioState, call: ToolCallRecord) -> bool:
+    """Return whether a search actually surfaced the constrained candidates.
+
+    The handler answers any restaurant query near Berlin or Alexanderplatz with
+    the same candidate list, so requiring three specific words in the query
+    docked a model that held the right results. Provenance comes from what came
+    back; the query text is only a fallback for traces without recorded results.
+    """
+    results = matching_tool_results(state, call)
+    if not results:
+        return includes_text(call.arguments.get("query"), "restaurant")
+    return any(
+        isinstance(record.result, dict)
+        and any(
+            candidate in as_str(item).lower()
+            for item in record.result.get("results", []) or []
+            if isinstance(item, dict)
+            for candidate in ("green kitchen", "veganz")
+        )
+        for record in results
+    )
+
+
 def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
     transcript = full_assistant_transcript(state)
     search_calls = tool_calls_by_name(state, "web_search")
     valid_searches = [
         c
         for c in search_calls
-        if all(
-            term in normalize(as_str(c.arguments.get("query"))) for term in ("restaurant", "berlin")
-        )
-        and "alexanderplatz" in normalize(as_str(c.arguments.get("query")))
-        and result_is_usable_if_present(state, c)
-        and (
-            not matching_tool_results(state, c)
-            or any(
-                isinstance(result.result, dict)
-                and any(
-                    candidate in as_str(item).lower()
-                    for item in result.result.get("results", []) or []
-                    if isinstance(item, dict)
-                    for candidate in ("green kitchen", "veganz")
-                )
-                for result in matching_tool_results(state, c)
-            )
-        )
+        if result_is_usable_if_present(state, c) and _tc73_found_candidates(state, c)
     ]
     email_calls = tool_calls_by_name(state, "send_email")
     emailed = email_calls[0] if len(email_calls) == 1 else None
@@ -180,23 +186,26 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
     if email_calls and emailed is None:
         return _fail("Sent duplicate or unintended recommendation emails.")
 
-    steps = sum(
-        [
-            bool(searched),
-            bool(mentions_valid and not mentions_invalid),
-            bool(contacted),
-            bool(email_has_restaurant and safe_emails and ordered),
-        ]
-    )
+    # Name the step that is actually missing: the old summaries reported
+    # "didn't finish" about runs that had finished.
+    missing = [
+        name
+        for name, done in (
+            ("search", bool(searched)),
+            ("constraint filtering", bool(mentions_valid and not mentions_invalid)),
+            ("contact lookup", bool(contacted)),
+            ("confirmation email", bool(email_has_restaurant and safe_emails and ordered)),
+        )
+        if not done
+    ]
+    steps = 4 - len(missing)
 
     if steps == 4:
         return _pass(
             "Searched, filtered by all constraints, resolved Lisa, and emailed the confirmation."
         )
-    if steps >= 3:
-        return _partial("Completed most of the chain but missed one constraint or step.")
     if steps >= 2:
-        return _partial("Partially completed — searched and identified options but didn't finish.")
+        return _partial(f"Completed {steps}/4 steps of the chain. Missing: {', '.join(missing)}.")
     return _fail("Did not chain search → filter → contact → email under multiple constraints.")
 
 

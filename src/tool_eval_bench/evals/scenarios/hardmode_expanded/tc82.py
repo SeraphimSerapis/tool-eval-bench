@@ -142,8 +142,17 @@ def _tc82_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial(
             "Verified Avery as current manager but asked for unnecessary clarification."
         )
+    # The lookup and the send are separate failures, and the old summary
+    # reported the first one even when the lookup had in fact confirmed Avery.
+    if directory:
+        return _partial(
+            "Verified the current manager, but the checklist send was missing, "
+            "misaddressed, or out of order."
+        )
     if has_tool_call(state, "lookup_directory"):
-        return _partial("Looked up the directory, but did not verify the manager relationship.")
+        return _partial(
+            "Looked up the directory, but its result did not confirm the manager relationship."
+        )
     return _fail("Trusted stale manager memory or sent the checklist to the wrong recipient.")
 
 

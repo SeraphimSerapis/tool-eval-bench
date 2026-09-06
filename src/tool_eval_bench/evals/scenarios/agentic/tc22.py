@@ -15,9 +15,6 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    as_str as _as_str,
-)
-from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
@@ -27,13 +24,13 @@ from tool_eval_bench.evals.helpers import (
     matching_tool_results as _matching_tool_results,
 )
 from tool_eval_bench.evals.helpers import (
-    normalize as _normalize,
-)
-from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    positive_argument_contains as _positive_argument_contains,
 )
 from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
@@ -67,7 +64,7 @@ def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
     berlin_calls = [
         call
         for call in weather_calls
-        if _normalize(_as_str(call.arguments.get("location"))) in ("berlin", "berlin, germany")
+        if _positive_argument_contains(call.arguments.get("location"), "berlin")
     ]
     if not berlin_calls:
         return _fail("Called get_weather for the wrong location.")
