@@ -256,6 +256,11 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc63_handle,
     evaluate=_tc63_eval,
     follow_up_messages=_TC63_FOLLOW_UPS,
+    # Five user messages need five assistant content turns, so the global
+    # 8-turn budget left room for three tool rounds across the whole
+    # conversation. Re-searching as each constraint arrives is the behaviour
+    # the handler rewards, and it ran out of budget before the last constraint.
+    max_turns_override=12,
     difficulty=4,
 )
 

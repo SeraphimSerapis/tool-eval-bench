@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback,
     includes_text,
     normalize,
+    positive_argument_contains,
 )
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -59,8 +60,7 @@ _TC65_SCHEMA = {
 
 def _tc65_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
-        location = normalize(as_str(call.arguments.get("location")))
-        if location != "tokyo":
+        if not positive_argument_contains(call.arguments.get("location"), "tokyo"):
             return _noise(
                 {"error": "Weather report only available for Tokyo in this scenario."}, call.name
             )
@@ -90,7 +90,7 @@ def _tc65_eval(state: ScenarioState) -> ScenarioEvaluation:
         call
         for call in state.tool_calls
         if call.name == "get_weather"
-        and normalize(as_str(call.arguments.get("location"))) == "tokyo"
+        and positive_argument_contains(call.arguments.get("location"), "tokyo")
         and _result_matches_if_present(state, call, weather_result_is_tokyo)
     ]
     if not weather_calls:

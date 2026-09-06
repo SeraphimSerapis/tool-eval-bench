@@ -38,6 +38,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    time_matches as _time_matches,
+)
+from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -97,12 +100,7 @@ def _tc05_eval(state: ScenarioState) -> ScenarioEvaluation:
     expected_date = _next_weekday_after_reference(state, "monday")
     # Use flexible date matching — accept any ISO 8601 date representation
     correct_date = _date_matches(event.arguments.get("date"), expected_date)
-    # Time: accept HH:MM with optional seconds or an explicit offset.
-    correct_time = bool(
-        re.fullmatch(
-            r"09:30(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?", _as_str(event.arguments.get("time")).strip()
-        )
-    )
+    correct_time = _time_matches(event.arguments.get("time"), "09:30")
     has_title = _positive_argument_contains(event.arguments.get("title"), "standup")
     if correct_date and correct_time and has_duration and has_attendees and has_title:
         if len(event_calls) > 1:

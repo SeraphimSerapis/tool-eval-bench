@@ -70,6 +70,37 @@ def _tc03_time_3pm(value: str) -> bool:
     )
 
 
+# A message that has already been negated is not a notification of the change.
+_TC03_UNCHANGED = re.compile(
+    r"\b(?:not|never|no|isn't|is\s+not|hasn't|has\s+not|wasn't|was\s+not)\s+"
+    r"(?:been\s+)?(?:moved|rescheduled|changed|shifted|pushed)\b|\bnot\s+at\s+3",
+    re.IGNORECASE,
+)
+
+
+# What the message is about: the meeting itself, or the fact that it moved.
+_TC03_SUBJECT_MATTER = re.compile(
+    r"\bmeetings?\b|\bmoved\b|\brescheduled\b|\bshifted\b|\bchanged\b|\bpushed\b|"
+    r"\bbumped\b|\bnew\s+time\b|\bnow\s+at\b",
+    re.IGNORECASE,
+)
+
+
+def _tc03_states_the_new_time(subject: str, body: str) -> bool:
+    """Return whether the message tells Sarah her meeting is now at 3pm.
+
+    The verb is the model's choice: "moved to 3pm", "rescheduled to 3pm",
+    "is now at 3:00 PM" and "the meeting time changed to 3pm" all deliver the
+    same message. Requiring the literal "moved to" graded vocabulary, so what
+    is checked is the subject matter and the new time.
+    """
+    return bool(
+        _TC03_SUBJECT_MATTER.search(f"{subject}\n{body}")
+        and _tc03_time_3pm(body)
+        and not _TC03_UNCHANGED.search(body)
+    )
+
+
 def _tc03_contact_result_has_sarah(payload: Any) -> bool:
     """Return whether a contact result identifies Sarah's company address."""
     if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
@@ -96,18 +127,9 @@ def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
             _normalize(_as_str(call.arguments.get("to"))) == "sarah.chen@company.com"
             and bool(_as_str(call.arguments.get("subject")).strip())
             and bool(_as_str(call.arguments.get("body")).strip())
-            and re.search(
-                r"\b(?:the\s+)?(?:meeting\s+)?(?:has\s+been\s+|was\s+)?moved\s+to\s+"
-                r"(?:3(?::00)?\s*p\.?m\.?|15:00)\b",
-                _as_str(call.arguments.get("body")),
-                re.IGNORECASE,
+            and _tc03_states_the_new_time(
+                _as_str(call.arguments.get("subject")), _as_str(call.arguments.get("body"))
             )
-            and not re.search(
-                r"\b(?:not|never|no)\s+(?:been\s+)?moved\b",
-                _as_str(call.arguments.get("body")),
-                re.IGNORECASE,
-            )
-            and _tc03_time_3pm(_as_str(call.arguments.get("body")))
         )
     ]
     ordered_pairs = [

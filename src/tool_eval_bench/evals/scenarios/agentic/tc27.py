@@ -37,6 +37,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    positive_argument_contains as _positive_argument_contains,
+)
+from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
 )
 from tool_eval_bench.evals.helpers import (
@@ -80,7 +83,8 @@ def _tc27_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     if len(weather_calls) == 2:
         if any(
-            _as_str(c.arguments.get("location")).strip().lower() != "london" for c in weather_calls
+            not _positive_argument_contains(c.arguments.get("location"), "london")
+            for c in weather_calls
         ):
             return _fail("Requested weather for the wrong location.")
         units_used = [

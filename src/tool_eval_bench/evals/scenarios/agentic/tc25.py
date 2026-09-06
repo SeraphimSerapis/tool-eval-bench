@@ -31,6 +31,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    positive_argument_contains as _positive_argument_contains,
+)
+from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
 )
 from tool_eval_bench.evals.helpers import (
@@ -68,7 +71,7 @@ def _tc25_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Did not check the weather.")
 
     if not any(
-        _as_str(call.arguments.get("location")).strip().lower() in ("berlin", "berlin, germany")
+        _positive_argument_contains(call.arguments.get("location"), "berlin")
         for call in weather_calls
     ):
         return _fail("Checked the wrong location for the conditional weather request.")

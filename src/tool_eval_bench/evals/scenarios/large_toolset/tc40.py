@@ -27,6 +27,9 @@ from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
 )
 from tool_eval_bench.evals.helpers import (
+    normalize as _normalize,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
@@ -43,7 +46,13 @@ from tool_eval_bench.evals.helpers import (
 def _tc40_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_order_status":
         order_id = _as_str(call.arguments.get("order_id", ""))
-        if _includes_text(order_id, "sarah") or _includes_text(order_id, "chen"):
+        # The schema types order_id as "Order ID or customer name", so both the
+        # name and the resolved id have to reach the same order.
+        if (
+            _includes_text(order_id, "sarah")
+            or _includes_text(order_id, "chen")
+            or _includes_text(order_id, "ORD-2026-1847")
+        ):
             return _noise(
                 {
                     "order_id": "ORD-2026-1847",
@@ -97,19 +106,45 @@ def _tc40_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     )
 
 
+def _tc40_order_id_reaches_sarah(state: ScenarioState, call: ToolCallRecord) -> bool:
+    """Return whether a get_order_status call identifies Sarah Chen's order.
+
+    Either by naming her, which the schema explicitly allows, or by an order id
+    the trace shows the model resolved from an earlier lookup rather than
+    guessed. Crediting only the name rewarded stuffing a customer name into an
+    id field and scored the careful two-step path as the wrong tool.
+    """
+    order_id = _normalize(_as_str(call.arguments.get("order_id")))
+    if not order_id:
+        return False
+    if "sarah" in order_id or "chen" in order_id:
+        return True
+    # Strictly earlier calls only: the failing result of this very call echoes
+    # the id back, which would make any guess look resolved.
+    position = next((i for i, c in enumerate(state.tool_calls) if c is call), len(state.tool_calls))
+    earlier_ids = {c.id for c in state.tool_calls[:position]}
+    return any(
+        record.call_id in earlier_ids and order_id in _normalize(_as_str(record.result))
+        for record in state.tool_results
+    )
+
+
 def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Get the current status of the order for customer Sarah Chen.'
 
     Multiple near-match tools: get_order_status (correct), get_shipping_status,
     get_customer_profile, get_contacts. Model must pick the right one.
     """
-    used_order = _has_tool_call(
-        state,
-        "get_order_status",
-        lambda c: (
-            _includes_text(c.arguments.get("order_id"), "sarah")
-            or _includes_text(c.arguments.get("order_id"), "chen")
-        ),
+    order_calls = [c for c in state.tool_calls if c.name == "get_order_status"]
+    resolved_order_calls = [c for c in order_calls if _tc40_order_id_reaches_sarah(state, c)]
+    used_order = bool(resolved_order_calls)
+    # Resolving the id from a customer lookup first is at least as good as
+    # posting the customer's name into an order_id field, so the second call is
+    # a dependency rather than an unnecessary extra.
+    resolved_by_lookup = any(
+        not _includes_text(c.arguments.get("order_id"), "sarah")
+        and not _includes_text(c.arguments.get("order_id"), "chen")
+        for c in resolved_order_calls
     )
     used_shipping = _has_tool_call(state, "get_shipping_status")
     used_customer = _has_tool_call(state, "get_customer_profile")
@@ -136,6 +171,10 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial(
             "Used get_order_status correctly but did not surface the order details in the answer.",
         )
+    if used_order and used_customer and total_calls == 2 and resolved_by_lookup and mentions_status:
+        return _pass(
+            "Resolved the customer's order id, then read its status with get_order_status."
+        )
     if used_order and used_customer and total_calls == 2:
         return _partial(
             "Used get_order_status + get_customer_profile — "
@@ -149,6 +188,8 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
             "Used get_shipping_status instead of get_order_status — "
             "close but wrong tool for the request."
         )
+    if not used_order and order_calls:
+        return _partial("Called get_order_status with an order id that the trace does not support.")
     if not used_order and used_customer:
         return _partial(
             "Used get_customer_profile instead of get_order_status — "

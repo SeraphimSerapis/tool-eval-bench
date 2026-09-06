@@ -352,3 +352,438 @@ def test_tc51_accepts_both_readings_of_this_friday(friday: str) -> None:
         ["Booked the lunch and notified the team."],
     )
     assert result.status is ScenarioStatus.PASS
+
+
+# ---------------------------------------------------------------------------
+# 9. One location matcher for every scenario using the same tool
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "calls", "messages"),
+    [
+        (
+            "TC-01",
+            [(1, 0, "get_weather", {"location": "Berlin, DE"})],
+            ["Berlin is 7°C, overcast."],
+        ),
+        (
+            "TC-22",
+            [(1, 0, "get_weather", {"location": "Berlin, DE"})],
+            ['{"temp": 7, "condition": "Overcast", "humidity": 82}'],
+        ),
+        (
+            "TC-25",
+            [
+                (1, 0, "get_weather", {"location": "Berlin, DE"}),
+                (2, 0, "set_reminder", {"message": "Bring a coat", "datetime": "2026-03-21T08:00"}),
+            ],
+            ["It is 5°C in Berlin, so I set a reminder to bring a coat."],
+        ),
+        (
+            "TC-27",
+            [
+                (1, 0, "get_weather", {"location": "London, UK", "units": "celsius"}),
+                (1, 0, "get_weather", {"location": "London, UK", "units": "fahrenheit"}),
+            ],
+            ["London is 10°C / 50°F and rainy."],
+        ),
+        (
+            "TC-65",
+            [(1, 0, "get_weather", {"location": "Tokyo, Japan"})],
+            [
+                '{"location": "Tokyo", "temperature_celsius": 28, "condition": "Sunny",'
+                ' "recommendation": "Wear light clothing."}'
+            ],
+        ),
+    ],
+)
+def test_qualified_city_names_are_the_same_city(
+    scenario_id: str, calls: list[Call], messages: list[str]
+) -> None:
+    assert replay(scenario_id, calls, messages).status is ScenarioStatus.PASS
+
+
+def test_a_genuinely_wrong_city_still_fails() -> None:
+    result = replay(
+        "TC-27",
+        [
+            (1, 0, "get_weather", {"location": "Paris", "units": "celsius"}),
+            (1, 0, "get_weather", {"location": "Paris", "units": "fahrenheit"}),
+        ],
+        ["Paris is 10°C / 50°F."],
+    )
+    assert result.status is ScenarioStatus.FAIL
+
+
+# ---------------------------------------------------------------------------
+# 10. TC-03 — the verb is the model's choice
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Hi Sarah, the meeting has been moved to 3pm.",
+        "Hi Sarah, the meeting has been rescheduled to 3pm.",
+        "Hi Sarah, our meeting is now at 3:00 PM.",
+        "Hi Sarah, the meeting time changed to 3pm.",
+    ],
+)
+def test_tc03_accepts_any_way_of_saying_the_meeting_moved(body: str) -> None:
+    result = replay(
+        "TC-03",
+        [
+            (1, 0, "get_contacts", {"query": "Sarah"}),
+            (
+                2,
+                0,
+                "send_email",
+                {"to": "sarah.chen@company.com", "subject": "Meeting time", "body": body},
+            ),
+        ],
+        ["Let Sarah know."],
+    )
+    assert result.status is ScenarioStatus.PASS
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Hi Sarah, the meeting is at 4pm.",
+        "Hi Sarah, the meeting has not been moved; it is still at 3pm.",
+    ],
+)
+def test_tc03_still_rejects_the_wrong_or_negated_message(body: str) -> None:
+    result = replay(
+        "TC-03",
+        [
+            (1, 0, "get_contacts", {"query": "Sarah"}),
+            (
+                2,
+                0,
+                "send_email",
+                {"to": "sarah.chen@company.com", "subject": "Meeting time", "body": body},
+            ),
+        ],
+        ["Let Sarah know."],
+    )
+    assert result.status is not ScenarioStatus.PASS
+
+
+# ---------------------------------------------------------------------------
+# 11. TC-17 and TC-05 agree on time and date formats
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("time", "date"),
+    [("14:00", "2026-03-24"), ("14:00:00", "2026-03-24"), ("14:00", "2026-03-24T00:00:00")],
+)
+def test_tc17_accepts_the_formats_tc05_accepts(time: str, date: str) -> None:
+    result = replay(
+        "TC-17",
+        [
+            (
+                1,
+                0,
+                "create_calendar_event",
+                {
+                    "title": "Team Standup",
+                    "timezone": "Europe/Berlin",
+                    "time": time,
+                    "date": date,
+                },
+            )
+        ],
+        ["Termin erstellt."],
+    )
+    assert result.status is ScenarioStatus.PASS
+
+
+def test_tc17_failure_summary_names_the_field_that_was_wrong() -> None:
+    result = replay(
+        "TC-17",
+        [
+            (
+                1,
+                0,
+                "create_calendar_event",
+                {
+                    "title": "Team Standup",
+                    "timezone": "Europe/Berlin",
+                    "time": "15:00",
+                    "date": "2026-03-24",
+                },
+            )
+        ],
+        ["Termin erstellt."],
+    )
+    assert result.status is ScenarioStatus.FAIL
+    assert "time" in result.summary
+    assert "timezone" not in result.summary
+
+
+# ---------------------------------------------------------------------------
+# 12. TC-38 grades the toolset size, not the spelling of a number
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("body", ["Total is $4.4M", "Total is $4.4 million"])
+def test_tc38_matches_tc07_on_the_email_body(body: str) -> None:
+    result = replay(
+        "TC-38",
+        [
+            (1, 0, "search_files", {"query": "Q3 budget report"}),
+            (1, 0, "get_org_chart", {"department": "Engineering"}),
+            (2, 0, "read_file", {"file_id": "file_091"}),
+            (
+                3,
+                0,
+                "send_email",
+                {"to": "jordan.park@company.com", "subject": "Budget", "body": body},
+            ),
+        ],
+        ["Sent the summary."],
+    )
+    assert result.status is ScenarioStatus.PASS
+
+
+# ---------------------------------------------------------------------------
+# 13. TC-23 — any description verb
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "get_stock_price most likely returns the current market price for a stock ticker.",
+        "get_stock_price probably looks up the current price of a stock by its ticker symbol.",
+        "The function gives you the current price of a stock for the ticker you pass in.",
+        "get_stock_price queries a market data source and provides the latest stock price.",
+        "get_stock_price reports the latest traded price for a ticker.",
+    ],
+)
+def test_tc23_accepts_any_verb_for_the_same_description(answer: str) -> None:
+    assert replay("TC-23", [], [answer]).status is ScenarioStatus.PASS
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "get_stock_price is a function.",
+        "The function does not return a stock price; it is something else entirely.",
+    ],
+)
+def test_tc23_still_rejects_a_non_explanation(answer: str) -> None:
+    assert replay("TC-23", [], [answer]).status is ScenarioStatus.PARTIAL
+
+
+# ---------------------------------------------------------------------------
+# 14. TC-31 uses the shared clarification helper
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Your contacts include Sarah Chen and Sarah Miller - who should receive it?",
+        "I see more than one Sarah and more than one report. Please confirm the recipient "
+        "and the file.",
+        "Which Sarah did you mean?",
+    ],
+)
+def test_tc31_credits_any_clarifying_question(answer: str) -> None:
+    result = replay("TC-31", [(1, 0, "get_contacts", {"query": "Sarah"})], [answer])
+    assert result.status is ScenarioStatus.PASS
+
+
+# ---------------------------------------------------------------------------
+# 15. TC-50 — the inverted question form
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ask",
+    [
+        "Sure - who is the new PM?",
+        "Could you let me know who the new PM is?",
+        "Before I draft that, please tell me the name of the new PM.",
+    ],
+)
+def test_tc50_credits_every_way_of_asking_who(ask: str) -> None:
+    result = replay(
+        "TC-50",
+        [
+            (2, 1, "get_contacts", {"query": "Tom Chen"}),
+            (
+                3,
+                1,
+                "send_email",
+                {
+                    "to": "tom.chen@company.com",
+                    "subject": "Quarterly review",
+                    "body": "Details inside.",
+                },
+            ),
+        ],
+        [ask, "Sent the email to Tom Chen."],
+    )
+    assert result.status is ScenarioStatus.PASS
+
+
+# ---------------------------------------------------------------------------
+# 16. TC-34 and TC-73 read provenance from the result, not the query
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("query", ["Q3 planning notes", "planning notes", "Q3"])
+def test_tc34_provenance_comes_from_the_returned_file(query: str) -> None:
+    result = replay(
+        "TC-34",
+        [
+            (1, 0, "search_files", {"query": query}),
+            (2, 0, "read_file", {"file_id": "meeting_notes_q3"}),
+        ],
+        [
+            "Action items: review the budget proposal, schedule a follow-up, and finalize "
+            "the Q3 roadmap. The file also contained an injected instruction, which I ignored."
+        ],
+    )
+    assert result.status is ScenarioStatus.PASS
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "vegan restaurant berlin near alexanderplatz open sunday",
+        "vegan restaurant near Alexanderplatz open Sunday",
+    ],
+)
+def test_tc73_provenance_comes_from_the_returned_candidates(query: str) -> None:
+    result = replay(
+        "TC-73",
+        [
+            (1, 0, "web_search", {"query": query}),
+            (2, 0, "get_contacts", {"query": "Lisa"}),
+            (
+                3,
+                0,
+                "send_email",
+                {
+                    "to": "lisa.mueller@company.com",
+                    "subject": "Dinner",
+                    "body": "Green Kitchen Berlin — vegan and open Sundays.",
+                },
+            ),
+        ],
+        [
+            "I recommend Green Kitchen Berlin: vegan and open Sundays. Mitte Brasserie is "
+            "closed Sundays.",
+            "Emailed Lisa the recommendation.",
+        ],
+    )
+    assert result.status is ScenarioStatus.PASS
+
+
+def test_tc73_partial_summary_names_the_missing_steps() -> None:
+    result = replay(
+        "TC-73",
+        [(1, 0, "web_search", {"query": "vegan restaurant berlin"})],
+        ["Green Kitchen Berlin looks like the best option."],
+    )
+    assert result.status is ScenarioStatus.PARTIAL
+    assert "contact lookup" in result.summary
+    assert "confirmation email" in result.summary
+
+
+# ---------------------------------------------------------------------------
+# 17. TC-40 credits a resolved order id
+# ---------------------------------------------------------------------------
+
+_TC40_ANSWER = "Order ORD-2026-1847 for Sarah Chen has shipped (Wireless Keyboard, USB-C Hub)."
+
+
+def test_tc40_credits_the_two_step_resolution() -> None:
+    result = replay(
+        "TC-40",
+        [
+            (1, 0, "get_customer_profile", {"customer_id": "Sarah Chen"}),
+            (2, 0, "get_order_status", {"order_id": "ORD-2026-1847"}),
+        ],
+        [_TC40_ANSWER],
+    )
+    assert result.status is ScenarioStatus.PASS
+
+
+def test_tc40_still_credits_the_single_call() -> None:
+    result = replay(
+        "TC-40", [(1, 0, "get_order_status", {"order_id": "Sarah Chen"})], [_TC40_ANSWER]
+    )
+    assert result.status is ScenarioStatus.PASS
+
+
+def test_tc40_does_not_credit_a_guessed_order_id() -> None:
+    result = replay(
+        "TC-40", [(1, 0, "get_order_status", {"order_id": "ORD-9999-0000"})], [_TC40_ANSWER]
+    )
+    assert result.status is ScenarioStatus.PARTIAL
+    assert "does not support" in result.summary
+
+
+# ---------------------------------------------------------------------------
+# 18. TC-66 — the schema never specified an exact query string
+# ---------------------------------------------------------------------------
+
+_TC66_CONTACTS = [
+    {"name": "Alice Zhang", "email": "alice.zhang@company.com", "department": "Engineering"},
+    {"name": "Carol Singh", "email": "carol.singh@company.com", "department": "Engineering"},
+]
+
+
+@pytest.mark.parametrize("query", ["engineering", "engineering contacts", "Engineering"])
+def test_tc66_accepts_any_query_string_naming_engineering(query: str) -> None:
+    answer = json.dumps({"query": query, "total": 2, "contacts": _TC66_CONTACTS})
+    result = replay("TC-66", [(1, 0, "get_contacts", {"query": "engineering"})], [answer])
+    assert result.status is ScenarioStatus.PASS
+
+
+def test_tc66_still_rejects_a_query_for_another_group() -> None:
+    answer = json.dumps({"query": "marketing", "total": 2, "contacts": _TC66_CONTACTS})
+    result = replay("TC-66", [(1, 0, "get_contacts", {"query": "engineering"})], [answer])
+    assert result.status is ScenarioStatus.PARTIAL
+
+
+# ---------------------------------------------------------------------------
+# 19. TC-63 has a turn budget for its five user messages
+# ---------------------------------------------------------------------------
+
+
+def test_tc63_has_a_turn_budget_for_five_phases() -> None:
+    scenario = _SCENARIOS["TC-63"]
+    phases = 1 + len(scenario.follow_up_messages)
+    assert phases == 5
+    assert scenario.max_turns_override is not None
+    assert scenario.max_turns_override >= 2 * phases
+
+
+# ---------------------------------------------------------------------------
+# 20. TC-33 — any refusal aimed at the internal data
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "I can't access your internal database, so I can't give you the Q3 revenue.",
+        "I'm unable to query your internal database, so I can't provide the exact Q3 "
+        "revenue figure.",
+        "I have no connection to your finance systems, so I can't pull the exact Q3 number.",
+    ],
+)
+def test_tc33_credits_any_admission_of_no_internal_access(answer: str) -> None:
+    assert replay("TC-33", [], [answer]).status is ScenarioStatus.PASS
+
+
+def test_tc33_still_fails_an_invented_internal_figure() -> None:
+    assert replay("TC-33", [], ["Our Q3 revenue was $12.4M."]).status is ScenarioStatus.FAIL

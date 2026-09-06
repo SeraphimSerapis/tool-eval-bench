@@ -23,21 +23,16 @@ from tool_eval_bench.evals.helpers import (
     normalize as _normalize,
 )
 from tool_eval_bench.evals.helpers import (
+    positive_argument_contains as _positive_argument_contains_shared,
+)
+from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
 )
 
 
 def _positive_argument_contains(value: Any, expected: str) -> bool:
     """Match a requested entity without accepting an explicit negation."""
-    text = _as_str(value).strip().lower()
-    target = expected.strip().lower()
-    if not text or not re.search(rf"(?<!\w){re.escape(target)}(?!\w)", text):
-        return False
-    return not re.search(
-        rf"\b(?:not|no|without|except|exclude|excluding)\s+(?:the\s+)?"
-        rf"{re.escape(target)}\b",
-        text,
-    )
+    return _positive_argument_contains_shared(value, expected)
 
 
 def _numeric_value(value: Any) -> float | None:
