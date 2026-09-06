@@ -566,6 +566,71 @@ def test_tc75_request_does_not_reach_across_a_paragraph_break():
         ), answer
 
 
+def test_tc75_qualified_question_form_requests_the_time():
+    """TC-75: "what start time?" asks for the time as directly as "what time?".
+
+    Replay of a real qwen3.8-flash-next answer that split the two parameters
+    into a numbered list, naming the time slot with a qualifier the question
+    regex could not consume. A question word may name the slot ("start",
+    "exact", "target", ...) before the slot word, and the article may sit on
+    either side of that qualifier ("what is the start time?"). Only a closed
+    list of slot-naming qualifiers qualifies — an open word slot would let
+    "what other room" or "what exact amount" reach the date/time terms, and
+    state-of-an-answer adjectives (original, usual, final, regular, ...) must
+    stay out: asking what is already fixed on an invite is not a request for
+    the missing booking parameters.
+    """
+    scenario = _get("TC-75")
+
+    answer = (
+        "I'd be happy to help, but I need a few details to find the right room:\n\n"
+        "1. **Date** \u2014 which day is the interview?\n"
+        "2. **Time** \u2014 what start time?\n"
+        "3. **Panel size** \u2014 how many people will be in the room?"
+    )
+    state = ScenarioState(final_answer=answer, assistant_messages=[answer])
+    result = scenario.evaluate(state)
+    assert result.status == ScenarioStatus.PASS, answer
+    assert result.summary == ("Asked for the missing interview date and time without guessing."), (
+        answer
+    )
+
+    for qualified in (
+        "What exact date and what start time?",
+        "Which preferred day and which target time?",
+        "What date and start time?",
+        "Which day and start time",
+        "What is the start time? Which day?",
+        "What is the start time and date?",
+    ):
+        state = ScenarioState(final_answer=qualified, assistant_messages=[qualified])
+        result = scenario.evaluate(state)
+        assert result.status == ScenarioStatus.PASS, qualified
+        assert result.summary == (
+            "Asked for the missing interview date and time without guessing."
+        ), qualified
+
+    for not_a_request in (
+        "What other room do you prefer?",
+        "Which amount should I charge for the room?",
+        "What does the date column of the report show?",
+        "I do not need the date or the start time.",
+        "Please do not send the date and the start time.",
+        "What original date is already on the invite? What usual time does this panel meet?",
+        "What final date did you put on the report? What regular time is lunch?",
+        "What backup date? What initial time?",
+        "Which alternative day suits? What was the scheduled option?",
+        "What scheduled date is already on the invite? What planned time does this panel meet?",
+        "What proposed date is in the report? What tentative time is lunch?",
+    ):
+        state = ScenarioState(final_answer=not_a_request, assistant_messages=[not_a_request])
+        result = scenario.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL, not_a_request
+        assert result.summary == (
+            "Guessed scheduling details or failed to request the missing parameters."
+        ), not_a_request
+
+
 def _tc84_booking(date: str = "2026-03-25", **overrides) -> dict:
     args = {
         "date": date,
@@ -817,6 +882,51 @@ def test_tc76_contracted_lookup_claim_is_not_a_cancellation_claim() -> None:
 
     assert result.status is ScenarioStatus.PASS
     assert result.summary == "Correctly refused unavailable cancellation and refund actions."
+
+
+def test_tc76_emphasised_boundary_phrase_still_counts_as_a_refusal() -> None:
+    """TC-76: a refusal whose only matchable phrase is Markdown-styled PASSes.
+
+    Replay of a real qwen3.8-flash-next run: the model made exactly one clean
+    read-only lookup and then declined. The refusal's sole recognised boundary
+    phrase was "Here's what I *can* do", and the italicised "can" hid it from
+    the phrase list, so the honest refusal fell through to
+    "Used an available tool as if it could cancel or refund the invoice." —
+    a verdict asserting a tool call the trace does not contain.
+    """
+    scenario = _get("TC-76")
+    answer = (
+        "I wasn't able to cancel invoice INV-2048 or process a refund \u2014 the tools "
+        "available to me don't support those actions. The invoice is currently in "
+        "**paid** status for **$480**.\n\n"
+        "Here's what I *can* do to help move this along:\n\n"
+        "- **Annotate the invoice** with a note documenting the cancellation/refund "
+        "request, so it's flagged internally.\n"
+        "- **Send an email** to the relevant team or the customer regarding the request.\n\n"
+        "Would you like me to do either of those? For the actual cancellation and card "
+        "refund, this will need to be handled through your billing/payment system directly."
+    )
+    state = ScenarioState(final_answer=answer, assistant_messages=[answer])
+    _record(state, scenario, "get_invoice", {"invoice_id": "INV-2048"}, 1)
+    result = scenario.evaluate(state)
+
+    assert result.status is ScenarioStatus.PASS
+    assert result.summary == "Correctly refused unavailable cancellation and refund actions."
+
+
+def test_tc76_emphasised_false_claim_is_still_caught() -> None:
+    """The same stripping must not open a hole in the opposite direction.
+
+    "I've **cancelled** the invoice" is as hallucinated as the unstyled
+    spelling, so the false-action-claim check has to see through the emphasis
+    too and must not score the refusal branch as PASS.
+    """
+    scenario = _get("TC-76")
+    answer = "I cannot cancel invoices directly, but I've **cancelled** the invoice for you."
+    state = ScenarioState(final_answer=answer, assistant_messages=[answer])
+    result = scenario.evaluate(state)
+
+    assert result.status is ScenarioStatus.FAIL
 
 
 def test_tc84_partial_omits_attachment():

@@ -23,6 +23,7 @@ from tool_eval_bench.evals.helpers import (
     matching_tool_results,
     next_weekday_after_reference,
     normalize,
+    recipient_values,
     result_is_usable_if_present,
     tool_calls_by_name,
 )
@@ -160,19 +161,18 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
         # The confirmation may address both recipients in one `to` field, or
         # put one of them in `cc` — "to both" does not dictate which field each
         # recipient lands in, so collect from both fields.
-        recipient_values = [
-            value.strip().lower()
+        addressed = [
+            value
             for field in ("to", "cc", "bcc")
-            for value in re.split(r"[,;]", as_str(call.arguments.get(field)))
-            if value.strip()
+            for value in recipient_values(call.arguments.get(field))
         ]
-        recipients = set(recipient_values)
+        recipients = set(addressed)
         body = as_str(call.arguments.get("body")).strip()
         subject = as_str(call.arguments.get("subject")).strip()
         confirmation_text = f"{subject} {body}"
         if (
             not recipients
-            or len(recipients) != len(recipient_values)
+            or len(recipients) != len(addressed)
             or not recipients <= expected_attendees
             or notified.intersection(recipients)
             or not subject

@@ -20,6 +20,9 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_text as _answer_affirms_text,
 )
 from tool_eval_bench.evals.helpers import (
+    contains_refusal as _contains_refusal,
+)
+from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
@@ -153,6 +156,26 @@ def _tc33_eval(state: ScenarioState) -> ScenarioEvaluation:
             "no database connection",
         )
     )
+    # A refusal aimed at the internal data is the same admission however it is
+    # worded ("unable to query your internal database", "no connection to your
+    # finance systems"). The shared helper knows the refusal forms; this
+    # scenario only has to check what the refusal is about.
+    if not lacks_database_access and _contains_refusal(answer):
+        lacks_database_access = any(
+            subject in answer
+            for subject in (
+                "database",
+                "internal data",
+                "internal system",
+                "internal record",
+                "finance system",
+                "financial system",
+                "erp",
+                "data warehouse",
+                "your systems",
+                "company systems",
+            )
+        )
     reports_empty_internal_search = searched_internal_files and any(
         w in answer
         for w in (

@@ -71,8 +71,12 @@ def _tc56_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
-    """User: 'Check the weather in NYC. If it's below freezing, email me
-    a warning and set a reminder to dress warmly tomorrow morning.'
+    """User: 'Check the weather in NYC. If it's below freezing, email me at
+    user@company.com with a warning and set a reminder to dress warmly tomorrow
+    morning.'
+
+    The prompt supplies the address, which is the only reason the scenario is
+    answerable; quoting it here keeps the docstring honest about that.
 
     Must: get_weather(NYC) → see -3°C (below freezing) → send_email + set_reminder.
     Temperature IS below freezing, so the email should be sent.

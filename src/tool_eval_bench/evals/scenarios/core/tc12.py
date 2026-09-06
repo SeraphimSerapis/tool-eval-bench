@@ -39,8 +39,12 @@ def _tc12_eval(state: ScenarioState) -> ScenarioEvaluation:
     if (
         len(state.tool_calls) == 0
         and _contains_refusal(answer)
+        # `contains_refusal` already establishes that the model declined. A
+        # second keyword gate only re-asked the same question in one author's
+        # vocabulary and rejected the most natural phrasings ("I don't have the
+        # ability to delete emails"), so the refusal only has to be about the
+        # request.
         and re.search(r"delete|remove|erase|email", answer, re.IGNORECASE)
-        and re.search(r"tool|support|capab|avail|cannot|can't|unable|won't", answer, re.I)
     ):
         return _pass("Refused cleanly because no delete-email tool exists.")
     return _fail("Did not refuse the unsupported email-deletion request correctly.")

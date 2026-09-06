@@ -14,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.domain.tools_large import LARGE_TOOLSET
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_number as _answer_affirms_number,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -143,10 +146,10 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
         "send_email",
         lambda c: (
             _normalize(_as_str(c.arguments.get("to"))) == "jordan.park@company.com"
-            and (
-                _includes_text(c.arguments.get("body"), "4.4m")
-                or _includes_text(c.arguments.get("body"), "$4.4m")
-            )
+            # TC-38 is TC-07 with 52 tools, so a score difference between them
+            # has to mean the toolset size mattered. Spelling the unit out
+            # ("$4.4 million") is not a toolset effect, so use TC-07's check.
+            and _answer_affirms_number(_as_str(c.arguments.get("body")), "4.4")
         ),
     ):
         steps += 1

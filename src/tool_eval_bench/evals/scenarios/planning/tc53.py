@@ -32,6 +32,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    recipient_values as _recipient_values,
+)
+from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -124,12 +127,7 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
             )
     notifications = [c for c in state.tool_calls if c.name == "send_email"]
     recipient_sets = [
-        {
-            value.strip().lower()
-            for value in re.split(r"[,;]", _as_str(notification.arguments.get("to")))
-            if value.strip()
-        }
-        for notification in notifications
+        set(_recipient_values(notification.arguments.get("to"))) for notification in notifications
     ]
     notified: set[str] = set()
     no_duplicate_recipients = True

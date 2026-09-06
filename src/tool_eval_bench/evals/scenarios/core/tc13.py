@@ -50,7 +50,12 @@ def _tc13_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         file_type = _normalize(_as_str(call.arguments.get("file_type"))) or "any"
         attempts = int(state.meta.get("search_attempts", 0)) + 1
         state.meta["search_attempts"] = attempts
-        if "johnson proposal" in query and attempts == 1:
+        # The scenario's premise is "the first search comes back empty".  Keying
+        # that on the model's wording made the premise a coin flip: "Johnson"
+        # or "proposal Johnson" returned the document immediately, and the
+        # evaluator then failed the model for not adapting to an empty result
+        # it never saw.  The first search is empty whatever the model asked.
+        if attempts == 1:
             return _noise({"results": []}, "search_files")
         if "johnson" in query:
             results = (

@@ -48,6 +48,17 @@ def _tc88_eval(state: ScenarioState) -> ScenarioEvaluation:
     planned_numbers = set(_TC88_NUMBER.findall(first_reasoning))
     if all(number in planned_numbers for number in numbers):
         return _pass("Preserved all three privately planned values across two user follow-ups.")
+    # PASS is only reachable when the provider surfaces a reasoning channel: the
+    # proof this scenario grades is the plan itself, and most OpenAI-compatible
+    # endpoints emit no ``reasoning_content`` at all. Say so, rather than
+    # reporting a stack's transport as something the model failed to do. The
+    # constraints themselves stay verifiable from the visible transcript, so a
+    # model on such a stack still earns the middle tier on its own merit.
+    if not any(reasoning.strip() for reasoning in state.assistant_reasoning):
+        return _partial(
+            "Returned three valid values. This endpoint exposed no reasoning channel, "
+            "so the planned-ahead check could not run and PASS was unreachable here."
+        )
     return _partial(
         "Returned three valid values, but the provider exposed no proof that all were planned first."
     )

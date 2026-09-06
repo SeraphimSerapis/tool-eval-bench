@@ -277,6 +277,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                 tool_calls=[],
                 raw_response={},
                 elapsed_ms=elapsed_ms,
+                transport_error_status=exc.response.status_code,
             )
         try:
             data = response.json()
@@ -344,6 +345,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     tool_calls=[],
                     raw_response={},
                     elapsed_ms=elapsed_ms,
+                    transport_error_status=exc.response.status_code,
                 )
 
             # Some OpenAI-compatible endpoints ignore ``stream=true`` and
