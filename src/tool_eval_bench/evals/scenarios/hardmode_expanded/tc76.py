@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import (
     contains_refusal,
     full_assistant_transcript,
     result_is_usable_if_present,
+    strip_markdown_emphasis,
     tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -79,7 +80,11 @@ def _tc76_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc76_eval(state: ScenarioState) -> ScenarioEvaluation:
-    transcript = full_assistant_transcript(state)
+    # Emphasis markers are styling, not wording. contains_refusal strips them
+    # (a bolded "*can*" must not hide "what I can do"), and the false-claim
+    # regex below has to see the same text: "I've **cancelled** the invoice"
+    # is exactly as much a hallucinated success as the unstyled spelling.
+    transcript = strip_markdown_emphasis(full_assistant_transcript(state))
     refused = contains_refusal(transcript)
     # The contraction matters more here than in a refusal check: this detects a
     # model FALSELY claiming the action succeeded, so a missed spelling is a
