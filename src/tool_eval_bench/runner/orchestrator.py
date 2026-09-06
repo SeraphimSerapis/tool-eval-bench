@@ -456,6 +456,40 @@ async def run_scenario(
             turn_ms = (time.perf_counter() - turn_start) * 1000
             turn_latencies.append(turn_ms)
 
+            # A rejected request produced no model output, so there is nothing
+            # to grade. Whether that is the model's fault depends on what the
+            # request contained: once the model has authored a tool call, the
+            # history carries arguments a strict server may refuse, and the
+            # existing soft-result behaviour records that as a model failure.
+            # Before then the request is entirely ours, so a 4xx means the
+            # endpoint would not accept a parameter this benchmark sent
+            # (tool_choice and response_format are the usual ones) and the
+            # scenario measures the serving stack rather than the model.
+            if result.transport_error_status is not None and not state.tool_calls:
+                elapsed = time.perf_counter() - t0
+                summary = (
+                    f"Endpoint rejected the request with HTTP "
+                    f"{result.transport_error_status} before the model produced anything: "
+                    f"{result.content}"
+                )
+                trace_lines.append(f"transport_error={result.transport_error_status}")
+                return ScenarioResult(
+                    scenario_id=scenario.id,
+                    status=ScenarioStatus.FAIL,
+                    points=0,
+                    summary=summary,
+                    raw_log=_format_trace(
+                        model, scenario, {"status": "fail", "summary": summary}, trace_lines
+                    ),
+                    duration_seconds=elapsed,
+                    ttft_ms=ttft_ms,
+                    turn_count=len(turn_latencies),
+                    turn_latencies_ms=turn_latencies,
+                    parallel_tool_turns=parallel_tool_turns,
+                    state_checkpoints=state_checkpoints,
+                    failure_kind=FailureKind.SERVER_ERROR,
+                )
+
             # Capture TTFT from the first streamed turn
             if turn == 1 and result.ttft_ms is not None:
                 ttft_ms = result.ttft_ms
@@ -650,6 +684,92 @@ async def run_scenario(
 # ---------------------------------------------------------------------------
 
 
+# A tool the probe below can force a call to. Deliberately trivial: the probe
+# asks whether the *endpoint* honours tool_choice, not whether the model can
+# choose well, so the request must be one no capable model would decline.
+_TOOL_CHOICE_PROBE_TOOLS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "probe_ping",
+            "description": "Acknowledge the probe. Call this with any value.",
+            "parameters": {
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+                "additionalProperties": False,
+            },
+        },
+    }
+]
+
+
+async def supports_tool_choice_required(
+    adapter: BackendAdapter,
+    *,
+    model: str,
+    base_url: str,
+    api_key: str | None,
+    timeout_seconds: float,
+    extra_params: dict[str, Any] | None = None,
+) -> bool:
+    """Return whether the endpoint actually enforces ``tool_choice="required"``.
+
+    Two stacks fail this in different ways and only one of them is visible after
+    the fact. An endpoint that rejects the parameter answers with a 4xx, which
+    the adapter surfaces. An endpoint that accepts the parameter and then drops
+    it is indistinguishable, once a scenario is running, from a model that chose
+    not to call a tool, and the scenario that depends on it would record the
+    model as having ignored an instruction it was never given. One forced call
+    against a trivial tool separates the two, so the cost is a single request
+    per run rather than a wrong verdict.
+    """
+    try:
+        result = await adapter.chat_completion(
+            model=model,
+            messages=[{"role": "user", "content": "Call probe_ping with any value."}],
+            tools=_TOOL_CHOICE_PROBE_TOOLS,
+            tool_choice="required",
+            temperature=0.0,
+            max_tokens=128,
+            timeout_seconds=timeout_seconds,
+            api_key=api_key,
+            base_url=base_url,
+            extra_params=extra_params,
+            stream=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - any failure means "cannot rely on it"
+        logger.warning("tool_choice=required probe failed (%s); treating as unsupported", exc)
+        return False
+    if result.transport_error_status is not None:
+        logger.warning(
+            "Endpoint rejected tool_choice=required with HTTP %d; treating as unsupported",
+            result.transport_error_status,
+        )
+        return False
+    return bool(result.tool_calls)
+
+
+def _unsupported_tool_choice_result(scenario: ScenarioDefinition) -> ScenarioResult:
+    """Build the excluded result for a scenario the endpoint cannot host."""
+    summary = (
+        "Endpoint does not enforce tool_choice='required', so this scenario "
+        "cannot distinguish a model that ignored the constraint from one that "
+        "never received it. Excluded from scoring."
+    )
+    return ScenarioResult(
+        scenario_id=scenario.id,
+        status=ScenarioStatus.FAIL,
+        points=0,
+        summary=summary,
+        raw_log=_format_trace(
+            "", scenario, {"status": "fail", "summary": summary}, ["assistant=not attempted"]
+        ),
+        expected_behavior=scenario.description,
+        failure_kind=FailureKind.SERVER_ERROR,
+    )
+
+
 async def run_all_scenarios(
     adapter: BackendAdapter,
     *,
@@ -680,28 +800,50 @@ async def run_all_scenarios(
     target_scenarios = scenarios
     total = len(target_scenarios)
 
+    # Scenarios that force a tool call only mean something on an endpoint that
+    # enforces the constraint. Probe once, and only when such a scenario was
+    # actually selected, so an ordinary run pays nothing.
+    forced_tool_choice = [s for s in target_scenarios if s.tool_choice_override == "required"]
+    unsupported_ids: set[str] = set()
+    if forced_tool_choice and not await supports_tool_choice_required(
+        adapter,
+        model=model,
+        base_url=base_url,
+        api_key=api_key,
+        timeout_seconds=timeout_seconds,
+        extra_params=extra_params,
+    ):
+        unsupported_ids = {s.id for s in forced_tool_choice}
+        logger.warning(
+            "Excluding %s from scoring: the endpoint does not enforce tool_choice='required'.",
+            ", ".join(sorted(unsupported_ids)),
+        )
+
     if concurrency <= 1:
         # Sequential path — original behavior, preserves ordering guarantees
         results: list[ScenarioResult] = []
         for idx, scenario in enumerate(target_scenarios):
             if on_scenario_start:
                 await on_scenario_start(scenario, idx, total)
-            result = await run_scenario(
-                adapter,
-                model=model,
-                base_url=base_url,
-                api_key=api_key,
-                scenario=scenario,
-                max_turns=max_turns,
-                timeout_seconds=timeout_seconds,
-                temperature=temperature,
-                seed=seed,
-                reference_date=reference_date,
-                reference_day=reference_day,
-                error_rate=error_rate,
-                extra_params=extra_params,
-                context_pressure_messages=context_pressure_messages,
-            )
+            if scenario.id in unsupported_ids:
+                result = _unsupported_tool_choice_result(scenario)
+            else:
+                result = await run_scenario(
+                    adapter,
+                    model=model,
+                    base_url=base_url,
+                    api_key=api_key,
+                    scenario=scenario,
+                    max_turns=max_turns,
+                    timeout_seconds=timeout_seconds,
+                    temperature=temperature,
+                    seed=seed,
+                    reference_date=reference_date,
+                    reference_day=reference_day,
+                    error_rate=error_rate,
+                    extra_params=extra_params,
+                    context_pressure_messages=context_pressure_messages,
+                )
             results.append(result)
             if on_scenario_result:
                 await on_scenario_result(scenario, result, idx, total)
@@ -732,22 +874,25 @@ async def run_all_scenarios(
         async with sem:
             if on_scenario_start:
                 await on_scenario_start(scenario, idx, total)
-            result = await run_scenario(
-                adapter,
-                model=model,
-                base_url=base_url,
-                api_key=api_key,
-                scenario=scenario,
-                max_turns=max_turns,
-                timeout_seconds=timeout_seconds,
-                temperature=temperature,
-                seed=seed,
-                reference_date=reference_date,
-                reference_day=reference_day,
-                error_rate=error_rate,
-                extra_params=extra_params,
-                context_pressure_messages=context_pressure_messages,
-            )
+            if scenario.id in unsupported_ids:
+                result = _unsupported_tool_choice_result(scenario)
+            else:
+                result = await run_scenario(
+                    adapter,
+                    model=model,
+                    base_url=base_url,
+                    api_key=api_key,
+                    scenario=scenario,
+                    max_turns=max_turns,
+                    timeout_seconds=timeout_seconds,
+                    temperature=temperature,
+                    seed=seed,
+                    reference_date=reference_date,
+                    reference_day=reference_day,
+                    error_rate=error_rate,
+                    extra_params=extra_params,
+                    context_pressure_messages=context_pressure_messages,
+                )
             ordered_results[idx] = result
             if on_scenario_result:
                 async with progress_lock:
