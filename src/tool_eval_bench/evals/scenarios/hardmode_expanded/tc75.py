@@ -76,13 +76,15 @@ _TC75_QUOTES = "'\"\u201c\u2018\u201d\u2019"
 
 # A question word may name the slot it wants before the slot word itself:
 # "what start time?" asks for the start time as directly as "what time?".
-# Only closed lists of timing qualifiers qualify — any open `\w+` would let
-# "what other room" or "what exact amount" reach the date/time terms, so the
-# nouns, adjectives and discourse words in the negative tests below must stay
-# outside this list.
+# The list stays closed and holds only qualifiers that name the interview's
+# own slot. State-of-an-answer adjectives (original, final, backup, ... ) are
+# deliberately absent: "what original date is already on the invite?" asks
+# what is already fixed, not for the booking parameter, and must not read as
+# a clarification request. An open `\w+` would likewise let "what other room"
+# or "what exact amount" reach the date/time terms.
 _TC75_QUALIFIER = (
     r"(?:start|end|exact|target|proposed|preferred|desired|planned|"
-    r"scheduled|tentative|initial|final|backup|alternative|original|usual|regular)"
+    r"scheduled|tentative)"
 )
 
 
@@ -220,16 +222,17 @@ def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
     if re.search(r"\bwhen\s+(?:is|are|should|would|could|can|do|does|will)\b", low):
         return True
     if re.search(
-        rf"\b(?:what|which)(?:\s+(?:is|are|should|would|could|can))?"
-        rf"(?:\s+{_TC75_QUALIFIER})?\s+"
-        rf"(?:the\s+)?(?:interview\s+)?{terms}\b",
+        rf"\b(?:what|which)(?:\s+(?:is|are|should|would|could|can))?\s+"
+        rf"(?:the\s+)?(?:{_TC75_QUALIFIER}\s+)?"
+        rf"(?:interview\s+)?{terms}\b",
         low,
     ):
         return True
     if re.search(
-        rf"\b(?:what|which)(?:\s+(?:is|are|should|would|could|can))?"
-        rf"(?:\s+{_TC75_QUALIFIER})?\s+"
-        rf"(?:the\s+)?(?:date|day|time)\s+(?:and|or)\s+(?:{_TC75_QUALIFIER}\s+)?{terms}\b",
+        rf"\b(?:what|which)(?:\s+(?:is|are|should|would|could|can))?\s+"
+        rf"(?:the\s+)?(?:{_TC75_QUALIFIER}\s+)?"
+        rf"(?:date|day|time)\s+(?:and|or)\s+"
+        rf"(?:the\s+)?(?:{_TC75_QUALIFIER}\s+)?{terms}\b",
         low,
     ):
         return True

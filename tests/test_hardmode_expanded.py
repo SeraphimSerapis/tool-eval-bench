@@ -572,10 +572,13 @@ def test_tc75_qualified_question_form_requests_the_time():
     Replay of a real qwen3.8-flash-next answer that split the two parameters
     into a numbered list, naming the time slot with a qualifier the question
     regex could not consume. A question word may name the slot ("start",
-    "exact", "target", ...) before the slot word, but only from the closed
-    qualifier list — an open word slot would let "what other room" or "what
-    exact amount" reach the date/time terms, and the coordinated-form guard
-    still requires both terms to be requested, never a statement of a value.
+    "exact", "target", ...) before the slot word, and the article may sit on
+    either side of that qualifier ("what is the start time?"). Only a closed
+    list of slot-naming qualifiers qualifies — an open word slot would let
+    "what other room" or "what exact amount" reach the date/time terms, and
+    state-of-an-answer adjectives (original, usual, final, regular, ...) must
+    stay out: asking what is already fixed on an invite is not a request for
+    the missing booking parameters.
     """
     scenario = _get("TC-75")
 
@@ -597,10 +600,15 @@ def test_tc75_qualified_question_form_requests_the_time():
         "Which preferred day and which target time?",
         "What date and start time?",
         "Which day and start time",
+        "What is the start time? Which day?",
+        "What is the start time and date?",
     ):
         state = ScenarioState(final_answer=qualified, assistant_messages=[qualified])
         result = scenario.evaluate(state)
         assert result.status == ScenarioStatus.PASS, qualified
+        assert result.summary == (
+            "Asked for the missing interview date and time without guessing."
+        ), qualified
 
     for not_a_request in (
         "What other room do you prefer?",
@@ -608,6 +616,10 @@ def test_tc75_qualified_question_form_requests_the_time():
         "What does the date column of the report show?",
         "I do not need the date or the start time.",
         "Please do not send the date and the start time.",
+        "What original date is already on the invite? What usual time does this panel meet?",
+        "What final date did you put on the report? What regular time is lunch?",
+        "What backup date? What initial time?",
+        "Which alternative day suits? What was the scheduled option?",
     ):
         state = ScenarioState(final_answer=not_a_request, assistant_messages=[not_a_request])
         result = scenario.evaluate(state)
