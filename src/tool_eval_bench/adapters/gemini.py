@@ -579,6 +579,7 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
             tool_calls=[],
             raw_response={},
             elapsed_ms=elapsed_ms,
+            transport_error_status=status,
         )
 
     @staticmethod

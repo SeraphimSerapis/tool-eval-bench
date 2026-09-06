@@ -59,6 +59,12 @@ class ChatCompletionResult:
     message_extra_content: dict[str, Any] | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # HTTP status when the server rejected the request outright and the adapter
+    # degraded to a soft result rather than raising. The turn produced no model
+    # output at all, so a caller must not grade ``content`` as an answer. The
+    # runner decides whether the rejected request was the model's fault, which
+    # depends on whether the model had authored anything in the history yet.
+    transport_error_status: int | None = None
 
 
 class BackendAdapter(ABC):
