@@ -76,16 +76,12 @@ _TC75_QUOTES = "'\"\u201c\u2018\u201d\u2019"
 
 # A question word may name the slot it wants before the slot word itself:
 # "what start time?" asks for the start time as directly as "what time?".
-# The list stays closed and holds only qualifiers that name the interview's
-# own slot. State-of-an-answer adjectives (original, final, backup, ... ) are
-# deliberately absent: "what original date is already on the invite?" asks
-# what is already fixed, not for the booking parameter, and must not read as
-# a clarification request. An open `\w+` would likewise let "what other room"
-# or "what exact amount" reach the date/time terms.
-_TC75_QUALIFIER = (
-    r"(?:start|end|exact|target|proposed|preferred|desired|planned|"
-    r"scheduled|tentative)"
-)
+# The list stays closed and holds only qualifiers that unambiguously name the
+# requested slot. State adjectives such as "scheduled" or "original" can
+# describe an existing value and must not read as a clarification request.
+# An open `\w+` would likewise let "what other room" or "what exact amount"
+# reach the date/time terms.
+_TC75_QUALIFIER = r"(?:start|end|exact|target|preferred|desired)"
 
 
 _TC75_REQUEST_MARKER = (

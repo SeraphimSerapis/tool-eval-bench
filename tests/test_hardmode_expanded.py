@@ -620,6 +620,8 @@ def test_tc75_qualified_question_form_requests_the_time():
         "What final date did you put on the report? What regular time is lunch?",
         "What backup date? What initial time?",
         "Which alternative day suits? What was the scheduled option?",
+        "What scheduled date is already on the invite? What planned time does this panel meet?",
+        "What proposed date is in the report? What tentative time is lunch?",
     ):
         state = ScenarioState(final_answer=not_a_request, assistant_messages=[not_a_request])
         result = scenario.evaluate(state)
