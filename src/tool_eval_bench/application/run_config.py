@@ -29,6 +29,7 @@ COMPARISON_METADATA_KEYS = (
     "engine_version",
     "quantization",
     "gpu_count",
+    "slot_count",
     "spec_decoding",
 )
 

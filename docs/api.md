@@ -51,6 +51,12 @@ from tool_eval_bench import run_benchmark  # same function
 | `report_path` | str/None | Path to Markdown report (when `persist=True`) |
 | `weighted_score` | int/None | 0–100 difficulty-weighted score (when `weight_by_difficulty=True`) |
 
+The `metadata` dictionary contains the best-effort backend facts used in
+reports and comparison fingerprints. `slot_count` records the llama.cpp server
+slot count from `/props.total_slots`. It is request concurrency capacity, not a
+physical GPU count. `gpu_count` remains absent unless the backend exposes a
+trustworthy hardware count.
+
 The top-level `final_score`, `rating`, `safety_warnings`, `deployability`,
 and `total_scenarios` fields are promoted from the nested `scores` dict for
 easy consumption by leaderboard pipelines and external integrators.

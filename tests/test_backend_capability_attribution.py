@@ -171,6 +171,38 @@ async def test_rejection_after_the_model_authored_a_tool_call_stays_a_model_fail
 
 
 @pytest.mark.asyncio
+async def test_sampler_initialization_rejection_after_tool_call_is_infrastructure() -> None:
+    """A backend sampler failure is not caused by valid tool-call history."""
+    adapter = ScriptedAdapter(
+        [
+            ChatCompletionResult(content="", tool_calls=[_tool_call("anything")]),
+            ChatCompletionResult(
+                content=(
+                    "[server error 400] Failed to initialize samplers: failed to parse grammar"
+                ),
+                transport_error_status=400,
+                transport_error_is_infrastructure=True,
+            ),
+        ]
+    )
+    seen: list[str] = []
+    scenario = _trivial_scenario()
+
+    def evaluate(state: ScenarioState) -> ScenarioEvaluation:
+        seen.append(state.final_answer)
+        return ScenarioEvaluation(ScenarioStatus.PARTIAL, 1, "graded server output")
+
+    scenario.evaluate = evaluate
+
+    result = await _run(adapter, scenario)
+
+    assert seen == []
+    assert result.failure_kind == FailureKind.SERVER_ERROR
+    assert result.is_infrastructure_failure
+    assert "serving stack failed before inference" in result.summary
+
+
+@pytest.mark.asyncio
 async def test_infrastructure_rejection_drops_out_of_the_score() -> None:
     """An excluded scenario leaves the denominator, it does not score zero."""
     good = _trivial_scenario("TC-GOOD")

@@ -460,16 +460,24 @@ async def run_scenario(
             # to grade. Whether that is the model's fault depends on what the
             # request contained: once the model has authored a tool call, the
             # history carries arguments a strict server may refuse, and the
-            # existing soft-result behaviour records that as a model failure.
+            # existing soft-result behaviour records that as a model failure
+            # unless the adapter identifies a backend-internal rejection.
             # Before then the request is entirely ours, so a 4xx means the
             # endpoint would not accept a parameter this benchmark sent
             # (tool_choice and response_format are the usual ones) and the
             # scenario measures the serving stack rather than the model.
-            if result.transport_error_status is not None and not state.tool_calls:
+            if result.transport_error_status is not None and (
+                not state.tool_calls or result.transport_error_is_infrastructure
+            ):
                 elapsed = time.perf_counter() - t0
+                rejection_stage = (
+                    "because the serving stack failed before inference"
+                    if result.transport_error_is_infrastructure
+                    else "before the model produced anything"
+                )
                 summary = (
                     f"Endpoint rejected the request with HTTP "
-                    f"{result.transport_error_status} before the model produced anything: "
+                    f"{result.transport_error_status} {rejection_stage}: "
                     f"{result.content}"
                 )
                 trace_lines.append(f"transport_error={result.transport_error_status}")

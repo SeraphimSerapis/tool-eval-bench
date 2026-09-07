@@ -67,12 +67,14 @@ class TestRunContext:
             engine_version="0.8.5",
             max_model_len=65536,
             quantization="AWQ",
+            slot_count=3,
         )
         d = ctx.to_dict()
         assert d["engine_name"] == "vLLM"
         assert d["engine_version"] == "0.8.5"
         assert d["max_model_len"] == 65536
         assert d["quantization"] == "AWQ"
+        assert d["slot_count"] == 3
 
     def test_to_dict_is_json_serializable(self):
         from tool_eval_bench.domain.models import RunContext
@@ -92,6 +94,43 @@ class TestRunContext:
         serialized = json.dumps(ctx.to_dict())
         parsed = json.loads(serialized)
         assert parsed["extra_params"] == {"temperature": 0.6, "top_p": 0.9}
+
+    def test_new_slot_count_field_preserves_positional_spec_decoding(self):
+        from tool_eval_bench.domain.models import RunContext
+
+        ctx = RunContext(
+            "1.4.0",
+            "abc123",
+            "host",
+            "Linux",
+            "3.12",
+            "model",
+            "llamacpp",
+            "http://localhost:8080",
+            0.0,
+            8,
+            120.0,
+            None,
+            "all",
+            1,
+            1,
+            0.0,
+            True,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "llama.cpp",
+            "b10820",
+            None,
+            None,
+            None,
+            "mtp",
+        )
+
+        assert ctx.spec_decoding == "mtp"
+        assert ctx.slot_count is None
 
     def test_defaults_match_cli_defaults(self):
         """RunContext defaults should match CLI argparse defaults."""
@@ -268,6 +307,15 @@ class TestRenderRunContext:
         assert "65,536" in md
         assert "AWQ" in md
 
+    def test_server_slots_are_not_rendered_as_gpu_count(self):
+        from tool_eval_bench.storage.reports import _render_run_context
+
+        ctx = self._make_context(engine_name="llama.cpp", slot_count=3)
+        md = "\n".join(_render_run_context(ctx))
+
+        assert "| Server Slots | 3 |" in md
+        assert "GPU Count" not in md
+
     def test_environment_section_without_engine(self):
         from tool_eval_bench.storage.reports import _render_run_context
 
@@ -404,6 +452,13 @@ class TestHistoryContextExtraction:
         assert "AWQ" in text
         assert "Qwen/Qwen3.6-27B-Instruct" in text
         assert "inference-01" in text
+
+    def test_extract_context_panel_shows_server_slots(self):
+        from tool_eval_bench.cli.history import _extract_context_panel
+
+        run = {"metadata": {"engine_name": "llama.cpp", "slot_count": 3}, "config": {}}
+
+        assert "  [dim]Server slots:[/] 3" in _extract_context_panel(run)
 
     def test_extract_context_panel_old_run(self):
         """Old runs should return empty list gracefully."""

@@ -244,7 +244,7 @@ async def _probe_llamacpp(base_url: str, *, session: _ProbeSession | None = None
             elif "build_number" in body:
                 result["engine_version"] = f"b{body['build_number']}"
             if "total_slots" in body:
-                result["gpu_count"] = body.get("total_slots")
+                result["slot_count"] = body.get("total_slots")
             return result
     return {}
 
@@ -549,6 +549,7 @@ async def collect_run_context(
         max_model_len=engine_info.get("max_model_len"),
         quantization=engine_info.get("quantization"),
         gpu_count=engine_info.get("gpu_count"),
+        slot_count=engine_info.get("slot_count"),
         spec_decoding=engine_info.get("spec_decoding"),
     )
 

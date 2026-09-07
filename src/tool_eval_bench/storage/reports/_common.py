@@ -178,6 +178,7 @@ def _render_run_context(ctx: RunContext) -> list[str]:
             ctx.max_model_len,
             ctx.quantization,
             ctx.gpu_count,
+            ctx.slot_count,
             ctx.spec_decoding,
         ]
     )
@@ -199,6 +200,8 @@ def _render_run_context(ctx: RunContext) -> list[str]:
             md.append(f"| Quantization | {ctx.quantization} |")
         if ctx.gpu_count:
             md.append(f"| GPU Count | {ctx.gpu_count} |")
+        if ctx.slot_count:
+            md.append(f"| Server Slots | {ctx.slot_count} |")
         if ctx.spec_decoding:
             md.append(f"| Spec Decoding | {ctx.spec_decoding} |")
         md.extend(

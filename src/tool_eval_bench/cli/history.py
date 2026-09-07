@@ -91,6 +91,10 @@ def _extract_context_panel(run: dict) -> list[str]:
     if quant:
         lines.append(f"  [dim]Quantization:[/] {quant}")
 
+    slot_count = metadata.get("slot_count")
+    if slot_count:
+        lines.append(f"  [dim]Server slots:[/] {slot_count}")
+
     model_root = metadata.get("server_model_root")
     model_api = metadata.get("model") or config.get("model")
     if model_root and model_root != model_api:
