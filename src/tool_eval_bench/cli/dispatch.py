@@ -354,7 +354,7 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
     )
 
     if not args.perf_only:
-        return throughput_samples, False
+        return [sample for sample in throughput_samples if not sample.error], False
 
     from tool_eval_bench.utils.ids import build_run_id
 
@@ -374,18 +374,26 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
         throughput_samples,
         run_context=target.run_context,
     )
+    failed_count = sum(bool(sample.error) for sample in throughput_samples)
+    successful_count = len(throughput_samples) - failed_count
+    scores = {"samples": len(throughput_samples)}
+    if failed_count:
+        scores.update({"successful": successful_count, "failed": failed_count})
     _persist_plugin_run(
         {
             "run_id": run_id,
             "run_type": "perf",
-            "status": "completed",
+            "status": "failed" if failed_count else "completed",
             "config": run_config,
-            "scores": {"samples": len(throughput_samples)},
+            "scores": scores,
             "metadata": _metadata_for_storage(target.run_context),
             "report_path": str(report_path),
         }
     )
     console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
+    if failed_count:
+        console.print(f"[bold red]Throughput benchmark failed in {failed_count} cell(s).[/]")
+        sys.exit(1)
     return throughput_samples, True
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from rich.console import Console
@@ -261,11 +262,12 @@ def test_dispatch_main_skip_and_perf_only_routes(
     dispatch.main()
     assert context_calls[-1]["label"] == "startup A"
 
+    successful_runs: list[dict] = []
     monkeypatch.setattr(dispatch, "_run_llama_benchy", lambda *a, **k: [_sample()])
     monkeypatch.setattr(
         reports.MarkdownReporter, "write_throughput_report", lambda *a, **k: tmp_path / "p.md"
     )
-    monkeypatch.setattr(dispatch, "_persist_plugin_run", lambda value: None)
+    monkeypatch.setattr(dispatch, "_persist_plugin_run", successful_runs.append)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -282,6 +284,63 @@ def test_dispatch_main_skip_and_perf_only_routes(
         ],
     )
     dispatch.main()
+    assert successful_runs[-1]["status"] == "completed"
+    assert successful_runs[-1]["scores"] == {"samples": 1}
+
+    perf_samples = [_sample(), _sample(error="backend unavailable")]
+    written_samples: list = []
+    persisted_runs: list[dict] = []
+    monkeypatch.setattr(dispatch, "_run_llama_benchy", lambda *a, **k: perf_samples)
+    monkeypatch.setattr(
+        reports.MarkdownReporter,
+        "write_throughput_report",
+        lambda self, run_id, model, samples, **kwargs: (
+            written_samples.extend(samples) or tmp_path / "p.md"
+        ),
+    )
+    monkeypatch.setattr(dispatch, "_persist_plugin_run", persisted_runs.append)
+    with pytest.raises(SystemExit) as exc:
+        dispatch.main()
+
+    assert exc.value.code == 1
+    assert written_samples == perf_samples
+    assert persisted_runs[-1]["status"] == "failed"
+    assert persisted_runs[-1]["scores"] == {"samples": 2, "successful": 1, "failed": 1}
+
+
+def test_regular_perf_keeps_only_successful_samples(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Failed cells must not change the existing combined-run input contract."""
+    from tool_eval_bench.cli import dispatch
+
+    good = _sample()
+    failed = _sample(error="backend unavailable")
+    monkeypatch.setattr(dispatch, "_run_llama_benchy", lambda *a, **k: [good, failed])
+    target = SimpleNamespace(
+        args=SimpleNamespace(
+            perf=True,
+            perf_only=False,
+            benchy_args=None,
+            pp=2048,
+            tg=128,
+            depth="0",
+            concurrency="1",
+            benchy_runs=1,
+            benchy_latency_mode="generation",
+            no_warmup=True,
+            tokenizer=None,
+        ),
+        console=Console(),
+        model="model",
+        display_name="Model",
+        base_url="http://test/v1",
+        api_key=None,
+        backend="llamacpp",
+    )
+
+    samples, finished = dispatch._run_throughput_mode(target)
+
+    assert samples == [good]
+    assert finished is False
 
 
 @pytest.mark.parametrize(

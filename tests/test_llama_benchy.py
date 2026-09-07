@@ -808,6 +808,75 @@ class TestRunLlamaBenchy:
         with pytest.raises(RuntimeError, match="no usable throughput metrics"):
             await run_llama_benchy("http://localhost:8888/v1", "test-model")
 
+    async def test_partial_null_metrics_preserve_request_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One successful cell must not hide a failed cell in the same matrix."""
+        from tool_eval_bench.runner.llama_benchy import run_llama_benchy
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+        output_file_ref = _capture_output_file(monkeypatch)
+        failed_entry = {
+            "concurrency": 2,
+            "context_size": 161792,
+            "prompt_size": 2048,
+            "response_size": 512,
+            "pp_throughput": None,
+            "tg_throughput": None,
+            "pp_req_throughput": None,
+            "tg_req_throughput": None,
+            "e2e_ttft": None,
+            "est_ppt": None,
+        }
+        unstarted_entry = {**failed_entry, "concurrency": 3}
+        progress_events = [
+            {
+                "type": "request_start",
+                "request_id": 7,
+                "prompt_size": 2048,
+                "response_size": 512,
+                "context_size": 161792,
+                "concurrency": 2,
+                "run_index": 0,
+            },
+            {
+                "type": "request_end",
+                "request_id": 7,
+                "total_tokens": 0,
+                "prompt_tokens": 0,
+                "decode_seconds": 0.0,
+                "error": "Cannot connect to host after backend exited",
+            },
+            {"type": "bench_complete", "status": "ok"},
+        ]
+
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(
+                stdout_lines=[f"{json.dumps(event)}\n" for event in progress_events],
+                output_file=output_file_ref[0],
+                write_json={
+                    "benchmarks": [SAMPLE_BENCHMARK_ENTRY, failed_entry, unstarted_entry],
+                },
+            )
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
+            mock_create,
+        )
+
+        result = await run_llama_benchy("http://localhost:8888/v1", "test-model")
+
+        assert result.samples[0].error is None
+        assert result.samples[1].error == (
+            "pp2048 tg512 @ d161792 c2: Cannot connect to host after backend exited"
+        )
+        assert result.samples[2].error == (
+            "pp2048 tg512 @ d161792 c3: no usable throughput metrics"
+        )
+
     async def test_on_output_receives_stderr_lines(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """on_output callback should receive every stderr line."""
         from tool_eval_bench.runner.llama_benchy import run_llama_benchy
