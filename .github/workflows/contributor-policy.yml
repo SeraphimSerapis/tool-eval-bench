@@ -21,6 +21,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Fetch pull-request head
+        # refs/pull/N/head survives branch deletion, so the head SHA stays
+        # fetchable even for runs that start after the PR was merged.
+        run: git fetch --no-tags --no-recurse-submodules origin "+refs/pull/${{ github.event.pull_request.number }}/head"
+
       - name: Check contribution requirements
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

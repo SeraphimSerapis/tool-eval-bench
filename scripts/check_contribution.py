@@ -135,20 +135,28 @@ def evaluate_policy(
 def _git_files(root: Path, base_sha: str, head_sha: str, *, diff_filter: str) -> set[str]:
     # Git receives separate arguments and never invokes a shell. The commit IDs
     # and paths may come from the PR event, but they cannot become commands.
-    result = subprocess.run(  # noqa: S603
-        [
-            "git",
-            "diff",
-            "--name-only",
-            "-z",
-            f"--diff-filter={diff_filter}",
-            f"{base_sha}...{head_sha}",
-            "--",
-        ],
-        cwd=root,
-        check=True,
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            [
+                "git",
+                "diff",
+                "--name-only",
+                "-z",
+                f"--diff-filter={diff_filter}",
+                f"{base_sha}...{head_sha}",
+                "--",
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or b"").decode("utf-8", "replace").strip()
+        raise SystemExit(
+            f"Cannot diff {base_sha}...{head_sha}: {detail or 'git diff failed'}. "
+            "Fetch the pull-request commits first "
+            "(git fetch origin '+refs/pull/<number>/head') and rerun."
+        ) from exc
     return {path.decode("utf-8") for path in result.stdout.split(b"\0") if path}
 
 
@@ -195,6 +203,9 @@ def main(argv: list[str] | None = None) -> int:
 
     event = json.loads(args.event_path.read_text(encoding="utf-8"))
     pull_request = _pull_request(event)
+    if pull_request.get("state", "open") != "open":
+        print("Pull request is closed; contributor policy check skipped.")
+        return 0
     base_sha = args.base_sha or _sha(pull_request, "base")
     head_sha = args.head_sha or _sha(pull_request, "head")
     root = args.root.resolve()
