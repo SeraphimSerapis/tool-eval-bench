@@ -238,8 +238,12 @@ def test_llama_benchy_cli_success_and_unavailable(monkeypatch: pytest.MonkeyPatc
         runs=1,
     )
 
-    assert result == [ok]
-    assert "llama-benchy 1.2.3" in console.export_text()
+    assert result == [ok, failed]
+    output = console.export_text()
+    assert "llama-benchy 1.2.3" in output
+    assert "Incomplete" in output
+    assert "\u2713 Complete" not in output
+    assert "failed" in output
 
 
 def test_spec_bench_cli_renders_metrics_and_persists(

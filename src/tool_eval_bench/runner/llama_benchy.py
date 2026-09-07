@@ -340,6 +340,32 @@ def _stat_mean(stat: dict[str, Any]) -> float:
     return 0.0
 
 
+def _sample_cell_key(sample: ThroughputSample) -> tuple[int, int, int, int]:
+    """Return the matrix coordinates shared by results and progress events."""
+    return (sample.pp_tokens, sample.tg_tokens, sample.depth, sample.concurrency)
+
+
+def _progress_cell_key(event: dict[str, Any]) -> tuple[int, int, int, int]:
+    """Return one progress event's matrix coordinates."""
+    return (
+        int(event.get("prompt_size", 0)),
+        int(event.get("response_size", 0)),
+        int(event.get("context_size", 0)),
+        int(event.get("concurrency", 1)),
+    )
+
+
+def _invalid_sample_error(sample: ThroughputSample, errors: list[str]) -> str | None:
+    """Describe an all-zero cell, using llama-benchy's request error when present."""
+    if any(value > 0 for value in (sample.pp_tps, sample.tg_tps, sample.ttft_ms, sample.total_ms)):
+        return None
+    detail = "; ".join(dict.fromkeys(errors)) or "no usable throughput metrics"
+    return (
+        f"pp{sample.label_pp} tg{sample.tg_tokens} @ d{sample.label_depth} "
+        f"c{sample.concurrency}: {detail}"
+    )
+
+
 def parse_json_output(data: dict[str, Any]) -> LlamaBenchyResult:
     """Parse a complete llama-benchy JSON output into a LlamaBenchyResult."""
     result = LlamaBenchyResult(
@@ -462,6 +488,8 @@ async def run_llama_benchy(
         # stdout and regular output to stderr.  Read both concurrently to avoid
         # pipe-buffer deadlock.
         output_lines: list[str] = []
+        request_cells: dict[int, tuple[int, int, int, int]] = {}
+        cell_errors: dict[tuple[int, int, int, int], list[str]] = {}
         # Known noisy lines from transformers/HF Hub we suppress from display
         _SUPPRESS = (
             "PyTorch was not found",
@@ -493,6 +521,15 @@ async def run_llama_benchy(
                     if line:
                         output_lines.append(line)
                     continue
+                event_type = event.get("type")
+                request_id = event.get("request_id")
+                if event_type == "request_start" and request_id is not None:
+                    request_cells[int(request_id)] = _progress_cell_key(event)
+                elif event_type == "request_end" and request_id is not None:
+                    cell = request_cells.pop(int(request_id), None)
+                    error = event.get("error")
+                    if cell is not None and isinstance(error, str) and error:
+                        cell_errors.setdefault(cell, []).append(error)
                 if on_progress:
                     on_progress(event)
 
@@ -567,6 +604,11 @@ async def run_llama_benchy(
 
         raw_data = json.loads(output_path.read_text(encoding="utf-8"))
         result = parse_json_output(raw_data)
+        for sample in result.samples:
+            sample.error = _invalid_sample_error(
+                sample,
+                cell_errors.get(_sample_cell_key(sample), []),
+            )
         if not result.samples:
             raise RuntimeError(
                 "llama-benchy produced no benchmark samples. "

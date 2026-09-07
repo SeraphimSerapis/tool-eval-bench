@@ -221,7 +221,6 @@ def run_llama_benchy(
             def on_progress(event: dict[str, Any]) -> None:
                 event_type = event.get("type", "")
                 if event_type == "bench_complete":
-                    progress.update(task, completed=total_runs, description="[green]✓ Complete")
                     return
                 tracker.handle(event)
                 if event_type == "request_start":
@@ -247,7 +246,9 @@ def run_llama_benchy(
                 on_progress=on_progress,
             )
 
-            progress.update(task, completed=total_runs, description="[green]✓ Complete")
+            failed_samples = [sample for sample in benchy_result.samples if sample.error]
+            description = "[red]✗ Incomplete" if failed_samples else "[green]✓ Complete"
+            progress.update(task, completed=total_runs, description=description)
 
     try:
         asyncio.run(_run())
@@ -313,5 +314,11 @@ def run_llama_benchy(
             "[bold]https://github.com/eugr/llama-benchy[/] for methodology.[/]"
         )
 
+    failed_samples = [s for s in benchy_result.samples if s.error]
+    if failed_samples:
+        console.print("\n[bold red]Failed measurements:[/]")
+        for sample in failed_samples:
+            console.print(f"  [red]•[/] {sample.error}")
+
     console.print()
-    return ok_samples
+    return benchy_result.samples
