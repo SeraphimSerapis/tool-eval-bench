@@ -130,6 +130,7 @@ async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.Mo
 
     prior = _scenario("PRIOR-A", Category.A)
     rerun = _scenario("RERUN-K", Category.K)
+    rerun.safety_critical_on_fail = True
     rerun_result = ScenarioResult(
         scenario_id=rerun.id,
         status=ScenarioStatus.FAIL,
