@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from scripts.check_contribution import evaluate_policy
+import json
+import subprocess
+
+import pytest
+
+from scripts.check_contribution import _git_files, evaluate_policy, main
 
 
 def _event(
@@ -147,3 +152,21 @@ def test_packaging_change_requires_changelog_but_not_python_test() -> None:
         "changelog.d/<issue-or-+slug>.<type>.md or ask a maintainer to apply the "
         "skip-changelog label."
     ]
+
+
+def test_closed_pull_request_skips_diff(tmp_path, capsys) -> None:
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps({"pull_request": {"state": "closed", "labels": []}}),
+        encoding="utf-8",
+    )
+
+    assert main(["--event-path", str(event_path), "--root", str(tmp_path)]) == 0
+    assert "skipped" in capsys.readouterr().out
+
+
+def test_git_files_missing_sha_reports_git_error(tmp_path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    with pytest.raises(SystemExit, match="Cannot diff"):
+        _git_files(tmp_path, "0" * 40, "1" * 40, diff_filter="ACDMR")
