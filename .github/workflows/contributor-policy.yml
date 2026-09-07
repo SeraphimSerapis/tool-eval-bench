@@ -1,0 +1,31 @@
+name: Contributor policy
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited, ready_for_review, labeled, unlabeled]
+
+# Pull requests are untrusted. This job gets read-only access and no secrets.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  contributor-policy:
+    name: contributor-policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check contribution requirements
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >
+          python scripts/check_contribution.py
+          --base-sha "$BASE_SHA"
+          --head-sha "$HEAD_SHA"

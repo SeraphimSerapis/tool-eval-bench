@@ -91,6 +91,34 @@ TOOL_EVAL_CANARY_BASE_URL=http://host:port/v1 \
   .venv/bin/python -m pytest -m live tests/test_live_canary.py
 ```
 
+## Pull request policy
+
+The `contributor-policy` check rejects mechanical omissions before maintainer
+review:
+
+- Production Python changes need a corresponding change under `tests/`.
+- Runtime and packaging changes need a new, nonempty `changelog.d/` fragment.
+- `CHANGELOG.md` must not be edited directly because towncrier generates it.
+- Pull requests from forks must enable **Allow edits from maintainers**.
+
+Documentation-only and test-only changes do not need a changelog fragment.
+When tests or a changelog entry genuinely do not apply, ask a maintainer to add
+the `tests-not-needed` or `skip-changelog` label. Contributors should explain
+the exception in the pull request instead of adding the labels themselves.
+
+On a user-owned fork, **Allow edits from maintainers** lets people with push
+access to this repository commit to the pull request branch. If the fork has
+GitHub Actions workflows, GitHub labels this option **Allow edits and access to
+secrets by maintainers** because it can also expose the fork's Actions secrets
+and other branches. Review GitHub's
+[fork permission documentation](https://docs.github.com/en/pull-requests/how-tos/work-with-forks/allowing-changes-to-a-pull-request-branch-created-from-a-fork)
+before enabling it.
+
+Draft pull requests are welcome for early discussion. Maintainer review begins
+after the pull request is marked ready, the policy check passes, and CI is
+green. Maintainers may push a small correction when that is cheaper than a
+review round, but contributors remain responsible for a complete submission.
+
 ## What a good contribution looks like
 
 Prefer one focused change per pull request. A strong contribution generally:
@@ -252,6 +280,7 @@ Before submitting a pull request:
 - [ ] No secrets, live endpoints, generated reports, or unrelated changes are
       included.
 - [ ] The PR description lists the validation performed.
+- [ ] Fork PRs enable **Allow edits from maintainers**.
 
 Thank you for contributing improvements that make model and tool-use evaluation
 more trustworthy.

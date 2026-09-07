@@ -1,26 +1,23 @@
-## Summary
+## Problem
 
-<!-- What problem does this change solve? Link the relevant issue, if one exists. -->
+<!-- Link the issue or provide a minimal reproduction and expected behavior. -->
 
-## Changes
+## Change
 
-<!-- Summarize the implementation and any user-facing or scoring impact. -->
+<!-- Explain the implementation and any user-facing or scoring impact. -->
 
-## Validation
+## Regression coverage
 
-<!-- List focused tests and the broader checks you ran. If a check is not applicable, say why. -->
+<!-- Name the tests that fail without this change. Include negative or false-positive cases. -->
 
-- [ ] Focused tests pass.
-- [ ] `.venv/bin/ruff check .` passes.
-- [ ] `.venv/bin/ruff format --check .` passes.
-- [ ] `.venv/bin/mypy` passes.
-- [ ] Required pytest suite passes.
-- [ ] Live-server testing is not required, or the test endpoint and scope are described.
+## Changelog and documentation
+
+<!-- Link the new changelog.d/ fragment and documentation changes, or explain why neither applies. -->
 
 ## Contributor checklist
 
 - [ ] This PR contains one focused, logically related change.
-- [ ] Regression or behavior tests were added or updated where appropriate.
-- [ ] Positive and negative/false-positive cases are covered for evaluator changes.
-- [ ] `README.md` and/or `CHANGELOG.md` is updated when applicable.
+- [ ] Regression tests were added or a maintainer applied `tests-not-needed`.
+- [ ] A `changelog.d/` fragment was added or a maintainer applied `skip-changelog`.
+- [ ] Fork PRs enable **Allow edits from maintainers**.
 - [ ] No credentials, live endpoints, generated run artifacts, or unrelated formatting changes are included.

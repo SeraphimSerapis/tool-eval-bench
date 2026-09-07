@@ -1,2 +1,4 @@
-# Default owner for everything in this repository.
-*       @SeraphimSerapis
+# Keep the enforcement mechanism itself under maintainer review. Other pull
+# requests can merge without a mandatory approval once their checks pass.
+/.github/workflows/contributor-policy.yml @SeraphimSerapis
+/scripts/check_contribution.py @SeraphimSerapis
