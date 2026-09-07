@@ -472,6 +472,37 @@ async def test_4xx_returns_graceful_result() -> None:
     await adapter.aclose()
 
 
+@pytest.mark.asyncio
+async def test_sampler_initialization_4xx_is_marked_as_infrastructure() -> None:
+    """llama.cpp can reject generated grammars before inference starts."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "code": 400,
+                    "message": "Failed to initialize samplers: failed to parse grammar",
+                    "type": "invalid_request_error",
+                }
+            },
+        )
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "return JSON"}],
+        base_url="http://localhost:8080",
+        response_format={"type": "json_schema", "json_schema": {"schema": {"type": "object"}}},
+    )
+
+    assert result.transport_error_status == 400
+    assert result.transport_error_is_infrastructure
+    await adapter.aclose()
+
+
 # ---------------------------------------------------------------------------
 # response_format and extra_params
 # ---------------------------------------------------------------------------
@@ -1049,6 +1080,34 @@ async def test_stream_4xx_returns_graceful_result() -> None:
 
     assert "[server error 422]" in result.content
     assert result.tool_calls == []
+    assert not result.transport_error_is_infrastructure
+    await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_sampler_initialization_4xx_is_marked_as_infrastructure() -> None:
+    """Streaming and non-streaming requests classify the same llama.cpp error."""
+    body = json.dumps(
+        {
+            "error": {
+                "code": 400,
+                "message": "FAILED TO INITIALIZE SAMPLERS: failed to parse grammar",
+                "type": "invalid_request_error",
+            }
+        }
+    )
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body, status=400))
+
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "return JSON"}],
+        base_url="http://localhost:8080",
+        stream=True,
+    )
+
+    assert result.transport_error_status == 400
+    assert result.transport_error_is_infrastructure
     await adapter.aclose()
 
 

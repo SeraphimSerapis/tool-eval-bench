@@ -62,9 +62,11 @@ class ChatCompletionResult:
     # HTTP status when the server rejected the request outright and the adapter
     # degraded to a soft result rather than raising. The turn produced no model
     # output at all, so a caller must not grade ``content`` as an answer. The
-    # runner decides whether the rejected request was the model's fault, which
-    # depends on whether the model had authored anything in the history yet.
+    # runner decides whether the request or the serving stack caused the error.
     transport_error_status: int | None = None
+    # True when the adapter can identify a rejection that happened inside the
+    # serving stack before inference, even if an earlier turn produced output.
+    transport_error_is_infrastructure: bool = False
 
 
 class BackendAdapter(ABC):

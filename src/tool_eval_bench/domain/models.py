@@ -79,6 +79,7 @@ class RunContext:
     quantization: str | None = None
     gpu_count: int | None = None
     spec_decoding: str | None = None
+    slot_count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-safe dict for metadata_json storage."""

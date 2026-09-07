@@ -182,6 +182,12 @@ class TestFingerprintIncludesCodeIdentity:
     def test_missing_sha_is_tolerated(self) -> None:
         assert _config({})["config_fingerprint"]
 
+    def test_server_slot_count_changes_comparison_cohort(self) -> None:
+        one_slot = _config({"git_sha": "aaaaaaa", "slot_count": 1})
+        three_slots = _config({"git_sha": "aaaaaaa", "slot_count": 3})
+
+        assert one_slot["config_fingerprint"] != three_slots["config_fingerprint"]
+
 
 def _package_head() -> str | None:
     """The HEAD of the checkout the installed package lives in, if any."""

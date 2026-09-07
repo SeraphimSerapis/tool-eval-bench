@@ -38,6 +38,12 @@ from tool_eval_bench.utils.urls import redact_url as _redact_url
 
 logger = logging.getLogger(__name__)
 
+
+def _is_pre_inference_backend_error(body: str) -> bool:
+    """Return whether a 4xx body names a known failure before inference."""
+    return "failed to initialize samplers" in body.lower()
+
+
 # Re-exported for callers and tests that reach for the retry policy through the
 # adapter module it used to live in.
 __all__ = [
@@ -278,6 +284,9 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                 raw_response={},
                 elapsed_ms=elapsed_ms,
                 transport_error_status=exc.response.status_code,
+                transport_error_is_infrastructure=_is_pre_inference_backend_error(
+                    exc.response.text
+                ),
             )
         try:
             data = response.json()
@@ -346,6 +355,9 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     raw_response={},
                     elapsed_ms=elapsed_ms,
                     transport_error_status=exc.response.status_code,
+                    transport_error_is_infrastructure=_is_pre_inference_backend_error(
+                        full_body_text
+                    ),
                 )
 
             # Some OpenAI-compatible endpoints ignore ``stream=true`` and

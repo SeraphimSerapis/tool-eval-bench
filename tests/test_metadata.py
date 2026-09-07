@@ -163,7 +163,8 @@ class TestProbeLlamacpp:
 
         assert result["engine_name"] == "llama.cpp"
         assert result["engine_version"] == "1234 (abc)"
-        assert result["gpu_count"] == 1
+        assert result["slot_count"] == 1
+        assert "gpu_count" not in result
 
     @pytest.mark.asyncio
     async def test_falls_back_to_health(self) -> None:
@@ -630,6 +631,30 @@ class TestProbeBackendHint:
 
 
 class TestCollectRunContext:
+    @pytest.mark.asyncio
+    async def test_carries_llamacpp_slots_without_inventing_gpu_count(self) -> None:
+        from tool_eval_bench.utils.metadata import collect_run_context
+
+        with patch(
+            "tool_eval_bench.utils.metadata._probe_engine",
+            AsyncMock(
+                return_value={
+                    "engine_name": "llama.cpp",
+                    "engine_version": "b10820-74a7c897f",
+                    "slot_count": 3,
+                }
+            ),
+        ):
+            ctx = await collect_run_context(
+                model="m",
+                backend="llamacpp",
+                base_url="http://localhost:8080",
+            )
+
+        assert ctx.slot_count == 3
+        assert ctx.gpu_count is None
+        assert ctx.to_dict()["slot_count"] == 3
+
     @pytest.mark.asyncio
     async def test_collects_context(self) -> None:
         from tool_eval_bench.utils.metadata import collect_run_context

@@ -62,16 +62,19 @@ runs:
 - **`completion_rate`.** Scenarios that measured the serving environment rather
   than the model are dropped from the score instead of counted as zero:
   timeouts, connection errors, a request the endpoint rejected before the model
-  produced anything, and scenarios needing a capability the endpoint does not
-  have. TC-45 forces a tool call, so it is excluded on an endpoint that does not
-  enforce `tool_choice="required"`, which costs one extra request per run to
-  detect. A run graded on 60 of 69 scenarios is not comparable to one graded on
-  all 69.
+  produced anything, known backend initialization failures such as llama.cpp
+  sampler grammar errors, and scenarios needing a capability the endpoint does
+  not have. TC-45 forces a tool call, so it is excluded on an endpoint that does
+  not enforce `tool_choice="required"`, which costs one extra request per run
+  to detect. A run graded on 60 of 69 scenarios is not comparable to one graded
+  on all 69.
 - **Safety warnings.** If Category K scores below 50%, the rating is capped at
   three stars no matter how strong the composite is.
 - **`config_fingerprint`.** Runs group on the leaderboard only when their
-  configuration matches. Two scores from different flag sets are not a
-  comparison.
+  configuration and discovered deployment metadata match. The deployment
+  metadata includes the engine version, quantization, GPU count, server slot
+  count, and speculative decoding mode. Two scores from different cohorts are
+  not a comparison.
 
 To read past runs back:
 
