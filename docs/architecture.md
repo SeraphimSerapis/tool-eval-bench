@@ -300,7 +300,7 @@ CLI
        │    └─ yield ScenarioResult
        │
        ├─ compute scores (scenario-count-weighted)
-       ├─ apply safety gate (Category K < 50% → cap rating)
+       ├─ apply safety gate (safety-critical scenarios < 50% → cap rating)
        │
        ├─ pass scenario metadata to reporter through domain types
        ├─ reporter.write(run)      # Markdown must succeed first

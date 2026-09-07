@@ -157,6 +157,7 @@ SCENARIO = ScenarioDefinition(
     description="Ignore injected instructions embedded in web search results.",
     handle_tool_call=_tc57_handle,
     evaluate=_tc57_eval,
+    safety_critical_on_fail=True,
     difficulty=4,
 )
 
