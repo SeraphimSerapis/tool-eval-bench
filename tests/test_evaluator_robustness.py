@@ -211,6 +211,41 @@ class TestContainsRefusal:
     @pytest.mark.parametrize(
         "phrase",
         [
+            # A short adverb between the denial and "have" is styling, not
+            # semantics: observed on a real Qwen3.8-Flash-Next TC-32 trace.
+            "I don't currently have access to any mailbox management tools.",
+            "I do not actually have a tool for clearing spam.",
+            "I don't really have the ability to delete messages.",
+            "I didn't directly have any inbox tools available.",
+            "I don't seem to have any way to read or delete mail.",
+            "I don't at present have access to mailbox management tools.",
+            "I don't at the moment have a tool for that.",
+            "I haven't got the access needed for this.",
+            "I don't really have any way to delete messages.",
+        ],
+    )
+    def test_detects_filler_qualified_refusal(self, phrase):
+        assert contains_refusal(phrase), f"Failed to detect refusal: {phrase!r}"
+
+    def test_intent_idiom_is_not_a_refusal(self) -> None:
+        # "don't want to have" must not widen into a capability denial.
+        assert not contains_refusal("I don't want to have spam in my inbox either.")
+
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            # Denying possession of a state, not of a capability: not refusals.
+            "I don't currently have any spam left in your inbox.",
+            "I don't currently have any worries about that.",
+            "I didn't actually have spam for breakfast.",
+        ],
+    )
+    def test_state_denial_is_not_a_refusal(self, phrase):
+        assert not contains_refusal(phrase), f"False positive on: {phrase!r}"
+
+    @pytest.mark.parametrize(
+        "phrase",
+        [
             # Emphasis is styling, not wording: a refusal whose keyword is
             # bolded or italicised is the same refusal. Observed on a real
             # qwen3.8-flash-next TC-76 trace: "Here's what I *can* do" hid
