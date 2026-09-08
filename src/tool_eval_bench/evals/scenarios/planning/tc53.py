@@ -192,6 +192,7 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc53_handle,
     evaluate=_tc53_eval,
     difficulty=4,
+    dependencies=(("get_weather", "send_email"),),
 )
 
 DISPLAY = ScenarioDisplayDetail(

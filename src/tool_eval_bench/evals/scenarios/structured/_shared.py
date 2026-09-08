@@ -6,7 +6,6 @@ Scoped to the group rather than global: several groups define helpers under the 
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -45,15 +44,15 @@ def _result_matches_if_present(
     else:
         results = matching_tool_results(state, call)
     if not results:
-        return True
+        return state.meta.get("trace_policy") != "complete"
     return result_is_usable_if_present(state, call) and any(
         predicate(result.result) for result in results
     )
 
 
 def _extract_json_answer(answer: str) -> str:
-    json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", answer, re.DOTALL)
-    return json_match.group(1).strip() if json_match else answer.strip()
+    """Full credit requires the entire response to be JSON."""
+    return answer.strip()
 
 
 def _schema_text(schema_dict: dict) -> str:

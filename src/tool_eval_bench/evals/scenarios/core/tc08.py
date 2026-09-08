@@ -165,6 +165,7 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc08_handle,
     evaluate=_tc08_eval,
     difficulty=3,
+    dependencies=(("get_weather", "set_reminder"),),
 )
 
 DISPLAY = ScenarioDisplayDetail(

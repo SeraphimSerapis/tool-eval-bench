@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -11,9 +12,6 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioEvaluation,
     ScenarioState,
     ToolCallRecord,
-)
-from tool_eval_bench.evals.helpers import (
-    answer_contains_number as _answer_contains_number,
 )
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
@@ -105,8 +103,7 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Check that the final answer is in German.
     # Two paths: weather-specific vocabulary (when tool succeeds) or
     # generic German (when tool returns an error and model reports failure).
-    answer_lower = state.final_answer.lower()
-    weather_german = ["wetter", "grad", "bewölkt", "celsius", "münchen", "temperatur", "°c"]
+    answer_lower = re.sub(r"[*_`]", "", state.final_answer.lower())
     generic_german = [
         "tut mir leid",
         "bitte",
@@ -119,17 +116,20 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
         "gerade",
         "aktuell",
     ]
-    weather_score = sum(1 for w in weather_german if w in answer_lower)
     generic_score = sum(1 for w in generic_german if w in answer_lower)
-    # "temperatur", "celsius", "münchen" and "°c" all appear verbatim in English
-    # answers, so the vocabulary score alone cannot prove the reply is German.
-    # Require one marker that has no English reading — but keep the marker set
-    # wide enough that a terse, fully German answer ("München hat aktuell 14°C
-    # bei bewölktem Himmel.") still qualifies.
+    # Shared place and unit names cannot establish German. A grammatical marker
+    # also accepts terse answers without rewarding a minimum word count.
     german_markers = len(_GERMAN_MARKERS.findall(answer_lower))
-    answer_in_german = (weather_score >= 3 or generic_score >= 2) and german_markers >= 1
+    answer_in_german = german_markers >= 1
     # Check the model surfaced actual weather data (temp 14 or condition).
-    has_data = _answer_contains_number(state.final_answer, "14") or "bewölkt" in answer_lower
+    facts = re.compile(r"(?<!\d)14(?!\d)|\bbewölkt\w*", re.IGNORECASE)
+    affirmed = []
+    for match in facts.finditer(answer_lower):
+        clause = re.split(r"[.!?;]", answer_lower[: match.start()])[-1]
+        denied = re.search(r"\b(?:nicht|kein\w*|weder|not|never)\b(?:\s+\w+){0,5}\s*$", clause)
+        affirmed.append(not bool(denied))
+    wrong_units = re.search(r"\b14\s*(?:grad\s*)?(?:°\s*f\b|fahrenheit\b|f\b)", answer_lower)
+    has_data = bool(affirmed) and all(affirmed) and not wrong_units
     weather_success = any(
         _result_matches_if_present(state, call, _tc16_weather_result_is_munich)
         for call in matching_weather_calls
@@ -149,7 +149,9 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
             "Used get_weather and responded in German but did not surface the temperature."
         )
     if used_weather and not answer_in_german:
-        return _partial("Found the weather correctly but responded in English instead of German.")
+        return _partial(
+            "Used the weather tool, but the response does not establish a German answer."
+        )
     if not used_weather and answer_in_german:
         return _partial("Responded in German but didn't use the weather tool.")
     return _fail(
@@ -170,5 +172,5 @@ SCENARIO = ScenarioDefinition(
 
 DISPLAY = ScenarioDisplayDetail(
     "Pass if it calls get_weather for München and responds in German.",
-    "Fail if it responds in English or misses the weather tool.",
+    "Partial for incomplete data or unestablished German; fail if neither requirement is met.",
 )

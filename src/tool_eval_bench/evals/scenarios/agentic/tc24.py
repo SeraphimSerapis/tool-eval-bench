@@ -131,6 +131,7 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc24_handle,
     evaluate=_tc24_eval,
     difficulty=3,
+    dependencies=(("search_files", "read_file"),),
 )
 
 DISPLAY = ScenarioDisplayDetail(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -69,11 +68,6 @@ def _tc64_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Called tools when none were needed — this is a structured output task.")
 
     answer = state.final_answer.strip()
-
-    # Try to extract JSON from code fences if present
-    json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", answer, re.DOTALL)
-    if json_match:
-        answer = json_match.group(1).strip()
 
     try:
         data = json.loads(answer)

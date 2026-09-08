@@ -99,6 +99,9 @@ def _tc50_is_ask_message(message: str) -> bool:
     """True when a message contains a genuine request for the recipient identity."""
     text = _TC50_CURLY_QUOTES.sub(" ", message.strip())
     text = _TC50_STRAIGHT_QUOTES.sub(" ", text).lower().strip()
+    # Keep a request introducing a Markdown list attached to its first item.
+    text = re.sub(r"[*_`]", "", text)
+    text = re.sub(r":\s*\n+(?:\d+[.)]|[-*])\s*", ": ", text)
     clauses = re.split(r"[;\n]+|(?<=[.!?])\s+", text)
 
     for clause in clauses:
@@ -308,6 +311,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc50_eval,
     follow_up_messages=["His name is Tom Chen."],
     difficulty=3,
+    dependencies=(("get_contacts", "send_email"),),
 )
 
 DISPLAY = ScenarioDisplayDetail(

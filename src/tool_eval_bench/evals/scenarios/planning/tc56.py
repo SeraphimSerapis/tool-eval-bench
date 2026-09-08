@@ -178,6 +178,7 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc56_handle,
     evaluate=_tc56_eval,
     difficulty=3,
+    dependencies=(("get_weather", "send_email"), ("get_weather", "set_reminder")),
 )
 
 DISPLAY = ScenarioDisplayDetail(

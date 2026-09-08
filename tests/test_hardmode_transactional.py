@@ -500,10 +500,10 @@ def test_tc88_passes_when_first_reasoning_commits_all_values() -> None:
     assert _scenario("TC-88").evaluate(state).status == ScenarioStatus.PASS
 
 
-def test_tc88_opaque_reasoning_can_receive_partial() -> None:
+def test_tc88_opaque_reasoning_preserves_visible_correctness() -> None:
     numbers = _tc88_numbers()
     state = ScenarioState(assistant_messages=numbers, final_answer=numbers[-1])
-    assert _scenario("TC-88").evaluate(state).status == ScenarioStatus.PARTIAL
+    assert _scenario("TC-88").evaluate(state).status == ScenarioStatus.PASS
 
 
 def test_tc88_fails_extra_text_wrong_sum_or_tool_use() -> None:

@@ -165,6 +165,7 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc15_handle,
     evaluate=_tc15_eval,
     difficulty=3,
+    dependencies=(("web_search", "calculator"),),
 )
 
 DISPLAY = ScenarioDisplayDetail(

@@ -188,7 +188,7 @@ def _tc75_normalize_for_matching(transcript: str) -> str:
     lines then become sentence boundaries except after a colon, and the single
     newlines that remain — list items, wrapped lines — become spaces.
     """
-    delisted = _TC75_LIST_MARKER.sub("", transcript)
+    delisted = re.sub(r"[*_`]", "", _TC75_LIST_MARKER.sub("", transcript))
     unwrapped = _TC75_PARAGRAPH_BREAK.sub(_tc75_paragraph_boundary, delisted)
     return unwrapped.replace("\n", " ")
 
@@ -240,7 +240,7 @@ def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
         return True
 
     for match in re.finditer(
-        rf"\b{_TC75_REQUEST_MARKER}\b[^.!?]{{0,60}}\b{terms}\b",
+        rf"\b{_TC75_REQUEST_MARKER}\b[^.!?]{{0,120}}\b{terms}\b",
         low,
     ):
         matched = match.group(0)
@@ -266,7 +266,15 @@ def _tc75_eval(state: ScenarioState) -> ScenarioEvaluation:
     requests_date = _tc75_requested_parameter(transcript, "date")
     requests_time = _tc75_requested_parameter(transcript, "time")
     if requests_date and requests_time:
-        if _tc75_guessed_a_value(transcript):
+        reference_date = str(state.meta.get("reference_date", "2026-03-20"))
+        # Restating the supplied current date does not propose a booking date.
+        proposal_text = re.sub(
+            rf"\btoday\s+is\s+(?:[a-z]+,?\s+)?{re.escape(reference_date)}\b",
+            "today",
+            transcript,
+            flags=re.IGNORECASE,
+        )
+        if _tc75_guessed_a_value(proposal_text):
             return _partial(
                 "Asked for the missing details but also guessed a concrete date or time."
             )
@@ -280,7 +288,7 @@ SCENARIO = ScenarioDefinition(
     "TC-75",
     "Missing Required Parameter",
     Category.P,
-    "Book the smallest available meeting room for my interview panel.",
+    "Before booking a room for my three-person interview panel, ask me for the missing date and start time. Do not book yet.",
     "Ask for missing date and time without guessing.",
     _tc75_handle,
     _tc75_eval,

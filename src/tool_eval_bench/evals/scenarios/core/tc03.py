@@ -200,6 +200,7 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc03_handle,
     evaluate=_tc03_eval,
     difficulty=2,
+    dependencies=(("get_contacts", "send_email"),),
 )
 
 DISPLAY = ScenarioDisplayDetail(

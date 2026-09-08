@@ -96,6 +96,47 @@ def write_scenario_report(
             f"{len(summary.excluded_scenarios)} scenario(s) excluded from scoring "
             f"due to infrastructure failures (timeout / connection / 5xx): {excluded}"
         )
+    diagnostics = [
+        r
+        for r in summary.scenario_results
+        if r.diagnostics
+        and not (
+            scenario_metadata
+            and r.scenario_id in scenario_metadata
+            and scenario_metadata[r.scenario_id].held_out
+        )
+    ]
+    if diagnostics:
+        md.extend(
+            [
+                "",
+                "## Capability diagnostics",
+                "",
+                "These observations do not change task-correctness points.",
+                "",
+            ]
+        )
+        for result in diagnostics:
+            for key, value in sorted(result.diagnostics.items()):
+                md.append(
+                    f"- {result.scenario_id}: {_markdown_table_cell(key)} = {_markdown_table_cell(value)}"
+                )
+    if summary.toolset_deltas:
+        md.extend(
+            [
+                "",
+                "## Paired toolset results",
+                "",
+                "Crowded-toolset points minus the matched control, on the 0 to 2 scale. A single trial is not a calibrated difficulty estimate.",
+                "",
+                "| Pair | Delta points |",
+                "|---|---:|",
+            ]
+        )
+        md.extend(
+            f"| {_markdown_table_cell(pair)} | {delta:+d} |"
+            for pair, delta in summary.toolset_deltas.items()
+        )
     # Filter empty lines from conditional version stamp
     md = [line for line in md if line is not None and line != ""] + [""]
 

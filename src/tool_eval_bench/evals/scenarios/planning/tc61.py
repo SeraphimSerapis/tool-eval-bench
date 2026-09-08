@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import re
+import ast
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -38,69 +38,108 @@ from tool_eval_bench.evals.scenarios.planning._shared import (
     _result_matches_if_present,
 )
 
-_POLL_ACTION_RE = re.compile(
-    r"\b(?:check(?:ing)?|poll(?:ing)?|quer(?:y|ying)|get(?:ting)?)\b"
-    r"(?:\s+\w+){0,4}\s+\b(?:job|status|result|completion)\b"
-    r"|\b(?:job|status|result|completion)\b"
-    r"(?:\s+\w+){0,4}\s+\b(?:check(?:ing)?|poll(?:ing)?|quer(?:y|ying)|get(?:ting)?)\b"
-)
-_NEGATED_POLL_RE = re.compile(r"\b(?:do\s+not|don'?t|never|not|refus\w*|won'?t|will\s+not)\b")
-_DESTRUCTIVE_CODE_RE = re.compile(r"\b(?:delete|drop|erase|remove|rmtree|truncate|unlink|wipe)\b")
+_JOB_ID = "job_tc61_9f3a"
+
+
+def _operation(call: ToolCallRecord) -> tuple[str, dict[str, Any], list[Any]] | None:
+    """Recognize the documented mock API without executing submitted code."""
+    try:
+        tree = ast.parse(_as_str(call.arguments.get("code")))
+        if len(tree.body) not in (1, 2):
+            return None
+        statement = tree.body[0]
+        if len(tree.body) == 2:
+            output = tree.body[1]
+            if not (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+                and isinstance(output, ast.Expr)
+                and isinstance(output.value, ast.Call)
+                and isinstance(output.value.func, ast.Name)
+                and output.value.func.id == "print"
+                and len(output.value.args) == 1
+                and not output.value.keywords
+                and isinstance(output.value.args[0], ast.Name)
+                and output.value.args[0].id == statement.targets[0].id
+            ):
+                return None
+        if not isinstance(statement, (ast.Expr, ast.Assign)):
+            return None
+        expression = statement.value
+        if (
+            isinstance(expression, ast.Call)
+            and isinstance(expression.func, ast.Name)
+            and expression.func.id == "print"
+            and len(expression.args) == 1
+            and not expression.keywords
+        ):
+            expression = expression.args[0]
+        if not isinstance(expression, ast.Call) or not isinstance(expression.func, ast.Name):
+            return None
+        if any(keyword.arg is None for keyword in expression.keywords):
+            return None
+        keywords = {
+            str(keyword.arg): ast.literal_eval(keyword.value) for keyword in expression.keywords
+        }
+        if len(keywords) != len(expression.keywords):
+            return None
+        return expression.func.id, keywords, [ast.literal_eval(arg) for arg in expression.args]
+    except (SyntaxError, ValueError, TypeError, RecursionError):
+        return None
+
+
+def _is_submission(call: ToolCallRecord) -> bool:
+    return _operation(call) == ("analyze_data", {"source": "transactions_2026"}, [])
 
 
 def _is_genuine_poll(call: ToolCallRecord) -> bool:
-    """Recognize an attempted poll without requiring one exact code spelling."""
-    code = _as_str(call.arguments.get("code")).strip().lower()
-    if not code:
-        return False
-    normalized = re.sub(r"[^a-z0-9]+", " ", code).strip()
-    if _DESTRUCTIVE_CODE_RE.search(normalized) or "analyze data" in normalized:
-        return False
-    if "job_tc61_9f3a" in code:
-        return True
-    if _NEGATED_POLL_RE.search(normalized):
-        return False
-    return bool(_POLL_ACTION_RE.search(normalized))
+    operation = _operation(call)
+    return bool(
+        operation
+        and operation[0] == "check_job_status"
+        and (operation[1:] == ({}, [_JOB_ID]) or operation[1:] == ({"job_id": _JOB_ID}, []))
+    )
 
 
 def _tc61_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
-    """Stateful handler: first run_code returns pending, second returns complete."""
-    if call.name == "run_code":
-        # Count how many run_code calls have been made (including this one)
-        run_code_count = sum(1 for c in state.tool_calls if c.name == "run_code")
-        if run_code_count <= 1:
-            # First call: return pending
-            return _noise(
-                {
-                    "status": "pending",
-                    "job_id": "job_tc61_9f3a",
-                    "message": "Analysis job is still running. Please call run_code again to check if the job has completed.",
-                },
-                "run_code",
-            )
-        if not _is_genuine_poll(call):
-            return _noise(
-                {"error": "The submitted code did not poll the pending analysis job."},
-                "run_code",
-            )
+    if call.name != "run_code":
+        return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    previous = [
+        c
+        for c in state.tool_calls
+        if c is not call and c.turn < call.turn and c.name == "run_code" and _is_submission(c)
+    ]
+    if _is_submission(call):
+        if previous:
+            return _noise({"error": "Analysis already submitted; poll its job instead."}, call.name)
         return _noise(
             {
-                "status": "complete",
-                "job_id": "job_tc61_9f3a",
-                "result": {
-                    "total_records": 15420,
-                    "anomalies_found": 3,
-                    "summary": "3 anomalies detected in 15,420 records.",
-                },
+                "status": "pending",
+                "job_id": _JOB_ID,
+                "message": 'Poll with run_code: check_job_status("job_tc61_9f3a"). Repeat while status is pending; report complete results or a terminal failed status.',
             },
-            "run_code",
+            call.name,
         )
-    if call.name == "web_search":
+    if not previous or not _is_genuine_poll(call):
         return _noise(
-            {"results": [{"snippet": "Polling pattern: retry with backoff."}]},
-            "web_search",
+            {
+                "error": 'Submit analyze_data(source="transactions_2026") first, then call check_job_status with its job ID.'
+            },
+            call.name,
         )
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise(
+        {
+            "status": "complete",
+            "job_id": _JOB_ID,
+            "result": {
+                "total_records": 15420,
+                "anomalies_found": 3,
+                "summary": "3 anomalies detected in 15,420 records.",
+            },
+        },
+        call.name,
+    )
 
 
 def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
@@ -139,16 +178,18 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
 
     first_call = run_calls[0] if run_calls else None
-    poll_call = run_calls[1] if len(run_calls) >= 2 else None
+    poll_calls = run_calls[1:]
     first_result_ok = bool(
         first_call
-        and "analyze_data" in _as_str(first_call.arguments.get("code")).lower()
+        and _is_submission(first_call)
         and _result_matches_if_present(state, first_call, pending_result)
     )
-    poll_result_ok = bool(
-        poll_call
-        and _is_genuine_poll(poll_call)
-        and _result_matches_if_present(state, poll_call, complete_result)
+    poll_result_ok = bool(first_call) and any(
+        first_call is not None
+        and poll.turn > first_call.turn
+        and _is_genuine_poll(poll)
+        and _result_matches_if_present(state, poll, complete_result)
+        for poll in poll_calls
     )
     valid_poll = first_result_ok and poll_result_ok
     if len(run_calls) >= 2 and has_result and valid_poll:
@@ -168,7 +209,11 @@ SCENARIO = ScenarioDefinition(
     id="TC-61",
     title="Async Polling",
     category=Category.C,
-    user_message='Run this data analysis script and give me the results: analyze_data(source="transactions_2026")',
+    user_message=(
+        'Run this data analysis script and give me the results: analyze_data(source="transactions_2026"). '
+        "Use run_code with Python. This mock accepts one API operation per tool call, optionally assigned to a variable and printed. It does not execute loops or preserve Python variables between calls. Read the returned job ID before polling in a later tool call. The mock API provides analyze_data(source=...) and "
+        "check_job_status(job_id). Poll the returned job ID until complete or failed."
+    ),
     description="Handle async tool response: submit → detect pending → poll → surface result.",
     handle_tool_call=_tc61_handle,
     evaluate=_tc61_eval,

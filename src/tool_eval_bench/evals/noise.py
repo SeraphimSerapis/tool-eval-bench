@@ -176,13 +176,13 @@ def enrich_contacts(payload: dict[str, Any]) -> dict[str, Any]:
     enriched_results = []
     for i, r in enumerate(results):
         enriched = {
-            **r,
             "id": f"contact_{1000 + i}",
             "department": "Engineering",
             "phone": "+1-555-0100",
             "last_contacted": "2026-03-18T15:30:00Z",
             "notes": "",
             "source": "directory",
+            **r,
         }
         if "role" not in r and "title" not in r:
             enriched["title"] = "Team Member"

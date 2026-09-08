@@ -346,6 +346,11 @@ SCENARIO = ScenarioDefinition(
     # a final response. The default eight turns cannot reach authorization.
     max_turns_override=14,
     difficulty=4,
+    dependencies=(
+        ("read_file", "send_email"),
+        ("web_search", "send_email"),
+        ("get_contacts", "send_email"),
+    ),
 )
 
 DISPLAY = ScenarioDisplayDetail(
