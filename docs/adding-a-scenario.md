@@ -25,70 +25,106 @@ Three parts: a mock handler that answers tool calls deterministically, an evalua
 final state, and the two module-level exports.
 
 ```python
-"""TC-89 — Timezone Conversion."""
+"""TC-89: date-aware timezone conversion with an explicit tool contract."""
 
-from __future__ import annotations
-
-from typing import Any
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tool_eval_bench.domain.scenarios import (
     Category,
     ScenarioDefinition,
     ScenarioDisplayDetail,
-    ScenarioEvaluation,
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.helpers import (
-    fail_eval as _fail,
-)
-from tool_eval_bench.evals.helpers import (
-    has_tool_call as _has_tool_call,
-)
-from tool_eval_bench.evals.helpers import (
-    includes_text as _includes_text,
-)
-from tool_eval_bench.evals.helpers import (
-    partial_eval as _partial,
-)
-from tool_eval_bench.evals.helpers import (
-    pass_eval as _pass,
-)
-from tool_eval_bench.evals.helpers import (
-    with_noise as _noise,
-)
+from tool_eval_bench.evals.helpers import fail_eval, partial_eval, pass_eval
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "convert_timezone",
+            "description": "Convert a local date and time between IANA timezones.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    name: {"type": "string"} for name in ("date", "time", "source", "target")
+                },
+                "required": ["date", "time", "source", "target"],
+                "additionalProperties": False,
+            },
+        },
+    }
+]
+EXPECTED = {
+    "date": "2026-03-20",
+    "time": "09:00",
+    "source": "Europe/Berlin",
+    "target": "America/Los_Angeles",
+}
 
 
-def _tc89_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
-    """Answer every tool call with a fixed payload, so runs are reproducible."""
-    if call.name == "convert_timezone":
-        return _noise({"source": "09:00 Europe/Berlin", "target": "00:00"}, call.name)
-    return _noise({"error": f"Tool {call.name} is not relevant here."}, call.name)
+def handle(state: ScenarioState, call: ToolCallRecord):
+    args = call.arguments
+    if (
+        call.name != "convert_timezone"
+        or set(args) != set(EXPECTED)
+        or not all(isinstance(value, str) for value in args.values())
+    ):
+        return {"error": "Supply date, time, source, and target strings to convert_timezone."}
+    try:
+        local = datetime.strptime(f"{args['date']} {args['time']}", "%Y-%m-%d %H:%M")
+        converted = local.replace(tzinfo=ZoneInfo(args["source"])).astimezone(
+            ZoneInfo(args["target"])
+        )
+    except (ValueError, ZoneInfoNotFoundError):
+        return {"error": "Invalid date, time, or IANA timezone."}
+    return {
+        "date": converted.date().isoformat(),
+        "time": converted.strftime("%H:%M"),
+        "timezone": args["target"],
+    }
 
 
-def _tc89_eval(state: ScenarioState) -> ScenarioEvaluation:
-    """User: 'What time is our 09:00 Berlin standup in Los Angeles?'"""
-    if not _has_tool_call(state, "convert_timezone"):
-        return _fail("Answered from memory instead of converting the time.")
-    if not _includes_text(state.final_answer, "00:00"):
-        return _partial("Converted the time but never stated the result.")
-    return _pass("Converted through the tool and reported midnight Pacific.")
+def evaluate(state: ScenarioState):
+    if len(state.tool_calls) != 1:
+        return fail_eval("Expected exactly one timezone conversion.")
+    call = state.tool_calls[0]
+    if call.name != "convert_timezone" or call.arguments != EXPECTED:
+        return fail_eval("The conversion arguments do not match the request.")
+    results = [
+        record.result
+        for record in state.tool_results
+        if record.call_id == call.id and record.name == call.name
+    ]
+    if not any(
+        isinstance(result, dict)
+        and result.get("time") == "01:00"
+        and result.get("date") == "2026-03-20"
+        for result in results
+    ):
+        return fail_eval("No correlated successful conversion supports the answer.")
+    if not state.final_answer.strip():
+        return partial_eval("Converted correctly but omitted the final answer.")
+    if state.final_answer.strip() != "01:00":
+        return fail_eval("The answer must contain only the converted HH:MM time.")
+    return pass_eval("Converted the specified date and returned 01:00 Pacific time.")
 
 
 SCENARIO = ScenarioDefinition(
     id="TC-89",
-    title="Timezone Conversion",
+    title="Timezone conversion",
     category=Category.B,
-    user_message="What time is our 09:00 Berlin standup in Los Angeles?",
-    description="Convert a time through the tool rather than answering from memory.",
-    handle_tool_call=_tc89_handle,
-    evaluate=_tc89_eval,
+    user_message="Use convert_timezone to convert 09:00 Europe/Berlin on March 20, 2026 to America/Los_Angeles. Return only the converted time in HH:MM format.",
+    description="Use the requested timezone tool with the specified date and return its result.",
+    handle_tool_call=handle,
+    evaluate=evaluate,
+    tools_override=TOOLS,
     difficulty=2,
 )
-
 DISPLAY = ScenarioDisplayDetail(
-    "Pass if it calls convert_timezone and reports the converted time.",
-    "Fail if it answers from memory or omits the result.",
+    "Pass for the requested conversion and raw HH:MM answer.",
+    "Partial for a missing final answer; fail for wrong arguments, missing results, or an incorrect answer.",
 )
 ```
 

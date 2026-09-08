@@ -18,6 +18,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ScenarioStatus,
     ToolCallRecord,
+    ToolResultRecord,
 )
 from tool_eval_bench.evals.yaml_loader import load_yaml_scenarios
 
@@ -65,9 +66,13 @@ def test_the_yaml_example_shows_the_partial_tier(yaml_example: ScenarioDefinitio
 
 
 @pytest.fixture
-def call() -> ToolCallRecord:
+def call(example: dict) -> ToolCallRecord:
     return ToolCallRecord(
-        id="c1", name="convert_timezone", arguments={}, raw_arguments="{}", turn=1
+        id="c1",
+        name="convert_timezone",
+        arguments=dict(example["EXPECTED"]),
+        raw_arguments="{}",
+        turn=1,
     )
 
 
@@ -89,11 +94,15 @@ def test_the_example_scores_all_three_tiers(example: dict, call: ToolCallRecord)
 
     called_but_silent = ScenarioState()
     called_but_silent.tool_calls.append(call)
-    called_but_silent.final_answer = "I converted it."
+    result = ToolResultRecord(
+        call.id, call.name, example["SCENARIO"].handle_tool_call(called_but_silent, call)
+    )
+    called_but_silent.tool_results.append(result)
 
     complete = ScenarioState()
     complete.tool_calls.append(call)
-    complete.final_answer = "It is 00:00 in Los Angeles."
+    complete.tool_results.append(result)
+    complete.final_answer = "01:00"
 
     assert evaluate(no_call).status is ScenarioStatus.FAIL
     assert evaluate(called_but_silent).status is ScenarioStatus.PARTIAL
