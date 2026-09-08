@@ -269,3 +269,10 @@ else:
 4. **Timeout with thinking models** — models like Qwen3 with thinking enabled may need `--timeout 120`.
 5. **Warmup is automatic** — the first request primes the server. Use `--no-warmup` only if already warmed.
 6. **Use `--dry-run` to preview** — before committing to a long run, check which scenarios would execute.
+
+### Controlled scenario fixtures
+
+`--variant-seed INTEGER` selects versioned deterministic scenario variants independently
+of the sampling `--seed`. Unvaried scenarios remain controls. Variants are persisted in
+run configuration and comparison fingerprints; resume requires the same variant seed
+for affected scenarios. See [variant coverage](methodology.md#controlled-fixture-variants).

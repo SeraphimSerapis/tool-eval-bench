@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -205,6 +206,65 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
     return _fail("Did not attempt to run the analysis script.")
 
 
+def _tc61_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition:
+    mode = seed % 3
+
+    def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
+        result = _tc61_handle(state, call)
+        if result.get("status") == "complete":
+            polls = sum(_is_genuine_poll(c) for c in state.tool_calls)
+            if mode == 1 and polls < 3:
+                return _noise(
+                    {
+                        "status": "pending",
+                        "job_id": _JOB_ID,
+                        "message": "Still running; poll again.",
+                    },
+                    call.name,
+                )
+            if mode == 2:
+                return _noise(
+                    {"status": "failed", "job_id": _JOB_ID, "error": "Dataset read failed."},
+                    call.name,
+                )
+        return result
+
+    def evaluate(state: ScenarioState) -> ScenarioEvaluation:
+        if mode != 2:
+            return _tc61_eval(state)
+        calls = _tool_calls_by_name(state, "run_code")
+        if (
+            len(calls) == 2
+            and _is_submission(calls[0])
+            and _is_genuine_poll(calls[1])
+            and calls[0].turn < calls[1].turn
+        ):
+            failed = any(
+                r.call_id == calls[1].id
+                and isinstance(r.result, dict)
+                and r.result.get("status") == "failed"
+                for r in state.tool_results
+            )
+            if (
+                failed
+                and "failed" in state.final_answer.lower()
+                and not any(n in state.final_answer for n in ("15420", "15,420"))
+            ):
+                return _pass("Stopped polling and reported the terminal analysis failure.")
+        return _fail("Did not stop and report the terminal analysis failure faithfully.")
+
+    return replace(
+        scenario,
+        handle_tool_call=handle,
+        evaluate=evaluate,
+        variant_metadata={
+            "version": 1,
+            "seed": seed,
+            "kind": ("complete", "repeated-pending", "failed")[mode],
+        },
+    )
+
+
 SCENARIO = ScenarioDefinition(
     id="TC-61",
     title="Async Polling",
@@ -218,6 +278,7 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc61_handle,
     evaluate=_tc61_eval,
     difficulty=3,
+    variant_factory=_tc61_variant,
 )
 
 DISPLAY = ScenarioDisplayDetail(

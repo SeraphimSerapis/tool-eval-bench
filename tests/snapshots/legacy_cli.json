@@ -185,6 +185,16 @@
   },
   {
     "choices": null,
+    "default": null,
+    "dest": "variant_seed",
+    "flags": [
+      "--variant-seed"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": false,
     "dest": "hardmode",
     "flags": [

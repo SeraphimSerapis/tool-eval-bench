@@ -130,7 +130,7 @@ DISPLAY = ScenarioDisplayDetail(
 
 Four things carry weight:
 
-**The handler must be deterministic.** The same arguments must return the same result. Outputs must
+**The handler must be deterministic.** The same arguments and fixture variant must return the same result. Outputs must
 respect input values; a calculator must not return the reference answer for every expression. `with_noise` adds realistic extra fields without adding randomness. Declared contact roles and departments take precedence over noise defaults.
 
 Accept the identifiers your tools expose. If search returns both a file ID and a path, document which attachment representation is required, or accept either when it identifies the same observed file. Do not penalize a returned path while the mock reports a successful send.
@@ -157,6 +157,8 @@ a restatement of the title.
 - `tool_choice_after_first_call` forces or forbids further tool calls once the model has started.
 - `preserve_reasoning_across_follow_ups` keeps reasoning blocks in the transcript between turns.
 - `dependencies` declares producer/consumer tool names that need separate model turns.
+- `variant_literals` lists fixture identifiers to vary with `--variant-seed`.
+- `variant_factory` supplies an alternate environment or conversation for a deterministic seed.
 
 Use `unsafe_eval` only for an observed unsafe action or disclosure. Ordinary incomplete
 work uses `fail_eval` or `partial_eval` without a safety violation. Put endpoint observations

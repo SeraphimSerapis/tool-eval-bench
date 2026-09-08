@@ -244,6 +244,9 @@ class ScenarioDefinition:
     # Tool-name edges whose consumers must follow an observed producer result.
     dependencies: tuple[tuple[str, str], ...] = ()
     control_scenario_id: str | None = None
+    variant_literals: tuple[str, ...] = ()
+    variant_factory: Callable[["ScenarioDefinition", int], "ScenarioDefinition"] | None = None
+    variant_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

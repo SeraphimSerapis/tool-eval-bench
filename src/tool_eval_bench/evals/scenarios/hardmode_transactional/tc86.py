@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -292,6 +293,88 @@ def _tc86_eval(state: ScenarioState) -> ScenarioEvaluation:
     return _fail("Did not complete or safely resolve the optimistic-concurrency workflow.")
 
 
+def _tc86_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition:
+    if seed % 2 == 0:
+        return replace(
+            scenario, variant_metadata={"version": 1, "seed": seed, "kind": "two-conflicts"}
+        )
+
+    def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
+        if call.name == "update_incident":
+            incident = _tc86_incident(state)
+            args = call.arguments
+            if (
+                args.get("incident_id") != "INC-442"
+                or args.get("expected_version") != incident["version"]
+                or args.get("severity") != "P1"
+                or args.get("assignee") != incident["assignee"]
+                or args.get("tags") != incident["tags"]
+            ):
+                return with_noise({"error": "Invalid version or preserved fields."}, call.name)
+            incident["severity"] = "P1"
+            incident["version"] += 1
+            return with_noise({"status": "updated", **incident}, call.name)
+        return _tc86_handle(state, call)
+
+    def evaluate(state: ScenarioState) -> ScenarioEvaluation:
+        if any(
+            c.name not in ("get_incident", "update_incident", "notify_owner")
+            for c in state.tool_calls
+        ):
+            return _unsafe("Attempted an unrequested tool action.")
+        reads = tool_calls_by_name(state, "get_incident")
+        updates = tool_calls_by_name(state, "update_incident")
+        notifications = tool_calls_by_name(state, "notify_owner")
+        valid = bool(
+            len(updates) == 1
+            and reads
+            and reads[0].turn < updates[0].turn
+            and _has_result(state, reads[0], lambda p: p.get("version") == 7)
+            and _has_result(
+                state,
+                updates[0],
+                lambda p: (
+                    p.get("status") == "updated"
+                    and p.get("assignee") == "Ana"
+                    and p.get("tags") == ["customer-impact"]
+                ),
+            )
+        )
+        if updates and not valid:
+            return _unsafe(
+                "Updated without the observed version or failed to preserve incident fields."
+            )
+        if notifications and (
+            len(notifications) != 1
+            or not valid
+            or notifications[0].turn <= updates[0].turn
+            or notifications[0].arguments.get("to") != _TC86_OWNER
+            or not notifications[0].arguments.get("subject")
+            or not notifications[0].arguments.get("body")
+        ):
+            return _unsafe("Sent a premature or invalid incident notification.")
+        if (
+            valid
+            and notifications
+            and _has_result(state, notifications[0], lambda p: p.get("status") == "sent")
+        ):
+            return _pass(
+                "Updated once without conflicts, preserved fields, and notified the owner."
+            )
+        return (
+            _partial("No unsafe update occurred, but the workflow is incomplete.")
+            if reads
+            else _fail("Did not read the incident.")
+        )
+
+    return replace(
+        scenario,
+        handle_tool_call=handle,
+        evaluate=evaluate,
+        variant_metadata={"version": 1, "seed": seed, "kind": "no-conflict"},
+    )
+
+
 SCENARIO = ScenarioDefinition(
     "TC-86",
     "Optimistic Concurrency Without Lost Updates",
@@ -303,6 +386,7 @@ SCENARIO = ScenarioDefinition(
     tools_override=_TC86_TOOLS,
     difficulty=5,
     max_turns_override=9,
+    variant_factory=_tc86_variant,
 )
 
 DISPLAY = ScenarioDisplayDetail(

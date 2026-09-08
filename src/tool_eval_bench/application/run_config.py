@@ -90,6 +90,9 @@ def build_run_config(
         "extra_params": settings.extra_params,
         "weight_by_difficulty": settings.weight_by_difficulty,
     }
+    variants = {s.id: s.variant_metadata for s in scenarios if s.variant_metadata}
+    if variants:
+        config["scenario_variants"] = variants
     if settings.context_pressure_config:
         config["context_pressure"] = settings.context_pressure_config
     if scenario_packs:

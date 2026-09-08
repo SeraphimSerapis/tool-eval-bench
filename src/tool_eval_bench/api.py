@@ -89,6 +89,7 @@ async def run_benchmark(
     max_turns: int = 8,
     seed: int | None = None,
     reference_date: str | None = None,
+    variant_seed: int | None = None,
     concurrency: int = 1,
     error_rate: float = 0.0,
     alpha: float = 0.7,
@@ -119,6 +120,7 @@ async def run_benchmark(
         timeout_seconds: Per-request timeout in seconds.
         max_turns: Maximum conversation turns per scenario.
         seed: Random seed passed to the server.
+        variant_seed: Select versioned scenario fixtures independently of sampling.
         reference_date: Override benchmark reference date (``YYYY-MM-DD``).
         concurrency: Number of scenarios to run in parallel.
         error_rate: Inject random tool errors at this rate (0.0–1.0).
@@ -169,6 +171,7 @@ async def run_benchmark(
             max_turns=max_turns,
             seed=seed,
             reference_date=reference_date,
+            variant_seed=variant_seed,
             on_scenario_start=on_scenario_start,
             on_scenario_result=on_scenario_result,
             concurrency=concurrency,

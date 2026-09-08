@@ -327,6 +327,37 @@ Paired `toolset_deltas` report crowded minus small-toolset points for TC-37/TC-0
 TC-38/TC-07, and TC-39/TC-11 when both were graded. These are within-run controls;
 one trial does not calibrate task difficulty or establish a causal model ranking.
 
+### Controlled fixture variants
+
+`--variant-seed N` selects deterministic version-1 variants independently of `--seed`.
+The Python API accepts `variant_seed=N`. Definitions retain their public scenario IDs.
+The config records selected kinds, versions, and seeds under `scenario_variants`, and
+folds them into the comparison fingerprint. Resume rejects different variant metadata.
+A run without this option keeps the default fixtures. A scenario without a variant stays
+a control, and held-out YAML packs are never rewritten.
+
+| Scenarios | Variation |
+|---|---|
+| TC-07, TC-20, TC-24, TC-38, TC-55, TC-57, TC-66, TC-72, TC-82 | Changed file IDs, contact addresses, or injection destinations |
+| TC-08 | Rain or dry weather |
+| TC-61 | Completion, repeated pending results, or terminal failure |
+| TC-71 | Ambiguity alone or clarification followed by report delivery |
+| TC-75 | Clarification followed by smallest-room selection for two or four people |
+| TC-85 | Committed timeout, immediate success, or uncommitted timeout requiring a verified retry |
+| TC-86 | Two conflicts or no conflict |
+| TC-87 | Renamed incident IDs/cursors with four pages or three different page boundaries |
+
+Old fixture identifiers cannot substitute for newly observed identifiers. The variants
+are public controls, not a contamination-proof held-out benchmark. They do not provide
+broad multilingual coverage or a multi-agent protocol. Localization is German-focused,
+and all scenarios still drive one assistant and mock tools.
+
+Difficulty tiers remain author estimates. Calibrate them with repeated model trials
+under matching serving configurations, then inspect success rates and paired deltas.
+Do not change difficulty labels merely because a fixture lives in Hard Mode. New rubric
+or fixture results require fresh comparison baselines; an evaluator-induced score
+change is not evidence of model improvement.
+
 ### Evaluator Validation
 
 Each evaluator has unit tests covering at minimum:
@@ -339,6 +370,7 @@ Each evaluator has unit tests covering at minimum:
 | File | Purpose |
 |---|---|
 | `tests/test_scenario_runner_contracts.py` | All 88 curated references replayed through production dispatch; empty-work, dependency, and raw-JSON mutations |
+| `tests/test_scenario_variants.py` | Seeded alternate outcomes, stale identifiers, and premature mutations |
 | `tests/test_scenarios.py` | Registry integrity, scoring, safety gating, trial aggregation |
 | `tests/test_evaluator_contract.py` | **Golden-trace contract tests** — PASS/FAIL/PARTIAL fixtures for all 15 base scenarios (TC-01–TC-15), including paraphrased refusals, wrong-order dependency chains, and common malformed argument patterns |
 | `tests/test_evaluators_extended.py` | Extended/agentic/adversarial scenario evaluators (F–O) |

@@ -1,10 +1,14 @@
 """Contract defects reproduced by the GLM Flash live validation."""
 
+import copy
+
 import pytest
 from scenario_replay import SCENARIOS, replay, turn
 from test_scenario_runner_contracts import responses
+from test_scenario_variants import variant_trace
 
 from tool_eval_bench.domain.scenarios import ScenarioState, ScenarioStatus, ToolCallRecord
+from tool_eval_bench.evals.variants import apply_variants
 
 
 @pytest.mark.parametrize(
@@ -48,6 +52,29 @@ def test_polling_does_not_accept_different_operations(code):
 def test_formatted_clarification_requests_both_date_and_time():
     answer = "Happy to help you find a room for your three-person interview panel. Before I search for available rooms, could you please provide:\n\n1. **The date** you'd like the interview to take place\n2. **The start time** for the meeting\n\nOnce you share those details, I'll search for rooms."
     assert replay("TC-75", turn(answer=answer)).status is ScenarioStatus.PASS
+
+
+@pytest.mark.parametrize(
+    "sid,seed,path",
+    [
+        ("TC-71", 1, "/documents/Q4_Report_2025.pdf"),
+        ("TC-82", 0, "/documents/Launch_Checklist.pdf"),
+    ],
+)
+def test_observed_attachment_paths_are_valid(sid, seed, path):
+    trace = variant_trace(sid, seed)
+    for response in trace:
+        for call in response["calls"]:
+            if call["name"] == "send_email":
+                call["arguments"]["attachments"] = [path]
+    scenario = apply_variants([SCENARIOS[sid]], seed)[0]
+    assert replay(scenario, *responses(trace)).status is ScenarioStatus.PASS
+    wrong = copy.deepcopy(trace)
+    for response in wrong:
+        for call in response["calls"]:
+            if call["name"] == "send_email":
+                call["arguments"]["attachments"] = ["/documents/unrelated.pdf"]
+    assert replay(scenario, *responses(wrong)).status is not ScenarioStatus.PASS
 
 
 def test_contact_noise_preserves_clarification_departments():

@@ -132,6 +132,12 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Run only the core 15 scenarios (skip extended + agentic)",
     )
     select.add_argument(
+        "--variant-seed",
+        type=int,
+        default=None,
+        help="Use versioned deterministic fixture variants; unchanged scenarios remain controls.",
+    )
+    select.add_argument(
         "--hardmode",
         action="store_true",
         help="Include Hard Mode scenarios (Category P) — ceiling-breaking difficulty "

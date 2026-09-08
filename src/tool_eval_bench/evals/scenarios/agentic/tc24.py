@@ -132,6 +132,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc24_eval,
     difficulty=3,
     dependencies=(("search_files", "read_file"),),
+    variant_literals=("file_q3_report",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

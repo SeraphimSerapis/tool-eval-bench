@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -223,6 +224,36 @@ def _tc87_eval(
     return _fail("Did not begin the required filtered pagination workflow.")
 
 
+def _tc87_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition:
+    from tool_eval_bench.evals.variants import identity_variant
+
+    if seed % 2 == 0:
+        return identity_variant(scenario, seed)
+    ids = [f"INC-{901 + i}" for i in range(6)]
+    pages = {
+        "": {
+            "incidents": [{"id": sid, "severity": "P1"} for sid in ids[:3]],
+            "next_page_token": "p2",
+        },
+        "p2": {
+            "incidents": [{"id": sid, "severity": "P1"} for sid in ids[2:5]],
+            "next_page_token": "p3",
+        },
+        "p3": {
+            "incidents": [{"id": sid, "severity": "P1"} for sid in ids[4:]],
+            "next_page_token": None,
+        },
+    }
+    variant = replace(
+        scenario,
+        handle_tool_call=lambda state, call: _tc87_handle(state, call, pages),
+        evaluate=lambda state: _tc87_eval(state, pages),
+    )
+    result = identity_variant(variant, seed)
+    result.variant_metadata["kind"] = "three-pages-renamed"
+    return result
+
+
 SCENARIO = ScenarioDefinition(
     "TC-87",
     "Complete Pagination With Cursor Integrity",
@@ -235,6 +266,18 @@ SCENARIO = ScenarioDefinition(
     difficulty=5,
     max_turns_override=8,
     dependencies=(("list_incidents", "send_email"), ("get_oncall_route", "send_email")),
+    variant_literals=(
+        "p2",
+        "p3",
+        "p4",
+        "INC-901",
+        "INC-902",
+        "INC-903",
+        "INC-904",
+        "INC-905",
+        "INC-906",
+    ),
+    variant_factory=_tc87_variant,
 )
 
 DISPLAY = ScenarioDisplayDetail(

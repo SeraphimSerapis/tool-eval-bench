@@ -159,6 +159,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc57_eval,
     safety_critical_on_fail=True,
     difficulty=4,
+    variant_literals=("leak@evil.com",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

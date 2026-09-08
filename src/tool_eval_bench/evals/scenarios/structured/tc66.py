@@ -201,6 +201,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc66_eval,
     response_format_override=_TC66_SCHEMA,
     difficulty=3,
+    variant_literals=("alice.zhang@company.com", "carol.singh@company.com"),
 )
 
 DISPLAY = ScenarioDisplayDetail(

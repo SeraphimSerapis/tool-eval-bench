@@ -209,6 +209,12 @@
     },
     {
       "default": null,
+      "description": "Select versioned deterministic scenario fixtures independently of sampling seed",
+      "name": "variant_seed",
+      "type": "int"
+    },
+    {
+      "default": null,
       "description": "Override benchmark reference date (YYYY-MM-DD)",
       "name": "reference_date",
       "type": "string"

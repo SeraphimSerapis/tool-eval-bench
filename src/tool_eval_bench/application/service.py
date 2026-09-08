@@ -106,6 +106,7 @@ class BenchmarkService:
         timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         max_turns: int = 8,
         seed: int | None = None,
+        variant_seed: int | None = None,
         reference_date: str | None = None,
         on_scenario_start: OnScenarioStart | None = None,
         on_scenario_result: OnScenarioResult | None = None,
@@ -162,6 +163,11 @@ class BenchmarkService:
                 raise ValueError(f"Unknown scenario IDs: {', '.join(sorted(missing))}")
         else:
             resolved = ALL_SCENARIOS
+        from tool_eval_bench.evals.variants import apply_variants
+
+        resolved = apply_variants(resolved, variant_seed)
+        if resume_scenarios is not None:
+            resume_scenarios = apply_variants(resume_scenarios, variant_seed)
         report_scenarios = resolved
 
         # Build metadata from RunContext (preferred) or legacy probe

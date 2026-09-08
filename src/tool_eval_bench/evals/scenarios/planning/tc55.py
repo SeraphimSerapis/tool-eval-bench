@@ -195,6 +195,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc55_eval,
     difficulty=4,
     dependencies=(("search_files", "read_file"), ("read_file", "calculator")),
+    variant_literals=("q3_rev_na", "q3_rev_emea"),
 )
 
 DISPLAY = ScenarioDisplayDetail(
