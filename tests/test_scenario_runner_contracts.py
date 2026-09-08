@@ -9,7 +9,7 @@ from scenario_replay import SCENARIOS, replay, turn
 from tool_eval_bench.domain.scenarios import ScenarioStatus
 
 REFERENCES = json.loads(
-    (Path(__file__).parent / "fixtures/scenario_reference_traces.json").read_text()
+    (Path(__file__).parent / "fixtures/scenario_reference_traces.json").read_text(encoding="utf-8")
 )
 
 

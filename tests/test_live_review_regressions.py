@@ -101,9 +101,9 @@ def test_valid_live_answers_receive_full_credit(sid):
 
     from test_scenario_runner_contracts import REFERENCES
 
-    answer = json.loads((Path(__file__).parent / "fixtures/live_review_answers.json").read_text())[
-        sid
-    ]
+    answer = json.loads(
+        (Path(__file__).parent / "fixtures/live_review_answers.json").read_text(encoding="utf-8")
+    )[sid]
     sid = "TC-23" if sid == "TC-23-expanded" else sid
     if sid == "TC-50":
         trace = responses(REFERENCES[sid])
