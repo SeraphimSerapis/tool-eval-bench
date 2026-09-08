@@ -67,7 +67,7 @@ def test_tc88_visible_quality_and_diagnostic_survive_reporting(tmp_path):
     assert results[1].diagnostics["reasoning_transport"] == "observed"
     summary = score_results([results[0]], [SCENARIOS["TC-88"]])
     path = write_scenario_report(tmp_path, "review", "scripted", summary)
-    assert "reasoning_transport = unavailable" in path.read_text()
+    assert "reasoning_transport = unavailable" in path.read_text(encoding="utf-8")
 
 
 def test_toolset_pairs_report_only_comparable_observed_results(tmp_path):
@@ -79,7 +79,9 @@ def test_toolset_pairs_report_only_comparable_observed_results(tmp_path):
     summary = score_results([control, crowded], scenarios)
     assert summary.toolset_deltas == {"TC-37 vs TC-01": -1}
     assert summary.to_dict()["toolset_deltas"] == summary.toolset_deltas
-    report = write_scenario_report(tmp_path, "pairs", "scripted", summary).read_text()
+    report = write_scenario_report(tmp_path, "pairs", "scripted", summary).read_text(
+        encoding="utf-8"
+    )
     assert "| TC-37 vs TC-01 | -1 |" in report
     assert not score_results([crowded], scenarios).toolset_deltas
     failed_control = replace(
