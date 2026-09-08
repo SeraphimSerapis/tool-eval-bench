@@ -406,6 +406,78 @@ def test_tc21_does_not_count_negated_validation_issues() -> None:
     assert result.status is ScenarioStatus.FAIL
 
 
+def test_tc21_counts_a_table_that_diagnoses_all_five_errors() -> None:
+    # Reported on issue #164: a full five-row diagnosis table scored 2/5 —
+    # "empty" and "out of plausible range" were outside the issue vocabulary,
+    # and the date row's "(valid: 01-12)" range annotations were misread as
+    # claims that the offending date itself is valid.
+    answer = "\n".join(
+        (
+            "| # | Field | Value | Issue | Severity |",
+            "|---|-------|-------|-------|----------|",
+            '| 1 | `email` | `"john@.com"` | Domain is `.com` — the label before the TLD '
+            "is empty. | Error |",
+            "| 2 | `age` | `200` | Out of plausible range. Typical upper bound is 120–150. "
+            "| Error (range) |",
+            '| 3 | `phone` | `"555-12"` | Malformed. Only 5 digits (`55512`). | Error |',
+            '| 4 | `date` | `"2020-13-45"` | Two violations: **month `13`** (valid: 01–12) '
+            "and **day `45`** (valid: 01–31). | Error |",
+            "| 5 | `amount` | `-50` | Negative value; it must be positive. | Error |",
+        )
+    )
+    result = _evaluate("TC-21", final_answer=answer)
+    assert result.status is ScenarioStatus.PASS
+
+
+def test_tc21_drops_to_partial_when_one_row_is_neutral() -> None:
+    answer = "\n".join(
+        (
+            '| 1 | `email` | `"john@.com"` | Domain is `.com` — the label before the TLD '
+            "is empty. | Error |",
+            "| 2 | `age` | `200` | Out of plausible range; the limit is 150. | Error |",
+            '| 3 | `phone` | `"555-12"` | Looks acceptable for a development environment. | Note |',
+            '| 4 | `date` | `"2020-13-45"` | Impossible: month 13 and day 45 '
+            "(valid: 01–12, 01–31). | Error |",
+            "| 5 | `amount` | `-50` | Negative value. | Error |",
+        )
+    )
+    result = _evaluate("TC-21", final_answer=answer)
+    assert result.status is ScenarioStatus.PARTIAL
+
+
+def test_tc21_bold_and_prose_range_annotations_are_not_quality_claims() -> None:
+    # A bolded annotation and an attributive "valid ranges/values" sentence
+    # annotate the accepted range; neither asserts that the offending value is
+    # valid.
+    answer = (
+        "Email john@.com is invalid: the domain label is empty. The age 200 is out of "
+        "plausible range. The phone 555-12 has only 5 digits. The date 2020-13-45 is "
+        "impossible (**month**: 13 — **valid**: 01–12; **day**: 45 — **valid**: 01–31), "
+        "because valid values for the month are only 01–12. "
+        "The amount -50 is negative and should be positive."
+    )
+    result = _evaluate("TC-21", final_answer=answer)
+    assert result.status is ScenarioStatus.PASS
+
+
+def test_tc21_predicate_colon_and_nonempty_prose_are_not_annotations() -> None:
+    # Review-adversarial pins: a colon followed by prose re-introduces a
+    # predicative claim (suppressed), "nonempty" must not match "empty", and a
+    # phone row that merely mentions "empty numbers" is not a diagnosis.
+    healthy = (
+        "The age is over 150. The phone has too few digits. The date is invalid. "
+        "The amount is negative."
+    )
+    for prefix in (
+        "The amount -50 is valid: withdrawals can be negative. ",
+        "The email john@.com is valid: it is malformed. ",
+        "The email john@.com has a nonempty domain label. ",
+        "The phone 555-12 is fine — only empty numbers are rejected. ",
+    ):
+        result = _evaluate("TC-21", final_answer=prefix + healthy)
+        assert result.status is ScenarioStatus.PARTIAL, f"body: {prefix!r}"
+
+
 def test_tc21_positive_validity_does_not_count_malformed_email() -> None:
     result = _evaluate(
         "TC-21",

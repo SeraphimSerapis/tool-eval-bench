@@ -39,7 +39,7 @@ def _tc21_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 # label", "has only 5 digits") is style, not correctness.
 _TC21_PROBLEM = (
     r"(?:invalid|malformed|bad\b|wrong|incorrect|not\s+(?:a\s+)?(?:valid|allowed|permitted)|"
-    r"isn't\s+valid|error|issue|problem|violat|fails?\b|exceed|out\s+of\s+range|"
+    r"isn't\s+valid|error|issue|problem|violat|fails?\b|exceed|out\s+of\s+(?:\w+\s+){0,2}range|"
     r"too\s+(?:high|low|few|short|long|large|small|many)|must\s+be|should\s+be|"
     r"cannot|can't|do(?:es)?\s+not\s+exist|don't\s+exist|doesn't\s+exist|missing|"
     r"only\s+\d+|negative|below\s+zero|impossible|not\s+\d+\s+digits)"
@@ -78,6 +78,24 @@ def _tc21_asserts_issue(answer: str, field: str, issue_pattern: str, value: str 
             clause,
             re.IGNORECASE,
         ):
+            # "(valid: 01-12)", "valid values are 01-12" or "the **valid**
+            # ranges (01-12)" annotate which values a field would accept: a
+            # colon followed by digits, or an attributive range/values noun,
+            # is annotation syntax, not a claim that the offending value
+            # itself is valid (issue #164).  A predicative use — "the email
+            # is valid but malformed", or "is valid: an explanation" — still
+            # suppresses the diagnosis.
+            trailing = clause[quality.end() :]
+            if (
+                re.match(r"[*_`\s]*:\s*\d", trailing)
+                or re.match(
+                    r"[*_`\s]+(?:ranges?|values?|bounds?|limits?|accepted)\b",
+                    trailing,
+                    re.IGNORECASE,
+                )
+                or re.match(r"[*_`\s]+\d{1,2}\s*[–-]\s*\d{1,2}", trailing)
+            ):
+                continue
             quality_before = clause[: quality.start()]
             if not re.search(
                 r"(?:\b(?:not|never|no)\b(?:\s+\w+){0,2}|n't)\s*$",
@@ -109,7 +127,10 @@ def _tc21_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer.lower()
     error_checks = [
         _tc21_asserts_issue(
-            answer, "email", r"(?:invalid|malformed|bad|missing|incomplete)", "john@.com"
+            answer,
+            "email",
+            r"(?:invalid|malformed|bad|missing|incomplete|\bempty\b)",
+            "john@.com",
         ),
         _tc21_asserts_issue(
             answer,
