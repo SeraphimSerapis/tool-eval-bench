@@ -36,7 +36,7 @@ RUN_CONTROL = (
     "no_preflight",
     "reference_date",
 )
-SCENARIOS = ("scenarios", "categories", "short", "hardmode", "hardmode_only")
+SCENARIOS = ("scenarios", "categories", "short", "hardmode", "hardmode_only", "variant_seed")
 PERF = (
     "perf",
     "perf_only",

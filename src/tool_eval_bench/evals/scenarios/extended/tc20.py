@@ -172,6 +172,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc20_eval,
     difficulty=3,
     dependencies=(("search_files", "read_file"), ("read_file", "calculator")),
+    variant_literals=("file_q3_sales",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

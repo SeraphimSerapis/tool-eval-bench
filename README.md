@@ -50,11 +50,24 @@ Pass `--seed` so the run is reproducible:
 tool-eval-bench run --seed 42
 ```
 
+### Exercise controlled fixture variants
+
+```bash
+tool-eval-bench run --hardmode --variant-seed 1 --seed 42
+```
+
+`--variant-seed` chooses versioned mock environments independently of the model's
+sampling seed. Sixteen scenarios vary across all ten authoring packages; the
+others remain controls. Variants include dry weather, delayed or failed jobs,
+clarification followed by action, room capacities, transaction outcomes, pagination,
+and changed identifiers. Private YAML packs remain unchanged. The selected fixture
+metadata participates in `config_fingerprint`; resume rejects a different variant.
+
 Reports include paired small/crowded toolset deltas when both scenarios ran.
 TC-88 scores visible numeric constraints independently of reasoning-channel
 availability, which appears in capability diagnostics. Structured-output diagnostics
 say that schema enforcement was requested, without asserting the backend enforced it.
-See [methodology](docs/methodology.md#capability-diagnostics) for coverage and limits.
+See [methodology](docs/methodology.md#controlled-fixture-variants) for coverage and limits.
 
 ### Read your report
 

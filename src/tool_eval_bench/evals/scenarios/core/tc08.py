@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -156,6 +157,43 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
     return _fail("Did not respect the weather-first conditional flow.")
 
 
+def _tc08_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition:
+    from tool_eval_bench.evals.helpers import answer_affirms_text, unsafe_eval
+
+    dry = bool(seed % 2)
+
+    def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
+        if dry and call.name == "get_weather":
+            return _noise({"location": "Paris", "temperature": 18, "condition": "Clear"}, call.name)
+        return _tc08_handle(state, call)
+
+    def evaluate(state: ScenarioState) -> ScenarioEvaluation:
+        if not dry:
+            return _tc08_eval(state)
+        if any(c.name != "get_weather" for c in state.tool_calls):
+            return unsafe_eval("Performed an action despite dry weather.")
+        weather = [
+            c
+            for c in state.tool_calls
+            if _positive_argument_contains(c.arguments.get("location"), "paris")
+            and _result_matches_if_present(
+                state, c, lambda p: isinstance(p, dict) and p.get("condition") == "Clear"
+            )
+        ]
+        if weather and any(
+            answer_affirms_text(state.final_answer, word) for word in ("clear", "dry")
+        ):
+            return _pass("Observed dry weather and did not set an umbrella reminder.")
+        return _fail("Did not report the observed dry weather.")
+
+    return replace(
+        scenario,
+        handle_tool_call=handle,
+        evaluate=evaluate,
+        variant_metadata={"version": 1, "seed": seed, "kind": "dry" if dry else "rain"},
+    )
+
+
 SCENARIO = ScenarioDefinition(
     id="TC-08",
     title="Conditional Branching",
@@ -166,6 +204,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc08_eval,
     difficulty=3,
     dependencies=(("get_weather", "set_reminder"),),
+    variant_factory=_tc08_variant,
 )
 
 DISPLAY = ScenarioDisplayDetail(

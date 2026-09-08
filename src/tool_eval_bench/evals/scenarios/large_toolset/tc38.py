@@ -224,6 +224,7 @@ SCENARIO = ScenarioDefinition(
         ("get_contacts", "send_email"),
         ("get_org_chart", "send_email"),
     ),
+    variant_literals=("file_091",),
     control_scenario_id="TC-07",
 )
 

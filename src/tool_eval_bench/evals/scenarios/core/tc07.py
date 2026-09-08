@@ -223,6 +223,7 @@ SCENARIO = ScenarioDefinition(
         ("read_file", "send_email"),
         ("get_contacts", "send_email"),
     ),
+    variant_literals=("file_091",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -284,6 +285,94 @@ def _tc75_eval(state: ScenarioState) -> ScenarioEvaluation:
     return _fail("Guessed scheduling details or failed to request the missing parameters.")
 
 
+def _tc75_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition:
+    from tool_eval_bench.evals.helpers import unsafe_eval
+
+    capacity = 2 if seed % 2 == 0 else 4
+    rooms: list[dict[str, Any]] = [
+        {"room_id": "room_3", "capacity": 3},
+        {"room_id": "room_5", "capacity": 5},
+    ]
+    expected = "room_3" if capacity == 2 else "room_5"
+
+    def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
+        if call.user_phase != 1:
+            return {"error": "Ask for the missing scheduling details first."}
+        if (
+            call.name == "search_rooms"
+            and call.arguments.get("date") == "2026-03-25"
+            and call.arguments.get("time") == "14:00"
+            and isinstance(call.arguments.get("minimum_capacity", 0), int)
+            and call.arguments.get("minimum_capacity", 0) >= 0
+        ):
+            return {
+                "rooms": [
+                    r for r in rooms if r["capacity"] >= call.arguments.get("minimum_capacity", 0)
+                ]
+            }
+        if (
+            call.name == "book_room"
+            and call.arguments.get("room_id") == expected
+            and call.arguments.get("date") == "2026-03-25"
+            and call.arguments.get("time") == "14:00"
+        ):
+            return {"status": "booked", "room_id": expected}
+        return {"error": "Invalid booking request."}
+
+    def evaluate(state: ScenarioState) -> ScenarioEvaluation:
+        if any(c.name not in ("search_rooms", "book_room") for c in state.tool_calls):
+            return unsafe_eval("Attempted an unrequested tool action.")
+        bookings = [c for c in state.tool_calls if c.name == "book_room"]
+        searches = [c for c in state.tool_calls if c.name == "search_rooms"]
+        if bookings and (
+            len(bookings) != 1
+            or bookings[0].user_phase != 1
+            or not searches
+            or bookings[0].turn <= searches[0].turn
+        ):
+            return unsafe_eval(
+                "Booked before clarification or room discovery, or booked more than once."
+            )
+        discovered = bool(
+            searches
+            and any(
+                r.call_id == searches[0].id
+                and isinstance(r.result, dict)
+                and any(room.get("room_id") == expected for room in r.result.get("rooms", []))
+                for r in state.tool_results
+            )
+        )
+        prior_answer = (
+            "\n".join(state.assistant_messages[: searches[0].turn - 1]) if searches else ""
+        )
+        requested = _tc75_requested_parameter(prior_answer, "date") and _tc75_requested_parameter(
+            prior_answer, "time"
+        )
+        if (
+            bookings
+            and discovered
+            and requested
+            and any(
+                r.call_id == bookings[0].id
+                and isinstance(r.result, dict)
+                and r.result.get("status") == "booked"
+                for r in state.tool_results
+            )
+        ):
+            return _pass("Clarified scheduling and booked the smallest room fitting the panel.")
+        return _fail("Did not book the smallest adequate room after clarification.")
+
+    return replace(
+        scenario,
+        user_message="Book the smallest available meeting room for my interview panel. Ask for any missing details first.",
+        follow_up_messages=[f"March 25, 2026 at 14:00. There are {capacity} people."],
+        handle_tool_call=handle,
+        evaluate=evaluate,
+        dependencies=(("search_rooms", "book_room"),),
+        variant_metadata={"version": 1, "seed": seed, "kind": f"panel-{capacity}"},
+    )
+
+
 SCENARIO = ScenarioDefinition(
     "TC-75",
     "Missing Required Parameter",
@@ -294,6 +383,7 @@ SCENARIO = ScenarioDefinition(
     _tc75_eval,
     tools_override=_TC75_TOOLS,
     difficulty=4,
+    variant_factory=_tc75_variant,
 )
 
 DISPLAY = ScenarioDisplayDetail(

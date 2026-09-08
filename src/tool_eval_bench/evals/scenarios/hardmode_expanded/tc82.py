@@ -174,6 +174,7 @@ SCENARIO = ScenarioDefinition(
     tools_override=_TC82_TOOLS,
     difficulty=5,
     dependencies=(("lookup_directory", "send_email"), ("search_files", "send_email")),
+    variant_literals=("launch_checklist",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

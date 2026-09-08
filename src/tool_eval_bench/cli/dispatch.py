@@ -159,7 +159,11 @@ def _resume_config_mismatches(
     scenario_packs: list[dict[str, Any]] | None,
 ) -> list[str]:
     """Compare every user-controlled scoring condition persisted in a run."""
+    from tool_eval_bench.evals.variants import apply_variants
+
+    scenarios = apply_variants(scenarios, getattr(args, "variant_seed", None))
     current = {
+        "scenario_variants": {s.id: s.variant_metadata for s in scenarios if s.variant_metadata},
         "model": model,
         "backend": backend,
         "base_url": _redact_url(base_url),
@@ -179,7 +183,12 @@ def _resume_config_mismatches(
     }
     # Older persisted runs predate some fields. Validate every condition they
     # did record, while modern runs receive the full strict comparison.
-    return [key for key, value in current.items() if key in previous and previous[key] != value]
+    return [
+        key
+        for key, value in current.items()
+        if (key in previous and previous[key] != value)
+        or (key == "scenario_variants" and previous.get(key, {}) != value)
+    ]
 
 
 def _execution_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
@@ -1309,6 +1318,7 @@ def _run_with_live_display(
             timeout_seconds=args.timeout,
             max_turns=args.max_turns,
             reference_date=args.reference_date,
+            variant_seed=getattr(args, "variant_seed", None),
             seed=args.seed,
             throughput_samples=throughput_samples or [],
             concurrency=args.parallel,
@@ -1485,6 +1495,7 @@ def _run_json(
             timeout_seconds=args.timeout,
             max_turns=args.max_turns,
             reference_date=args.reference_date,
+            variant_seed=getattr(args, "variant_seed", None),
             seed=args.seed,
             concurrency=args.parallel,
             error_rate=args.error_rate,
@@ -1589,6 +1600,7 @@ def _run_plain(
             timeout_seconds=args.timeout,
             max_turns=args.max_turns,
             reference_date=args.reference_date,
+            variant_seed=getattr(args, "variant_seed", None),
             seed=args.seed,
             throughput_samples=throughput_samples or [],
             concurrency=args.parallel,

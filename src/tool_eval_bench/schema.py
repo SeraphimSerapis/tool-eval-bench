@@ -220,6 +220,12 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Skip the strict model availability pre-flight check",
     },
     {
+        "name": "variant_seed",
+        "type": "int",
+        "default": None,
+        "description": "Select versioned deterministic scenario fixtures independently of sampling seed",
+    },
+    {
         "name": "reference_date",
         "type": "string",
         "default": None,
