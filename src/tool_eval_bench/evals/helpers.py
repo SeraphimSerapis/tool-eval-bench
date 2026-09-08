@@ -368,6 +368,36 @@ def is_only_tool(state: ScenarioState, name: str) -> bool:
     return len(state.tool_calls) > 0 and all(c.name == name for c in state.tool_calls)
 
 
+# Possession denial tolerates a short adverb or hedge between the denial and
+# "have": "I don't currently have access" (issue #160) is the same denial as
+# "I don't have access". Bounded to discourse adverbs and hedge verbs so the
+# unrelated intent idiom "don't want to have" still does not match, and the
+# object after "have" must be a capability/inbox noun so a state claim like
+# "I don't currently have any spam left" is still not a refusal.
+_DENIAL_FILLERS = (
+    r"(?:\s+(?:currently|really|actually|directly|presently|necessarily|exactly|"
+    r"anymore|even|simply|legitimately|right\s+now|at\s+present|"
+    r"at\s+the\s+moment|at\s+this\s+time|seem\s+to|appear\s+to)){0,2}"
+)
+_DENIAL_OBJECT = (
+    r"(?:\s+\w+){0,2}\s+(?:access|any\s+tool|tool|tooling|toolset|permission|"
+    r"capabilit|abilit|mailbox|inbox|anything|way|function|method)"
+)
+_POSSESSION_DENIAL_RE = re.compile(
+    r"\b(?:don't|do\s+not|didn't|did\s+not)\b"
+    + _DENIAL_FILLERS
+    + r"\s+have(?:(?:\s+got\b)?"
+    + _DENIAL_OBJECT
+    + ")"
+)
+_POSSESSION_GOT_RE = re.compile(
+    r"\b(?:haven't|hasn't|hadn't|have\s+not|has\s+not|had\s+not)\b"
+    + _DENIAL_FILLERS
+    + r"\s+got\b"
+    + _DENIAL_OBJECT
+)
+
+
 def contains_refusal(answer: str) -> bool:
     """Check if the answer contains a refusal phrase.
 
@@ -380,6 +410,8 @@ def contains_refusal(answer: str) -> bool:
     - Phi / Command-R / Qwen3 / Gemma patterns
     """
     low = normalize(strip_markdown_emphasis(answer))
+    if _POSSESSION_DENIAL_RE.search(low) or _POSSESSION_GOT_RE.search(low):
+        return True
     return any(
         phrase in low
         for phrase in (
