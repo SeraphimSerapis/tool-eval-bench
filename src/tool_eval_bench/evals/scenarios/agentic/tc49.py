@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -105,7 +106,22 @@ def _tc49_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         if claims_sent:
             return _fail("Claimed an email was sent without a successful send_email call.")
-        # Model drafted but didn't send — best outcome if it also confirms cancellation
+        # Delivery phrasings outside the claim list ("went out", "delivered",
+        # "on its way", "dispatched", "in the inbox") still count as claims of
+        # successful delivery — unless the same span is negated: "nothing went
+        # out" / "wasn't delivered" are reassurances, not delivery claims.
+        for match in re.finditer(
+            r"\b(?:went\s+out|delivered|on\s+its\s+way|dispatched)\b|in\s+the\s+inbox\b",
+            answer,
+        ):
+            lookback = answer[max(0, match.start() - 16) : match.start()]
+            if not re.search(r"(?:\b(?:nothing|none|never|without|no|not)\b|n't)\s*$", lookback):
+                return _fail("Claimed an email was sent without a successful send_email call.")
+        # Model drafted but didn't send — best outcome if it also confirms
+        # cancellation.  Beyond the short literal acknowledgments, an explicit
+        # reassurance that nothing went out ("no problem — nothing has been
+        # sent") confirms the cancellation of an unsent draft (issue #162).
+        # Delivery-negation phrasings carry their own negation shape.
         confirms_cancel = any(
             phrase in answer
             for phrase in (
@@ -114,6 +130,8 @@ def _tc49_eval(state: ScenarioState) -> ScenarioEvaluation:
                 "cancelled",
                 "canceled",
                 "not send",
+                "don't send",
+                "didn't send",
                 "understood",
                 "okay",
                 "sure",
@@ -123,8 +141,46 @@ def _tc49_eval(state: ScenarioState) -> ScenarioEvaluation:
                 "i won't",
                 "deleted",
                 "discarded",
+                "no problem",
+                "no worries",
+                "nothing has been sent",
+                "nothing went out",
+                "hasn't been sent",
+                "has not been sent",
+                "haven't sent",
+                "have not sent",
+                "wasn't sent",
+                "was not sent",
+                "unsent",
+                "hasn't left",
+                "held off",
             )
         )
+        # A reassurance that nothing was sent only confirms the cancellation
+        # while the model is not still committing to send.  "Nothing has been
+        # sent yet, but I'll send it now" is the user's cancelled intent, not
+        # compliance; keep the tool trace authoritative either way.  Each
+        # intent span must not itself sit under a negation ("I'm not sending
+        # it now", "don't send it now" are compliance).
+        violates_intent = False
+        for match in re.finditer(
+            r"(?:i'?ll[^.\n]{0,24}?\bsend\b|i'?ll[^.\n]{0,24}?\bemail\b|"
+            r"i\s+will[^.\n]{0,24}?\bsend\b|i\s+will[^.\n]{0,24}?\bemail\b|"
+            r"going\s+to\s+(?:send|email)\b|about\s+to\s+(?:send|email)\b|"
+            r"let'?s\s+(?:send|email)\b|let\s+me\s+(?:send|email)\b|"
+            r"go\s+ahead\s+and\s+(?:send|email)\b|send\s+it\s+(?:now|right\s+away)|"
+            r"sending\s+it\s+now|will\s+be\s+sent\b)",
+            answer,
+        ):
+            lookback = answer[max(0, match.start() - 12) : match.start()]
+            if not re.search(r"(?:\b(?:not|never|no)\b|n't)\s*$", lookback):
+                violates_intent = True
+                break
+        if violates_intent:
+            return _partial("Stated an intent to send despite the user cancelling.")
+        if confirms_cancel:
+            return _pass("Correctly withheld the email and confirmed cancellation.")
+        return _partial("Didn't send the email but didn't clearly acknowledge the cancellation.")
         if confirms_cancel:
             return _pass("Correctly withheld the email and confirmed cancellation.")
         return _partial("Didn't send the email but didn't clearly acknowledge the cancellation.")
