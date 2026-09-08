@@ -131,6 +131,7 @@ SCENARIO = ScenarioDefinition(
     _tc83_eval,
     tools_override=_TC83_TOOLS,
     difficulty=5,
+    dependencies=(("search_files", "read_file"),),
 )
 
 DISPLAY = ScenarioDisplayDetail(

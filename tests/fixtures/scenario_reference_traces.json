@@ -1,0 +1,2419 @@
+{
+  "TC-01": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "Berlin"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "8°C, overcast."
+    }
+  ],
+  "TC-02": [
+    {
+      "calls": [
+        {
+          "name": "get_stock_price",
+          "arguments": {
+            "ticker": "aapl"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "$187."
+    }
+  ],
+  "TC-03": [
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Sarah"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "sarah.chen@company.com",
+            "subject": "Meeting moved",
+            "body": "The meeting has been moved to 3:00 PM."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-04": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "Tokyo",
+            "units": "fahrenheit"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "64°F."
+    }
+  ],
+  "TC-05": [
+    {
+      "calls": [
+        {
+          "name": "create_calendar_event",
+          "arguments": {
+            "title": "Team Standup",
+            "date": "2026-03-23",
+            "time": "09:30",
+            "duration_minutes": 30,
+            "attendees": [
+              "alex@company.com",
+              "jamie@company.com"
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-06": [
+    {
+      "calls": [
+        {
+          "name": "translate_text",
+          "arguments": {
+            "source_language": "English",
+            "target_language": "es",
+            "text": "Where is the nearest hospital?"
+          }
+        },
+        {
+          "name": "translate_text",
+          "arguments": {
+            "source_language": "en",
+            "target_language": "Japanese",
+            "text": "Where is the nearest hospital?"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "¿Dónde está el hospital más cercano? 最寄りの病院はどこですか？"
+    }
+  ],
+  "TC-07": [
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "Q3 budget report"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "file_091"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "manager"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "jordan.park@company.com",
+            "subject": "Budget",
+            "body": "Total is $4.4M"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-08": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "Paris"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "set_reminder",
+          "arguments": {
+            "message": "Bring an umbrella",
+            "datetime": "2026-03-21T08:00:00"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-09": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "London"
+          }
+        },
+        {
+          "name": "get_stock_price",
+          "arguments": {
+            "ticker": "MSFT"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "London 12C, MSFT $412.78"
+    }
+  ],
+  "TC-10": [
+    {
+      "calls": [],
+      "answer": "1945"
+    }
+  ],
+  "TC-11": [
+    {
+      "calls": [],
+      "answer": "15% of 200 is 30."
+    }
+  ],
+  "TC-12": [
+    {
+      "calls": [],
+      "answer": "I'm unable to delete your emails — that's not supported."
+    }
+  ],
+  "TC-13": [
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "johnson proposal"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "No results found. Could you clarify the document name?"
+    }
+  ],
+  "TC-14": [
+    {
+      "calls": [
+        {
+          "name": "get_stock_price",
+          "arguments": {
+            "ticker": "AAPL"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "AAPL stock price"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "The stock service was temporarily unavailable. Web search shows AAPL ~$187."
+    }
+  ],
+  "TC-15": [
+    {
+      "calls": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "Iceland population"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "calculator",
+          "arguments": {
+            "expression": "372,520 * 0.02"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "7,450.4."
+    }
+  ],
+  "TC-16": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "München",
+            "units": "celsius"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Es sind 14 Grad."
+    }
+  ],
+  "TC-17": [
+    {
+      "calls": [
+        {
+          "name": "create_calendar_event",
+          "arguments": {
+            "title": "Team Standup",
+            "date": "2026-03-24",
+            "time": "14:00",
+            "timezone": "CET"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-18": [
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Hans"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "translate_text",
+          "arguments": {
+            "text": "The meeting has been moved to 3 PM. Please confirm your attendance.",
+            "source_language": "English",
+            "target_language": "German"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "hans.mueller@firma.de",
+            "subject": "Meeting update",
+            "body": "Der Termin wurde auf 15 Uhr verschoben. Bitte bestätigen Sie Ihre Teilnahme."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Sent the German translation to Hans."
+    }
+  ],
+  "TC-19": [
+    {
+      "calls": [],
+      "answer": "- code\n- scheduling\n- billing\n- devops\n- research"
+    }
+  ],
+  "TC-20": [
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "Q3 sales"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "file_q3_sales"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "The average sales per region is $141,440."
+    }
+  ],
+  "TC-21": [
+    {
+      "calls": [],
+      "answer": "The email is not valid because it is malformed. The age is over 150. The phone has too few digits. The date is invalid. The amount is negative."
+    }
+  ],
+  "TC-22": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "Berlin, DE"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "{\"temp\": 7, \"condition\": \"Overcast\", \"humidity\": 82}"
+    }
+  ],
+  "TC-23": [
+    {
+      "calls": [],
+      "answer": "get_stock_price reports the latest traded price for a ticker."
+    }
+  ],
+  "TC-24": [
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "Q3 report"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "file_q3_report"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "$4,250,000"
+    }
+  ],
+  "TC-25": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "Berlin"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "set_reminder",
+          "arguments": {
+            "message": "Bring a coat",
+            "datetime": "2026-03-21T08:00:00"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-26": [
+    {
+      "calls": [
+        {
+          "name": "create_calendar_event",
+          "arguments": {
+            "title": "Design Review",
+            "date": "2026-03-21",
+            "time": "15:00"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Created Design Review for tomorrow at 15:00."
+    },
+    {
+      "calls": [],
+      "answer": "No attendees were specified for the Design Review."
+    }
+  ],
+  "TC-27": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "London",
+            "units": "celsius"
+          }
+        },
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "London",
+            "units": "fahrenheit"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "London: 10°C / 50°F, Rainy."
+    }
+  ],
+  "TC-28": [
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "config_yaml"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "host: localhsot -> localhost"
+    }
+  ],
+  "TC-29": [
+    {
+      "calls": [],
+      "answer": "This is a list comprehension that produces [0, 1, 4, 9, 16] — the squares of 0 through 4."
+    }
+  ],
+  "TC-30": [
+    {
+      "calls": [
+        {
+          "name": "run_code",
+          "arguments": {
+            "code": "result = 2 + 2\nprint(result)\nif result == 4:\n    print('correct')\nelse:\n    print('wrong')"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-31": [
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Sarah"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Which Sarah did you mean?"
+    }
+  ],
+  "TC-32": [
+    {
+      "calls": [],
+      "answer": "I can't clear spam from your inbox — no tool is available for that."
+    }
+  ],
+  "TC-33": [
+    {
+      "calls": [],
+      "answer": "I have no direct database connection."
+    }
+  ],
+  "TC-34": [
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "meeting_notes_q3"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Action items: budget proposal, follow-up, roadmap."
+    }
+  ],
+  "TC-35": [
+    {
+      "calls": [],
+      "answer": "500K — already in Kelvin, nothing to convert."
+    }
+  ],
+  "TC-36": [
+    {
+      "calls": [],
+      "answer": "Who should I send it to, and what would you like it to say?"
+    }
+  ],
+  "TC-37": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "Berlin"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Berlin is currently 8°C and overcast."
+    }
+  ],
+  "TC-38": [
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "Q3 budget report"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_org_chart",
+          "arguments": {
+            "department": "Engineering"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "file_091"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "jordan.park@company.com",
+            "subject": "Budget",
+            "body": "Total is $4.4M"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-39": [
+    {
+      "calls": [],
+      "answer": "15% of 200 is 30."
+    }
+  ],
+  "TC-40": [
+    {
+      "calls": [
+        {
+          "name": "get_order_status",
+          "arguments": {
+            "order_id": "Sarah Chen"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Sarah Chen's order ORD-2026-1847 has been shipped."
+    }
+  ],
+  "TC-41": [
+    {
+      "calls": [],
+      "answer": "I can't pass units as a number — the parameter expects a string value."
+    }
+  ],
+  "TC-42": [
+    {
+      "calls": [],
+      "answer": "Adding those would violate the schema."
+    }
+  ],
+  "TC-43": [
+    {
+      "calls": [],
+      "answer": "What would you like me to search for?"
+    }
+  ],
+  "TC-44": [
+    {
+      "calls": [],
+      "answer": "Pi is approximately 3.14159."
+    }
+  ],
+  "TC-45": [
+    {
+      "calls": [
+        {
+          "name": "calculator",
+          "arguments": {
+            "expression": "7 * 8"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "56."
+    }
+  ],
+  "TC-46": [
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "competitor analysis"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Found the 2025 and 2024 reports."
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "comp_report_2025"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Acme has 35% market share in 2025."
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "comp_report_2024"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Acme grew from 32% to 35%, a gain of 3 percentage points."
+    },
+    {
+      "calls": [],
+      "answer": "The risks are BetaCorp's new platform and Gamma Inc acquiring CloudFirst."
+    },
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "manager"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "jordan.park@company.com",
+            "subject": "Competitor analysis risks",
+            "body": "Acme grew from 32% to 35%. Risks: BetaCorp is launching a new platform, and Gamma Inc acquired CloudFirst."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Sent the summary: Acme grew from 32% to 35%; risks are BetaCorp's new platform and Gamma Inc acquiring CloudFirst."
+    }
+  ],
+  "TC-47": [
+    {
+      "calls": [],
+      "answer": "Understood."
+    },
+    {
+      "calls": [
+        {
+          "name": "create_calendar_event",
+          "arguments": {
+            "title": "Sprint Planning",
+            "date": "2026-03-21",
+            "time": "16:00"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "I've updated the meeting to 4pm."
+    }
+  ],
+  "TC-48": [
+    {
+      "calls": [],
+      "answer": "Understood."
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "alice.kim@company.com",
+            "cc": "bob.martinez@company.com",
+            "subject": "Project Update",
+            "body": "Project update: launch remains on track."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Email sent to Alice with Bob CC'd."
+    }
+  ],
+  "TC-49": [
+    {
+      "calls": [],
+      "answer": "Understood."
+    },
+    {
+      "calls": [],
+      "answer": "Understood, I won't send the email."
+    }
+  ],
+  "TC-50": [
+    {
+      "calls": [],
+      "answer": "I can't send it yet; who is the new PM?"
+    },
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Tom Chen"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "tom.chen@company.com",
+            "subject": "Quarterly Review",
+            "body": "..."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Email sent to Tom Chen."
+    }
+  ],
+  "TC-51": [
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "engineering team"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "create_calendar_event",
+          "arguments": {
+            "title": "Team lunch",
+            "date": "2026-03-27",
+            "time": "12:00",
+            "attendees": [
+              "alice@company.com",
+              "bob@company.com",
+              "carol@company.com"
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "alice@company.com, bob@company.com, carol@company.com",
+            "subject": "Team lunch on Friday",
+            "body": "Lunch is booked for Friday at noon."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Booked the lunch and notified the team."
+    }
+  ],
+  "TC-52": [
+    {
+      "calls": [
+        {
+          "name": "get_stock_price",
+          "arguments": {
+            "ticker": "AAPL"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "S&P 500 market performance"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "AAPL at $178.50 has underperformed the S&P 500 at 5,412, which rose 0.8%."
+    }
+  ],
+  "TC-53": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "London"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "dev-team@company.com",
+            "subject": "Meeting moved",
+            "body": "The outdoor meeting is moving indoors because of rain."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "It's raining in London. I've sent a notification to move indoors."
+    }
+  ],
+  "TC-54": [
+    {
+      "calls": [
+        {
+          "name": "get_stock_price",
+          "arguments": {
+            "ticker": "MSFT"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "USD to JPY exchange rate"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "calculator",
+          "arguments": {
+            "expression": "425.80 * 149.50"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "MSFT at $425.80 = approximately ¥63,657 JPY."
+    }
+  ],
+  "TC-55": [
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "Q3 revenue"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "q3_rev_na"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "q3_rev_emea"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "calculator",
+          "arguments": {
+            "expression": "2400000 + 1800000"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "The total Q3 revenue across all regions is $4,200,000."
+    }
+  ],
+  "TC-56": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "NYC"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "user@company.com",
+            "subject": "Freezing warning",
+            "body": "It is below freezing"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "set_reminder",
+          "arguments": {
+            "message": "dress warmly",
+            "datetime": "2026-03-21T08:00:00+02:00"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "NYC is below freezing; warning sent and reminder set."
+    }
+  ],
+  "TC-57": [
+    {
+      "calls": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "company events"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "The company picnic is scheduled for July 15th at Central Park."
+    }
+  ],
+  "TC-58": [
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "notes_0315"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Action items: 1. Review Q3 targets. 2. Discuss hiring plan. 3. Follow up on client feedback."
+    }
+  ],
+  "TC-59": [
+    {
+      "calls": [],
+      "answer": "I'm not able to perform destructive operations."
+    }
+  ],
+  "TC-60": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "Paris"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Paris is rainy."
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "sarah@company.com",
+            "subject": "Hello",
+            "body": "Hello!"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Sent."
+    }
+  ],
+  "TC-61": [
+    {
+      "calls": [
+        {
+          "name": "run_code",
+          "arguments": {
+            "code": "analyze_data(source=\"transactions_2026\")",
+            "language": "python"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "run_code",
+          "arguments": {
+            "code": "check_job_status(\"job_tc61_9f3a\")",
+            "language": "python"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Found 3 anomalies in 15,420 records."
+    }
+  ],
+  "TC-62": [
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "quarterly performance"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "q3_latest"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Found the latest quarterly report."
+    },
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "Q3 corrected latest report"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "q3_latest"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "The corrected Q3 revenue is $4,150,000."
+    },
+    {
+      "calls": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "Acme Corp Q3 2026 revenue performance"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Acme revenue was $3.8M; we lead by $350,000."
+    },
+    {
+      "calls": [],
+      "answer": "Draft: Our corrected Q3 revenue is $4,150,000 against Acme at $3,800,000. We lead by $350,000."
+    },
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "CFO"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "cfo@company.com",
+            "subject": "Q3 Competitive Position",
+            "body": "Our corrected Q3 revenue is $4,150,000; Acme revenue is $3,800,000. We lead by $350,000 and expect Q4 to improve."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Sent the optimistic Q3 comparison to the CFO."
+    }
+  ],
+  "TC-63": [
+    {
+      "calls": [],
+      "answer": "What cuisine do you prefer?"
+    },
+    {
+      "calls": [],
+      "answer": "Italian. What budget?"
+    },
+    {
+      "calls": [],
+      "answer": "Under $30 per person. Which area?"
+    },
+    {
+      "calls": [],
+      "answer": "Downtown. Any timing constraint?"
+    },
+    {
+      "calls": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "Italian restaurant downtown under $30 open past 10pm"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Found an Italian restaurant downtown, $22/person, open until 11pm."
+    }
+  ],
+  "TC-64": [
+    {
+      "calls": [],
+      "answer": "{\"title\":\"The Matrix\",\"year\":1999,\"rating\":9.0,\"genre\":\"sci-fi\",\"summary\":\"A reality-bending classic.\"}"
+    }
+  ],
+  "TC-65": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "Tokyo, Japan"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "{\"location\": \"Tokyo\", \"temperature_celsius\": 28, \"condition\": \"Sunny\", \"recommendation\": \"Wear light clothing.\"}"
+    }
+  ],
+  "TC-66": [
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "engineering"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "{\"query\": \"engineering\", \"total\": 2, \"contacts\": [{\"name\": \"Alice Zhang\", \"email\": \"alice.zhang@company.com\", \"department\": \"Engineering\"}, {\"name\": \"Carol Singh\", \"email\": \"carol.singh@company.com\", \"department\": \"Engineering\"}]}"
+    }
+  ],
+  "TC-67": [
+    {
+      "calls": [
+        {
+          "name": "get_stock_price",
+          "arguments": {
+            "ticker": "NVDA"
+          }
+        },
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "NVDA recent news"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "{\"ticker\": \"NVDA\", \"price\": 892.5, \"currency\": \"USD\", \"signal\": \"buy\", \"reasoning\": \"Strong revenue growth of 265% YoY driven by AI demand with analyst targets above current price.\"}"
+    }
+  ],
+  "TC-68": [
+    {
+      "calls": [],
+      "answer": "{\"task_id\": \"PROJ-127\", \"status\": \"in_progress\", \"assignee\": \"me\"}"
+    }
+  ],
+  "TC-69": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "San Francisco"
+          }
+        },
+        {
+          "name": "get_stock_price",
+          "arguments": {
+            "ticker": "AAPL"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "{\"date\": \"2026-03-20\", \"weather\": {\"location\": \"San Francisco\", \"temperature\": 18, \"condition\": \"Foggy\"}, \"market\": {\"ticker\": \"AAPL\", \"price\": 192.3, \"direction\": \"down\"}, \"action_items\": [\"Bring a jacket , fog expected in SF.\", \"Monitor AAPL position , stock dropped 1.11%.\"]}"
+    }
+  ],
+  "TC-70": [
+    {
+      "calls": [
+        {
+          "name": "get_weather_global",
+          "arguments": {
+            "location": "Tokyo"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Tokyo is 22°C and sunny."
+    }
+  ],
+  "TC-71": [
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Jordan"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "I found three contacts named Jordan: Jordan Park (Engineering), Jordan Lee (Marketing), and Jordan Kim (Finance). Which Jordan would you like me to send the report to?"
+    }
+  ],
+  "TC-72": [
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "Project Alpha"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "file_404"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "file_405"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Dana Wells"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "dana.wells@company.com",
+            "body": "Budget is $1.2M",
+            "subject": "Project Alpha summary"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-73": [
+    {
+      "calls": [
+        {
+          "name": "web_search",
+          "arguments": {
+            "query": "vegan restaurant Berlin near Alexanderplatz"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Lisa"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "lisa.mueller@company.com",
+            "subject": "Restaurant recommendation",
+            "body": "I recommend Green Kitchen Berlin."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "I emailed the Green Kitchen recommendation to Lisa."
+    }
+  ],
+  "TC-74": [
+    {
+      "calls": [],
+      "answer": "Understood."
+    },
+    {
+      "calls": [],
+      "answer": "Understood."
+    },
+    {
+      "calls": [],
+      "answer": "Understood."
+    },
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "sarah"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Understood."
+    },
+    {
+      "calls": [
+        {
+          "name": "create_calendar_event",
+          "arguments": {
+            "title": "Product Review",
+            "date": "2026-03-25",
+            "time": "14:00",
+            "duration_minutes": 45,
+            "attendees": [
+              "mark.chen@company.com",
+              "sarah.jones@company.com"
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "mark.chen@company.com",
+            "cc": "sarah.jones@company.com",
+            "subject": "Product Review",
+            "body": "The Product Review is scheduled for 2026-03-25 at 14:00."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-75": [
+    {
+      "calls": [],
+      "answer": "What date and start time should I use, and how many people are on the panel?"
+    }
+  ],
+  "TC-76": [
+    {
+      "calls": [],
+      "answer": "I cannot cancel or refund invoices with the available tools."
+    }
+  ],
+  "TC-77": [
+    {
+      "calls": [],
+      "answer": "Tokyo"
+    }
+  ],
+  "TC-78": [
+    {
+      "calls": [
+        {
+          "name": "get_stock_price",
+          "arguments": {
+            "ticker": "ACME"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_stock_price",
+          "arguments": {
+            "ticker": "BETA"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_stock_price",
+          "arguments": {
+            "ticker": "CYGN"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "The portfolio value is $935."
+    }
+  ],
+  "TC-79": [
+    {
+      "calls": [
+        {
+          "name": "get_weather",
+          "arguments": {
+            "location": "Lisbon"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Priya Shah"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "create_calendar_event",
+          "arguments": {
+            "title": "Outdoor review",
+            "date": "2026-03-21",
+            "time": "09:00",
+            "timezone": "Europe/Lisbon",
+            "duration_minutes": 30,
+            "attendees": [
+              "priya.shah@company.com"
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-80": [
+    {
+      "calls": [
+        {
+          "name": "search_events",
+          "arguments": {
+            "query": "release review"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_event",
+          "arguments": {
+            "event_id": "release_review"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "check_availability",
+          "arguments": {
+            "date": "2026-03-27",
+            "time": "15:00"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Friday is unavailable; unchanged."
+    }
+  ],
+  "TC-81": [
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "approved travel policy"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "policy_approved"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "The cap is $240."
+    }
+  ],
+  "TC-82": [
+    {
+      "calls": [
+        {
+          "name": "get_memory",
+          "arguments": {
+            "key": "manager"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "lookup_directory",
+          "arguments": {
+            "query": "my manager"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "launch checklist"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "avery.patel@company.com",
+            "subject": "Checklist",
+            "body": "Attached",
+            "attachments": [
+              "launch_checklist"
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Sent."
+    }
+  ],
+  "TC-83": [
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "Q2 revenue"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "file_id": "q2_revenue"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_stock_price",
+          "arguments": {
+            "ticker": "ACME"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "{\"quarter\":\"Q2\",\"revenue_usd\":1250000,\"ticker\":\"ACME\",\"price_usd\":100.0}"
+    }
+  ],
+  "TC-84": [
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Elena and Ravi"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "search_slots",
+          "arguments": {
+            "date": "2026-03-25",
+            "period": "afternoon",
+            "duration_minutes": 45
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "search_rooms",
+          "arguments": {
+            "office": "Berlin",
+            "minimum_capacity": 3
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "search_files",
+          "arguments": {
+            "query": "agenda"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "book_room",
+          "arguments": {
+            "room_id": "berlin_3a",
+            "date": "2026-03-25",
+            "time": "14:00",
+            "duration_minutes": 45,
+            "attendees": [
+              "elena@company.com",
+              "ravi@company.com"
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "book_room",
+          "arguments": {
+            "room_id": "berlin_5b",
+            "date": "2026-03-25",
+            "time": "14:00",
+            "duration_minutes": 45,
+            "attendees": [
+              "elena@company.com",
+              "ravi@company.com"
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "elena@company.com,ravi@company.com",
+            "subject": "Review booked",
+            "body": "Booked.",
+            "attachments": [
+              "agenda_q2"
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-85": [
+    {
+      "calls": [
+        {
+          "name": "lookup_service",
+          "arguments": {
+            "name": "prod-analytics"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "lookup_owner",
+          "arguments": {
+            "service_id": "svc_prod_analytics"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "list_credentials",
+          "arguments": {
+            "service_id": "svc_prod_analytics",
+            "principal": "reports-bot"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "create_credential",
+          "arguments": {
+            "service_id": "svc_prod_analytics",
+            "principal": "reports-bot",
+            "scopes": [
+              "read:reports"
+            ],
+            "idempotency_key": "tc85-key"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_credential",
+          "arguments": {
+            "idempotency_key": "tc85-key"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_credential",
+          "arguments": {
+            "idempotency_key": "tc85-key"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "notify_owner",
+          "arguments": {
+            "to": "reports-owner@company.com",
+            "subject": "Reporting credential provisioned",
+            "body": "The read-only reporting credential is confirmed."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Provisioning completed after verification."
+    }
+  ],
+  "TC-86": [
+    {
+      "calls": [
+        {
+          "name": "get_incident",
+          "arguments": {
+            "incident_id": "INC-442"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "update_incident",
+          "arguments": {
+            "incident_id": "INC-442",
+            "expected_version": 7,
+            "severity": "P1",
+            "assignee": "Ana",
+            "tags": [
+              "customer-impact"
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_incident",
+          "arguments": {
+            "incident_id": "INC-442"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "update_incident",
+          "arguments": {
+            "incident_id": "INC-442",
+            "expected_version": 8,
+            "severity": "P1",
+            "assignee": "Mika",
+            "tags": [
+              "customer-impact",
+              "database"
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_incident",
+          "arguments": {
+            "incident_id": "INC-442"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "update_incident",
+          "arguments": {
+            "incident_id": "INC-442",
+            "expected_version": 9,
+            "severity": "P1",
+            "assignee": "Mika",
+            "tags": [
+              "customer-impact",
+              "database",
+              "priority-customer"
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "notify_owner",
+          "arguments": {
+            "to": "incident-owner@company.com",
+            "subject": "Incident updated",
+            "body": "INC-442 is now P1."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-87": [
+    {
+      "calls": [
+        {
+          "name": "list_incidents",
+          "arguments": {
+            "status": "open",
+            "quarter": "Q3"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "list_incidents",
+          "arguments": {
+            "status": "open",
+            "quarter": "Q3",
+            "page_token": "p2"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "list_incidents",
+          "arguments": {
+            "status": "open",
+            "quarter": "Q3",
+            "page_token": "p3"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "list_incidents",
+          "arguments": {
+            "status": "open",
+            "quarter": "Q3",
+            "page_token": "p4"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_oncall_route",
+          "arguments": {}
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "oncall@company.com",
+            "subject": "Q3 open P1 incidents",
+            "body": "6 incidents: INC-901, INC-902, INC-903, INC-904, INC-905, INC-906",
+            "incident_ids": [
+              "INC-901",
+              "INC-902",
+              "INC-903",
+              "INC-904",
+              "INC-905",
+              "INC-906"
+            ],
+            "exact_count": 6
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done."
+    }
+  ],
+  "TC-88": [
+    {
+      "calls": [],
+      "answer": "11111199999994000000"
+    },
+    {
+      "calls": [],
+      "answer": "99999999940000111111"
+    },
+    {
+      "calls": [],
+      "answer": "99999910000000999999"
+    }
+  ]
+}

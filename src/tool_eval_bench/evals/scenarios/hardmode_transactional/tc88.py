@@ -14,7 +14,6 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import fail_eval as _fail
-from tool_eval_bench.evals.helpers import partial_eval as _partial
 from tool_eval_bench.evals.helpers import pass_eval as _pass
 
 _TC88_SUMS = (73, 91, 109)
@@ -46,22 +45,19 @@ def _tc88_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     first_reasoning = state.assistant_reasoning[0] if state.assistant_reasoning else ""
     planned_numbers = set(_TC88_NUMBER.findall(first_reasoning))
-    if all(number in planned_numbers for number in numbers):
-        return _pass("Preserved all three privately planned values across two user follow-ups.")
-    # PASS is only reachable when the provider surfaces a reasoning channel: the
-    # proof this scenario grades is the plan itself, and most OpenAI-compatible
-    # endpoints emit no ``reasoning_content`` at all. Say so, rather than
-    # reporting a stack's transport as something the model failed to do. The
-    # constraints themselves stay verifiable from the visible transcript, so a
-    # model on such a stack still earns the middle tier on its own merit.
-    if not any(reasoning.strip() for reasoning in state.assistant_reasoning):
-        return _partial(
-            "Returned three valid values. This endpoint exposed no reasoning channel, "
-            "so the planned-ahead check could not run and PASS was unreachable here."
+    evidence = (
+        "observed"
+        if all(number in planned_numbers for number in numbers)
+        else (
+            "unavailable"
+            if not any(reasoning.strip() for reasoning in state.assistant_reasoning)
+            else "unconfirmed"
         )
-    return _partial(
-        "Returned three valid values, but the provider exposed no proof that all were planned first."
     )
+    result = _pass("Returned three distinct values satisfying every visible cross-turn constraint.")
+    result.diagnostics["reasoning_transport"] = evidence
+    result.note = "Reasoning transport is a separate diagnostic; number occurrence does not prove private verification."
+    return result
 
 
 SCENARIO = ScenarioDefinition(
@@ -83,6 +79,6 @@ SCENARIO = ScenarioDefinition(
 )
 
 DISPLAY = ScenarioDisplayDetail(
-    "Pass if all three constrained values were present in the first exposed reasoning payload.",
+    "Pass if all three visible values satisfy the constraints. Report reasoning transport separately.",
     "Fail if values change, violate constraints, include extra text, or use tools.",
 )

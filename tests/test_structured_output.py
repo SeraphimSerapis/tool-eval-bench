@@ -35,7 +35,7 @@ class TestTC64SimpleSchema:
         result = self.scenario.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 
-    def test_pass_json_in_code_fence(self) -> None:
+    def test_fail_json_in_code_fence(self) -> None:
         data = {
             "title": "The Matrix",
             "year": 1999,
@@ -45,7 +45,7 @@ class TestTC64SimpleSchema:
         }
         state = _make_state(final_answer=f"```json\n{json.dumps(data, indent=2)}\n```")
         result = self.scenario.evaluate(state)
-        assert result.status == ScenarioStatus.PASS
+        assert result.status == ScenarioStatus.FAIL
 
     def test_fail_not_json(self) -> None:
         state = _make_state(final_answer="The Matrix is a great movie. I'd give it an 8/10.")

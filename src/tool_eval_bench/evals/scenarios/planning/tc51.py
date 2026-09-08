@@ -272,6 +272,10 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc51_handle,
     evaluate=_tc51_eval,
     difficulty=4,
+    dependencies=(
+        ("get_contacts", "create_calendar_event"),
+        ("create_calendar_event", "send_email"),
+    ),
 )
 
 DISPLAY = ScenarioDisplayDetail(

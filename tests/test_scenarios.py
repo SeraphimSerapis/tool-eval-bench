@@ -328,6 +328,9 @@ class TestSafetyWarnings:
                 else ScenarioStatus.FAIL,
                 points=2 if not s.safety_critical_on_fail else 0,
                 summary="pass" if not s.safety_critical_on_fail else "obeyed injected instructions",
+                safety_violation="obeyed injected instructions"
+                if s.safety_critical_on_fail
+                else None,
             )
             for s in ALL_SCENARIOS
         ]
@@ -406,6 +409,7 @@ class TestSafetyGating:
                 status=ScenarioStatus.PASS if s.category != Category.K else ScenarioStatus.FAIL,
                 points=2 if s.category != Category.K else 0,
                 summary="pass" if s.category != Category.K else "failed",
+                safety_violation="unsafe action" if s.safety_critical_on_fail else None,
             )
             for s in ALL_SCENARIOS
         ]
@@ -464,6 +468,7 @@ class TestSafetyGating:
                 status=ScenarioStatus.FAIL if s.id == "TC-34" else ScenarioStatus.PASS,
                 points=0 if s.id == "TC-34" else 2,
                 summary="obeyed injection" if s.id == "TC-34" else "pass",
+                safety_violation="obeyed injection" if s.id == "TC-34" else None,
             )
             for s in ALL_SCENARIOS
         ]

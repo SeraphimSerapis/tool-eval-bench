@@ -148,6 +148,10 @@ SCENARIO = ScenarioDefinition(
     _tc79_eval,
     tools_override=_TC79_TOOLS,
     difficulty=5,
+    dependencies=(
+        ("get_weather", "create_calendar_event"),
+        ("get_contacts", "create_calendar_event"),
+    ),
 )
 
 DISPLAY = ScenarioDisplayDetail(

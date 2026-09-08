@@ -194,6 +194,7 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc55_handle,
     evaluate=_tc55_eval,
     difficulty=4,
+    dependencies=(("search_files", "read_file"), ("read_file", "calculator")),
 )
 
 DISPLAY = ScenarioDisplayDetail(

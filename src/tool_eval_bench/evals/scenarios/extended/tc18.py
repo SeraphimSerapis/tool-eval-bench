@@ -164,6 +164,7 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc18_handle,
     evaluate=_tc18_eval,
     difficulty=3,
+    dependencies=(("translate_text", "send_email"), ("get_contacts", "send_email")),
 )
 
 DISPLAY = ScenarioDisplayDetail(

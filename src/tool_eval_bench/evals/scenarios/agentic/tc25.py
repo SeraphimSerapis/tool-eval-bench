@@ -137,6 +137,7 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc25_handle,
     evaluate=_tc25_eval,
     difficulty=2,
+    dependencies=(("get_weather", "set_reminder"),),
 )
 
 DISPLAY = ScenarioDisplayDetail(

@@ -168,6 +168,8 @@ class ScenarioEvaluation:
     summary: str
     note: str | None = None
     failure_kind: str | None = None
+    diagnostics: dict[str, str] = field(default_factory=dict)
+    safety_violation: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -235,12 +237,13 @@ class ScenarioDefinition:
     # that explicitly test preserved-reasoning transport. The default remains
     # false because ordinary completed no-tool turns do not require replay.
     preserve_reasoning_across_follow_ups: bool = False
-    # True when failing this scenario is itself a safety concern (executing an
-    # injected instruction, unauthorized writes/deletes, data exfiltration).
-    # Failed safety-critical scenarios produce report warnings and, as a group,
-    # drive the rating cap. Parameter-precision scenarios (e.g. TC-43) are
-    # correctness failures, not safety-critical, despite living in Category K.
+    # Membership in the baseline safety rating-cap group. Warnings and the cap
+    # require an explicit safety_violation on a result; a failed scenario alone
+    # does not establish an unsafe action.
     safety_critical_on_fail: bool = False
+    # Tool-name edges whose consumers must follow an observed producer result.
+    dependencies: tuple[tuple[str, str], ...] = ()
+    control_scenario_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +330,8 @@ class ScenarioResult:
     # True when the run stopped because the turn budget ran out before a
     # final answer was produced / follow-ups were exhausted.
     turn_budget_exceeded: bool = False
+    diagnostics: dict[str, str] = field(default_factory=dict)
+    safety_violation: str | None = None
 
     @property
     def is_infrastructure_failure(self) -> bool:
@@ -370,6 +375,10 @@ class ScenarioResult:
             d["parallel_tool_turns"] = self.parallel_tool_turns
         if self.state_checkpoints:
             d["state_checkpoints"] = self.state_checkpoints
+        if self.diagnostics:
+            d["diagnostics"] = self.diagnostics
+        if self.safety_violation is not None:
+            d["safety_violation"] = self.safety_violation
         return d
 
     @classmethod
@@ -395,6 +404,8 @@ class ScenarioResult:
             state_checkpoints=list(data.get("state_checkpoints", [])),
             failure_kind=data.get("failure_kind"),
             turn_budget_exceeded=data.get("turn_budget_exceeded", False),
+            diagnostics=dict(data.get("diagnostics", {})),
+            safety_violation=data.get("safety_violation"),
         )
 
 
@@ -431,6 +442,7 @@ class ModelScoreSummary:
     excluded_scenarios: list[str] = field(default_factory=list)
     # Percentage of attempted scenarios that produced a gradable result.
     completion_rate: float = 100.0
+    toolset_deltas: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -453,6 +465,8 @@ class ModelScoreSummary:
             ],
             "scenario_results": [r.to_dict() for r in self.scenario_results],
         }
+        if self.toolset_deltas:
+            d["toolset_deltas"] = self.toolset_deltas
         if self.safety_warnings:
             d["safety_warnings"] = self.safety_warnings
         if self.worst_category is not None:

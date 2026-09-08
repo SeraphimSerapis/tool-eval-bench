@@ -122,9 +122,12 @@ def _tc40_order_id_reaches_sarah(state: ScenarioState, call: ToolCallRecord) -> 
     # Strictly earlier calls only: the failing result of this very call echoes
     # the id back, which would make any guess look resolved.
     position = next((i for i, c in enumerate(state.tool_calls) if c is call), len(state.tool_calls))
-    earlier_ids = {c.id for c in state.tool_calls[:position]}
+    earlier_ids = {c.id for c in state.tool_calls[:position] if c.turn < call.turn}
     return any(
-        record.call_id in earlier_ids and order_id in _normalize(_as_str(record.result))
+        record.call_id in earlier_ids
+        and isinstance(record.result, dict)
+        and "error" not in record.result
+        and order_id in [str(value).lower() for value in record.result.get("orders", [])]
         for record in state.tool_results
     )
 
@@ -152,13 +155,7 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
     total_calls = len(state.tool_calls)
 
     answer = state.final_answer.lower()
-    mentions_status = (
-        _answer_affirms_text(answer, "shipped")
-        or "ord-2026-1847" in answer
-        or "keyboard" in answer
-        or "usb-c" in answer
-        or "tracking" in answer
-    )
+    mentions_status = _answer_affirms_text(answer, "shipped")
 
     if used_order and total_calls == 1 and mentions_status:
         order_call = next(c for c in state.tool_calls if c.name == "get_order_status")
@@ -171,7 +168,14 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial(
             "Used get_order_status correctly but did not surface the order details in the answer.",
         )
-    if used_order and used_customer and total_calls == 2 and resolved_by_lookup and mentions_status:
+    if (
+        used_order
+        and used_customer
+        and total_calls == 2
+        and resolved_by_lookup
+        and mentions_status
+        and all(_result_is_usable_if_present(state, call) for call in state.tool_calls)
+    ):
         return _pass(
             "Resolved the customer's order id, then read its status with get_order_status."
         )
@@ -214,6 +218,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc40_eval,
     tools_override=LARGE_TOOLSET,
     difficulty=3,
+    dependencies=(("get_customer_profile", "get_order_status"),),
 )
 
 DISPLAY = ScenarioDisplayDetail(

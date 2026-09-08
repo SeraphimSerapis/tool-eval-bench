@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     answer_affirms_number,
     as_str,
+    generic_tool_fallback,
     result_is_usable_if_present,
     tool_calls_by_name,
 )
@@ -55,7 +56,7 @@ def _tc78_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         if price is not None:
             return _noise({"ticker": ticker, "price_usd": price}, call.name)
     if call.name == "calculator":
-        return _noise({"result": 935.0}, call.name)
+        return generic_tool_fallback(call)
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 

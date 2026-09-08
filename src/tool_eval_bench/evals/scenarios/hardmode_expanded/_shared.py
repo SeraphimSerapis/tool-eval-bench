@@ -57,7 +57,7 @@ def _result_matches_if_present(
     """
     results = matching_tool_results(state, call)
     if not results:
-        return True
+        return state.meta.get("trace_policy") != "complete"
     for result in results:
         if not isinstance(result.result, dict):
             continue

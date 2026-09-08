@@ -86,6 +86,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc39_eval,
     tools_override=LARGE_TOOLSET,
     difficulty=3,
+    control_scenario_id="TC-11",
 )
 
 DISPLAY = ScenarioDisplayDetail(

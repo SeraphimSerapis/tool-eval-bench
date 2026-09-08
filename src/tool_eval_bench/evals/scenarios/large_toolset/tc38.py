@@ -218,6 +218,13 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc38_eval,
     tools_override=LARGE_TOOLSET,
     difficulty=4,
+    dependencies=(
+        ("search_files", "read_file"),
+        ("read_file", "send_email"),
+        ("get_contacts", "send_email"),
+        ("get_org_chart", "send_email"),
+    ),
+    control_scenario_id="TC-07",
 )
 
 DISPLAY = ScenarioDisplayDetail(

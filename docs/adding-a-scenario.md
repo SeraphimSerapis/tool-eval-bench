@@ -1,20 +1,20 @@
 # Adding a scenario
 
-A scenario is one file. Create `src/tool_eval_bench/evals/scenarios/<group>/tcNN.py`, export a
-`SCENARIO` and a `DISPLAY`, and it is registered. Nothing else lists it.
+A scenario implementation is one file. Create `src/tool_eval_bench/evals/scenarios/<group>/tcNN.py`, export a
+`SCENARIO` and a `DISPLAY`, and it is registered. Add its reference trace to `tests/fixtures/scenario_reference_traces.json` so the runner contract tests cover the new registration.
 
 ## Pick a group
 
 | Group | What lives there | IDs |
 |---|---|---|
-| `core/` | The original ToolCall-15 set, run by `--short` | TC-01 – TC-15 |
-| `extended/` | Reference-date and multilingual handling | TC-16 – TC-21 |
-| `agentic/` | Multi-step chains, error recovery, safety | TC-22 – TC-50, TC-62 – TC-63 |
-| `large_toolset/` | Selection under 20+ tools | TC-37 – TC-40 |
-| `planning/` | Autonomous planning and creative composition | TC-51 – TC-56 |
-| `adversarial/` | Prompt injection and authority escalation | TC-57 – TC-60 |
-| `structured/` | JSON schema compliance | TC-64 – TC-69 |
-| `hardmode/`, `hardmode_expanded/`, `hardmode_transactional/` | Category P, opt-in with `--hardmode` | TC-70 – TC-88 |
+| `core/` | The original ToolCall-15 set, run by `--short` | TC-01  to  TC-15 |
+| `extended/` | Reference-date and multilingual handling | TC-16  to  TC-21 |
+| `agentic/` | Multi-step chains, error recovery, safety | TC-22 to TC-36, TC-41 to TC-50 |
+| `large_toolset/` | Selection under 20+ tools | TC-37  to  TC-40 |
+| `planning/` | Autonomous planning and creative composition | TC-51 to TC-56, TC-61 to TC-63 |
+| `adversarial/` | Prompt injection and authority escalation | TC-57  to  TC-60 |
+| `structured/` | JSON schema compliance | TC-64  to  TC-69 |
+| `hardmode/`, `hardmode_expanded/`, `hardmode_transactional/` | Category P, opt-in with `--hardmode` | TC-70  to  TC-88 |
 
 Take the next free number. The file name and the scenario ID must agree, and the ID must be
 `TC-NN`: every registry sorts on `int(s.id.split("-")[1])`, so another shape raises at import.
@@ -130,8 +130,10 @@ DISPLAY = ScenarioDisplayDetail(
 
 Four things carry weight:
 
-**The handler must be deterministic.** Every run gives the same tool result, so a score difference
-is a model difference. `with_noise` adds realistic extra fields without adding randomness.
+**The handler must be deterministic.** The same arguments must return the same result. Outputs must
+respect input values; a calculator must not return the reference answer for every expression. `with_noise` adds realistic extra fields without adding randomness. Declared contact roles and departments take precedence over noise defaults.
+
+Accept the identifiers your tools expose. If search returns both a file ID and a path, document which attachment representation is required, or accept either when it identifies the same observed file. Do not penalize a returned path while the mock reports a successful send.
 
 **`difficulty` is required in practice.** It is a tier from 1 (trivial) to 5 (very hard). A
 scenario without one is unrated and drops out of `--weight-by-difficulty` scoring.
@@ -146,14 +148,19 @@ a restatement of the title.
 
 ## Optional fields that change how the runner behaves
 
-`ScenarioDefinition` has ten optional fields. Four of them change the conversation itself, and
-are worth reading in `domain/scenarios.py` before you use one:
+`ScenarioDefinition` exposes optional conversation and grading settings. Read
+`domain/scenarios.py` before using them:
 
 - `follow_up_messages` turns the scenario multi-turn.
 - `tools_override` replaces the default toolset, which is how the large-toolset scenarios present
   20+ tools.
 - `tool_choice_after_first_call` forces or forbids further tool calls once the model has started.
 - `preserve_reasoning_across_follow_ups` keeps reasoning blocks in the transcript between turns.
+- `dependencies` declares producer/consumer tool names that need separate model turns.
+
+Use `unsafe_eval` only for an observed unsafe action or disclosure. Ordinary incomplete
+work uses `fail_eval` or `partial_eval` without a safety violation. Put endpoint observations
+in `ScenarioEvaluation.diagnostics`, separate from task-correctness points.
 
 `max_turns_override` raises the 8-turn default for a scenario that genuinely needs more rounds.
 

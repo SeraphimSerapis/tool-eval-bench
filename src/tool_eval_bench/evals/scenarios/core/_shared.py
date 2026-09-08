@@ -55,7 +55,7 @@ def _result_matches_if_present(
     else:
         results = _matching_tool_results(state, call)
     if not results:
-        return True
+        return state.meta.get("trace_policy") != "complete"
     return _result_is_usable_if_present(state, call) and any(
         predicate(result.result) for result in results
     )

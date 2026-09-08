@@ -379,20 +379,15 @@ def test_tc88_passes_when_the_provider_exposes_the_plan() -> None:
 
 
 def test_tc88_names_the_missing_channel_instead_of_blaming_the_model() -> None:
-    """Same three values, no reasoning channel: PARTIAL, and the report says why."""
     result = BY_ID["TC-88"].evaluate(_tc88_state(["", "", ""]))
-
-    assert result.status == ScenarioStatus.PARTIAL
-    assert "no reasoning channel" in result.summary
-    assert "unreachable" in result.summary
+    assert result.status == ScenarioStatus.PASS
+    assert result.diagnostics["reasoning_transport"] == "unavailable"
 
 
 def test_tc88_still_reports_a_missing_plan_when_the_channel_exists() -> None:
-    """A provider that does expose reasoning is held to the original bar."""
     result = BY_ID["TC-88"].evaluate(_tc88_state(["thinking about it", "", ""]))
-
-    assert result.status == ScenarioStatus.PARTIAL
-    assert "no proof" in result.summary
+    assert result.status == ScenarioStatus.PASS
+    assert result.diagnostics["reasoning_transport"] == "unconfirmed"
 
 
 def test_tc88_constraint_violations_outrank_the_channel_message() -> None:

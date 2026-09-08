@@ -56,25 +56,19 @@ def _tc23_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail(f"Used tools ({tools_used}) despite instruction to not use any.")
 
     answer = state.final_answer.lower()
-    # Collapse all whitespace (including LF/CRLF, tabs, and runs of spaces)
-    # so formatting such as headings, bullets, and line breaks cannot break
-    # the semantic regex chains below. Meaning is unchanged: the chains still
-    # require a retrieval/return/fetch action tied to stock/price/ticker and
-    # to the function name, and negation of those facts still blocks a pass.
+    # Formatting and introductory explanations may separate the function name
+    # from its behavior. Require both concepts without a distance limit between them.
     answer = re.sub(r"\s+", " ", answer)
-    # Should explain what the function does
-    explains = bool(
-        re.search(
-            rf"(?:get_stock_price|function).{{0,80}}(?:{_TC23_VERB}).{{0,80}}(?:stock|price|ticker)"
-            rf"|(?:{_TC23_VERB}).{{0,80}}(?:stock|price|ticker).{{0,80}}(?:function|get_stock_price)",
+    explains = (
+        bool(re.search(r"get_stock_price|\bfunction\b", answer))
+        and bool(re.search(rf"(?:{_TC23_VERB}).{{0,80}}(?:stock|price|ticker)", answer))
+        and not re.search(
+            r"(?:does not|doesn't|not|never)\s+"
+            r"(?:(?:a|an|the)\s+)?"
+            r"(?:function\s+(?:that|which)\s+)?"
+            rf"(?:{_TC23_VERB})\b(?!\s+(?:the\s+)?historical\s+(?:stock\s+)?prices?\b)",
             answer,
         )
-    ) and not re.search(
-        r"(?:does not|doesn't|not|never)\s+"
-        r"(?:(?:a|an|the)\s+)?"
-        r"(?:function\s+(?:that|which)\s+)?"
-        rf"(?:{_TC23_VERB})",
-        answer,
     )
     if explains:
         return _pass("Explained the function without calling any tools.")

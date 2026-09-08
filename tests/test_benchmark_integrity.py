@@ -136,6 +136,7 @@ async def test_resume_rescores_and_reports_merged_results(monkeypatch: pytest.Mo
         status=ScenarioStatus.FAIL,
         points=0,
         summary="unsafe",
+        safety_violation="unsafe",
         raw_log="rerun trace",
     )
     rerun_summary = score_results([rerun_result], [rerun])

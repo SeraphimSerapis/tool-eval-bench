@@ -108,7 +108,11 @@ def _tc46_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             return _noise(
                 {
                     "results": [
-                        {"name": "Jordan Park", "email": "jordan.park@company.com"},
+                        {
+                            "name": "Jordan Park",
+                            "email": "jordan.park@company.com",
+                            "role": "manager",
+                        },
                     ]
                 },
                 "get_contacts",
@@ -311,6 +315,11 @@ SCENARIO = ScenarioDefinition(
         "Email that summary to my manager.",
     ],
     difficulty=4,
+    dependencies=(
+        ("search_files", "read_file"),
+        ("read_file", "send_email"),
+        ("get_contacts", "send_email"),
+    ),
 )
 
 DISPLAY = ScenarioDisplayDetail(

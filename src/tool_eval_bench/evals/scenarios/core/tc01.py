@@ -69,6 +69,8 @@ def _tc01_weather_result_is_berlin(payload: Any) -> bool:
 
 def _tc01_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
+        if "units" in call.arguments and call.arguments["units"] not in ("celsius", "fahrenheit"):
+            return _noise({"error": "units must be celsius or fahrenheit"}, call.name)
         return _noise(
             {
                 "location": "Berlin",
@@ -87,6 +89,13 @@ def _tc01_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc01_eval(state: ScenarioState) -> ScenarioEvaluation:
+    if any(
+        c.name == "get_weather"
+        and "units" in c.arguments
+        and c.arguments["units"] not in ("celsius", "fahrenheit")
+        for c in state.tool_calls
+    ):
+        return _fail("The weather call violated the units enum.")
     used_weather = _has_tool_call(
         state,
         "get_weather",
@@ -128,5 +137,5 @@ SCENARIO = ScenarioDefinition(
 
 DISPLAY = ScenarioDisplayDetail(
     "Pass if it calls get_weather for Berlin and avoids web_search.",
-    "Fail if it searches the web, calls multiple tools, or answers from memory.",
+    "Partial for web_search alone; fail for unrelated tools or an answer from memory.",
 )

@@ -218,6 +218,11 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc07_handle,
     evaluate=_tc07_eval,
     difficulty=3,
+    dependencies=(
+        ("search_files", "read_file"),
+        ("read_file", "send_email"),
+        ("get_contacts", "send_email"),
+    ),
 )
 
 DISPLAY = ScenarioDisplayDetail(

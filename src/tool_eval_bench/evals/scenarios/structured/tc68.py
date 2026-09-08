@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -77,10 +76,6 @@ def _tc68_near_miss_searches(state: ScenarioState) -> bool:
 
 def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer.strip()
-
-    json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", answer, re.DOTALL)
-    if json_match:
-        answer = json_match.group(1).strip()
 
     try:
         data = json.loads(answer)

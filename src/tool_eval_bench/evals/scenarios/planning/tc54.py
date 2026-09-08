@@ -187,6 +187,7 @@ SCENARIO = ScenarioDefinition(
     handle_tool_call=_tc54_handle,
     evaluate=_tc54_eval,
     difficulty=4,
+    dependencies=(("get_stock_price", "calculator"), ("web_search", "calculator")),
 )
 
 DISPLAY = ScenarioDisplayDetail(

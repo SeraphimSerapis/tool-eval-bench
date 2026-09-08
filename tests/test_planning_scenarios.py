@@ -879,10 +879,14 @@ class TestTC61AsyncPolling:
     def test_pass_polls_twice(self) -> None:
         state = _make_state(
             tool_calls=[
-                {"name": "run_code", "arguments": {"code": "analyze_data()"}, "turn": 1},
                 {
                     "name": "run_code",
-                    "arguments": {"code": "check_status(job_tc61_9f3a)"},
+                    "arguments": {"code": 'analyze_data(source="transactions_2026")'},
+                    "turn": 1,
+                },
+                {
+                    "name": "run_code",
+                    "arguments": {"code": 'check_job_status("job_tc61_9f3a")'},
                     "turn": 2,
                 },
             ],
@@ -898,9 +902,8 @@ class TestTC61AsyncPolling:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 
-    def test_pass_poll_via_generic_status_check(self) -> None:
-        """Replays the 2026-09-03 run: the model re-invoked run_code with a
-        status check, got the completed payload, and surfaced 15420/3."""
+    def test_generic_status_print_is_not_a_poll(self) -> None:
+        """A status-printing snippet cannot stand in for the documented polling API."""
         state = _make_state(
             tool_calls=[
                 {
@@ -941,12 +944,15 @@ class TestTC61AsyncPolling:
             final_answer="The data analysis script has completed. Here are the results:\n\n- **Total records analyzed** | 15,420\n- **Anomalies found** | 3",
         )
         result = self.sc.evaluate(state)
-        assert result.status == ScenarioStatus.PASS
+        assert result.status != ScenarioStatus.PASS
 
-    def test_handler_accepts_generic_status_poll(self) -> None:
+    def test_handler_rejects_generic_status_print(self) -> None:
         state = _make_state(
             tool_calls=[
-                {"name": "run_code", "arguments": {"code": "analyze_data()"}},
+                {
+                    "name": "run_code",
+                    "arguments": {"code": 'analyze_data(source="transactions_2026")'},
+                },
                 {
                     "name": "run_code",
                     "arguments": {"code": 'print("Checking job status...")'},
@@ -956,8 +962,7 @@ class TestTC61AsyncPolling:
 
         result = self.sc.handle_tool_call(state, state.tool_calls[1])
 
-        assert result["status"] == "complete"
-        assert result["job_id"] == "job_tc61_9f3a"
+        assert "error" in result
 
     def test_unrelated_second_code_is_not_a_poll(self) -> None:
         invalid_poll_code = (
@@ -1015,7 +1020,11 @@ class TestTC61AsyncPolling:
     def test_partial_single_call(self) -> None:
         state = _make_state(
             tool_calls=[
-                {"name": "run_code", "arguments": {"code": "analyze_data()"}, "turn": 1},
+                {
+                    "name": "run_code",
+                    "arguments": {"code": 'analyze_data(source="transactions_2026")'},
+                    "turn": 1,
+                },
             ],
             final_answer="The job is pending, please wait.",
         )

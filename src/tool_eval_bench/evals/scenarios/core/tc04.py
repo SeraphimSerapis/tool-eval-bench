@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -91,7 +92,11 @@ def _tc04_eval(state: ScenarioState) -> ScenarioEvaluation:
                 "get_weather returned an error, so the temperature cannot be confirmed."
             )
         # The requested unit alone is not returned weather data.
-        has_data = _answer_affirms_number(state.final_answer, "64")
+        has_data = _answer_affirms_number(state.final_answer, "64") and not re.search(
+            r"\b64\s*(?:degrees?\s*)?(?:°\s*c\b|celsius\b|centigrade\b)",
+            state.final_answer,
+            re.IGNORECASE,
+        )
         if has_data:
             if len(state.tool_calls) != 1:
                 return _partial(

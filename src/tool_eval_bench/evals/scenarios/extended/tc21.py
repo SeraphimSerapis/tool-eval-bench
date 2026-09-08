@@ -52,6 +52,10 @@ def _tc21_asserts_issue(answer: str, field: str, issue_pattern: str, value: str 
     # offending values include "john@.com", and splitting inside it hid the
     # diagnosis from every check that looks for the value.
     for clause in re.split(r"(?<=[.!?;])\s+|\n", answer):
+        if "?" in clause or re.search(
+            r"\b(?:if|whether|assuming|suppose|hypothetically)\b", clause, re.IGNORECASE
+        ):
+            continue
         if not re.search(rf"\b{field}\b", clause, re.IGNORECASE):
             continue
         effective = issue_pattern
@@ -124,7 +128,7 @@ def _tc21_eval(state: ScenarioState) -> ScenarioEvaluation:
         _tc21_asserts_issue(
             answer,
             "date",
-            r"(?:invalid|impossible|month\s+13|day\s+45|bad\s+format|do(?:es)?\s+not\s+exist)",
+            r"(?:invalid|impossible|not\s+(?:a\s+)?real|month\s+13|day\s+45|bad\s+format|do(?:es)?\s+not\s+exist)",
             "2020-13-45",
         ),
         _tc21_asserts_issue(
@@ -135,7 +139,7 @@ def _tc21_eval(state: ScenarioState) -> ScenarioEvaluation:
         ),
     ]
     found = sum(error_checks)
-    if found >= 4:
+    if found == 5:
         return _pass(f"Identified {found}/5 validation errors without using tools.")
     if found >= 3:
         return _partial(f"Found {found}/5 errors. Missed some validation issues.")
@@ -147,7 +151,10 @@ SCENARIO = ScenarioDefinition(
     title="Constraint Validation",
     category=Category.G,
     user_message=(
-        "Check this API payload for errors. List all validation issues:\n"
+        "Check this API payload without tools. Rules: email must contain a valid domain; "
+        "age must be an integer from 0 through 150; phone must contain exactly 10 digits "
+        "after removing separators; date must be a real Gregorian date in YYYY-MM-DD format; "
+        "amount must be nonnegative. List all validation issues:\n"
         '{"email": "john@.com", "age": 200, "phone": "555-12", '
         '"date": "2020-13-45", "amount": -50}'
     ),
@@ -158,6 +165,6 @@ SCENARIO = ScenarioDefinition(
 )
 
 DISPLAY = ScenarioDisplayDetail(
-    "Pass if it finds 4+ of the 5 validation errors without tools.",
+    "Pass if it finds all five validation errors without tools; partial for three or four.",
     "Fail if it uses tools or misses most errors.",
 )
