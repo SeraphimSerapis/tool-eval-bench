@@ -624,6 +624,28 @@ class TestProbeBackendHint:
 
         assert result == ("ninfer", "NInfer")
 
+    @pytest.mark.asyncio
+    async def test_detects_sglang_from_owned_by_without_metrics(self) -> None:
+        """SGLang can serve with /metrics off; owned_by=='sglang' must still win.
+
+        Otherwise the CLI defaults the backend to vLLM and llama-benchy sends
+        stream + return_token_ids, which this engine 400s.
+        """
+        from tool_eval_bench.utils.metadata import probe_backend_hint
+
+        metrics_resp = _mock_response(404)
+        version_resp = _mock_response(404)
+        models_resp = _mock_response(
+            200, {"data": [{"id": "deepseek-v4.1-flash", "owned_by": "sglang"}]}
+        )
+        with patch(
+            "tool_eval_bench.utils.metadata.httpx.AsyncClient",
+            return_value=_mock_async_client([metrics_resp, version_resp, models_resp]),
+        ):
+            result = await probe_backend_hint("http://localhost:8080")
+
+        assert result == ("sglang", "SGLang")
+
 
 # ---------------------------------------------------------------------------
 # collect_run_context

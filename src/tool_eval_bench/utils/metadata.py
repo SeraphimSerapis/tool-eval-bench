@@ -314,7 +314,10 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
     1. The ``/metrics`` namespace — see :func:`detect_backend_from_metrics`.
        Unambiguous, but llama.cpp's ``--metrics`` flag is opt-in.
     2. vLLM's ``/version`` — llama.cpp 404s this, so it cannot false-positive.
-    3. NInfer's ``owned_by`` marker from ``/v1/models``.
+    3. The ``owned_by`` marker on ``/v1/models`` (NInfer, SGLang).  SGLang
+       often runs with ``/metrics`` disabled; without this rung ``--perf``
+       defaults the backend to vLLM and llama-benchy 400s on a streaming
+       ``return_token_ids`` request.
     4. llama.cpp's ``/props``/``/health``.  Deliberately last: ``/health``
        is generic enough that other engines answer it, and vLLM only avoids
        matching here because its ``/health`` body is empty.
@@ -335,12 +338,13 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
         if await _probe_vllm_version(base_url, api_key, session=active):
             return "vllm", "vLLM"
 
-        # NInfer: /v1/models entries carry owned_by == "ninfer".  Checked before
-        # the generic /health fallback, which otherwise fingerprints NInfer as
-        # llama.cpp (NInfer answers /health with 200 {"status":"ok"} and does not
-        # serve /metrics, /version, or /props).
-        if await _probe_ninfer(base_url, api_key, session=active):
-            return "ninfer", "NInfer"
+        # /v1/models owned_by, checked before the generic /health fallback.
+        # NInfer answers /health with 200 {"status":"ok"} and would otherwise
+        # look like llama.cpp.  SGLang without /metrics would otherwise default
+        # to vLLM, which breaks llama-benchy (stream + return_token_ids).
+        owned = await _probe_owned_by(base_url, api_key, session=active)
+        if owned:
+            return owned
 
         if await _probe_llamacpp(base_url, session=active):
             return "llamacpp", "llama.cpp"
@@ -382,33 +386,39 @@ def _guess_quantization(model_name: str | None) -> str | None:
     return None
 
 
-async def _probe_ninfer(
-    base_url: str, api_key: str | None, *, session: _ProbeSession | None = None
-) -> dict[str, Any]:
-    """Detect NInfer from /v1/models: entries carry owned_by == 'ninfer'.
+_OWNED_BY_BACKENDS: dict[str, tuple[str, str]] = {
+    "ninfer": ("ninfer", "NInfer"),
+    "sglang": ("sglang", "SGLang"),
+}
 
-    More specific than the generic /health probe that otherwise fingerprints
-    NInfer as llama.cpp (NInfer answers /health with 200 {'status':'ok'} and
-    does not serve /metrics, /version, or /props).
+
+async def _probe_owned_by(
+    base_url: str, api_key: str | None, *, session: _ProbeSession | None = None
+) -> tuple[str, str] | None:
+    """Identify the engine from /v1/models ``owned_by`` when that field is distinctive.
+
+    NInfer would otherwise match llama.cpp's generic /health.  SGLang without
+    /metrics would otherwise default to vLLM.
     """
     async with _probe_session(session) as active:
         resp = await _probe_get(
             active,
             f"{_root_url(base_url)}/v1/models",
             headers=_auth_headers(api_key),
-            what="ninfer /v1/models",
+            what="owned_by /v1/models",
         )
     if resp is None or resp.status_code != 200:
-        return {}
+        return None
     try:
         body = resp.json()
     except ValueError:
-        return {}
+        return None
     data = body.get("data") if isinstance(body, dict) else None
     if isinstance(data, list) and data and isinstance(data[0], dict):
-        if data[0].get("owned_by") == "ninfer":
-            return {"engine_name": "NInfer"}
-    return {}
+        owner = data[0].get("owned_by")
+        if isinstance(owner, str):
+            return _OWNED_BY_BACKENDS.get(owner.lower())
+    return None
 
 
 async def _probe_engine(
