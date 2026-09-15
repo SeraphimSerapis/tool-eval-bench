@@ -19,6 +19,8 @@
         "llamacpp",
         "sglang",
         "gemini",
+        "openai",
+        "anthropic",
         "ninfer"
       ],
       "default": "vllm",
@@ -36,6 +38,12 @@
       "default": null,
       "description": "API key (optional; can also be set via TOOL_EVAL_API_KEY env var)",
       "name": "api_key",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Read base_url/api_key/model from TOOL_EVAL_<PROVIDER>_* env vars (also TOOL_EVAL_PROVIDER); explicit flags still win",
+      "name": "provider",
       "type": "string"
     },
     {

@@ -1,10 +1,14 @@
 """CLI dispatch and compatibility implementation for running benchmarks.
 
 Defaults cascade:  .env file → TOOL_EVAL_* env vars → hardcoded fallbacks.
+With --provider NAME (or TOOL_EVAL_PROVIDER), the TOOL_EVAL_<NAME>_* triple
+replaces the generic base URL, API key, and model, so one .env can hold several
+endpoints for A/B runs.
 
 Usage:
     tool-eval-bench                           # uses .env / env vars
     tool-eval-bench --base-url URL            # override server
+    tool-eval-bench --provider gemini         # TOOL_EVAL_GEMINI_* from .env
     tool-eval-bench --short                   # core 15 scenarios only
 
 The --model flag is optional: if omitted, the CLI will query the server's
@@ -71,6 +75,7 @@ from tool_eval_bench.cli.pressure import (
 )
 from tool_eval_bench.cli.probe import preflight_model_check as _preflight_model_check
 from tool_eval_bench.cli.probe import warmup_server as _do_warmup
+from tool_eval_bench.cli.provider_env import resolve_provider as _resolve_provider
 from tool_eval_bench.cli.resolve import (
     parse_int_list as _parse_int_list,
 )
@@ -653,12 +658,25 @@ def main() -> None:
         except ValueError as exc:
             parser.error(str(exc))
 
-    # Cascade: CLI flag → env var → auto-discovery
-    model = args.model or os.getenv("TOOL_EVAL_MODEL") or None
-    backend = args.backend or os.getenv("TOOL_EVAL_BACKEND", "")
+    # Cascade: CLI flag → provider-scoped env → generic env → auto-discovery.
+    # A selected provider owns its api_key and model: the generic
+    # TOOL_EVAL_API_KEY is for whatever the generic base URL points at, and
+    # sending it to a vendor API would just muddy a failed-auth diagnosis.
+    try:
+        provider = _resolve_provider(args.provider or os.getenv("TOOL_EVAL_PROVIDER"), os.environ)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if provider is not None:
+        model = args.model or provider.model
+        backend = args.backend or os.getenv("TOOL_EVAL_BACKEND", "") or provider.backend_label or ""
+        base_url = args.base_url or provider.base_url
+        api_key = args.api_key or provider.api_key
+    else:
+        model = args.model or os.getenv("TOOL_EVAL_MODEL") or None
+        backend = args.backend or os.getenv("TOOL_EVAL_BACKEND", "")
+        base_url = args.base_url or os.getenv("TOOL_EVAL_BASE_URL", "")
+        api_key = args.api_key or os.getenv("TOOL_EVAL_API_KEY")
     backend_explicit = bool(backend)
-    base_url = args.base_url or os.getenv("TOOL_EVAL_BASE_URL", "")
-    api_key = args.api_key or os.getenv("TOOL_EVAL_API_KEY")
 
     # Fallback: construct URL from TOOL_EVAL_HOST + TOOL_EVAL_PORT
     if not base_url:

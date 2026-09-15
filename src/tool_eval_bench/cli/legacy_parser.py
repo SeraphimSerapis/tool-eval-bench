@@ -47,7 +47,8 @@ def _make_parser() -> argparse.ArgumentParser:
     conn.add_argument(
         "--backend",
         default=None,
-        help="Backend label for reports: vllm, litellm, llamacpp, sglang, gemini, ninfer "
+        help="Backend label for reports: vllm, litellm, llamacpp, sglang, gemini, openai, "
+        "anthropic, ninfer "
         "(the request format follows the endpoint, not this label — see --format; "
         "default: auto-detected via /metrics, falling back to env/vllm)",
     )
@@ -57,6 +58,13 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Server base URL (default: auto-discover on localhost, or from .env)",
     )
     conn.add_argument("--api-key", default=None, help="API key")
+    conn.add_argument(
+        "--provider",
+        default=None,
+        metavar="NAME",
+        help="Use TOOL_EVAL_<NAME>_BASE_URL/_API_KEY/_MODEL from .env (any name, "
+        "e.g. gemini, openai, anthropic); explicit flags win. Env: TOOL_EVAL_PROVIDER",
+    )
     conn.add_argument(
         "--format",
         choices=list(WIRE_FORMATS),

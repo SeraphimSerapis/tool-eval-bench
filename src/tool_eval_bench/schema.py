@@ -53,7 +53,16 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "backend",
         "type": "string",
         "default": "vllm",
-        "choices": ["vllm", "litellm", "llamacpp", "sglang", "gemini", "ninfer"],
+        "choices": [
+            "vllm",
+            "litellm",
+            "llamacpp",
+            "sglang",
+            "gemini",
+            "openai",
+            "anthropic",
+            "ninfer",
+        ],
         "description": "Backend label for reports",
     },
     {
@@ -67,6 +76,15 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "type": "string",
         "default": None,
         "description": "API key (optional; can also be set via TOOL_EVAL_API_KEY env var)",
+    },
+    {
+        "name": "provider",
+        "type": "string",
+        "default": None,
+        "description": (
+            "Read base_url/api_key/model from TOOL_EVAL_<PROVIDER>_* env vars "
+            "(also TOOL_EVAL_PROVIDER); explicit flags still win"
+        ),
     },
     {
         "name": "format",

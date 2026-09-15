@@ -433,6 +433,26 @@ class TestProbeEngine:
         assert result == {"engine_name": "Google Gemini API"}
         assert client.get.await_count == 0
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("backend", "engine_name"),
+        [
+            ("openai", "OpenAI API"),
+            ("anthropic", "Anthropic API (OpenAI-compatible)"),
+        ],
+    )
+    async def test_hosted_openai_compatible_probe_makes_no_requests(
+        self, backend: str, engine_name: str
+    ) -> None:
+        from tool_eval_bench.utils.metadata import _probe_engine
+
+        client = _mock_async_client([])
+        with patch("tool_eval_bench.utils.metadata.httpx.AsyncClient", return_value=client):
+            result = await _probe_engine("https://api.example", "key", backend)
+
+        assert result == {"engine_name": engine_name}
+        assert client.get.await_count == 0
+
 
 # ---------------------------------------------------------------------------
 # detect_backend_from_metrics / probe_backend_hint

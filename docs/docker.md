@@ -14,7 +14,8 @@ cd tool-eval-bench
 # (same TOOL_EVAL_* variables as the README's Configuration section)
 cp .env.example .env
 # edit .env: set TOOL_EVAL_BASE_URL, or set TOOL_EVAL_HOST/TOOL_EVAL_PORT;
-# also set TOOL_EVAL_API_KEY when the endpoint requires authentication
+# also set TOOL_EVAL_API_KEY when the endpoint requires authentication;
+# or scope several endpoints as TOOL_EVAL_<NAME>_* and pass --provider NAME
 
 # Compose validates env_file entries before any command, so .env must exist first.
 # It also requires the host identity for writable bind mounts.

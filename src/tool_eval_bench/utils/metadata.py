@@ -386,6 +386,13 @@ def _guess_quantization(model_name: str | None) -> str | None:
     return None
 
 
+# Backend labels that name a vendor API rather than a self-hosted engine.
+_HOSTED_ENGINE_NAMES: dict[str, str] = {
+    "gemini": "Google Gemini API",
+    "openai": "OpenAI API",
+    "anthropic": "Anthropic API (OpenAI-compatible)",
+}
+
 _OWNED_BY_BACKENDS: dict[str, tuple[str, str]] = {
     "ninfer": ("ninfer", "NInfer"),
     "sglang": ("sglang", "SGLang"),
@@ -434,11 +441,11 @@ async def _probe_engine(
     result: dict[str, Any] = {}
     backend_l = backend.lower()
 
-    if backend_l == "gemini":
-        # A hosted API serves no engine metadata, and its native endpoint does
-        # not answer /v1/models at all, so every probe below would be a wasted
-        # round trip against Google's servers.
-        return {"engine_name": "Google Gemini API"}
+    if backend_l in _HOSTED_ENGINE_NAMES:
+        # A hosted API serves no engine metadata, and Gemini's native endpoint
+        # does not answer /v1/models at all, so every probe below would be a
+        # wasted round trip against the vendor's servers.
+        return {"engine_name": _HOSTED_ENGINE_NAMES[backend_l]}
 
     async with _probe_session(None) as active:
         # Always probe /v1/models (works for all self-hosted backends)

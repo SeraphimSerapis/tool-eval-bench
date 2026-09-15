@@ -50,6 +50,16 @@
     "required": false
   },
   {
+    "choices": null,
+    "default": null,
+    "dest": "provider",
+    "flags": [
+      "--provider"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
     "choices": [
       "auto",
       "openai",
