@@ -74,10 +74,11 @@ tool-eval-bench --json --short
 
 Priority order (highest wins):
 1. `--base-url` CLI flag
-2. `TOOL_EVAL_BASE_URL` environment variable
-3. `TOOL_EVAL_HOST` + `TOOL_EVAL_PORT` environment variables
-4. `.env` file (never overrides existing env vars)
-5. Auto-discovery on localhost
+2. `TOOL_EVAL_<PROVIDER>_BASE_URL`, when `--provider` or `TOOL_EVAL_PROVIDER` names one
+3. `TOOL_EVAL_BASE_URL` environment variable
+4. `TOOL_EVAL_HOST` + `TOOL_EVAL_PORT` environment variables
+5. `.env` file (never overrides existing env vars)
+6. Auto-discovery on localhost
 
 ```bash
 # Explicit URL
@@ -86,7 +87,16 @@ tool-eval-bench --base-url http://192.168.1.5:8000 --json --short
 # Via environment
 export TOOL_EVAL_BASE_URL=http://192.168.1.5:8000
 tool-eval-bench --json --short
+
+# Named provider: TOOL_EVAL_OPENAI_BASE_URL / _API_KEY / _MODEL
+tool-eval-bench --provider openai --json --short
 ```
+
+A provider owns its API key and model: `TOOL_EVAL_API_KEY` and `TOOL_EVAL_MODEL`
+are not consulted when one is selected, and a provider with no `_BASE_URL` is an
+error rather than a fall-through to auto-discovery. `--api-key` and `--model`
+still override. `gemini`, `openai`, and `anthropic` set the backend label and
+skip engine probing; any other name leaves detection alone.
 
 ## Key CLI flags
 
@@ -99,7 +109,8 @@ tool-eval-bench --json --short
 | `--dry-run` | List scenarios that would run (no server needed) |
 | `--base-url URL` | Server endpoint |
 | `--model NAME` | Model name (auto-detected if omitted) |
-| `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp` |
+| `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp`, `sglang`, `gemini`, `openai`, `anthropic`, `ninfer` |
+| `--provider NAME` | Read the endpoint from `TOOL_EVAL_<NAME>_*` env vars |
 | `--seed N` | Random seed for reproducibility |
 | `--temperature F` | Sampling temperature (default: 0.0 = greedy) |
 | `--timeout F` | Per-request timeout in seconds (default: 60) |

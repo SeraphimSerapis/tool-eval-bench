@@ -127,6 +127,27 @@ TOOL_EVAL_API_KEY=       # optional
 Priority order: CLI flags > environment variables > `.env` > auto-discovery.
 Env vars set by a calling process are never overridden by a stale `.env`.
 
+To keep several endpoints in one `.env` for A/B runs, scope them by name and
+pick one with `--provider`:
+
+```bash
+TOOL_EVAL_GEMINI_BASE_URL=https://generativelanguage.googleapis.com
+TOOL_EVAL_GEMINI_API_KEY=...
+TOOL_EVAL_GEMINI_MODEL=gemini-2.5-pro
+
+TOOL_EVAL_LOCAL_BASE_URL=http://gpu-box:8080
+```
+
+```bash
+tool-eval-bench run --provider gemini
+tool-eval-bench run --provider local
+tool-eval-bench compare <run-a> <run-b>
+```
+
+The name is free-form. `gemini`, `openai`, and `anthropic` also set the
+report's backend label. See `.env.example` for the vendor endpoints and the
+caveats on Anthropic's OpenAI-compatible layer.
+
 ## What it measures
 
 | | What it tests | More |
