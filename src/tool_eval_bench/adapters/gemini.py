@@ -42,6 +42,18 @@ from tool_eval_bench.utils.urls import redact_url as _redact_url
 logger = logging.getLogger(__name__)
 
 
+def _finish_reason(value: Any) -> str | None:
+    """Map Gemini's finishReason onto the OpenAI vocabulary the runner reads."""
+    if not value:
+        return None
+    reason = str(value).upper()
+    if reason == "MAX_TOKENS":
+        return "length"
+    if reason == "STOP":
+        return "stop"
+    return reason.lower()
+
+
 def _sse_payload(line: str) -> str | None:
     """Return the payload from an SSE data line.
 
@@ -483,6 +495,7 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
         thoughts: list[str] = []
         tool_calls: list[ProviderToolCall] = []
         usage: dict[str, Any] = {}
+        finish_reason: str | None = None
 
         async with client.stream(
             "POST", url, json=payload, headers=headers, timeout=timeout
@@ -534,6 +547,8 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
                 candidates = chunk.get("candidates") or []
                 if not candidates:
                     continue
+                if candidates[0].get("finishReason"):
+                    finish_reason = _finish_reason(candidates[0]["finishReason"])
                 parts = (candidates[0].get("content") or {}).get("parts") or []
                 chunk_texts, chunk_thoughts, chunk_calls = _parse_parts(parts)
                 # Native Gemini thinking chunks are generated output even
@@ -554,6 +569,7 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
             reasoning="".join(thoughts) or None,
             prompt_tokens=usage.get("promptTokenCount"),
             completion_tokens=usage.get("candidatesTokenCount"),
+            finish_reason=finish_reason,
         )
 
     @staticmethod
@@ -609,4 +625,5 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
             reasoning="".join(thoughts) or None,
             prompt_tokens=usage.get("promptTokenCount"),
             completion_tokens=usage.get("candidatesTokenCount"),
+            finish_reason=_finish_reason(candidates[0].get("finishReason")) if candidates else None,
         )

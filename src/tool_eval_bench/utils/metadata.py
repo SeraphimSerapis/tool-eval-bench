@@ -25,6 +25,7 @@ from tool_eval_bench.domain.models import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     BenchmarkConfig,
     RunContext,
+    default_max_tokens,
 )
 from tool_eval_bench.utils.urls import metrics_url as _metrics_url
 from tool_eval_bench.utils.urls import models_url as _models_url
@@ -555,6 +556,7 @@ async def collect_run_context(
         parallel=parallel,
         error_rate=error_rate,
         thinking_enabled=thinking_enabled,
+        max_tokens=default_max_tokens(extra_params),
         extra_params=extra_params,
         context_pressure=context_pressure,
         label=label,

@@ -709,6 +709,37 @@ async def test_stream_basic_content() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_captures_finish_reason() -> None:
+    """A turn the ceiling cut short reports finish_reason=length."""
+    chunks = [
+        json.dumps({"choices": [{"delta": {"reasoning_content": "thinking"}}]}),
+        json.dumps({"choices": [{"delta": {}, "finish_reason": "length"}]}),
+    ]
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(_sse_lines(*chunks)))
+
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="http://localhost:8000",
+        stream=True,
+    )
+
+    assert result.content == ""
+    assert result.reasoning == "thinking"
+    assert result.finish_reason == "length"
+    await adapter.aclose()
+
+
+def test_non_stream_parse_captures_finish_reason() -> None:
+    result = OpenAICompatibleAdapter._parse_response(
+        {"choices": [{"message": {"content": "56"}, "finish_reason": "stop"}]}, elapsed_ms=1.0
+    )
+    assert result.finish_reason == "stop"
+    assert OpenAICompatibleAdapter._parse_response({"choices": []}, 1.0).finish_reason is None
+
+
+@pytest.mark.asyncio
 async def test_stream_tool_calls() -> None:
     """Streaming should accumulate tool calls from delta chunks."""
     chunks = [

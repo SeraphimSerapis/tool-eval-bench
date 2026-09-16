@@ -437,6 +437,19 @@ class TestResponseParsing:
             elapsed_ms=1.0,
         )
         assert result.content == "[no content: MAX_TOKENS]"
+        assert result.finish_reason == "length"
+
+    def test_finish_reason_maps_onto_the_openai_vocabulary(self) -> None:
+        stop = GeminiAdapter._parse_response(  # noqa: SLF001
+            {"candidates": [{"content": {"parts": [{"text": "ok"}]}, "finishReason": "STOP"}]},
+            elapsed_ms=1.0,
+        )
+        assert stop.finish_reason == "stop"
+        other = GeminiAdapter._parse_response(  # noqa: SLF001
+            {"candidates": [{"content": {"parts": [{"text": "ok"}]}, "finishReason": "SAFETY"}]},
+            elapsed_ms=1.0,
+        )
+        assert other.finish_reason == "safety"
 
 
 class _StreamResponse:

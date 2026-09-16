@@ -27,7 +27,11 @@ from tool_eval_bench.domain.adapters import (
     ChatCompletionResult,
     ProviderToolCall,
 )
-from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage
+from tool_eval_bench.domain.models import (
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    ChatMessage,
+    default_max_tokens,
+)
 from tool_eval_bench.domain.scenarios import (
     CATEGORY_LABELS,
     SAFETY_GATE_THRESHOLD,
@@ -47,7 +51,6 @@ from tool_eval_bench.domain.scenarios import (
     compute_deployability,
     rating_for_score,
 )
-from tool_eval_bench.domain.timeouts import unstreamed_turn_timeout
 from tool_eval_bench.domain.tools import (
     BENCHMARK_REFERENCE_DATE,
     BENCHMARK_REFERENCE_DAY,
@@ -430,11 +433,19 @@ async def run_scenario(
     # the budget was still available, the model was going nowhere with it.
     loop_stop: str | None = None
     recent_turn_signatures: list[str] = []
+    # Set when a turn ends on finish_reason=length with nothing to grade: the
+    # model spent the whole ceiling thinking and never reached an answer.
+    truncated_stop: str | None = None
+    max_tokens = default_max_tokens(extra)
 
     try:
         for turn in range(1, max_turns + 1):
-            # Stream the first turn to measure TTFT accurately
-            use_stream = turn == 1
+            # Every turn is streamed. On a streamed turn the read timeout
+            # bounds the gap between tokens, so a model that thinks for
+            # minutes while still emitting stays alive and a hung endpoint
+            # still dies after timeout_seconds of silence. TTFT is read from
+            # turn 1 only.
+            use_stream = True
 
             turn_start = time.perf_counter()
             # Only send response_format on content turns (not tool-calling
@@ -451,26 +462,14 @@ async def run_scenario(
             if state.tool_calls and scenario.tool_choice_after_first_call is not None:
                 active_tool_choice = scenario.tool_choice_after_first_call
 
-            # Turns after the first are not streamed, so the read timeout bounds
-            # the whole generation instead of the gap between tokens. Scale it
-            # from what turn 1 actually took. See domain.timeouts.
-            turn_timeout = (
-                timeout_seconds
-                if use_stream
-                else unstreamed_turn_timeout(
-                    timeout_seconds,
-                    turn_latencies[0] if turn_latencies else 0.0,
-                )
-            )
-
             result = await adapter.chat_completion(
                 model=model,
                 messages=messages,
                 tools=scenario_tools or None,  # Don't send empty list
                 tool_choice=active_tool_choice if scenario_tools else None,
                 temperature=temperature,
-                max_tokens=4096,
-                timeout_seconds=turn_timeout,
+                max_tokens=max_tokens,
+                timeout_seconds=timeout_seconds,
                 api_key=api_key,
                 base_url=base_url,
                 extra_params=extra,
@@ -547,6 +546,23 @@ async def run_scenario(
             trace_lines.append(f"assistant_turn_{turn}={result.content or '[tool_calls_only]'}")
             if result.reasoning:
                 trace_lines.append(f"assistant_reasoning_{turn}={result.reasoning}")
+
+            # The ceiling ate the turn: nothing visible came back and the
+            # provider says it stopped for length. Grading the empty string
+            # would blame the model's judgement for a harness setting, so
+            # stop here and tag the run instead.
+            # The Gemini adapter stands in "[no content: MAX_TOKENS]" for an
+            # empty candidate, so that placeholder counts as no answer too.
+            visible_answer = bool(result.content) and not result.content.startswith("[no content:")
+            if not result.tool_calls and not visible_answer and result.finish_reason == "length":
+                reasoning_chars = len(result.reasoning or "")
+                truncated_stop = (
+                    f"Turn {turn} hit the max_tokens ceiling ({max_tokens}) with "
+                    f"{reasoning_chars} characters of reasoning and no answer or tool call."
+                )
+                trace_lines.append(f"truncated={truncated_stop}")
+                budget_exhausted = False
+                break
 
             # No tool calls → model finished this conversational phase
             if not result.tool_calls:
@@ -655,8 +671,9 @@ async def run_scenario(
     # entire benchmark run (issue #5).
     try:
         evaluation = scenario.evaluate(state)
-        if loop_stop is not None and evaluation.status != ScenarioStatus.PASS:
-            evaluation.note = f"{loop_stop} {evaluation.note or ''}".strip()
+        harness_stop = truncated_stop or loop_stop
+        if harness_stop is not None and evaluation.status != ScenarioStatus.PASS:
+            evaluation.note = f"{harness_stop} {evaluation.note or ''}".strip()
         if scenario.response_format_override is not None:
             evaluation.diagnostics["response_format"] = (
                 "requested; backend enforcement is not independently measured"
@@ -756,7 +773,9 @@ async def run_scenario(
         parallel_tool_turns=parallel_tool_turns,
         state_checkpoints=state_checkpoints,
         failure_kind=(
-            FailureKind.REPEATED_CALL_LOOP
+            FailureKind.REASONING_TRUNCATED
+            if truncated_stop is not None and evaluation.status != ScenarioStatus.PASS
+            else FailureKind.REPEATED_CALL_LOOP
             if loop_stop is not None and evaluation.status != ScenarioStatus.PASS
             else FailureKind.BUDGET_EXCEEDED
             if budget_exhausted and evaluation.status != ScenarioStatus.PASS

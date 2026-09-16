@@ -75,20 +75,23 @@ tool-eval-bench run --backend-kwargs '{"max_tokens": 1024}'         # hard cap o
 diagnostic rather than a setting to keep. Scenarios that score provider-exposed reasoning, such as
 TC-88, cannot reach a pass without it.
 
-### Why a later turn times out when the first one did not
+### What the timeout bounds
 
-Only the first turn of a scenario is streamed. On a streamed turn the read timeout measures the gap
-between tokens, so a long generation never trips it. Every later turn arrives as one response, which
-makes the same number bound the whole generation instead.
+Every turn of a scenario is streamed, so the read timeout measures the gap between tokens, not the
+length of the generation. A model that thinks for six minutes while still emitting tokens stays
+alive; an endpoint that goes silent for `--timeout` seconds is treated as hung and the scenario is
+excluded as an infrastructure failure. Raise `--timeout` only when a healthy endpoint pauses that
+long between tokens, which is rare outside heavily loaded shared servers.
 
-A model that comfortably finished turn 1 in 150 seconds under a 120-second timeout will therefore
-die on turn 2 without having slowed down at all. To stop that, later turns are given a multiple of
-what turn 1 actually took, so a model that has demonstrated it is slow gets room while a hung
-endpoint still fails at the configured timeout. Raising `--timeout` further is still the fix when
-even that is not enough.
+### A turn that hit the token ceiling
 
-Eleven of the 88 scenarios have follow-up turns, so on a slow deployment this shows up as a handful
-of exclusions rather than a whole-run failure.
+Each turn is sent with `max_tokens` 16384 when thinking is enabled and 4096 under `--no-think`;
+the value is printed under Run Context. On OpenAI-compatible reasoning endpoints the thinking
+tokens count against that ceiling. When a turn ends on `finish_reason=length` with no visible
+answer and no tool call, the scenario stops there, the trace carries a `truncated=` line, the
+evaluation note says how much reasoning was cut, and the failure kind is `reasoning_truncated`.
+That result still scores, because the model did not answer, but the tag separates "ran out of room
+to think" from a wrong answer. `--backend-kwargs '{"max_tokens": 32768}'` raises the ceiling.
 
 ## Rate limits against a hosted endpoint
 

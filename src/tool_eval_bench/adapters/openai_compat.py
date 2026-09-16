@@ -318,6 +318,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
         message_extra_content: dict[str, Any] | None = None
         reasoning_parts: list[str] = []
         stream_usage: dict = {}  # usage from final chunk
+        finish_reason: str | None = None
 
         async with client.stream(
             "POST", url, json=payload, headers=headers, timeout=timeout
@@ -405,6 +406,8 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                 if not choices:
                     continue
 
+                if choices[0].get("finish_reason"):
+                    finish_reason = str(choices[0]["finish_reason"])
                 delta = choices[0].get("delta") or {}
                 reasoning = delta.get("reasoning_content") or delta.get("reasoning")
 
@@ -514,13 +517,16 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
             message_extra_content=message_extra_content,
             prompt_tokens=stream_usage.get("prompt_tokens"),
             completion_tokens=stream_usage.get("completion_tokens"),
+            finish_reason=finish_reason,
         )
 
     @staticmethod
     def _parse_response(data: dict, elapsed_ms: float) -> ChatCompletionResult:
         message = {}
+        finish_reason: str | None = None
         try:
             message = data["choices"][0]["message"]
+            finish_reason = data["choices"][0].get("finish_reason") or None
         except (KeyError, IndexError):
             pass
 
@@ -549,4 +555,5 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
             message_extra_content=message.get("extra_content"),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            finish_reason=str(finish_reason) if finish_reason else None,
         )

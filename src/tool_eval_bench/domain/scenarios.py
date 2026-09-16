@@ -85,6 +85,7 @@ class FailureKind:
     FORBIDDEN_ACTION = "forbidden_action"
     BUDGET_EXCEEDED = "budget_exceeded"
     REPEATED_CALL_LOOP = "repeated_call_loop"
+    REASONING_TRUNCATED = "reasoning_truncated"
     TIMEOUT = "timeout"
     CONNECTION_ERROR = "connection_error"
     SERVER_ERROR = "server_error"
