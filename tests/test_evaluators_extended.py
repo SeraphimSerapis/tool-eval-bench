@@ -2163,6 +2163,16 @@ class TestTC45:
         s = _state(final_answer="7 times 8 is 56.")
         assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
 
+    def test_partial_empty_arguments_names_the_parser_question(self) -> None:
+        """DeepSeek V4.1 Flash on SGLang: the forced call arrived as calculator {}."""
+        s = _state(
+            tool_calls=[{"name": "calculator", "arguments": {}}],
+            final_answer="7 × 8 = 56.",
+        )
+        result = self.sc.evaluate(s)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "empty arguments" in result.summary
+
     def test_partial_wrong_tool(self) -> None:
         s = _state(
             tool_calls=[{"name": "web_search", "arguments": {"query": "7 * 8"}}],

@@ -78,6 +78,14 @@ def _tc45_eval(state: ScenarioState) -> ScenarioEvaluation:
     unrelated_calls = [call for call in state.tool_calls if call.name != "calculator"]
     calc_calls = [c for c in state.tool_calls if c.name == "calculator"]
     if calc_calls:
+        if not calc_calls[0].arguments:
+            # The forced call arrived with no arguments at all. Whether the
+            # model or the endpoint's tool parser dropped them is what the
+            # run-level tool_choice diagnostic records.
+            return _partial(
+                "Used calculator but the forced call arrived with empty arguments "
+                "(see the tool_choice diagnostic for parser drops)."
+            )
         expr = _as_str(calc_calls[0].arguments.get("expression", ""))
         result = _parse_math_expression(expr)
         if (

@@ -59,6 +59,43 @@ def test_unobserved_dependency_cannot_pass(sid):
     assert result.status is not ScenarioStatus.PASS, result.summary
 
 
+def test_batched_dependency_is_described_as_batched():
+    """DeepSeek V4.1 Flash on TC-74 issued the creation and the confirmation
+    email in one turn. The verdict is unchanged; the summary says what happened
+    instead of implying the corrections were lost."""
+    trace = responses(REFERENCES["TC-74"])
+    create_index = next(
+        i
+        for i, r in enumerate(trace)
+        if any(c.name == "create_calendar_event" for c in r.tool_calls)
+    )
+    email_index = next(
+        i for i, r in enumerate(trace) if any(c.name == "send_email" for c in r.tool_calls)
+    )
+    assert create_index < email_index
+    trace[create_index].tool_calls = trace[create_index].tool_calls + trace[email_index].tool_calls
+    del trace[email_index]
+    result = replay("TC-74", *trace)
+    assert result.status is ScenarioStatus.FAIL
+    assert result.summary.startswith("Batched send_email with create_calendar_event")
+
+
+def test_out_of_order_dependency_keeps_the_plain_wording():
+    trace = responses(REFERENCES["TC-74"])
+    create_index = next(
+        i
+        for i, r in enumerate(trace)
+        if any(c.name == "create_calendar_event" for c in r.tool_calls)
+    )
+    email_index = next(
+        i for i, r in enumerate(trace) if any(c.name == "send_email" for c in r.tool_calls)
+    )
+    trace[create_index], trace[email_index] = trace[email_index], trace[create_index]
+    result = replay("TC-74", *trace)
+    assert result.status is ScenarioStatus.FAIL
+    assert result.summary == "Called send_email before observing a create_calendar_event result."
+
+
 @pytest.mark.parametrize("sid", [f"TC-{i}" for i in range(64, 70)])
 @pytest.mark.parametrize("wrapper", ["```json\n{}\n```", "Explanation: {}", "{}\nThank you."])
 def test_structured_output_requires_complete_raw_json(sid, wrapper):
