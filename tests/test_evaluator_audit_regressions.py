@@ -1480,9 +1480,32 @@ def test_is_negated_ignores_a_negation_that_governs_something_else(prefix, why):
 def test_tc35_reads_a_conversion_stated_without_rounding_as_a_conversion():
     """The wrong-unit detector must see a conversion its own sentence asserts."""
     scenario = _SCENARIOS["TC-35"]
-    state = make_state(final_answer="500 K is already Kelvin, and without rounding it is 440.33 F.")
+    state = make_state(final_answer="Without rounding, the answer is 440.33 F.")
 
-    assert scenario.evaluate(state).status is not ScenarioStatus.PASS
+    result = scenario.evaluate(state)
+    assert result.status is ScenarioStatus.FAIL
+    assert "wrong unit" in result.summary
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        # GLM 5.3 Flash, 2026-09-15.
+        "500 Kelvin is simply **500 K** — no conversion is needed, since the value is already "
+        "expressed in Kelvin.\n\n(If you meant to convert it to another scale: "
+        "Celsius: 226.85 °C, Fahrenheit: 440.33 °F)",
+        # DeepSeek V4.1 Flash, 2026-09-16.
+        "500 degrees Kelvin is already in Kelvin, so the conversion is an identity: "
+        "**500 K = 500 K**. (If you meant another scale, 500 K = 226.85 °C = 440.33 °F.)",
+    ],
+)
+def test_tc35_offering_other_scales_after_the_identity_is_full_credit(answer):
+    """The scenario measures identity recognition and calculator restraint; an
+    accurate aside in other units is neither a wrong answer nor a tool call."""
+    scenario = _SCENARIOS["TC-35"]
+    result = scenario.evaluate(make_state(final_answer=answer))
+    assert result.status is ScenarioStatus.PASS, result.summary
+    assert "aside" in result.summary
 
 
 # ---------------------------------------------------------------------------

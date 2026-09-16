@@ -123,8 +123,13 @@ def _tc35_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial("Called calculator on a same-unit identity conversion, but reached 500 K.")
     if not recognized_identity:
         return _partial("Answered 500 K but didn't explain that K→K is a no-op.")
+    # Offering the Celsius or Fahrenheit equivalent after stating the identity
+    # is an accurate extra, not a wrong answer. Two of three models produced
+    # it; the scenario measures identity recognition and calculator restraint.
     if converted_value:
-        return _partial("Recognized the Kelvin identity but volunteered an unrequested conversion.")
+        return _pass(
+            "Spotted the tautology and offered other scales as an aside — no conversion needed."
+        )
     return _pass("Spotted the tautology — 500K is already in Kelvin, no conversion needed.")
 
 
