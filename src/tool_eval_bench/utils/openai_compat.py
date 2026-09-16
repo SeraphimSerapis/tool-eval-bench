@@ -43,3 +43,25 @@ def max_tokens_retry_payload(
     retry = dict(payload)
     retry["max_completion_tokens"] = retry.pop("max_tokens")
     return retry
+
+
+_SAMPLING_KEYS = ("temperature", "top_p", "top_k")
+
+
+def sampling_retry_payload(
+    payload: dict[str, Any], status_code: int, response_text: str
+) -> dict[str, Any] | None:
+    """Drop sampling knobs when an endpoint rejects them by name.
+
+    Current Claude models return HTTP 400 for ``temperature``, ``top_p``, and
+    ``top_k`` rather than ignoring them.  The benchmark's ``temperature=0``
+    never guaranteed determinism there anyway, so the request is worth more
+    without the field than the field is worth.
+    """
+    if status_code not in (400, 422):
+        return None
+    text = response_text.lower()
+    present = [key for key in _SAMPLING_KEYS if key in payload]
+    if not present or not any(key in text for key in present):
+        return None
+    return {k: v for k, v in payload.items() if k not in _SAMPLING_KEYS}

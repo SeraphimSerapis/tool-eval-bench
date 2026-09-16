@@ -23,6 +23,7 @@ from tool_eval_bench.domain.measurement import MeasurementClient, MeasurementCli
 from tool_eval_bench.utils.openai_compat import (
     max_tokens_retry_payload,
     output_token_limit_reached,
+    sampling_retry_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -475,6 +476,10 @@ async def warmup(
                 if tok_cfg is not None:
                     tok_cfg.output_token_field = "max_completion_tokens"
                 logger.debug("Warm-up rejected max_tokens; retrying with max_completion_tokens")
+            elif (
+                retry_payload := sampling_retry_payload(payload, resp.status_code, resp.text)
+            ) is not None:
+                logger.debug("Warm-up rejected sampling parameters; retrying without them")
             else:
                 retry_payload = _without_optional_hints(payload)
                 if retry_payload is None:

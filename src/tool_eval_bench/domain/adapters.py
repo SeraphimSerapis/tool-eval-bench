@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 # HTTP statuses an adapter should retry, and which — if they survive the retry
 # budget — indicate a saturated endpoint rather than a bad request.  A 500 is
 # excluded: it normally reflects a request the server cannot process at all.
-RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 502, 503, 504})
+# 529 is the Messages API's "overloaded", its equivalent of a 503.
+RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 502, 503, 504, 529})
 
 
 @dataclass

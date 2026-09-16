@@ -2,7 +2,7 @@
 
 A tool-calling quality benchmark for LLMs in agentic workflows, built for
 self-hosted serving stacks: **vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**,
-**NInfer**, and hosted **Gemini**.
+**NInfer**, and hosted **Gemini** and **Anthropic**.
 
 Each scenario observes one assistant conversation with mock tools. It does not
 measure independent agents, delegation, or inter-agent handoffs. Localization
@@ -145,8 +145,10 @@ tool-eval-bench compare <run-a> <run-b>
 ```
 
 The name is free-form. `gemini`, `openai`, and `anthropic` also set the
-report's backend label. See `.env.example` for the vendor endpoints and the
-caveats on Anthropic's OpenAI-compatible layer.
+report's backend label. See `.env.example` for the vendor endpoints. An
+Anthropic Messages endpoint (`api.anthropic.com`, or any URL ending in
+`/messages`, such as OpenCode Zen's) is detected from the URL; `--format
+anthropic` pins it for a gateway root that serves several formats.
 
 ## What it measures
 

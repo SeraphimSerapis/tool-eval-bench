@@ -90,7 +90,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "format",
         "type": "string",
         "default": "auto",
-        "choices": ["auto", "openai", "gemini"],
+        "choices": ["auto", "openai", "gemini", "anthropic"],
         "description": "Endpoint wire format (default: detect from the base URL)",
     },
     {

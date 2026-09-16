@@ -50,7 +50,8 @@
       "choices": [
         "auto",
         "openai",
-        "gemini"
+        "gemini",
+        "anthropic"
       ],
       "default": "auto",
       "description": "Endpoint wire format (default: detect from the base URL)",

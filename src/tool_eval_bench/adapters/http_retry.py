@@ -1,10 +1,11 @@
 """Shared HTTP retry, backoff, and rate-limit machinery for backend adapters.
 
-Both wire formats the benchmark speaks — OpenAI-compatible
-(``/v1/chat/completions``) and native Gemini (``:generateContent``) — hit the
-same operational realities: transient gateway errors and, on hosted endpoints,
-per-minute quotas.  The retry policy, the adaptive pacing, and the HTTP client
-lifecycle live here so both adapters behave identically under pressure.
+Every wire format the benchmark speaks — OpenAI-compatible
+(``/v1/chat/completions``), native Gemini (``:generateContent``), and the
+Anthropic Messages API (``/v1/messages``) — hits the same operational
+realities: transient gateway errors and, on hosted endpoints, per-minute
+quotas.  The retry policy, the adaptive pacing, and the HTTP client lifecycle
+live here so every adapter behaves identically under pressure.
 """
 
 from __future__ import annotations

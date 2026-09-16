@@ -181,7 +181,8 @@ difference is what makes Python the right language for an evaluator.
 | `measurement.py` | HTTP implementation of the domain-owned measurement port, including raw SSE arrival timing |
 | `openai_compat.py` | `OpenAICompatibleAdapter` — vLLM, LiteLLM, llama.cpp, SGLang, and Google's OpenAI compatibility layer |
 | `gemini.py` | `GeminiAdapter` — the native Gemini `:generateContent` API |
-| `http_retry.py` | Shared retry, backoff, and rate-limit pacing for both adapters |
+| `anthropic.py` | `AnthropicAdapter` — the Anthropic Messages API (`/v1/messages`), also spoken by gateways such as OpenCode Zen |
+| `http_retry.py` | Shared retry, backoff, and rate-limit pacing for every adapter |
 | `wire_format.py` | Which format an endpoint speaks, detected from its URL |
 | `factory.py` | `build_adapter()` — picks the adapter for a base URL / `--format` |
 | `requests.py` | Minimal single-shot request bodies for pre-flight and warm-up |

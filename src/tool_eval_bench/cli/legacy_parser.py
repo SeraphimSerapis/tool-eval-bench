@@ -69,8 +69,8 @@ def _make_parser() -> argparse.ArgumentParser:
         "--format",
         choices=list(WIRE_FORMATS),
         default="auto",
-        help="Request wire format: openai (/v1/chat/completions) or gemini "
-        "(native :generateContent). Default: auto-detected from --base-url",
+        help="Wire format: openai, gemini, or anthropic (/v1/messages). "
+        "Default: detected from --base-url",
     )
     conn.add_argument(
         "--probe",

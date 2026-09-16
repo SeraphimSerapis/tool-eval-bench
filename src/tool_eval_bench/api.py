@@ -135,7 +135,7 @@ async def run_benchmark(
         output_dir: Directory for Markdown report files (default: ``./runs/``).
             The SQLite database is always at ``./data/benchmarks.sqlite``.
         wire_format: Request format the endpoint speaks — ``openai``, ``gemini``,
-            or ``auto``/*None* to detect it from ``base_url``.
+            ``anthropic``, or ``auto``/*None* to detect it from ``base_url``.
 
     Returns:
         A versioned JSON-serializable dict containing ``run_id``, ``config``,

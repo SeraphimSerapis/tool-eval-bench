@@ -81,7 +81,7 @@ def _probe_via_main(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> dict[st
     """Run ``main()`` in probe mode and capture what the cascade resolved."""
     seen: dict[str, object] = {}
 
-    def fake_probe(console, base_url, api_key, headless=False):
+    def fake_probe(console, base_url, api_key, headless=False, wire_format="openai"):
         seen["base_url"] = base_url
         seen["api_key"] = api_key
 
