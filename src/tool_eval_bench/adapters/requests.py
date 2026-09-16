@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from tool_eval_bench.adapters.anthropic import ANTHROPIC_VERSION, _apply_extra_params
 from tool_eval_bench.adapters.gemini import _generation_config
-from tool_eval_bench.adapters.wire_format import gemini_generate_url
+from tool_eval_bench.adapters.wire_format import anthropic_messages_url, gemini_generate_url
 from tool_eval_bench.utils.urls import chat_completions_url
 
 _WARMUP_SYSTEM = "You are a helpful assistant."
@@ -43,6 +44,27 @@ def minimal_request(
         if api_key:
             headers["x-goog-api-key"] = api_key
         return gemini_generate_url(base_url, model), payload, headers
+
+    if wire_format == "anthropic":
+        payload = {
+            "model": model,
+            "system": _WARMUP_SYSTEM,
+            "messages": [{"role": "user", "content": _WARMUP_USER}],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        headers["anthropic-version"] = ANTHROPIC_VERSION
+        if api_key:
+            headers["x-api-key"] = api_key
+            headers["Authorization"] = f"Bearer {api_key}"
+        # The warm-up's ``enable_thinking=False`` hint would become disabled
+        # thinking, which some models reject outright; a probe must not fail
+        # on a knob it does not need.
+        probe_params = {
+            k: v for k, v in (extra_params or {}).items() if k != "chat_template_kwargs"
+        }
+        _apply_extra_params(payload, headers, probe_params)
+        return anthropic_messages_url(base_url), payload, headers
 
     payload = {
         "model": model,

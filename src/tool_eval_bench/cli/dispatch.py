@@ -244,10 +244,13 @@ def _probe_server(
     api_key: str | None,
     *,
     headless: bool = False,
+    wire_format: str = "openai",
 ) -> None:
     """Compatibility wrapper preserving the historical asyncio patch seam."""
     _model_probe.asyncio = asyncio
-    _model_probe._probe_server(console, base_url, api_key, headless=headless)
+    _model_probe._probe_server(
+        console, base_url, api_key, headless=headless, wire_format=wire_format
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -713,10 +716,10 @@ def main() -> None:
         wire_format = _resolve_wire_format(args.format, base_url)
     except ValueError as exc:
         parser.error(str(exc))
-    if wire_format == "gemini" and not backend_explicit:
+    if wire_format in ("gemini", "anthropic") and not backend_explicit:
         # Engine probing (/metrics, /props, /version) is meaningless against a
         # hosted API, and "vllm" would be a false label on every report.
-        backend = "gemini"
+        backend = wire_format
         backend_explicit = True
 
     # Authoritative backend detection: a port-based guess (from localhost
@@ -746,7 +749,7 @@ def main() -> None:
 
     # --probe: check if server is reachable and exit
     if args.probe:
-        _probe_server(console, base_url, api_key, headless=args.json)
+        _probe_server(console, base_url, api_key, headless=args.json, wire_format=wire_format)
         return
 
     # URL redaction for display (actual API calls use real base_url)

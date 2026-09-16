@@ -63,7 +63,8 @@
     "choices": [
       "auto",
       "openai",
-      "gemini"
+      "gemini",
+      "anthropic"
     ],
     "default": "auto",
     "dest": "format",

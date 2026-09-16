@@ -438,7 +438,7 @@ class TestProbeEngine:
         ("backend", "engine_name"),
         [
             ("openai", "OpenAI API"),
-            ("anthropic", "Anthropic API (OpenAI-compatible)"),
+            ("anthropic", "Anthropic Messages API"),
         ],
     )
     async def test_hosted_openai_compatible_probe_makes_no_requests(

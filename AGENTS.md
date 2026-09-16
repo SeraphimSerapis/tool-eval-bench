@@ -34,7 +34,7 @@ integrations. There is no web server or TUI.
     lifetime; `tests/test_architecture_boundaries.py` enforces this.
 - Prefer composition over global state.
 - Keep adapters backend-specific and pluggable. OpenAI-compatible backends use the OpenAI wire
-  format; Gemini also has a native adapter and wire format.
+  format; Gemini and Anthropic also have native adapters and wire formats.
 - Scenarios are self-contained: one file per scenario at `evals/scenarios/<group>/tcNN.py`,
   exporting `SCENARIO` and `DISPLAY`. The group package discovers its own files, so creating the
   file is the whole registration; there is no list to append to. Helpers shared inside a group live
@@ -57,7 +57,9 @@ integrations. There is no web server or TUI.
 ## Compatibility targets
 
 - vLLM, SGLang, LiteLLM, and llama.cpp are supported via OpenAI-compatible endpoints. Gemini is
-  supported through its native API as well as its OpenAI-compatible endpoint.
+  supported through its native API as well as its OpenAI-compatible endpoint. Anthropic is
+  supported through the native Messages API (`/v1/messages`), which also covers gateways that
+  front other models with it, such as OpenCode Zen.
 - Any server exposing `/v1/chat/completions` with `tools` support should work.
 - Non-tool benchmarks (GSM8K, MMLU, IFEval) only require chat-completion support; `tools` support
   is not needed.

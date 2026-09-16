@@ -15,6 +15,7 @@ from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.utils.openai_compat import (
     max_tokens_retry_payload,
     output_token_limit_reached,
+    sampling_retry_payload,
 )
 
 
@@ -51,7 +52,9 @@ def preflight_model_check(
     async def check() -> httpx.Response:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
             response = await client.post(url, json=payload, headers=headers)
-            retry_payload = max_tokens_retry_payload(payload, response.status_code, response.text)
+            retry_payload = max_tokens_retry_payload(
+                payload, response.status_code, response.text
+            ) or sampling_retry_payload(payload, response.status_code, response.text)
             if retry_payload is not None:
                 response = await client.post(url, json=retry_payload, headers=headers)
             return response

@@ -9,7 +9,8 @@ from typing import Any
 
 from rich.console import Console
 
-from tool_eval_bench.adapters.wire_format import gemini_models_url
+from tool_eval_bench.adapters.anthropic import ANTHROPIC_VERSION
+from tool_eval_bench.adapters.wire_format import anthropic_models_url, gemini_models_url
 from tool_eval_bench.cli.helpers import emit_headless_error as _headless_error
 from tool_eval_bench.domain.errors import (
     CONNECTION_FAILED,
@@ -18,6 +19,29 @@ from tool_eval_bench.domain.errors import (
     INVALID_RESPONSE,
     NO_MODELS,
 )
+
+
+def _models_request(
+    base_url: str, api_key: str | None, wire_format: str
+) -> tuple[str, dict[str, str]]:
+    """Return the model-listing URL and auth headers for a wire format."""
+    headers: dict[str, str] = {}
+    if wire_format == "gemini":
+        if api_key:
+            headers["x-goog-api-key"] = api_key
+        return gemini_models_url(base_url), headers
+    if wire_format == "anthropic":
+        headers["anthropic-version"] = ANTHROPIC_VERSION
+        if api_key:
+            headers["x-api-key"] = api_key
+            headers["Authorization"] = f"Bearer {api_key}"
+        return anthropic_models_url(base_url), headers
+    url = base_url.rstrip("/")
+    # Handle base_url that already ends with /v1
+    endpoint = f"{url}/models" if url.endswith("/v1") else f"{url}/v1/models"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return endpoint, headers
 
 
 def _detect_model(
@@ -43,28 +67,13 @@ def _detect_model(
     import httpx
 
     gemini = wire_format == "gemini"
+    anthropic = wire_format == "anthropic"
     url = base_url.rstrip("/")
-    headers: dict[str, str] = {}
-    if gemini:
-        models_endpoint = gemini_models_url(base_url)
-        if api_key:
-            headers["x-goog-api-key"] = api_key
-    else:
-        models_endpoint = f"{url}/v1/models"
-        # Handle base_url that already ends with /v1
-        if url.endswith("/v1"):
-            models_endpoint = f"{url}/models"
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+    models_endpoint, headers = _models_request(base_url, api_key, wire_format)
 
     # Build a display-safe endpoint URL for console output
     show_url = display_url or base_url
-    if gemini:
-        show_endpoint = gemini_models_url(show_url)
-    else:
-        show_endpoint = f"{show_url.rstrip('/')}/v1/models"
-        if show_url.rstrip("/").endswith("/v1"):
-            show_endpoint = f"{show_url.rstrip('/')}/models"
+    show_endpoint, _ = _models_request(show_url, None, wire_format)
     if not headless:
         console.print(f"[dim]  Querying {show_endpoint} …[/]", end=" ")
 
@@ -74,7 +83,7 @@ def _detect_model(
         nonlocal used_fallback
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(models_endpoint, headers=headers)
-            if resp.status_code == 404 and not gemini:
+            if resp.status_code == 404 and not (gemini or anthropic):
                 fallback_url = f"{url}/models"
                 resp = await client.get(fallback_url, headers=headers)
                 used_fallback = True
@@ -146,7 +155,7 @@ def _detect_model(
         api_id = m.get("id") or str(m.get("name", "")).removeprefix("models/")
         if not api_id:
             continue
-        root = m.get("root") or m.get("displayName", "")
+        root = m.get("root") or m.get("displayName") or m.get("display_name", "")
         # Use root as display name if it differs from the alias
         display = root if root and root != api_id else api_id
         models.append((api_id, display))
@@ -214,6 +223,7 @@ def _probe_server(
     api_key: str | None,
     *,
     headless: bool = False,
+    wire_format: str = "openai",
 ) -> None:
     """Check if a server is reachable and responsive, then exit.
 
@@ -225,12 +235,7 @@ def _probe_server(
     """
     import httpx
 
-    from tool_eval_bench.utils.urls import models_url
-
-    endpoint = models_url(base_url)
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    endpoint, headers = _models_request(base_url, api_key, wire_format)
 
     async def _check() -> httpx.Response:
         async with httpx.AsyncClient(timeout=10.0) as client:

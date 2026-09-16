@@ -391,7 +391,7 @@ def _guess_quantization(model_name: str | None) -> str | None:
 _HOSTED_ENGINE_NAMES: dict[str, str] = {
     "gemini": "Google Gemini API",
     "openai": "OpenAI API",
-    "anthropic": "Anthropic API (OpenAI-compatible)",
+    "anthropic": "Anthropic Messages API",
 }
 
 _OWNED_BY_BACKENDS: dict[str, tuple[str, str]] = {

@@ -12,6 +12,9 @@ accuracy benchmarks (GSM8K, MMLU, IFEval, needle) need only chat completions.
 - **Gemini** — supported through its native API as well as its OpenAI-compatible
   endpoint; the native wire format is detected from the URL, and `--format` pins
   it manually
+- **Anthropic** — supported through the native Messages API (`/v1/messages`),
+  which also covers gateways that front other models with it, such as OpenCode
+  Zen; detected from the URL, or pinned with `--format anthropic`
 
 ## How the adapter talks to a server
 
@@ -38,8 +41,9 @@ rather than tied to provider or model names.
 | `--spec-bench` acceptance rate | ✅ Prometheus | ⚠️ Live gauges are not request-local | ✅ when backend metrics are reachable | ✅ Counters or per-request timings |
 | `--spec-live` dashboard | ✅ Counters | ✅ Gauges | ✅ when backend metrics are separately reachable | ✅ Counters on current builds; engine-only fallback |
 
-OpenAI-compatible backends use `OpenAICompatibleAdapter`; native Gemini uses its
-own adapter. If you hit a backend-specific issue, please
+OpenAI-compatible backends use `OpenAICompatibleAdapter`; native Gemini and the
+Anthropic Messages API each use their own adapter. If you hit a backend-specific
+issue, please
 [open an issue](https://github.com/SeraphimSerapis/tool-eval-bench/issues).
 
 ## LiteLLM and other model routers
@@ -73,3 +77,36 @@ tool-eval-bench run --model gemini-3-flash --api-key "$GEMINI_API_KEY" \
 The native API is detected from the URL. Engine probing (`/metrics`, `/props`,
 `/version`) is skipped for hosted APIs, since it would be meaningless and would
 put a false backend label on every report.
+
+## Anthropic Messages API
+
+```bash
+tool-eval-bench run --model claude-opus-5 --api-key "$ANTHROPIC_API_KEY" \
+  --base-url https://api.anthropic.com
+
+# A gateway that serves the Messages API for other models
+tool-eval-bench run --model qwen3-coder --api-key "$OPENCODE_API_KEY" \
+  --base-url https://opencode.ai/zen/go/v1/messages
+```
+
+`api.anthropic.com` and any base URL whose path ends in `/messages` select the
+native format; a gateway root that serves several formats side by side needs
+`--format anthropic`. The adapter sends both `x-api-key` and a bearer token, so
+gateways that read either header work without configuration.
+
+What the translation does and does not carry:
+
+- Tool definitions, `tool_choice`, and `parallel_tool_calls=false` map onto
+  their Messages API equivalents. A `json_schema` response format becomes
+  `output_config.format`, minus the numeric and string constraints the API
+  rejects (the evaluators still check them).
+- Thinking blocks and their signatures are replayed verbatim on the next
+  turn, as the API requires when a turn also carried a tool call. Thinking is
+  reported as reasoning; its visibility follows the model's default unless
+  `--backend-kwargs` sets `thinking` explicitly. `--no-think` maps onto
+  `thinking: {"type": "disabled"}`, which some models reject.
+- Current Claude models reject `temperature`, `top_p`, and `top_k` with HTTP
+  400. The adapter drops them on that response and remembers the choice for the
+  endpoint, so the benchmark's `temperature=0` costs one extra request per run
+  rather than failing it.
+- Throughput sweeps (`--throughput`) and engine metrics remain OpenAI-only.

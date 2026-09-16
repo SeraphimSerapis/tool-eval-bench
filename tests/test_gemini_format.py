@@ -61,7 +61,7 @@ class TestWireFormatDetection:
 
     def test_unknown_format_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="Unknown --format"):
-            resolve_wire_format("anthropic", NATIVE_URL)
+            resolve_wire_format("cohere", NATIVE_URL)
 
 
 class TestGeminiUrls:
