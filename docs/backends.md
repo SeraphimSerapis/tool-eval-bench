@@ -89,6 +89,27 @@ tool-eval-bench run --model qwen3-coder --api-key "$OPENCODE_API_KEY" \
   --base-url https://opencode.ai/zen/go/v1/messages
 ```
 
+OpenCode Go routes by conversation and refuses a request without a stable
+`x-opencode-session`; it also asks clients to identify themselves. Both are
+endpoint configuration, so they sit next to the endpoint:
+
+```bash
+TOOL_EVAL_ZEN_BASE_URL=https://opencode.ai/zen/go/v1/messages
+TOOL_EVAL_ZEN_API_KEY=...
+TOOL_EVAL_ZEN_HEADERS=User-Agent=my-coding-agent/1.0
+TOOL_EVAL_ZEN_SESSION_HEADER=x-opencode-session
+```
+
+```bash
+tool-eval-bench run --provider zen --model union-alpha
+```
+
+Each scenario is one conversation: every turn of it sends the same id, and the
+next scenario gets a new one. Single-shot requests (pre-flight, warm-up, the
+accuracy plugins) each get their own. The same two settings work on any
+gateway with the same shape, through `--header` and `--session-header` on the
+command line or the generic `TOOL_EVAL_HEADERS` and `TOOL_EVAL_SESSION_HEADER`.
+
 `api.anthropic.com` and any base URL whose path ends in `/messages` select the
 native format; a gateway root that serves several formats side by side needs
 `--format anthropic`. The adapter sends both `x-api-key` and a bearer token, so

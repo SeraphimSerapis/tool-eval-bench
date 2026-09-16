@@ -155,18 +155,8 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
     Call ``aclose()`` when done (optional — Python GC handles cleanup).
     """
 
-    def __init__(
-        self,
-        *,
-        max_retries: int = DEFAULT_MAX_RETRIES,
-        max_rate_limit_retries: int = DEFAULT_MAX_RATE_LIMIT_RETRIES,
-        rate_limit_observer: RateLimitObserver | None = None,
-    ) -> None:
-        super().__init__(
-            max_retries=max_retries,
-            max_rate_limit_retries=max_rate_limit_retries,
-            rate_limit_observer=rate_limit_observer,
-        )
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._max_completion_tokens_endpoints: set[tuple[str, str]] = set()
 
     async def chat_completion(
@@ -185,6 +175,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
         stream: bool = False,
         response_format: dict[str, Any] | None = None,
         parallel_tool_calls: bool | None = True,
+        conversation_id: str | None = None,
     ) -> ChatCompletionResult:
         url = _chat_completions_url(base_url)
         endpoint = (url, model)
@@ -226,6 +217,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        headers = self._request_headers(headers, conversation_id)
 
         client = self._get_client()
         req_timeout = httpx.Timeout(timeout_seconds)

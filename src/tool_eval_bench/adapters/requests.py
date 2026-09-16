@@ -6,11 +6,13 @@ applies), but they still have to speak whichever wire format the endpoint uses.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from tool_eval_bench.adapters.anthropic import ANTHROPIC_VERSION, _apply_extra_params
 from tool_eval_bench.adapters.gemini import _generation_config
 from tool_eval_bench.adapters.wire_format import anthropic_messages_url, gemini_generate_url
+from tool_eval_bench.utils.headers import USER_AGENT
 from tool_eval_bench.utils.urls import chat_completions_url
 
 _WARMUP_SYSTEM = "You are a helpful assistant."
@@ -26,8 +28,35 @@ def minimal_request(
     temperature: float = 0.0,
     max_tokens: int = 1,
     extra_params: dict[str, Any] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, str]]:
-    """Build (url, payload, headers) for a trivial completion request."""
+    """Build (url, payload, headers) for a trivial completion request.
+
+    *headers* are the user's extra headers; they are applied last so they can
+    override anything the wire format sets.
+    """
+    url, payload, format_headers = _minimal_request(
+        base_url,
+        model,
+        api_key,
+        wire_format=wire_format,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        extra_params=extra_params,
+    )
+    return url, payload, {"User-Agent": USER_AGENT, **format_headers, **(headers or {})}
+
+
+def _minimal_request(
+    base_url: str,
+    model: str,
+    api_key: str | None,
+    *,
+    wire_format: str,
+    temperature: float,
+    max_tokens: int,
+    extra_params: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any], dict[str, str]]:
     headers: dict[str, str] = {"Content-Type": "application/json"}
 
     if wire_format == "gemini":

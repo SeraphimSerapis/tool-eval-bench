@@ -15,13 +15,22 @@ Gemini and a local vLLM box is a flag change rather than an edit:
 ``TOOL_EVAL_GEMINI_*`` triple.  The provider name is a free-form prefix, not
 an enum: ``VLLM_A`` and ``VLLM_B`` are as valid as ``OPENAI``.  Explicit CLI
 flags still win, and with no provider selected nothing here applies.
+
+A gateway that wants extra headers keeps them next to its endpoint too:
+
+.. code-block:: bash
+
+    TOOL_EVAL_ZEN_HEADERS=User-Agent=my-agent/1.0
+    TOOL_EVAL_ZEN_SESSION_HEADER=x-opencode-session
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from tool_eval_bench.utils.headers import parse_header_env
 
 #: Provider names that name a hosted API rather than a self-hosted engine.
 #: They double as the report's backend label, and engine probing is skipped
@@ -40,6 +49,8 @@ class ProviderSettings:
     base_url: str
     api_key: str | None
     model: str | None
+    headers: dict[str, str] = field(default_factory=dict)
+    session_header: str | None = None
 
     @property
     def backend_label(self) -> str | None:
@@ -83,4 +94,6 @@ def resolve_provider(name: str | None, env: Mapping[str, str]) -> ProviderSettin
         base_url=base_url,
         api_key=env.get(prefix + "API_KEY", "").strip() or None,
         model=env.get(prefix + "MODEL", "").strip() or None,
+        headers=parse_header_env(env.get(prefix + "HEADERS")),
+        session_header=env.get(prefix + "SESSION_HEADER", "").strip() or None,
     )

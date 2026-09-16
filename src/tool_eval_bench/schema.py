@@ -94,6 +94,21 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Endpoint wire format (default: detect from the base URL)",
     },
     {
+        "name": "header",
+        "type": "list[string]",
+        "default": None,
+        "description": "Extra request header as NAME=VALUE (repeatable; also TOOL_EVAL_HEADERS)",
+    },
+    {
+        "name": "session_header",
+        "type": "string",
+        "default": None,
+        "description": (
+            "Header that carries a per-conversation id for gateways that route by "
+            "conversation (also TOOL_EVAL_SESSION_HEADER)"
+        ),
+    },
+    {
         "name": "probe",
         "type": "bool",
         "default": False,

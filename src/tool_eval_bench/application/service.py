@@ -7,6 +7,7 @@ scenario benchmark system.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, cast
 
@@ -80,12 +81,17 @@ class BenchmarkService:
         backend: str,
         base_url: str = "",
         wire_format: str | None = None,
+        *,
+        extra_headers: Mapping[str, str] | None = None,
+        session_header: str | None = None,
     ) -> BackendAdapter:
         """Return the adapter for a backend label and endpoint.
 
         ``backend`` is a reporting label (vllm, litellm, …); the request format
         follows the endpoint itself, detected from ``base_url`` unless
-        ``wire_format`` names one explicitly.
+        ``wire_format`` names one explicitly.  ``extra_headers`` ride on every
+        request; ``session_header`` names the header that carries the
+        per-conversation id.
         """
         backend_l = backend.lower()
         if backend_l not in _SUPPORTED_BACKENDS:
@@ -93,7 +99,12 @@ class BenchmarkService:
                 f"Unsupported backend: {backend}. "
                 "Supported: vllm, litellm, llamacpp, sglang, gemini, openai, anthropic, ninfer"
             )
-        return build_adapter(base_url, wire_format=wire_format)
+        return build_adapter(
+            base_url,
+            wire_format=wire_format,
+            default_headers=extra_headers,
+            session_header=session_header,
+        )
 
     async def run_benchmark(
         self,
@@ -127,6 +138,8 @@ class BenchmarkService:
         scenario_packs: list[dict[str, Any]] | None = None,
         rate_limit_observer: RateLimitObserver | None = None,
         wire_format: str | None = None,
+        extra_headers: Mapping[str, str] | None = None,
+        session_header: str | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
 
@@ -137,7 +150,13 @@ class BenchmarkService:
         ``resume_scenarios`` retains definitions that are not in the rerun
         subset, including held-out pack and Hard Mode scenarios.
         """
-        adapter = self._adapter_for(backend, base_url, wire_format)
+        adapter = self._adapter_for(
+            backend,
+            base_url,
+            wire_format,
+            extra_headers=extra_headers,
+            session_header=session_header,
+        )
         if rate_limit_observer is not None:
             setter = getattr(adapter, "set_rate_limit_observer", None)
             if setter is not None:

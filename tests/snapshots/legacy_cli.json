@@ -76,6 +76,26 @@
   },
   {
     "choices": null,
+    "default": null,
+    "dest": "header",
+    "flags": [
+      "--header"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "session_header",
+    "flags": [
+      "--session-header"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": false,
     "dest": "probe",
     "flags": [

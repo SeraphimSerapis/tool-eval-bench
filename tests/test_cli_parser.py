@@ -214,7 +214,9 @@ def test_subprocess_help_is_command_specific(command: str, included: str, exclud
     assert completed.returncode == 0, completed.stderr
     assert included in completed.stdout
     assert excluded not in completed.stdout
-    assert len(completed.stdout.splitlines()) < 180
+    # Focused help must stay well short of the flat parser's (270+ lines);
+    # ``bench`` carries every connection and sampling flag and sits nearest.
+    assert len(completed.stdout.splitlines()) < 200
 
 
 def test_module_execution_version_path() -> None:

@@ -59,6 +59,18 @@
       "type": "string"
     },
     {
+      "default": null,
+      "description": "Extra request header as NAME=VALUE (repeatable; also TOOL_EVAL_HEADERS)",
+      "name": "header",
+      "type": "list[string]"
+    },
+    {
+      "default": null,
+      "description": "Header that carries a per-conversation id for gateways that route by conversation (also TOOL_EVAL_SESSION_HEADER)",
+      "name": "session_header",
+      "type": "string"
+    },
+    {
       "default": false,
       "description": "Check server reachability and exit (0 = ready, 1 = not found)",
       "name": "probe",

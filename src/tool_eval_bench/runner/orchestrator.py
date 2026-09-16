@@ -15,6 +15,7 @@ import json
 import logging
 import random
 import time
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -361,6 +362,9 @@ async def run_scenario(
 ) -> ScenarioResult:
     """Run a single scenario through the multi-turn orchestration loop."""
     t0 = time.perf_counter()
+    # One scenario is one conversation: every turn carries the same id so a
+    # gateway that routes or caches per conversation sees it as one.
+    conversation_id = uuid.uuid4().hex
     state = ScenarioState()
     state.meta["trace_policy"] = "complete"
     # Meta must match the reference date actually injected into the prompt:
@@ -475,6 +479,7 @@ async def run_scenario(
                 extra_params=extra,
                 stream=use_stream,
                 response_format=response_format,
+                conversation_id=conversation_id,
             )
             turn_ms = (time.perf_counter() - turn_start) * 1000
             turn_latencies.append(turn_ms)

@@ -24,6 +24,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -123,6 +124,9 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioStatus,
 )
 from tool_eval_bench.storage.reports import MarkdownReporter
+from tool_eval_bench.utils.headers import attach_session_id as _attach_session_id
+from tool_eval_bench.utils.headers import parse_header_env as _parse_header_env
+from tool_eval_bench.utils.headers import parse_header_pairs as _parse_header_pairs
 from tool_eval_bench.utils.urls import endpoint_identity
 
 logger = logging.getLogger(__name__)
@@ -225,6 +229,7 @@ def _detect_model(
     display_url: str | None = None,
     headless: bool = False,
     wire_format: str = "openai",
+    headers: Mapping[str, str] | None = None,
 ) -> tuple[str, str]:
     """Compatibility wrapper preserving the historical asyncio patch seam."""
     _model_probe.asyncio = asyncio
@@ -235,6 +240,7 @@ def _detect_model(
         display_url=display_url,
         headless=headless,
         wire_format=wire_format,
+        headers=headers,
     )
 
 
@@ -245,11 +251,12 @@ def _probe_server(
     *,
     headless: bool = False,
     wire_format: str = "openai",
+    headers: Mapping[str, str] | None = None,
 ) -> None:
     """Compatibility wrapper preserving the historical asyncio patch seam."""
     _model_probe.asyncio = asyncio
     _model_probe._probe_server(
-        console, base_url, api_key, headless=headless, wire_format=wire_format
+        console, base_url, api_key, headless=headless, wire_format=wire_format, headers=headers
     )
 
 
@@ -458,6 +465,7 @@ def _check_endpoint_ready(
     api_key: str | None,
     wire_format: str,
     extra_params: dict[str, Any],
+    headers: Mapping[str, str] | None = None,
 ) -> None:
     """Verify the model answers a real request, then warm the server.
 
@@ -475,6 +483,7 @@ def _check_endpoint_ready(
             timeout_seconds=args.timeout,
             temperature=args.temperature,
             extra_params=extra_params or None,
+            headers=headers,
         )
 
     if not args.no_warmup and not args.json:
@@ -486,6 +495,7 @@ def _check_endpoint_ready(
             wire_format=wire_format,
             temperature=args.temperature,
             extra_params=extra_params or None,
+            headers=headers,
         )
 
 
@@ -669,17 +679,35 @@ def main() -> None:
         provider = _resolve_provider(args.provider or os.getenv("TOOL_EVAL_PROVIDER"), os.environ)
     except ValueError as exc:
         parser.error(str(exc))
-    if provider is not None:
-        model = args.model or provider.model
-        backend = args.backend or os.getenv("TOOL_EVAL_BACKEND", "") or provider.backend_label or ""
-        base_url = args.base_url or provider.base_url
-        api_key = args.api_key or provider.api_key
-    else:
-        model = args.model or os.getenv("TOOL_EVAL_MODEL") or None
-        backend = args.backend or os.getenv("TOOL_EVAL_BACKEND", "")
-        base_url = args.base_url or os.getenv("TOOL_EVAL_BASE_URL", "")
-        api_key = args.api_key or os.getenv("TOOL_EVAL_API_KEY")
+    try:
+        if provider is not None:
+            model = args.model or provider.model
+            backend = (
+                args.backend or os.getenv("TOOL_EVAL_BACKEND", "") or provider.backend_label or ""
+            )
+            base_url = args.base_url or provider.base_url
+            api_key = args.api_key or provider.api_key
+            env_headers = provider.headers
+            session_header = args.session_header or provider.session_header
+        else:
+            model = args.model or os.getenv("TOOL_EVAL_MODEL") or None
+            backend = args.backend or os.getenv("TOOL_EVAL_BACKEND", "")
+            base_url = args.base_url or os.getenv("TOOL_EVAL_BASE_URL", "")
+            api_key = args.api_key or os.getenv("TOOL_EVAL_API_KEY")
+            env_headers = _parse_header_env(os.getenv("TOOL_EVAL_HEADERS"))
+            session_header = args.session_header or os.getenv("TOOL_EVAL_SESSION_HEADER") or None
+        # Headers merge rather than replace: a --header adds to the provider's.
+        request_headers = {**env_headers, **_parse_header_pairs(args.header)}
+    except ValueError as exc:
+        parser.error(str(exc))
     backend_explicit = bool(backend)
+    # Left on the namespace so the plugin and pressure runners, which take
+    # ``args`` rather than the resolved connection, build their adapters the
+    # same way (see cli.helpers.adapter_options).
+    args._request_headers = request_headers
+    args._session_header = session_header
+    # Pre-flight requests are single-shot conversations of their own.
+    probe_headers = _attach_session_id(request_headers, session_header)
 
     # Fallback: construct URL from TOOL_EVAL_HOST + TOOL_EVAL_PORT
     if not base_url:
@@ -749,7 +777,14 @@ def main() -> None:
 
     # --probe: check if server is reachable and exit
     if args.probe:
-        _probe_server(console, base_url, api_key, headless=args.json, wire_format=wire_format)
+        _probe_server(
+            console,
+            base_url,
+            api_key,
+            headless=args.json,
+            wire_format=wire_format,
+            headers=probe_headers,
+        )
         return
 
     # URL redaction for display (actual API calls use real base_url)
@@ -768,6 +803,7 @@ def main() -> None:
             display_url=display_url,
             headless=args.json,
             wire_format=wire_format,
+            headers=probe_headers,
         )
         if not args.json:
             console.print()
@@ -844,6 +880,7 @@ def main() -> None:
         api_key=api_key,
         wire_format=wire_format,
         extra_params=extra_params,
+        headers=probe_headers,
     )
 
     run_context = _build_run_context(
@@ -1355,6 +1392,8 @@ def _run_with_live_display(
             resume_scenarios=getattr(args, "_resume_scenarios", None),
             scenario_packs=_pack_attestations(args),
             wire_format=wire_format,
+            extra_headers=getattr(args, "_request_headers", None),
+            session_header=getattr(args, "_session_header", None),
             **callbacks,
         )
 
@@ -1531,6 +1570,8 @@ def _run_json(
             resume_scenarios=getattr(args, "_resume_scenarios", None),
             scenario_packs=_pack_attestations(args),
             wire_format=wire_format,
+            extra_headers=getattr(args, "_request_headers", None),
+            session_header=getattr(args, "_session_header", None),
             on_scenario_start=_stderr_progress_start,
             on_scenario_result=_stderr_progress_result,
         )
@@ -1637,6 +1678,8 @@ def _run_plain(
             resume_scenarios=getattr(args, "_resume_scenarios", None),
             scenario_packs=_pack_attestations(args),
             wire_format=wire_format,
+            extra_headers=getattr(args, "_request_headers", None),
+            session_header=getattr(args, "_session_header", None),
             **callbacks,
         )
 

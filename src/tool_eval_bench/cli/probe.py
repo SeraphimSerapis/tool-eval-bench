@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Mapping
 from typing import Any
 
 from rich.console import Console
@@ -30,6 +31,7 @@ def preflight_model_check(
     temperature: float = 0.0,
     extra_params: dict[str, Any] | None = None,
     wire_format: str = "openai",
+    headers: Mapping[str, str] | None = None,
 ) -> None:
     """Verify that a listed model can serve a minimal completion.
 
@@ -47,6 +49,7 @@ def preflight_model_check(
         temperature=temperature,
         max_tokens=1,
         extra_params=extra_params,
+        headers=headers,
     )
 
     async def check() -> httpx.Response:
@@ -113,6 +116,7 @@ def warmup_server(
     wire_format: str = "openai",
     temperature: float = 0.0,
     extra_params: dict[str, Any] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> None:
     """Prime the model server before measuring benchmark behavior."""
     from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
@@ -132,6 +136,7 @@ def warmup_server(
         temperature=temperature,
         max_tokens=WARMUP_MAX_TOKENS,
         extra_params=warmup_params,
+        headers=headers,
     )
 
     with console.status(

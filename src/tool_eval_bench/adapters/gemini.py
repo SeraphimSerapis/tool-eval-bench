@@ -409,6 +409,7 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
         stream: bool = False,
         response_format: dict[str, Any] | None = None,
         parallel_tool_calls: bool | None = True,
+        conversation_id: str | None = None,
     ) -> ChatCompletionResult:
         contents, system_instruction = _to_gemini_contents(messages)
         payload: dict[str, Any] = {
@@ -437,6 +438,7 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if api_key:
             headers["x-goog-api-key"] = api_key
+        headers = self._request_headers(headers, conversation_id)
 
         url = gemini_generate_url(base_url, model, stream=stream)
         client = self._get_client()

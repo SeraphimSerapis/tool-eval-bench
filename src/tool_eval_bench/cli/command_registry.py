@@ -5,7 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-CONNECTION = ("model", "backend", "base_url", "api_key", "provider", "format")
+CONNECTION = (
+    "model",
+    "backend",
+    "base_url",
+    "api_key",
+    "provider",
+    "format",
+    "header",
+    "session_header",
+)
 SAMPLING = (
     "temperature",
     "no_think",

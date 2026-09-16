@@ -22,6 +22,7 @@ The returned dict matches the ``--json`` output schema (see OUTPUT_SCHEMA_VERSIO
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from contextlib import ExitStack, closing
 from typing import Any
 
@@ -100,6 +101,8 @@ async def run_benchmark(
     persist: bool = True,
     output_dir: str | None = None,
     wire_format: str | None = None,
+    extra_headers: Mapping[str, str] | None = None,
+    session_header: str | None = None,
 ) -> dict[str, Any]:
     """Run tool-eval-bench programmatically and return structured results.
 
@@ -136,6 +139,11 @@ async def run_benchmark(
             The SQLite database is always at ``./data/benchmarks.sqlite``.
         wire_format: Request format the endpoint speaks — ``openai``, ``gemini``,
             ``anthropic``, or ``auto``/*None* to detect it from ``base_url``.
+        extra_headers: Headers attached to every request, for gateways that
+            need one the wire format does not define.
+        session_header: Name of a header that carries a per-conversation id
+            (for example ``x-opencode-session``); each scenario is one
+            conversation.
 
     Returns:
         A versioned JSON-serializable dict containing ``run_id``, ``config``,
@@ -180,6 +188,8 @@ async def run_benchmark(
             weight_by_difficulty=weight_by_difficulty,
             extra_params=extra_params,
             wire_format=wire_format,
+            extra_headers=extra_headers,
+            session_header=session_header,
         )
 
     return format_result(run_data)

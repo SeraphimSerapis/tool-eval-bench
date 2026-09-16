@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from collections.abc import Mapping
 from typing import Any
 
 from rich.console import Console
@@ -19,12 +20,26 @@ from tool_eval_bench.domain.errors import (
     INVALID_RESPONSE,
     NO_MODELS,
 )
+from tool_eval_bench.utils.headers import USER_AGENT
 
 
 def _models_request(
+    base_url: str,
+    api_key: str | None,
+    wire_format: str,
+    extra_headers: Mapping[str, str] | None = None,
+) -> tuple[str, dict[str, str]]:
+    """Return the model-listing URL and headers for a wire format.
+
+    *extra_headers* are the user's and are applied last.
+    """
+    url, headers = _models_url_and_auth(base_url, api_key, wire_format)
+    return url, {"User-Agent": USER_AGENT, **headers, **(extra_headers or {})}
+
+
+def _models_url_and_auth(
     base_url: str, api_key: str | None, wire_format: str
 ) -> tuple[str, dict[str, str]]:
-    """Return the model-listing URL and auth headers for a wire format."""
     headers: dict[str, str] = {}
     if wire_format == "gemini":
         if api_key:
@@ -52,6 +67,7 @@ def _detect_model(
     display_url: str | None = None,
     headless: bool = False,
     wire_format: str = "openai",
+    headers: Mapping[str, str] | None = None,
 ) -> tuple[str, str]:
     """Query /v1/models and auto-select or let the user pick.
 
@@ -69,7 +85,7 @@ def _detect_model(
     gemini = wire_format == "gemini"
     anthropic = wire_format == "anthropic"
     url = base_url.rstrip("/")
-    models_endpoint, headers = _models_request(base_url, api_key, wire_format)
+    models_endpoint, request_headers = _models_request(base_url, api_key, wire_format, headers)
 
     # Build a display-safe endpoint URL for console output
     show_url = display_url or base_url
@@ -82,10 +98,10 @@ def _detect_model(
     async def _fetch() -> tuple[httpx.Response, bool]:
         nonlocal used_fallback
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(models_endpoint, headers=headers)
+            resp = await client.get(models_endpoint, headers=request_headers)
             if resp.status_code == 404 and not (gemini or anthropic):
                 fallback_url = f"{url}/models"
-                resp = await client.get(fallback_url, headers=headers)
+                resp = await client.get(fallback_url, headers=request_headers)
                 used_fallback = True
             return resp, used_fallback
 
@@ -224,6 +240,7 @@ def _probe_server(
     *,
     headless: bool = False,
     wire_format: str = "openai",
+    headers: Mapping[str, str] | None = None,
 ) -> None:
     """Check if a server is reachable and responsive, then exit.
 
@@ -235,11 +252,11 @@ def _probe_server(
     """
     import httpx
 
-    endpoint, headers = _models_request(base_url, api_key, wire_format)
+    endpoint, request_headers = _models_request(base_url, api_key, wire_format, headers)
 
     async def _check() -> httpx.Response:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(endpoint, headers=headers)
+            resp = await client.get(endpoint, headers=request_headers)
             resp.raise_for_status()
             return resp
 

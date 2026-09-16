@@ -73,6 +73,20 @@ def _make_parser() -> argparse.ArgumentParser:
         "Default: detected from --base-url",
     )
     conn.add_argument(
+        "--header",
+        action="append",
+        default=None,
+        metavar="NAME=VALUE",
+        help="Extra request header, repeatable. Env: TOOL_EVAL_HEADERS (';'-separated)",
+    )
+    conn.add_argument(
+        "--session-header",
+        default=None,
+        metavar="NAME",
+        help="Header carrying a per-conversation id, e.g. x-opencode-session. "
+        "Env: TOOL_EVAL_SESSION_HEADER",
+    )
+    conn.add_argument(
         "--probe",
         action="store_true",
         help="Check if a server is reachable and exit (exit 0 = ready, exit 1 = not found)",
