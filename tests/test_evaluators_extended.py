@@ -915,6 +915,56 @@ class TestTC26:
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
 
+    def test_pass_organizer_only_phrasing(self) -> None:
+        """Gemini 3.8 Flash, 2026-09-15 run: the tool result names the organizer,
+        so "no additional attendees, only you" is grounded recall, not ambiguity."""
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "create_calendar_event",
+                    "arguments": {"title": "Design Review", "date": "2026-03-21", "time": "15:00"},
+                }
+            ],
+            final_answer=(
+                "Currently, there are no additional attendees listed for the **Design Review** "
+                "meeting\u2014only you (the organizer)."
+            ),
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+
+    def test_pass_negated_attendee_noun_variants(self) -> None:
+        for answer in (
+            "There are no other participants on the Design Review yet.",
+            "The Design Review was created without any invitees.",
+            "Just yourself so far; nobody else was invited.",
+        ):
+            s = _state(
+                tool_calls=[
+                    {
+                        "name": "create_calendar_event",
+                        "arguments": {
+                            "title": "Design Review",
+                            "date": "2026-03-21",
+                            "time": "15:00",
+                        },
+                    }
+                ],
+                final_answer=answer,
+            )
+            assert self.sc.evaluate(s).status == ScenarioStatus.PASS, answer
+
+    def test_partial_when_answer_never_addresses_attendees(self) -> None:
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "create_calendar_event",
+                    "arguments": {"title": "Design Review", "date": "2026-03-21", "time": "15:00"},
+                }
+            ],
+            final_answer="The Design Review is tomorrow at 3pm.",
+        )
+        assert self.sc.evaluate(s).status == ScenarioStatus.PARTIAL
+
     def test_pass_unknown_name_only_in_separate_suggestion(self) -> None:
         s = _state(
             tool_calls=[

@@ -15,6 +15,7 @@ import json
 import logging
 import random
 import time
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -23,6 +24,7 @@ from tool_eval_bench.domain.adapters import (
     RETRYABLE_STATUS_CODES,
     BackendAdapter,
     ChatCompletionResult,
+    ProviderToolCall,
 )
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage
 from tool_eval_bench.domain.scenarios import (
@@ -294,6 +296,22 @@ def _tool_result_message(call_id: str, name: str, result: Any) -> ChatMessage:
 # ---------------------------------------------------------------------------
 
 
+# Consecutive tool-call turns that must be identical (same calls, same
+# arguments, same results) before the loop guard stops the scenario. Legitimate
+# polling (TC-61) repeats a call once and then sees a different result, so it
+# never reaches this count; a model stuck re-issuing the same request does.
+_LOOP_GUARD_TURNS = 3
+
+
+def _turn_signature(tool_calls: Sequence[ProviderToolCall], results: Sequence[Any]) -> str:
+    """Order-independent fingerprint of one turn's tool calls and their results."""
+    pairs = sorted(
+        (call.name, call.arguments_str, json.dumps(result, sort_keys=True, default=str))
+        for call, result in zip(tool_calls, results, strict=True)
+    )
+    return json.dumps(pairs)
+
+
 def _format_trace(
     model: str,
     scenario: ScenarioDefinition,
@@ -406,6 +424,11 @@ async def run_scenario(
     # produced a final answer (or before exhausting the follow-up queue).
     # Distinguishes turn-budget exhaustion from evaluator failures.
     budget_exhausted = True
+    # Set when the loop guard stops a model that keeps issuing the same tool
+    # calls and receiving the same results. Distinct from budget exhaustion:
+    # the budget was still available, the model was going nowhere with it.
+    loop_stop: str | None = None
+    recent_turn_signatures: list[str] = []
 
     try:
         for turn in range(1, max_turns + 1):
@@ -545,6 +568,7 @@ async def run_scenario(
             if len(result.tool_calls) > 1:
                 parallel_tool_turns.append(turn)
 
+            turn_results: list[Any] = []
             for tc in result.tool_calls:
                 record = ToolCallRecord(
                     id=tc.id,
@@ -572,6 +596,7 @@ async def run_scenario(
                 state.tool_results.append(
                     ToolResultRecord(call_id=record.id, name=record.name, result=mock_result)
                 )
+                turn_results.append(mock_result)
                 trace_lines.append(f"tool_result={json.dumps(mock_result)}")
                 messages.append(_tool_result_message(tc.id, tc.name, mock_result))
                 if scenario.checkpoint:
@@ -580,6 +605,20 @@ async def run_scenario(
                         state_checkpoints.append(diagnostic)
                         state.meta.setdefault("state_checkpoints", []).append(diagnostic)
                         trace_lines.append(f"state_checkpoint={diagnostic}")
+
+            recent_turn_signatures.append(_turn_signature(result.tool_calls, turn_results))
+            del recent_turn_signatures[:-_LOOP_GUARD_TURNS]
+            if (
+                len(recent_turn_signatures) == _LOOP_GUARD_TURNS
+                and len(set(recent_turn_signatures)) == 1
+            ):
+                loop_stop = (
+                    f"Stopped after {_LOOP_GUARD_TURNS} consecutive turns of identical tool "
+                    f"calls ({', '.join(tool_names)}) with identical results."
+                )
+                trace_lines.append(f"loop_guard={loop_stop}")
+                budget_exhausted = False
+                break
 
     except Exception as exc:
         elapsed = time.perf_counter() - t0
@@ -615,6 +654,8 @@ async def run_scenario(
     # entire benchmark run (issue #5).
     try:
         evaluation = scenario.evaluate(state)
+        if loop_stop is not None and evaluation.status != ScenarioStatus.PASS:
+            evaluation.note = f"{loop_stop} {evaluation.note or ''}".strip()
         if scenario.response_format_override is not None:
             evaluation.diagnostics["response_format"] = (
                 "requested; backend enforcement is not independently measured"
@@ -706,7 +747,9 @@ async def run_scenario(
         parallel_tool_turns=parallel_tool_turns,
         state_checkpoints=state_checkpoints,
         failure_kind=(
-            FailureKind.BUDGET_EXCEEDED
+            FailureKind.REPEATED_CALL_LOOP
+            if loop_stop is not None and evaluation.status != ScenarioStatus.PASS
+            else FailureKind.BUDGET_EXCEEDED
             if budget_exhausted and evaluation.status != ScenarioStatus.PASS
             else _classify_evaluation_failure(state, evaluation)
         ),

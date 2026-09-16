@@ -6,6 +6,7 @@ from conftest import make_state as _make_state
 
 from tool_eval_bench.domain.scenarios import (
     ScenarioStatus,
+    ToolCallRecord,
 )
 
 
@@ -664,6 +665,84 @@ class TestTC69MultiToolComplex:
         )
         result = self.scenario.evaluate(state)
         assert result.status == ScenarioStatus.PASS
+
+    def test_mock_honours_units_argument(self) -> None:
+        """The weather mock serves Fahrenheit when asked, as TC-04's does."""
+        state = _make_state()
+        fahrenheit = self.scenario.handle_tool_call(
+            state,
+            ToolCallRecord(
+                id="c1",
+                name="get_weather",
+                raw_arguments="{}",
+                arguments={"location": "San Francisco", "units": "fahrenheit"},
+                turn=1,
+            ),
+        )
+        assert (fahrenheit["temperature"], fahrenheit["units"]) == (64.4, "fahrenheit")
+        default = self.scenario.handle_tool_call(
+            state,
+            ToolCallRecord(
+                id="c2",
+                name="get_weather",
+                raw_arguments="{}",
+                arguments={"location": "San Francisco", "units": "kelvin"},
+                turn=1,
+            ),
+        )
+        assert (default["temperature"], default["units"]) == (18, "celsius")
+
+    def test_pass_fahrenheit_reading(self) -> None:
+        """GLM 5.3 Flash, 2026-09-15 run: asked for Fahrenheit and reported the
+        Fahrenheit value. The schema field has no unit, so that is the tool's value."""
+        data = {
+            "date": "2026-03-20",
+            "weather": {"location": "San Francisco", "temperature": 64.4, "condition": "Foggy"},
+            "market": {"ticker": "AAPL", "price": 192.30, "direction": "down"},
+            "action_items": ["Bring a light jacket; foggy at 64°F.", "AAPL is down 1.11%."],
+        }
+        state = _make_state(
+            tool_calls=[
+                {
+                    "name": "get_weather",
+                    "arguments": {"location": "San Francisco", "units": "fahrenheit"},
+                },
+                {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}},
+            ],
+            tool_results=[
+                {
+                    "call_id": "call_0",
+                    "name": "get_weather",
+                    "result": {
+                        "location": "San Francisco",
+                        "temperature": 64.4,
+                        "units": "fahrenheit",
+                        "condition": "Foggy",
+                    },
+                },
+            ],
+            final_answer=json.dumps(data),
+        )
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.PASS, result.summary
+
+    def test_partial_invented_temperature(self) -> None:
+        data = {
+            "date": "2026-04-19",
+            "weather": {"location": "San Francisco", "temperature": 21, "condition": "Foggy"},
+            "market": {"ticker": "AAPL", "price": 192.30, "direction": "down"},
+            "action_items": ["Check weather"],
+        }
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "San Francisco"}},
+                {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}},
+            ],
+            final_answer=json.dumps(data),
+        )
+        result = self.scenario.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+        assert "temperature" in result.summary
 
     def test_fail_missing_tool(self) -> None:
         data = {

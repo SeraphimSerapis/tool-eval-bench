@@ -82,13 +82,19 @@ _TC69_SCHEMA = {
 }
 
 
+_TC69_TEMPERATURES = {"celsius": 18, "fahrenheit": 64.4}
+
+
 def _tc69_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
+        units = normalize(as_str(call.arguments.get("units"))) or "celsius"
+        if units not in _TC69_TEMPERATURES:
+            units = "celsius"
         return _noise(
             {
                 "location": "San Francisco",
-                "temperature": 18,
-                "units": "celsius",
+                "temperature": _TC69_TEMPERATURES[units],
+                "units": units,
                 "condition": "Foggy",
                 "humidity": 85,
             },
@@ -113,7 +119,7 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
         return (
             isinstance(payload, dict)
             and payload.get("location") == "San Francisco"
-            and payload.get("temperature") == 18
+            and payload.get("temperature") in _TC69_TEMPERATURES.values()
             and payload.get("condition") == "Foggy"
         )
 
@@ -216,9 +222,10 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
     ):
         return _partial("action_items must be a non-empty array of actionable strings.")
 
-    # Verify data integrity from tools
-    if w.get("temperature") != 18:
-        return _partial("Weather temperature doesn't match tool result (18°C).")
+    # Verify data integrity from tools. The schema field carries no unit, so
+    # either served reading is the tool's value; anything else is invented.
+    if w.get("temperature") not in _TC69_TEMPERATURES.values():
+        return _partial("Weather temperature doesn't match tool result (18°C / 64.4°F).")
     if w.get("location") != "San Francisco" or w.get("condition") != "Foggy":
         return _partial("Weather fields don't match the San Francisco tool result.")
 

@@ -753,7 +753,21 @@ async def test_checkpoint_runs_after_each_tool_call() -> None:
 
 
 def _stalled_tool_adapter(tool_name: str = "get_weather") -> MockAdapter:
-    """Adapter that always calls a tool and never produces a final answer."""
+    """Adapter that always calls a tool and never produces a final answer.
+
+    The arguments change every turn so the stall exhausts the turn budget
+    instead of tripping the identical-call loop guard.
+    """
+    return MockAdapter(
+        [
+            {"content": "", "tool_calls": [{"name": tool_name, "arguments": {"attempt": i}}]}
+            for i in range(30)
+        ]
+    )
+
+
+def _looping_tool_adapter(tool_name: str = "get_weather") -> MockAdapter:
+    """Adapter that re-issues the identical tool call every turn."""
     return MockAdapter(
         [{"content": "", "tool_calls": [{"name": tool_name, "arguments": {}}]} for _ in range(30)]
     )
@@ -838,6 +852,90 @@ async def test_max_turns_override_not_set_uses_global_budget() -> None:
     assert result.turn_count == 4  # global budget applied
     assert result.turn_budget_exceeded is True
     assert result.failure_kind == FailureKind.BUDGET_EXCEEDED
+
+
+@pytest.mark.asyncio
+async def test_loop_guard_stops_identical_call_turns() -> None:
+    """Three identical call-and-result turns end the scenario as a loop, not a budget run-out."""
+    scenario = _tool_failing_evaluator("LOOP-01")
+    result = await run_scenario(
+        _looping_tool_adapter(),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+    )
+    assert result.turn_count == 3
+    assert result.status == ScenarioStatus.FAIL
+    assert result.failure_kind == FailureKind.REPEATED_CALL_LOOP
+    assert result.turn_budget_exceeded is False
+    assert "loop_guard=Stopped after 3 consecutive turns" in result.raw_log
+    assert "note=Stopped after 3 consecutive turns of identical tool calls" in result.raw_log
+
+
+@pytest.mark.asyncio
+async def test_loop_guard_ignores_repeated_calls_with_changing_results() -> None:
+    """Polling the same call while the mock's answer changes is not a loop."""
+    scenario = _tool_failing_evaluator("LOOP-02")
+    polls = {"n": 0}
+
+    def _handle(state: ScenarioState, call: ToolCallRecord) -> dict:
+        polls["n"] += 1
+        return {"status": "pending", "poll": polls["n"]}
+
+    scenario.handle_tool_call = _handle
+    result = await run_scenario(
+        _looping_tool_adapter(),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=5,
+    )
+    assert result.turn_count == 5
+    assert result.failure_kind == FailureKind.BUDGET_EXCEEDED
+    assert result.turn_budget_exceeded is True
+
+
+@pytest.mark.asyncio
+async def test_loop_guard_resets_when_a_turn_differs() -> None:
+    """Two identical turns, one different, two identical again never reach three in a row."""
+    scenario = _tool_failing_evaluator("LOOP-03")
+    same = {"content": "", "tool_calls": [{"name": "get_weather", "arguments": {}}]}
+    other = {"content": "", "tool_calls": [{"name": "get_weather", "arguments": {"x": 1}}]}
+    result = await run_scenario(
+        MockAdapter([same, same, other, same, same, {"content": "done"}]),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+    )
+    assert result.turn_count == 6
+    assert result.turn_budget_exceeded is False
+    assert result.failure_kind != FailureKind.REPEATED_CALL_LOOP
+
+
+@pytest.mark.asyncio
+async def test_loop_guard_does_not_touch_a_passing_evaluation() -> None:
+    """A scenario whose evaluator passes on the looped state keeps its verdict."""
+    scenario = _tool_failing_evaluator("LOOP-04")
+    scenario.evaluate = lambda state: ScenarioEvaluation(
+        status=ScenarioStatus.PASS, points=2, summary="looped but fine"
+    )
+    result = await run_scenario(
+        _looping_tool_adapter(),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+    )
+    assert result.turn_count == 3
+    assert result.status == ScenarioStatus.PASS
+    assert result.failure_kind is None
+    assert "note=Stopped" not in result.raw_log
 
 
 @pytest.mark.asyncio
