@@ -34,6 +34,7 @@ from tool_eval_bench.adapters.wire_format import (
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.domain.adapters import ChatCompletionResult
 from tool_eval_bench.runner.orchestrator import _assistant_message
+from tool_eval_bench.utils.headers import USER_AGENT
 from tool_eval_bench.utils.openai_compat import sampling_retry_payload
 
 ANTHROPIC_URL = "https://api.anthropic.com"
@@ -739,6 +740,7 @@ class TestMinimalRequest:
         }
         assert headers["x-api-key"] == "secret"
         assert headers["anthropic-version"] == "2023-06-01"
+        assert headers["User-Agent"] == USER_AGENT
 
 
 class TestModelListing:
@@ -748,12 +750,13 @@ class TestModelListing:
         url, headers = _models_request(ZEN_URL, "k", "anthropic")
         assert url == "https://opencode.ai/zen/go/v1/models"
         assert headers == {
+            "User-Agent": USER_AGENT,
             "anthropic-version": "2023-06-01",
             "x-api-key": "k",
             "Authorization": "Bearer k",
         }
         url, headers = _models_request("https://generativelanguage.googleapis.com", "k", "gemini")
         assert url.endswith("/v1beta/models")
-        assert headers == {"x-goog-api-key": "k"}
+        assert headers == {"User-Agent": USER_AGENT, "x-goog-api-key": "k"}
         url, headers = _models_request("http://localhost:8000/v1", None, "openai")
-        assert (url, headers) == ("http://localhost:8000/v1/models", {})
+        assert (url, headers) == ("http://localhost:8000/v1/models", {"User-Agent": USER_AGENT})

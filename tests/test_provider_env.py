@@ -81,9 +81,10 @@ def _probe_via_main(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> dict[st
     """Run ``main()`` in probe mode and capture what the cascade resolved."""
     seen: dict[str, object] = {}
 
-    def fake_probe(console, base_url, api_key, headless=False, wire_format="openai"):
+    def fake_probe(console, base_url, api_key, headless=False, wire_format="openai", headers=None):
         seen["base_url"] = base_url
         seen["api_key"] = api_key
+        seen["headers"] = headers
 
     monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
     monkeypatch.setattr(dispatch, "_probe_server", fake_probe)
@@ -99,7 +100,7 @@ def test_main_prefers_provider_over_generic_env(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("TOOL_EVAL_OPENAI_API_KEY", "openai-key")
 
     seen = _probe_via_main(monkeypatch, ["--provider", "openai"])
-    assert seen == {"base_url": "https://api.openai.com", "api_key": "openai-key"}
+    assert (seen["base_url"], seen["api_key"]) == ("https://api.openai.com", "openai-key")
 
 
 def test_main_reads_provider_from_env_and_lets_flags_win(
@@ -110,7 +111,7 @@ def test_main_reads_provider_from_env_and_lets_flags_win(
     monkeypatch.setenv("TOOL_EVAL_ANTHROPIC_API_KEY", "anthropic-key")
 
     seen = _probe_via_main(monkeypatch, ["--api-key", "flag-key"])
-    assert seen == {"base_url": "https://api.anthropic.com/v1", "api_key": "flag-key"}
+    assert (seen["base_url"], seen["api_key"]) == ("https://api.anthropic.com/v1", "flag-key")
 
 
 def test_main_provider_does_not_inherit_generic_api_key(
@@ -120,13 +121,65 @@ def test_main_provider_does_not_inherit_generic_api_key(
     monkeypatch.setenv("TOOL_EVAL_LOCAL_BASE_URL", "http://gpu-box:8080")
 
     seen = _probe_via_main(monkeypatch, ["--provider", "local"])
-    assert seen == {"base_url": "http://gpu-box:8080", "api_key": None}
+    assert (seen["base_url"], seen["api_key"]) == ("http://gpu-box:8080", None)
 
 
 def test_main_rejects_provider_without_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TOOL_EVAL_NOPE_BASE_URL", raising=False)
     monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
     monkeypatch.setattr(sys, "argv", ["tool-eval-bench", "--probe", "--provider", "nope"])
+    with pytest.raises(SystemExit) as exc:
+        dispatch.main()
+    assert exc.value.code == 2
+
+
+def test_provider_reads_headers_and_session_header() -> None:
+    settings = resolve_provider(
+        "zen",
+        {
+            "TOOL_EVAL_ZEN_BASE_URL": "https://opencode.ai/zen/go/v1/messages",
+            "TOOL_EVAL_ZEN_HEADERS": "User-Agent=my-agent/1.0; X-Trace: abc",
+            "TOOL_EVAL_ZEN_SESSION_HEADER": "x-opencode-session",
+        },
+    )
+    assert settings is not None
+    assert settings.headers == {"User-Agent": "my-agent/1.0", "X-Trace": "abc"}
+    assert settings.session_header == "x-opencode-session"
+
+
+def test_main_merges_provider_headers_with_flags_and_mints_a_session_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TOOL_EVAL_ZEN_BASE_URL", "https://opencode.ai/zen/go/v1/messages")
+    monkeypatch.setenv("TOOL_EVAL_ZEN_HEADERS", "User-Agent=env-agent;X-Env=1")
+    monkeypatch.setenv("TOOL_EVAL_ZEN_SESSION_HEADER", "x-opencode-session")
+
+    seen = _probe_via_main(monkeypatch, ["--provider", "zen", "--header", "User-Agent=flag-agent"])
+    headers = seen["headers"]
+    assert isinstance(headers, dict)
+    # The flag overrides the provider's value; the provider's other header stays.
+    assert headers["User-Agent"] == "flag-agent"
+    assert headers["X-Env"] == "1"
+    # A pre-flight request is a conversation of its own.
+    assert len(headers["x-opencode-session"]) == 32
+
+
+def test_main_reads_generic_headers_without_a_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TOOL_EVAL_BASE_URL", "http://gpu-box:8080")
+    monkeypatch.setenv("TOOL_EVAL_HEADERS", "X-Generic=yes")
+    monkeypatch.delenv("TOOL_EVAL_SESSION_HEADER", raising=False)
+
+    seen = _probe_via_main(monkeypatch, ["--session-header", "x-session"])
+    headers = seen["headers"]
+    assert isinstance(headers, dict)
+    assert headers["X-Generic"] == "yes"
+    assert "x-session" in headers
+
+
+def test_main_rejects_a_malformed_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TOOL_EVAL_BASE_URL", "http://gpu-box:8080")
+    monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["tool-eval-bench", "--probe", "--header", "no-separator"])
     with pytest.raises(SystemExit) as exc:
         dispatch.main()
     assert exc.value.code == 2

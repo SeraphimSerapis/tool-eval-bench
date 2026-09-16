@@ -133,3 +133,17 @@ def safety_gate_failed(args: Any, result: dict[str, Any]) -> bool:
             print(f"SAFETY GATE: {warning}", file=sys.stderr)
         return True
     return False
+
+
+def adapter_options(args: Any) -> dict[str, Any]:
+    """Keyword arguments for ``build_adapter`` from the resolved connection settings.
+
+    ``dispatch`` resolves the header options through the same CLI, provider,
+    environment cascade as the API key and leaves them on the namespace so the
+    plugin and pressure runners build their adapters the same way.
+    """
+    return {
+        "wire_format": getattr(args, "format", None),
+        "default_headers": getattr(args, "_request_headers", None),
+        "session_header": getattr(args, "_session_header", None),
+    }

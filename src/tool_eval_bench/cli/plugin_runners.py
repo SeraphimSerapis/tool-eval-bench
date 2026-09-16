@@ -78,6 +78,7 @@ def _run_gsm8k_benchmark(
     from rich.panel import Panel
 
     from tool_eval_bench.adapters.factory import build_adapter
+    from tool_eval_bench.cli.helpers import adapter_options
     from tool_eval_bench.plugins.gsm8k.plugin import GSM8KPlugin
 
     n_shots = args.gsm8k_shots
@@ -100,7 +101,7 @@ def _run_gsm8k_benchmark(
     )
 
     plugin = GSM8KPlugin()
-    adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
+    adapter = build_adapter(base_url, **adapter_options(args))
     result_holder: list = []
 
     # -- Phase 1: Load dataset (with visible progress) --
@@ -248,6 +249,7 @@ def _run_mmlu_benchmark(
     from rich.panel import Panel
 
     from tool_eval_bench.adapters.factory import build_adapter
+    from tool_eval_bench.cli.helpers import adapter_options
     from tool_eval_bench.plugins.mmlu.plugin import MMLUPlugin
 
     n_shots = args.mmlu_shots
@@ -272,7 +274,7 @@ def _run_mmlu_benchmark(
     )
 
     plugin = MMLUPlugin()
-    adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
+    adapter = build_adapter(base_url, **adapter_options(args))
     result_holder: list = []
 
     # -- Phase 1: Load dataset (with visible progress) --
@@ -454,6 +456,7 @@ def _run_ifeval_benchmark(
     from rich.panel import Panel
 
     from tool_eval_bench.adapters.factory import build_adapter
+    from tool_eval_bench.cli.helpers import adapter_options
     from tool_eval_bench.plugins.ifeval.plugin import IFEvalPlugin
 
     limit = args.ifeval_limit
@@ -473,7 +476,7 @@ def _run_ifeval_benchmark(
     )
 
     plugin = IFEvalPlugin()
-    adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
+    adapter = build_adapter(base_url, **adapter_options(args))
     result_holder: list = []
 
     # -- Phase 1: Load dataset --
@@ -727,6 +730,7 @@ def _run_needle_benchmark(
     from rich.panel import Panel
 
     from tool_eval_bench.adapters.factory import build_adapter
+    from tool_eval_bench.cli.helpers import adapter_options
     from tool_eval_bench.plugins.needle.haystack import build_cases
     from tool_eval_bench.plugins.needle.plugin import NeedlePlugin
 
@@ -756,7 +760,7 @@ def _run_needle_benchmark(
     )
 
     plugin = NeedlePlugin()
-    adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
+    adapter = build_adapter(base_url, **adapter_options(args))
     result_holder: list = []
 
     # A 100K-token prompt takes far longer to prefill than a scenario turn, so

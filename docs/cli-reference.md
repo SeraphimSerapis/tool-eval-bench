@@ -98,6 +98,13 @@ error rather than a fall-through to auto-discovery. `--api-key` and `--model`
 still override. `gemini`, `openai`, and `anthropic` set the backend label and
 skip engine probing; any other name leaves detection alone.
 
+A provider also owns its extra headers: `TOOL_EVAL_<NAME>_HEADERS` and
+`TOOL_EVAL_<NAME>_SESSION_HEADER` replace the generic `TOOL_EVAL_HEADERS` and
+`TOOL_EVAL_SESSION_HEADER` when one is selected. `--header` adds to whichever
+set applies and wins on a name clash; `--session-header` overrides. Every
+request carries `User-Agent: tool-eval-bench/<version>` unless a header
+replaces it.
+
 ## Key CLI flags
 
 | Flag | Purpose |
@@ -111,6 +118,8 @@ skip engine probing; any other name leaves detection alone.
 | `--model NAME` | Model name (auto-detected if omitted) |
 | `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp`, `sglang`, `gemini`, `openai`, `anthropic`, `ninfer` |
 | `--provider NAME` | Read the endpoint from `TOOL_EVAL_<NAME>_*` env vars |
+| `--header NAME=VALUE` | Extra request header, repeatable (env: `TOOL_EVAL_HEADERS`, `;`-separated) |
+| `--session-header NAME` | Header that carries a per-conversation id, e.g. `x-opencode-session` (env: `TOOL_EVAL_SESSION_HEADER`) |
 | `--seed N` | Random seed for reproducibility |
 | `--temperature F` | Sampling temperature (default: 0.0 = greedy) |
 | `--timeout F` | Per-request timeout in seconds (default: 60) |

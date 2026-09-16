@@ -94,6 +94,13 @@ class BackendAdapter(ABC):
         stream: bool = False,
         response_format: dict[str, Any] | None = None,
         parallel_tool_calls: bool | None = True,
+        conversation_id: str | None = None,
     ) -> ChatCompletionResult:
-        """Send a full chat-completion request."""
+        """Send a full chat-completion request.
+
+        ``conversation_id`` names the conversation the request continues.  It
+        is stable across the turns of one scenario, and an adapter configured
+        with a session header sends it there so a gateway can route and cache
+        by conversation.  A single-shot caller leaves it unset.
+        """
         ...

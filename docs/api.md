@@ -84,7 +84,9 @@ result = asyncio.run(run_benchmark(
     alpha=0.7,
     extra_params=None,    # e.g. {"chat_template_kwargs": {"enable_thinking": False}}
     weight_by_difficulty=False,  # weight scores by difficulty tier
-    wire_format=None,      # auto, openai, or gemini
+    wire_format=None,      # auto, openai, gemini, or anthropic
+    extra_headers=None,    # e.g. {"User-Agent": "my-agent/1.0"}
+    session_header=None,   # e.g. "x-opencode-session"; one id per scenario
     on_scenario_start=None,
     on_scenario_result=None,
     persist=True,         # False = skip SQLite + Markdown
@@ -275,6 +277,8 @@ with RunRepository() as repo:
   (e.g. `http://localhost:8080`). The adapter appends `/v1/chat/completions`
   automatically. If you include `/v1`, it will be detected and not duplicated.
 - Set `api_key` if your server requires authentication.
+- `extra_headers` ride on every request. `session_header` names a header that
+  carries a per-conversation id; each scenario sends one id for all its turns.
 - For thinking models (Qwen3, DeepSeek), pass
   `extra_params={"chat_template_kwargs": {"enable_thinking": False}}` to
   disable thinking — or use the CLI's `--no-think` flag.

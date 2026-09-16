@@ -14,12 +14,13 @@ import asyncio
 import logging
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 
 import httpx
 
 from tool_eval_bench.domain.adapters import RETRYABLE_STATUS_CODES, ChatCompletionResult
+from tool_eval_bench.utils.headers import USER_AGENT, attach_session_id
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 
 logger = logging.getLogger(__name__)
@@ -273,7 +274,14 @@ class RetryingHTTPAdapter:
     """HTTP client lifecycle plus the shared retry / rate-limit policy.
 
     Concrete adapters implement the wire format; this base owns connection
-    reuse, the retry budgets, and the rate-limit coordinator.
+    reuse, the retry budgets, the rate-limit coordinator, and the headers a
+    user attaches to every request.
+
+    ``default_headers`` ride on every request and override the adapter's own
+    (a user who sets ``User-Agent`` means it).  ``session_header`` names a
+    header that carries the conversation id, for gateways that route and
+    cache by conversation; a request without an id gets a fresh one, since a
+    single-shot question is its own conversation.
     """
 
     def __init__(
@@ -282,11 +290,25 @@ class RetryingHTTPAdapter:
         max_retries: int = DEFAULT_MAX_RETRIES,
         max_rate_limit_retries: int = DEFAULT_MAX_RATE_LIMIT_RETRIES,
         rate_limit_observer: RateLimitObserver | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        session_header: str | None = None,
     ) -> None:
         self._client: httpx.AsyncClient | None = None
         self._max_retries = max_retries
         self._max_rate_limit_retries = max_rate_limit_retries
         self._rate_limits = RateLimitCoordinator(observer=rate_limit_observer)
+        self._default_headers: dict[str, str] = dict(default_headers or {})
+        self._session_header = session_header or None
+
+    def _request_headers(
+        self, headers: Mapping[str, str], conversation_id: str | None
+    ) -> dict[str, str]:
+        """Merge the wire format's headers with the user's and the session id."""
+        return attach_session_id(
+            {"User-Agent": USER_AGENT, **headers, **self._default_headers},
+            self._session_header,
+            conversation_id,
+        )
 
     def _get_client(self) -> httpx.AsyncClient:
         """Return the shared client, creating it lazily on first access.

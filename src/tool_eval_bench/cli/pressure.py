@@ -103,6 +103,7 @@ def run_pressure_sweep(
 
     from tool_eval_bench.adapters.factory import build_adapter
     from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
+    from tool_eval_bench.cli.helpers import adapter_options
     from tool_eval_bench.runner.context_pressure import (
         ContextPressureConfig,
         build_pressure_messages,
@@ -249,7 +250,7 @@ def run_pressure_sweep(
                 end="",
             )
 
-            adapter = build_adapter(base_url, wire_format=getattr(args, "format", None))
+            adapter = build_adapter(base_url, **adapter_options(args))
 
             try:
                 summary = asyncio.run(

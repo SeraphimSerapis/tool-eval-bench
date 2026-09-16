@@ -395,6 +395,7 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
         stream: bool = False,
         response_format: dict[str, Any] | None = None,
         parallel_tool_calls: bool | None = True,
+        conversation_id: str | None = None,
     ) -> ChatCompletionResult:
         converted, system = _to_anthropic_messages(messages)
         payload: dict[str, Any] = {
@@ -428,6 +429,7 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
 
         payload["temperature"] = temperature
         _apply_extra_params(payload, headers, extra_params)
+        headers = self._request_headers(headers, conversation_id)
         url = anthropic_messages_url(base_url)
         if (url, model) in self._sampling_rejected_endpoints:
             for key in ("temperature", "top_p", "top_k"):
