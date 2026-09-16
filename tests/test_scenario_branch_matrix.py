@@ -107,6 +107,9 @@ _TOOL_OUTCOME_KEYS = {
     "get_stock_price": frozenset({"error", "price"}),
     "set_reminder": frozenset({"error", "reminder_id"}),
     "run_code": frozenset({"error", "status", "stdout"}),
+    # TC-53's calendar read tools.
+    "search_events": frozenset({"error", "results"}),
+    "get_event": frozenset({"error", "event_id"}),
 }
 
 

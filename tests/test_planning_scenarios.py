@@ -1729,6 +1729,73 @@ class TestTC52EdgeCases:
 class TestTC53EdgeCases:
     sc = _get("TC-53")
 
+    def test_outdoor_meeting_is_findable(self) -> None:
+        """Gemini, GLM and DeepSeek all went looking for the meeting first and
+        hit a "not relevant" error. The calendar read tools exist now."""
+        names = {tool["function"]["name"] for tool in self.sc.tools_override or []}
+        assert {"search_events", "get_event", "create_calendar_event", "send_email"} <= names
+        state = ScenarioState()
+        found = self.sc.handle_tool_call(
+            state,
+            ToolCallRecord("s1", "search_events", "{}", {"query": "outdoor meeting"}, 1),
+        )
+        assert found["results"][0]["event_id"] == "evt_outdoor_sync"
+        event = self.sc.handle_tool_call(
+            state,
+            ToolCallRecord("g1", "get_event", "{}", {"event_id": "evt_outdoor_sync"}, 2),
+        )
+        assert event["attendees"] == ["lead@company.com", "dev-team@company.com"]
+        missing = self.sc.handle_tool_call(
+            state, ToolCallRecord("g2", "get_event", "{}", {"event_id": "guess"}, 2)
+        )
+        assert "error" in missing
+
+    def test_file_tools_answer_honestly(self) -> None:
+        state = ScenarioState()
+        files = self.sc.handle_tool_call(
+            state, ToolCallRecord("f1", "search_files", "{}", {"query": "outdoor meeting"}, 1)
+        )
+        assert files["results"] == [] and "error" not in files
+
+    def test_pass_read_event_then_relocate_and_notify(self) -> None:
+        """The path all three models tried: find the meeting, read the attendees,
+        then act on the rain."""
+        state = _make_state(
+            tool_calls=[
+                {"name": "get_weather", "arguments": {"location": "London"}, "turn": 1},
+                {"name": "search_events", "arguments": {"query": "outdoor meeting"}, "turn": 1},
+                {"name": "get_event", "arguments": {"event_id": "evt_outdoor_sync"}, "turn": 2},
+                {
+                    "name": "create_calendar_event",
+                    "arguments": {
+                        "title": "Team Sync (moved to office)",
+                        "date": "2026-03-21",
+                        "time": "10:00",
+                    },
+                    "turn": 3,
+                },
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": ["lead@company.com", "dev-team@company.com"],
+                        "subject": "Saturday sync moved indoors",
+                        "body": "Rain is forecast, so we are meeting in the office instead.",
+                    },
+                    "turn": 3,
+                },
+            ],
+            tool_results=[
+                {
+                    "call_id": "call_2",
+                    "name": "get_event",
+                    "result": {"attendees": ["lead@company.com", "dev-team@company.com"]},
+                },
+            ],
+            final_answer="Rain is forecast, so I moved the meeting to the office and notified both attendees.",
+        )
+        result = self.sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS, result.summary
+
     def test_pass_email_plus_rain(self) -> None:
         """Checked weather + sent email + mentions rain → pass (alternative path)."""
         state = _make_state(

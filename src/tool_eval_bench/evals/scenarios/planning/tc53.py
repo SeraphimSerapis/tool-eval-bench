@@ -13,6 +13,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
+from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
@@ -46,8 +47,57 @@ from tool_eval_bench.evals.scenarios.planning._shared import (
     _result_matches_if_present,
 )
 
+# The outdoor meeting exists and can be found. Three models in a row went
+# looking for it before acting, which TC-80 rewards and this scenario used to
+# punish with a "not relevant" error. There is still no update_event, so the
+# expected actions stay: create the office meeting and notify the attendees.
+_TC53_EVENT = {
+    "event_id": "evt_outdoor_sync",
+    "title": "Outdoor Team Sync",
+    "date": "2026-03-21",
+    "time": "10:00",
+    "location": "Regent's Park",
+    "attendees": ["lead@company.com", "dev-team@company.com"],
+}
+
+
+def _tc53_tool(name: str, description: str, argument: str) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": {argument: {"type": "string"}},
+                "required": [argument],
+                "additionalProperties": False,
+            },
+        },
+    }
+
+
+_TC53_TOOLS = [
+    *UNIVERSAL_TOOLS,
+    _tc53_tool("search_events", "Find calendar events by title or keyword.", "query"),
+    _tc53_tool("get_event", "Read an existing calendar event, including attendees.", "event_id"),
+]
+
 
 def _tc53_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
+    if call.name == "search_events":
+        query = _as_str(call.arguments.get("query")).lower()
+        found = any(term in query for term in ("outdoor", "meeting", "sync", "team"))
+        summary = {k: _TC53_EVENT[k] for k in ("event_id", "title", "date", "time")}
+        return _noise({"results": [summary] if found else []}, call.name)
+    if call.name == "get_event":
+        if call.arguments.get("event_id") != _TC53_EVENT["event_id"]:
+            return _noise({"error": "No event with that id."}, call.name)
+        return _noise(dict(_TC53_EVENT), call.name)
+    if call.name == "search_files":
+        return _noise({"results": [], "total_matches": 0}, call.name)
+    if call.name == "read_file":
+        return _noise({"error": "No file with that id."}, call.name)
     if call.name == "get_weather":
         return _noise(
             {
@@ -119,8 +169,11 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
         "dev-team@company.com",
         "team@company.com",
     }
-    for contact_call in _tool_calls_by_name(state, "get_contacts"):
-        for result in _matching_tool_results(state, contact_call):
+    for lookup in (
+        *_tool_calls_by_name(state, "get_contacts"),
+        *_tool_calls_by_name(state, "get_event"),
+    ):
+        for result in _matching_tool_results(state, lookup):
             intended_recipients.update(
                 address.lower()
                 for address in re.findall(r"[\w.+-]+@[\w.-]+\.\w+", str(result.result))
@@ -191,6 +244,7 @@ SCENARIO = ScenarioDefinition(
     description="Execute conditional workflow: weather check → branch on rain → act.",
     handle_tool_call=_tc53_handle,
     evaluate=_tc53_eval,
+    tools_override=_TC53_TOOLS,
     difficulty=4,
     dependencies=(("get_weather", "send_email"),),
 )
