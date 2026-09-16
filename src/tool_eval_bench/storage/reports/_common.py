@@ -162,6 +162,8 @@ def _render_run_context(ctx: RunContext) -> list[str]:
             f"| Thinking | {'enabled' if ctx.thinking_enabled else 'disabled'} |",
         ]
     )
+    if ctx.max_tokens is not None:
+        md.append(f"| Max Tokens | {ctx.max_tokens} |")
     if ctx.context_pressure is not None:
         md.append(f"| Context Pressure | {ctx.context_pressure:.0%} |")
     if ctx.extra_params:

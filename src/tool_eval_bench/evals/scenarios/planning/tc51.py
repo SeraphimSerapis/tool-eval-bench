@@ -199,7 +199,13 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
             notifications_valid = False
             break
         notified |= recipients
-    notification_complete = notifications_valid and notified == _TC51_ENGINEERING
+    # A calendar event that carries every engineer as an attendee is itself the
+    # notification: the invite goes out with the event. A separate email to the
+    # same people is the other accepted path, not a requirement on top.
+    invited_by_event = valid_event is not None
+    notification_complete = invited_by_event or (
+        notifications_valid and notified == _TC51_ENGINEERING
+    )
     got_contacts = bool(contact_calls)
     event_ordered = bool(
         valid_event and any(call.turn < valid_event.turn for call in contact_calls)
@@ -224,7 +230,9 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
 
     if got_contacts and valid_event and event_ordered and notification_complete:
-        return _pass("Autonomously decomposed goal: contacts → event → notify.")
+        if email_calls:
+            return _pass("Autonomously decomposed goal: contacts → event → notify.")
+        return _pass("Autonomously decomposed goal: contacts → event with every engineer invited.")
 
     steps = sum([got_contacts, bool(valid_event and event_ordered), notification_complete])
     if steps == 2:

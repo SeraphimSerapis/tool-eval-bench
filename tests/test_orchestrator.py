@@ -23,7 +23,12 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioStatus,
     ToolCallRecord,
 )
-from tool_eval_bench.runner.orchestrator import _repair_json_str, run_all_scenarios, run_scenario
+from tool_eval_bench.runner.orchestrator import (
+    DEFAULT_TIMEOUT_SECONDS,
+    _repair_json_str,
+    run_all_scenarios,
+    run_scenario,
+)
 
 # ---------------------------------------------------------------------------
 # Mock adapter
@@ -936,6 +941,86 @@ async def test_loop_guard_does_not_touch_a_passing_evaluation() -> None:
     assert result.status == ScenarioStatus.PASS
     assert result.failure_kind is None
     assert "note=Stopped" not in result.raw_log
+
+
+@pytest.mark.asyncio
+async def test_truncated_reasoning_turn_is_tagged_not_graded_as_judgement() -> None:
+    """DeepSeek V4.1 Flash on TC-50, TC-62, TC-84: 17K characters of reasoning,
+    finish_reason=length, no content, no tool call."""
+    scenario = _tool_failing_evaluator("TRUNC-01")
+    adapter = MockAdapter(
+        [
+            {"content": "", "tool_calls": [{"name": "get_weather", "arguments": {"q": 1}}]},
+            ChatCompletionResult(content="", reasoning="x" * 17000, finish_reason="length"),
+            {"content": "never reached"},
+        ]
+    )
+    result = await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+    )
+    assert result.turn_count == 2
+    assert result.failure_kind == FailureKind.REASONING_TRUNCATED
+    assert result.turn_budget_exceeded is False
+    assert (
+        "truncated=Turn 2 hit the max_tokens ceiling (16384) with 17000 characters"
+        in result.raw_log
+    )
+    assert "note=Turn 2 hit the max_tokens ceiling" in result.raw_log
+
+
+@pytest.mark.asyncio
+async def test_length_stop_with_a_visible_answer_is_graded_normally() -> None:
+    """A cut-off answer is still an answer; only an empty turn is the ceiling's fault."""
+    scenario = _tool_failing_evaluator("TRUNC-02")
+    adapter = MockAdapter([ChatCompletionResult(content="partial ans", finish_reason="length")])
+    result = await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+    )
+    assert result.failure_kind != FailureKind.REASONING_TRUNCATED
+    assert "truncated=" not in result.raw_log
+
+
+@pytest.mark.asyncio
+async def test_every_turn_is_streamed_with_the_thinking_ceiling() -> None:
+    scenario = _tool_failing_evaluator("STREAM-01")
+    adapter = _tool_then_final_adapter()
+    await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+    )
+    assert [p["stream"] for p in adapter.captured_payloads] == [True, True]
+    assert {p["max_tokens"] for p in adapter.captured_payloads} == {16384}
+    assert {p["timeout_seconds"] for p in adapter.captured_payloads} == {DEFAULT_TIMEOUT_SECONDS}
+
+
+@pytest.mark.asyncio
+async def test_no_think_keeps_the_tight_ceiling() -> None:
+    scenario = _tool_failing_evaluator("STREAM-02")
+    adapter = _tool_then_final_adapter()
+    await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+        extra_params={"chat_template_kwargs": {"enable_thinking": False}},
+    )
+    assert {p["max_tokens"] for p in adapter.captured_payloads} == {4096}
 
 
 @pytest.mark.asyncio

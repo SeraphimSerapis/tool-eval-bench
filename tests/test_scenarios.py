@@ -201,15 +201,15 @@ class TestTC35ContradictoryParams:
         )
         assert result.status == ScenarioStatus.FAIL
 
-    def test_partial_unrequested_extra_conversion(self) -> None:
-        """An unasked-for conversion is scored as its own shortfall, not as a
-        wrong-unit answer."""
+    def test_pass_unrequested_extra_conversion(self) -> None:
+        """An unasked-for conversion after the identity is an accurate aside,
+        not a wrong-unit answer and not a shortfall."""
         s = self._get_scenario()
         result = s.evaluate(
             _make_state(final_answer="500 K, which is the same value. That's about 440.33 °F.")
         )
-        assert result.status == ScenarioStatus.PARTIAL
-        assert "unrequested" in result.summary
+        assert result.status == ScenarioStatus.PASS
+        assert "aside" in result.summary
 
     def test_partial_value_without_explanation(self) -> None:
         s = self._get_scenario()

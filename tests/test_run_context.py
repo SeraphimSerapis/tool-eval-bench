@@ -364,6 +364,18 @@ class TestRenderRunContext:
         md = "\n".join(lines)
         assert "| Thinking | disabled |" in md
 
+    def test_max_tokens_rendered(self):
+        from tool_eval_bench.storage.reports import _render_run_context
+
+        ctx = self._make_context()
+        ctx.max_tokens = 16384
+        assert "| Max Tokens | 16384 |" in "\n".join(_render_run_context(ctx))
+
+    def test_max_tokens_absent_on_legacy_context(self):
+        from tool_eval_bench.storage.reports import _render_run_context
+
+        assert "Max Tokens" not in "\n".join(_render_run_context(self._make_context()))
+
     def test_extra_params_rendered(self):
         from tool_eval_bench.storage.reports import _render_run_context
 
@@ -628,3 +640,39 @@ class TestRunLabel:
             probe_engine=False,
         )
         assert ctx.label == "tonyd2wild tool hardening 646c55f"
+
+
+class TestDefaultMaxTokens:
+    def test_thinking_gets_the_wide_ceiling(self):
+        from tool_eval_bench.domain.models import default_max_tokens
+
+        assert default_max_tokens(None) == 16384
+        assert default_max_tokens({"top_p": 0.9}) == 16384
+
+    def test_no_think_keeps_the_tight_ceiling(self):
+        from tool_eval_bench.domain.models import default_max_tokens
+
+        assert default_max_tokens({"chat_template_kwargs": {"enable_thinking": False}}) == 4096
+
+    def test_explicit_backend_kwarg_wins(self):
+        from tool_eval_bench.domain.models import default_max_tokens
+
+        assert default_max_tokens({"max_tokens": 1024}) == 1024
+        assert default_max_tokens({"max_completion_tokens": 32768}) == 32768
+
+    def test_collect_run_context_records_the_ceiling(self):
+        import asyncio
+
+        from tool_eval_bench.utils.metadata import collect_run_context
+
+        ctx = asyncio.run(
+            collect_run_context(
+                model="m",
+                backend="vllm",
+                base_url="http://localhost:8000",
+                probe_engine=False,
+                extra_params={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+        )
+        assert ctx.max_tokens == 4096
+        assert ctx.to_dict()["max_tokens"] == 4096

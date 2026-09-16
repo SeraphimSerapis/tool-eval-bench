@@ -163,7 +163,15 @@ def _tc84_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         room_id = call.arguments.get("room_id")
         if room_id == "berlin_3a":
             state.meta["berlin_3a_failed"] = True
-            return _noise({"error": "Room became unavailable during booking."}, call.name)
+            return _noise(
+                {
+                    "error": "Room berlin_3a was booked by another request while this one "
+                    "was in flight. Search rooms again for what is still free.",
+                    "error_code": "ROOM_TAKEN",
+                    "retryable": True,
+                },
+                call.name,
+            )
         if room_id == "berlin_5b":
             state.meta["successful_booking_turn"] = call.turn
             return _noise({"status": "booked", "booking_id": "booking_84"}, call.name)

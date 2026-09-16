@@ -446,6 +446,11 @@ class TestEnrichPayload:
         r = enrich_payload("get_weather", {"error": "timeout"})
         assert r["error_code"] == "ERR_TOOL_UNAVAILABLE"
 
+    def test_error_payload_keeps_a_scenario_error_code(self):
+        r = enrich_payload("book_room", {"error": "taken", "error_code": "ROOM_TAKEN"})
+        assert r["error_code"] == "ROOM_TAKEN"
+        assert r["documentation_url"].endswith("/ROOM_TAKEN")
+
     def test_non_dict_passthrough(self):
         assert enrich_payload("get_weather", "string") == "string"
 

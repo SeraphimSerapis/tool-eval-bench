@@ -32,6 +32,7 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
 from tool_eval_bench.runner.orchestrator import (
+    probe_tool_choice_required,
     run_all_scenarios,
     run_scenario,
     supports_tool_choice_required,
@@ -302,6 +303,61 @@ async def test_forced_tool_choice_scenario_runs_when_the_endpoint_enforces_it() 
     assert summary.excluded_scenarios == []
     assert summary.max_points == 2
     assert adapter.tool_choices[0] == "required"
+
+
+@pytest.mark.asyncio
+async def test_probe_tells_the_model_not_to_call() -> None:
+    """A model that would call anyway proves nothing about the endpoint."""
+    adapter = ScriptedAdapter([ChatCompletionResult(content="", tool_calls=[_tool_call()])])
+    messages: list[Any] = []
+
+    async def _capture(**kwargs: Any) -> ChatCompletionResult:
+        messages.append(kwargs["messages"])
+        return await ScriptedAdapter.chat_completion(adapter, **kwargs)
+
+    adapter.chat_completion = _capture  # type: ignore[method-assign]
+    probe = await probe_tool_choice_required(
+        adapter, model="m", base_url="http://x", api_key=None, timeout_seconds=5
+    )
+
+    assert probe.enforced and probe.arguments_intact
+    assert "Do not call any tools" in messages[0][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_probe_flags_a_forced_call_that_lost_its_arguments() -> None:
+    """DeepSeek V4.1 Flash on SGLang: the forced call arrived as calculator {}."""
+    empty = ProviderToolCall(id="tc_1", name="probe_ping", arguments_str="{}")
+    adapter = ScriptedAdapter([ChatCompletionResult(content="", tool_calls=[empty])])
+
+    probe = await probe_tool_choice_required(
+        adapter, model="m", base_url="http://x", api_key=None, timeout_seconds=5
+    )
+
+    assert probe.enforced
+    assert not probe.arguments_intact
+    assert "empty arguments" in probe.detail
+
+
+@pytest.mark.asyncio
+async def test_probe_verdict_is_attached_to_forced_scenarios_only() -> None:
+    forced = _trivial_scenario("TC-45", tool_choice_override="required")
+    other = _trivial_scenario("TC-OTHER")
+    adapter = ScriptedAdapter(
+        [
+            ChatCompletionResult(content="", tool_calls=[_tool_call()]),  # probe
+            ChatCompletionResult(content="56"),
+            ChatCompletionResult(content="done"),
+        ]
+    )
+
+    summary = await run_all_scenarios(
+        adapter, model="m", base_url="http://x", scenarios=[forced, other]
+    )
+
+    by_id = {r.scenario_id: r for r in summary.scenario_results}
+    assert by_id["TC-45"].diagnostics["tool_choice"].startswith("enforced by the endpoint")
+    assert "tool_choice" not in by_id["TC-OTHER"].diagnostics
 
 
 @pytest.mark.asyncio

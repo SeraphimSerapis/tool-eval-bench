@@ -266,14 +266,20 @@ def enrich_reminder(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def enrich_generic_error(payload: dict[str, Any]) -> dict[str, Any]:
-    """Add realistic metadata to error responses."""
+    """Add realistic metadata to error responses.
+
+    A scenario that names its own ``error_code`` keeps it: a room race is
+    ``ROOM_TAKEN``, not a tool outage, and the code is what a model reads to
+    decide whether retrying makes sense.
+    """
     seed = _seed_from_payload(payload, "error")
+    code = str(payload.get("error_code") or "ERR_TOOL_UNAVAILABLE")
     return {
         **payload,
-        "error_code": "ERR_TOOL_UNAVAILABLE",
+        "error_code": code,
         "timestamp": "2026-03-20T12:00:00Z",
         "trace_id": _seeded_id("trace_", seed),
-        "documentation_url": "https://docs.example.com/errors/ERR_TOOL_UNAVAILABLE",
+        "documentation_url": f"https://docs.example.com/errors/{code}",
         "request_id": _seeded_id("req_err_", seed),
     }
 

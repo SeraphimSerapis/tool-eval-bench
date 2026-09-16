@@ -16,6 +16,7 @@ import logging
 import random
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -26,7 +27,11 @@ from tool_eval_bench.domain.adapters import (
     ChatCompletionResult,
     ProviderToolCall,
 )
-from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage
+from tool_eval_bench.domain.models import (
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    ChatMessage,
+    default_max_tokens,
+)
 from tool_eval_bench.domain.scenarios import (
     CATEGORY_LABELS,
     SAFETY_GATE_THRESHOLD,
@@ -46,7 +51,6 @@ from tool_eval_bench.domain.scenarios import (
     compute_deployability,
     rating_for_score,
 )
-from tool_eval_bench.domain.timeouts import unstreamed_turn_timeout
 from tool_eval_bench.domain.tools import (
     BENCHMARK_REFERENCE_DATE,
     BENCHMARK_REFERENCE_DAY,
@@ -429,11 +433,19 @@ async def run_scenario(
     # the budget was still available, the model was going nowhere with it.
     loop_stop: str | None = None
     recent_turn_signatures: list[str] = []
+    # Set when a turn ends on finish_reason=length with nothing to grade: the
+    # model spent the whole ceiling thinking and never reached an answer.
+    truncated_stop: str | None = None
+    max_tokens = default_max_tokens(extra)
 
     try:
         for turn in range(1, max_turns + 1):
-            # Stream the first turn to measure TTFT accurately
-            use_stream = turn == 1
+            # Every turn is streamed. On a streamed turn the read timeout
+            # bounds the gap between tokens, so a model that thinks for
+            # minutes while still emitting stays alive and a hung endpoint
+            # still dies after timeout_seconds of silence. TTFT is read from
+            # turn 1 only.
+            use_stream = True
 
             turn_start = time.perf_counter()
             # Only send response_format on content turns (not tool-calling
@@ -450,26 +462,14 @@ async def run_scenario(
             if state.tool_calls and scenario.tool_choice_after_first_call is not None:
                 active_tool_choice = scenario.tool_choice_after_first_call
 
-            # Turns after the first are not streamed, so the read timeout bounds
-            # the whole generation instead of the gap between tokens. Scale it
-            # from what turn 1 actually took. See domain.timeouts.
-            turn_timeout = (
-                timeout_seconds
-                if use_stream
-                else unstreamed_turn_timeout(
-                    timeout_seconds,
-                    turn_latencies[0] if turn_latencies else 0.0,
-                )
-            )
-
             result = await adapter.chat_completion(
                 model=model,
                 messages=messages,
                 tools=scenario_tools or None,  # Don't send empty list
                 tool_choice=active_tool_choice if scenario_tools else None,
                 temperature=temperature,
-                max_tokens=4096,
-                timeout_seconds=turn_timeout,
+                max_tokens=max_tokens,
+                timeout_seconds=timeout_seconds,
                 api_key=api_key,
                 base_url=base_url,
                 extra_params=extra,
@@ -546,6 +546,23 @@ async def run_scenario(
             trace_lines.append(f"assistant_turn_{turn}={result.content or '[tool_calls_only]'}")
             if result.reasoning:
                 trace_lines.append(f"assistant_reasoning_{turn}={result.reasoning}")
+
+            # The ceiling ate the turn: nothing visible came back and the
+            # provider says it stopped for length. Grading the empty string
+            # would blame the model's judgement for a harness setting, so
+            # stop here and tag the run instead.
+            # The Gemini adapter stands in "[no content: MAX_TOKENS]" for an
+            # empty candidate, so that placeholder counts as no answer too.
+            visible_answer = bool(result.content) and not result.content.startswith("[no content:")
+            if not result.tool_calls and not visible_answer and result.finish_reason == "length":
+                reasoning_chars = len(result.reasoning or "")
+                truncated_stop = (
+                    f"Turn {turn} hit the max_tokens ceiling ({max_tokens}) with "
+                    f"{reasoning_chars} characters of reasoning and no answer or tool call."
+                )
+                trace_lines.append(f"truncated={truncated_stop}")
+                budget_exhausted = False
+                break
 
             # No tool calls → model finished this conversational phase
             if not result.tool_calls:
@@ -654,8 +671,9 @@ async def run_scenario(
     # entire benchmark run (issue #5).
     try:
         evaluation = scenario.evaluate(state)
-        if loop_stop is not None and evaluation.status != ScenarioStatus.PASS:
-            evaluation.note = f"{loop_stop} {evaluation.note or ''}".strip()
+        harness_stop = truncated_stop or loop_stop
+        if harness_stop is not None and evaluation.status != ScenarioStatus.PASS:
+            evaluation.note = f"{harness_stop} {evaluation.note or ''}".strip()
         if scenario.response_format_override is not None:
             evaluation.diagnostics["response_format"] = (
                 "requested; backend enforcement is not independently measured"
@@ -667,7 +685,15 @@ async def run_scenario(
                 any(not any(source.turn < target.turn for source in sources) for target in targets)
                 and sources
             ):
-                violation = f"Called {consumer} before observing a {producer} result."
+                batched = any(
+                    source.turn == target.turn for source in sources for target in targets
+                )
+                violation = (
+                    f"Batched {consumer} with {producer} in the same turn instead of waiting "
+                    f"for the {producer} result."
+                    if batched
+                    else f"Called {consumer} before observing a {producer} result."
+                )
                 evaluation = ScenarioEvaluation(
                     ScenarioStatus.FAIL,
                     0,
@@ -747,7 +773,9 @@ async def run_scenario(
         parallel_tool_turns=parallel_tool_turns,
         state_checkpoints=state_checkpoints,
         failure_kind=(
-            FailureKind.REPEATED_CALL_LOOP
+            FailureKind.REASONING_TRUNCATED
+            if truncated_stop is not None and evaluation.status != ScenarioStatus.PASS
+            else FailureKind.REPEATED_CALL_LOOP
             if loop_stop is not None and evaluation.status != ScenarioStatus.PASS
             else FailureKind.BUDGET_EXCEEDED
             if budget_exhausted and evaluation.status != ScenarioStatus.PASS
@@ -784,6 +812,92 @@ _TOOL_CHOICE_PROBE_TOOLS: list[dict[str, Any]] = [
 ]
 
 
+@dataclass(frozen=True)
+class ToolChoiceProbe:
+    """What one forced call told us about the endpoint.
+
+    ``enforced`` is whether a tool call came back at all. ``arguments_intact``
+    is whether that call carried the schema's required argument: an endpoint
+    whose tool parser drops arguments under a forced call produces ``{}``,
+    which a scenario would otherwise grade as the model sending an empty
+    expression. ``detail`` is the sentence the report shows.
+    """
+
+    enforced: bool
+    arguments_intact: bool
+    detail: str
+
+
+async def probe_tool_choice_required(
+    adapter: BackendAdapter,
+    *,
+    model: str,
+    base_url: str,
+    api_key: str | None,
+    timeout_seconds: float,
+    extra_params: dict[str, Any] | None = None,
+) -> ToolChoiceProbe:
+    """Ask the endpoint, not the model, whether ``tool_choice="required"`` holds.
+
+    Two stacks fail this in different ways and only one of them is visible after
+    the fact. An endpoint that rejects the parameter answers with a 4xx, which
+    the adapter surfaces. An endpoint that accepts the parameter and then drops
+    it is indistinguishable, once a scenario is running, from a model that chose
+    not to call a tool, and the scenario that depends on it would record the
+    model as having ignored an instruction it was never given.
+
+    The prompt tells the model not to call anything. A model that obeys the
+    prompt on an enforcing endpoint still produces a call, because the grammar
+    leaves it no other output; on a non-enforcing endpoint it answers in prose.
+    Asking the model to call the tool would only prove it was willing to.
+    """
+    try:
+        result = await adapter.chat_completion(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Reply with the single word OK. Do not call any tools.",
+                }
+            ],
+            tools=_TOOL_CHOICE_PROBE_TOOLS,
+            tool_choice="required",
+            temperature=0.0,
+            max_tokens=256,
+            timeout_seconds=timeout_seconds,
+            api_key=api_key,
+            base_url=base_url,
+            extra_params=extra_params,
+            stream=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - any failure means "cannot rely on it"
+        logger.warning("tool_choice=required probe failed (%s); treating as unsupported", exc)
+        return ToolChoiceProbe(False, False, f"probe request failed ({exc})")
+    if result.transport_error_status is not None:
+        logger.warning(
+            "Endpoint rejected tool_choice=required with HTTP %d; treating as unsupported",
+            result.transport_error_status,
+        )
+        return ToolChoiceProbe(
+            False,
+            False,
+            f"endpoint rejected the parameter with HTTP {result.transport_error_status}",
+        )
+    if not result.tool_calls:
+        return ToolChoiceProbe(
+            False, False, "not enforced; the endpoint answered in prose when told not to call"
+        )
+    call = result.tool_calls[0]
+    if call.name == "probe_ping" and str(call.arguments.get("value", "")).strip():
+        return ToolChoiceProbe(True, True, "enforced by the endpoint; probe call carried arguments")
+    return ToolChoiceProbe(
+        True,
+        False,
+        "enforced by the endpoint, but the probe call arrived with empty arguments; "
+        "empty-argument calls in this scenario may be the tool parser rather than the model",
+    )
+
+
 async def supports_tool_choice_required(
     adapter: BackendAdapter,
     *,
@@ -793,41 +907,16 @@ async def supports_tool_choice_required(
     timeout_seconds: float,
     extra_params: dict[str, Any] | None = None,
 ) -> bool:
-    """Return whether the endpoint actually enforces ``tool_choice="required"``.
-
-    Two stacks fail this in different ways and only one of them is visible after
-    the fact. An endpoint that rejects the parameter answers with a 4xx, which
-    the adapter surfaces. An endpoint that accepts the parameter and then drops
-    it is indistinguishable, once a scenario is running, from a model that chose
-    not to call a tool, and the scenario that depends on it would record the
-    model as having ignored an instruction it was never given. One forced call
-    against a trivial tool separates the two, so the cost is a single request
-    per run rather than a wrong verdict.
-    """
-    try:
-        result = await adapter.chat_completion(
-            model=model,
-            messages=[{"role": "user", "content": "Call probe_ping with any value."}],
-            tools=_TOOL_CHOICE_PROBE_TOOLS,
-            tool_choice="required",
-            temperature=0.0,
-            max_tokens=128,
-            timeout_seconds=timeout_seconds,
-            api_key=api_key,
-            base_url=base_url,
-            extra_params=extra_params,
-            stream=False,
-        )
-    except Exception as exc:  # noqa: BLE001 - any failure means "cannot rely on it"
-        logger.warning("tool_choice=required probe failed (%s); treating as unsupported", exc)
-        return False
-    if result.transport_error_status is not None:
-        logger.warning(
-            "Endpoint rejected tool_choice=required with HTTP %d; treating as unsupported",
-            result.transport_error_status,
-        )
-        return False
-    return bool(result.tool_calls)
+    """Compatibility wrapper: whether the endpoint enforces ``tool_choice="required"``."""
+    probe = await probe_tool_choice_required(
+        adapter,
+        model=model,
+        base_url=base_url,
+        api_key=api_key,
+        timeout_seconds=timeout_seconds,
+        extra_params=extra_params,
+    )
+    return probe.enforced
 
 
 def _unsupported_tool_choice_result(scenario: ScenarioDefinition) -> ScenarioResult:
@@ -885,19 +974,32 @@ async def run_all_scenarios(
     # actually selected, so an ordinary run pays nothing.
     forced_tool_choice = [s for s in target_scenarios if s.tool_choice_override == "required"]
     unsupported_ids: set[str] = set()
-    if forced_tool_choice and not await supports_tool_choice_required(
-        adapter,
-        model=model,
-        base_url=base_url,
-        api_key=api_key,
-        timeout_seconds=timeout_seconds,
-        extra_params=extra_params,
-    ):
-        unsupported_ids = {s.id for s in forced_tool_choice}
-        logger.warning(
-            "Excluding %s from scoring: the endpoint does not enforce tool_choice='required'.",
-            ", ".join(sorted(unsupported_ids)),
+    probe: ToolChoiceProbe | None = None
+    if forced_tool_choice:
+        probe = await probe_tool_choice_required(
+            adapter,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+            extra_params=extra_params,
         )
+        if not probe.enforced:
+            unsupported_ids = {s.id for s in forced_tool_choice}
+            logger.warning(
+                "Excluding %s from scoring: the endpoint does not enforce tool_choice='required'.",
+                ", ".join(sorted(unsupported_ids)),
+            )
+    forced_ids = {s.id for s in forced_tool_choice}
+
+    def _attach_probe(result: ScenarioResult) -> ScenarioResult:
+        # The verdict stays the model's; the diagnostic tells the reader what
+        # the endpoint did with the constraint so an empty call or a missing
+        # call can be attributed. Reports render these under "Capability
+        # diagnostics", next to the response_format line.
+        if probe is not None and result.scenario_id in forced_ids:
+            result.diagnostics["tool_choice"] = probe.detail
+        return result
 
     if concurrency <= 1:
         # Sequential path — original behavior, preserves ordering guarantees
@@ -924,7 +1026,7 @@ async def run_all_scenarios(
                     extra_params=extra_params,
                     context_pressure_messages=context_pressure_messages,
                 )
-            results.append(result)
+            results.append(_attach_probe(result))
             if on_scenario_result:
                 await on_scenario_result(scenario, result, idx, total)
         return score_results(
@@ -973,7 +1075,7 @@ async def run_all_scenarios(
                     extra_params=extra_params,
                     context_pressure_messages=context_pressure_messages,
                 )
-            ordered_results[idx] = result
+            ordered_results[idx] = _attach_probe(result)
             if on_scenario_result:
                 async with progress_lock:
                     await on_scenario_result(scenario, result, progress_counter, total)

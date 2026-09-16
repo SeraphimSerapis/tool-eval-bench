@@ -1,9 +1,7 @@
 """Infrastructure failures: how they render, what they advise, how they are bounded.
 
-Covers the three halves of the timeout problem. A scenario dropped from scoring
-must not render as a verdict, the run must say what to change, and a turn that
-is not streamed must be bounded by what the model actually demonstrated rather
-than by a number calibrated for a streamed turn.
+Covers the two halves of the timeout problem. A scenario dropped from scoring
+must not render as a verdict, and the run must say what to change.
 """
 
 from __future__ import annotations
@@ -23,7 +21,6 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioResult,
     ScenarioStatus,
 )
-from tool_eval_bench.domain.timeouts import unstreamed_turn_timeout
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
 
 
@@ -156,9 +153,10 @@ class TestTimeoutAdvice:
         assert "--no-think" in text
         assert "max_tokens" in text
 
-    def test_explains_the_streaming_asymmetry(self) -> None:
+    def test_explains_what_the_timeout_bounds(self) -> None:
         text = " ".join(timeout_advice(_summary([_result()]), timeout_seconds=120))
-        assert "first turn is streamed" in text
+        assert "Every turn is streamed" in text
+        assert "gap between tokens" in text
 
     def test_works_without_a_known_timeout(self) -> None:
         text = " ".join(timeout_advice(_summary([_result()]), timeout_seconds=None))
@@ -183,31 +181,3 @@ class TestSuggestedTimeout:
 
     def test_never_suggests_lowering_the_configured_value(self) -> None:
         assert suggested_timeout(1_000, 600) >= 600
-
-
-# ---------------------------------------------------------------------------
-# Unstreamed turn budget
-# ---------------------------------------------------------------------------
-
-
-class TestUnstreamedTurnTimeout:
-    def test_slow_first_turn_widens_the_budget(self) -> None:
-        # 151s on turn 1 must not leave turn 2 bounded by 120s.
-        assert unstreamed_turn_timeout(120, 151_199) == pytest.approx(151.199 * 2.5)
-
-    def test_fast_first_turn_keeps_the_configured_timeout(self) -> None:
-        assert unstreamed_turn_timeout(120, 300) == 120
-
-    def test_never_narrows_the_configured_timeout(self) -> None:
-        assert unstreamed_turn_timeout(600, 1_000) == 600
-
-    @pytest.mark.parametrize("first_turn_ms", [0.0, -1.0])
-    def test_no_measurement_leaves_the_timeout_alone(self, first_turn_ms: float) -> None:
-        assert unstreamed_turn_timeout(120, first_turn_ms) == 120
-
-    def test_the_reported_case_now_fits(self) -> None:
-        # All three GLM-5.3-Flash runs: turn 1 between 131s and 180s, turn 2
-        # killed at exactly the 120s default.
-        for turn_one_seconds in (131.4, 151.2, 179.9):
-            budget = unstreamed_turn_timeout(120, turn_one_seconds * 1000)
-            assert budget > turn_one_seconds, "turn 2 must get more room than turn 1 took"

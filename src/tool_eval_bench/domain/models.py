@@ -10,6 +10,32 @@ from typing import Any, TypedDict
 # scored as model failures.
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
 
+# Per-turn generation ceiling. On OpenAI-compatible reasoning endpoints the
+# thinking tokens count against max_tokens, and DeepSeek V4.1 Flash lost three
+# scenarios to turns where roughly 4,500 tokens of reasoning hit the old 4096
+# cap before any answer. Thinking gets four times the room; --no-think keeps
+# the tighter cap so a rambling model cannot pad its turn. An explicit
+# ``max_tokens`` in --backend-kwargs still wins in the adapter.
+MAX_TOKENS_THINKING = 16384
+MAX_TOKENS_NO_THINK = 4096
+
+
+def thinking_enabled_for(extra_params: dict[str, Any] | None) -> bool:
+    """Whether the request asks the model to think, from the run's extra params."""
+    kwargs = (extra_params or {}).get("chat_template_kwargs")
+    return not (isinstance(kwargs, dict) and kwargs.get("enable_thinking") is False)
+
+
+def default_max_tokens(extra_params: dict[str, Any] | None) -> int:
+    """The per-turn ceiling a run sends unless --backend-kwargs overrides it."""
+    explicit = (extra_params or {}).get("max_tokens") or (extra_params or {}).get(
+        "max_completion_tokens"
+    )
+    if isinstance(explicit, int) and explicit > 0:
+        return explicit
+    return MAX_TOKENS_THINKING if thinking_enabled_for(extra_params) else MAX_TOKENS_NO_THINK
+
+
 # A run's lifecycle vocabulary.  Storage persists these, the service writes
 # them, and the CLI reads them to tell a resumable run from a broken one, so
 # they belong to no single layer.
@@ -80,6 +106,11 @@ class RunContext:
     gpu_count: int | None = None
     spec_decoding: str | None = None
     slot_count: int | None = None
+    # The per-turn generation ceiling the run sent. Reports print it so a run
+    # made under the old fixed 4096 is not compared silently with one that had
+    # four times the room to think. Appended last: RunContext is constructed
+    # positionally in places.
+    max_tokens: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-safe dict for metadata_json storage."""

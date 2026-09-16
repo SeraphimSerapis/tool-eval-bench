@@ -59,6 +59,10 @@ class ChatCompletionResult:
     message_extra_content: dict[str, Any] | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # Why generation stopped, normalised to the OpenAI vocabulary: "stop",
+    # "length", "tool_calls", or None when the provider did not say. "length"
+    # with no content and no tool calls is a turn the token ceiling ate.
+    finish_reason: str | None = None
     # HTTP status when the server rejected the request outright and the adapter
     # degraded to a soft result rather than raising. The turn produced no model
     # output at all, so a caller must not grade ``content`` as an answer. The

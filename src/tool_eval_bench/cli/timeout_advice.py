@@ -79,8 +79,8 @@ def timeout_advice(
     if slowest > 0:
         lines.append(
             f"Slowest completed turn: {slowest / 1000:.0f}s. "
-            "Only the first turn is streamed, so on later turns the timeout "
-            "bounds the whole generation rather than the gap between tokens."
+            "Every turn is streamed, so the timeout bounds the gap between "
+            "tokens; a turn that timed out went silent for that long."
         )
 
     if timeout_seconds and slowest > 0:
