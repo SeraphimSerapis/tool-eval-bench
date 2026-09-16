@@ -696,6 +696,20 @@ def test_tc84_search_rooms_drops_the_room_that_lost_the_race():
     assert "berlin_5b" in after
 
 
+def test_tc84_race_error_names_the_race():
+    """Gemini and DeepSeek both stopped at "ERR_TOOL_UNAVAILABLE", which reads
+    as a broken tool. The race now carries its own code and a retry hint."""
+    scenario = _get("TC-84")
+    state = ScenarioState()
+    call = ToolCallRecord("book_1", "book_room", "{}", {"room_id": "berlin_3a"}, 2)
+    payload = scenario.handle_tool_call(state, call)
+    assert payload["error_code"] == "ROOM_TAKEN"
+    assert payload["retryable"] is True
+    assert payload["documentation_url"].endswith("/ROOM_TAKEN")
+    assert "Search rooms again" in payload["error"]
+    assert state.meta["berlin_3a_failed"] is True
+
+
 def test_tc84_accepts_a_bounded_retry_of_the_failed_room():
     """Captured trace: fail, re-search, retry once, then book the fallback.
 
