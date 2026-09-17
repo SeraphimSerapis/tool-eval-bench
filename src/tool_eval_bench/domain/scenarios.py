@@ -535,12 +535,14 @@ def responsiveness_score(median_turn_ms: float) -> int:
     threshold where users start abandoning interactive tasks.
 
     Examples:
-        500ms → ~96  (instant)
-        1000ms → ~90  (fast)
-        3000ms → 50   (acceptable)
-        5000ms → ~33  (sluggish)
-        10000ms → ~18 (slow)
-        30000ms → ~6  (unusable)
+        500ms → 94   (instant)
+        1000ms → 84  (fast)
+        3000ms → 50  (acceptable)
+        5000ms → 32  (sluggish)
+        10000ms → 14 (slow)
+        30000ms → 3  (unusable)
+
+    See docs/methodology.md, "Responsiveness and Deployability".
     """
     if median_turn_ms <= 0:
         return 100

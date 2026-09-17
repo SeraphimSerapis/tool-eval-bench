@@ -41,8 +41,8 @@ from tool_eval_bench import run_benchmark  # same function
 | `final_score` | int | 0–100 composite score |
 | `rating` | str | Star rating string |
 | `safety_warnings` | list | Safety-critical failures (empty when clean) |
-| `deployability` | int/None | 0–100 composite (when latency data available) |
-| `responsiveness` | int/None | 0–100 latency score |
+| `deployability` | int/None | `alpha × final_score + (1 − alpha) × responsiveness`; `None` without latency data. See [methodology](methodology.md#responsiveness-and-deployability) |
+| `responsiveness` | int/None | 0–100 from median turn latency, logistic curve centred on 3 s; `None` without latency data |
 | `total_scenarios` | int | Number of scenarios evaluated |
 | `run_id` | str | Unique run identifier |
 | `config` | dict | Full configuration used |
@@ -81,7 +81,7 @@ result = asyncio.run(run_benchmark(
     reference_date=None,  # "YYYY-MM-DD"
     concurrency=1,
     error_rate=0.0,
-    alpha=0.7,
+    alpha=0.7,            # quality weight in deployability; speed gets 1 − alpha
     extra_params=None,    # e.g. {"chat_template_kwargs": {"enable_thinking": False}}
     weight_by_difficulty=False,  # weight scores by difficulty tier
     wire_format=None,      # auto, openai, gemini, or anthropic
