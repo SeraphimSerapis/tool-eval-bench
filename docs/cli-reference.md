@@ -133,6 +133,7 @@ replaces it.
 | `--resume RUN_ID` | Resume a previous run (skip already-passed scenarios) |
 | `--hardmode-only` | Run ONLY Hard Mode scenarios (equivalent to --hardmode --categories P) |
 | `--weight-by-difficulty` | Weight scores by difficulty tier (harder scenarios count more) |
+| `--alpha F` | Quality weight in the deployability composite (default: 0.7; speed gets 1 − alpha) |
 
 ## Accuracy benchmarks (pluggable)
 
@@ -187,8 +188,8 @@ See [needle.md](needle.md) for the retrieval grid and how to read it.
   "final_score": 85,           // 0–100, the headline number
   "rating": "★★★★ Good",       // star rating with label
   "safety_warnings": [],       // empty = safe; non-empty = failures in safety-critical scenarios
-  "deployability": 78,         // quality × speed composite (if latency data available)
-  "responsiveness": 65,        // latency score 0–100
+  "deployability": 78,         // alpha × final_score + (1 − alpha) × responsiveness; null without latency data
+  "responsiveness": 65,        // 0–100 from median turn latency; see methodology.md
   "total_scenarios": 69,
   "run_id": "2026-05-07T...",
   "config": { ... },

@@ -255,6 +255,85 @@ With safety gate active (safety-critical scenarios < 50%):
 
 ---
 
+## Responsiveness and Deployability
+
+The final score measures what a model gets right. Two derived scores add how
+long it took, so a run can say whether a model is usable behind an interactive
+agent and not only whether it is correct. Both appear in CLI output, Markdown
+reports, and JSON output as `responsiveness` and `deployability`, next to
+`median_turn_ms`. All three are `null` when no latency data was captured.
+
+### Turn latency
+
+A turn is one request to the endpoint: the runner sends the conversation so
+far, the model answers with text or tool calls, and the runner records the
+wall-clock time of that request. A scenario that takes four model turns
+contributes four latencies. The runner pools the latencies of every scored
+scenario in the run and takes the median. Scenarios excluded as
+infrastructure failures (timeout, connection error, 5xx) contribute nothing,
+so a timed-out request cannot drag the median toward the timeout ceiling.
+
+Median turn latency is what `--perf` does not measure. Throughput benchmarking
+(below) reports tokens per second under controlled prompt sizes; turn latency
+is the time a real scenario turn took, including prefill, generation, and any
+thinking the model did before answering.
+
+### Responsiveness
+
+Responsiveness maps median turn latency to 0–100 through a logistic curve
+centred on 3 seconds:
+
+```
+responsiveness = round(100 / (1 + (median_turn_ms / 3000) ^ 1.5))
+```
+
+The 3-second centre is the point where people start abandoning an interactive
+task. The curve is steep around it and flat at both ends, so the difference
+between 0.5 s and 1 s matters less than the difference between 2 s and 5 s.
+
+| Median turn | Responsiveness |
+|---|---|
+| 500 ms | 94 |
+| 1 s | 84 |
+| 2 s | 65 |
+| 3 s | 50 |
+| 5 s | 32 |
+| 10 s | 14 |
+| 30 s | 3 |
+
+Responsiveness is a property of the model on the endpoint that served it. The
+same weights on a faster GPU, with a longer context, or with thinking disabled
+(`--no-think`) will score differently. Compare responsiveness only between
+runs on the same serving stack.
+
+### Deployability
+
+Deployability combines the two:
+
+```
+deployability = round(alpha × final_score + (1 − alpha) × responsiveness)
+```
+
+`alpha` defaults to 0.7 and is set with `--alpha` (CLI) or `alpha=` (Python
+API). At the default, quality carries 70% of the composite and speed 30%. A
+model that scores 90 on quality with a 5-second median turn gets
+`round(0.7 × 90 + 0.3 × 32) = 73`. The same model at a 1-second median turn
+gets `round(0.7 × 90 + 0.3 × 84) = 88`.
+
+The composite uses the standard `final_score`, not `weighted_score`, and the
+safety cap does not apply to it. Deployability is not an input to the rating.
+
+### Why a composite
+
+A single quality number hides a trade-off that matters in deployment. A
+reasoning model that scores 95 but takes 20 seconds a turn and a plain model
+that scores 85 at 1 second a turn are not interchangeable behind a chat
+interface, and neither `final_score` nor tokens per second shows that. The
+composite puts the trade-off in one number, and `alpha` lets the person
+running the benchmark say how much speed is worth to them.
+
+---
+
 ## Evaluator Design
 
 ### Pattern-Based Evaluation
