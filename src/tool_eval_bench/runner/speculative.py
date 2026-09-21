@@ -12,7 +12,9 @@ Key metrics:
 - Goodput:             accepted tokens ÷ wall-clock time
 
 Data sources:
-- vLLM:     Prometheus counters at /metrics
+- vLLM:     ``metrics.speculative_decoding`` in the response when the server
+            runs with ``--per-request-spec-decode-metrics``; otherwise
+            Prometheus counter deltas at /metrics
 - llama.cpp: /metrics endpoint (if --metrics flag enabled)
 - SGLang:   live gauges are available to spec-live, but are not request-local here
 - Fallback: wall-clock effective t/s only (always available)
@@ -27,6 +29,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from tool_eval_bench.domain.measurement import MeasurementClient, MeasurementClientFactory
+from tool_eval_bench.domain.spec_decode import per_position_acceptance
 from tool_eval_bench.runner.throughput import (
     ThroughputSample,
     TokenizerConfig,
@@ -151,6 +154,10 @@ class SpecDecodeInfo:
     method: str = "unknown"  # mtp, draft_model, ngram, eagle, unknown
     has_prometheus: bool = False
     has_per_request_timings: bool = False  # llama.cpp: draft_n in response timings
+    # vLLM --per-request-spec-decode-metrics. Learned from the first response
+    # that carries it; once set, the Prometheus scrape around each request is
+    # skipped because the response body is exact and request-scoped.
+    has_per_request_metrics: bool = False
     detail: str = ""
 
 
@@ -241,6 +248,74 @@ async def detect_spec_decoding(
 
 
 # ---------------------------------------------------------------------------
+# vLLM per-request metrics
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PerRequestSpecMetrics:
+    """Typed view of vLLM's ``metrics.speculative_decoding`` response field.
+
+    ``summary`` mode gives the three counters and ``num_spec_tokens``;
+    ``detailed`` mode adds the per-step arrays. vLLM marks the shape as
+    experimental, so the parser accepts only what it can verify.
+    """
+
+    num_draft_tokens: int
+    num_accepted_draft_tokens: int
+    num_spec_steps: int
+    num_spec_tokens: int | None = None
+    per_step_accepted: list[int] | None = None
+    per_step_drafted: list[int] | None = None
+
+
+def _int_list(value: object) -> list[int] | None:
+    if not isinstance(value, list) or not all(
+        isinstance(v, int) and not isinstance(v, bool) for v in value
+    ):
+        return None
+    return list(value)
+
+
+def _non_negative_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def parse_per_request_spec_metrics(raw: object) -> PerRequestSpecMetrics | None:
+    """Parse ``metrics.speculative_decoding`` from a vLLM response.
+
+    Returns ``None`` when the object is missing any of the three counters or
+    they are not non-negative integers. Per-step arrays are dropped, not
+    rejected, when they are malformed or disagree with each other in length.
+    """
+    if not isinstance(raw, dict):
+        return None
+    drafted = _non_negative_int(raw.get("num_draft_tokens"))
+    accepted = _non_negative_int(raw.get("num_accepted_draft_tokens"))
+    steps = _non_negative_int(raw.get("num_spec_steps"))
+    if drafted is None or accepted is None or steps is None:
+        return None
+    per_step_accepted = _int_list(raw.get("per_step_accepted"))
+    per_step_drafted = _int_list(raw.get("per_step_drafted"))
+    if (
+        per_step_accepted is None
+        or per_step_drafted is None
+        or len(per_step_accepted) != len(per_step_drafted)
+    ):
+        per_step_accepted = per_step_drafted = None
+    return PerRequestSpecMetrics(
+        num_draft_tokens=drafted,
+        num_accepted_draft_tokens=accepted,
+        num_spec_steps=steps,
+        num_spec_tokens=_non_negative_int(raw.get("num_spec_tokens")),
+        per_step_accepted=per_step_accepted,
+        per_step_drafted=per_step_drafted,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
 
@@ -264,18 +339,31 @@ class SpecDecodeSample:
     error: str | None = None
 
     # Spec-decode-specific metrics
-    acceptance_rate: float | None = None  # 0.0–1.0 (from Prometheus deltas)
+    acceptance_rate: float | None = None  # 0.0–1.0
     acceptance_length: float | None = None  # avg tokens per spec step
     draft_tokens_delta: int | None = None  # draft tokens in this measurement
     accepted_tokens_delta: int | None = None  # accepted tokens in this measurement
     num_drafts_delta: int | None = None  # spec steps in this measurement
+    # Where the acceptance counters came from: "response" (vLLM per-request
+    # metrics, exact), "prometheus" (server-wide counter deltas, subject to
+    # cross-talk), "timings" (llama.cpp), or None when unavailable.
+    acceptance_source: str | None = None
+    # Configured draft length, when the server reports it directly.
+    num_spec_tokens: int | None = None
+    # Per-step arrays from vLLM ``detailed`` mode; None in ``summary`` mode.
+    per_step_accepted: list[int] | None = None
+    per_step_drafted: list[int] | None = None
 
     # Derived metrics
     spec_method: str = "unknown"  # mtp / draft_model / ngram / eagle
     baseline_tg_tps: float | None = None  # stored baseline for comparison
 
     # Prompt type used
-    prompt_type: str = "filler"  # filler / code / structured
+    prompt_type: str = "filler"  # filler / code / structured / custom label
+
+    # Repeated measurements pooled into this sample (see pool_spec_samples).
+    runs: int = 1
+    acceptance_rate_range: tuple[float, float] | None = None
 
     @property
     def effective_tg_tps(self) -> float:
@@ -333,6 +421,23 @@ class SpecDecodeSample:
         return None
 
     @property
+    def verify_steps_per_s(self) -> float | None:
+        """Target-model verification passes per second of generation time.
+
+        Without speculation every forward pass yields exactly one token, and a
+        verification pass costs at least as much as a plain decode pass plus
+        the drafting in between, so this is a lower bound on the no-spec
+        decode rate. Effective t/s divided by it is therefore a ceiling on the
+        real speedup, and it equals τ. ``--baseline-tgs`` measures the real
+        thing.
+        """
+        if self.num_drafts_delta is not None and self.num_drafts_delta > 0 and self.total_ms > 0:
+            gen_ms = self.total_ms - self.ttft_ms if self.ttft_ms > 0 else self.total_ms
+            if gen_ms > 0:
+                return self.num_drafts_delta / (gen_ms / 1000)
+        return None
+
+    @property
     def draft_window(self) -> float | None:
         """Average tokens drafted per speculative step.
 
@@ -347,6 +452,35 @@ class SpecDecodeSample:
         ):
             return self.draft_tokens_delta / self.num_drafts_delta
         return None
+
+    @property
+    def per_position_acceptance(self) -> list[float] | None:
+        """Acceptance rate at each draft position for this request.
+
+        Only available from vLLM ``detailed`` per-request metrics. Shows where
+        in the draft window acceptance falls off, which is what decides the
+        right ``num_speculative_tokens``.
+        """
+        if self.per_step_accepted is None or self.per_step_drafted is None:
+            return None
+        rates = per_position_acceptance([(self.per_step_accepted, self.per_step_drafted)])
+        return rates or None
+
+    def apply_per_request_metrics(self, metrics: PerRequestSpecMetrics) -> None:
+        """Fill acceptance fields from vLLM per-request response metrics."""
+        self.draft_tokens_delta = metrics.num_draft_tokens
+        self.accepted_tokens_delta = metrics.num_accepted_draft_tokens
+        self.num_drafts_delta = metrics.num_spec_steps
+        self.num_spec_tokens = metrics.num_spec_tokens
+        self.per_step_accepted = metrics.per_step_accepted
+        self.per_step_drafted = metrics.per_step_drafted
+        self.acceptance_source = "response"
+        if metrics.num_draft_tokens > 0:
+            self.acceptance_rate = metrics.num_accepted_draft_tokens / metrics.num_draft_tokens
+        if metrics.num_spec_steps > 0:
+            self.acceptance_length = (
+                1.0 + metrics.num_accepted_draft_tokens / metrics.num_spec_steps
+            )
 
     @classmethod
     def from_throughput_sample(
@@ -370,6 +504,68 @@ class SpecDecodeSample:
             spec_method=spec_method,
             prompt_type=prompt_type,
         )
+
+
+def pool_spec_samples(samples: list[SpecDecodeSample]) -> SpecDecodeSample:
+    """Pool repeated measurements of one sweep cell into a single sample.
+
+    Every extensive quantity (tokens, time, counters) becomes its per-run
+    mean, so each ratio property reads as the token-weighted pooled value
+    while the displayed TTFT, total time, and token count stay per-request.
+    Per-step arrays are concatenated because per-position rates are counts.
+    Failed runs are dropped; when every run failed the first failure is
+    returned as-is.
+    """
+    ok = [s for s in samples if s.error is None]
+    if not ok:
+        return samples[0]
+    if len(ok) == 1:
+        return ok[0]
+    n = len(ok)
+    first = ok[0]
+
+    def mean(values: list[float]) -> float:
+        return sum(values) / n
+
+    def mean_counter(values: list[int | None]) -> int | None:
+        present = [v for v in values if v is not None]
+        return round(sum(present) / len(present)) if present else None
+
+    pooled = SpecDecodeSample(
+        pp_tokens=round(mean([s.pp_tokens for s in ok])),
+        tg_tokens=round(mean([s.tg_tokens for s in ok])),
+        depth=first.depth,
+        concurrency=first.concurrency,
+        ttft_ms=mean([s.ttft_ms for s in ok]),
+        total_ms=mean([s.total_ms for s in ok]),
+        pp_tps=mean([s.pp_tps for s in ok]),
+        tg_tps=mean([s.tg_tps for s in ok]),
+        draft_tokens_delta=mean_counter([s.draft_tokens_delta for s in ok]),
+        accepted_tokens_delta=mean_counter([s.accepted_tokens_delta for s in ok]),
+        num_drafts_delta=mean_counter([s.num_drafts_delta for s in ok]),
+        acceptance_source=first.acceptance_source,
+        num_spec_tokens=first.num_spec_tokens,
+        spec_method=first.spec_method,
+        baseline_tg_tps=first.baseline_tg_tps,
+        prompt_type=first.prompt_type,
+        runs=n,
+    )
+    # Rates from the pooled counters, not the mean of per-run rates, so a
+    # short run does not weigh as much as a long one.
+    drafted = sum(s.draft_tokens_delta or 0 for s in ok)
+    accepted = sum(s.accepted_tokens_delta or 0 for s in ok)
+    steps = sum(s.num_drafts_delta or 0 for s in ok)
+    if drafted > 0:
+        pooled.acceptance_rate = accepted / drafted
+    if steps > 0:
+        pooled.acceptance_length = 1.0 + accepted / steps
+    rates = [s.acceptance_rate for s in ok if s.acceptance_rate is not None]
+    if rates:
+        pooled.acceptance_rate_range = (min(rates), max(rates))
+    if all(s.per_step_accepted is not None and s.per_step_drafted is not None for s in ok):
+        pooled.per_step_accepted = [v for s in ok for v in (s.per_step_accepted or [])]
+        pooled.per_step_drafted = [v for s in ok for v in (s.per_step_drafted or [])]
+    return pooled
 
 
 # Callback type
@@ -407,8 +603,12 @@ _STRUCTURED_PROMPT = (
 )
 
 
-def _get_prompt_for_type(prompt_type: str) -> str | None:
+def _get_prompt_for_type(
+    prompt_type: str, custom_prompts: dict[str, str] | None = None
+) -> str | None:
     """Return a fixed prompt for a given type, or None for filler."""
+    if custom_prompts and prompt_type in custom_prompts:
+        return custom_prompts[prompt_type]
     if prompt_type == "code":
         return _CODE_PROMPT
     elif prompt_type == "structured":
@@ -435,6 +635,8 @@ async def measure_spec_single(
     baseline_tg_tps: float | None = None,
     prompt_type: str = "filler",
     metrics_url: str | None = None,
+    temperature: float = 0.0,
+    custom_prompts: dict[str, str] | None = None,
 ) -> SpecDecodeSample:
     """Measure throughput with speculative decoding awareness.
 
@@ -445,7 +647,7 @@ async def measure_spec_single(
     spec_info = spec_info or SpecDecodeInfo()
 
     # Build messages — use typed prompt if specified
-    fixed_prompt = _get_prompt_for_type(prompt_type)
+    fixed_prompt = _get_prompt_for_type(prompt_type, custom_prompts)
     if fixed_prompt:
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
@@ -462,15 +664,18 @@ async def measure_spec_single(
             tok_cfg,
         )
 
-    # Scrape counters BEFORE generation
+    # Scrape counters BEFORE generation, unless the server has already shown
+    # that it reports exact per-request metrics in the response body.
     counters_before: SpecDecodeCounters | None = None
-    if spec_info.has_prometheus:
+    if spec_info.has_prometheus and not spec_info.has_per_request_metrics:
         counters_before = await scrape_spec_metrics(
             client, base_url, api_key, metrics_url=metrics_url
         )
 
     # Run the generation
-    sample = await _stream_one(client, base_url, model, messages, tg, api_key, tok_cfg)
+    sample = await _stream_one(
+        client, base_url, model, messages, tg, api_key, tok_cfg, temperature=temperature
+    )
     # Typed prompts are fixed strings and intentionally do not include the
     # requested filler/context depth.  Keep the reported depth honest instead
     # of labeling a fixed prompt as if it contained ``depth`` tokens.
@@ -489,6 +694,13 @@ async def measure_spec_single(
     )
     spec_sample.baseline_tg_tps = baseline_tg_tps
 
+    # vLLM --per-request-spec-decode-metrics: exact and request-scoped, so it
+    # wins over the server-wide counter delta whenever it is present.
+    per_request = parse_per_request_spec_metrics(sample.spec_decode_metrics)
+    if per_request is not None:
+        spec_sample.apply_per_request_metrics(per_request)
+        return spec_sample
+
     # Scrape counters AFTER generation and compute deltas
     if spec_info.has_prometheus and counters_before is not None:
         counters_after = await scrape_spec_metrics(
@@ -504,6 +716,7 @@ async def measure_spec_single(
             spec_sample.num_drafts_delta = int(
                 counters_after.num_drafts - counters_before.num_drafts
             )
+            spec_sample.acceptance_source = "prometheus"
 
             # Compute rates from deltas
             dt = spec_sample.draft_tokens_delta
@@ -520,6 +733,7 @@ async def measure_spec_single(
     if spec_sample.draft_tokens_delta is None and sample.draft_n is not None:
         spec_sample.draft_tokens_delta = sample.draft_n
         spec_sample.accepted_tokens_delta = sample.draft_n_accepted or 0
+        spec_sample.acceptance_source = "timings"
         if sample.draft_n > 0:
             spec_sample.acceptance_rate = (sample.draft_n_accepted or 0) / sample.draft_n
         # llama.cpp timings don't expose num_drafts, so acceptance_length
@@ -548,6 +762,9 @@ async def run_spec_bench(
     prompt_types: list[str] | None = None,
     on_sample: OnSpecSample | None = None,
     metrics_url: str | None = None,
+    runs: int = 1,
+    temperature: float = 0.0,
+    custom_prompts: dict[str, str] | None = None,
 ) -> list[SpecDecodeSample]:
     """Run speculative decoding benchmark sweep.
 
@@ -570,6 +787,13 @@ async def run_spec_bench(
         metrics_url: Optional direct URL to the Prometheus /metrics endpoint.
             Useful when the API is behind a proxy (e.g. LiteLLM) and /metrics
             lives on a different host/port.
+        runs: Measurements per depth × prompt cell, pooled into one sample.
+            One request of a hundred tokens is only a few dozen speculative
+            steps, so a single run gives a noisy acceptance rate.
+        temperature: Sampling temperature. Rejection sampling accepts more at
+            low temperature, so 0.0 reports a ceiling for sampled workloads.
+        custom_prompts: Extra prompt types, label to prompt text, selectable
+            through ``prompt_types``.
 
     Returns:
         List of SpecDecodeSample results.
@@ -596,15 +820,7 @@ async def run_spec_bench(
             metrics_url=metrics_url,
         )
 
-        if spec_info.has_prometheus:
-            logger.warning(
-                "Prometheus /metrics acceptance-rate counters are server-wide aggregates. "
-                "If other models are serving concurrent traffic on this endpoint, "
-                "per-request acceptance rate measurements will be inaccurate. "
-                "For clean measurements: use a single-model server with no concurrent load.",
-            )
-            print()  # visual separator before results
-        elif spec_info.has_per_request_timings:
+        if spec_info.has_per_request_timings:
             logger.info(
                 "llama.cpp backend detected — spec decode metrics will be "
                 "extracted from per-request timings (draft_n/draft_n_accepted). "
@@ -618,21 +834,51 @@ async def run_spec_bench(
         samples: list[SpecDecodeSample] = []
 
         for idx, (depth, prompt_type) in enumerate(combos):
-            spec_sample = await measure_spec_single(
-                client,
-                base_url,
-                model,
-                pp=pp,
-                tg=tg,
-                depth=depth,
-                api_key=api_key,
-                tok_cfg=tok_cfg,
-                spec_info=spec_info,
-                baseline_tg_tps=baseline_tg_tps,
-                prompt_type=prompt_type,
-                metrics_url=metrics_url,
-            )
+            cell: list[SpecDecodeSample] = []
+            for _ in range(max(1, runs)):
+                cell.append(
+                    await measure_spec_single(
+                        client,
+                        base_url,
+                        model,
+                        pp=pp,
+                        tg=tg,
+                        depth=depth,
+                        api_key=api_key,
+                        tok_cfg=tok_cfg,
+                        spec_info=spec_info,
+                        baseline_tg_tps=baseline_tg_tps,
+                        prompt_type=prompt_type,
+                        metrics_url=metrics_url,
+                        temperature=temperature,
+                        custom_prompts=custom_prompts,
+                    )
+                )
+                # Learn the source from the very first response so the
+                # remaining runs of this cell already skip the scrape.
+                if cell[-1].acceptance_source == "response":
+                    spec_info.has_per_request_metrics = True
+                    spec_info.active = True
+            spec_sample = pool_spec_samples(cell)
             samples.append(spec_sample)
+
+            # The source is only known once a response has come back, so the
+            # cross-talk caveat waits for the first sample instead of firing
+            # on every server that happens to expose /metrics.
+            if idx == 0 and spec_sample.acceptance_source == "response":
+                logger.info(
+                    "Server returns per-request spec decode metrics in the response body. "
+                    "Prometheus deltas are not needed, so concurrent traffic does not "
+                    "affect these measurements.",
+                )
+            elif idx == 0 and spec_sample.acceptance_source == "prometheus":
+                logger.warning(
+                    "Prometheus /metrics acceptance-rate counters are server-wide aggregates. "
+                    "If other models are serving concurrent traffic on this endpoint, "
+                    "per-request acceptance rate measurements will be inaccurate. "
+                    "For clean measurements: use a single-model server with no concurrent "
+                    "load, or start vLLM with --per-request-spec-decode-metrics summary.",
+                )
 
             if on_sample:
                 await on_sample(spec_sample, idx, total)

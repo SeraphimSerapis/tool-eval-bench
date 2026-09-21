@@ -590,13 +590,18 @@ metrics, you can't tell whether your MTP configuration is actually helping.
 | **Acceptance length (τ)** | 1 + accepted draft tokens ÷ speculative steps for counter backends; direct gauge for SGLang | Prometheus `/metrics` |
 | **Draft window** | Drafted tokens ÷ speculative steps (configured draft size) | Prometheus `/metrics` |
 | **Draft t/s** | Drafted tokens ÷ wall-clock generation time | Prometheus `/metrics` + timing |
+| **Verify steps/s** | Speculative steps ÷ wall-clock generation time. A lower bound on the no-spec decode rate, so Effective t/s ÷ Steps/s (≈ τ) is a ceiling on the speedup | Counters + timing |
 | **Speedup ratio** | Effective t/s ÷ baseline t/s | Requires `--baseline-tgs` |
 | **Goodput** | Only accepted (verified) tokens per second | Prometheus `/metrics` |
 
 ### Data Collection
 
-Acceptance rate is collected by scraping **Prometheus counters before and
-after** each generation request when the backend exposes counters:
+When vLLM runs with `--per-request-spec-decode-metrics`, each response carries
+`metrics.speculative_decoding` with the request's own draft, accepted, and
+step counts (and per-step arrays in `detailed` mode). That is exact and
+request-scoped, so it is preferred whenever present. Otherwise acceptance
+rate is collected by scraping **Prometheus counters before and after** each
+generation request when the backend exposes counters:
 
 - `vllm:spec_decode_num_accepted_tokens_total`
 - `vllm:spec_decode_num_draft_tokens_total`
@@ -606,6 +611,11 @@ after** each generation request when the backend exposes counters:
 - `llamacpp:spec_decode_num_drafts_total`
 
 The delta between before/after gives per-request acceptance metrics.
+Each depth × prompt cell is measured `--spec-runs` times (default 3) and the
+counters are pooled, because one request is only a few dozen speculative
+steps; the row shows the pooled α and the per-run range. Requests are greedy
+unless `--temperature` is set; rejection sampling accepts more at low
+temperature, so the greedy figure is a ceiling for sampled workloads.
 The acceptance-length convention includes the verifier's bonus token, so it
 is `1 + accepted draft tokens ÷ speculative steps`. vLLM also exposes
 `spec_decode_num_accepted_tokens_per_pos_total{position="..."}` and the
@@ -617,7 +627,7 @@ This requires `concurrency=1` for accurate isolation.
 
 | Backend | Effective t/s | Acceptance Rate | Method |
 |---|---|---|---|
-| vLLM | ✅ Always | ✅ Via `/metrics` | Prometheus counters |
+| vLLM | ✅ Always | ✅ Per-request response metrics when enabled, else `/metrics` | Response field or Prometheus counters |
 | SGLang | ✅ Always | `spec-live` only | Direct gauges are server state, not request-local counters |
 | llama.cpp | ✅ Always | ✅ On current builds with `--metrics` | Prometheus counters |
 | Other | ✅ Always | ❌ Not available | — |
@@ -631,6 +641,10 @@ of any speculative decoding technique.
 `--spec-live` uses the same Prometheus endpoint without starting a generation
 request. It keeps a rolling dashboard for acceptance, throughput, cache use,
 request queues, and per-position acceptance where the backend publishes it.
+The gauge and sparklines pool counter deltas over a 30-second window; the
+session α is the pooled ratio since the dashboard opened (or the last
+Ctrl+R). A failed scrape is shown in the header with the age of the data on
+screen.
 
 The monitor follows the backend contracts maintained upstream:
 

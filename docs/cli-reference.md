@@ -135,6 +135,37 @@ replaces it.
 | `--weight-by-difficulty` | Weight scores by difficulty tier (harder scenarios count more) |
 | `--alpha F` | Quality weight in the deployability composite (default: 0.7; speed gets 1 − alpha) |
 
+## Benchmark modes
+
+These run alongside the tool-call scenarios, or on their own with `--skip-tool-eval`
+(`--perf-only` for throughput). Method and metric details live in
+[benchmarks](benchmarks.md), [speculative-decoding](speculative-decoding.md), and
+[context-pressure](context-pressure.md).
+
+| Flag | Purpose |
+|------|---------|
+| `--perf` | Throughput benchmark (llama-benchy style pp/tg sweep) |
+| `--perf-only` | Throughput only, skip the scenarios |
+| `--pp N`, `--tg N` | Prompt and generation tokens per request (default: 2048, 128) |
+| `--depth LIST` | Context depths, comma separated (default: `0,4096,8192`) |
+| `--concurrency LIST` | Concurrency levels for `--perf` (default: `1,2,4`) |
+| `--benchy-runs N` | Measurement runs per throughput test point (default: 3) |
+| `--spec-bench` | Speculative-decoding benchmark: effective t/s, acceptance rate, τ, per-position acceptance |
+| `--spec-method M` | Method hint when the server does not identify it (`--help` lists the choices) |
+| `--spec-prompts LIST` | Prompt types (default: `filler,code,structured`); labels from `--spec-prompt-file` are accepted |
+| `--spec-prompt-file PATH` | Your own workload: one prompt per line, or JSON lines with `prompt` and an optional `label` |
+| `--spec-runs N` | Measurements per depth × prompt cell, pooled into one row (default: 3) |
+| `--baseline-tgs F` | Known no-spec tg t/s for a measured speedup; without it a ceiling is derived from verify steps/s |
+| `--metrics-url URL` | Prometheus `/metrics` when the API sits behind a proxy |
+| `--spec-live` | Live dashboard of speculative-decoding metrics (also the `spec-live` subcommand) |
+| `--spec-live-interval S` | Seconds between scrapes (default: 1.0) |
+| `--context-pressure R` | Fill the context to ratio R (0–1) before each scenario |
+| `--context-pressure-sweep A-B` | Sweep pressure from A to B in `--sweep-steps` levels (default: 5) |
+| `--context-size N` | Override the detected context window |
+
+`--temperature` applies to spec-bench requests as well; greedy is the default and the report
+records the value, since acceptance falls as sampling temperature rises.
+
 ## Accuracy benchmarks (pluggable)
 
 In addition to the 69-scenario tool-call benchmark, `tool-eval-bench` supports

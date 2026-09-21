@@ -1,1 +1,0 @@
-`--perf` against SGLang still failed when `/metrics` was off. Backend detection then fell through to vLLM, so llama-benchy kept sending `return_token_ids` on a streaming request and every sample 400'd. `/v1/models` `owned_by=sglang` now identifies the engine the same way `owned_by=ninfer` already did.

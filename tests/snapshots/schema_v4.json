@@ -434,6 +434,18 @@
     },
     {
       "default": null,
+      "description": "Prompt file for spec-bench: one prompt per line, or JSON lines with 'prompt' and an optional 'label'",
+      "name": "spec_prompt_file",
+      "type": "string"
+    },
+    {
+      "default": 3,
+      "description": "Measurements per spec-bench cell, pooled into one row",
+      "name": "spec_runs",
+      "type": "int"
+    },
+    {
+      "default": null,
       "description": "Prometheus /metrics URL (when API is behind a proxy)",
       "name": "metrics_url",
       "type": "string"

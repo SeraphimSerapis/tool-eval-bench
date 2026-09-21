@@ -280,6 +280,10 @@ class ThroughputSample:
     # instead it embeds draft_n/draft_n_accepted in the response timings.
     draft_n: int | None = None  # tokens drafted (llama.cpp timings)
     draft_n_accepted: int | None = None  # tokens accepted (llama.cpp timings)
+    # vLLM ``--per-request-spec-decode-metrics``: the raw
+    # ``metrics.speculative_decoding`` object from the final usage chunk.
+    # Kept raw here; ``runner.speculative`` owns the typed parse.
+    spec_decode_metrics: dict[str, Any] | None = None
 
     @property
     def effective_tg_tps(self) -> float:
@@ -554,6 +558,7 @@ async def _stream_one(
     api_key: str | None,
     tok_cfg: TokenizerConfig | None = None,
     _include_token_ids: bool | None = None,
+    temperature: float = 0.0,
 ) -> ThroughputSample:
     """Execute a single streaming request and collect timing data.
 
@@ -588,7 +593,7 @@ async def _stream_one(
         "model": model,
         "messages": messages,
         (tok_cfg.output_token_field if tok_cfg else "max_tokens"): tg,
-        "temperature": 0.0,
+        "temperature": temperature,
         "stream": True,
         "stream_options": {"include_usage": True},
     }
@@ -633,6 +638,14 @@ async def _stream_one(
                 if usage:
                     prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
                     server_completion_tokens = usage.get("completion_tokens", 0)
+
+                # vLLM per-request spec decode metrics ride on the same
+                # final chunk as usage, and only when include_usage is set.
+                metrics = chunk.get("metrics")
+                if isinstance(metrics, dict):
+                    spec_metrics = metrics.get("speculative_decoding")
+                    if isinstance(spec_metrics, dict):
+                        sample.spec_decode_metrics = spec_metrics
 
                 # llama.cpp embeds speculative decoding stats in timings
                 timings = chunk.get("timings")
@@ -705,7 +718,9 @@ async def _stream_one(
         )
         if retry_payload is not None and tok_cfg is not None:
             tok_cfg.output_token_field = "max_completion_tokens"
-            return await _stream_one(client, base_url, model, messages, tg, api_key, tok_cfg)
+            return await _stream_one(
+                client, base_url, model, messages, tg, api_key, tok_cfg, temperature=temperature
+            )
         # ``return_token_ids`` is not part of the OpenAI API contract.  Probe
         # it once, then remember the endpoint cannot accept it for this run.
         # Retry the same request without the extension on strict 4xx responses,

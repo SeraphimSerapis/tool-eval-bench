@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import httpx
@@ -171,6 +172,16 @@ _LLAMACPP_PER_POSITION_COUNTER_METRIC_NAMES = (
     "llamacpp:spec_decode_num_accepted_tokens_per_pos",
     "llamacpp:spec_decode_num_accepted_tokens_per_pos_total",
 )
+# vLLM also counts how many drafts reached each position.  Dividing by it
+# instead of by ``num_drafts`` keeps per-position rates exact for proposers
+# whose draft length varies (ngram, suffix), where later positions are not
+# drafted in every step.
+_PER_POSITION_DRAFTED_METRIC_NAMES = (
+    "vllm:spec_decode_num_draft_tokens_per_pos",
+    "vllm:spec_decode_num_draft_tokens_per_pos_total",
+    "vllm_spec_decode_num_draft_tokens_per_pos",
+    "vllm_spec_decode_num_draft_tokens_per_pos_total",
+)
 
 # These are the method values accepted by current vLLM's SpeculativeConfig.
 # Method detection only trusts an explicit method/config label.  Generic
@@ -278,6 +289,25 @@ def _sum_pattern_values(pattern: re.Pattern[str], text: str) -> tuple[float | No
 def counter_delta(previous: float, current: float) -> float:
     """Return a non-negative counter delta, treating a decrease as a reset."""
     return current - previous if current >= previous else max(0.0, current)
+
+
+def per_position_rates_from_counters(
+    accepted: dict[int, float],
+    drafted: dict[int, float],
+    num_drafts: float,
+) -> dict[int, float]:
+    """Acceptance rate per draft position from cumulative counters.
+
+    The denominator is the number of drafts that reached the position when
+    the exporter counts that (vLLM ``num_draft_tokens_per_pos``); otherwise
+    every draft is assumed to be full length and ``num_drafts`` is used.
+    """
+    rates: dict[int, float] = {}
+    for position_index, accepted_count in accepted.items():
+        denominator = drafted.get(position_index, num_drafts) if drafted else num_drafts
+        if denominator > 0:
+            rates[position_index] = accepted_count / denominator
+    return rates
 
 
 def _canonical_spec_method(value: str) -> str | None:
@@ -408,6 +438,9 @@ class MetricsSnapshot:
 
     # Per-position accepted token counters (position → cumulative count)
     per_position_counters: dict[int, float] = field(default_factory=dict)
+    # Per-position drafted token counters (position → cumulative count).
+    # Empty on exporters that only publish accepted-per-position.
+    per_position_drafted_counters: dict[int, float] = field(default_factory=dict)
 
     # Detected speculative decoding method (dflash, mtp, eagle, etc.)
     spec_method: str = "unknown"
@@ -503,6 +536,19 @@ class SpecLiveDelta:
     acceptance_length: float | None = None  # avg tokens per draft step
     draft_window: float | None = None  # avg drafted per step
     waste_ratio: float | None = None  # 1 - acceptance_rate
+
+    # Raw counter deltas for this interval, kept so a rolling window can be
+    # pooled across intervals without re-deriving them from rates.
+    delta_accepted: float = 0.0
+    delta_drafted: float = 0.0
+    delta_drafts: float = 0.0
+
+    # --- Rolling-window rates (pooled over the recent intervals) ---
+    # A session average converges and then hides regime changes; these
+    # follow the workload.  None until the window has seen a draft.
+    rolling_acceptance_rate: float | None = None
+    rolling_acceptance_length: float | None = None
+    rolling_draft_window: float | None = None
 
     # Throughput from deltas
     accepted_tps: float = 0.0  # accepted tokens / elapsed
@@ -632,6 +678,16 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
                 )
                 snap.vllm_spec_metrics_present = True
 
+    for metric_name in _PER_POSITION_DRAFTED_METRIC_NAMES:
+        for labels, value in _metric_series(text, metric_name):
+            position = labels.get("position")
+            if position is None:
+                continue
+            position_index = int(position)
+            snap.per_position_drafted_counters[position_index] = (
+                snap.per_position_drafted_counters.get(position_index, 0.0) + value
+            )
+
     # Use llama.cpp spec counters as the generic counter view when no vLLM
     # counter family is present.  This keeps existing dashboard consumers
     # backend-neutral while retaining explicit fields for mixed scrapes.
@@ -648,10 +704,11 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
         snap.spec_backend = "llamacpp"
 
     # If we have per-position counters but no rate gauges, compute rates
-    # from counters: rate[pos] = counter[pos] / num_drafts
+    # from counters.
     if not snap.per_position_rates and snap.per_position_counters and snap.num_drafts > 0:
-        for position_index, counter_value in snap.per_position_counters.items():
-            snap.per_position_rates[position_index] = counter_value / snap.num_drafts
+        snap.per_position_rates = per_position_rates_from_counters(
+            snap.per_position_counters, snap.per_position_drafted_counters, snap.num_drafts
+        )
 
     # Detect speculative decoding method from raw text
     snap.spec_method = _detect_spec_method(text)
@@ -778,6 +835,9 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
     delta = SpecLiveDelta(
         elapsed_s=dt,
         had_activity=had_activity,
+        delta_accepted=d_accepted,
+        delta_drafted=d_drafted,
+        delta_drafts=d_drafts,
         # Throughput (gauge or counter-derived fallback)
         prompt_tps=prompt_tps_val,
         generation_tps=gen_tps,
@@ -854,6 +914,35 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
         delta.drafted_tps = d_drafted / dt
 
     return delta
+
+
+def apply_rolling_rates(history: Sequence[SpecLiveDelta], window_s: float) -> None:
+    """Pool the counter deltas of the most recent ``window_s`` seconds.
+
+    Sets the ``rolling_*`` fields on the newest delta in *history*. Walks
+    backwards until the accumulated interval time exceeds the window, so the
+    window is measured in wall-clock time rather than poll count and survives
+    a non-default poll interval. Direct-gauge backends (SGLang) carry no
+    counter deltas and are left untouched.
+    """
+    if not history:
+        return
+    latest = history[-1]
+    if not latest.counter_metrics_available:
+        return
+    accepted = drafted = drafts = elapsed = 0.0
+    for delta in reversed(history):
+        if elapsed >= window_s:
+            break
+        accepted += delta.delta_accepted
+        drafted += delta.delta_drafted
+        drafts += delta.delta_drafts
+        elapsed += delta.elapsed_s
+    if drafted > 0:
+        latest.rolling_acceptance_rate = accepted / drafted
+    if drafts > 0:
+        latest.rolling_acceptance_length = 1.0 + accepted / drafts
+        latest.rolling_draft_window = drafted / drafts
 
 
 def metrics_url_from_base(base_url: str) -> str:

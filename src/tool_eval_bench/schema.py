@@ -459,6 +459,21 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Prompt types for spec-bench, comma separated",
     },
     {
+        "name": "spec_prompt_file",
+        "type": "string",
+        "default": None,
+        "description": (
+            "Prompt file for spec-bench: one prompt per line, or JSON lines with "
+            "'prompt' and an optional 'label'"
+        ),
+    },
+    {
+        "name": "spec_runs",
+        "type": "int",
+        "default": 3,
+        "description": "Measurements per spec-bench cell, pooled into one row",
+    },
+    {
         "name": "metrics_url",
         "type": "string",
         "default": None,

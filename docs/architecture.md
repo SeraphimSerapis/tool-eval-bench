@@ -89,6 +89,7 @@ external dependencies.
 | `scenarios.py` | `ScenarioDefinition`, `ScenarioEvaluation`, `ScenarioState`, `Category` enum, scoring functions, safety gating |
 | `models.py` | `BenchmarkConfig` dataclass |
 | `measurement.py` | `MeasurementClient` port and raw streaming response types |
+| `spec_decode.py` | Per-position acceptance arithmetic shared by the spec runner and its report renderer |
 | `plugin.py` | `BenchmarkPlugin` ABC + `BenchmarkResult` dataclass for pluggable benchmarks |
 | `tools.py` | Universal tool definitions (12 tools), system prompt |
 | `tools_large.py` | Extended 52-tool definitions for Category L |

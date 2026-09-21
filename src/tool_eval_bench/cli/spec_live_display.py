@@ -30,6 +30,7 @@ from tool_eval_bench.cli.spec_live_rendering import (
     _ACTIVITY_FRAMES,
     _HISTORY_LEN,
     _POLL_INTERVAL,
+    _ROLLING_WINDOW_S,
     _ar_color,
     _efficiency_insight,
     _format_uptime,
@@ -43,8 +44,10 @@ from tool_eval_bench.runner.spec_live import (
     MetricsSnapshot,
     ServerSpecInfo,
     SpecLiveDelta,
+    apply_rolling_rates,
     compute_delta,
     counter_delta,
+    per_position_rates_from_counters,
     probe_server_spec_info,
     scrape_snapshot,
 )
@@ -64,6 +67,9 @@ def _build_dashboard(
     term_width: int = 120,
     server_spec_info: ServerSpecInfo | None = None,
     reset_flash: bool = False,
+    poll_interval: float = _POLL_INTERVAL,
+    failed_polls: int = 0,
+    last_scrape_age_s: float | None = None,
 ) -> Panel:
     """Build the full dashboard layout.
 
@@ -72,9 +78,16 @@ def _build_dashboard(
     term_width : int
         Terminal width in columns. Used to scale all widget widths
         so the dashboard fills but never overflows the terminal.
+    failed_polls : int
+        Consecutive scrapes that returned nothing. Non-zero turns the header
+        red and shows how old the numbers on screen are, so a dead server
+        never looks like a quiet one.
+    last_scrape_age_s : float | None
+        Seconds since the last successful scrape, when there has been one.
     """
     now = time.time()
     uptime = now - start_time
+    stale = failed_polls > 0
 
     # ── Responsive width calculations ──
     # Panel border + padding eats 4 chars (│ + padding each side)
@@ -90,7 +103,11 @@ def _build_dashboard(
 
     # Activity indicator
     activity = _ACTIVITY_FRAMES[poll_count % len(_ACTIVITY_FRAMES)]
-    activity_color = "bright_green" if delta is not None else "yellow"
+    if stale:
+        activity = "✗"
+        activity_color = "bright_red"
+    else:
+        activity_color = "bright_green" if delta is not None else "yellow"
 
     # ── Header ──
     header = Table.grid(padding=0, expand=True)
@@ -124,6 +141,10 @@ def _build_dashboard(
         left_text.append(draft_name, style="dim italic cyan")
 
     right_text = Text()
+    if stale:
+        age = f", data {_format_uptime(last_scrape_age_s)} old" if last_scrape_age_s else ""
+        right_text.append(f"⚠ {failed_polls} failed polls{age}", style="bold bright_red")
+        right_text.append("  │  ", style="dim")
     right_text.append(f"⏱  {_format_uptime(uptime)}", style="dim")
     right_text.append("  │  ", style="dim")
     right_text.append(f"📡 {poll_count}", style="dim")
@@ -148,17 +169,29 @@ def _build_dashboard(
             Group(header, waiting),
             border_style="bright_magenta",
             title="[bold bright_magenta]─── ◆ spec-live ◆ ───[/]",
-            subtitle="[dim italic]Ctrl+R reset  ·  Ctrl+C exit  ·  Refreshing every 1s[/]",
+            subtitle=(
+                "[dim italic]Ctrl+R reset  ·  Ctrl+C exit  ·  "
+                f"Refreshing every {poll_interval:g}s[/]"
+            ),
         )
 
     # ── Use CUMULATIVE rates for gauges (always meaningful) ──
-    # vLLM updates Prometheus counters every ~10s, so per-interval
-    # rates are zero most of the time.  Cumulative α is always valid.
-    ar = delta.cumulative_acceptance_rate if delta.cumulative_acceptance_rate is not None else 0.0
+    # Session α is a running average: it converges and then hides workload
+    # changes.  The gauge and the sparklines follow the rolling window so a
+    # switch from code to prose is visible; the session figure lives in the
+    # grid and the exit summary.
+    session_ar = delta.cumulative_acceptance_rate
+    rolling = delta.rolling_acceptance_rate
+    ar = rolling if rolling is not None else session_ar if session_ar is not None else 0.0
+    ar_label = (
+        f" ◈ ACCEPTANCE RATE ({_ROLLING_WINDOW_S:g}s)  "
+        if rolling is not None
+        else " ◈ ACCEPTANCE RATE  "
+    )
 
     gauge_line = Text()
     gauge_line.append("\n ")
-    gauge_line.append(" ◈ ACCEPTANCE RATE  ", style="bold bright_magenta")
+    gauge_line.append(ar_label, style="bold bright_magenta")
     gauge_line.append_text(_gauge_bar(ar, width=gauge_w))
 
     # Annotate with τ/window utilization and inferred num_speculative_tokens
@@ -218,15 +251,21 @@ def _build_dashboard(
         Text("  Waste Ratio", style="dim"),
         Text(waste_str, style=f"bold {waste_color}" if waste is not None else "dim"),
     )
+    session_ar_str = f"{session_ar * 100:.1f}%" if session_ar is not None else "—"
+    rolling_tau = delta.rolling_acceptance_length
+    rolling_tau_str = f"{rolling_tau:.2f}" if rolling_tau is not None else "—"
     metrics.add_row(
         Text("  Gen t/s", style="dim"),
         Text(f"{delta.generation_tps:.1f}", style="bold bright_green"),
         Text("│", style="dim"),
-        Text("", style="dim"),
-        Text("", style="dim"),
-        Text("", style="dim"),
-        Text("", style="dim"),
-        Text("", style="dim"),
+        Text("  Session α", style="dim"),
+        Text(
+            session_ar_str,
+            style=f"bold {_ar_color(session_ar)}" if session_ar is not None else "dim",
+        ),
+        Text("│", style="dim"),
+        Text(f"  τ ({_ROLLING_WINDOW_S:g}s)", style="dim"),
+        Text(rolling_tau_str, style="bold cyan"),
     )
 
     # ── Divider ──
@@ -327,18 +366,24 @@ def _build_dashboard(
     left_col = engine_panel
 
     # ── Right Column: Sparklines + Throughput History ──
-    # Use cumulative α for sparklines (always available)
+    # Sparklines follow the rolling window; direct-gauge backends have no
+    # counter deltas, so they fall back to the gauge value itself.
     ar_hist = [
-        d.cumulative_acceptance_rate for d in history if d.cumulative_acceptance_rate is not None
+        rate
+        for d in history
+        if (
+            rate := (
+                d.rolling_acceptance_rate
+                if d.rolling_acceptance_rate is not None
+                else d.cumulative_acceptance_rate
+            )
+        )
+        is not None
     ]
     # For throughput, use gen_tps gauge (always updated) and filter accepted to active intervals
     gen_hist = [d.generation_tps for d in history]
     acc_hist = [d.accepted_tps for d in history if d.had_activity]
-    waste_hist = [
-        1.0 - d.cumulative_acceptance_rate
-        for d in history
-        if d.cumulative_acceptance_rate is not None
-    ]
+    waste_hist = [1.0 - rate for rate in ar_hist]
 
     spark_table = Table.grid(padding=(0, 1))
     spark_table.add_column("label", width=13, no_wrap=True)
@@ -398,7 +443,10 @@ def _build_dashboard(
 
     sparkline_panel = Panel(
         spark_table,
-        title=f"[bold]📊 History ({len(history)}/{_HISTORY_LEN}s)[/]",
+        title=(
+            f"[bold]📊 History ({len(history)}/{_HISTORY_LEN} polls"
+            f" · {_format_uptime(_HISTORY_LEN * poll_interval)})[/]"
+        ),
         border_style="bright_cyan",
         padding=(0, 1),
     )
@@ -410,12 +458,12 @@ def _build_dashboard(
     avg_table.add_column("label", no_wrap=True, width=14)
     avg_table.add_column("value", no_wrap=True)
 
-    avg_ar = mean(ar_hist) if ar_hist else 0.0
+    avg_ar = session_ar if session_ar is not None else 0.0
     avg_gen = mean(gen_hist) if gen_hist else 0.0
     avg_acc = mean(acc_hist) if acc_hist else 0.0
 
     avg_table.add_row(
-        Text("Avg α", style="dim"),
+        Text("Session α", style="dim"),
         Text(f"{avg_ar * 100:.1f}%", style=f"bold {_ar_color(avg_ar)}"),
     )
     avg_table.add_row(
@@ -429,7 +477,7 @@ def _build_dashboard(
 
     avg_panel = Panel(
         avg_table,
-        title="[bold]⌀ Rolling Averages[/]",
+        title="[bold]⌀ Session Averages[/]",
         border_style="dim cyan",
         padding=(0, 1),
     )
@@ -486,7 +534,9 @@ def _build_dashboard(
         Group(*parts),
         border_style="bright_magenta",
         title="[bold bright_magenta]─── ◆ spec-live ◆ ───[/]",
-        subtitle="[dim italic]Ctrl+R reset  ·  Ctrl+C exit  ·  Refreshing every 1s[/]",
+        subtitle=(
+            f"[dim italic]Ctrl+R reset  ·  Ctrl+C exit  ·  Refreshing every {poll_interval:g}s[/]"
+        ),
         padding=(0, 1),
     )
 
@@ -586,6 +636,12 @@ async def run_spec_live(
     poll_count = 0
     last_delta: SpecLiveDelta | None = None
     reset_flash_remaining = 0  # show reset banner for N poll cycles
+    failed_polls = 0  # consecutive scrapes that returned nothing
+    last_scrape_ok: float | None = None
+    # Whole-session generation throughput, independent of the history window.
+    gen_tps_sum = 0.0
+    gen_tps_count = 0
+    gen_tps_peak = 0.0
 
     # Sticky gauges — vLLM resets gauge metrics to 0 between its ~10s
     # internal update intervals.  We keep the last non-zero value so the
@@ -682,6 +738,11 @@ async def run_spec_live(
                     finally:
                         poll_task = None
                     poll_count += 1
+                    if snap is None:
+                        failed_polls += 1
+                    else:
+                        failed_polls = 0
+                        last_scrape_ok = time.time()
 
                     if snap is not None and (snap.has_spec_decode or snap.has_llamacpp_metrics):
                         # Capture baseline on first successful scrape (session-relative counters)
@@ -718,26 +779,43 @@ async def run_spec_live(
                                 else:
                                     delta.cumulative_acceptance_rate = None
 
-                                # Session acceptance length (τ)
+                                # Session acceptance length (τ), draft window,
+                                # and the k inferred from the window.
                                 if sess_drafts > 0:
                                     delta.cumulative_acceptance_length = (
                                         1.0 + sess_accepted / sess_drafts
                                     )
+                                    delta.cumulative_draft_window = sess_drafted / sess_drafts
+                                    delta.num_spec_tokens = round(sess_drafted / sess_drafts)
                                 else:
                                     delta.cumulative_acceptance_length = None
+                                    delta.cumulative_draft_window = None
+                                    delta.num_spec_tokens = None
 
                                 # Session per-position rates from counters
                                 if snap.per_position_counters:
                                     if sess_drafts > 0:
-                                        sess_rates: dict[int, float] = {}
-                                        for pos, count in snap.per_position_counters.items():
-                                            base_count = baseline_snap.per_position_counters.get(
-                                                pos, 0.0
+                                        sess_accepted_pos = {
+                                            pos: counter_delta(
+                                                baseline_snap.per_position_counters.get(pos, 0.0),
+                                                count,
                                             )
-                                            sess_rates[pos] = (
-                                                counter_delta(base_count, count) / sess_drafts
+                                            for pos, count in snap.per_position_counters.items()
+                                        }
+                                        sess_drafted_pos = {
+                                            pos: counter_delta(
+                                                baseline_snap.per_position_drafted_counters.get(
+                                                    pos, 0.0
+                                                ),
+                                                count,
                                             )
-                                        delta.per_position_rates = sess_rates
+                                            for pos, count in (
+                                                snap.per_position_drafted_counters.items()
+                                            )
+                                        }
+                                        delta.per_position_rates = per_position_rates_from_counters(
+                                            sess_accepted_pos, sess_drafted_pos, sess_drafts
+                                        )
                                     else:
                                         # No new drafts yet — don't show stale all-time rates
                                         delta.per_position_rates = {}
@@ -765,7 +843,12 @@ async def run_spec_live(
                                 delta.prefix_cache_hit_pct = _sticky_prefix_cache_pct
 
                             history.append(delta)
+                            apply_rolling_rates(history, _ROLLING_WINDOW_S)
                             last_delta = delta
+                            if delta.generation_tps > 0:
+                                gen_tps_sum += delta.generation_tps
+                                gen_tps_count += 1
+                                gen_tps_peak = max(gen_tps_peak, delta.generation_tps)
 
                             # Override spec method from --spec-method CLI flag
                             if spec_method is not None:
@@ -794,28 +877,39 @@ async def run_spec_live(
                             term_width=console.width,
                             server_spec_info=server_spec_info,
                             reset_flash=reset_flash_remaining > 0,
+                            poll_interval=poll_interval,
+                            failed_polls=failed_polls,
+                            last_scrape_age_s=(
+                                time.time() - last_scrape_ok if last_scrape_ok else None
+                            ),
                         )
                     )
 
                     # ── Wait for poll interval OR Ctrl+R keypress ──
                     reset_event = asyncio.Event()
 
-                    async def _check_stdin() -> None:
-                        """Check stdin for Ctrl+R (\x12) keypresses."""
+                    async def _check_stdin() -> bool:
+                        """Wait one poll interval while watching stdin for Ctrl+R.
+
+                        Returns False when stdin cannot be watched (no termios,
+                        or not a TTY) so the caller sleeps instead; otherwise
+                        the loop would spin at full speed whenever output is
+                        piped.
+                        """
                         nonlocal tty_restore
 
                         try:
                             import termios  # noqa: F811
                             import tty  # noqa: F811
                         except ImportError:
-                            return
+                            return False
                         import sys as _sys  # avoid shadowing outer
 
                         fd = _sys.stdin.fileno()
                         try:
                             old = termios.tcgetattr(fd)
                         except termios.error:
-                            return
+                            return False
 
                         def _restore_tty() -> None:
                             termios.tcsetattr(fd, termios.TCSADRAIN, old)
@@ -860,12 +954,15 @@ async def run_spec_live(
                             except (OSError, ValueError):
                                 logger.debug("Failed to restore terminal settings")
                             tty_restore = None
+                        return True
 
                     # Run stdin check with poll timeout
                     try:
-                        await _check_stdin()
+                        waited = await _check_stdin()
                     except Exception:
-                        # Fallback: plain wait (no stdin support)
+                        waited = False
+                    if not waited:
+                        # Plain wait: no stdin support or stdin is not a TTY.
                         try:
                             await asyncio.wait_for(
                                 stop_event.wait(),
@@ -886,6 +983,9 @@ async def run_spec_live(
                         last_delta = None
                         start_time = time.time()
                         poll_count = 0
+                        gen_tps_sum = 0.0
+                        gen_tps_count = 0
+                        gen_tps_peak = 0.0
                         _sticky_gen_tps = 0.0
                         _sticky_prompt_tps = 0.0
                         _sticky_gpu_cache_pct = 0.0
@@ -919,63 +1019,71 @@ async def run_spec_live(
     console.print()
     console.print("  [bold bright_magenta]◆ spec-live[/] stopped.")
 
-    # Print session summary
-    if history:
-        ar_vals = [
-            d.cumulative_acceptance_rate
-            for d in history
-            if d.cumulative_acceptance_rate is not None
+    # Print session summary.  Session α is the pooled counter ratio for the
+    # whole session, not an average of the running average; the spread is
+    # the range of the rolling window, which is what actually varied.
+    if last_delta is not None and last_delta.cumulative_acceptance_rate is not None:
+        session_ar = last_delta.cumulative_acceptance_rate
+        session_tau = last_delta.cumulative_acceptance_length
+        rolling_vals = [
+            d.rolling_acceptance_rate for d in history if d.rolling_acceptance_rate is not None
         ]
-        gen_vals = [d.generation_tps for d in history]
-        if ar_vals:
-            from statistics import mean, stdev
+        avg_gen = gen_tps_sum / gen_tps_count if gen_tps_count else 0.0
 
-            avg_ar = mean(ar_vals)
-            std_ar = stdev(ar_vals) if len(ar_vals) > 1 else 0.0
-            avg_gen = mean(gen_vals) if gen_vals else 0.0
-            max_gen = max(gen_vals) if gen_vals else 0.0
-
-            console.print()
-
-            # Session-relative totals for exit summary
-            if last_delta and last_delta.counter_metrics_available:
-                if baseline_snap:
-                    sess_accepted_text = f"{int(counter_delta(baseline_snap.accepted_tokens, last_delta.total_accepted)):,}"
-                    sess_drafted_text = f"{int(counter_delta(baseline_snap.draft_tokens, last_delta.total_drafted)):,}"
-                else:
-                    sess_accepted_text = f"{last_delta.total_accepted:,}"
-                    sess_drafted_text = f"{last_delta.total_drafted:,}"
+        # Session-relative totals for exit summary
+        if last_delta.counter_metrics_available:
+            if baseline_snap:
+                sess_accepted_text = f"{int(counter_delta(baseline_snap.accepted_tokens, last_delta.total_accepted)):,}"
+                sess_drafted_text = (
+                    f"{int(counter_delta(baseline_snap.draft_tokens, last_delta.total_drafted)):,}"
+                )
             else:
-                sess_accepted_text = sess_drafted_text = "—"
+                sess_accepted_text = f"{last_delta.total_accepted:,}"
+                sess_drafted_text = f"{last_delta.total_drafted:,}"
+        else:
+            sess_accepted_text = sess_drafted_text = "—"
 
-            console.print(
-                Panel(
-                    Text.assemble(
-                        ("  Duration:        ", "dim"),
-                        (_format_uptime(time.time() - start_time), "bold"),
-                        ("  │  ", "dim"),
-                        (f"{poll_count} polls", "dim"),
-                        ("\n", ""),
-                        ("  Avg α:           ", "dim"),
-                        (f"{avg_ar * 100:.1f}%", f"bold {_ar_color(avg_ar)}"),
-                        (" ± ", "dim"),
-                        (f"{std_ar * 100:.1f}%", "dim"),
-                        ("\n", ""),
-                        ("  Avg Gen t/s:     ", "dim"),
-                        (f"{avg_gen:.1f}", "bold bright_green"),
-                        ("  ", ""),
-                        ("peak ", "dim"),
-                        (f"{max_gen:.1f}", "bold"),
-                        ("\n", ""),
-                        ("  Session tokens:  ", "dim"),
-                        (sess_accepted_text, "bold"),
-                        (" accepted  / ", "dim"),
-                        (sess_drafted_text, "bold"),
-                        (" drafted", "dim"),
-                    ),
-                    title="[bold]Session Summary[/]",
-                    border_style="bright_magenta",
-                    padding=(0, 1),
+        alpha_line: list[tuple[str, str]] = [
+            ("  Session α:       ", "dim"),
+            (f"{session_ar * 100:.1f}%", f"bold {_ar_color(session_ar)}"),
+        ]
+        if len(rolling_vals) > 1:
+            alpha_line.append(
+                (
+                    f"  ({_ROLLING_WINDOW_S:g}s window ranged "
+                    f"{min(rolling_vals) * 100:.0f}–{max(rolling_vals) * 100:.0f}%)",
+                    "dim",
                 )
             )
+        if session_tau is not None:
+            alpha_line.extend([("  │  τ ", "dim"), (f"{session_tau:.2f}", "bold cyan")])
+
+        console.print()
+        console.print(
+            Panel(
+                Text.assemble(
+                    ("  Duration:        ", "dim"),
+                    (_format_uptime(time.time() - start_time), "bold"),
+                    ("  │  ", "dim"),
+                    (f"{poll_count} polls", "dim"),
+                    ("\n", ""),
+                    *alpha_line,
+                    ("\n", ""),
+                    ("  Avg Gen t/s:     ", "dim"),
+                    (f"{avg_gen:.1f}", "bold bright_green"),
+                    ("  ", ""),
+                    ("peak ", "dim"),
+                    (f"{gen_tps_peak:.1f}", "bold"),
+                    ("\n", ""),
+                    ("  Session tokens:  ", "dim"),
+                    (sess_accepted_text, "bold"),
+                    (" accepted  / ", "dim"),
+                    (sess_drafted_text, "bold"),
+                    (" drafted", "dim"),
+                ),
+                title="[bold]Session Summary[/]",
+                border_style="bright_magenta",
+                padding=(0, 1),
+            )
+        )
     console.print()

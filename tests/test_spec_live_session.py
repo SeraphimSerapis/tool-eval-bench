@@ -188,6 +188,67 @@ async def test_an_sglang_session_uses_its_gauges(monitor) -> None:
     assert "stopped" in output
 
 
+def _frame_text(frame: Any) -> str:
+    out = StringIO()
+    Console(file=out, width=120, no_color=True).print(frame)
+    return out.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_rolling_gauge_tracks_a_workload_change_while_session_alpha_pools(
+    monitor,
+) -> None:
+    # 20 s apart: the first interval is high acceptance, then it collapses.
+    frames, output = await monitor(
+        [
+            _vllm(1000.0, accepted=0, drafted=0, gen_tps=40.0),
+            _vllm(1020.0, accepted=80, drafted=100, gen_tps=40.0),
+            _vllm(1040.0, accepted=100, drafted=200, gen_tps=40.0),
+            _vllm(1060.0, accepted=120, drafted=300, gen_tps=40.0),
+        ]
+    )
+    last = _frame_text(frames[-1])
+    assert "ACCEPTANCE RATE (30s)" in last
+    assert "20.0%" in last  # rolling: the last two intervals
+    assert "40.0%" in last  # session: 120 / 300
+    assert "Session α:       40.0%" in output
+    assert "30s window ranged 20–80%" in output
+    assert "τ 2.60" in output  # 1 + 120 / 75 drafts
+
+
+@pytest.mark.asyncio
+async def test_a_dead_server_is_flagged_instead_of_freezing_quietly(monitor) -> None:
+    frames, _ = await monitor(
+        [
+            _vllm(1000.0, accepted=100, drafted=200, gen_tps=40.0),
+            _vllm(1001.0, accepted=180, drafted=300, gen_tps=45.0),
+            None,
+            None,
+        ]
+    )
+    # The scrape that stops the loop is cancelled before it renders, so the
+    # final frame is the one after the second failure.
+    last = _frame_text(frames[-1])
+    assert "✗" in last
+    assert "2 failed polls" in last
+    assert "80.0%" in last  # session α 80/100 stays on screen, dated
+
+
+@pytest.mark.asyncio
+async def test_a_reset_after_activity_recovers(monitor) -> None:
+    frames, _ = await monitor(
+        [
+            _vllm(1000.0, accepted=100, drafted=200, gen_tps=40.0),
+            None,
+            _vllm(1002.0, accepted=180, drafted=300, gen_tps=45.0),
+        ]
+    )
+    assert "1 failed polls" in _frame_text(frames[-2])
+    healthy = _frame_text(frames[-1])
+    assert "failed polls" not in healthy
+    assert "✗" not in healthy
+
+
 @pytest.mark.asyncio
 async def test_a_zero_gauge_does_not_wipe_the_last_real_reading(monitor) -> None:
     """vLLM zeroes its gauges between its internal updates; the panel must not flicker.
@@ -287,3 +348,44 @@ class TestReadKeypress:
         monkeypatch.setattr(loop, "remove_reader", lambda fd: True)
 
         assert await display._read_keypress(asyncio.Event()) == "\x12"
+
+
+@requires_termios
+@pytest.mark.asyncio
+async def test_ctrl_r_restarts_the_session_throughput_average(
+    monitor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exit summary's gen t/s must not span a reset the user asked for."""
+    import sys
+    import termios
+    import tty
+
+    monkeypatch.setattr(sys, "stdin", _FakeStdin())
+    monkeypatch.setattr(termios, "tcgetattr", lambda fd: [])
+    monkeypatch.setattr(termios, "tcsetattr", lambda fd, when, old: None)
+    monkeypatch.setattr(tty, "setcbreak", lambda fd: None)
+
+    waits = 0
+
+    def add_reader(fd: int, fn: Any, *args: Any) -> None:
+        nonlocal waits
+        waits += 1
+        # Press Ctrl+R once, after the third frame; every other wait times out.
+        if waits == 3:
+            fn(*args)
+
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(loop, "add_reader", add_reader)
+    monkeypatch.setattr(loop, "remove_reader", lambda fd: True)
+
+    _, output = await monitor(
+        [
+            _vllm(1000.0, accepted=100, drafted=200, gen_tps=10.0),
+            _vllm(1001.0, accepted=180, drafted=300, gen_tps=20.0),
+            _vllm(1002.0, accepted=260, drafted=400, gen_tps=30.0),
+            _vllm(1003.0, accepted=340, drafted=500, gen_tps=100.0),  # baseline after reset
+            _vllm(1004.0, accepted=420, drafted=600, gen_tps=200.0),
+        ]
+    )
+    assert "Avg Gen t/s:     200.0  peak 200.0" in output
+    assert "Session tokens:  80 accepted  / 100 drafted" in output
