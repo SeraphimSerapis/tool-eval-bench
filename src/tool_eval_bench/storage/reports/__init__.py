@@ -144,6 +144,9 @@ class MarkdownReporter:
         model: str,
         spec_samples: list[Any],
         label: str | None = None,
+        temperature: float | None = None,
     ) -> Path:
         """Write a Markdown report for speculative decoding benchmark results."""
-        return write_spec_decode_report(self.root, run_id, model, spec_samples, label)
+        return write_spec_decode_report(
+            self.root, run_id, model, spec_samples, label, temperature=temperature
+        )

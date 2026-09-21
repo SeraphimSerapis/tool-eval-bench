@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from tool_eval_bench.domain.spec_decode import per_position_acceptance
 from tool_eval_bench.storage.reports._common import (
     markdown_label,
     report_filename,
@@ -18,6 +19,7 @@ def write_spec_decode_report(
     model: str,
     spec_samples: list[Any],
     label: str | None = None,
+    temperature: float | None = None,
 ) -> Path:
     """Write a Markdown report for speculative decoding benchmark results."""
     now = datetime.now(timezone.utc)
@@ -39,9 +41,33 @@ def write_spec_decode_report(
     methods = {s.spec_method for s in spec_samples if hasattr(s, "spec_method")}
     method_str = ", ".join(sorted(methods)) if methods else "unknown"
     md.append(f"- **Spec Method**: {method_str}")
+    runs = {getattr(s, "runs", 1) for s in spec_samples}
+    if runs and runs != {1}:
+        runs_str = ", ".join(str(r) for r in sorted(runs))
+        md.append(f"- **Runs per cell**: {runs_str} (counters pooled, α range shown per row)")
+    if temperature is not None:
+        note = " (greedy: a ceiling for sampled workloads)" if temperature == 0 else ""
+        md.append(f"- **Temperature**: {temperature:g}{note}")
 
     # Check if acceptance rate is available
     has_ar = any(getattr(s, "acceptance_rate", None) is not None for s in spec_samples)
+    sources: set[str] = {
+        src for s in spec_samples if isinstance(src := getattr(s, "acceptance_source", None), str)
+    }
+    if sources == {"response"}:
+        md.append("- **Acceptance Source**: per-request response metrics (exact)")
+    elif sources:
+        md.append(f"- **Acceptance Source**: {', '.join(sorted(sources))}")
+        if "prometheus" in sources:
+            md.extend(
+                [
+                    "",
+                    "> [!NOTE]",
+                    "> Acceptance counters are server-wide Prometheus deltas, so concurrent",
+                    "> traffic during the run skews per-request values. vLLM can report exact",
+                    "> per-request values with `--per-request-spec-decode-metrics`.",
+                ]
+            )
     if not has_ar:
         md.extend(
             [
@@ -63,9 +89,10 @@ def write_spec_decode_report(
     if has_ar and has_draft:
         md.append(
             "| Prompt | Depth | Eff t/s | Stream t/s | α (accept) | Waste "
-            "| τ (length) | Window | Draft t/s | Speedup | TTFT (ms) | Total (ms) | Tokens |"
+            "| τ (length) | Window | Draft t/s | Steps/s | Speedup | TTFT (ms) | Total (ms) "
+            "| Tokens |"
         )
-        md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+        md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     elif has_ar:
         md.append(
             "| Prompt | Depth | Eff t/s | Stream t/s | α (accept) | Waste "
@@ -82,6 +109,7 @@ def write_spec_decode_report(
         eff = getattr(s, "effective_tg_tps", 0)
         tg = getattr(s, "tg_tps", 0)
         ar = getattr(s, "acceptance_rate", None)
+        ar_range = getattr(s, "acceptance_rate_range", None)
         wr = getattr(s, "waste_ratio", None)
         al = getattr(s, "acceptance_length", None)
         dw = getattr(s, "draft_window", None)
@@ -94,20 +122,23 @@ def write_spec_decode_report(
         depth = getattr(s, "depth", 0)
 
         sp_str = f"{sp:.2f}x" if sp is not None else "—"
+        ar_str = f"{ar * 100:.1f}%" if ar is not None else "—"
+        if ar is not None and ar_range is not None:
+            ar_str += f" ({ar_range[0] * 100:.0f}–{ar_range[1] * 100:.0f})"
 
         if has_ar and has_draft:
-            ar_str = f"{ar * 100:.1f}%" if ar is not None else "—"
             wr_str = f"{wr * 100:.0f}%" if wr is not None else "—"
             al_str = f"{al:.1f}" if al is not None else "—"
             dw_str = f"{dw:.0f}" if dw is not None else "—"
             dt_str = f"{dt:,.1f}" if dt is not None else "—"
+            steps = getattr(s, "verify_steps_per_s", None)
+            steps_str = f"{steps:,.1f}" if steps is not None else "—"
             md.append(
                 f"| {prompt_type} | {depth} | {eff:,.1f} | {tg:,.1f} "
-                f"| {ar_str} | {wr_str} | {al_str} | {dw_str} | {dt_str} | {sp_str} "
+                f"| {ar_str} | {wr_str} | {al_str} | {dw_str} | {dt_str} | {steps_str} | {sp_str} "
                 f"| {ttft:,.0f} | {total:,.0f} | {tg_tok} |"
             )
         elif has_ar:
-            ar_str = f"{ar * 100:.1f}%" if ar is not None else "—"
             wr_str = f"{wr * 100:.0f}%" if wr is not None else "—"
             al_str = f"{al:.1f}" if al is not None else "—"
             md.append(
@@ -218,6 +249,30 @@ def write_spec_decode_report(
             )
         md.append("")
 
+    # Per-position acceptance (vLLM detailed per-request metrics only)
+    step_arrays = [
+        (s.per_step_accepted, s.per_step_drafted)
+        for s in spec_samples
+        if getattr(s, "per_step_accepted", None) is not None
+        and getattr(s, "per_step_drafted", None) is not None
+    ]
+    per_pos = per_position_acceptance(step_arrays) if step_arrays else []
+    if per_pos:
+        md.extend(
+            [
+                "## Per-Position Acceptance",
+                "",
+                "Acceptance rate at each draft position, aggregated over every step of "
+                "every request. Verification stops at the first rejection, so a position "
+                "is only reached when all earlier positions were accepted.",
+                "",
+                "| Position | Acceptance |",
+                "|---:|---:|",
+            ]
+        )
+        md.extend(f"| {pos} | {rate * 100:.1f}% |" for pos, rate in enumerate(per_pos))
+        md.append("")
+
     # Interpretation guide
     md.extend(
         [
@@ -238,6 +293,10 @@ def write_spec_decode_report(
             "Compare with τ to see window utilization.",
             "- **Draft t/s**: Rate at which draft tokens are generated, regardless of acceptance. "
             "Compare with Eff t/s to see draft overhead.",
+            "- **Steps/s**: Target-model verification passes per second. Without speculation "
+            "each pass yields one token, and a verification pass costs at least a plain decode "
+            "pass, so this is a lower bound on the no-spec decode rate and Eff t/s ÷ Steps/s "
+            "(≈ τ) is a ceiling on the speedup. `--baseline-tgs` gives the measured figure.",
             "- **Speedup**: Effective t/s ÷ baseline t/s. Values > 1.0x indicate spec decode "
             "is providing a benefit.",
             "",

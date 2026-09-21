@@ -111,6 +111,9 @@ from tool_eval_bench.cli.server import (
     discover_server as _discover_server,
 )
 from tool_eval_bench.cli.spec_bench import (
+    load_spec_prompt_file,
+)
+from tool_eval_bench.cli.spec_bench import (
     run_spec_bench as _run_spec_bench,
 )
 from tool_eval_bench.domain.errors import (
@@ -570,6 +573,10 @@ def _run_spec_bench_mode(target: _Target) -> bool:
     if args.spec_bench:
         spec_depths = _parse_int_list(args.depth)
         spec_prompts = [p.strip() for p in args.spec_prompts.split(",") if p.strip()]
+        custom_prompts = load_spec_prompt_file(args.spec_prompt_file)
+        # A file with no explicit selection runs every prompt in it.
+        if custom_prompts and not any(label in custom_prompts for label in spec_prompts):
+            spec_prompts = spec_prompts + list(custom_prompts)
         _run_spec_bench(
             console,
             model,
@@ -583,6 +590,9 @@ def _run_spec_bench_mode(target: _Target) -> bool:
             baseline_tg_tps=args.baseline_tgs,
             prompt_types=spec_prompts,
             metrics_url=args.metrics_url,
+            runs=args.spec_runs,
+            temperature=args.temperature,
+            custom_prompts=custom_prompts,
             output_dir=args.output_dir,
             metadata_for_storage=_metadata_for_storage,
             with_config_fingerprint=_with_config_fingerprint,

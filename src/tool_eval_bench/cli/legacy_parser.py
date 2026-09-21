@@ -498,7 +498,32 @@ def _make_parser() -> argparse.ArgumentParser:
         "--spec-prompts",
         type=str,
         default="filler,code,structured",
-        help="Prompt types, comma separated (default: 'filler,code,structured')",
+        help=(
+            "Prompt types, comma separated (default: 'filler,code,structured'). "
+            "Labels from --spec-prompt-file are also accepted; omit them to run every "
+            "prompt in the file alongside the built-in types."
+        ),
+    )
+    spec_grp.add_argument(
+        "--spec-prompt-file",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Add your own workload: one prompt per line, or JSON lines with 'prompt' and "
+            "an optional 'label'. Lines starting with '#' are skipped."
+        ),
+    )
+    spec_grp.add_argument(
+        "--spec-runs",
+        type=int,
+        default=3,
+        metavar="N",
+        help=(
+            "Measurements per depth × prompt cell, pooled into one row (default: 3). "
+            "One request is only a few dozen speculative steps, so a single run gives a "
+            "noisy acceptance rate."
+        ),
     )
     spec_grp.add_argument(
         "--metrics-url",

@@ -8,7 +8,9 @@ a summary table, and a Markdown report.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -30,6 +32,40 @@ def _report_then_persist_spec_bench(
     )
 
 
+def load_spec_prompt_file(path: str | None) -> dict[str, str]:
+    """Read a user workload for spec-bench: label to prompt text.
+
+    Plain lines become ``custom#N``. A line that parses as a JSON object uses
+    its ``prompt`` and optional ``label`` keys, which is the only way to carry
+    a multi-line prompt. Blank lines and ``#`` comments are skipped.
+    """
+    if not path:
+        return {}
+    prompts: dict[str, str] = {}
+    for number, raw in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        label = f"custom#{len(prompts) + 1}"
+        text = line
+        if line.startswith("{"):
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{path}:{number}: invalid JSON line: {exc}") from exc
+            if not isinstance(record, dict) or not isinstance(record.get("prompt"), str):
+                raise ValueError(f"{path}:{number}: JSON line needs a string 'prompt'")
+            text = record["prompt"]
+            if isinstance(record.get("label"), str) and record["label"].strip():
+                label = record["label"].strip()
+        if label in prompts:
+            raise ValueError(f"{path}:{number}: duplicate prompt label {label!r}")
+        prompts[label] = text
+    if not prompts:
+        raise ValueError(f"{path}: no prompts found")
+    return prompts
+
+
 def run_spec_bench(
     console: Console,
     model: str,
@@ -44,6 +80,9 @@ def run_spec_bench(
     baseline_tg_tps: float | None = None,
     prompt_types: list[str] | None = None,
     metrics_url: str | None = None,
+    runs: int = 1,
+    temperature: float = 0.0,
+    custom_prompts: dict[str, str] | None = None,
     output_dir: str | None = None,
     metadata_for_storage: Any = None,
     with_config_fingerprint: Any = None,
@@ -58,16 +97,19 @@ def run_spec_bench(
     from rich.table import Table
 
     from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
+    from tool_eval_bench.domain.spec_decode import per_position_acceptance
     from tool_eval_bench.runner.speculative import SpecDecodeSample, run_spec_bench
 
     prompt_types = prompt_types or ["filler", "code", "structured"]
 
     console.print()
     baseline_str = f"  baseline={baseline_tg_tps:.1f} t/s" if baseline_tg_tps else ""
+    runs_str = f"  runs={runs}" if runs > 1 else ""
     console.print(
         Panel(
             f"[bold]{display_name}[/]\n"
-            f"[dim]tg={tg}  depth={depths}  prompts={prompt_types}  method={spec_method}{baseline_str}[/]",
+            f"[dim]tg={tg}  depth={depths}  prompts={prompt_types}  method={spec_method}"
+            f"{runs_str}  temperature={temperature:g}{baseline_str}[/]",
             title="[bold]🔮 Speculative Decoding Benchmark[/]",
             border_style="bright_magenta",
         )
@@ -79,6 +121,8 @@ def run_spec_bench(
     async def on_sample(sample: SpecDecodeSample, idx: int, total: int) -> None:
         completed.append(sample)
         label = f"{sample.prompt_type:>10} @ d{sample.depth}"
+        if sample.runs > 1:
+            label += f" ×{sample.runs}"
         if sample.error:
             console.print(f"  [red]✗[/] {label} — {sample.error}")
         else:
@@ -92,6 +136,9 @@ def run_spec_bench(
                 ar_pct = sample.acceptance_rate * 100
                 ar_style = "green" if ar_pct >= 60 else "yellow" if ar_pct >= 40 else "red"
                 parts.append(f"  [{ar_style}]α={ar_pct:.1f}%[/{ar_style}]")
+                if sample.acceptance_rate_range is not None:
+                    lo, hi = sample.acceptance_rate_range
+                    parts.append(f"[dim] ({lo * 100:.0f}–{hi * 100:.0f})[/]")
 
             if sample.waste_ratio is not None:
                 wr_pct = sample.waste_ratio * 100
@@ -130,6 +177,9 @@ def run_spec_bench(
             prompt_types=prompt_types,
             on_sample=on_sample,
             metrics_url=metrics_url,
+            runs=runs,
+            temperature=temperature,
+            custom_prompts=custom_prompts,
         )
 
     try:
@@ -163,6 +213,7 @@ def run_spec_bench(
         if has_draft:
             table.add_column("Win", justify="right", no_wrap=True)
             table.add_column("Draft t/s", justify="right", min_width=9, no_wrap=True)
+            table.add_column("Steps/s", justify="right", min_width=7, no_wrap=True)
         if has_speedup:
             table.add_column("Speed", justify="right", no_wrap=True)
         table.add_column("TTFT ms", justify="right", min_width=7, no_wrap=True)
@@ -190,6 +241,9 @@ def run_spec_bench(
             if has_draft:
                 row.append(f"{s.draft_window:.0f}" if s.draft_window is not None else "—")
                 row.append(f"{s.draft_tps:,.1f}" if s.draft_tps is not None else "—")
+                row.append(
+                    f"{s.verify_steps_per_s:,.1f}" if s.verify_steps_per_s is not None else "—"
+                )
             if has_speedup:
                 row.append(f"{s.speedup_ratio:.2f}x" if s.speedup_ratio is not None else "—")
             row.extend(
@@ -205,6 +259,34 @@ def run_spec_bench(
         # Show insights
         has_ar = any(s.acceptance_rate is not None for s in ok_samples)
         if has_ar:
+            sources = {s.acceptance_source for s in ok_samples if s.acceptance_source}
+            if sources == {"response"}:
+                console.print(
+                    "\n  [dim]Acceptance source:[/] per-request response metrics "
+                    "[green](exact, unaffected by concurrent traffic)[/]"
+                )
+            elif "prometheus" in sources:
+                console.print(
+                    "\n  [dim]Acceptance source:[/] Prometheus counter deltas "
+                    "[yellow](server-wide; concurrent traffic skews per-request values)[/]"
+                )
+                console.print(
+                    "  [dim]  vLLM can report exact per-request values: start the server "
+                    "with --per-request-spec-decode-metrics summary|detailed[/]"
+                )
+            step_arrays = [
+                (s.per_step_accepted, s.per_step_drafted)
+                for s in ok_samples
+                if s.per_step_accepted is not None and s.per_step_drafted is not None
+            ]
+            per_pos = per_position_acceptance(step_arrays) if step_arrays else []
+            if per_pos:
+                cells = []
+                for pos, rate in enumerate(per_pos):
+                    pct = rate * 100
+                    style = "green" if pct >= 60 else "yellow" if pct >= 40 else "red"
+                    cells.append(f"[dim]{pos}:[/][{style}]{pct:.0f}%[/{style}]")
+                console.print(f"  [dim]Per-position acceptance:[/] {'  '.join(cells)}")
             best = max(ok_samples, key=lambda s: s.acceptance_rate or 0)
             worst = min(
                 ok_samples,
@@ -250,6 +332,19 @@ def run_spec_bench(
                         f"  [yellow]💡 Consider reducing num_speculative_tokens to "
                         f"~{optimal} (currently ~{avg_window:.0f})[/]"
                     )
+            if not has_speedup:
+                with_steps = [s for s in ok_samples if s.verify_steps_per_s]
+                if with_steps:
+                    ceilings = [
+                        s.effective_tg_tps / s.verify_steps_per_s
+                        for s in with_steps
+                        if s.verify_steps_per_s
+                    ]
+                    console.print(
+                        f"  [dim]Speedup ceiling:[/] [bold]{min(ceilings):.1f}–{max(ceilings):.1f}x[/] "
+                        "[dim](eff t/s ÷ verify steps/s; the real figure needs "
+                        "--baseline-tgs from a run without speculation)[/]"
+                    )
         else:
             console.print("\n  [dim]ℹ Acceptance rate: not available (optional).[/]")
             console.print(
@@ -275,6 +370,8 @@ def run_spec_bench(
                 "base_url": base_url,
                 "mode": "spec-bench",
                 "method": spec_method,
+                "runs": runs,
+                "temperature": temperature,
             }
         )
         run_id = build_run_id(run_config)
@@ -295,7 +392,7 @@ def run_spec_bench(
         _report_then_persist_spec_bench(
             run_data=run_data,
             write_report=lambda: reporter.write_spec_decode_report(
-                run_id, display_name, ok_samples, label=label
+                run_id, display_name, ok_samples, label=label, temperature=temperature
             ),
             persist_plugin_run=persist_plugin_run,
         )

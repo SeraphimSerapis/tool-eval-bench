@@ -63,6 +63,8 @@ SPEC = (
     "spec_method",
     "baseline_tgs",
     "spec_prompts",
+    "spec_prompt_file",
+    "spec_runs",
     "metrics_url",
 )
 PRESSURE = ("context_pressure", "context_size", "context_pressure_sweep", "sweep_steps")

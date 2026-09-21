@@ -38,7 +38,7 @@ rather than tied to provider or model names.
 | Streaming `usage` stats | ✅ | Varies | Varies | ❌ |
 | `tool_choice: "required"` | ✅ | ✅ | ✅ | ⚠️ Version-dependent |
 | Large toolsets (52 tools) | ✅ | ✅ | ✅ | ⚠️ May exceed context window |
-| `--spec-bench` acceptance rate | ✅ Prometheus | ⚠️ Live gauges are not request-local | ✅ when backend metrics are reachable | ✅ Counters or per-request timings |
+| `--spec-bench` acceptance rate | ✅ Per-request response metrics when enabled, else Prometheus | ⚠️ Live gauges are not request-local | ✅ when backend metrics are reachable | ✅ Counters or per-request timings |
 | `--spec-live` dashboard | ✅ Counters | ✅ Gauges | ✅ when backend metrics are separately reachable | ✅ Counters on current builds; engine-only fallback |
 
 OpenAI-compatible backends use `OpenAICompatibleAdapter`; native Gemini and the

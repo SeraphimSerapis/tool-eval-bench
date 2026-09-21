@@ -651,7 +651,7 @@ class TestBuildDashboard:
             delta, history, time.time() - 30, "TestModel", "http://localhost:8000/metrics", 30
         )
         text = self._render(panel)
-        assert "Rolling Averages" in text
+        assert "Session Averages" in text
 
     def test_renders_rolling_averages_early(self):
         """Rolling averages panel visible immediately with zero values."""
@@ -663,7 +663,7 @@ class TestBuildDashboard:
             delta, history, time.time() - 3, "TestModel", "http://localhost:8000/metrics", 3
         )
         text = self._render(panel)
-        assert "Rolling Averages" in text
+        assert "Session Averages" in text
 
     def test_renders_high_acceptance(self):
         """Dashboard with excellent acceptance rate."""

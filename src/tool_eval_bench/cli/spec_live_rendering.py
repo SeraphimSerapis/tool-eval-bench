@@ -19,6 +19,10 @@ from tool_eval_bench.runner.spec_live import SpecLiveDelta
 
 _HISTORY_LEN = 60  # keep 60 samples ≈ 60 seconds at 1 Hz
 _POLL_INTERVAL = 1.0  # seconds between scrapes
+# vLLM folds spec counters into Prometheus about every 10 s, so 30 s covers a
+# few real updates: short enough to track a workload change, long enough
+# that one update does not swing the gauge.
+_ROLLING_WINDOW_S = 30.0
 
 # Sparkline block characters (⅛ blocks, bottom-up)
 _SPARK_CHARS = " ▁▂▃▄▅▆▇█"

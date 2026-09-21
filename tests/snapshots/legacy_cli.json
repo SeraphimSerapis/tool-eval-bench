@@ -817,6 +817,26 @@
   {
     "choices": null,
     "default": null,
+    "dest": "spec_prompt_file",
+    "flags": [
+      "--spec-prompt-file"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 3,
+    "dest": "spec_runs",
+    "flags": [
+      "--spec-runs"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
     "dest": "metrics_url",
     "flags": [
       "--metrics-url"
