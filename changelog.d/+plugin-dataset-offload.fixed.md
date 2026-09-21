@@ -1,1 +1,0 @@
-GSM8K, MMLU, and IFEval loaded their datasets with a synchronous HTTP client from inside `async def run`, so a first-use download stalled the event loop and everything on it. The loaders now run on a worker thread.

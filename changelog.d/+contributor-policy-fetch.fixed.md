@@ -1,1 +1,0 @@
-Fixed the contributor-policy check failing on runs that start after the PR branch was deleted: the workflow now fetches `refs/pull/<number>/head`, closed pull requests skip the check, and missing commits report git's error instead of a traceback.
