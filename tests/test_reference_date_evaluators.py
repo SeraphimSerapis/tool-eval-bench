@@ -255,9 +255,11 @@ def test_tc79_follows_the_reference_date(reference):
     expected = EXPECTED["TC-79"][reference]
 
     right = _simulated("TC-79", reference, _tc79_calls(expected))
+    right.final_answer = "Lisbon will be dry, so I scheduled the outdoor review."
     assert scenario.evaluate(right).status == ScenarioStatus.PASS
 
     wrong = _simulated("TC-79", reference, _tc79_calls(_other_date("TC-79", reference)))
+    wrong.final_answer = right.final_answer
     assert scenario.evaluate(wrong).status != ScenarioStatus.PASS
 
 

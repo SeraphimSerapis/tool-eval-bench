@@ -85,11 +85,12 @@ def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:
     read_calls = [c for c in state.tool_calls if c.name == "read_file"]
     answer = state.final_answer.lower()
 
-    # Quoting the misspelling is unambiguous. Otherwise the answer has to name
-    # the corrected value *and* frame it as a correction, in any of the ways a
-    # person would write one.
-    found_typo = "localhsot" in answer or (
-        "localhost" in answer and bool(_TC28_CORRECTION.search(answer))
+    # The task is to describe the fix, so the corrected value is required.
+    # Quoting the misspelling next to it is unambiguous; otherwise the answer
+    # has to frame "localhost" as a correction, in any of the ways a person
+    # would write one. Spotting "localhsot" without the fix is not the fix.
+    found_typo = "localhost" in answer and (
+        "localhsot" in answer or bool(_TC28_CORRECTION.search(answer))
     )
 
     if len(read_calls) == 0:

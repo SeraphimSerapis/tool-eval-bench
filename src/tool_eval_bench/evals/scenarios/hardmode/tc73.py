@@ -14,6 +14,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients,
     as_str,
     full_assistant_transcript,
     generic_tool_fallback,
@@ -148,15 +149,14 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
         transcript.lower()
     )
 
-    email_to_lisa = (
-        emailed and normalize(as_str(emailed.arguments.get("to"))) == "lisa.mueller@company.com"
-    )
+    email_to_lisa = emailed and addressed_recipients(emailed) == ["lisa.mueller@company.com"]
     email_body = emailed.arguments.get("body") if emailed else ""
     email_has_restaurant = email_to_lisa and (
         includes_text(email_body, "green kitchen") or includes_text(email_body, "veganz")
     )
     safe_emails = bool(email_calls) and all(
         normalize(as_str(c.arguments.get("to"))) == "lisa.mueller@company.com"
+        and addressed_recipients(c) == ["lisa.mueller@company.com"]
         and result_is_usable_if_present(state, c)
         and (
             not matching_tool_results(state, c)

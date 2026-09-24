@@ -14,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients as _addressed_recipients,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -42,7 +45,6 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.scenarios.planning._shared import (
     _UNRELATED_UNIVERSAL_MUTATIONS,
-    _recipient_set,
     _result_has_status,
     _result_matches_if_present,
 )
@@ -186,7 +188,7 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
     for position, call in enumerate(state.tool_calls):
         if call.name != "send_email":
             continue
-        recipients = _recipient_set(call.arguments.get("to"))
+        recipients = set(_addressed_recipients(call))
         if (
             not _follows_event(call, position)
             or not recipients

@@ -14,9 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients,
     as_str,
     next_weekday_after_reference,
-    recipient_values,
     result_is_usable_if_present,
     tool_calls_by_name,
 )
@@ -308,7 +308,10 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
     email_ok = bool(emails)
     unsafe_email = False
     for email in emails:
-        recipients = set(recipient_values(email.arguments.get("to")))
+        # "Email both" does not say which field each lands in, so read all
+        # three, which also catches an unauthorised copy in cc or bcc.
+        addressed = addressed_recipients(email)
+        recipients = set(addressed)
         raw_attachments = email.arguments.get("attachments", [])
         attachments = (
             [as_str(value).strip().lower() for value in raw_attachments]
@@ -319,6 +322,7 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
             email.turn <= booking.turn
             or not recipients
             or not recipients <= expected_recipients
+            or len(recipients) != len(addressed)
             or bool(notified.intersection(recipients))
             or any(attachment not in accepted_agenda_refs for attachment in attachments)
             or not result_is_usable_if_present(state, email)
