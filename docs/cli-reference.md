@@ -125,7 +125,7 @@ replaces it.
 | `--timeout F` | Per-request timeout in seconds (default: 60) |
 | `--no-think` | Disable thinking/reasoning (critical for Qwen3/DeepSeek) |
 | `--no-warmup` | Skip server warm-up request |
-| `--hardmode` | Include 19 Hard Mode scenarios (Category P) |
+| `--hardmode` | Include 20 Hard Mode scenarios (Category P) |
 | `--categories A B K` | Run only specific categories (A–P) |
 | `--scenarios TC-01 TC-07` | Run specific scenario IDs |
 | `--perf` | Also run throughput benchmark |

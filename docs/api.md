@@ -113,7 +113,7 @@ result = asyncio.run(run_benchmark(
 
 The Python API does not have a separate `hardmode` boolean. Pass the desired
 definitions through `scenarios`. The standard registry contains 69 scenarios,
-and `ALL_SCENARIOS_WITH_HARDMODE` contains all 88.
+and `ALL_SCENARIOS_WITH_HARDMODE` contains all 89.
 
 ```python
 from tool_eval_bench.evals.scenarios import SCENARIOS, ALL_SCENARIOS

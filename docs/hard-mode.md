@@ -1,6 +1,6 @@
 # Hard Mode
 
-Nineteen opt-in scenarios (TC-70 to TC-88) built to separate models that already score well on
+Twenty opt-in scenarios (TC-70 to TC-89) built to separate models that already score well on
 the standard suite. They are adversarial, stateful, and transactional, and they are not included
 in the default 69.
 
@@ -9,7 +9,7 @@ in the default 69.
 The standard 69-scenario benchmark covers *breadth* of tool-calling capabilities. Once a model scores 100% on the standard suite, `--hardmode` adds ceiling-breaking scenarios (Category P) designed to separate truly excellent models from merely good ones.
 
 ```bash
-# Standard benchmark + Hard Mode scenarios (69 + 19 = 88 scenarios)
+# Standard benchmark + Hard Mode scenarios (69 + 20 = 89 scenarios)
 tool-eval-bench run --hardmode
 
 # Run only Hard Mode scenarios
@@ -20,7 +20,7 @@ tool-eval-bench run --hardmode --categories P  # equivalent
 tool-eval-bench run --hardmode --context-pressure 0.75
 ```
 
-Hard Mode focuses on nineteen ceiling-breaking scenarios:
+Hard Mode focuses on twenty ceiling-breaking scenarios:
 
 | Scenario | Focus Area | What it tests |
 |---|---|---|
@@ -43,6 +43,7 @@ Hard Mode focuses on nineteen ceiling-breaking scenarios:
 | TC-86 | Optimistic concurrency without lost updates | Re-read after two consecutive conflicts and preserve both concurrent field changes |
 | TC-87 | Complete pagination with cursor integrity | Follow four cursors, reject a stale-count shortcut, deduplicate, resolve routing, and delay notification |
 | TC-88 | Preserved reasoning across follow-ups | Carry three linked, privately planned constrained values across two user follow-ups |
+| TC-89 | Compensation after partial success | After a terminal payment failure, release the held reservation once, confirm the release, and neither claim nor announce payment |
 
 TC-88 opts into replaying the provider's `reasoning_content` field across its
 follow-up turns. It does not ask the model to print its reasoning to the user.
@@ -78,13 +79,14 @@ not an estimate.
 | `tool-selection` | Tool selection among near-duplicates | TC-70 |
 | `clarification` | Asking for missing or ambiguous information | TC-71, TC-75 |
 | `restraint` | Declining unavailable or irrelevant actions | TC-76, TC-77 |
-| `error-recovery` | Recovering from tool failures | TC-72, TC-84 |
+| `error-recovery` | Recovering from tool failures | TC-72, TC-84, TC-89 |
 | `constraints` | Satisfying multiple constraints | TC-73, TC-84, TC-88 |
 | `planning` | Dependency-aware planning | TC-78, TC-79 |
 | `completeness` | Covering every required item | TC-78, TC-87 |
 | `state-tracking` | Tracking state across turns | TC-74, TC-88 |
 | `authorization` | Acting only when authorized | TC-74 |
 | `safe-mutation` | Safe, verified state changes | TC-80, TC-85, TC-86 |
+| `compensation` | Undoing completed work after a later step fails | TC-89 |
 | `concurrency` | Races, conflicts, and ambiguous commits | TC-84, TC-85, TC-86 |
 | `grounding` | Preferring authoritative current data | TC-82 |
 | `injection` | Resisting injected instructions | TC-81 |
