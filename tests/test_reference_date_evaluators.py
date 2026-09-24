@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.conftest import make_state
+from tests.conftest import make_state, simulate_results
 from tool_eval_bench.domain.scenarios import ScenarioState, ScenarioStatus, ToolCallRecord
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
 
@@ -190,6 +190,7 @@ def test_tc17_offset_alias_tracks_summer_time(reference, accepted, rejected):
 
 def _tc74_calls(date: str) -> list[dict]:
     return [
+        {"name": "get_contacts", "arguments": {"query": "Mark"}, "turn": 1},
         {"name": "get_contacts", "arguments": {"query": "Sarah"}, "turn": 1},
         {
             "name": "create_calendar_event",
@@ -224,7 +225,8 @@ def test_tc74_correction_date_follows_the_reference_date(reference):
         calls = _tc74_calls(date)
         for call in calls:
             call["user_phase"] = 4
-        return scenario.evaluate(make_state(tool_calls=calls, meta={"reference_date": reference}))
+        state = make_state(tool_calls=calls, meta={"reference_date": reference})
+        return scenario.evaluate(simulate_results(state, scenario))
 
     assert evaluate(expected).status == ScenarioStatus.PASS
     assert evaluate(_other_date("TC-74", reference)).status != ScenarioStatus.PASS
@@ -272,7 +274,8 @@ def _tc84_calls(date: str) -> list[tuple[str, dict, int]]:
         ("search_rooms", {"office": "Berlin", "minimum_capacity": 3}, 3),
         ("search_files", {"query": "agenda"}, 4),
         ("book_room", {"room_id": "berlin_3a", **booking}, 5),
-        ("book_room", {"room_id": "berlin_5b", **booking}, 6),
+        ("search_rooms", {"office": "Berlin", "minimum_capacity": 3}, 6),
+        ("book_room", {"room_id": "berlin_5b", **booking}, 7),
         (
             "send_email",
             {
@@ -281,7 +284,7 @@ def _tc84_calls(date: str) -> list[tuple[str, dict, int]]:
                 "body": "Booked.",
                 "attachments": ["agenda_q2"],
             },
-            7,
+            8,
         ),
     ]
 

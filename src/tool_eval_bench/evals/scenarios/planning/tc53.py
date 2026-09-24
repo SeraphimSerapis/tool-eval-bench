@@ -20,6 +20,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import date_matches
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -28,6 +29,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     matching_tool_results as _matching_tool_results,
+)
+from tool_eval_bench.evals.helpers import (
+    next_weekday_after_reference as _next_weekday_after_reference,
 )
 from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
@@ -202,8 +206,16 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     if len(event_calls) > 1:
         return _fail("Created duplicate calendar events while handling the conditional request.")
+    # Moving the meeting indoors keeps its day. A title that merely mentions a
+    # meeting is not enough: "Team sync" on some other date moved nothing.
+    weekend_dates = {
+        _as_str(_TC53_EVENT["date"]),
+        _next_weekday_after_reference(state, "saturday"),
+        _next_weekday_after_reference(state, "sunday"),
+    }
     valid_events = all(
         any(weather.turn <= event.turn for weather in weather_calls)
+        and any(date_matches(event.arguments.get("date"), day) for day in weekend_dates)
         and any(
             term in _as_str(event.arguments.get("title")).lower()
             for term in ("meeting", "sync", "office", "indoor")

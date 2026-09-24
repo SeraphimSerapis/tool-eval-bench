@@ -347,7 +347,18 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         all(any(c.turn < first_failure.turn for c in calls) for calls in discovery_calls.values())
         and last_failure.turn < booking.turn
     )
+    # ROOM_TAKEN says the earlier availability is stale and to search again.
+    # Rebooking from the old list worked here only because the mock kept 5B
+    # free; the recovery has to rest on a search made after the failure.
+    fresh_search = any(
+        first_failure.turn < call.turn < booking.turn for call in discovery_calls["search_rooms"]
+    )
     if failure_ok and booking_ok and email_ok and booking_ordered:
+        if not fresh_search:
+            return _partial(
+                "Completed the workflow but rebooked from stale availability without "
+                "searching rooms again after ROOM_TAKEN."
+            )
         return _pass("Recovered from the room race and completed the constrained Berlin workflow.")
     if booking_ok and not failure_ok:
         return _partial(

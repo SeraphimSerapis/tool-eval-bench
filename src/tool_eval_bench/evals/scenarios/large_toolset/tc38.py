@@ -14,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.domain.tools_large import LARGE_TOOLSET
 from tool_eval_bench.evals.helpers import (
+    address_observed_before as _address_observed_before,
+)
+from tool_eval_bench.evals.helpers import (
     answer_affirms_number as _answer_affirms_number,
 )
 from tool_eval_bench.evals.helpers import (
@@ -201,6 +204,8 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
         email = cast(ToolCallRecord, email)
         if not (search.turn < read.turn < email.turn and manager.turn < email.turn):
             return _partial("Completed the calls, but violated a data dependency before email.")
+        if not _address_observed_before(state, email, "jordan.park@company.com"):
+            return _partial("Emailed the manager at an address no earlier lookup returned.")
         return _pass("Completed the full 4-step chain correctly from 52 tools.")
     if steps == 4 and domain_calls:
         extras = ", ".join(domain_calls[:3])

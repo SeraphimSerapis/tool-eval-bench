@@ -911,8 +911,30 @@
   ],
   "TC-48": [
     {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Alice"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
       "calls": [],
       "answer": "Understood."
+    },
+    {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Bob"
+          }
+        }
+      ],
+      "answer": ""
     },
     {
       "calls": [
@@ -1684,6 +1706,17 @@
   ],
   "TC-74": [
     {
+      "calls": [
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "Mark"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
       "calls": [],
       "answer": "Understood."
     },
@@ -2073,6 +2106,18 @@
               "elena@company.com",
               "ravi@company.com"
             ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "search_rooms",
+          "arguments": {
+            "office": "Berlin",
+            "minimum_capacity": 3
           }
         }
       ],

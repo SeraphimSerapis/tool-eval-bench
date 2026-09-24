@@ -144,6 +144,7 @@ _EMAIL_TRACES: dict[str, tuple[list[Call], str]] = {
                 },
                 5,
             ),
+            ("search_rooms", {"office": "Berlin", "minimum_capacity": 3}, 6),
             (
                 "book_room",
                 {
@@ -153,7 +154,7 @@ _EMAIL_TRACES: dict[str, tuple[list[Call], str]] = {
                     "duration_minutes": 45,
                     "attendees": ["elena@company.com", "ravi@company.com"],
                 },
-                6,
+                7,
             ),
             (
                 "send_email",
@@ -163,7 +164,7 @@ _EMAIL_TRACES: dict[str, tuple[list[Call], str]] = {
                     "body": "The review is booked.",
                     "attachments": ["agenda_q2"],
                 },
-                7,
+                8,
             ),
         ],
         "Recovered the booking race and emailed both attendees.",

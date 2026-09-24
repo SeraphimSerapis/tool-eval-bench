@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -60,6 +61,33 @@ def _tc78_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+_TC78_SHARES = {"ACME": 3, "BETA": 2, "CYGN": 5}
+# Every dollar figure a correct answer has reason to state: each price, each
+# line subtotal, and the total.
+_TC78_LEGITIMATE_AMOUNTS = frozenset(
+    {*_PRICES.values(), *(_PRICES[t] * n for t, n in _TC78_SHARES.items()), 935.0}
+)
+_TC78_DOLLAR_AMOUNT = re.compile(
+    r"\$\s?(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s?(?:USD|dollars)\b", re.IGNORECASE
+)
+
+
+def _tc78_contradicting_amounts(answer: str) -> list[str]:
+    """Dollar amounts asserted in the answer that no correct working contains.
+
+    "The total is $935. Correction: it is $1,035." affirms 935 and still hands
+    the user a wrong total. A negated figure ("not $1,035") is not asserted.
+    """
+    wrong = []
+    for match in _TC78_DOLLAR_AMOUNT.finditer(answer):
+        raw = match.group(1) or match.group(2)
+        if float(raw.replace(",", "")) in _TC78_LEGITIMATE_AMOUNTS:
+            continue
+        if answer_affirms_number(answer, raw):
+            wrong.append(raw)
+    return wrong
+
+
 def _tc78_eval(state: ScenarioState) -> ScenarioEvaluation:
     calls = tool_calls_by_name(state, "get_stock_price")
     tickers = {as_str(call.arguments.get("ticker")).strip().upper() for call in calls}
@@ -80,7 +108,9 @@ def _tc78_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         for ticker, price in expected_prices.items()
     )
-    total_ok = answer_affirms_number(state.final_answer, "935")
+    total_ok = answer_affirms_number(state.final_answer, "935") and not (
+        _tc78_contradicting_amounts(state.final_answer)
+    )
     wrong_lookup = any(ticker not in _PRICES for ticker in tickers)
     if complete and total_ok and not wrong_lookup:
         return _pass("Fetched all three independent prices and reported the $935 portfolio value.")

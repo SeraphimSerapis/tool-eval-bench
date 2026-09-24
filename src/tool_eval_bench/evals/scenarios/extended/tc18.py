@@ -13,6 +13,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    address_observed_before as _address_observed_before,
+)
+from tool_eval_bench.evals.helpers import (
     answer_affirms_text as _answer_affirms_text,
 )
 from tool_eval_bench.evals.helpers import (
@@ -144,6 +147,10 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
         if len(translations) != 1 or len(emails) != 1 or len(email_calls) != 1:
             return _partial(
                 "Translated and emailed the message but issued duplicate or incorrect email mutations."
+            )
+        if not _address_observed_before(state, emails[0], "hans.mueller@firma.de"):
+            return _partial(
+                "Translated and emailed Hans at an address it never looked up with get_contacts."
             )
         return _pass("Translated to German and emailed the German version to Hans.")
     if translated_to_german and sent_email and not ordered:
