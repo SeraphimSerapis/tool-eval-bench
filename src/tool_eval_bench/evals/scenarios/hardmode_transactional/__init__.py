@@ -1,4 +1,4 @@
-"""Transactional and preserved-reasoning Hard Mode scenarios TC-85 through TC-88."""
+"""Transactional and preserved-reasoning Hard Mode scenarios TC-85 through TC-89."""
 
 from __future__ import annotations
 

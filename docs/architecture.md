@@ -120,7 +120,7 @@ different helpers under the same name.
 | `scenarios/structured/` | O | TC-64 – TC-69 |
 | `scenarios/hardmode/` | P (opt-in) | TC-70 – TC-74 |
 | `scenarios/hardmode_expanded/` | P (opt-in expansion) | TC-75 – TC-84 |
-| `scenarios/hardmode_transactional/` | P (transactional and reasoning continuity) | TC-85 – TC-88 |
+| `scenarios/hardmode_transactional/` | P (transactional and reasoning continuity) | TC-85 – TC-89 |
 | `packs.py` | none | Held-out YAML scenario-pack loading and content attestations |
 | `yaml_loader.py` | none | The declarative scenario format, used by held-out packs |
 | `yaml_scenarios/` | none | Three worked YAML examples: a single call, a chain, and restraint |
@@ -137,7 +137,7 @@ The CLI's public scenario selection follows these rules:
 - The default pool is the standard 69 scenarios.
 - `--hardmode` adds all 19 Category P scenarios. `--hardmode-only` selects
   Category P alone.
-- Explicit IDs resolve against all 88 public scenarios, so
+- Explicit IDs resolve against all 89 public scenarios, so
   `--scenarios TC-85` selects a Hard Mode scenario without `--hardmode`.
   Explicit IDs take precedence over `--short` and `--categories`.
   Unknown IDs fail before model discovery.

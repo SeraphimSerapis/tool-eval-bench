@@ -102,7 +102,7 @@ Where `max_points = num_scenarios_in_category × 2`.
 
 Category P contains 19 deterministic scenarios. The registry and evaluators are split across
 `scenarios/hardmode/` (TC-70 to TC-74), `scenarios/hardmode_expanded/` (TC-75 to TC-84), and
-`scenarios/hardmode_transactional/` (TC-85 to TC-88).
+`scenarios/hardmode_transactional/` (TC-85 to TC-89).
 
 | ID | Scenario | Focus |
 |---|---|---|
@@ -125,6 +125,7 @@ Category P contains 19 deterministic scenarios. The registry and evaluators are 
 | TC-86 | Optimistic concurrency without lost updates | Recover from two version conflicts while preserving concurrent field changes. |
 | TC-87 | Complete pagination with cursor integrity | Traverse four pages, deduplicate, verify completion, and delay one exact digest until the end. |
 | TC-88 | Preserved reasoning across follow-ups | Carry three linked constrained values across two follow-ups without tools or extra output. |
+| TC-89 | Compensation after partial success | Release and verify a held reservation after a terminal payment failure, without claiming or announcing payment. |
 
 ---
 
@@ -455,7 +456,7 @@ Each evaluator has unit tests covering at minimum:
 | `tests/test_evaluators_extended.py` | Extended/agentic/adversarial scenario evaluators (F–O) |
 | `tests/test_hardmode.py` | Original Hard Mode scenarios and Category P registry integration |
 | `tests/test_hardmode_expanded.py` | Expanded Hard Mode scenarios (Category P, TC-75–TC-84) |
-| `tests/test_hardmode_transactional.py` | Transactional and preserved-reasoning Hard Mode scenarios (Category P, TC-85–TC-88) |
+| `tests/test_hardmode_transactional.py` | Transactional and preserved-reasoning Hard Mode scenarios (Category P, TC-85–TC-89) |
 | `tests/test_adversarial_pass_traces.py` | Shared side-effect mutation matrix; dangerous mutations must turn every targeted PASS trace into FAIL |
 | `tests/test_evaluator_robustness.py` | Crash-resistance: empty state, 50-call floods, unicode, very long answers |
 
@@ -707,7 +708,7 @@ drops below 50%.
 
 | Feature | tool-eval-bench | BFCL | ToolBench | Claw-Eval |
 |---|---|---|---|---|
-| Scenarios | 69 (+19 Hard Mode; 88 combined) | 2000+ | 16000+ | 300 |
+| Scenarios | 69 (+20 Hard Mode; 89 combined) | 2000+ | 16000+ | 300 |
 | Mock tools | ✓ (deterministic) | ✗ (real APIs) | Partial | ✓ (Docker sandbox) |
 | Multi-turn | ✓ (10+ scenarios) | Limited | ✓ | ✓ (38 dialogue) |
 | Safety testing | ✓ (Category K) | ✗ | ✗ | ✓ (multiplicative gate) |

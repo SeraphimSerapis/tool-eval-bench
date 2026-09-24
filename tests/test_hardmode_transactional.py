@@ -1,4 +1,4 @@
-"""Contract tests for transactional Hard Mode scenarios TC-85 through TC-88."""
+"""Contract tests for transactional Hard Mode scenarios TC-85 through TC-89."""
 
 from __future__ import annotations
 
@@ -548,12 +548,14 @@ def test_transactional_registry_and_empty_state_contracts() -> None:
         "TC-86",
         "TC-87",
         "TC-88",
+        "TC-89",
     ]
     assert set(TRANSACTIONAL_HARDMODE_DISPLAY_DETAILS) == {
         "TC-85",
         "TC-86",
         "TC-87",
         "TC-88",
+        "TC-89",
     }
     for scenario in TRANSACTIONAL_HARDMODE_SCENARIOS:
         assert scenario.evaluate(ScenarioState()).status in ScenarioStatus

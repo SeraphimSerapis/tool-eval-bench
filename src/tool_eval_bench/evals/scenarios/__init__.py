@@ -6,7 +6,7 @@ holding its tools, its ``handle_tool_call``, its evaluator, its
 discovers its own files, so creating the file is the whole registration.
 
 ``ALL_SCENARIOS`` is the 69 standard scenarios (categories A–O).
-``ALL_SCENARIOS_WITH_HARDMODE`` adds the 19 Hard Mode scenarios (category P),
+``ALL_SCENARIOS_WITH_HARDMODE`` adds the 20 Hard Mode scenarios (category P),
 which the CLI opts into with ``--hardmode``.
 """
 

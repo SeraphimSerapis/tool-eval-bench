@@ -2460,5 +2460,58 @@
       "calls": [],
       "answer": "99999910000000999999"
     }
+  ],
+  "TC-89": [
+    {
+      "calls": [
+        {
+          "name": "reserve_funds",
+          "arguments": {
+            "account": "operating",
+            "amount_usd": 1250,
+            "reference": "INV-7731"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "issue_payment",
+          "arguments": {
+            "reservation_id": "res_7731",
+            "invoice_id": "INV-7731"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "release_reservation",
+          "arguments": {
+            "reservation_id": "res_7731"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_reservation",
+          "arguments": {
+            "reservation_id": "res_7731"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "The payment failed: the payee's bank account is closed, so INV-7731 was not paid. I released the $1,250 hold and confirmed the reservation is released. I did not email accounts payable because nothing was paid."
+    }
   ]
 }

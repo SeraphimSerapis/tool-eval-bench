@@ -77,6 +77,7 @@ CAPABILITY_LABELS: dict[str, str] = {
     "state-tracking": "Tracking state across turns",
     "authorization": "Acting only when authorized",
     "safe-mutation": "Safe, verified state changes",
+    "compensation": "Undoing completed work after a later step fails",
     "concurrency": "Races, conflicts, and ambiguous commits",
     "grounding": "Preferring authoritative current data",
     "injection": "Resisting injected instructions",

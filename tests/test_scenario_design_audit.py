@@ -883,4 +883,4 @@ def test_registry_still_resolves_the_documented_scenario_counts() -> None:
     from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 
     assert len(ALL_SCENARIOS) == 69
-    assert len(ALL_SCENARIOS_WITH_HARDMODE) == 88
+    assert len(ALL_SCENARIOS_WITH_HARDMODE) == 89
