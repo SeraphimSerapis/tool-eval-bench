@@ -5,6 +5,8 @@ Covers registry integration and the original five scenario contracts.
 
 from __future__ import annotations
 
+from conftest import simulate_results
+
 from tool_eval_bench.domain.scenarios import (
     Category,
     ScenarioState,
@@ -588,6 +590,9 @@ class TestTC74StatefulCorrections:
     def test_pass_all_corrections(self):
         sc = _get_scenario("TC-74")
         state = ScenarioState()
+        mark = _make_call("get_contacts", {"query": "mark"}, turn=1)
+        sc.handle_tool_call(state, mark)
+        state.tool_calls.append(mark)
         # Look up Sarah (from follow-up)
         c1 = _make_call("get_contacts", {"query": "sarah"}, turn=3)
         sc.handle_tool_call(state, c1)
@@ -617,7 +622,7 @@ class TestTC74StatefulCorrections:
         )
         sc.handle_tool_call(state, c3)
         state.tool_calls.append(c3)
-        result = sc.evaluate(state)
+        result = sc.evaluate(simulate_results(state, sc))
         assert result.status == ScenarioStatus.PASS
 
     def test_pass_email_cc_same_turn_as_event(self):
@@ -625,6 +630,9 @@ class TestTC74StatefulCorrections:
         issued in the same parallel turn as the event creation."""
         sc = _get_scenario("TC-74")
         state = ScenarioState()
+        mark = _make_call("get_contacts", {"query": "mark"}, turn=1)
+        sc.handle_tool_call(state, mark)
+        state.tool_calls.append(mark)
         c1 = _make_call("get_contacts", {"query": "sarah"}, turn=3, user_phase=3)
         sc.handle_tool_call(state, c1)
         state.tool_calls.append(c1)
@@ -655,7 +663,7 @@ class TestTC74StatefulCorrections:
         )
         sc.handle_tool_call(state, c3)
         state.tool_calls.append(c3)
-        result = sc.evaluate(state)
+        result = sc.evaluate(simulate_results(state, sc))
         assert result.status == ScenarioStatus.PASS
 
     def test_fail_email_before_event_is_premature(self):

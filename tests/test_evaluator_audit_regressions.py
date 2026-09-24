@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 import pytest
-from conftest import make_state
+from conftest import make_state, simulate_results
 
 from tool_eval_bench.domain.scenarios import ScenarioState, ScenarioStatus
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, HARDMODE_SCENARIOS
@@ -1181,6 +1182,7 @@ _TC66_ANSWER = json.dumps(
 
 def _tc74_calls(*email_recipients, turn_offset=0):
     calls = [
+        _call("get_contacts", {"query": "Mark"}, 1),
         _call("get_contacts", {"query": "Sarah"}, 1),
         _call(
             "create_calendar_event",
@@ -1214,7 +1216,13 @@ def _tc53_state(recipient, *, contact_results=None):
             _call("send_email", {"to": recipient, "subject": "Moved", "body": "Rain."}, 2),
         ],
         results=(
-            [{"name": "get_contacts", "result": {"results": contact_results}}]
+            [
+                {
+                    "call_id": "call_1",
+                    "name": "get_contacts",
+                    "result": {"results": contact_results},
+                }
+            ]
             if contact_results
             else []
         ),
@@ -1301,7 +1309,8 @@ def _tc53_state(recipient, *, contact_results=None):
     ],
 )
 def test_alternative_workflows(scenario_id, state, expected):
-    result = _SCENARIOS[scenario_id].evaluate(state)
+    scenario = _SCENARIOS[scenario_id]
+    result = scenario.evaluate(simulate_results(deepcopy(state), scenario))
     assert result.status == expected, result.summary
 
 

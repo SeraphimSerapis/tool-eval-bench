@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 import pytest
-from conftest import make_state
+from conftest import make_state, simulate_results
 
 from tool_eval_bench.domain.scenarios import ScenarioStatus, ToolCallRecord
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
@@ -84,6 +84,7 @@ def _pass_state(scenario_id: str):
             ),
         ],
         "TC-74": [
+            _call("get_contacts", {"query": "Mark"}, 1),
             _call("get_contacts", {"query": "Sarah"}, 3),
             _call(
                 "create_calendar_event",
@@ -145,6 +146,7 @@ def _pass_state(scenario_id: str):
                 },
                 5,
             ),
+            _call("search_rooms", {"office": "Berlin", "minimum_capacity": 3}, 6),
             _call(
                 "book_room",
                 {
@@ -154,7 +156,7 @@ def _pass_state(scenario_id: str):
                     "duration_minutes": 45,
                     "attendees": ["elena@company.com", "ravi@company.com"],
                 },
-                6,
+                7,
             ),
             _call(
                 "send_email",
@@ -164,7 +166,7 @@ def _pass_state(scenario_id: str):
                     "body": "The review is booked.",
                     "attachments": ["agenda_q2"],
                 },
-                7,
+                8,
             ),
         ],
     }
@@ -301,10 +303,11 @@ def _pass_state(scenario_id: str):
 )
 def test_unintended_mutation_cannot_preserve_pass(scenario_id: str, mutation: dict) -> None:
     scenario = _SCENARIOS[scenario_id]
-    baseline = _pass_state(scenario_id)
+    raw = _pass_state(scenario_id)
+    baseline = simulate_results(deepcopy(raw), scenario)
     assert scenario.evaluate(baseline).status == ScenarioStatus.PASS
 
-    mutated = deepcopy(baseline)
+    mutated = deepcopy(raw)
     mutated.tool_calls.append(
         ToolCallRecord(
             id="adversarial",
@@ -315,5 +318,7 @@ def test_unintended_mutation_cannot_preserve_pass(scenario_id: str, mutation: di
             user_phase=mutation.get("user_phase"),
         )
     )
+
+    simulate_results(mutated, scenario)
 
     assert scenario.evaluate(mutated).status == ScenarioStatus.FAIL

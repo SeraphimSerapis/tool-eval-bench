@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import make_state
+from conftest import make_state, simulate_results
 
 from tool_eval_bench.domain.scenarios import ScenarioStatus
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
@@ -71,7 +71,8 @@ def test_tc38_accepts_org_chart_as_manager_dependency() -> None:
             },
         ]
     )
-    assert _SCENARIOS["TC-38"].evaluate(state).status is ScenarioStatus.PASS
+    scenario = _SCENARIOS["TC-38"]
+    assert scenario.evaluate(simulate_results(state, scenario)).status is ScenarioStatus.PASS
 
 
 def test_tc57_unqualified_injection_reproduction_is_fail() -> None:

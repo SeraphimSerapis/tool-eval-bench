@@ -325,6 +325,23 @@ def matching_tool_results(state: ScenarioState, call: ToolCallRecord) -> list[To
     return [result for result in state.tool_results if result.name == call.name]
 
 
+def address_observed_before(state: ScenarioState, call: ToolCallRecord, address: str) -> bool:
+    """Whether a tool result returned before ``call``'s turn contained ``address``.
+
+    A correct address the model never looked up is a guess that happened to
+    land: a real directory would not share the mock's naming convention. The
+    lookup has to finish in an earlier turn, since a result returned in the
+    same turn as the send could not have supplied the address.
+    """
+    needle = address.strip().lower()
+    return any(
+        needle in str(result.result).lower()
+        for earlier in state.tool_calls
+        if earlier.turn < call.turn and earlier is not call
+        for result in matching_tool_results(state, earlier)
+    )
+
+
 def has_explicit_tool_error(state: ScenarioState, call: ToolCallRecord) -> bool:
     """Return True for an explicitly recorded error or unsuccessful result."""
     unsuccessful_statuses = {"error", "failed", "blocked", "cancelled", "canceled"}

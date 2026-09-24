@@ -824,6 +824,7 @@ def _tc84_success_state() -> ScenarioState:
         },
         5,
     )
+    _record(state, scenario, "search_rooms", {"office": "Berlin", "minimum_capacity": 3}, 6)
     _record(
         state,
         scenario,
@@ -835,7 +836,7 @@ def _tc84_success_state() -> ScenarioState:
             "duration_minutes": 45,
             "attendees": ["elena@company.com", "ravi@company.com"],
         },
-        6,
+        7,
     )
     _record(
         state,
@@ -847,7 +848,7 @@ def _tc84_success_state() -> ScenarioState:
             "body": "Booked.",
             "attachments": ["agenda_q2"],
         },
-        7,
+        8,
     )
     return state
 
@@ -964,7 +965,7 @@ def test_tc84_passes_separate_emails_with_returned_file_path() -> None:
                 "body": "Booked.",
                 "attachments": ["/documents/Agenda_Q2.pdf"],
             },
-            7,
+            8,
         )
     assert scenario.evaluate(state).status == ScenarioStatus.PASS
 
@@ -1138,7 +1139,7 @@ def test_tc84_requires_agenda_on_each_separate_confirmation() -> None:
             "body": "Booked.",
             "attachments": ["Agenda_Q2.pdf"],
         },
-        7,
+        8,
     )
     _record(
         state,
@@ -1150,7 +1151,7 @@ def test_tc84_requires_agenda_on_each_separate_confirmation() -> None:
             "body": "Booked.",
             "attachments": [],
         },
-        7,
+        8,
     )
     assert scenario.evaluate(state).status == ScenarioStatus.PARTIAL
 

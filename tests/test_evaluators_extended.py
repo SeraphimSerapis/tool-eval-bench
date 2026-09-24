@@ -4,6 +4,8 @@ Covers TC-02 through TC-09, TC-11, TC-13 through TC-34, TC-41 through TC-50.
 Each scenario gets at least a pass and a fail test case.
 """
 
+from conftest import simulate_results
+
 from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ScenarioStatus,
@@ -596,6 +598,7 @@ class TestTC18:
     def test_pass(self) -> None:
         s = _state(
             tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Hans"}, "turn": 1},
                 {
                     "name": "translate_text",
                     "arguments": {
@@ -616,7 +619,7 @@ class TestTC18:
                 },
             ]
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+        assert self.sc.evaluate(simulate_results(s, self.sc)).status == ScenarioStatus.PASS
 
     def test_fail_no_email(self) -> None:
         s = _state(
@@ -1648,7 +1651,7 @@ class TestTC38:
                 },
             ]
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+        assert self.sc.evaluate(simulate_results(s, self.sc)).status == ScenarioStatus.PASS
 
     def test_pass_contact_lookup_parallel_with_file_search(self) -> None:
         s = _state(
@@ -1667,7 +1670,7 @@ class TestTC38:
                 },
             ]
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+        assert self.sc.evaluate(simulate_results(s, self.sc)).status == ScenarioStatus.PASS
 
     def test_partial_with_domain_tool(self) -> None:
         s = _state(
@@ -1707,7 +1710,7 @@ class TestTC38:
                 },
             ]
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+        assert self.sc.evaluate(simulate_results(s, self.sc)).status == ScenarioStatus.PASS
 
     def test_partial_unrelated_org_chart(self) -> None:
         """An org-chart lookup for an unrelated department is still penalized."""
@@ -2377,9 +2380,16 @@ class TestTC48:
     sc = _sc("TC-48")
 
     def test_pass_bob_ccd(self) -> None:
-        """Sent to Alice with Bob CC'd."""
+        """Sent to Alice with Bob CC'd, at addresses both looked up."""
         s = _state(
             tool_calls=[
+                {"name": "get_contacts", "arguments": {"query": "Alice"}, "turn": 1},
+                {
+                    "name": "get_contacts",
+                    "arguments": {"query": "Bob"},
+                    "turn": 2,
+                    "user_phase": 1,
+                },
                 {
                     "name": "send_email",
                     "arguments": {
@@ -2388,13 +2398,13 @@ class TestTC48:
                         "subject": "Project Update",
                         "body": "Project update: launch remains on track.",
                     },
-                    "turn": 2,
+                    "turn": 3,
                     "user_phase": 1,
                 },
             ],
             final_answer="Email sent to Alice with Bob CC'd.",
         )
-        assert self.sc.evaluate(s).status == ScenarioStatus.PASS
+        assert self.sc.evaluate(simulate_results(s, self.sc)).status == ScenarioStatus.PASS
 
     def test_fail_email_sent_before_cc_authorization(self) -> None:
         s = _state(

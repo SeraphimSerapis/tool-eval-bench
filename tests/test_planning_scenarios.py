@@ -125,7 +125,7 @@ class TestTC53ConditionalPlanning:
                 {"name": "get_weather", "arguments": {"location": "London"}, "turn": 1},
                 {
                     "name": "create_calendar_event",
-                    "arguments": {"title": "Meeting - Office"},
+                    "arguments": {"title": "Meeting - Office", "date": "2026-03-21"},
                     "turn": 2,
                 },
                 {
@@ -1838,7 +1838,10 @@ class TestTC53EdgeCases:
         state = _make_state(
             tool_calls=[
                 {"name": "get_weather", "arguments": {"location": "London"}},
-                {"name": "create_calendar_event", "arguments": {"title": "Meeting"}},
+                {
+                    "name": "create_calendar_event",
+                    "arguments": {"title": "Meeting", "date": "2026-03-21"},
+                },
             ],
             final_answer="I've updated the meeting.",
         )

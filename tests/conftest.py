@@ -153,6 +153,33 @@ def make_state(
     return state
 
 
+def simulate_results(state: ScenarioState, scenario: Any) -> ScenarioState:
+    """Replay ``state``'s tool calls through the scenario's handler, as the runner does.
+
+    A state built from bare calls has no results, and evaluators read a
+    missing result as "unknown" rather than as a failure, so such a test
+    grades a more lenient path than any real run takes. This rebuilds the
+    calls in order, recording each handler result and checkpoint, so the
+    evaluator sees what production would have shown it. Results already
+    recorded for a call are kept instead of simulated.
+    """
+    calls = list(state.tool_calls)
+    recorded = {result.call_id for result in state.tool_results}
+    state.tool_calls.clear()
+    for call in calls:
+        result = scenario.handle_tool_call(state, call)
+        state.tool_calls.append(call)
+        if call.id not in recorded:
+            state.tool_results.append(
+                ToolResultRecord(call_id=call.id, name=call.name, result=result)
+            )
+        if scenario.checkpoint:
+            diagnostic = scenario.checkpoint(state, call)
+            if diagnostic:
+                state.meta.setdefault("state_checkpoints", []).append(diagnostic)
+    return state
+
+
 def make_tool_call(
     name: str = "unknown_tool",
     arguments: dict | None = None,

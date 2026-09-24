@@ -158,6 +158,10 @@ such as `run_code` where computing the answer is the work. Pass `tools=` to cove
 custom toolset. `tests/test_side_effect_hygiene.py` replays every reference trace with a stray
 and a duplicate write inserted, and fails for any scenario that still passes.
 
+**Check where facts came from.** When the prompt names a person but not their address, use
+`address_observed_before(state, call, address)`. It is true only when a tool result returned in an
+earlier turn contained the address, so a correct guess does not pass.
+
 **`DISPLAY` is what reports show** next to the score, so write it as the reader's test rather than
 a restatement of the title.
 
@@ -197,6 +201,11 @@ Helpers used across groups live in `evals/helpers.py`.
 
 Cover the pass case, the fail case, and the near-misses that separate them. The near-misses are the
 point: a scenario that only passes its own happy path measures nothing.
+
+Give every call its result. Evaluators treat a missing result as unknown rather than failed, so a
+test built from bare calls grades a more lenient path than any real run. Pass the state through
+`simulate_results(state, scenario)` from `tests/conftest.py`, which replays each call through the
+scenario's handler as the runner does. `tests/scenario_replay.py` runs the real runner end to end.
 
 ```bash
 env -u FORCE_COLOR .venv/bin/python -m pytest tests/ -m "not live" -q

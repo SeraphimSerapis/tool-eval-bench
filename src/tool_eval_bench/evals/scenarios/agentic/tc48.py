@@ -14,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    address_observed_before as _address_observed_before,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -281,7 +284,16 @@ def _tc48_eval(state: ScenarioState) -> ScenarioEvaluation:
         for phrase in ("launch", "on track")
     )
 
+    # An address with an "@" is not the same as a resolved one: guessing
+    # alice.kim@company.com from the mock's naming convention would not work
+    # against a real directory, so both addresses must come from a lookup.
+    looked_up = all(
+        _address_observed_before(state, email_calls[0], address)
+        for address in ("alice.kim@company.com", "bob.martinez@company.com")
+    )
     if bob_ccd:
+        if resolved_addresses and preserved_content and not looked_up:
+            return _partial("Sent to Alice with Bob CC'd, but used addresses it never looked up.")
         if resolved_addresses and preserved_content:
             return _pass("Sent email to Alice with Bob CC'd — correctly merged additive context.")
         if resolved_addresses:
