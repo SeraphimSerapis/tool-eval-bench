@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ScenarioStatus,
@@ -445,6 +447,7 @@ def test_tc87_can_observe_then_reject_stale_count() -> None:
     assert _scenario("TC-87").evaluate(state).status == ScenarioStatus.PASS
 
 
+@pytest.mark.allow_missing_results
 def test_transactional_scenarios_require_observed_tool_results() -> None:
     for scenario_id, state in (
         ("TC-85", _tc85_pass_state()),
@@ -521,7 +524,13 @@ def test_tc88_fails_extra_text_wrong_sum_or_tool_use() -> None:
     assert _scenario("TC-88").evaluate(wrong).status == ScenarioStatus.FAIL
 
     tool_state = ScenarioState(assistant_messages=numbers, final_answer=numbers[-1])
-    tool_state.tool_calls.append(ToolCallRecord("forbidden", "calculator", "{}", {}, 1))
+    forbidden = ToolCallRecord("forbidden", "calculator", "{}", {}, 1)
+    tool_state.tool_calls.append(forbidden)
+    tool_state.tool_results.append(
+        ToolResultRecord(
+            "forbidden", "calculator", _scenario("TC-88").handle_tool_call(tool_state, forbidden)
+        )
+    )
     assert _scenario("TC-88").evaluate(tool_state).status == ScenarioStatus.FAIL
 
 

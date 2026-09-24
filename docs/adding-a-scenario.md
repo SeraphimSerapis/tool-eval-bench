@@ -206,6 +206,8 @@ Give every call its result. Evaluators treat a missing result as unknown rather 
 test built from bare calls grades a more lenient path than any real run. Pass the state through
 `simulate_results(state, scenario)` from `tests/conftest.py`, which replays each call through the
 scenario's handler as the runner does. `tests/scenario_replay.py` runs the real runner end to end.
+For Hard Mode scenarios this is enforced: a test that grades a call with no recorded result fails,
+unless it is marked `@pytest.mark.allow_missing_results` because missing results are its subject.
 
 ```bash
 env -u FORCE_COLOR .venv/bin/python -m pytest tests/ -m "not live" -q

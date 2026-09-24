@@ -29,6 +29,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ScenarioStatus,
     ToolCallRecord,
+    ToolResultRecord,
 )
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
 from tool_eval_bench.runner.orchestrator import (
@@ -458,8 +459,10 @@ def test_tc88_constraint_violations_outrank_the_channel_message() -> None:
 
 def test_tc88_tool_use_still_fails_regardless_of_reasoning() -> None:
     state = _tc88_state(["", "", ""])
-    state.tool_calls.append(
-        ToolCallRecord(id="c", name="web_search", raw_arguments="{}", arguments={}, turn=1)
+    call = ToolCallRecord(id="c", name="web_search", raw_arguments="{}", arguments={}, turn=1)
+    state.tool_calls.append(call)
+    state.tool_results.append(
+        ToolResultRecord("c", "web_search", BY_ID["TC-88"].handle_tool_call(state, call))
     )
     result = BY_ID["TC-88"].evaluate(state)
 

@@ -40,6 +40,40 @@ def open_repository(**kwargs: Any) -> Any:
 
 
 @pytest.fixture(autouse=True)
+def _hardmode_states_carry_results(request, monkeypatch):
+    """Fail a test that grades a Hard Mode state holding a call with no result.
+
+    Evaluators read a missing result as "unknown" and grade it leniently, so a
+    test built that way checks a path no production run takes. Record results
+    with the scenario's handler, or pass the state through
+    ``simulate_results``. A test that is about missing results opts out with
+    ``@pytest.mark.allow_missing_results``.
+    """
+    if request.node.get_closest_marker("allow_missing_results"):
+        yield
+        return
+    from tool_eval_bench.evals.scenarios import HARDMODE_SCENARIOS
+
+    for scenario in HARDMODE_SCENARIOS:
+
+        def guarded(state, _evaluate=scenario.evaluate, _sid=scenario.id):
+            recorded = {result.call_id for result in state.tool_results}
+            missing = [
+                call.name
+                for call in state.tool_calls
+                if isinstance(call, ToolCallRecord) and call.id not in recorded
+            ]
+            assert not missing, (
+                f"{_sid} graded calls without results: {missing}. "
+                "Record each handler result or use simulate_results()."
+            )
+            return _evaluate(state)
+
+        monkeypatch.setattr(scenario, "evaluate", guarded)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _close_leaked_repositories():
     """Close anything `open_repository` handed out during the test."""
     yield

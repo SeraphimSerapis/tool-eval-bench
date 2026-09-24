@@ -15,7 +15,12 @@ from __future__ import annotations
 import pytest
 
 from tests.conftest import make_state, simulate_results
-from tool_eval_bench.domain.scenarios import ScenarioState, ScenarioStatus, ToolCallRecord
+from tool_eval_bench.domain.scenarios import (
+    ScenarioState,
+    ScenarioStatus,
+    ToolCallRecord,
+    ToolResultRecord,
+)
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
 
 # (reference date, expected target date per scenario).  Written out rather than
@@ -53,10 +58,11 @@ def _simulated(sid: str, reference: str, calls: list[tuple[str, dict, int]]) -> 
     scenario = _scenario(sid)
     state = ScenarioState()
     state.meta["reference_date"] = reference
-    for name, args, turn in calls:
-        call = ToolCallRecord(f"{name}_{turn}", name, str(args), args, turn)
-        scenario.handle_tool_call(state, call)
+    for index, (name, args, turn) in enumerate(calls):
+        call = ToolCallRecord(f"{name}_{turn}_{index}", name, str(args), args, turn)
+        result = scenario.handle_tool_call(state, call)
         state.tool_calls.append(call)
+        state.tool_results.append(ToolResultRecord(call_id=call.id, name=name, result=result))
     return state
 
 
