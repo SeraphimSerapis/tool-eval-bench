@@ -13,6 +13,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_text,
     as_str,
     days_after_reference,
     positive_argument_contains,
@@ -68,6 +69,22 @@ def _tc79_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "create_calendar_event":
         return _noise({"status": "created", "event_id": "evt_lisbon"}, call.name)
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+
+
+_TC79_CONFIRMATIONS = ("scheduled", "created", "booked", "set up", "added")
+# Bare "rain" would reject "0% chance of rain", which is the correct forecast.
+_TC79_CONTRADICTIONS = ("will rain", "raining", "rainy", "not dry", "not be dry")
+
+
+def _tc79_answer_is_truthful(answer: str) -> bool:
+    """Whether the reply reports the event it created, without contradicting it.
+
+    The trace can be perfect while the reply says the opposite ("it will rain,
+    so I did not schedule anything"), and the user only ever sees the reply.
+    """
+    confirms = any(answer_affirms_text(answer, word) for word in _TC79_CONFIRMATIONS)
+    contradicts = any(answer_affirms_text(answer, word) for word in _TC79_CONTRADICTIONS)
+    return confirms and not contradicts
 
 
 def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
@@ -130,6 +147,10 @@ def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
         and attendee_values[0] == "priya.shah@company.com",
     ]
     if dependencies_first and event_usable and all(required):
+        if not _tc79_answer_is_truthful(state.final_answer):
+            return _partial(
+                "Created the event correctly but the reply did not report it or contradicted it."
+            )
         return _pass("Resolved weather and contact dependencies before creating the Lisbon event.")
     if dependencies_first and sum(required) >= 5:
         return _partial(

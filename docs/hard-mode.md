@@ -46,8 +46,13 @@ Hard Mode focuses on nineteen ceiling-breaking scenarios:
 
 TC-88 opts into replaying the provider's `reasoning_content` field across its
 follow-up turns. It does not ask the model to print its reasoning to the user.
-A pass requires the first reasoning payload to contain all three exact values;
-valid outputs from a backend that keeps reasoning opaque receive partial credit.
+Scoring uses only the three visible values: a pass requires each to satisfy its
+digit sum and the cross-turn reversal constraints. Whether the first reasoning
+payload already contained all three values is reported separately as the
+`reasoning_transport` diagnostic (`observed`, `unconfirmed`, or `unavailable`)
+and does not change the score, so a backend that keeps reasoning opaque can
+still pass. A pass therefore shows the values were retained across turns, not
+that private reasoning was preserved.
 Other scenarios keep the default behavior and do not replay completed no-tool
 reasoning across user turns.
 

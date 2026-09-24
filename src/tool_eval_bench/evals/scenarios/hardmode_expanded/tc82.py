@@ -13,6 +13,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients,
     as_str,
     asks_for_clarification,
     attachment_matches_observed_file,
@@ -124,6 +125,7 @@ def _tc82_eval(state: ScenarioState) -> ScenarioEvaluation:
     sent_avery = (
         len(emails) == 1
         and emails[0].arguments.get("to") == "avery.patel@company.com"
+        and addressed_recipients(emails[0]) == ["avery.patel@company.com"]
         and attachment_matches_observed_file(state, emails[0], "launch_checklist")
         and as_str(emails[0].arguments.get("subject")).strip()
         and as_str(emails[0].arguments.get("body")).strip()

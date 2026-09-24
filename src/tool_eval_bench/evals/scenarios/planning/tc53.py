@@ -15,6 +15,9 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients as _addressed_recipients,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -31,9 +34,6 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
-)
-from tool_eval_bench.evals.helpers import (
-    recipient_values as _recipient_values,
 )
 from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
@@ -179,9 +179,7 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
                 for address in re.findall(r"[\w.+-]+@[\w.-]+\.\w+", str(result.result))
             )
     notifications = [c for c in state.tool_calls if c.name == "send_email"]
-    recipient_sets = [
-        set(_recipient_values(notification.arguments.get("to"))) for notification in notifications
-    ]
+    recipient_sets = [set(_addressed_recipients(notification)) for notification in notifications]
     notified: set[str] = set()
     no_duplicate_recipients = True
     for recipients in recipient_sets:
