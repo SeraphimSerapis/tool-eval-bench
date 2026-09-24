@@ -312,7 +312,9 @@ def test_tc74_null_attendees_do_not_crash_tool_handler() -> None:
     result = state.tool_results[-1].result
     assert isinstance(result, dict)
     assert result["attendees"] == []
-    assert _scenario("TC-74").evaluate(ScenarioState(tool_calls=[call])).status in {
+    assert _scenario("TC-74").evaluate(
+        ScenarioState(tool_calls=[call], tool_results=state.tool_results)
+    ).status in {
         ScenarioStatus.FAIL,
         ScenarioStatus.PARTIAL,
     }

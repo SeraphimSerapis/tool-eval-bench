@@ -815,7 +815,8 @@ def _error(name, message="service unavailable", status=500):
     ],
 )
 def test_audit_regression(scenario_id, state, expected):
-    assert _SCENARIOS[scenario_id.removesuffix("-error")].evaluate(state).status == expected
+    scenario = _SCENARIOS[scenario_id.removesuffix("-error")]
+    assert scenario.evaluate(simulate_results(deepcopy(state), scenario)).status == expected
 
 
 @pytest.mark.parametrize(
@@ -1030,7 +1031,8 @@ def test_audit_regression(scenario_id, state, expected):
     ],
 )
 def test_reviewer_boundary_regressions(scenario_id, state, expected):
-    assert _SCENARIOS[scenario_id].evaluate(state).status == expected
+    scenario = _SCENARIOS[scenario_id]
+    assert scenario.evaluate(simulate_results(deepcopy(state), scenario)).status == expected
 
 
 # ---------------------------------------------------------------------------

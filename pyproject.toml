@@ -176,6 +176,7 @@ markers = [
   "live: requires a live external service or inference endpoint",
   "slow: takes materially longer than the default unit-test suite",
   "integration: exercises multiple project layers together",
+  "allow_missing_results: grades a Hard Mode state whose calls deliberately lack results",
 ]
 [tool.coverage.run]
 branch = true

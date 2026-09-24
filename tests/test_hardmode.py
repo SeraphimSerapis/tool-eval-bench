@@ -5,13 +5,14 @@ Covers registry integration and the original five scenario contracts.
 
 from __future__ import annotations
 
-from conftest import simulate_results
+from itertools import count
 
 from tool_eval_bench.domain.scenarios import (
     Category,
     ScenarioState,
     ScenarioStatus,
     ToolCallRecord,
+    ToolResultRecord,
 )
 from tool_eval_bench.evals.scenarios import HARDMODE_DISPLAY_DETAILS, HARDMODE_SCENARIOS
 
@@ -72,17 +73,36 @@ def _get_scenario(sid: str):
     return next(s for s in HARDMODE_SCENARIOS if s.id == sid)
 
 
+_CALL_IDS = count()
+
+
 def _make_call(
     name: str, args: dict, turn: int = 1, user_phase: int | None = None
 ) -> ToolCallRecord:
     return ToolCallRecord(
-        id=f"call_{name}_{turn}",
+        # Unique per call: two lookups in one turn must not share a result.
+        id=f"call_{name}_{turn}_{next(_CALL_IDS)}",
         name=name,
         raw_arguments=str(args),
         arguments=args,
         turn=turn,
         user_phase=user_phase,
     )
+
+
+def _record(state: ScenarioState, sc, call: ToolCallRecord) -> None:
+    """Execute ``call`` the way the runner does: handle it and record its result.
+
+    Evaluators read a missing result as "unknown" and grade it leniently, so a
+    call appended without its result tests a path no real run takes.
+    """
+    result = sc.handle_tool_call(state, call)
+    state.tool_calls.append(call)
+    state.tool_results.append(ToolResultRecord(call_id=call.id, name=call.name, result=result))
+    if sc.checkpoint:
+        diagnostic = sc.checkpoint(state, call)
+        if diagnostic:
+            state.meta.setdefault("state_checkpoints", []).append(diagnostic)
 
 
 def _tc74_confirmation_state(
@@ -113,8 +133,7 @@ def _tc74_confirmation_state(
     email = _make_call("send_email", email_args, turn=7, user_phase=4)
     ordered_calls = [contact, email, event] if email_before_event else [contact, event, email]
     for call in ordered_calls:
-        state.tool_calls.append(call)
-        sc.handle_tool_call(state, call)
+        _record(state, sc, call)
     return state
 
 
@@ -130,8 +149,7 @@ class TestTC70AdversarialTools:
         sc = _get_scenario("TC-70")
         state = ScenarioState()
         call = _make_call("get_weather_global", {"location": "Tokyo"})
-        sc.handle_tool_call(state, call)
-        state.tool_calls.append(call)
+        _record(state, sc, call)
         state.final_answer = "Tokyo is currently 22°C and Sunny."
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
@@ -141,12 +159,10 @@ class TestTC70AdversarialTools:
         state = ScenarioState()
         # First: wrong tool
         c1 = _make_call("get_weather", {"location": "Tokyo"}, turn=1)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         # Then: correct tool
         c2 = _make_call("get_weather_global", {"location": "Tokyo"}, turn=2)
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
 
@@ -154,8 +170,7 @@ class TestTC70AdversarialTools:
         sc = _get_scenario("TC-70")
         state = ScenarioState()
         call = _make_call("get_weather", {"location": "Tokyo"})
-        sc.handle_tool_call(state, call)
-        state.tool_calls.append(call)
+        _record(state, sc, call)
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
 
@@ -210,8 +225,7 @@ class TestTC71AmbiguousRecipient:
         sc = _get_scenario("TC-71")
         state = ScenarioState()
         call = _make_call("get_contacts", {"query": "Jordan"})
-        sc.handle_tool_call(state, call)
-        state.tool_calls.append(call)
+        _record(state, sc, call)
         state.assistant_messages.append(
             "I found three contacts named Jordan: Jordan Park (Engineering), "
             "Jordan Lee (Marketing), and Jordan Kim (Finance). Which Jordan "
@@ -226,8 +240,7 @@ class TestTC71AmbiguousRecipient:
         sc = _get_scenario("TC-71")
         state = ScenarioState()
         call = _make_call("get_contacts", {"query": "Jordan"})
-        sc.handle_tool_call(state, call)
-        state.tool_calls.append(call)
+        _record(state, sc, call)
         state.assistant_messages.append(
             "I found multiple contacts with that name. "
             "Could you clarify which one you'd like me to send the report to?"
@@ -240,11 +253,9 @@ class TestTC71AmbiguousRecipient:
         sc = _get_scenario("TC-71")
         state = ScenarioState()
         c1 = _make_call("get_contacts", {"query": "Jordan"}, turn=1)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         c2 = _make_call("send_email", {"to": "jordan.park@company.com", "body": "Report"}, turn=2)
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         state.final_answer = "I've sent the report to Jordan Park."
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
@@ -254,11 +265,9 @@ class TestTC71AmbiguousRecipient:
         sc = _get_scenario("TC-71")
         state = ScenarioState()
         c1 = _make_call("get_contacts", {"query": "Jordan"}, turn=1)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         c2 = _make_call("send_email", {"to": "jordan.park@company.com", "body": "Report"}, turn=2)
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         state.assistant_messages.append(
             "I sent the report to Jordan Park. Which Jordan did you mean? "
             "I see Jordan Park, Jordan Lee, and Jordan Kim."
@@ -280,14 +289,12 @@ class TestTC71AmbiguousRecipient:
         sc = _get_scenario("TC-71")
         state = ScenarioState()
         c0 = _make_call("get_contacts", {"query": "Jordan"}, turn=1)
-        sc.handle_tool_call(state, c0)
-        state.tool_calls.append(c0)
+        _record(state, sc, c0)
         for i, addr in enumerate(
             ["jordan.park@company.com", "jordan.lee@company.com", "jordan.kim@company.com"]
         ):
             c = _make_call("send_email", {"to": addr, "body": "Report"}, turn=2 + i)
-            sc.handle_tool_call(state, c)
-            state.tool_calls.append(c)
+            _record(state, sc, c)
         state.final_answer = "Sent to all three."
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
@@ -305,24 +312,19 @@ class TestTC72CascadingRecovery:
         sc = _get_scenario("TC-72")
         state = ScenarioState()
         c1 = _make_call("search_files", {"query": "Project Alpha"}, turn=1)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         c2 = _make_call("read_file", {"file_id": "file_404"}, turn=2)
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         c3 = _make_call("read_file", {"file_id": "file_405"}, turn=3)
-        sc.handle_tool_call(state, c3)
-        state.tool_calls.append(c3)
+        _record(state, sc, c3)
         contact = _make_call("get_contacts", {"query": "Dana Wells"}, turn=4)
-        sc.handle_tool_call(state, contact)
-        state.tool_calls.append(contact)
+        _record(state, sc, contact)
         c4 = _make_call(
             "send_email",
             {"to": "dana.wells@company.com", "body": "Budget is $1.2M"},
             turn=5,
         )
-        sc.handle_tool_call(state, c4)
-        state.tool_calls.append(c4)
+        _record(state, sc, c4)
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 
@@ -331,19 +333,15 @@ class TestTC72CascadingRecovery:
         sc = _get_scenario("TC-72")
         state = ScenarioState()
         c1 = _make_call("search_files", {"query": "Project Alpha"}, turn=1)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         c2 = _make_call("read_file", {"file_id": "file_405"}, turn=2)
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         contact = _make_call("get_contacts", {"query": "Dana Wells"}, turn=3)
-        sc.handle_tool_call(state, contact)
-        state.tool_calls.append(contact)
+        _record(state, sc, contact)
         c3 = _make_call(
             "send_email", {"to": "dana.wells@company.com", "body": "Total budget $1.2M"}, turn=4
         )
-        sc.handle_tool_call(state, c3)
-        state.tool_calls.append(c3)
+        _record(state, sc, c3)
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
 
@@ -362,8 +360,7 @@ class TestTC72CascadingRecovery:
                 turn=5,
             ),
         ):
-            sc.handle_tool_call(state, call)
-            state.tool_calls.append(call)
+            _record(state, sc, call)
         assert sc.evaluate(state).status == ScenarioStatus.PARTIAL
 
     def test_partial_reads_both_but_no_email(self):
@@ -371,11 +368,9 @@ class TestTC72CascadingRecovery:
         sc = _get_scenario("TC-72")
         state = ScenarioState()
         c1 = _make_call("read_file", {"file_id": "file_404"}, turn=1)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         c2 = _make_call("read_file", {"file_id": "file_405"}, turn=2)
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         state.final_answer = "The budget is $1.2M."
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
@@ -384,8 +379,7 @@ class TestTC72CascadingRecovery:
         sc = _get_scenario("TC-72")
         state = ScenarioState()
         c1 = _make_call("read_file", {"file_id": "file_404"})
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         state.final_answer = "The file is corrupted."
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
@@ -428,16 +422,14 @@ class TestTC73MultiConstraint:
         c1 = _make_call(
             "web_search", {"query": "vegan restaurant Berlin near Alexanderplatz"}, turn=1
         )
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         state.assistant_messages.append(
             "I found Green Kitchen Berlin — it's vegan-friendly, 0.8km from Alexanderplatz, "
             "and open daily including Sundays."
         )
         # Contact lookup
         c2 = _make_call("get_contacts", {"query": "Lisa"}, turn=2)
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         # Email
         c3 = _make_call(
             "send_email",
@@ -447,8 +439,7 @@ class TestTC73MultiConstraint:
             },
             turn=3,
         )
-        sc.handle_tool_call(state, c3)
-        state.tool_calls.append(c3)
+        _record(state, sc, c3)
         state.final_answer = "I've emailed the Green Kitchen recommendation to Lisa."
         state.assistant_messages.append(state.final_answer)
         result = sc.evaluate(state)
@@ -462,8 +453,7 @@ class TestTC73MultiConstraint:
         )
         contact = _make_call("get_contacts", {"query": "Lisa"}, turn=1)
         for call in (search, contact):
-            sc.handle_tool_call(state, call)
-            state.tool_calls.append(call)
+            _record(state, sc, call)
         state.assistant_messages.append(
             "Green Kitchen Berlin is vegan-friendly, open on Sundays, and 0.8km from Alexanderplatz."
         )
@@ -475,8 +465,7 @@ class TestTC73MultiConstraint:
             },
             turn=2,
         )
-        sc.handle_tool_call(state, email)
-        state.tool_calls.append(email)
+        _record(state, sc, email)
         state.final_answer = "I've emailed the Green Kitchen recommendation to Lisa."
 
         assert sc.evaluate(state).status == ScenarioStatus.PASS
@@ -485,8 +474,7 @@ class TestTC73MultiConstraint:
         sc = _get_scenario("TC-73")
         state = ScenarioState()
         c1 = _make_call("web_search", {"query": "restaurant Berlin Alexanderplatz vegan"}, turn=1)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         state.assistant_messages.append(
             "I found Green Kitchen Berlin and Veganz Bistro as vegan options near Alexanderplatz."
         )
@@ -507,8 +495,7 @@ class TestTC73MultiConstraint:
         sc = _get_scenario("TC-73")
         state = ScenarioState()
         c1 = _make_call("web_search", {"query": "restaurant Berlin Alexanderplatz"}, turn=1)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         state.assistant_messages.append(
             "I recommend Mitte Brasserie, it's 1.5km from Alexanderplatz."
         )
@@ -541,22 +528,19 @@ class TestTC73MultiConstraint:
         sc = _get_scenario("TC-73")
         state = ScenarioState()
         c1 = _make_call("web_search", {"query": "restaurant Berlin vegan Alexanderplatz"}, turn=1)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         state.assistant_messages.append(
             "I found several options. I excluded Mitte Brasserie because it's not vegan. "
             "I recommend Green Kitchen Berlin — it's vegan-friendly and open daily."
         )
         c2 = _make_call("get_contacts", {"query": "Lisa"}, turn=2)
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         c3 = _make_call(
             "send_email",
             {"to": "lisa.mueller@company.com", "body": "I recommend Green Kitchen Berlin."},
             turn=3,
         )
-        sc.handle_tool_call(state, c3)
-        state.tool_calls.append(c3)
+        _record(state, sc, c3)
         state.final_answer = "Done — emailed Lisa the Green Kitchen recommendation."
         state.assistant_messages.append(state.final_answer)
         result = sc.evaluate(state)
@@ -591,12 +575,10 @@ class TestTC74StatefulCorrections:
         sc = _get_scenario("TC-74")
         state = ScenarioState()
         mark = _make_call("get_contacts", {"query": "mark"}, turn=1)
-        sc.handle_tool_call(state, mark)
-        state.tool_calls.append(mark)
+        _record(state, sc, mark)
         # Look up Sarah (from follow-up)
         c1 = _make_call("get_contacts", {"query": "sarah"}, turn=3)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         # Final event with all corrections applied
         c2 = _make_call(
             "create_calendar_event",
@@ -609,8 +591,7 @@ class TestTC74StatefulCorrections:
             },
             turn=5,
         )
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         c3 = _make_call(
             "send_email",
             {
@@ -620,9 +601,8 @@ class TestTC74StatefulCorrections:
             },
             turn=6,
         )
-        sc.handle_tool_call(state, c3)
-        state.tool_calls.append(c3)
-        result = sc.evaluate(simulate_results(state, sc))
+        _record(state, sc, c3)
+        result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 
     def test_pass_email_cc_same_turn_as_event(self):
@@ -631,11 +611,9 @@ class TestTC74StatefulCorrections:
         sc = _get_scenario("TC-74")
         state = ScenarioState()
         mark = _make_call("get_contacts", {"query": "mark"}, turn=1)
-        sc.handle_tool_call(state, mark)
-        state.tool_calls.append(mark)
+        _record(state, sc, mark)
         c1 = _make_call("get_contacts", {"query": "sarah"}, turn=3, user_phase=3)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         c2 = _make_call(
             "create_calendar_event",
             {
@@ -648,8 +626,7 @@ class TestTC74StatefulCorrections:
             turn=7,
             user_phase=4,
         )
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         c3 = _make_call(
             "send_email",
             {
@@ -661,9 +638,8 @@ class TestTC74StatefulCorrections:
             turn=7,
             user_phase=4,
         )
-        sc.handle_tool_call(state, c3)
-        state.tool_calls.append(c3)
-        result = sc.evaluate(simulate_results(state, sc))
+        _record(state, sc, c3)
+        result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 
     def test_fail_email_before_event_is_premature(self):
@@ -671,8 +647,7 @@ class TestTC74StatefulCorrections:
         sc = _get_scenario("TC-74")
         state = ScenarioState()
         c1 = _make_call("get_contacts", {"query": "sarah"}, turn=3, user_phase=3)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         c2 = _make_call(
             "send_email",
             {
@@ -684,8 +659,7 @@ class TestTC74StatefulCorrections:
             turn=4,
             user_phase=4,
         )
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         c3 = _make_call(
             "create_calendar_event",
             {
@@ -698,8 +672,7 @@ class TestTC74StatefulCorrections:
             turn=5,
             user_phase=4,
         )
-        sc.handle_tool_call(state, c3)
-        state.tool_calls.append(c3)
+        _record(state, sc, c3)
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
 
@@ -758,8 +731,7 @@ class TestTC74StatefulCorrections:
         sc = _get_scenario("TC-74")
         state = ScenarioState()
         c1 = _make_call("get_contacts", {"query": "sarah"}, turn=3)
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         c2 = _make_call(
             "create_calendar_event",
             {
@@ -770,8 +742,7 @@ class TestTC74StatefulCorrections:
             },
             turn=5,
         )
-        sc.handle_tool_call(state, c2)
-        state.tool_calls.append(c2)
+        _record(state, sc, c2)
         result = sc.evaluate(state)
         # title_ok + date_ok + contacts_searched = 3/5 → PARTIAL
         assert result.status == ScenarioStatus.PARTIAL
@@ -797,8 +768,7 @@ class TestTC74StatefulCorrections:
             },
             turn=1,
         )
-        sc.handle_tool_call(state, c1)
-        state.tool_calls.append(c1)
+        _record(state, sc, c1)
         result = sc.evaluate(state)
         # 0/5 corrections → FAIL
         assert result.status == ScenarioStatus.FAIL
@@ -807,8 +777,7 @@ class TestTC74StatefulCorrections:
         sc = _get_scenario("TC-74")
         state = ScenarioState()
         contact = _make_call("get_contacts", {"query": "sarah"}, turn=3, user_phase=3)
-        sc.handle_tool_call(state, contact)
-        state.tool_calls.append(contact)
+        _record(state, sc, contact)
         event = _make_call(
             "create_calendar_event",
             {
@@ -821,8 +790,7 @@ class TestTC74StatefulCorrections:
             turn=9,
             user_phase=0,
         )
-        sc.handle_tool_call(state, event)
-        state.tool_calls.append(event)
+        _record(state, sc, event)
 
         assert sc.evaluate(state).status == ScenarioStatus.FAIL
 
@@ -841,8 +809,7 @@ class TestTC74StatefulCorrections:
                 },
                 turn=turn,
             )
-            sc.handle_tool_call(state, call)
-            state.tool_calls.append(call)
+            _record(state, sc, call)
         assert sc.evaluate(state).status == ScenarioStatus.FAIL
 
     def test_handler_contacts_sarah(self):

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from tool_eval_bench.domain.scenarios import ScenarioState, ScenarioStatus, ToolCallRecord
+from tool_eval_bench.domain.scenarios import (
+    ScenarioState,
+    ScenarioStatus,
+    ToolCallRecord,
+    ToolResultRecord,
+)
 from tool_eval_bench.evals.scenarios.hardmode_expanded import (
     DISPLAY_DETAILS as EXPANDED_HARDMODE_DISPLAY_DETAILS,
 )
@@ -18,9 +23,16 @@ def _get(sid: str):
 
 
 def _record(state: ScenarioState, scenario, name: str, args: dict, turn: int = 1):
-    call = ToolCallRecord(f"{name}_{turn}", name, str(args), args, turn)
-    scenario.handle_tool_call(state, call)
+    """Execute a call the way the runner does, recording its result.
+
+    A call appended without its result is graded as "unknown", a more lenient
+    path than any real run takes. Ids are unique so two calls in one turn
+    never share a result.
+    """
+    call = ToolCallRecord(f"{name}_{turn}_{len(state.tool_calls)}", name, str(args), args, turn)
+    result = scenario.handle_tool_call(state, call)
     state.tool_calls.append(call)
+    state.tool_results.append(ToolResultRecord(call_id=call.id, name=name, result=result))
     if scenario.checkpoint:
         diagnostic = scenario.checkpoint(state, call)
         if diagnostic:
