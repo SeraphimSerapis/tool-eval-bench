@@ -22,6 +22,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
@@ -104,6 +105,7 @@ def _tc38_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     )
 
 
+@forbid_unrequested_side_effects({"send_email": 1})
 def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Find the Q3 budget report and email the total to my manager.'
 

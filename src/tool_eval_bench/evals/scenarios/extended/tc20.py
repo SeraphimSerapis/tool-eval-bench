@@ -21,6 +21,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -111,6 +112,7 @@ def _tc20_calculator_result_is_average(payload: Any) -> bool:
     return value is not None and abs(value - 141440) < 1e-9
 
 
+@forbid_unrequested_side_effects({"run_code": None})
 def _tc20_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User asks to find the file, read it, and calculate the average sales per region.
 

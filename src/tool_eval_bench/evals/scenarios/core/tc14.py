@@ -22,6 +22,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     full_assistant_transcript as _full_assistant_transcript,
 )
@@ -93,6 +94,7 @@ def _tc14_search_result_is_usable(state: ScenarioState, call: ToolCallRecord) ->
     return any(_tc14_search_result_has_price(result.result) for result in same_name_results)
 
 
+@forbid_unrequested_side_effects()
 def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
     stock_attempts = _tool_calls_by_name(state, "get_stock_price")
     search_calls = _tool_calls_by_name(state, "web_search")

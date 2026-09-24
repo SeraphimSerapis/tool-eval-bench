@@ -22,6 +22,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -78,6 +79,7 @@ def _tc26_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects({"create_calendar_event": 1})
 def _tc26_eval(state: ScenarioState) -> ScenarioEvaluation:
     """True multi-turn test:
     Turn 1: 'Create a meeting at 3pm tomorrow titled Design Review.'

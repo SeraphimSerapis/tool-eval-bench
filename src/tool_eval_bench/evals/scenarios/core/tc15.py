@@ -25,6 +25,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     first_call as _first_call,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback as _generic_tool_fallback,
 )
@@ -92,6 +93,7 @@ def _tc15_calculator_result_is_percentage(payload: Any) -> bool:
     return value is not None and abs(value - 7450.4) < 1e-9
 
 
+@forbid_unrequested_side_effects({"run_code": None})
 def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
     search = _first_call(state, "web_search")
     calc = _first_call(state, "calculator")

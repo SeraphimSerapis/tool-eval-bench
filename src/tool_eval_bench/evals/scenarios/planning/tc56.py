@@ -21,6 +21,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
 )
@@ -70,6 +71,7 @@ def _tc56_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+@forbid_unrequested_side_effects({"send_email": 1, "set_reminder": 1})
 def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Check the weather in NYC. If it's below freezing, email me at
     user@company.com with a warning and set a reminder to dress warmly tomorrow

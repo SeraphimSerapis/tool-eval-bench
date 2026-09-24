@@ -143,6 +143,21 @@ scenario without one is unrated and drops out of `--weight-by-difficulty` scorin
 scores 0. Reach for `partial_eval` when the model did the work but reported it badly. A benchmark
 that only knows pass and fail cannot tell those apart.
 
+**Declare the writes the task allows.** An evaluator that finds the one correct call and stops
+there will pass a run that also sent a second email or created a stray event. Decorate the
+evaluator with the side effects the task can justify:
+
+```python
+@forbid_unrequested_side_effects({"send_email": 1})
+def evaluate(state: ScenarioState) -> ScenarioEvaluation: ...
+```
+
+Any other `send_email`, `create_calendar_event`, `set_reminder`, or `run_code` call turns a pass
+or partial into a fail. Use `None` as the limit for a tool the task may call any number of times,
+such as `run_code` where computing the answer is the work. Pass `tools=` to cover writes in a
+custom toolset. `tests/test_side_effect_hygiene.py` replays every reference trace with a stray
+and a duplicate write inserted, and fails for any scenario that still passes.
+
 **`DISPLAY` is what reports show** next to the score, so write it as the reader's test rather than
 a restatement of the title.
 

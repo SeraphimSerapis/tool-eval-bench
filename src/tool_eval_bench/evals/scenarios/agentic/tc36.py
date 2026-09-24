@@ -19,6 +19,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -43,6 +44,7 @@ def _tc36_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects()
 def _tc36_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Send an email right now.' — no recipient, subject, or body.
 

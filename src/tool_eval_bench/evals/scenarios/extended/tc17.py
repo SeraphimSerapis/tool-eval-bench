@@ -21,6 +21,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -76,6 +77,7 @@ def _tc17_event_result_is_created(payload: Any) -> bool:
     return _status_is_success(payload, statuses={"accepted", "created", "ok", "success"})
 
 
+@forbid_unrequested_side_effects({"create_calendar_event": 1})
 def _tc17_eval(state: ScenarioState) -> ScenarioEvaluation:
     """Should create event at 14:00 Europe/Berlin, not UTC."""
     event_calls = [c for c in state.tool_calls if c.name == "create_calendar_event"]

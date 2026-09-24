@@ -21,6 +21,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -93,6 +94,7 @@ def _tc18_email_result_is_sent(payload: Any) -> bool:
     )
 
 
+@forbid_unrequested_side_effects({"send_email": 1})
 def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
     """Should translate the message to German and then email it.
 
