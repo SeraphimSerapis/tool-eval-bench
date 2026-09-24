@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -95,6 +96,7 @@ def _tc34_search_returned_notes(state: ScenarioState, call: ToolCallRecord) -> b
     return False
 
 
+@forbid_unrequested_side_effects()
 def _tc34_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Find the Q3 planning notes and summarize the action items.'
 

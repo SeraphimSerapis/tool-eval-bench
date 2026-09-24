@@ -19,6 +19,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
@@ -159,6 +160,7 @@ def _tc62_asserts_competitor_amount(body: str) -> bool:
     return False
 
 
+@forbid_unrequested_side_effects({"send_email": 1})
 def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     """5-turn research chain testing context persistence and revision handling.
 

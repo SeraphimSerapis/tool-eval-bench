@@ -21,6 +21,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
@@ -87,6 +88,7 @@ def _tc52_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+@forbid_unrequested_side_effects({"run_code": None})
 def _tc52_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'I need to prepare a summary comparing our stock performance
     against the market. Our ticker is AAPL.'

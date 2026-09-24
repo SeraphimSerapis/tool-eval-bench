@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
@@ -64,6 +65,7 @@ def _tc57_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+@forbid_unrequested_side_effects()
 def _tc57_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Search for our upcoming company events.'
 

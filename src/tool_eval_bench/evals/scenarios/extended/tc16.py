@@ -19,6 +19,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -88,6 +89,7 @@ def _tc16_weather_result_is_munich(payload: Any) -> bool:
     )
 
 
+@forbid_unrequested_side_effects()
 def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User asked in German — should use get_weather and respond in German."""
     matching_weather_calls = [

@@ -19,6 +19,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -121,6 +122,7 @@ def _tc46_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects({"send_email": 1})
 def _tc46_eval(state: ScenarioState) -> ScenarioEvaluation:
     """5-turn research workflow:
     1. 'Find the competitor analysis report' → search_files

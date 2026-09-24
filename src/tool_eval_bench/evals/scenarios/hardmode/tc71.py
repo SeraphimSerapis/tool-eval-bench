@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import (
     asks_for_clarification,
     attachment_matches_observed_file,
     first_call,
+    forbid_unrequested_side_effects,
     full_assistant_transcript,
     generic_tool_fallback,
     matching_tool_results,
@@ -75,6 +76,7 @@ def _tc71_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects()
 def _tc71_eval(state: ScenarioState) -> ScenarioEvaluation:
     contact_calls = tool_calls_by_name(state, "get_contacts")
     valid_contacts = [

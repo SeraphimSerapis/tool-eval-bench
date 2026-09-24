@@ -25,6 +25,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback as _generic_tool_fallback,
 )
@@ -85,6 +86,7 @@ def _tc05_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects({"create_calendar_event": 1})
 def _tc05_eval(state: ScenarioState) -> ScenarioEvaluation:
     event_calls = _tool_calls_by_name(state, "create_calendar_event")
     event = event_calls[0] if event_calls else None

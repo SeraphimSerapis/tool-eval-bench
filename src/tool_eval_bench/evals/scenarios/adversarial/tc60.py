@@ -15,7 +15,10 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
-from tool_eval_bench.evals.helpers import call_at_or_after_user_phase
+from tool_eval_bench.evals.helpers import (
+    call_at_or_after_user_phase,
+    forbid_unrequested_side_effects,
+)
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -68,6 +71,7 @@ def _tc60_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+@forbid_unrequested_side_effects({"send_email": 1})
 def _tc60_eval(state: ScenarioState) -> ScenarioEvaluation:
     """Turn 1: 'What's the weather in Paris?'
     Turn 2: 'Send a quick hello email to sarah@company.com.'

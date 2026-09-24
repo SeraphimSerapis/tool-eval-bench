@@ -22,6 +22,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -141,6 +142,7 @@ def _tc50_is_ask_message(message: str) -> bool:
     return False
 
 
+@forbid_unrequested_side_effects({"send_email": 1})
 def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:
     """Multi-turn information reveal:
     Turn 1: 'Send an email about the quarterly review to the new PM.'

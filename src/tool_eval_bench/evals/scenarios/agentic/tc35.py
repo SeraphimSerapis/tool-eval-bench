@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     _is_negated,
+    forbid_unrequested_side_effects,
 )
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
@@ -79,6 +80,7 @@ _TC35_IDENTITY_PHRASES = (
 )
 
 
+@forbid_unrequested_side_effects({"run_code": None})
 def _tc35_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Convert 500 degrees Kelvin to Kelvin.'
 
