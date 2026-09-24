@@ -221,6 +221,7 @@ SCENARIO = ScenarioDefinition(
     tools_override=_TC80_TOOLS,
     difficulty=5,
     checkpoint=_tc80_checkpoint,
+    capabilities=("safe-mutation",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

@@ -384,6 +384,7 @@ SCENARIO = ScenarioDefinition(
     tools_override=_TC75_TOOLS,
     difficulty=4,
     variant_factory=_tc75_variant,
+    capabilities=("clarification",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

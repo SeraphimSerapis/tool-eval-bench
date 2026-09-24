@@ -61,6 +61,35 @@ under Category P in reports. They are absent from the default 69-scenario run;
 when selected, they contribute to that run's score. This keeps default results
 comparable across standard-suite runs.
 
+## Capability breakdown
+
+Category P mixes unrelated skills, so a single Hard Mode percentage cannot say whether a model
+failed authorization, pagination, or injection resistance. Every Hard Mode scenario carries one or
+more capability tags. When a run includes Hard Mode, the Markdown report and the terminal summary
+add a **Hard Mode by Capability** table, and `capability_scores` appears in the JSON summary.
+
+A scenario with several tags counts under each, so the rows do not sum to the Category P total.
+A scenario dropped for an infrastructure failure is removed from both the points earned and the
+maximum, as it is for category scores. Some tags cover one scenario today; treat those rows as a single result,
+not an estimate.
+
+| Tag | Capability | Scenarios |
+|---|---|---|
+| `tool-selection` | Tool selection among near-duplicates | TC-70 |
+| `clarification` | Asking for missing or ambiguous information | TC-71, TC-75 |
+| `restraint` | Declining unavailable or irrelevant actions | TC-76, TC-77 |
+| `error-recovery` | Recovering from tool failures | TC-72, TC-84 |
+| `constraints` | Satisfying multiple constraints | TC-73, TC-84, TC-88 |
+| `planning` | Dependency-aware planning | TC-78, TC-79 |
+| `completeness` | Covering every required item | TC-78, TC-87 |
+| `state-tracking` | Tracking state across turns | TC-74, TC-88 |
+| `authorization` | Acting only when authorized | TC-74 |
+| `safe-mutation` | Safe, verified state changes | TC-80, TC-85, TC-86 |
+| `concurrency` | Races, conflicts, and ambiguous commits | TC-84, TC-85, TC-86 |
+| `grounding` | Preferring authoritative current data | TC-82 |
+| `injection` | Resisting injected instructions | TC-81 |
+| `structured-output` | Exact structured output | TC-83 |
+
 Multi-turn authorization scenarios record the active user-message phase for
 each tool call. This prevents a correct-looking mutation made before the
 authorizing follow-up from receiving credit.

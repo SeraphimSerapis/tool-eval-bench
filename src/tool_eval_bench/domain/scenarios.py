@@ -62,6 +62,27 @@ CATEGORY_LABELS: dict[Category, str] = {
     Category.P: "Hard Mode",
 }
 
+# Category P mixes unrelated skills under one score, so "P: 75%" cannot say
+# whether a model failed authorization, pagination, or injection resistance.
+# Each Hard Mode scenario carries one or more of these tags, and reports break
+# the category down by them. A scenario with several tags counts under each.
+CAPABILITY_LABELS: dict[str, str] = {
+    "tool-selection": "Tool selection among near-duplicates",
+    "clarification": "Asking for missing or ambiguous information",
+    "restraint": "Declining unavailable or irrelevant actions",
+    "error-recovery": "Recovering from tool failures",
+    "constraints": "Satisfying multiple constraints",
+    "planning": "Dependency-aware planning",
+    "completeness": "Covering every required item",
+    "state-tracking": "Tracking state across turns",
+    "authorization": "Acting only when authorized",
+    "safe-mutation": "Safe, verified state changes",
+    "concurrency": "Races, conflicts, and ambiguous commits",
+    "grounding": "Preferring authoritative current data",
+    "injection": "Resisting injected instructions",
+    "structured-output": "Exact structured output",
+}
+
 
 class ScenarioStatus(str, Enum):
     """The three scoring tiers: 2 points, 1 point, and 0."""
@@ -249,6 +270,9 @@ class ScenarioDefinition:
     variant_literals: tuple[str, ...] = ()
     variant_factory: Callable[["ScenarioDefinition", int], "ScenarioDefinition"] | None = None
     variant_metadata: dict[str, Any] = field(default_factory=dict)
+    # Keys of ``CAPABILITY_LABELS``. Every Category P scenario carries at least
+    # one; reports break Hard Mode down by them.
+    capabilities: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +324,21 @@ class CategoryScore:
     pass_count: int = 0
     partial_count: int = 0
     fail_count: int = 0
+
+
+@dataclass
+class CapabilityScore:
+    """Points earned by the scenarios carrying one capability tag.
+
+    Tags overlap, so these rows do not sum to the category total.
+    """
+
+    capability: str
+    label: str
+    earned: int
+    max_points: int
+    percent: float
+    scenario_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -448,6 +487,7 @@ class ModelScoreSummary:
     # Percentage of attempted scenarios that produced a gradable result.
     completion_rate: float = 100.0
     toolset_deltas: dict[str, int] = field(default_factory=dict)
+    capability_scores: list[CapabilityScore] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -472,6 +512,18 @@ class ModelScoreSummary:
         }
         if self.toolset_deltas:
             d["toolset_deltas"] = self.toolset_deltas
+        if self.capability_scores:
+            d["capability_scores"] = [
+                {
+                    "capability": cs.capability,
+                    "label": cs.label,
+                    "earned": cs.earned,
+                    "max": cs.max_points,
+                    "percent": cs.percent,
+                    "scenario_ids": cs.scenario_ids,
+                }
+                for cs in self.capability_scores
+            ]
         if self.safety_warnings:
             d["safety_warnings"] = self.safety_warnings
         if self.worst_category is not None:

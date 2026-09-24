@@ -177,6 +177,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc70_eval,
     tools_override=_TC70_TOOLS,
     difficulty=4,
+    capabilities=("tool-selection",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

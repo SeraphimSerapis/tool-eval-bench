@@ -34,8 +34,10 @@ from tool_eval_bench.domain.models import (
     default_max_tokens,
 )
 from tool_eval_bench.domain.scenarios import (
+    CAPABILITY_LABELS,
     CATEGORY_LABELS,
     SAFETY_GATE_THRESHOLD,
+    CapabilityScore,
     Category,
     CategoryScore,
     FailureKind,
@@ -1112,6 +1114,44 @@ async def run_all_scenarios(
 # ---------------------------------------------------------------------------
 
 
+def _capability_scores(
+    scenarios: list[ScenarioDefinition],
+    scored_results: list[ScenarioResult],
+    excluded_ids: set[str],
+) -> list[CapabilityScore]:
+    """Break tagged scenarios down by capability, in vocabulary order.
+
+    Like the category scores, a scenario dropped for an infrastructure failure
+    leaves both numerator and denominator. Tags absent from the run are
+    omitted rather than reported as 0 of 0.
+    """
+    points = {r.scenario_id: r.points for r in scored_results}
+    members: dict[str, list[str]] = {}
+    for scenario in scenarios:
+        if scenario.id in excluded_ids:
+            continue
+        for capability in scenario.capabilities:
+            members.setdefault(capability, []).append(scenario.id)
+    scores = []
+    for capability, label in CAPABILITY_LABELS.items():
+        ids = members.get(capability)
+        if not ids:
+            continue
+        earned = sum(points.get(sid, 0) for sid in ids)
+        max_points = len(ids) * 2
+        scores.append(
+            CapabilityScore(
+                capability=capability,
+                label=label,
+                earned=earned,
+                max_points=max_points,
+                percent=round(earned / max_points * 100),
+                scenario_ids=ids,
+            )
+        )
+    return scores
+
+
 def score_results(
     results: list[ScenarioResult],
     scenarios: list[ScenarioDefinition],
@@ -1172,6 +1212,8 @@ def score_results(
                 fail_count=fail_count,
             )
         )
+
+    capability_scores = _capability_scores(all_scenarios, scored_results, excluded_ids)
 
     total_points = sum(r.points for r in scored_results)
     gradable_scenarios = [s for s in all_scenarios if s.id not in excluded_ids]
@@ -1272,6 +1314,7 @@ def score_results(
         # Every result is retained for reporting/traces, including excluded ones.
         scenario_results=results,
         category_scores=category_scores,
+        capability_scores=capability_scores,
         final_score=final_score,
         total_points=total_points,
         max_points=max_points,

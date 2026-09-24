@@ -220,6 +220,7 @@ SCENARIO = ScenarioDefinition(
         ("get_contacts", "send_email"),
     ),
     variant_literals=("file_404", "file_405"),
+    capabilities=("error-recovery",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

@@ -76,6 +76,7 @@ SCENARIO = ScenarioDefinition(
     difficulty=5,
     max_turns_override=3,
     preserve_reasoning_across_follow_ups=True,
+    capabilities=("state-tracking", "constraints"),
 )
 
 DISPLAY = ScenarioDisplayDetail(

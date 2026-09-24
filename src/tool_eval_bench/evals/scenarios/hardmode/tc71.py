@@ -226,6 +226,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc71_eval,
     difficulty=4,
     variant_factory=_tc71_variant,
+    capabilities=("clarification",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

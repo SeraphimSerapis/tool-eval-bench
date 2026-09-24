@@ -129,6 +129,7 @@ SCENARIO = ScenarioDefinition(
     _tc78_eval,
     tools_override=_TC78_TOOLS,
     difficulty=4,
+    capabilities=("planning", "completeness"),
 )
 
 DISPLAY = ScenarioDisplayDetail(

@@ -327,6 +327,33 @@ def _print_category_scores(console: Console, summary: ModelScoreSummary) -> None
         )
 
     console.print(table)
+    _print_capability_scores(console, summary)
+
+
+def _print_capability_scores(console: Console, summary: ModelScoreSummary) -> None:
+    """Break Hard Mode down by capability tag, when the run included it."""
+    if not summary.capability_scores:
+        return
+    table = Table(
+        title="[bold]Hard Mode by Capability[/]",
+        caption="[dim]Scenarios can carry several tags, so rows overlap.[/]",
+        show_header=True,
+        header_style="bold",
+        border_style="bright_blue",
+        expand=True,
+    )
+    table.add_column("Capability", min_width=22)
+    table.add_column("Score", justify="center", width=8)
+    table.add_column("Earned", justify="center", width=8)
+    table.add_column("Scenarios", min_width=12)
+    for cs in summary.capability_scores:
+        table.add_row(
+            cs.label,
+            f"[bold]{cs.percent}%[/]",
+            f"{cs.earned}/{cs.max_points}",
+            ", ".join(cs.scenario_ids),
+        )
+    console.print(table)
 
 
 def _print_final_panel(

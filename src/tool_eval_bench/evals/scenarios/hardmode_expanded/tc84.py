@@ -388,6 +388,7 @@ SCENARIO = ScenarioDefinition(
         ("book_room", "send_email"),
         ("search_files", "send_email"),
     ),
+    capabilities=("error-recovery", "constraints", "concurrency"),
 )
 
 DISPLAY = ScenarioDisplayDetail(

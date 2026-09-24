@@ -173,6 +173,7 @@ SCENARIO = ScenarioDefinition(
         ("get_weather", "create_calendar_event"),
         ("get_contacts", "create_calendar_event"),
     ),
+    capabilities=("planning",),
 )
 
 DISPLAY = ScenarioDisplayDetail(
