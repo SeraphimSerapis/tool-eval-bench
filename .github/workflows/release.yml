@@ -71,7 +71,7 @@ jobs:
 
           assert (files("tool_eval_bench.evals.yaml_scenarios") / "weather.yaml").is_file()
           assert len(ALL_SCENARIOS) == 69, len(ALL_SCENARIOS)
-          assert len(ALL_SCENARIOS_WITH_HARDMODE) == 89, len(ALL_SCENARIOS_WITH_HARDMODE)
+          assert len(ALL_SCENARIOS_WITH_HARDMODE) == 92, len(ALL_SCENARIOS_WITH_HARDMODE)
           assert set(ALL_DISPLAY_DETAILS) == {s.id for s in ALL_SCENARIOS_WITH_HARDMODE}
           print("packaged scenarios verified")
           PY

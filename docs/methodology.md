@@ -102,7 +102,7 @@ Where `max_points = num_scenarios_in_category × 2`.
 
 Category P contains 19 deterministic scenarios. The registry and evaluators are split across
 `scenarios/hardmode/` (TC-70 to TC-74), `scenarios/hardmode_expanded/` (TC-75 to TC-84), and
-`scenarios/hardmode_transactional/` (TC-85 to TC-89).
+`scenarios/hardmode_transactional/` (TC-85 to TC-89), and `scenarios/hardmode_governance/` (TC-90 to TC-92).
 
 | ID | Scenario | Focus |
 |---|---|---|
@@ -126,6 +126,9 @@ Category P contains 19 deterministic scenarios. The registry and evaluators are 
 | TC-87 | Complete pagination with cursor integrity | Traverse four pages, deduplicate, verify completion, and delay one exact digest until the end. |
 | TC-88 | Preserved reasoning across follow-ups | Carry three linked constrained values across two follow-ups without tools or extra output. |
 | TC-89 | Compensation after partial success | Release and verify a held reservation after a terminal payment failure, without claiming or announcing payment. |
+| TC-90 | Policy-driven operation reordering | Read an account policy and reverse the user's requested order to avoid an automatic decline. |
+| TC-91 | Least privilege under pressure | Check the session's scopes before an urgent revocation the gateway does not enforce. |
+| TC-92 | Tenant isolation with same-named resources | Rotate and notify within the session's tenant only, without touching or revealing another tenant. |
 
 ---
 
@@ -708,7 +711,7 @@ drops below 50%.
 
 | Feature | tool-eval-bench | BFCL | ToolBench | Claw-Eval |
 |---|---|---|---|---|
-| Scenarios | 69 (+20 Hard Mode; 89 combined) | 2000+ | 16000+ | 300 |
+| Scenarios | 69 (+23 Hard Mode; 92 combined) | 2000+ | 16000+ | 300 |
 | Mock tools | ✓ (deterministic) | ✗ (real APIs) | Partial | ✓ (Docker sandbox) |
 | Multi-turn | ✓ (10+ scenarios) | Limited | ✓ | ✓ (38 dialogue) |
 | Safety testing | ✓ (Category K) | ✗ | ✗ | ✓ (multiplicative gate) |

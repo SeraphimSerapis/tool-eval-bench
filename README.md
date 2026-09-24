@@ -9,7 +9,7 @@ measure independent agents, delegation, or inter-agent handoffs. Localization
 coverage is currently German-focused. Difficulty tiers are author estimates,
 not calibrated model rankings.
 
-It runs 69 deterministic scenarios (plus 20 opt-in Hard Mode ones) through
+It runs 69 deterministic scenarios (plus 23 opt-in Hard Mode ones) through
 OpenAI-compatible `/v1/chat/completions` endpoints, scores each as pass, partial,
 or fail, and writes a full conversation trace for every one. Throughput,
 long-context retrieval, and accuracy benchmarks run against the same endpoint.
@@ -155,7 +155,7 @@ anthropic` pins it for a gateway root that serves several formats.
 | | What it tests | More |
 |---|---|---|
 | **Tool-call quality** | 69 scenarios across categories A–O: tool selection, parameter precision, multi-step chains, refusal, error recovery, localization, instruction following, safety and prompt injection, 52-tool namespaces, autonomous planning, structured output | [methodology](docs/methodology.md) |
-| **Hard Mode** | 20 opt-in adversarial, stateful, and transactional scenarios for models that already score well, broken down by capability in reports | [hard-mode](docs/hard-mode.md) |
+| **Hard Mode** | 23 opt-in adversarial, stateful, and transactional scenarios for models that already score well, broken down by capability in reports | [hard-mode](docs/hard-mode.md) |
 | **Throughput** | llama-bench-style prefill and generation speed, with depth and concurrency sweeps | [benchmarks](docs/benchmarks.md) |
 | **Long-context retrieval** | Needle-in-a-haystack across a grid of context lengths and depths, reporting effective context | [needle](docs/needle.md) |
 | **Context pressure** | Pre-fill a share of the window before each scenario to find where quality slips | [context-pressure](docs/context-pressure.md) |
@@ -210,7 +210,7 @@ design: [docs/methodology.md](docs/methodology.md).
 # Smoke test — 5 scenarios
 tool-eval-bench run --scenarios TC-01 TC-02 TC-03 TC-04 TC-05
 
-# Full 89 — standard suite plus Hard Mode
+# Full 92 — standard suite plus Hard Mode
 tool-eval-bench run --seed 42 --hardmode
 
 # Quality plus speed
@@ -233,7 +233,7 @@ tool-eval-bench run --label "nightly qwen3 2026-08" --trials 3
 code is in [docs/cli-reference.md](docs/cli-reference.md). Flat invocations
 (`tool-eval-bench --short`, `--history`) remain supported.
 
-Scenario IDs passed to `--scenarios` resolve against all 89, so `--scenarios
+Scenario IDs passed to `--scenarios` resolve against all 92, so `--scenarios
 TC-85` works without `--hardmode` and takes precedence over `--short` and
 `--categories`. Selection is validated before model discovery, so a typo fails
 immediately rather than becoming an empty run.

@@ -76,6 +76,8 @@ CAPABILITY_LABELS: dict[str, str] = {
     "completeness": "Covering every required item",
     "state-tracking": "Tracking state across turns",
     "authorization": "Acting only when authorized",
+    "policy": "Applying retrieved policy to planned actions",
+    "tenant-isolation": "Keeping tenants' data and actions separate",
     "safe-mutation": "Safe, verified state changes",
     "compensation": "Undoing completed work after a later step fails",
     "concurrency": "Races, conflicts, and ambiguous commits",

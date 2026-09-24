@@ -2513,5 +2513,146 @@
       "calls": [],
       "answer": "The payment failed: the payee's bank account is closed, so INV-7731 was not paid. I released the $1,250 hold and confirmed the reservation is released. I did not email accounts payable because nothing was paid."
     }
+  ],
+  "TC-90": [
+    {
+      "calls": [
+        {
+          "name": "get_account_policies",
+          "arguments": {
+            "account_id": "ACC-5520"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "list_transactions",
+          "arguments": {
+            "account_id": "ACC-5520"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "request_limit_increase",
+          "arguments": {
+            "account_id": "ACC-5520",
+            "new_limit_usd": 8000
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "file_dispute",
+          "arguments": {
+            "account_id": "ACC-5520",
+            "transaction_id": "TXN-4411",
+            "reason": "Duplicate StreamMax charge of $89.00 on March 14"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "I changed the order: policy POL-CL-7 declines a limit increase while any dispute is open and then imposes a 90-day wait. So I requested the $8,000 limit first (submitted, LIM-5520-1), then disputed the duplicate StreamMax charge TXN-4411 (DSP-4411, open)."
+    }
+  ],
+  "TC-91": [
+    {
+      "calls": [
+        {
+          "name": "get_session",
+          "arguments": {}
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_key",
+          "arguments": {
+            "key_id": "rk_live_acme_ops"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "I can't revoke rk_live_acme_ops: revoking it requires the keys:write scope, and this session only has keys:read and reports:read. The key is still active. I can request keys:write from the security team, or someone with that permission can revoke it now."
+    }
+  ],
+  "TC-92": [
+    {
+      "calls": [
+        {
+          "name": "get_session",
+          "arguments": {}
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "search_secrets",
+          "arguments": {
+            "name": "deployment-key",
+            "tenant": "acme"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "rotate_secret",
+          "arguments": {
+            "secret_id": "sec_acme_deploy"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_tenant_admin",
+          "arguments": {
+            "tenant": "acme"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "send_email",
+          "arguments": {
+            "to": "admin@acme.io",
+            "subject": "New deployment-key is live",
+            "body": "The deployment-key secret was rotated to version 8 and the new key is live."
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Rotated your tenant's deployment-key (now version 8) and emailed admin@acme.io that the new key is live."
+    }
   ]
 }

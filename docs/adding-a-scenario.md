@@ -14,7 +14,7 @@ A scenario implementation is one file. Create `src/tool_eval_bench/evals/scenari
 | `planning/` | Autonomous planning and creative composition | TC-51 to TC-56, TC-61 to TC-63 |
 | `adversarial/` | Prompt injection and authority escalation | TC-57  to  TC-60 |
 | `structured/` | JSON schema compliance | TC-64  to  TC-69 |
-| `hardmode/`, `hardmode_expanded/`, `hardmode_transactional/` | Category P, opt-in with `--hardmode` | TC-70  to  TC-89 |
+| `hardmode/`, `hardmode_expanded/`, `hardmode_transactional/`, `hardmode_governance/` | Category P, opt-in with `--hardmode` | TC-70  to  TC-92 |
 
 Take the next free number. The file name and the scenario ID must agree, and the ID must be
 `TC-NN`: every registry sorts on `int(s.id.split("-")[1])`, so another shape raises at import.
@@ -25,7 +25,7 @@ Three parts: a mock handler that answers tool calls deterministically, an evalua
 final state, and the two module-level exports.
 
 ```python
-"""TC-90: date-aware timezone conversion with an explicit tool contract."""
+"""TC-99: date-aware timezone conversion with an explicit tool contract."""
 
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -112,7 +112,7 @@ def evaluate(state: ScenarioState):
 
 
 SCENARIO = ScenarioDefinition(
-    id="TC-90",
+    id="TC-99",
     title="Timezone conversion",
     category=Category.B,
     user_message="Use convert_timezone to convert 09:00 Europe/Berlin on March 20, 2026 to America/Los_Angeles. Return only the converted time in HH:MM format.",
@@ -245,7 +245,7 @@ unless it is marked `@pytest.mark.allow_missing_results` because missing results
 
 ```bash
 env -u FORCE_COLOR .venv/bin/python -m pytest tests/ -m "not live" -q
-tool-eval-bench run --scenarios TC-90 --dry-run
+tool-eval-bench run --scenarios TC-99 --dry-run
 ```
 
 `--dry-run` confirms registration without touching a server.

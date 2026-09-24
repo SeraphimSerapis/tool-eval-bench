@@ -28,7 +28,7 @@ SCENARIO_FILES = sorted(TREE.glob("*/tc*.py"))
 
 
 def test_the_tree_is_not_empty() -> None:
-    assert len(SCENARIO_FILES) == len(ALL_SCENARIOS_WITH_HARDMODE) == 89
+    assert len(SCENARIO_FILES) == len(ALL_SCENARIOS_WITH_HARDMODE) == 92
 
 
 @pytest.mark.parametrize("path", SCENARIO_FILES, ids=lambda p: f"{p.parent.name}/{p.stem}")
