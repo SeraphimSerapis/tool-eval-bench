@@ -406,6 +406,7 @@ SCENARIO = ScenarioDefinition(
     difficulty=5,
     max_turns_override=9,
     variant_factory=_tc86_variant,
+    capabilities=("safe-mutation", "concurrency"),
 )
 
 DISPLAY = ScenarioDisplayDetail(

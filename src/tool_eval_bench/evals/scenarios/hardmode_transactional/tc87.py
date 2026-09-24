@@ -278,6 +278,7 @@ SCENARIO = ScenarioDefinition(
         "INC-906",
     ),
     variant_factory=_tc87_variant,
+    capabilities=("completeness",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

@@ -247,6 +247,7 @@ SCENARIO = ScenarioDefinition(
         ("get_contacts", "create_calendar_event"),
         ("create_calendar_event", "send_email"),
     ),
+    capabilities=("state-tracking", "authorization"),
 )
 
 DISPLAY = ScenarioDisplayDetail(

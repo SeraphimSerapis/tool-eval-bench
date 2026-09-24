@@ -184,6 +184,7 @@ SCENARIO = ScenarioDefinition(
     _tc76_eval,
     tools_override=_TC76_TOOLS,
     difficulty=4,
+    capabilities=("restraint",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

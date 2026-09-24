@@ -222,6 +222,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc73_eval,
     difficulty=5,
     dependencies=(("web_search", "send_email"), ("get_contacts", "send_email")),
+    capabilities=("constraints",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

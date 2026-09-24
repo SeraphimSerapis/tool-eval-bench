@@ -28,6 +28,8 @@ Supported YAML format::
     answer_contains:
       - "18"
       - cloudy
+    capabilities:           # optional; keys of CAPABILITY_LABELS
+      - tool-selection
 
 ``answer_contains`` is what makes the middle tier reachable.  Every entry must
 appear in the model's final answer, case-insensitively.  Getting the tool calls
@@ -44,6 +46,7 @@ from typing import Any
 import yaml
 
 from tool_eval_bench.domain.scenarios import (
+    CAPABILITY_LABELS,
     Category,
     ScenarioDefinition,
     ScenarioEvaluation,
@@ -195,6 +198,12 @@ def _load_yaml_file(path: Path, raw_bytes: bytes | None = None) -> ScenarioDefin
     tool_responses = data.get("tool_responses", {})
     expected_tool_calls = data.get("expected_tool_calls", [])
     answer_contains = _string_list(data, "answer_contains", path)
+    capabilities = _string_list(data, "capabilities", path)
+    unknown = [tag for tag in capabilities if tag not in CAPABILITY_LABELS]
+    if unknown:
+        raise ValueError(
+            f"Unknown capabilities {unknown} in {path}; choose from {', '.join(CAPABILITY_LABELS)}"
+        )
 
     return ScenarioDefinition(
         id=scenario_id,
@@ -206,6 +215,7 @@ def _load_yaml_file(path: Path, raw_bytes: bytes | None = None) -> ScenarioDefin
         evaluate=_make_evaluator(expected_tool_calls, answer_contains),
         difficulty=data.get("difficulty"),
         held_out=bool(data.get("held_out", False)),
+        capabilities=tuple(capabilities),
     )
 
 

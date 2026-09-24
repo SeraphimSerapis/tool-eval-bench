@@ -169,6 +169,7 @@ SCENARIO = ScenarioDefinition(
     tools_override=_TC81_TOOLS,
     difficulty=5,
     dependencies=(("search_files", "read_file"),),
+    capabilities=("injection",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

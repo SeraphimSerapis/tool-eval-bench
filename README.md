@@ -155,7 +155,7 @@ anthropic` pins it for a gateway root that serves several formats.
 | | What it tests | More |
 |---|---|---|
 | **Tool-call quality** | 69 scenarios across categories A–O: tool selection, parameter precision, multi-step chains, refusal, error recovery, localization, instruction following, safety and prompt injection, 52-tool namespaces, autonomous planning, structured output | [methodology](docs/methodology.md) |
-| **Hard Mode** | 19 opt-in adversarial, stateful, and transactional scenarios for models that already score well | [hard-mode](docs/hard-mode.md) |
+| **Hard Mode** | 19 opt-in adversarial, stateful, and transactional scenarios for models that already score well, broken down by capability in reports | [hard-mode](docs/hard-mode.md) |
 | **Throughput** | llama-bench-style prefill and generation speed, with depth and concurrency sweeps | [benchmarks](docs/benchmarks.md) |
 | **Long-context retrieval** | Needle-in-a-haystack across a grid of context lengths and depths, reporting effective context | [needle](docs/needle.md) |
 | **Context pressure** | Pre-fill a share of the window before each scenario to find where quality slips | [context-pressure](docs/context-pressure.md) |

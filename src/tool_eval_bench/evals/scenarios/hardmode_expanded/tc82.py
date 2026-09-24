@@ -177,6 +177,7 @@ SCENARIO = ScenarioDefinition(
     difficulty=5,
     dependencies=(("lookup_directory", "send_email"), ("search_files", "send_email")),
     variant_literals=("launch_checklist",),
+    capabilities=("grounding",),
 )
 
 DISPLAY = ScenarioDisplayDetail(

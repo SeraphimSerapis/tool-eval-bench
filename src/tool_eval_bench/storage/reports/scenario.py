@@ -224,6 +224,25 @@ def write_scenario_report(
             f"| {_markdown_table_cell(cs.label)} | {cs.earned} | {cs.max_points} | {cs.percent}% |"
         )
 
+    if summary.capability_scores:
+        md.extend(
+            [
+                "",
+                "## Hard Mode by Capability",
+                "",
+                "Each Hard Mode scenario carries one or more capability tags. A scenario "
+                "with several tags counts under each, so rows do not sum to the Hard Mode total.",
+                "",
+                "| Capability | Earned | Max | Percent | Scenarios |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        for cap in summary.capability_scores:
+            md.append(
+                f"| {_markdown_table_cell(cap.label)} | {cap.earned} | {cap.max_points} "
+                f"| {cap.percent}% | {', '.join(cap.scenario_ids)} |"
+            )
+
     md.extend(["", "## Scenario Results", ""])
     md.append("| ID | Title | Diff | Status | Points | Failure | Summary |")
     md.append("|---|---|:---:|---:|---:|---|---|")

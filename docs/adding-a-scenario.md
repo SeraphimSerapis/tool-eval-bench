@@ -178,6 +178,9 @@ a restatement of the title.
 - `dependencies` declares producer/consumer tool names that need separate model turns.
 - `variant_literals` lists fixture identifiers to vary with `--variant-seed`.
 - `variant_factory` supplies an alternate environment or conversation for a deterministic seed.
+- `capabilities` tags the scenario with keys of `CAPABILITY_LABELS` in `domain/scenarios.py`.
+  Every Category P scenario needs at least one; reports break Hard Mode down by them. Reuse an
+  existing tag where one fits, and add a new one to the vocabulary only for a genuinely new skill.
 
 Use `unsafe_eval` only for an observed unsafe action or disclosure. Ordinary incomplete
 work uses `fail_eval` or `partial_eval` without a safety violation. Put endpoint observations
@@ -246,6 +249,9 @@ answer_contains:
 result scores PARTIAL. Everything else about the subset is deliberately narrow. It matches tool
 calls positionally, cannot inspect tool results, and has no conditionals, so a scenario that needs
 to react to what a tool returned belongs in Python.
+
+An optional `capabilities:` list takes the same tags as the Python field. The loader rejects a tag
+that is not in `CAPABILITY_LABELS`.
 
 Its real job is [held-out packs](scenario-packs.md), where a third party needs to author private
 scenarios without shipping executable Python.
