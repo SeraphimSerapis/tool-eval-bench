@@ -197,8 +197,7 @@ async def test_custom_prompt_is_sent_fixed_and_temperature_reaches_the_request(
     )
     assert captured["temperature"] == 0.5
     assert captured["messages"][-1]["content"] == "Translate this to German: good morning"  # type: ignore[index]
-    # A fixed prompt does not pretend to carry the requested depth.
-    assert sample.depth == 0 and sample.prompt_type == "custom#1"
+    assert sample.depth == 4096 and sample.prompt_type == "custom#1"
 
 
 # ---------------------------------------------------------------------------

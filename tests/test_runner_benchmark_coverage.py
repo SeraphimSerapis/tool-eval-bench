@@ -190,3 +190,29 @@ async def test_throughput_single_and_concurrent_aggregation(
     monkeypatch.setattr(throughput, "_stream_one", failing)
     failed = await throughput.measure_concurrent(MagicAsyncClient(), "url", "m", concurrency=2)
     assert failed.error and "bad" in failed.error
+
+
+@pytest.mark.asyncio
+async def test_fixed_prompt_gets_depth_context_in_system_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench.runner import speculative
+
+    seen: list[list[dict[str, object]]] = []
+
+    async def stream(client, base_url, model, messages, *args, **kwargs):
+        seen.append(messages)
+        return speculative.ThroughputSample(tg_tokens=1)
+
+    monkeypatch.setattr(speculative, "_stream_one", stream)
+    cfg = speculative.TokenizerConfig(chars_per_token=2.0)
+    for depth in (0, 512):
+        sample = await speculative.measure_spec_single(
+            MagicAsyncClient(), "url", "model", depth=depth, prompt_type="code", tok_cfg=cfg
+        )
+        assert sample.depth == depth
+
+    shallow, deep = seen
+    assert shallow[1] == deep[1] == {"role": "user", "content": speculative._CODE_PROMPT}
+    assert shallow[0]["content"] == "You are a helpful assistant."
+    assert len(str(deep[0]["content"])) >= 512

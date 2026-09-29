@@ -29,6 +29,7 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 | `--baseline-tgs` | — | Known baseline tg t/s for speedup calculation |
 | `--spec-prompts` | `filler,code,structured` | Prompt types to test; labels from `--spec-prompt-file` are accepted too |
 | `--spec-prompt-file` | — | Your own workload: one prompt per line, or JSON lines with `prompt` and an optional `label`. Without an explicit `--spec-prompts` selection every prompt in the file runs alongside the built-in types |
+| `--depth` | `0` | Context depth sweep, in tokens. Applies to every prompt type: `filler` fills it in both turns, while `code`, `structured`, and `--spec-prompt-file` prompts keep their text as the user turn and get the filler context in the system turn |
 | `--spec-runs` | `3` | Measurements per depth × prompt cell, pooled into one row. One request is only a few dozen speculative steps, so a single run gives a noisy α; the row shows the pooled value and the per-run range |
 | `--temperature` | `0.0` | Sampling temperature for the benchmark requests. Rejection sampling accepts more at low temperature, so greedy reports a ceiling for sampled workloads; the report records the value |
 | `--metrics-url` | auto | Direct URL to Prometheus `/metrics` (e.g. `http://vllm:8080/metrics`) |

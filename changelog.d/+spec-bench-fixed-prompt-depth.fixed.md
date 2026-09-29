@@ -1,0 +1,1 @@
+`--spec-bench --depth` now applies to the `code`, `structured`, and custom prompts too. They used to ignore the requested depth and were relabeled `d0`, so every depth after the first repeated the same rows. The fixed prompt is now the user turn and the system turn carries the requested context, as it already did for `filler`.

@@ -262,10 +262,10 @@ class TestSpecDecodeSample:
         assert spec.effective_tg_tps > 0
 
     @pytest.mark.asyncio
-    async def test_fixed_prompt_does_not_claim_requested_context_depth(
+    async def test_fixed_prompt_reports_requested_context_depth(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Code/structured prompts ignore the filler depth sweep parameter."""
+        """Code/structured prompts carry the requested depth as system-turn context."""
         import tool_eval_bench.runner.speculative as speculative
 
         async def fake_stream_one(*args, **kwargs):
@@ -282,7 +282,7 @@ class TestSpecDecodeSample:
             prompt_type="code",
         )
 
-        assert sample.depth == 0
+        assert sample.depth == 4096
         assert sample.pp_tokens == 42
 
     # -- draft_tps --

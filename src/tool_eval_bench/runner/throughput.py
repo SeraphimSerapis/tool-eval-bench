@@ -796,6 +796,22 @@ async def _stream_one(
     return sample
 
 
+async def _build_depth_system_text(
+    client: MeasurementClient,
+    base_url: str,
+    model: str,
+    depth: int,
+    api_key: str | None,
+    tok_cfg: TokenizerConfig,
+) -> str:
+    """System message carrying ``depth`` tokens of context (or the plain default at 0)."""
+    if depth <= 0:
+        return "You are a helpful assistant. Continue the text provided by the user."
+    if tok_cfg.has_tokenize_endpoint:
+        return await _build_exact_prompt(client, base_url, model, depth, api_key, tok_cfg, "system")
+    return _build_filler_heuristic(depth, tok_cfg)
+
+
 async def _build_messages(
     client: MeasurementClient,
     base_url: str,
@@ -806,29 +822,14 @@ async def _build_messages(
     tok_cfg: TokenizerConfig,
 ) -> list[dict[str, Any]]:
     """Build the messages list with exact token counts where possible."""
-    messages: list[dict[str, Any]] = []
-
-    if depth > 0:
-        if tok_cfg.has_tokenize_endpoint:
-            system_text = await _build_exact_prompt(
-                client,
-                base_url,
-                model,
-                depth,
-                api_key,
-                tok_cfg,
-                "system",
-            )
-        else:
-            system_text = _build_filler_heuristic(depth, tok_cfg)
-        messages.append({"role": "system", "content": system_text})
-    else:
-        messages.append(
-            {
-                "role": "system",
-                "content": "You are a helpful assistant. Continue the text provided by the user.",
-            }
-        )
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "system",
+            "content": await _build_depth_system_text(
+                client, base_url, model, depth, api_key, tok_cfg
+            ),
+        }
+    ]
 
     if tok_cfg.has_tokenize_endpoint:
         user_text = await _build_exact_prompt(

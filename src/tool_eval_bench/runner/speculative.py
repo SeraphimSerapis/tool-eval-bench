@@ -33,6 +33,7 @@ from tool_eval_bench.domain.spec_decode import per_position_acceptance
 from tool_eval_bench.runner.throughput import (
     ThroughputSample,
     TokenizerConfig,
+    _build_depth_system_text,
     _build_messages,
     _stream_one,
     calibrate,
@@ -646,11 +647,18 @@ async def measure_spec_single(
     tok_cfg = tok_cfg or TokenizerConfig()
     spec_info = spec_info or SpecDecodeInfo()
 
-    # Build messages — use typed prompt if specified
+    # Build messages — use typed prompt if specified.  A fixed prompt is the
+    # user turn; depth is filled with context in the system turn, exactly as
+    # for the filler workload, so every prompt type can be swept over depth.
     fixed_prompt = _get_prompt_for_type(prompt_type, custom_prompts)
     if fixed_prompt:
+        system_text = (
+            await _build_depth_system_text(client, base_url, model, depth, api_key, tok_cfg)
+            if depth > 0
+            else "You are a helpful assistant."
+        )
         messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "system", "content": system_text},
             {"role": "user", "content": fixed_prompt},
         ]
     else:
@@ -676,15 +684,11 @@ async def measure_spec_single(
     sample = await _stream_one(
         client, base_url, model, messages, tg, api_key, tok_cfg, temperature=temperature
     )
-    # Typed prompts are fixed strings and intentionally do not include the
-    # requested filler/context depth.  Keep the reported depth honest instead
-    # of labeling a fixed prompt as if it contained ``depth`` tokens.
-    effective_depth = depth if fixed_prompt is None else 0
-    sample.depth = effective_depth
+    sample.depth = depth
     sample.concurrency = 1
+    sample.requested_depth = depth
     if fixed_prompt is None:
         sample.requested_pp = pp
-        sample.requested_depth = depth
 
     # Convert to SpecDecodeSample
     spec_sample = SpecDecodeSample.from_throughput_sample(
