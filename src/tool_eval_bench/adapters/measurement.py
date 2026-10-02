@@ -24,6 +24,7 @@ from tool_eval_bench.utils.urls import (
     chat_completions_url,
     metrics_request_target,
     models_url,
+    root_url,
 )
 
 
@@ -108,6 +109,15 @@ class _ConfiguredMeasurementClient:
             MeasurementResponse,
             await self._client.get(
                 models_url(self._base_url), headers=self._json_headers(self._api_key)
+            ),
+        )
+
+    async def health(self) -> MeasurementResponse:
+        """Read root-level health with the same authentication as model discovery."""
+        return cast(
+            MeasurementResponse,
+            await self._client.get(
+                f"{root_url(self._base_url)}/health", headers=self._json_headers(self._api_key)
             ),
         )
 

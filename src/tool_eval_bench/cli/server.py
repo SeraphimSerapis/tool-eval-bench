@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+from tool_eval_bench.utils.metadata import backend_from_models
+
 # Ports to scan on localhost.  Order matters — first match wins.
 # The backend_hint is a *guess* used only when the server doesn't identify
 # itself via response headers.  Ports used by multiple backends (8080, 8081)
@@ -33,11 +35,18 @@ DISCOVERY_PORTS: list[tuple[int, str, str]] = [
 
 
 def detect_backend_from_response(resp: Any, port: int) -> tuple[str, str]:
-    """Try to identify the backend from response headers.
+    """Identify a distinctive model owner, then check response headers.
 
     vLLM sets ``server: vllm``, SGLang sets ``server: sglang``,
     llama.cpp sets ``server: llama.cpp``.  Falls back to port-based hint.
     """
+    try:
+        owner = backend_from_models(resp.json())
+    except (AttributeError, ValueError):
+        owner = None
+    if owner:
+        return owner
+
     server_header = ""
     if hasattr(resp, "headers"):
         server_header = resp.headers.get("server", "").lower()

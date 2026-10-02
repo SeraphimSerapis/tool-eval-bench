@@ -51,15 +51,15 @@ _COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
     # Spec decode counters (vLLM).  The parser sums every matching series,
     # because vLLM emits one counter set per engine.
     "accepted_tokens": re.compile(
-        rf"^(?:vllm[:_])?spec_decode_num_accepted_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|tensorfold:)?spec_decode_num_accepted_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "draft_tokens": re.compile(
-        rf"^(?:vllm[:_])?spec_decode_num_draft_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|tensorfold:)?spec_decode_num_draft_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "num_drafts": re.compile(
-        rf"^(?:vllm[:_])?spec_decode_num_drafts(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|tensorfold:)?spec_decode_num_drafts(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     # Engine throughput gauges (deprecated in vLLM ≥0.8, but still present in
@@ -78,16 +78,16 @@ _COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
         re.MULTILINE,
     ),
     "kv_cache_usage": re.compile(
-        rf"^(?:vllm[:_])?kv_cache_usage_perc(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|tensorfold:)?kv_cache_usage_perc(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     # Requests
     "running_reqs": re.compile(
-        rf"^(?:vllm[:_])?num_requests_running(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|tensorfold:)?num_requests_running(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "waiting_reqs": re.compile(
-        rf"^(?:vllm[:_])?num_requests_waiting(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|tensorfold:)?num_requests_waiting(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     # Prefix cache — old gauge and new counters
@@ -105,11 +105,11 @@ _COUNTER_PATTERNS: dict[str, re.Pattern[str]] = {
     ),
     # Token counts (cumulative) — primary source for throughput in vLLM ≥0.8
     "prompt_tokens_total": re.compile(
-        rf"^(?:vllm[:_])?prompt_tokens_total(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|tensorfold:)?prompt_tokens_total(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "generation_tokens_total": re.compile(
-        rf"^(?:vllm[:_])?generation_tokens_total(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|tensorfold:)?generation_tokens_total(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     # -- llama.cpp counters (llamacpp: prefix) --
@@ -464,17 +464,19 @@ class MetricsSnapshot:
     # Presence flags distinguish a legitimate zero gauge/counter from an
     # exporter that does not implement the metric family.
     vllm_spec_metrics_present: bool = False
+    tensorfold_spec_metrics_present: bool = False
     sglang_spec_metrics_present: bool = False
     llamacpp_spec_metrics_present: bool = False
     llamacpp_metrics_present: bool = False
 
-    # ``vllm`` / ``sglang`` / ``llamacpp`` when known, otherwise ``unknown``.
+    # ``vllm`` / ``sglang`` / ``llamacpp`` / ``tensorfold``, or ``unknown``.
     spec_backend: str = "unknown"
 
     @property
     def has_spec_decode(self) -> bool:
         return (
             self.vllm_spec_metrics_present
+            or self.tensorfold_spec_metrics_present
             or self.sglang_spec_metrics_present
             or self.llamacpp_spec_metrics_present
             or self.draft_tokens > 0
@@ -487,6 +489,7 @@ class MetricsSnapshot:
         """Whether this scrape has cumulative spec counters."""
         return (
             self.vllm_spec_metrics_present
+            or self.tensorfold_spec_metrics_present
             or self.llamacpp_spec_metrics_present
             or self.draft_tokens > 0
             or self.accepted_tokens > 0
@@ -609,7 +612,11 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
             if first is not None:
                 setattr(snap, name, float(first.group(1)))
         if name in {"accepted_tokens", "draft_tokens", "num_drafts"}:
-            snap.vllm_spec_metrics_present = True
+            for match in pattern.finditer(text):
+                if match.group(0).startswith("tensorfold:"):
+                    snap.tensorfold_spec_metrics_present = True
+                else:
+                    snap.vllm_spec_metrics_present = True
         if name.startswith("llamacpp_"):
             snap.llamacpp_metrics_present = True
         if name in {"llamacpp_accepted_tokens", "llamacpp_draft_tokens", "llamacpp_num_drafts"}:
@@ -691,7 +698,9 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
     # Use llama.cpp spec counters as the generic counter view when no vLLM
     # counter family is present.  This keeps existing dashboard consumers
     # backend-neutral while retaining explicit fields for mixed scrapes.
-    if snap.llamacpp_spec_metrics_present and not snap.vllm_spec_metrics_present:
+    if snap.llamacpp_spec_metrics_present and not (
+        snap.vllm_spec_metrics_present or snap.tensorfold_spec_metrics_present
+    ):
         snap.spec_backend = "llamacpp"
         snap.accepted_tokens = snap.llamacpp_accepted_tokens
         snap.draft_tokens = snap.llamacpp_draft_tokens
@@ -699,6 +708,8 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
         snap.per_position_counters = dict(snap.llamacpp_per_position_counters)
     elif snap.vllm_spec_metrics_present:
         snap.spec_backend = "vllm"
+    if snap.tensorfold_spec_metrics_present and snap.spec_backend == "unknown":
+        snap.spec_backend = "tensorfold"
 
     if snap.llamacpp_metrics_present and snap.spec_backend == "unknown":
         snap.spec_backend = "llamacpp"
@@ -727,7 +738,9 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
 
     def _counter_values(snapshot: MetricsSnapshot) -> tuple[float, float, float]:
         """Return accepted, drafted, and draft-step counters for a snapshot."""
-        if snapshot.llamacpp_spec_metrics_present and not snapshot.vllm_spec_metrics_present:
+        if snapshot.llamacpp_spec_metrics_present and not (
+            snapshot.vllm_spec_metrics_present or snapshot.tensorfold_spec_metrics_present
+        ):
             return (
                 snapshot.llamacpp_accepted_tokens,
                 snapshot.llamacpp_draft_tokens,
@@ -861,9 +874,12 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
             "sglang"
             if is_sglang
             else "llamacpp"
-            if curr.llamacpp_spec_metrics_present and not curr.vllm_spec_metrics_present
+            if curr.llamacpp_spec_metrics_present
+            and not (curr.vllm_spec_metrics_present or curr.tensorfold_spec_metrics_present)
             else "vllm"
             if curr.vllm_spec_metrics_present
+            else "tensorfold"
+            if curr.tensorfold_spec_metrics_present
             else "unknown"
         ),
     )

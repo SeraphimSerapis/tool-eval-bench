@@ -47,6 +47,7 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > |---|---|---|
 > | **vLLM** | `metrics.speculative_decoding` in each response when the server runs with `--per-request-spec-decode-metrics`; otherwise Prometheus `/metrics` (`spec_decode_*` counter deltas) | α %, acceptance length (τ), draft window, waste ratio; `detailed` mode adds exact per-position acceptance |
 > | **llama.cpp** | Current Prometheus counters, with per-request `timings` fallback | Full counter metrics on current builds; α % and waste ratio from response timings on older builds |
+> | **TensorFold** | MLX `speculative` or CUDA `tensorfold` request-local counts; otherwise `tensorfold:spec_decode_*` counter deltas | α % and waste ratio; step-based estimates stay unavailable without a step counter |
 > | **SGLang** | No request-local counter contract | Effective t/s remains available; use `spec-live` for the server's current acceptance gauges |
 >
 > **vLLM per-request metrics** are optional but worth turning on. Prometheus
@@ -138,5 +139,9 @@ Press **Ctrl+R** to reset all session counters and history without restarting.  
 > of summing replicas. Current llama.cpp builds publish cumulative
 > `llamacpp:spec_decode_*` counters and per-position counters. Older llama.cpp
 > builds fall back to engine and throughput data when those counters are absent.
+> TensorFold exports `tensorfold:spec_decode_*` draft and accepted-token
+> counters alongside duplicate native names. The monitor reads the aliases
+> once. It does not infer a proposer from `mtp_*` names or treat engine rounds
+> as speculative steps. Without step counters, τ and draft window stay unknown.
 > Acceptance length follows each upstream contract and includes the verifier's
 > bonus token.

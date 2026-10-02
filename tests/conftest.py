@@ -118,6 +118,9 @@ class MeasurementTestClient(httpx.AsyncClient):
     async def models(self) -> httpx.Response:
         return await self.get("http://test/v1/models")
 
+    async def health(self) -> httpx.Response:
+        return await self.get("http://test/health")
+
     async def metrics(self, *, metrics_url: str | None = None) -> httpx.Response:
         return await self.get(metrics_url or "http://test/metrics")
 

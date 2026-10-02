@@ -62,6 +62,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
             "openai",
             "anthropic",
             "ninfer",
+            "tensorfold",
         ],
         "description": "Backend label for reports",
     },

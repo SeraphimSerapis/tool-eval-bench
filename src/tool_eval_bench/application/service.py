@@ -53,6 +53,7 @@ _SUPPORTED_BACKENDS = {
     "openai",
     "anthropic",
     "ninfer",
+    "tensorfold",
 }
 
 
@@ -97,7 +98,7 @@ class BenchmarkService:
         if backend_l not in _SUPPORTED_BACKENDS:
             raise ValueError(
                 f"Unsupported backend: {backend}. "
-                "Supported: vllm, litellm, llamacpp, sglang, gemini, openai, anthropic, ninfer"
+                "Supported: vllm, litellm, llamacpp, sglang, gemini, openai, anthropic, ninfer, tensorfold"
             )
         return build_adapter(
             base_url,

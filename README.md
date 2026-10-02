@@ -2,7 +2,7 @@
 
 A tool-calling quality benchmark for LLMs in agentic workflows, built for
 self-hosted serving stacks: **vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**,
-**NInfer**, and hosted **Gemini** and **Anthropic**.
+**NInfer**, **TensorFold**, and hosted **Gemini** and **Anthropic**.
 
 Each scenario observes one assistant conversation with mock tools. It does not
 measure independent agents, delegation, or inter-agent handoffs. Localization
@@ -40,7 +40,7 @@ tool-eval-bench run --short --base-url http://localhost:8000
 ```
 
 Drop `--base-url` and it scans the common localhost ports used by vLLM,
-llama.cpp, SGLang, LiteLLM, Ollama, and TGI. `tool-eval-bench probe` checks an
+llama.cpp, TensorFold, SGLang, LiteLLM, Ollama, and TGI. `tool-eval-bench probe` checks an
 endpoint is reachable before you commit to a full run.
 
 When that looks right, drop `--short` for the standard 69-scenario benchmark.
@@ -49,6 +49,16 @@ Pass `--seed` so the run is reproducible:
 ```bash
 tool-eval-bench run --seed 42
 ```
+
+TensorFold is detected from its model owner or metrics namespace and uses the
+existing OpenAI-compatible adapter. Its default port is already scanned:
+
+```bash
+tool-eval-bench run --short --base-url http://127.0.0.1:8080/v1 --seed 42
+```
+
+See [TensorFold compatibility](docs/backends.md#tensorfold) for deployment
+metadata limits, structured-output setup, and speculative metrics.
 
 ### Exercise controlled fixture variants
 

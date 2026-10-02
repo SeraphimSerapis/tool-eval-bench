@@ -27,6 +27,7 @@ COMPARISON_METADATA_KEYS = (
     "server_model_root",
     "engine_name",
     "engine_version",
+    "max_model_len",
     "quantization",
     "gpu_count",
     "slot_count",

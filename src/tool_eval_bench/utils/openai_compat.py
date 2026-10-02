@@ -45,6 +45,19 @@ def max_tokens_retry_payload(
     return retry
 
 
+def completion_stream_error(chunk: dict[str, Any]) -> tuple[int, str] | None:
+    """Translate an SSE error into failure facts, never a generated answer."""
+    error = chunk.get("error")
+    if error is None:
+        return None
+    if isinstance(error, dict):
+        status = 400 if error.get("type") == "invalid_request_error" else 500
+        message = str(error.get("message") or error)
+    else:
+        status, message = 500, str(error)
+    return status, message[:200]
+
+
 _SAMPLING_KEYS = ("temperature", "top_p", "top_k")
 
 

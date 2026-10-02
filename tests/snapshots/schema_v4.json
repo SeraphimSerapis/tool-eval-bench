@@ -21,7 +21,8 @@
         "gemini",
         "openai",
         "anthropic",
-        "ninfer"
+        "ninfer",
+        "tensorfold"
       ],
       "default": "vllm",
       "description": "Backend label for reports",

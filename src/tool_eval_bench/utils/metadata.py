@@ -284,6 +284,7 @@ async def _probe_litellm(
 # cpp-httplib server doesn't either. Order matters only in that the first
 # matching non-comment line wins.
 _METRICS_BACKEND_PREFIXES: tuple[tuple[str, str, str], ...] = (
+    ("tensorfold:", "tensorfold", "TensorFold"),
     ("vllm:", "vllm", "vLLM"),
     ("llamacpp:", "llamacpp", "llama.cpp"),
     ("sglang:", "sglang", "SGLang"),
@@ -315,7 +316,7 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
     1. The ``/metrics`` namespace — see :func:`detect_backend_from_metrics`.
        Unambiguous, but llama.cpp's ``--metrics`` flag is opt-in.
     2. vLLM's ``/version`` — llama.cpp 404s this, so it cannot false-positive.
-    3. The ``owned_by`` marker on ``/v1/models`` (NInfer, SGLang).  SGLang
+    3. The ``owned_by`` marker on ``/v1/models`` (TensorFold, NInfer, SGLang).  SGLang
        often runs with ``/metrics`` disabled; without this rung ``--perf``
        defaults the backend to vLLM and llama-benchy 400s on a streaming
        ``return_token_ids`` request.
@@ -368,12 +369,17 @@ def _guess_quantization(model_name: str | None) -> str | None:
     gguf_match = re.search(r"(Q\d+_K_?\w?)", upper)
     if gguf_match:
         return gguf_match.group(1)
+    mlx_match = re.search(r"MLX-(\d+)BIT", upper)
+    if mlx_match:
+        return f"MLX-{mlx_match.group(1)}bit"
     # Simple keyword match
     for q in [
         "AWQ",
         "GPTQ",
         "GGUF",
+        "EXL3",
         "EXL2",
+        "NVFP4",
         "BNBQ4",
         "BNB4",
         "INT8",
@@ -395,9 +401,20 @@ _HOSTED_ENGINE_NAMES: dict[str, str] = {
 }
 
 _OWNED_BY_BACKENDS: dict[str, tuple[str, str]] = {
+    "tensorfold": ("tensorfold", "TensorFold"),
     "ninfer": ("ninfer", "NInfer"),
     "sglang": ("sglang", "SGLang"),
 }
+
+
+def backend_from_models(body: Any) -> tuple[str, str] | None:
+    """Read a distinctive model owner without guessing from its model ID."""
+    data = body.get("data") if isinstance(body, dict) else None
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        owner = data[0].get("owned_by")
+        if isinstance(owner, str):
+            return _OWNED_BY_BACKENDS.get(owner.lower())
+    return None
 
 
 async def _probe_owned_by(
@@ -421,12 +438,36 @@ async def _probe_owned_by(
         body = resp.json()
     except ValueError:
         return None
-    data = body.get("data") if isinstance(body, dict) else None
-    if isinstance(data, list) and data and isinstance(data[0], dict):
-        owner = data[0].get("owned_by")
-        if isinstance(owner, str):
-            return _OWNED_BY_BACKENDS.get(owner.lower())
-    return None
+    return backend_from_models(body)
+
+
+async def _probe_tensorfold(
+    base_url: str, api_key: str | None, *, session: _ProbeSession
+) -> dict[str, Any]:
+    """Collect declared capacity, not CUDA counters or MLX batch widths."""
+    result: dict[str, Any] = {"engine_name": "TensorFold"}
+    resp = await _probe_get(
+        session,
+        f"{_root_url(base_url)}/health",
+        headers=_auth_headers(api_key),
+        what="TensorFold /health",
+    )
+    if resp is None or resp.status_code != 200:
+        return result
+    try:
+        body = resp.json()
+    except ValueError:
+        return result
+    if not isinstance(body, dict):
+        return result
+    window = body.get("context_length")
+    if type(window) is int and window > 0:
+        result["max_model_len"] = window
+    streams = body.get("streams")
+    slots = streams.get("max") if isinstance(streams, dict) else None
+    if type(slots) is int and slots > 0:
+        result["slot_count"] = slots
+    return result
 
 
 async def _probe_engine(
@@ -453,7 +494,9 @@ async def _probe_engine(
         result.update(await _probe_models(base_url, api_key, session=active))
 
         # Backend-specific probes
-        if backend_l == "vllm":
+        if backend_l == "tensorfold" or str(result.get("owned_by", "")).lower() == "tensorfold":
+            result.update(await _probe_tensorfold(base_url, api_key, session=active))
+        elif backend_l == "vllm":
             result.update(await _probe_vllm_version(base_url, api_key, session=active))
         elif backend_l in ("llamacpp", "llama.cpp", "llama_cpp"):
             result.update(await _probe_llamacpp(base_url, session=active))

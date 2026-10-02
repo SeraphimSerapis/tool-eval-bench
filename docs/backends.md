@@ -9,6 +9,8 @@ accuracy benchmarks (GSM8K, MMLU, IFEval, needle) need only chat completions.
 - **LiteLLM** — proxy for multiple backends
 - **llama.cpp** — lightweight local inference
 - **NInfer** — OpenAI-compatible inference engine, detected via `/v1/models`
+- **TensorFold** serves MLX and CUDA models through the existing OpenAI adapter;
+  detected by `owned_by: "tensorfold"` or the `tensorfold:` metrics namespace
 - **Gemini** — supported through its native API as well as its OpenAI-compatible
   endpoint; the native wire format is detected from the URL, and `--format` pins
   it manually
@@ -27,7 +29,8 @@ normal JSON 200 response when an endpoint ignores `stream=true`. It defaults to
 the widely supported `max_tokens` field; if an endpoint rejects that field and
 asks for `max_completion_tokens`, the adapter retries once and remembers the
 choice for that endpoint and model. This capability check is response-driven
-rather than tied to provider or model names.
+rather than tied to provider or model names. SSE error events are recorded as
+failures, not empty answers. Partial tool calls from a failed stream are discarded.
 
 ## Compatibility notes
 
@@ -45,6 +48,51 @@ OpenAI-compatible backends use `OpenAICompatibleAdapter`; native Gemini and the
 Anthropic Messages API each use their own adapter. If you hit a backend-specific
 issue, please
 [open an issue](https://github.com/SeraphimSerapis/tool-eval-bench/issues).
+
+## TensorFold
+
+```bash
+tool-eval-bench run --short --base-url http://127.0.0.1:8080/v1 --seed 42
+# Pin the reporting label when a proxy hides identification endpoints:
+tool-eval-bench run --backend tensorfold --base-url http://127.0.0.1:8080/v1 --seed 42
+```
+
+Both model discovery and engine probing recognize TensorFold without relying
+on a port or Python HTTP server header. CUDA health supplies the effective
+context window and, under concurrent serving, the maximum stream count.
+The maximum MLX batch width is not interpreted as a server slot count.
+The discovered context window participates in the comparison fingerprint.
+
+Current upstream model listings do not expose a version, original checkpoint
+behind an alias, checkpoint revision, or deployment drafting configuration.
+Those remain unknown. Quantization inferred from checkpoint names remains a
+heuristic; aliases cannot recover it. Use the original model ID where possible
+and record deployment details with `--label`. Labels annotate reports but do
+not change comparison cohorts. Do not treat otherwise matching fingerprints
+as proof that unknown deployment settings match.
+
+CUDA context-pressure and needle runs can discover their window through
+`/health`. MLX currently requires `--context-size`. If health is inaccessible,
+pass the effective serving window explicitly, not the architecture maximum.
+
+Structured-output requests require TensorFold's grammar extra on the server:
+`pip install 'tensorfold[grammar]'`. Tool-choice capabilities are still probed,
+not assumed from the engine name. Protocol fixtures cover MLX and CUDA; live
+model-family qualification is not implied by these tests.
+
+Spec-bench reads request-local draft counts from MLX's `speculative` object or
+CUDA's `tensorfold` statistics before falling back to Prometheus deltas.
+Spec-live reads the `tensorfold:` counter aliases and engine metrics once,
+without adding their duplicate native counters. Missing speculative-step
+counts leave acceptance length and draft-window estimates unavailable;
+engine `rounds` are not substituted. The `mtp_*` names do not identify the
+proposer. Pass `--spec-method` when you know the configured method.
+
+For a speedup comparison, measure an otherwise identical serial run using
+`draft: false` where the engine supports it, then supply its measured generation
+rate through `--baseline-tgs`. Keep checkpoint, backend, prompt, seed, and
+sampling settings fixed. At nonzero temperature, independent repeats require
+different seeds; without a seed TensorFold derives one from the prompt.
 
 ## LiteLLM and other model routers
 

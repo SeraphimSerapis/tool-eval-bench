@@ -55,6 +55,7 @@ class SpecDecodeCounters:
     draft_tokens: float = 0.0
     num_drafts: float = 0.0
     timestamp: float = 0.0
+    has_num_drafts: bool = True
 
     @property
     def acceptance_rate(self) -> float | None:
@@ -81,15 +82,15 @@ _NUM = r"(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"
 _PROM_PATTERNS = {
     # vLLM metrics (both prefix variants) and current llama.cpp counters.
     "accepted_tokens": re.compile(
-        rf"^(?:vllm[:_]|llamacpp:)?spec_decode_num_accepted_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|llamacpp:|tensorfold:)?spec_decode_num_accepted_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "draft_tokens": re.compile(
-        rf"^(?:vllm[:_]|llamacpp:)?spec_decode_num_draft_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|llamacpp:|tensorfold:)?spec_decode_num_draft_tokens(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
     "num_drafts": re.compile(
-        rf"^(?:vllm[:_]|llamacpp:)?spec_decode_num_drafts(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
+        rf"^(?:vllm[:_]|llamacpp:|tensorfold:)?spec_decode_num_drafts(?:_total)?(?:\{{[^}}]*\}})?\s+{_NUM}",
         re.MULTILINE,
     ),
 }
@@ -108,6 +109,7 @@ def parse_prometheus_spec_metrics(text: str) -> SpecDecodeCounters:
         if matches:
             setattr(counters, field_name, sum(float(match.group(1)) for match in matches))
 
+    counters.has_num_drafts = bool(_PROM_PATTERNS["num_drafts"].search(text))
     return counters
 
 
@@ -193,7 +195,15 @@ async def detect_spec_decoding(
 
                 # Only trust an explicit method token. Generic counters prove
                 # activity, but do not identify the configured proposer.
-                if "eagle" in text.lower():
+                if "tensorfold:" in text:
+                    # Counters exist even with drafting off, and mtp_*
+                    # aliases count all proposers, not just MTP.
+                    info.active = parse_prometheus_spec_metrics(text).draft_tokens > 0
+                    info.method = "unknown"
+                    info.detail = (
+                        "TensorFold draft counters available; proposer configuration unknown"
+                    )
+                elif "eagle" in text.lower():
                     info.method = "eagle"
                 elif "ngram" in text.lower():
                     info.method = "ngram"
@@ -255,16 +265,17 @@ async def detect_spec_decoding(
 
 @dataclass
 class PerRequestSpecMetrics:
-    """Typed view of vLLM's ``metrics.speculative_decoding`` response field.
+    """Request-local speculative counters, with an optional step count.
 
     ``summary`` mode gives the three counters and ``num_spec_tokens``;
     ``detailed`` mode adds the per-step arrays. vLLM marks the shape as
-    experimental, so the parser accepts only what it can verify.
+    experimental, so the parser accepts only what it can verify. TensorFold
+    provides draft and accepted counts but no speculative-step count.
     """
 
     num_draft_tokens: int
     num_accepted_draft_tokens: int
-    num_spec_steps: int
+    num_spec_steps: int | None
     num_spec_tokens: int | None = None
     per_step_accepted: list[int] | None = None
     per_step_drafted: list[int] | None = None
@@ -316,6 +327,17 @@ def parse_per_request_spec_metrics(raw: object) -> PerRequestSpecMetrics | None:
     )
 
 
+def parse_tensorfold_spec_metrics(raw: object) -> PerRequestSpecMetrics | None:
+    """Read request-local draft counts; engine rounds are not spec steps."""
+    if not isinstance(raw, dict):
+        return None
+    drafted = _non_negative_int(raw.get("drafted"))
+    accepted = _non_negative_int(raw.get("accepted"))
+    if drafted is None or accepted is None or accepted > drafted:
+        return None
+    return PerRequestSpecMetrics(drafted, accepted, num_spec_steps=None)
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -345,7 +367,7 @@ class SpecDecodeSample:
     draft_tokens_delta: int | None = None  # draft tokens in this measurement
     accepted_tokens_delta: int | None = None  # accepted tokens in this measurement
     num_drafts_delta: int | None = None  # spec steps in this measurement
-    # Where the acceptance counters came from: "response" (vLLM per-request
+    # Where the acceptance counters came from: "response" (request-local
     # metrics, exact), "prometheus" (server-wide counter deltas, subject to
     # cross-talk), "timings" (llama.cpp), or None when unavailable.
     acceptance_source: str | None = None
@@ -468,7 +490,7 @@ class SpecDecodeSample:
         return rates or None
 
     def apply_per_request_metrics(self, metrics: PerRequestSpecMetrics) -> None:
-        """Fill acceptance fields from vLLM per-request response metrics."""
+        """Fill acceptance fields from verified request-local counters."""
         self.draft_tokens_delta = metrics.num_draft_tokens
         self.accepted_tokens_delta = metrics.num_accepted_draft_tokens
         self.num_drafts_delta = metrics.num_spec_steps
@@ -478,7 +500,7 @@ class SpecDecodeSample:
         self.acceptance_source = "response"
         if metrics.num_draft_tokens > 0:
             self.acceptance_rate = metrics.num_accepted_draft_tokens / metrics.num_draft_tokens
-        if metrics.num_spec_steps > 0:
+        if metrics.num_spec_steps is not None and metrics.num_spec_steps > 0:
             self.acceptance_length = (
                 1.0 + metrics.num_accepted_draft_tokens / metrics.num_spec_steps
             )
@@ -700,7 +722,11 @@ async def measure_spec_single(
 
     # vLLM --per-request-spec-decode-metrics: exact and request-scoped, so it
     # wins over the server-wide counter delta whenever it is present.
+    if sample.error:
+        return spec_sample
     per_request = parse_per_request_spec_metrics(sample.spec_decode_metrics)
+    if per_request is None:
+        per_request = parse_tensorfold_spec_metrics(sample.tensorfold_spec_metrics)
     if per_request is not None:
         spec_sample.apply_per_request_metrics(per_request)
         return spec_sample
@@ -717,9 +743,10 @@ async def measure_spec_single(
             spec_sample.accepted_tokens_delta = int(
                 counters_after.accepted_tokens - counters_before.accepted_tokens
             )
-            spec_sample.num_drafts_delta = int(
-                counters_after.num_drafts - counters_before.num_drafts
-            )
+            if counters_before.has_num_drafts and counters_after.has_num_drafts:
+                spec_sample.num_drafts_delta = int(
+                    counters_after.num_drafts - counters_before.num_drafts
+                )
             spec_sample.acceptance_source = "prometheus"
 
             # Compute rates from deltas
@@ -862,7 +889,8 @@ async def run_spec_bench(
                 # remaining runs of this cell already skip the scrape.
                 if cell[-1].acceptance_source == "response":
                     spec_info.has_per_request_metrics = True
-                    spec_info.active = True
+                    if (cell[-1].draft_tokens_delta or 0) > 0:
+                        spec_info.active = True
             spec_sample = pool_spec_samples(cell)
             samples.append(spec_sample)
 

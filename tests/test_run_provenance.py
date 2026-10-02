@@ -182,6 +182,15 @@ class TestFingerprintIncludesCodeIdentity:
     def test_missing_sha_is_tolerated(self) -> None:
         assert _config({})["config_fingerprint"]
 
+    def test_context_window_changes_comparison_cohort(self) -> None:
+        small = _config({"engine_name": "TensorFold", "max_model_len": 8192})
+        large = _config({"engine_name": "TensorFold", "max_model_len": 32768})
+        assert small["config_fingerprint"] != large["config_fingerprint"]
+        assert (
+            _config({})["config_fingerprint"]
+            == _config({"max_model_len": None})["config_fingerprint"]
+        )
+
     def test_server_slot_count_changes_comparison_cohort(self) -> None:
         one_slot = _config({"git_sha": "aaaaaaa", "slot_count": 1})
         three_slots = _config({"git_sha": "aaaaaaa", "slot_count": 3})

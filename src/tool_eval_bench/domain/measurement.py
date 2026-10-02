@@ -67,6 +67,10 @@ class MeasurementClient(Protocol):
         """List the models the endpoint serves, for discovery and detection."""
         ...
 
+    async def health(self) -> MeasurementResponse:
+        """Read server health and its declared serving capacity."""
+        ...
+
     async def metrics(self, *, metrics_url: str | None = None) -> MeasurementResponse:
         """Scrape the backend's Prometheus metrics.
 

@@ -251,29 +251,26 @@ async def detect_context_size(
             resp = await client.models()
             resp.raise_for_status()
             data = resp.json()
+            model_list = data.get("data", [])
+            if not model_list:
+                return None
+            target = next((m for m in model_list if m.get("id") == model), model_list[0])
+            for field_name in ("max_model_len", "context_window", "max_tokens"):
+                val = target.get(field_name)
+                if type(val) is int and val > 0:
+                    logger.info("Detected context size: %d tokens (via %s)", val, field_name)
+                    return val
+            # TensorFold CUDA declares its effective window in health instead
+            # of the model listing. MLX currently needs --context-size.
+            if str(target.get("owned_by", "")).lower() == "tensorfold":
+                health = await client.health()
+                health.raise_for_status()
+                window = health.json().get("context_length")
+                if type(window) is int and window > 0:
+                    return window
     except Exception as exc:
         logger.debug("Context size detection failed: %s", exc)
         return None
-
-    model_list = data.get("data", [])
-    if not model_list:
-        return None
-
-    # Find the matching model entry (or use the first one)
-    target = None
-    for m in model_list:
-        if m.get("id") == model:
-            target = m
-            break
-    if target is None:
-        target = model_list[0]
-
-    # Try known fields in order of preference
-    for field_name in ("max_model_len", "context_window", "max_tokens"):
-        val = target.get(field_name)
-        if isinstance(val, int) and val > 0:
-            logger.info("Detected context size: %d tokens (via %s)", val, field_name)
-            return val
 
     logger.debug("No context size field found in model metadata")
     return None

@@ -21,6 +21,7 @@ from typing import Any
 
 from tool_eval_bench.domain.measurement import MeasurementClient, MeasurementClientFactory
 from tool_eval_bench.utils.openai_compat import (
+    completion_stream_error,
     max_tokens_retry_payload,
     output_token_limit_reached,
     sampling_retry_payload,
@@ -284,6 +285,7 @@ class ThroughputSample:
     # ``metrics.speculative_decoding`` object from the final usage chunk.
     # Kept raw here; ``runner.speculative`` owns the typed parse.
     spec_decode_metrics: dict[str, Any] | None = None
+    tensorfold_spec_metrics: dict[str, Any] | None = None
 
     @property
     def effective_tg_tps(self) -> float:
@@ -633,6 +635,14 @@ async def _stream_one(
                 except json.JSONDecodeError:
                     continue
 
+                error = completion_stream_error(chunk)
+                if error is not None:
+                    status, message = error
+                    return ThroughputSample(
+                        error=f"[server error {status}] {message}",
+                        total_ms=(time.perf_counter() - t0) * 1000,
+                    )
+
                 # Check for usage in final chunk
                 usage = chunk.get("usage")
                 if usage:
@@ -646,6 +656,12 @@ async def _stream_one(
                     spec_metrics = metrics.get("speculative_decoding")
                     if isinstance(spec_metrics, dict):
                         sample.spec_decode_metrics = spec_metrics
+
+                # MLX carries speculative counters separately; CUDA puts
+                # engine stats in tensorfold. Neither exposes spec-step counts.
+                tensorfold = chunk.get("speculative", chunk.get("tensorfold"))
+                if isinstance(tensorfold, dict):
+                    sample.tensorfold_spec_metrics = tensorfold
 
                 # llama.cpp embeds speculative decoding stats in timings
                 timings = chunk.get("timings")

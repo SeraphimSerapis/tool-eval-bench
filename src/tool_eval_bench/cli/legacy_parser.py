@@ -48,7 +48,7 @@ def _make_parser() -> argparse.ArgumentParser:
         "--backend",
         default=None,
         help="Backend label for reports: vllm, litellm, llamacpp, sglang, gemini, openai, "
-        "anthropic, ninfer "
+        "anthropic, ninfer, tensorfold "
         "(the request format follows the endpoint, not this label — see --format; "
         "default: auto-detected via /metrics, falling back to env/vllm)",
     )

@@ -32,7 +32,7 @@ from tool_eval_bench.domain.adapters import (
     ProviderToolCall,
 )
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage
-from tool_eval_bench.utils.openai_compat import max_tokens_retry_payload
+from tool_eval_bench.utils.openai_compat import completion_stream_error, max_tokens_retry_payload
 from tool_eval_bench.utils.urls import chat_completions_url as _chat_completions_url
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 
@@ -389,6 +389,25 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     chunk = json.loads(payload_str)
                 except json.JSONDecodeError:
                     continue
+
+                error = completion_stream_error(chunk)
+                if error is not None:
+                    status, message = error
+                    details = chunk.get("error")
+                    context_overflow = (
+                        isinstance(details, dict)
+                        and details.get("code") == "context_length_exceeded"
+                    )
+                    # Discard partial calls; repairing a failed stream could
+                    # turn unfinished arguments into an executable tool call.
+                    return ChatCompletionResult(
+                        content=f"[server error {status}] {message}",
+                        raw_response=chunk,
+                        elapsed_ms=(time.perf_counter() - started) * 1000,
+                        ttft_ms=ttft_ms,
+                        transport_error_status=status,
+                        transport_error_is_infrastructure=status >= 500 or context_overflow,
+                    )
 
                 # Capture usage from final chunk (vLLM/OpenAI include this)
                 if chunk.get("usage"):
