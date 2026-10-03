@@ -1,0 +1,1 @@
+Rewritten prefill rates now use llama-benchy's numerator for the active phase: prompt plus depth for a standard run, depth for context load, and prompt for a prefix-cached follow-up. A standard pp1024 @ d8192 row on TensorFold now counts all 9,216 prefilled tokens rather than only the 1,024-token prompt.

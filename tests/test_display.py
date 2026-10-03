@@ -752,5 +752,5 @@ class TestPrintFinalReportThroughput:
         output = console.file.getvalue()
         assert "754* pp t/s" in output
         # The panel wraps the note, so match the phrase that stays on one line.
-        assert "role-only first SSE chunk" in output
-        assert PP_ESTIMATED_NOTE.split(" the signature of ", maxsplit=1)[0] in output
+        assert "response chunk before the first content token" in output
+        assert PP_ESTIMATED_NOTE.split(" llama-benchy", maxsplit=1)[0] in output

@@ -808,6 +808,41 @@ class TestRunLlamaBenchy:
         with pytest.raises(RuntimeError, match="no usable throughput metrics"):
             await run_llama_benchy("http://localhost:8888/v1", "test-model")
 
+    async def test_content_first_zero_prefill_does_not_pass_throughput_gate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tool_eval_bench.runner.llama_benchy import run_llama_benchy
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+        output_file_ref = _capture_output_file(monkeypatch)
+        entry = {
+            "concurrency": 1,
+            "context_size": 0,
+            "prompt_size": 2048,
+            "response_size": 1,
+            "pp_throughput": None,
+            "pp_req_throughput": None,
+            "tg_throughput": None,
+            "tg_req_throughput": None,
+            "ttfr": {"mean": 30.0},
+            "est_ppt": {"mean": 0.0},
+            "e2e_ttft": {"mean": 30.0},
+        }
+
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(output_file=output_file_ref[0], write_json={"benchmarks": [entry]})
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
+            mock_create,
+        )
+
+        with pytest.raises(RuntimeError, match="no usable throughput metrics"):
+            await run_llama_benchy("http://localhost:8888/v1", "test-model")
+
     async def test_partial_null_metrics_preserve_request_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1481,6 +1516,7 @@ class TestRoleChunkGuard:
         pp_size=2048,
         is_ctx_prefill=False,
         pp_req_tps=None,
+        ttfr=None,
     ):
         if pp_req_tps is None:
             pp_req_tps = pp_tps
@@ -1494,14 +1530,14 @@ class TestRoleChunkGuard:
             "pp_req_throughput": {"mean": pp_req_tps},
             "tg_throughput": {"mean": 50.0},
             "tg_req_throughput": {"mean": 50.0},
-            "ttfr": {"mean": est_ppt + 2.0},
+            "ttfr": {"mean": est_ppt + 2.0 if ttfr is None else ttfr},
             "est_ppt": {"mean": est_ppt},
             "e2e_ttft": {"mean": e2e_ttft},
         }
 
     def test_tensorfold_shape_is_rewritten_and_marked(self):
-        # The live TensorFold shape: 2048 tokens claimed at 847,691 t/s from a
-        # 2.4 ms est_ppt, while the first token arrived after 2,717 ms.
+        # The live TensorFold shape (depth 0): 2048 tokens claimed at
+        # 847,691 t/s from a 2.4 ms est_ppt, first token after 2,717 ms.
         sample = _parse_benchmark_entry(self._entry(847_691.0, 2.4, 2_717.0))
         assert sample.pp_estimated is True
         assert sample.label_pp == 2048
@@ -1586,18 +1622,108 @@ class TestRoleChunkGuard:
         assert sample.label_pp == 4096
         assert sample.pp_tps == pytest.approx(4096 / 2.740, rel=1e-6)
 
-    def test_depth_row_rate_matches_labeled_prompt_size(self):
-        # A non-context row is labeled pp{prompt_size} @ d{depth}. The
-        # rewritten rate is prompt_size / e2e_ttft, not (depth + prompt_size).
+    def test_depth_row_rate_counts_prompt_plus_depth(self):
+        # A non-context row is labeled pp{prompt_size} @ d{depth}, but the
+        # request prefilled prompt + depth (llama-benchy's own numerator is
+        # expected_pp + expected_ctx). The rewritten rate divides by both.
         sample = _parse_benchmark_entry(
             self._entry(800_000.0, 2.5, 2_500.0, depth=4096, pp_size=512)
         )
         assert sample.pp_estimated is True
         assert sample.label_pp == 512
         assert sample.depth == 4096
-        assert sample.pp_tps == pytest.approx(512 / 2.5, rel=1e-6)
+        assert sample.pp_tps == pytest.approx((512 + 4096) / 2.5, rel=1e-6)
 
     def test_empty_labeled_prompt_is_not_rewritten(self):
         sample = _parse_benchmark_entry(self._entry(800_000.0, 2.4, 2_717.0, pp_size=0))
         assert sample.pp_estimated is False
         assert sample.pp_tps == pytest.approx(800_000.0)
+
+    def test_deep_depth_role_chunk_above_fixed_ceiling_is_rewritten(self):
+        # Live mlx-serve escape (run 2cdf03f8): at depth 16384 the server
+        # tokenizes the whole input before flushing the role chunk, so est_ppt
+        # was 10.87 ms — above a fixed 10 ms ceiling — and the row published
+        # 1,697,429 t/s while e2e_ttft was 12,079 ms. The bound must scale
+        # with the input size, not stay a constant round-trip.
+        claimed = 1_697_429.0
+        sample = _parse_benchmark_entry(
+            self._entry(claimed, 10.87, 12_079.0, depth=16384, pp_size=1024)
+        )
+        assert sample.pp_estimated is True
+        # The request prefilled 1024 + 16384 tokens in 12.079 s.
+        assert sample.pp_tps == pytest.approx((1024 + 16384) / 12.079, rel=1e-6)
+
+    def test_zero_est_ppt_row_is_estimated_from_e2e_ttft(self):
+        # Live mlx-serve degenerate shape (same run): ttfr at or under the
+        # measured latency zeroes est_ppt, benchy drops the sample, and the
+        # row published 0 t/s while e2e_ttft showed a 3.1 s prefill.
+        sample = _parse_benchmark_entry(self._entry(0.0, 0.0, 3_092.0, depth=1024, pp_size=1024))
+        assert sample.pp_estimated is True
+        assert sample.pp_tps == pytest.approx((1024 + 1024) / 3.092, rel=1e-6)
+        assert sample.total_ms > 0
+
+    def test_zero_est_ppt_without_early_response_stays_unmeasured(self):
+        entry = self._entry(0.0, 0.0, 30.0, pp_size=2048, ttfr=30.0)
+        entry["tg_throughput"] = {"mean": 0.0}
+        entry["tg_req_throughput"] = {"mean": 0.0}
+        sample = _parse_benchmark_entry(entry)
+        assert sample.pp_estimated is False
+        assert sample.pp_tps == 0.0
+        assert not (sample.pp_tps > 0 or sample.tg_tps > 0)
+
+    def test_zero_est_ppt_without_ttfr_stays_unmeasured(self):
+        entry = self._entry(0.0, 0.0, 3_092.0, depth=1024, pp_size=1024)
+        entry["ttfr"] = None
+        sample = _parse_benchmark_entry(entry)
+        assert sample.pp_estimated is False
+        assert sample.pp_tps == 0.0
+
+    def test_short_honest_prefill_with_queue_delay_stays_measured(self):
+        entry = self._entry(51_200.0, 5.0, 50.0, pp_size=256, ttfr=50.0)
+        sample = _parse_benchmark_entry(entry)
+        assert sample.pp_estimated is False
+        assert sample.pp_tps == pytest.approx(51_200.0)
+
+    def test_context_phase_cap_uses_depth_not_configured_prompt(self):
+        entry = self._entry(70_000.0, 58.5, 585.0, depth=4096, pp_size=8192, is_ctx_prefill=True)
+        sample = _parse_benchmark_entry(entry)
+        assert sample.pp_estimated is False
+        assert sample.pp_tps == pytest.approx(70_000.0)
+
+        standard = self._entry(210_000.0, 58.5, 585.0, depth=4096, pp_size=8192)
+        standard_sample = _parse_benchmark_entry(standard)
+        assert standard_sample.pp_estimated is True
+        assert standard_sample.pp_tps == pytest.approx((4096 + 8192) / 0.585, rel=1e-6)
+
+    def test_prefix_cached_inference_uses_prompt_only(self):
+        entry = self._entry(800_000.0, 2.4, 5_127.0, depth=8192, pp_size=1024)
+        context = self._entry(
+            800_000.0, 2.4, 5_127.0, depth=8192, pp_size=1024, is_ctx_prefill=True
+        )
+        result = parse_json_output({"prefix_caching_enabled": True, "benchmarks": [entry, context]})
+        sample = result.samples[0]
+        assert sample.pp_estimated is True
+        assert sample.pp_tps == pytest.approx(1024 / 5.127, rel=1e-6)
+        assert result.samples[1].pp_tps == pytest.approx(8192 / 5.127, rel=1e-6)
+
+    def test_rewritten_depth_row_divides_by_prompt_plus_depth(self):
+        # Live TensorFold row (run 626169d8): pp1024 @ d8192 rewrote to 200 t/s
+        # = 1024/5.127 s, crediting a 9,216-token prefill with only its prompt.
+        # The honest rate is (1024 + 8192) / 5.127 s = 1,798 t/s — what the
+        # same request measures when run as --depth 0 --pp 9216.
+        sample = _parse_benchmark_entry(
+            self._entry(9216 / 0.0024, 2.4, 5_127.0, depth=8192, pp_size=1024)
+        )
+        assert sample.pp_estimated is True
+        assert sample.pp_tps == pytest.approx((1024 + 8192) / 5.127, rel=1e-6)
+
+    def test_honest_deep_prefill_with_slow_tokenizer_untouched(self):
+        # A real prefill whose est_ppt includes tokenizer work at depth:
+        # est_ppt 40 ms over 17,408 input tokens is honest preprocessing,
+        # and e2e_ttft 100 ms is queue — ratio 2.5, nowhere near 10x.
+        claimed = 2048 / 0.040
+        sample = _parse_benchmark_entry(
+            self._entry(claimed, 40.0, 100.0, depth=16384, pp_size=2048)
+        )
+        assert sample.pp_estimated is False
+        assert sample.pp_tps == pytest.approx(claimed)

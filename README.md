@@ -172,6 +172,9 @@ anthropic` pins it for a gateway root that serves several formats.
 | **Speculative decoding** | Acceptance rate, effective tokens per second, speedup, plus a live monitor | [speculative-decoding](docs/speculative-decoding.md) |
 | **Accuracy** | GSM8K, MMLU, and IFEval through the same adapter | [benchmarks](docs/benchmarks.md) |
 
+An asterisk on a prefill rate marks an estimate from time to first content token.
+The [throughput guide](docs/benchmarks.md) explains when that estimate is used.
+
 Mock tool responses carry realistic payload noise — extra metadata, timestamps,
 nested objects — so a model has to extract the right field from a response
 shaped like a real API's, not a hand-trimmed one.

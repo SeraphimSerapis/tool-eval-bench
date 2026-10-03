@@ -282,25 +282,32 @@ def _build_command(
 # ---------------------------------------------------------------------------
 
 # llama-benchy <0.4.2 (eugr/llama-benchy#33) stamps first_response_ts on any
-# choices chunk. A role-only priming chunk arrives when the socket opens,
-# before prefill, so est_ppt collapses to the residual round-trip — a few
-# milliseconds (the live TensorFold row was 2.4 ms; the reported band is
-# about 2–6 ms) — and pp_throughput = tokens / est_ppt inflates by orders of
-# magnitude. e2e_ttft waits for the first content or reasoning chunk.
+# choices chunk. A role-only chunk can arrive before prefill, so est_ppt
+# measures time to that chunk instead of the first content token. ttfr records
+# the first response and e2e_ttft records the first content or reasoning token.
+# Equal timings mean the response was content-first, even if latency clamped
+# est_ppt to zero.
 #
-# 10 ms sits above that round-trip band and below a real prefill, which is
-# tens of milliseconds. An absolute t/s cutoff does not: 2048 tokens at a
-# 40 ms est_ppt is about 51k t/s and is an honest prefill, while 64 tokens
-# over a 2.4 ms est_ppt is only about 27k t/s and is the same bug.
-_ROLE_CHUNK_MAX_EST_PPT_MS = 10.0
-# Claimed t/s divided by the same tokens over e2e_ttft equals
-# e2e_ttft / est_ppt. The live case is about 1,100×. One order of magnitude
-# excludes a fast prefill whose e2e_ttft is larger only because of queue
-# (about 2–3×).
+# The priming chunk's residual grows with depth on servers that tokenize
+# before flushing it. The live mlx-serve row took 10.87 ms at depth 16384
+# and escaped a fixed 10 ms ceiling. Bound this residual using the tokens
+# the current phase prefilled.
+_ROLE_CHUNK_PREPROCESS_MS_PER_TOKEN = 0.005
+_ROLE_CHUNK_MAX_EST_PPT_MS = 10.0  # the floor of the bound, for depth-0 rows
+# A pre-content chunk can also arrive after real prefill. Keep the cap and
+# ratio so its mere presence does not force a rewrite.
 _ROLE_CHUNK_MIN_E2E_RATIO = 10.0
 
 
-def _role_chunk_prefill_inflated(concurrency: int, est_ppt_ms: float, e2e_ttft_ms: float) -> bool:
+def _role_chunk_prefill_inflated(
+    concurrency: int,
+    ttfr_ms: float,
+    est_ppt_ms: float,
+    e2e_ttft_ms: float,
+    *,
+    prefill_tokens: int = 0,
+    pp_tps: float = 0.0,
+) -> bool:
     """Return whether a single-stream row has the role-chunk timing signature.
 
     Concurrent ``pp_throughput`` is llama-benchy's batch formula: total prompt
@@ -308,30 +315,53 @@ def _role_chunk_prefill_inflated(concurrency: int, est_ppt_ms: float, e2e_ttft_m
     is the first content or reasoning chunk, so the role-only chunk does not
     enter it. ``pp_req_throughput`` can still be inflated; the sample displays
     the batch total for concurrency above 1 and leaves that row alone.
+
+    A zero est_ppt is estimated only when the first response preceded the
+    first content token. A content-first response can also have zero est_ppt
+    when the latency probe exceeds ttfr.
     """
-    if concurrency != 1 or est_ppt_ms <= 0 or e2e_ttft_ms <= 0:
+    if concurrency != 1 or not 0 < ttfr_ms < e2e_ttft_ms:
         return False
-    if est_ppt_ms >= _ROLE_CHUNK_MAX_EST_PPT_MS:
+    if est_ppt_ms <= 0:
+        return pp_tps <= 0
+    cap = max(
+        _ROLE_CHUNK_MAX_EST_PPT_MS,
+        prefill_tokens * _ROLE_CHUNK_PREPROCESS_MS_PER_TOKEN,
+    )
+    if est_ppt_ms >= cap:
         return False
     return (e2e_ttft_ms / est_ppt_ms) >= _ROLE_CHUNK_MIN_E2E_RATIO
 
 
-def _labeled_prefill_tokens(is_ctx_prefill: bool, depth: int, pp_tokens: int) -> int:
-    """Return the token count the published row attributes to this prefill rate.
+def _labeled_prefill_tokens(
+    is_ctx_prefill: bool,
+    depth: int,
+    pp_tokens: int,
+    *,
+    prefix_caching_enabled: bool = False,
+) -> int:
+    """Return the token count this row's prefill rate should be divided by.
 
     llama-benchy defines ``context_size`` as the prefix, ``prompt_size`` as the
     prompt, and ``is_context_prefill_phase`` as the context-load step. That
     step's numerator is the depth (``ctx_pp @ d{context_size}``); this tool
     labels it ``pp{depth}``. Every other row is labeled ``pp{prompt_size}``.
-    llama-benchy divides ``prompt_size + context_size`` on a standard run with
-    depth above 0, and ``prompt_size`` alone on a prefix-cached follow-up, while
-    both labels still say ``pp{prompt_size}``. The rewritten rate uses the
-    labeled quantity, so the number and the label name the same tokens.
+
+    Match llama-benchy's numerator for each phase: depth for context load,
+    prompt for its prefix-cached follow-up, and depth plus prompt for a
+    standard run. ``--enable-prefix-caching`` is accepted through
+    ``--benchy-args`` even when this tool passes ``--no-cache``.
     """
-    return depth if is_ctx_prefill else pp_tokens
+    if is_ctx_prefill:
+        return depth
+    if prefix_caching_enabled and depth > 0:
+        return pp_tokens
+    return depth + pp_tokens
 
 
-def _parse_benchmark_entry(entry: dict[str, Any]) -> ThroughputSample:
+def _parse_benchmark_entry(
+    entry: dict[str, Any], *, prefix_caching_enabled: bool = False
+) -> ThroughputSample:
     """Convert a single llama-benchy benchmark entry to a ThroughputSample."""
     concurrency = entry.get("concurrency", 1)
     depth = entry.get("context_size", 0)
@@ -345,15 +375,24 @@ def _parse_benchmark_entry(entry: dict[str, Any]) -> ThroughputSample:
     pp_req_tps = _stat_mean(entry.get("pp_req_throughput", {}))
     tg_req_tps = _stat_mean(entry.get("tg_req_throughput", {}))
 
-    _stat_mean(entry.get("ttfr", {}))  # ttfr available but we use e2e_ttft
+    ttfr_ms = _stat_mean(entry.get("ttfr", {}))
     est_ppt_ms = _stat_mean(entry.get("est_ppt", {}))
     e2e_ttft_ms = _stat_mean(entry.get("e2e_ttft", {}))
 
     pp_estimated = False
-    if _role_chunk_prefill_inflated(concurrency, est_ppt_ms, e2e_ttft_ms):
-        labeled_tokens = _labeled_prefill_tokens(is_ctx_prefill, depth, pp_tokens)
-        if labeled_tokens > 0:
-            honest_pp_tps = labeled_tokens / (e2e_ttft_ms / 1000.0)
+    prefill_tokens = _labeled_prefill_tokens(
+        is_ctx_prefill, depth, pp_tokens, prefix_caching_enabled=prefix_caching_enabled
+    )
+    if _role_chunk_prefill_inflated(
+        concurrency,
+        ttfr_ms,
+        est_ppt_ms,
+        e2e_ttft_ms,
+        prefill_tokens=prefill_tokens,
+        pp_tps=pp_tps,
+    ):
+        if prefill_tokens > 0:
+            honest_pp_tps = prefill_tokens / (e2e_ttft_ms / 1000.0)
             pp_tps = honest_pp_tps
             pp_req_tps = honest_pp_tps
             est_ppt_ms = e2e_ttft_ms
@@ -435,8 +474,9 @@ def parse_json_output(data: dict[str, Any]) -> LlamaBenchyResult:
         raw_json=data,
     )
 
+    prefix_caching_enabled = data.get("prefix_caching_enabled") is True
     for entry in data.get("benchmarks", []):
-        sample = _parse_benchmark_entry(entry)
+        sample = _parse_benchmark_entry(entry, prefix_caching_enabled=prefix_caching_enabled)
         result.samples.append(sample)
 
     return result

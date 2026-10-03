@@ -286,10 +286,9 @@ class ThroughputSample:
     # Kept raw here; ``runner.speculative`` owns the typed parse.
     spec_decode_metrics: dict[str, Any] | None = None
     tensorfold_spec_metrics: dict[str, Any] | None = None
-    # True when single-stream prefill was derived from e2e_ttft. est_ppt was a
-    # few milliseconds and an order of magnitude shorter than e2e_ttft, the
-    # signature of llama-benchy counting a role-only first SSE chunk (see
-    # ``_parse_benchmark_entry``). Reports mark such rows with an asterisk.
+    # True when single-stream prefill was estimated from e2e_ttft because
+    # llama-benchy counted a pre-content stream chunk as its first response.
+    # Reports mark such rows with an asterisk.
     pp_estimated: bool = False
 
     @property

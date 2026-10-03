@@ -333,6 +333,8 @@ class TestThroughputReport:
         content = path.read_text(encoding="utf-8")
         assert "754*" in content
         assert PP_ESTIMATED_NOTE in content
+        assert "tokens counted by this benchmark phase" in content
+        assert "includes network and queue time" in content
         assert "50k" not in content
         assert "50,000" not in content
 

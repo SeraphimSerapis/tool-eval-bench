@@ -51,6 +51,8 @@ tool-eval-bench bench --mmlu --ifeval --gsm8k        # all three after tool-eval
 
 Throughput measurement uses [llama-benchy](https://github.com/eugr/llama-benchy) — a dedicated benchmarking tool that provides multi-run statistics with mean ± std, proper latency estimation, and cache-busting. Install with `pip install 'tool-eval-bench[perf]'` or ensure `uvx` is on PATH. Progress is shown via a live Rich progress bar. For authenticated endpoints, the regular `--api-key` value is forwarded to llama-benchy's supported CLI option and redacted from logs. Because llama-benchy 0.4.x does not support environment-based credentials, the key may still be visible to process inspection by other users on the same host while the benchmark is running.
 
+An asterisk on a prefill rate means the first response chunk arrived before the first content token. Older llama-benchy versions can count that early chunk as the end of prefill, so the displayed rate is estimated from end-to-end time to first content token. The numerator follows the benchmark phase: prompt plus depth for a standard run, depth for context load, and prompt for a prefix-cached follow-up. This estimate includes network and queue time; compare it with other estimated rates rather than directly measured prefill rates.
+
 ```bash
 # Throughput only (skip tool-call scenarios)
 tool-eval-bench bench --perf-only --pp 2048 --tg 128 --depth "0 4096 8192 16384 32768"
