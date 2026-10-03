@@ -1011,3 +1011,82 @@ def test_dispatch_spec_and_sweep_modes(monkeypatch: pytest.MonkeyPatch) -> None:
         ("spec", "spec A"),
         ("sweep", "sweep A"),
     ]
+
+
+def test_system_prompt_flags_parse_and_resolve(tmp_path: Path) -> None:
+    """--system-prompt-file is materialized onto args.system_prompt."""
+
+    from tool_eval_bench.cli.dispatch import _resolve_system_prompt
+    from tool_eval_bench.cli.legacy_parser import _make_parser
+
+    parser = _make_parser()
+    prompt_file = tmp_path / "prompt.txt"
+    prompt_file.write_text("You are a strict contract evaluator.\n", encoding="utf-8")
+
+    args = parser.parse_args(["--system-prompt-file", str(prompt_file)])
+    _resolve_system_prompt(args, parser)
+    assert args.system_prompt == "You are a strict contract evaluator.\n"
+
+    args = parser.parse_args(["--system-prompt", "Be terse."])
+    _resolve_system_prompt(args, parser)
+    assert args.system_prompt == "Be terse."
+
+    args = parser.parse_args([])
+    _resolve_system_prompt(args, parser)
+    assert args.system_prompt is None
+
+
+def test_system_prompt_flags_are_mutually_exclusive() -> None:
+    import argparse
+
+    from tool_eval_bench.cli.dispatch import _resolve_system_prompt
+    from tool_eval_bench.cli.legacy_parser import _make_parser
+
+    args = _make_parser().parse_args(["--system-prompt", "a", "--system-prompt-file", "p"])
+    with pytest.raises(SystemExit):
+        _resolve_system_prompt(args, argparse.ArgumentParser())
+
+
+def test_system_prompt_file_missing_is_a_parse_error(tmp_path: Path) -> None:
+    import argparse
+
+    from tool_eval_bench.cli.dispatch import _resolve_system_prompt
+    from tool_eval_bench.cli.legacy_parser import _make_parser
+
+    args = _make_parser().parse_args(["--system-prompt-file", str(tmp_path / "absent.txt")])
+    with pytest.raises(SystemExit):
+        _resolve_system_prompt(args, argparse.ArgumentParser())
+
+
+def test_resume_config_mismatches_cover_system_prompt() -> None:
+    from tool_eval_bench.cli.dispatch import _resume_config_mismatches
+    from tool_eval_bench.cli.legacy_parser import _make_parser
+    from tool_eval_bench.domain.scenarios import (
+        Category,
+        ScenarioDefinition,
+        ScenarioEvaluation,
+        ScenarioStatus,
+    )
+
+    scenario = ScenarioDefinition(
+        id="TC-01",
+        title="t",
+        category=Category.A,
+        user_message="u",
+        description="d",
+        handle_tool_call=lambda state, call: {},
+        evaluate=lambda state: ScenarioEvaluation(ScenarioStatus.PASS, 2, "ok"),
+    )
+    args = _make_parser().parse_args(["--system-prompt", "Be terse."])
+    previous = {"system_prompt": None}
+    mismatches = _resume_config_mismatches(
+        previous,
+        model="m",
+        backend="vllm",
+        base_url="http://localhost:8000",
+        scenarios=[scenario],
+        args=args,
+        extra_params=None,
+        scenario_packs=None,
+    )
+    assert "system_prompt" in mismatches

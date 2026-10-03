@@ -346,6 +346,26 @@
   },
   {
     "choices": null,
+    "default": null,
+    "dest": "system_prompt",
+    "flags": [
+      "--system-prompt"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "system_prompt_file",
+    "flags": [
+      "--system-prompt-file"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": false,
     "dest": "skip_tool_eval",
     "flags": [

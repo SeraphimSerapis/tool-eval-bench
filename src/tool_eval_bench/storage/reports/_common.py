@@ -166,6 +166,8 @@ def _render_run_context(ctx: RunContext) -> list[str]:
         md.append(f"| Max Tokens | {ctx.max_tokens} |")
     if ctx.context_pressure is not None:
         md.append(f"| Context Pressure | {ctx.context_pressure:.0%} |")
+    if ctx.system_prompt is not None:
+        md.append("| System Prompt | custom (`--system-prompt`; built-in prompt replaced) |")
     if ctx.extra_params:
         import json as _json
 

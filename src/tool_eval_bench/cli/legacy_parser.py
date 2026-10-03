@@ -226,6 +226,20 @@ def _make_parser() -> argparse.ArgumentParser:
         "--reference-date", default=None, help="Override benchmark reference date (YYYY-MM-DD)"
     )
     run_ctrl.add_argument(
+        "--system-prompt",
+        default=None,
+        metavar="TEXT",
+        help="Replace the built-in system prompt with TEXT for every scenario "
+        "(part of the run config fingerprint)",
+    )
+    run_ctrl.add_argument(
+        "--system-prompt-file",
+        default=None,
+        metavar="PATH",
+        help="Read the system prompt override from a file (mutually exclusive "
+        "with --system-prompt)",
+    )
+    run_ctrl.add_argument(
         "--skip-tool-eval",
         action="store_true",
         help="Skip tool-call scenarios (use with --perf / --spec-bench)",

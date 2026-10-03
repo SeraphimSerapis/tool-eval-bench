@@ -255,6 +255,14 @@ Runs are checkpointed to SQLite as each scenario finishes, so a Ctrl-C costs you
 only the scenario in flight — `tool-eval-bench resume RUN_ID` picks up the rest.
 See [docs/artifacts.md](docs/artifacts.md).
 
+`--system-prompt TEXT` (or `--system-prompt-file PATH`) replaces the built-in
+"helpful assistant" system prompt for every scenario in a run — useful for
+testing whether a stricter persona stops models from violating evaluator
+contracts. The benchmark reference-date line is always kept, the override is
+recorded in the run config and its comparison fingerprint, and the run report
+marks it in the Run Context table. [`examples/system-prompt-function.txt`](examples/system-prompt-function.txt)
+is a minimal override that constrains the model to verified output.
+
 ## Programmatic API
 
 ```python

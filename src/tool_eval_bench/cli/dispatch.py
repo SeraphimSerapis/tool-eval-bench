@@ -26,6 +26,7 @@ import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv  # noqa: F401  (re-exported via _load_dotenv)
@@ -185,6 +186,7 @@ def _resume_config_mismatches(
         "max_turns": args.max_turns,
         "seed": args.seed,
         "reference_date": args.reference_date,
+        "system_prompt": getattr(args, "system_prompt", None),
         "scenario_ids": [scenario.id for scenario in scenarios],
         "concurrency": args.parallel,
         "error_rate": args.error_rate,
@@ -502,6 +504,26 @@ def _check_endpoint_ready(
         )
 
 
+def _resolve_system_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Materialize ``--system-prompt-file`` into ``args.system_prompt``.
+
+    Downstream consumers (run modes, resume-compat check, RunContext) read only
+    ``args.system_prompt``, so the file variant is resolved once, right after
+    argument parsing.
+    """
+    file_prompt = getattr(args, "system_prompt_file", None)
+    inline_prompt = getattr(args, "system_prompt", None)
+    if file_prompt and inline_prompt:
+        parser.error("--system-prompt and --system-prompt-file are mutually exclusive")
+    if file_prompt:
+        try:
+            args.system_prompt = Path(file_prompt).read_text(encoding="utf-8")
+        except OSError as exc:
+            parser.error(f"Cannot read --system-prompt-file '{file_prompt}': {exc}")
+    if args.system_prompt is not None and not args.system_prompt.strip():
+        parser.error("--system-prompt must not be empty")
+
+
 def _scenario_selector_label(args: argparse.Namespace) -> str:
     """Describe the scenario selection for the run report."""
     resolved = _resolve_scenarios(args)
@@ -550,6 +572,7 @@ def _build_run_context(
                 thinking_enabled=not args.no_think,
                 extra_params=extra_params or None,
                 context_pressure=args.context_pressure,
+                system_prompt=getattr(args, "system_prompt", None),
                 label=args.label,
                 probe_engine=not args.no_probe_engine,
             )
@@ -660,6 +683,11 @@ def main() -> None:
     # --json-file implies --json
     if args.json_file:
         args.json = True
+
+    # Resolve the system-prompt override from its file, if given, so every
+    # downstream consumer (run, resume-compat check, RunContext) sees plain
+    # text on args.system_prompt.
+    _resolve_system_prompt(args, parser)
 
     if _handle_local_command(
         args,
@@ -1386,6 +1414,7 @@ def _run_with_live_display(
             timeout_seconds=args.timeout,
             max_turns=args.max_turns,
             reference_date=args.reference_date,
+            system_prompt=getattr(args, "system_prompt", None),
             variant_seed=getattr(args, "variant_seed", None),
             seed=args.seed,
             throughput_samples=throughput_samples or [],
@@ -1565,6 +1594,7 @@ def _run_json(
             timeout_seconds=args.timeout,
             max_turns=args.max_turns,
             reference_date=args.reference_date,
+            system_prompt=getattr(args, "system_prompt", None),
             variant_seed=getattr(args, "variant_seed", None),
             seed=args.seed,
             concurrency=args.parallel,
@@ -1672,6 +1702,7 @@ def _run_plain(
             timeout_seconds=args.timeout,
             max_turns=args.max_turns,
             reference_date=args.reference_date,
+            system_prompt=getattr(args, "system_prompt", None),
             variant_seed=getattr(args, "variant_seed", None),
             seed=args.seed,
             throughput_samples=throughput_samples or [],

@@ -141,6 +141,7 @@ class BenchmarkService:
         wire_format: str | None = None,
         extra_headers: Mapping[str, str] | None = None,
         session_header: str | None = None,
+        system_prompt: str | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
 
@@ -220,6 +221,7 @@ class BenchmarkService:
             extra_params=extra_params,
             context_pressure_config=context_pressure_config,
             weight_by_difficulty=weight_by_difficulty,
+            system_prompt=system_prompt,
         )
         run_config = build_run_config(
             settings,
@@ -258,6 +260,7 @@ class BenchmarkService:
                 extra_params=extra_params,
                 context_pressure_messages=context_pressure_messages,
                 weight_by_difficulty=weight_by_difficulty,
+                system_prompt=system_prompt,
             )
         except BaseException:
             # Covers KeyboardInterrupt and CancelledError as well as errors —

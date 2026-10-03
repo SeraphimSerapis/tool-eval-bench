@@ -58,6 +58,7 @@ class RunSettings:
     extra_params: dict[str, Any] | None
     context_pressure_config: dict[str, Any] | None
     weight_by_difficulty: bool
+    system_prompt: str | None = None
 
 
 def build_run_config(
@@ -90,6 +91,9 @@ def build_run_config(
         "alpha": settings.alpha,
         "extra_params": settings.extra_params,
         "weight_by_difficulty": settings.weight_by_difficulty,
+        # Always persisted (None = built-in prompt) so resume-compat comparison
+        # can flag a prompt change in either direction.
+        "system_prompt": settings.system_prompt,
     }
     variants = {s.id: s.variant_metadata for s in scenarios if s.variant_metadata}
     if variants:

@@ -1304,3 +1304,55 @@ def test_turn_budget_exceeded_roundtrips_through_serialization() -> None:
     legacy_dict.pop("turn_budget_exceeded", None)
     legacy = ScenarioResult.from_dict(legacy_dict)
     assert legacy.turn_budget_exceeded is False
+
+
+# ---------------------------------------------------------------------------
+# System prompt override
+# ---------------------------------------------------------------------------
+
+
+def test_initial_messages_default_uses_builtin_system_prompt() -> None:
+    """Without an override, the built-in helpful-assistant prompt is used."""
+    from tool_eval_bench.domain.tools import SYSTEM_PROMPT
+    from tool_eval_bench.runner.orchestrator import _initial_messages
+
+    msgs = _initial_messages("What's the weather?")
+
+    system = msgs[0].get("content")
+    assert isinstance(system, str)
+    assert SYSTEM_PROMPT in system
+    # The benchmark reference-date line is always part of the system message.
+    assert "Benchmark context: today is" in system
+
+
+def test_initial_messages_override_replaces_builtin_but_keeps_date_line() -> None:
+    """A custom prompt replaces the built-in persona, never the date line."""
+    from tool_eval_bench.domain.tools import SYSTEM_PROMPT
+    from tool_eval_bench.runner.orchestrator import _initial_messages
+
+    msgs = _initial_messages("What's the weather?", system_prompt="You are a strict evaluator.")
+
+    system = msgs[0].get("content")
+    assert isinstance(system, str)
+    assert "You are a strict evaluator." in system
+    assert SYSTEM_PROMPT not in system
+    assert "Benchmark context: today is" in system
+
+
+@pytest.mark.asyncio
+async def test_run_scenario_passes_system_prompt_override_to_adapter() -> None:
+    """The override reaches the wire as the first system message."""
+    adapter = MockAdapter([{"content": "Understood."}])
+
+    await run_scenario(
+        adapter,
+        model="test",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=MOCK_SCENARIO,
+        system_prompt="You are a contract-bound test subject.",
+    )
+
+    system = adapter.captured_payloads[0]["messages"][0]
+    assert system["role"] == "system"
+    assert "You are a contract-bound test subject." in system["content"]

@@ -133,6 +133,8 @@ replaces it.
 | `--resume RUN_ID` | Resume a previous run (skip already-passed scenarios) |
 | `--hardmode-only` | Run ONLY Hard Mode scenarios (equivalent to --hardmode --categories P) |
 | `--weight-by-difficulty` | Weight scores by difficulty tier (harder scenarios count more) |
+| `--system-prompt TEXT` | Replace the built-in system prompt with TEXT for every scenario |
+| `--system-prompt-file PATH` | Read the system prompt override from a file (exclusive with `--system-prompt`) |
 | `--alpha F` | Quality weight in the deployability composite (default: 0.7; speed gets 1 − alpha) |
 
 ## Benchmark modes
