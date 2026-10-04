@@ -166,6 +166,10 @@ def _render_run_context(ctx: RunContext) -> list[str]:
         md.append(f"| Max Tokens | {ctx.max_tokens} |")
     if ctx.context_pressure is not None:
         md.append(f"| Context Pressure | {ctx.context_pressure:.0%} |")
+    if ctx.system_prompt is not None:
+        # Deliberately unattributed: --system-prompt and --system-prompt-file
+        # produce the same run, and the file path is not recorded.
+        md.append("| System Prompt | custom (built-in prompt replaced) |")
     if ctx.extra_params:
         import json as _json
 

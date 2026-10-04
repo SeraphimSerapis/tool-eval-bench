@@ -133,6 +133,8 @@ replaces it.
 | `--resume RUN_ID` | Resume a previous run (skip already-passed scenarios) |
 | `--hardmode-only` | Run ONLY Hard Mode scenarios (equivalent to --hardmode --categories P) |
 | `--weight-by-difficulty` | Weight scores by difficulty tier (harder scenarios count more) |
+| `--system-prompt TEXT` | Replace the built-in system prompt with TEXT for every scenario |
+| `--system-prompt-file PATH` | Read the system prompt override from a UTF-8 file, max 32 KiB (exclusive with `--system-prompt`) |
 | `--alpha F` | Quality weight in the deployability composite (default: 0.7; speed gets 1 − alpha) |
 
 ## Benchmark modes
@@ -165,6 +167,29 @@ These run alongside the tool-call scenarios, or on their own with `--skip-tool-e
 
 `--temperature` applies to spec-bench requests as well; greedy is the default and the report
 records the value, since acceptance falls as sampling temperature rises.
+
+### Overriding the system prompt
+
+`--system-prompt` and `--system-prompt-file` replace the built-in persona for every
+scenario in the run. Both forms are equivalent: surrounding whitespace and a leading
+byte-order mark are stripped, so the same words read from a file and passed inline
+produce the same run.
+
+The benchmark reference-date line is appended after the override and remains
+authoritative — an override that asserts its own "today" does not move the date that
+relative-time scenarios are graded against.
+
+An override is recorded in the run config and folded into `config_fingerprint`, so runs
+with different prompts are not compared with each other, and `--resume` refuses to
+continue a run whose prompt differs — including a run recorded before this option
+existed, which is treated as having used the built-in prompt. A run without either flag
+persists and fingerprints exactly as it did before the option existed.
+
+The prompt must be valid UTF-8, non-blank, and at most 32 KiB, because it is stored
+verbatim in the run config and metadata. Reports mark only *that* a custom prompt was
+used; they never reproduce it. The flags are accepted but ignored, with a warning, by
+invocations that run no tool-call scenarios (`--perf-only`, `--spec-bench` alone, a
+`plugin` run, or `--skip-tool-eval`).
 
 ## Accuracy benchmarks (pluggable)
 

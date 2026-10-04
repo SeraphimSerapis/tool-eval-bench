@@ -44,6 +44,8 @@ RUN_CONTROL = (
     "no_warmup",
     "no_preflight",
     "reference_date",
+    "system_prompt",
+    "system_prompt_file",
 )
 SCENARIOS = ("scenarios", "categories", "short", "hardmode", "hardmode_only", "variant_seed")
 PERF = (

@@ -266,6 +266,18 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Override benchmark reference date (YYYY-MM-DD)",
     },
     {
+        "name": "system_prompt",
+        "type": "string",
+        "default": None,
+        "description": "Replace the built-in system prompt with TEXT for every scenario",
+    },
+    {
+        "name": "system_prompt_file",
+        "type": "string",
+        "default": None,
+        "description": "Read the system prompt override from a file (exclusive with --system-prompt)",
+    },
+    {
         "name": "skip_tool_eval",
         "type": "bool",
         "default": False,

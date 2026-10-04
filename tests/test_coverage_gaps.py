@@ -606,6 +606,23 @@ class TestRenderRunContext:
         text = "\n".join(md)
         assert "top_k" in text
 
+    def test_custom_system_prompt_is_marked_without_naming_a_flag(self):
+        """--system-prompt and --system-prompt-file produce the same run.
+
+        The report also must not reproduce the prompt: it can be long, and it is
+        whatever text the user supplied.
+        """
+        ctx = _make_run_context(system_prompt="Be strict and cite sources.")
+
+        text = "\n".join(_render_run_context(ctx))
+
+        assert "| System Prompt | custom (built-in prompt replaced) |" in text
+        assert "--system-prompt" not in text
+        assert "Be strict and cite sources." not in text
+
+    def test_default_run_has_no_system_prompt_row(self):
+        assert "System Prompt" not in "\n".join(_render_run_context(_make_run_context()))
+
     def test_server_model_root_shown(self):
         ctx = _make_run_context(server_model_root="Qwen/Qwen-27B")
         md = _render_run_context(ctx)

@@ -103,6 +103,7 @@ async def run_benchmark(
     wire_format: str | None = None,
     extra_headers: Mapping[str, str] | None = None,
     session_header: str | None = None,
+    system_prompt: str | None = None,
 ) -> dict[str, Any]:
     """Run tool-eval-bench programmatically and return structured results.
 
@@ -144,6 +145,10 @@ async def run_benchmark(
         session_header: Name of a header that carries a per-conversation id
             (for example ``x-opencode-session``); each scenario is one
             conversation.
+        system_prompt: Replaces the built-in system prompt for every scenario.
+            The benchmark reference-date line is still appended after it. Part of
+            the comparison fingerprint, so runs with different prompts are not
+            grouped together.
 
     Returns:
         A versioned JSON-serializable dict containing ``run_id``, ``config``,
@@ -190,6 +195,7 @@ async def run_benchmark(
             wire_format=wire_format,
             extra_headers=extra_headers,
             session_header=session_header,
+            system_prompt=system_prompt,
         )
 
     return format_result(run_data)

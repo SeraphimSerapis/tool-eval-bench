@@ -1331,6 +1331,124 @@ class TestPressureSweepIntegration:
             seed=None,
         )
 
+    def test_sweep_runs_every_level_under_the_system_prompt_override(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """A sweep is a scenario run: the override must reach each level.
+
+        Without this the flag is accepted, the report is marked, and every level
+        silently runs on the built-in prompt.
+        """
+        import io
+
+        from rich.console import Console
+
+        from tool_eval_bench.adapters import factory
+        from tool_eval_bench.cli.helpers import (
+            metadata_for_storage,
+            parse_sweep_range,
+            with_config_fingerprint,
+        )
+        from tool_eval_bench.cli.pressure import run_pressure_sweep
+        from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
+        from tool_eval_bench.runner import orchestrator
+
+        scenario = ScenarioDefinition(
+            id="TC-01",
+            title="Test",
+            category=Category.A,
+            user_message="test",
+            description="test",
+            handle_tool_call=lambda s, c: {},
+            evaluate=lambda s: None,
+        )
+        runner = AsyncMock(return_value=self._make_summary(["pass"]))
+        monkeypatch.setattr(orchestrator, "run_all_scenarios", runner)
+        monkeypatch.setattr(factory, "build_adapter", lambda *a, **k: AsyncMock())
+
+        args = self._make_args(sweep="0.5-1.0", steps=2, context_size=32768)
+        args.system_prompt = "SWEEP-MARKER"
+        args.output_dir = str(tmp_path)
+        args.timeout = 60.0
+        persisted: list[dict[str, Any]] = []
+
+        with patch("asyncio.new_event_loop", return_value=_ImmediateEventLoop()):
+            run_pressure_sweep(
+                Console(file=io.StringIO(), force_terminal=False),
+                "test-model",
+                "test-model",
+                "vllm",
+                "http://localhost:8080",
+                None,
+                args,
+                parse_sweep_range=parse_sweep_range,
+                resolve_scenarios=lambda _args: [scenario],
+                with_config_fingerprint=with_config_fingerprint,
+                persist_plugin_run=persisted.append,
+                metadata_for_storage=metadata_for_storage,
+            )
+
+        assert runner.await_count == 2
+        assert [call.kwargs.get("system_prompt") for call in runner.await_args_list] == [
+            "SWEEP-MARKER",
+            "SWEEP-MARKER",
+        ]
+        assert persisted[0]["config"]["system_prompt"] == "SWEEP-MARKER"
+
+    def test_default_sweep_config_has_no_system_prompt_key(self, tmp_path, monkeypatch) -> None:
+        """A sweep without the flag fingerprints as it did before the option existed."""
+        import io
+
+        from rich.console import Console
+
+        from tool_eval_bench.adapters import factory
+        from tool_eval_bench.cli.helpers import (
+            metadata_for_storage,
+            parse_sweep_range,
+            with_config_fingerprint,
+        )
+        from tool_eval_bench.cli.pressure import run_pressure_sweep
+        from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
+        from tool_eval_bench.runner import orchestrator
+
+        scenario = ScenarioDefinition(
+            id="TC-01",
+            title="Test",
+            category=Category.A,
+            user_message="test",
+            description="test",
+            handle_tool_call=lambda s, c: {},
+            evaluate=lambda s: None,
+        )
+        monkeypatch.setattr(
+            orchestrator, "run_all_scenarios", AsyncMock(return_value=self._make_summary(["pass"]))
+        )
+        monkeypatch.setattr(factory, "build_adapter", lambda *a, **k: AsyncMock())
+
+        args = self._make_args(sweep="0.5-1.0", steps=2, context_size=32768)
+        args.system_prompt = None
+        args.output_dir = str(tmp_path)
+        args.timeout = 60.0
+        persisted: list[dict[str, Any]] = []
+
+        with patch("asyncio.new_event_loop", return_value=_ImmediateEventLoop()):
+            run_pressure_sweep(
+                Console(file=io.StringIO(), force_terminal=False),
+                "test-model",
+                "test-model",
+                "vllm",
+                "http://localhost:8080",
+                None,
+                args,
+                parse_sweep_range=parse_sweep_range,
+                resolve_scenarios=lambda _args: [scenario],
+                with_config_fingerprint=with_config_fingerprint,
+                persist_plugin_run=persisted.append,
+                metadata_for_storage=metadata_for_storage,
+            )
+
+        assert "system_prompt" not in persisted[0]["config"]
+
     def _make_summary(self, statuses: list[str]) -> Any:
         """Build a mock ModelScoreSummary with given statuses."""
         from tool_eval_bench.domain.scenarios import (

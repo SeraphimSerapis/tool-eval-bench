@@ -87,6 +87,7 @@ result = asyncio.run(run_benchmark(
     wire_format=None,      # auto, openai, gemini, or anthropic
     extra_headers=None,    # e.g. {"User-Agent": "my-agent/1.0"}
     session_header=None,   # e.g. "x-opencode-session"; one id per scenario
+    system_prompt=None,    # replaces the built-in prompt; date line still appended
     on_scenario_start=None,
     on_scenario_result=None,
     persist=True,         # False = skip SQLite + Markdown

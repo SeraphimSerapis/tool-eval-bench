@@ -130,6 +130,7 @@ from tool_eval_bench.storage.reports import MarkdownReporter
 from tool_eval_bench.utils.headers import attach_session_id as _attach_session_id
 from tool_eval_bench.utils.headers import parse_header_env as _parse_header_env
 from tool_eval_bench.utils.headers import parse_header_pairs as _parse_header_pairs
+from tool_eval_bench.utils.system_prompt import MAX_SYSTEM_PROMPT_BYTES, normalize_system_prompt
 from tool_eval_bench.utils.urls import endpoint_identity
 
 logger = logging.getLogger(__name__)
@@ -185,6 +186,7 @@ def _resume_config_mismatches(
         "max_turns": args.max_turns,
         "seed": args.seed,
         "reference_date": args.reference_date,
+        "system_prompt": getattr(args, "system_prompt", None),
         "scenario_ids": [scenario.id for scenario in scenarios],
         "concurrency": args.parallel,
         "error_rate": args.error_rate,
@@ -200,6 +202,10 @@ def _resume_config_mismatches(
         for key, value in current.items()
         if (key in previous and previous[key] != value)
         or (key == "scenario_variants" and previous.get(key, {}) != value)
+        # A run on the built-in prompt persists no system_prompt key at all, so
+        # absence means "built-in": resuming it with an override would otherwise
+        # merge two personas into one result.
+        or (key == "system_prompt" and previous.get(key) != value)
     ]
 
 
@@ -502,6 +508,90 @@ def _check_endpoint_ready(
         )
 
 
+_PLUGIN_BENCHMARKS = ("gsm8k", "mmlu", "ifeval", "needle")
+
+
+def _resolve_system_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Materialize ``--system-prompt-file`` into ``args.system_prompt``.
+
+    Downstream consumers (run modes, resume-compat check, RunContext) read only
+    ``args.system_prompt``, so the file variant is resolved once, right after
+    argument parsing, and both variants leave here in the canonical form that is
+    persisted and sent (see ``normalize_system_prompt``).
+    """
+    file_prompt = getattr(args, "system_prompt_file", None)
+    inline_prompt = getattr(args, "system_prompt", None)
+    if file_prompt is not None and inline_prompt is not None:
+        parser.error("--system-prompt and --system-prompt-file are mutually exclusive")
+    if file_prompt is not None:
+        source = f"--system-prompt-file '{file_prompt}'"
+        try:
+            with open(file_prompt, "rb") as handle:
+                raw = handle.read(MAX_SYSTEM_PROMPT_BYTES + 1)
+        except OSError as exc:
+            parser.error(f"Cannot read {source}: {exc}")
+        # Judged on the file, not the stripped text: a bounded read must never
+        # silently drop the tail of a larger file.
+        if len(raw) > MAX_SYSTEM_PROMPT_BYTES:
+            parser.error(f"{source} is larger than {MAX_SYSTEM_PROMPT_BYTES} bytes")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            parser.error(f"{source} is not valid UTF-8")
+    elif inline_prompt is not None:
+        source, text = "--system-prompt", inline_prompt
+    else:
+        return
+    try:
+        args.system_prompt = normalize_system_prompt(text)
+    except ValueError as exc:
+        parser.error(f"{source}: {exc}")
+
+
+def _sends_system_prompt(args: argparse.Namespace) -> bool:
+    """Whether this invocation runs tool-call scenarios, the override's only consumer.
+
+    Mirrors the routing in ``main()``: ``--perf-only``, ``--spec-live``, a lone
+    ``--spec-bench``, any ``--<plugin>-only`` run, and ``--skip-tool-eval`` all
+    stop before the scenarios; a context-pressure sweep is a scenario run.
+
+    Probe, ``--dry-run``, and the storage commands are not considered here: they
+    record nothing, so an unused flag is inert, and they already accept the rest
+    of the run-control group in silence.
+    """
+    if args.spec_live or args.perf_only:
+        return False
+    other_benchmarks = args.perf or any(
+        getattr(args, name) or getattr(args, f"{name}_only") for name in _PLUGIN_BENCHMARKS
+    )
+    if args.spec_bench and (args.skip_tool_eval or not other_benchmarks):
+        return False
+    if args.context_pressure_sweep is not None:
+        return True
+    if args.skip_tool_eval:
+        return False
+    return not any(getattr(args, f"{name}_only") for name in _PLUGIN_BENCHMARKS)
+
+
+def _drop_unused_system_prompt(args: argparse.Namespace, console: Console) -> None:
+    """Ignore, with a warning, an override that no scenario would receive.
+
+    Left on the namespace it would be recorded in the run context and marked in
+    a report as if the model had been run under it.
+    """
+    if args.system_prompt is None or _sends_system_prompt(args):
+        return
+    message = (
+        "--system-prompt applies only to tool-call scenarios and is ignored: "
+        "this invocation runs none."
+    )
+    if args.json:
+        logger.warning(message)
+    else:
+        console.print(f"\n  [yellow]⚠ {message}[/]\n")
+    args.system_prompt = None
+
+
 def _scenario_selector_label(args: argparse.Namespace) -> str:
     """Describe the scenario selection for the run report."""
     resolved = _resolve_scenarios(args)
@@ -550,6 +640,7 @@ def _build_run_context(
                 thinking_enabled=not args.no_think,
                 extra_params=extra_params or None,
                 context_pressure=args.context_pressure,
+                system_prompt=getattr(args, "system_prompt", None),
                 label=args.label,
                 probe_engine=not args.no_probe_engine,
             )
@@ -660,6 +751,12 @@ def main() -> None:
     # --json-file implies --json
     if args.json_file:
         args.json = True
+
+    # Resolve the system-prompt override from its file, if given, so every
+    # downstream consumer (run, resume-compat check, RunContext) sees plain
+    # text on args.system_prompt.
+    _resolve_system_prompt(args, parser)
+    _drop_unused_system_prompt(args, console)
 
     if _handle_local_command(
         args,
@@ -1386,6 +1483,7 @@ def _run_with_live_display(
             timeout_seconds=args.timeout,
             max_turns=args.max_turns,
             reference_date=args.reference_date,
+            system_prompt=getattr(args, "system_prompt", None),
             variant_seed=getattr(args, "variant_seed", None),
             seed=args.seed,
             throughput_samples=throughput_samples or [],
@@ -1565,6 +1663,7 @@ def _run_json(
             timeout_seconds=args.timeout,
             max_turns=args.max_turns,
             reference_date=args.reference_date,
+            system_prompt=getattr(args, "system_prompt", None),
             variant_seed=getattr(args, "variant_seed", None),
             seed=args.seed,
             concurrency=args.parallel,
@@ -1672,6 +1771,7 @@ def _run_plain(
             timeout_seconds=args.timeout,
             max_turns=args.max_turns,
             reference_date=args.reference_date,
+            system_prompt=getattr(args, "system_prompt", None),
             variant_seed=getattr(args, "variant_seed", None),
             seed=args.seed,
             throughput_samples=throughput_samples or [],

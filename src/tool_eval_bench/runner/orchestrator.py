@@ -166,14 +166,19 @@ def _initial_messages(
     reference_day: str | None = None,
     context_pressure_messages: list[ChatMessage] | None = None,
     scenario_id: str | None = None,
+    system_prompt: str | None = None,
 ) -> list[ChatMessage]:
     ref_date = reference_date or BENCHMARK_REFERENCE_DATE
     ref_day = reference_day or BENCHMARK_REFERENCE_DAY
+    # An explicit override replaces the built-in "helpful assistant" persona;
+    # the benchmark reference-date line is always kept because relative-time
+    # scenarios depend on it.
+    base_prompt = SYSTEM_PROMPT if system_prompt is None else system_prompt
     msgs: list[ChatMessage] = [
         {
             "role": "system",
             "content": (
-                f"{SYSTEM_PROMPT}\n\n"
+                f"{base_prompt}\n\n"
                 f"Benchmark context: today is {ref_date} ({ref_day}). "
                 "Use this date for any relative time request."
             ),
@@ -361,6 +366,7 @@ async def run_scenario(
     error_rate: float = 0.0,
     extra_params: dict[str, Any] | None = None,
     context_pressure_messages: list[ChatMessage] | None = None,
+    system_prompt: str | None = None,
 ) -> ScenarioResult:
     """Run a single scenario through the multi-turn orchestration loop."""
     t0 = time.perf_counter()
@@ -379,6 +385,7 @@ async def run_scenario(
         reference_day=reference_day,
         context_pressure_messages=context_pressure_messages,
         scenario_id=scenario.id,
+        system_prompt=system_prompt,
     )
     # None → use defaults; [] → explicitly no tools
     scenario_tools = UNIVERSAL_TOOLS if scenario.tools_override is None else scenario.tools_override
@@ -967,11 +974,13 @@ async def run_all_scenarios(
     extra_params: dict[str, Any] | None = None,
     context_pressure_messages: list[ChatMessage] | None = None,
     weight_by_difficulty: bool = False,
+    system_prompt: str | None = None,
 ) -> ModelScoreSummary:
     """Run every scenario and produce an aggregate score summary.
 
     Args:
         concurrency: max parallel scenario runs. 1 = sequential (default).
+        system_prompt: replaces the built-in system prompt for every scenario.
     """
     target_scenarios = scenarios
     total = len(target_scenarios)
@@ -1032,6 +1041,7 @@ async def run_all_scenarios(
                     error_rate=error_rate,
                     extra_params=extra_params,
                     context_pressure_messages=context_pressure_messages,
+                    system_prompt=system_prompt,
                 )
             results.append(_attach_probe(result))
             if on_scenario_result:
@@ -1081,6 +1091,7 @@ async def run_all_scenarios(
                     error_rate=error_rate,
                     extra_params=extra_params,
                     context_pressure_messages=context_pressure_messages,
+                    system_prompt=system_prompt,
                 )
             ordered_results[idx] = _attach_probe(result)
             if on_scenario_result:

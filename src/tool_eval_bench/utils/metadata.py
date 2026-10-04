@@ -559,6 +559,7 @@ async def collect_run_context(
     thinking_enabled: bool = True,
     extra_params: dict[str, Any] | None = None,
     context_pressure: float | None = None,
+    system_prompt: str | None = None,
     label: str | None = None,
     redact_url: bool = True,
     probe_engine: bool = True,
@@ -602,6 +603,7 @@ async def collect_run_context(
         max_tokens=default_max_tokens(extra_params),
         extra_params=extra_params,
         context_pressure=context_pressure,
+        system_prompt=system_prompt,
         label=label,
         # Tier 3
         server_model_id=engine_info.get("server_model_id"),

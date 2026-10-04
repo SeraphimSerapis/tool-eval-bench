@@ -108,9 +108,12 @@ class RunContext:
     slot_count: int | None = None
     # The per-turn generation ceiling the run sent. Reports print it so a run
     # made under the old fixed 4096 is not compared silently with one that had
-    # four times the room to think. Appended last: RunContext is constructed
-    # positionally in places.
+    # four times the room to think.
     max_tokens: int | None = None
+    # Custom system prompt replacing the built-in one (--system-prompt).
+    # Part of the config fingerprint via the persisted run config. Kept last:
+    # positional RunContext construction (tests, callers) predates this field.
+    system_prompt: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-safe dict for metadata_json storage."""

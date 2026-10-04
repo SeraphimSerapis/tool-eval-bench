@@ -242,6 +242,18 @@
       "type": "string"
     },
     {
+      "default": null,
+      "description": "Replace the built-in system prompt with TEXT for every scenario",
+      "name": "system_prompt",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Read the system prompt override from a file (exclusive with --system-prompt)",
+      "name": "system_prompt_file",
+      "type": "string"
+    },
+    {
       "default": false,
       "description": "Skip tool-call scenarios (use with --perf or --spec-bench)",
       "name": "skip_tool_eval",
