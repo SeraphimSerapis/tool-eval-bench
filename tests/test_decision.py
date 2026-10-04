@@ -630,12 +630,13 @@ class TestReport:
 
     @pytest.mark.asyncio
     async def test_message_text_cannot_break_the_mistakes_table(self) -> None:
+        # always_first answers "billing", so a gold of "shipping" forces a mistake row.
         item = DecisionItem(
             id="pipe",
             category="c",
             state="a | b\nc",
             question=_CHOICE,
-            gold="billing",
+            gold="shipping",
         )
         plugin = DecisionPlugin()
         result = await plugin.run(
@@ -643,14 +644,6 @@ class TestReport:
             model="m",
             base_url="u",
             items=[item],
-        )
-        # always_first picks "billing", so flip the gold to force a mistake row.
-        wrong = DecisionItem("pipe", "c", "a | b\nc", _CHOICE, "shipping")
-        result = await plugin.run(
-            FakeDecisionBackend([wrong], always_first=True),  # type: ignore[arg-type]
-            model="m",
-            base_url="u",
-            items=[wrong],
         )
         report = "\n".join(plugin.render_report_section(result))
         assert "| pipe | a \\| b c |" in report
