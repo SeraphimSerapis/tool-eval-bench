@@ -261,6 +261,21 @@ class TestRunBenchmark:
             )
         assert mock_service.run_benchmark.call_args.kwargs["weight_by_difficulty"] is True
 
+    @pytest.mark.asyncio
+    async def test_system_prompt_is_forwarded(self, mock_service):
+        """The override is reachable from the public API, not only the CLI."""
+        with patch("tool_eval_bench.api.BenchmarkService", return_value=mock_service):
+            await run_benchmark(
+                model="test-model",
+                base_url="http://localhost:8000",
+                system_prompt="You are a strict evaluator.",
+                persist=False,
+            )
+        assert (
+            mock_service.run_benchmark.call_args.kwargs["system_prompt"]
+            == "You are a strict evaluator."
+        )
+
 
 # ---------------------------------------------------------------------------
 # JSONL progress callbacks (from cli/bench.py)

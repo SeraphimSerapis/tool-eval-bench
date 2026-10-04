@@ -258,10 +258,13 @@ See [docs/artifacts.md](docs/artifacts.md).
 `--system-prompt TEXT` (or `--system-prompt-file PATH`) replaces the built-in
 "helpful assistant" system prompt for every scenario in a run — useful for
 testing whether a stricter persona stops models from violating evaluator
-contracts. The benchmark reference-date line is always kept, the override is
-recorded in the run config and its comparison fingerprint, and the run report
-marks it in the Run Context table. [`examples/system-prompt-function.txt`](examples/system-prompt-function.txt)
-is a minimal override that constrains the model to verified output.
+contracts. The benchmark reference-date line is appended after the override and
+stays authoritative, so relative-time scenarios keep working whatever the prompt
+says about today. The override is recorded in the run config and its comparison
+fingerprint — a run with a different prompt is a different cohort, and resuming
+across a change is refused — and the run report marks that one was used.
+[`examples/system-prompt-function.txt`](examples/system-prompt-function.txt) is a
+minimal override that constrains the model to verified output.
 
 ## Programmatic API
 

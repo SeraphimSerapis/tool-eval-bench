@@ -201,10 +201,44 @@ class TestFingerprintIncludesCodeIdentity:
 class TestSystemPromptProvenance:
     """A custom system prompt is a scoring condition: it must change the cohort."""
 
-    def test_default_prompt_is_persisted_as_none(self) -> None:
+    def test_default_run_persists_no_system_prompt_key(self) -> None:
+        """The key is absent, not null.
+
+        The fingerprint is a hash of this mapping, so persisting ``None`` on every
+        run would have re-cohorted every historical run the first time this option
+        shipped. Absence also means "built-in prompt" to the resume check.
+        """
         config = _config({})
 
-        assert config["system_prompt"] is None
+        assert "system_prompt" not in config
+
+    def test_default_fingerprint_ignores_the_feature(self) -> None:
+        """A default run fingerprints exactly as it did before the override existed."""
+        import dataclasses
+
+        from tool_eval_bench import __version__
+        from tool_eval_bench.application.run_config import build_run_config
+        from tool_eval_bench.utils.ids import build_config_fingerprint
+
+        config = build_run_config(
+            dataclasses.replace(_settings(), system_prompt=None),
+            scenarios=[_scenario("TC-01")],
+            metadata={},
+        )
+        persisted = dict(config)
+        fingerprint = persisted.pop("config_fingerprint")
+        # The payload shape predates this PR; rebuilt here so a future change to
+        # the default config has to be deliberate.
+        expected = build_config_fingerprint(
+            {
+                "config": {**persisted, "scenario_ids": sorted(persisted["scenario_ids"])},
+                "deployment": {},
+                "tool_version": __version__,
+                "git_sha": None,
+            }
+        )
+
+        assert fingerprint == expected
 
     def test_override_is_persisted_and_changes_cohort(self) -> None:
         import dataclasses
@@ -234,7 +268,9 @@ class TestSystemPromptResumeCompatibility:
     """Resuming a run with a different system prompt must be flagged."""
 
     @staticmethod
-    def _mismatches(previous: dict, *, system_prompt: str | None) -> list[str]:
+    def _mismatches(
+        previous: dict, *, system_prompt: str | None, drop: tuple[str, ...] = ()
+    ) -> list[str]:
         import dataclasses
 
         from tool_eval_bench.cli.dispatch import _resume_config_mismatches
@@ -246,8 +282,14 @@ class TestSystemPromptResumeCompatibility:
         args = _make_parser().parse_args(
             [] if system_prompt is None else ["--system-prompt", system_prompt]
         )
+        # ``drop`` is applied after the merge: the prior run is modelled on the
+        # current config, so a key the current run sets has to be removed here to
+        # model a persisted run that never recorded it.
+        prior = {**current_config, **previous}
+        for key in drop:
+            prior.pop(key, None)
         return _resume_config_mismatches(
-            {**current_config, **previous},
+            prior,
             model=settings.model,
             backend=settings.backend,
             base_url=settings.base_url,
@@ -259,6 +301,22 @@ class TestSystemPromptResumeCompatibility:
 
     def test_same_prompt_resume_is_clean(self) -> None:
         assert "system_prompt" not in self._mismatches({}, system_prompt=None)
+
+    def test_resuming_a_keyless_run_with_an_override_is_flagged(self) -> None:
+        """A run that predates this option persists no key; it used the built-in prompt.
+
+        Without this, completed scenarios graded under the built-in persona would be
+        merged with the remainder graded under an override, and the finished run
+        would fingerprint as the override-only cohort.
+        """
+        assert "system_prompt" in self._mismatches(
+            {}, system_prompt="You are a pirate.", drop=("system_prompt",)
+        )
+
+    def test_resuming_a_keyless_run_without_an_override_is_clean(self) -> None:
+        assert "system_prompt" not in self._mismatches(
+            {}, system_prompt=None, drop=("system_prompt",)
+        )
 
     def test_changed_prompt_is_flagged_in_both_directions(self) -> None:
         # Default run resumed with an override...

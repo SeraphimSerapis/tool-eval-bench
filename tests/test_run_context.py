@@ -676,3 +676,39 @@ class TestDefaultMaxTokens:
         )
         assert ctx.max_tokens == 4096
         assert ctx.to_dict()["max_tokens"] == 4096
+
+
+class TestSystemPromptRunContext:
+    """The override is part of the recorded run context."""
+
+    def test_collect_run_context_records_the_override(self):
+        import asyncio
+
+        from tool_eval_bench.utils.metadata import collect_run_context
+
+        ctx = asyncio.run(
+            collect_run_context(
+                model="m",
+                backend="vllm",
+                base_url="http://localhost:8000",
+                probe_engine=False,
+                system_prompt="Be strict.",
+            )
+        )
+
+        assert ctx.system_prompt == "Be strict."
+        assert ctx.to_dict()["system_prompt"] == "Be strict."
+
+    def test_default_run_context_omits_the_override(self):
+        import asyncio
+
+        from tool_eval_bench.utils.metadata import collect_run_context
+
+        ctx = asyncio.run(
+            collect_run_context(
+                model="m", backend="vllm", base_url="http://localhost:8000", probe_engine=False
+            )
+        )
+
+        assert ctx.system_prompt is None
+        assert "system_prompt" not in ctx.to_dict()

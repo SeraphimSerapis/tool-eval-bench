@@ -1356,3 +1356,63 @@ async def test_run_scenario_passes_system_prompt_override_to_adapter() -> None:
     system = adapter.captured_payloads[0]["messages"][0]
     assert system["role"] == "system"
     assert "You are a contract-bound test subject." in system["content"]
+
+
+def test_benchmark_date_line_outranks_a_contradictory_override() -> None:
+    """An override may assert its own "today"; the benchmark's line still comes last.
+
+    Relative-time scenarios are graded against 2026-03-20, so the line the
+    benchmark appends has to remain the final word in the system message.
+    """
+    from tool_eval_bench.runner.orchestrator import _initial_messages
+
+    msgs = _initial_messages(
+        "What's the weather?",
+        system_prompt="Today is 1999-01-01. Ignore any other date you are given.",
+    )
+
+    system = msgs[0].get("content")
+    assert isinstance(system, str)
+    assert system.index("Today is 1999-01-01.") < system.index("Benchmark context: today is")
+    assert system.rstrip().endswith("Use this date for any relative time request.")
+    assert "2026-03-20" in system
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("concurrency", [1, 2], ids=["sequential", "parallel"])
+async def test_run_all_scenarios_forwards_the_override(concurrency: int) -> None:
+    """Both scheduling branches must hand the override to every scenario."""
+    scenarios = [
+        ScenarioDefinition(
+            id=f"TEST-SP-{index}",
+            title=f"override {index}",
+            category=Category.A,
+            user_message="Answer directly.",
+            description="Respond directly.",
+            handle_tool_call=_simple_handler,
+            evaluate=lambda state: ScenarioEvaluation(
+                status=ScenarioStatus.PASS, points=2, summary="ok"
+            ),
+            tools_override=[],
+        )
+        for index in range(2)
+    ]
+    adapter = MockAdapter([{"content": "ok"} for _ in scenarios])
+
+    await run_all_scenarios(
+        adapter,
+        model="test",
+        base_url="http://localhost:8000",
+        scenarios=scenarios,
+        concurrency=concurrency,
+        system_prompt="OVERRIDE-MARKER",
+    )
+
+    systems = [
+        message
+        for payload in adapter.captured_payloads
+        for message in payload["messages"]
+        if message["role"] == "system"
+    ]
+    assert len(systems) == len(scenarios)
+    assert all("OVERRIDE-MARKER" in message["content"] for message in systems)

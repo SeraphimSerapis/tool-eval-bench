@@ -39,6 +39,7 @@ from tool_eval_bench.storage.db import (
 )
 from tool_eval_bench.storage.reports import MarkdownReporter
 from tool_eval_bench.utils.ids import build_run_id
+from tool_eval_bench.utils.system_prompt import normalize_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,11 @@ class BenchmarkService:
                     f"Invalid --reference-date '{reference_date}'. "
                     f"Expected format: YYYY-MM-DD (e.g. 2026-03-20)"
                 ) from None
+
+        # The same canonical text is persisted, fingerprinted, and sent, whether it
+        # arrived from the CLI (already normalized, so this is a no-op) or the API.
+        if system_prompt is not None:
+            system_prompt = normalize_system_prompt(system_prompt)
 
         # Resolve scenarios: explicit list > ID filter > base default
         if scenarios is not None:

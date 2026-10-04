@@ -91,10 +91,12 @@ def build_run_config(
         "alpha": settings.alpha,
         "extra_params": settings.extra_params,
         "weight_by_difficulty": settings.weight_by_difficulty,
-        # Always persisted (None = built-in prompt) so resume-compat comparison
-        # can flag a prompt change in either direction.
-        "system_prompt": settings.system_prompt,
     }
+    # Present only for an override. A default run persists exactly the config it
+    # did before this option existed, so its fingerprint (and the cohort it falls
+    # in) does not move; the resume check reads a missing key as "built-in".
+    if settings.system_prompt is not None:
+        config["system_prompt"] = settings.system_prompt
     variants = {s.id: s.variant_metadata for s in scenarios if s.variant_metadata}
     if variants:
         config["scenario_variants"] = variants

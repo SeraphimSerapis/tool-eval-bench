@@ -265,6 +265,7 @@ def run_pressure_sweep(
                         timeout_seconds=effective_timeout,
                         extra_params=extra_params,
                         context_pressure_messages=pressure_messages,
+                        system_prompt=getattr(args, "system_prompt", None),
                     )
                 )
 
@@ -396,17 +397,21 @@ def run_pressure_sweep(
 
     from tool_eval_bench.utils.ids import build_run_id
 
-    sweep_config = with_config_fingerprint(
-        {
-            "model": model,
-            "base_url": base_url,
-            "mode": "context-pressure-sweep",
-            "start": start,
-            "end": end,
-            "steps": steps,
-            "scenarios": scenario_ids,
-        }
-    )
+    sweep_fields: dict[str, Any] = {
+        "model": model,
+        "base_url": base_url,
+        "mode": "context-pressure-sweep",
+        "start": start,
+        "end": end,
+        "steps": steps,
+        "scenarios": scenario_ids,
+    }
+    # Present only for an override, so a default sweep keeps the fingerprint it
+    # had before this option existed.
+    system_prompt = getattr(args, "system_prompt", None)
+    if system_prompt is not None:
+        sweep_fields["system_prompt"] = system_prompt
+    sweep_config = with_config_fingerprint(sweep_fields)
     sweep_run_id = build_run_id(sweep_config)
     metadata = metadata_for_storage(None)
     if label:
