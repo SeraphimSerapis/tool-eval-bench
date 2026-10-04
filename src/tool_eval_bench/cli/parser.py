@@ -126,10 +126,14 @@ def _plugin_argv(argv: list[str]) -> list[str]:
     if args.shots is not None:
         if args.benchmark == "ifeval":
             parser.error("--shots is not supported by the IFEval plugin")
+        if args.benchmark == "decision":
+            parser.error("--shots is not supported by the decision plugin")
         translated.extend((f"{prefix}-shots", str(args.shots)))
     if args.limit is not None:
         if args.benchmark == "needle":
             parser.error("--limit is not supported by the needle plugin; use --lengths/--depths")
+        if args.benchmark == "decision":
+            parser.error("--limit is not supported by the decision plugin")
         translated.extend((f"{prefix}-limit", str(args.limit)))
     if args.shuffle:
         if args.benchmark != "gsm8k":

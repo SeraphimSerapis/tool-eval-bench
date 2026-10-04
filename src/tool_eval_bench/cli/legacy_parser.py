@@ -460,6 +460,19 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Haystack sizes to probe, up to the context window (default: 4)",
     )
 
+    # -- Decision models ------------------------------------------------
+    decision_grp = parser.add_argument_group("decision-model benchmark")
+    decision_grp.add_argument(
+        "--decision",
+        action="store_true",
+        help="Run the decision-model benchmark (llama.cpp /v1/systemone) after tool-call scenarios",
+    )
+    decision_grp.add_argument(
+        "--decision-only",
+        action="store_true",
+        help="Run ONLY the decision-model benchmark (skip tool-call scenarios and chat preflight)",
+    )
+
     # -- Speculative decoding benchmark ------------------------------------
     spec_grp = parser.add_argument_group("speculative decoding benchmark")
     spec_grp.add_argument(

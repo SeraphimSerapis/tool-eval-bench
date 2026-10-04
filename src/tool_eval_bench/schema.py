@@ -625,6 +625,19 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "default": 4,
         "description": "Haystack sizes to probe, up to the context window",
     },
+    # -- Decision models --
+    {
+        "name": "decision",
+        "type": "bool",
+        "default": False,
+        "description": "Run the decision-model benchmark (/v1/systemone) after tool-call scenarios",
+    },
+    {
+        "name": "decision_only",
+        "type": "bool",
+        "default": False,
+        "description": "Run ONLY the decision-model benchmark (skip tool-call scenarios)",
+    },
     # -- History & comparison --
     {
         "name": "diff",

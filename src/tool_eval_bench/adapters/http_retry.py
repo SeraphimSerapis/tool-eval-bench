@@ -16,14 +16,17 @@ import random
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from typing import TypeVar
 
 import httpx
 
-from tool_eval_bench.domain.adapters import RETRYABLE_STATUS_CODES, ChatCompletionResult
+from tool_eval_bench.domain.adapters import RETRYABLE_STATUS_CODES
 from tool_eval_bench.utils.headers import USER_AGENT, attach_session_id
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 # Retries apply to fast failures only.  Read timeouts are deliberately NOT
 # retried: the budget is already spent, and a retry would multiply the run's
@@ -344,12 +347,12 @@ class RetryingHTTPAdapter:
 
     async def _with_retries(
         self,
-        attempt: Callable[[], Awaitable[ChatCompletionResult]],
+        attempt: Callable[[], Awaitable[_T]],
         *,
         url: str,
         max_retries: int | None = None,
         max_rate_limit_retries: int | None = None,
-    ) -> ChatCompletionResult:
+    ) -> _T:
         """Retry transient rate-limit / gateway failures with jittered backoff.
 
         Retries only conditions that fail fast and are plausibly self-healing.

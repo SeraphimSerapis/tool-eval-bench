@@ -171,6 +171,7 @@ anthropic` pins it for a gateway root that serves several formats.
 | **Context pressure** | Pre-fill a share of the window before each scenario to find where quality slips | [context-pressure](docs/context-pressure.md) |
 | **Speculative decoding** | Acceptance rate, effective tokens per second, speedup, plus a live monitor | [speculative-decoding](docs/speculative-decoding.md) |
 | **Accuracy** | GSM8K, MMLU, and IFEval through the same adapter | [benchmarks](docs/benchmarks.md) |
+| **Decision models** | Single-pass option scoring on llama.cpp `/v1/systemone`: accuracy, calibration, and option-order robustness | [decision-models](docs/decision-models.md) |
 
 An asterisk on a prefill rate marks an estimate from time to first content token.
 The [throughput guide](docs/benchmarks.md) explains when that estimate is used.
@@ -213,7 +214,7 @@ design: [docs/methodology.md](docs/methodology.md).
 | `run` | Run tool-call scenarios |
 | `probe` | Check inference-server reachability |
 | `bench` | Throughput, speculative-decoding, or context-pressure benchmarks |
-| `plugin` | Run GSM8K, MMLU, IFEval, or needle-in-a-haystack |
+| `plugin` | Run GSM8K, MMLU, IFEval, needle-in-a-haystack, or decision models |
 | `spec-live` | Monitor speculative-decoding metrics |
 | `compare` | Compare stored runs or Markdown reports |
 | `history`, `leaderboard`, `export` | Inspect or export persisted results |
@@ -300,6 +301,7 @@ External tools can validate configuration against the published schema via
   [run IDs, artifacts, and labels](docs/artifacts.md)
 - **The benchmarks:** [methodology](docs/methodology.md) ·
   [hard mode](docs/hard-mode.md) · [needle](docs/needle.md) ·
+  [decision models](docs/decision-models.md) ·
   [context pressure](docs/context-pressure.md) ·
   [speculative decoding](docs/speculative-decoding.md) ·
   [accuracy and throughput](docs/benchmarks.md) ·

@@ -217,8 +217,9 @@ def test_subprocess_help_is_command_specific(command: str, included: str, exclud
     # Focused help must stay well short of the flat parser's (270+ lines);
     # ``bench`` carries every connection and sampling flag and sits nearest.
     # The shared run-control group's --system-prompt/--system-prompt-file pair
-    # added six lines to the usage and options blocks (196 -> 202).
-    assert len(completed.stdout.splitlines()) < 206
+    # added six lines to the usage and options blocks (196 -> 202), and the
+    # --decision/--decision-only pair added four more (202 -> 206).
+    assert len(completed.stdout.splitlines()) < 210
 
 
 def test_module_execution_version_path() -> None:
