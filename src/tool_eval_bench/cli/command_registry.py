@@ -164,6 +164,13 @@ COMMAND_SPECS = (
         legacy_flags=("spec_live",),
     ),
     CommandSpec(
+        "decision-live",
+        "Live-monitor a decision model with canary probes",
+        legacy_prefix=("--decision-live",),
+        help_dests=CONNECTION + ("decision_live_interval", "metrics_url", "redact_url"),
+        legacy_flags=("decision_live",),
+    ),
+    CommandSpec(
         "plugin",
         "Run an external accuracy benchmark",
         translation="plugin",

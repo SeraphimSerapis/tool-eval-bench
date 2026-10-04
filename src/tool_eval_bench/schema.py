@@ -638,6 +638,18 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "default": False,
         "description": "Run ONLY the decision-model benchmark (skip tool-call scenarios)",
     },
+    {
+        "name": "decision_live",
+        "type": "bool",
+        "default": False,
+        "description": "Live-monitor a decision model with canary probes (runs until Ctrl+C)",
+    },
+    {
+        "name": "decision_live_interval",
+        "type": "float",
+        "default": 0.5,
+        "description": "Pause between canary probes for --decision-live in seconds",
+    },
     # -- History & comparison --
     {
         "name": "diff",

@@ -560,7 +560,7 @@ def _sends_system_prompt(args: argparse.Namespace) -> bool:
     record nothing, so an unused flag is inert, and they already accept the rest
     of the run-control group in silence.
     """
-    if args.spec_live or args.perf_only:
+    if args.spec_live or args.decision_live or args.perf_only:
         return False
     other_benchmarks = args.perf or any(
         getattr(args, name) or getattr(args, f"{name}_only") for name in _PLUGIN_BENCHMARKS
@@ -980,6 +980,32 @@ def main() -> None:
             )
         except KeyboardInterrupt:
             pass
+        return
+
+    # -- decision-live: standalone canary monitor (exits after session) --
+    if args.decision_live:
+        from tool_eval_bench.cli.decision_live_display import run_decision_live
+        from tool_eval_bench.cli.helpers import adapter_options
+        from tool_eval_bench.domain.decision import DecisionUnsupportedError
+
+        try:
+            asyncio.run(
+                run_decision_live(
+                    base_url,
+                    model=model,
+                    api_key=api_key,
+                    metrics_url=args.metrics_url,
+                    display_url=display_url,
+                    interval=args.decision_live_interval,
+                    timeout_seconds=args.timeout,
+                    adapter_options=adapter_options(args),
+                )
+            )
+        except KeyboardInterrupt:
+            pass
+        except DecisionUnsupportedError as exc:
+            console.print(f"\n[bold red]Decision monitor error:[/] {exc}")
+            sys.exit(1)
         return
 
     # A decision model has no chat endpoint to preflight or warm; the plugin

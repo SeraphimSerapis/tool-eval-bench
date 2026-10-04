@@ -387,12 +387,15 @@ class FakeDecisionBackend(DecisionBackend):
         fail_states: frozenset[str] = frozenset(),
         unsupported: bool = False,
     ) -> None:
-        self._by_key = {(i.state, id(i.question)): i for i in items}
+        self._by_key = {(i.state, repr(i.question)): i for i in items}
         self.confidence = confidence
         self.always_first = always_first
         self.fail_states = fail_states
         self.unsupported = unsupported
         self.calls = 0
+
+    async def aclose(self) -> None:
+        return None
 
     async def decide(
         self,
@@ -410,7 +413,7 @@ class FakeDecisionBackend(DecisionBackend):
         if state in self.fail_states:
             raise TimeoutError("synthetic")
         question = questions[QUESTION_NAME]
-        item = self._by_key[(state, id(question))]
+        item = self._by_key[(state, repr(question))]
         c = self.confidence
         answer: ChoiceAnswer | ScoreAnswer | YesNoAnswer
         if isinstance(question, ChoiceQuestion):

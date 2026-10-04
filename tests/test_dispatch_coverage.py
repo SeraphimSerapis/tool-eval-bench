@@ -1136,6 +1136,7 @@ def test_oversized_system_prompt_file_is_a_parse_error(tmp_path: Path) -> None:
         pytest.param(["--spec-bench"], id="spec-bench-alone"),
         pytest.param(["--skip-tool-eval", "--perf"], id="skip-tool-eval"),
         pytest.param(["--spec-live"], id="spec-live"),
+        pytest.param(["--decision-live"], id="decision-live"),
     ],
 )
 def test_override_is_dropped_on_modes_that_run_no_scenarios(argv: list[str]) -> None:
