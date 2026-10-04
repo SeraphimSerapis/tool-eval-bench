@@ -761,6 +761,26 @@
   {
     "choices": null,
     "default": false,
+    "dest": "decision",
+    "flags": [
+      "--decision"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "decision_only",
+    "flags": [
+      "--decision-only"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
     "dest": "spec_bench",
     "flags": [
       "--spec-bench"

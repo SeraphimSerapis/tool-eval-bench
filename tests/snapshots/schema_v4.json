@@ -592,6 +592,18 @@
       "type": "int"
     },
     {
+      "default": false,
+      "description": "Run the decision-model benchmark (/v1/systemone) after tool-call scenarios",
+      "name": "decision",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run ONLY the decision-model benchmark (skip tool-call scenarios)",
+      "name": "decision_only",
+      "type": "bool"
+    },
+    {
       "default": null,
       "description": "Compare against a previous run (use 'latest' for most recent)",
       "name": "diff",
@@ -691,14 +703,16 @@
         "gsm8k",
         "mmlu",
         "ifeval",
-        "needle"
+        "needle",
+        "decision"
       ],
       "description": "Run an external accuracy benchmark",
       "legacy_flags": [
         "gsm8k_only",
         "mmlu_only",
         "ifeval_only",
-        "needle_only"
+        "needle_only",
+        "decision_only"
       ]
     },
     "probe": {

@@ -7,6 +7,7 @@ from typing import Any
 from tool_eval_bench.adapters.anthropic import AnthropicAdapter
 from tool_eval_bench.adapters.gemini import GeminiAdapter
 from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
+from tool_eval_bench.adapters.systemone import SystemOneAdapter
 from tool_eval_bench.adapters.wire_format import WireFormat, resolve_wire_format
 from tool_eval_bench.domain.adapters import BackendAdapter
 
@@ -29,3 +30,13 @@ def build_adapter(
     if resolved == "anthropic":
         return AnthropicAdapter(**kwargs)
     return OpenAICompatibleAdapter(**kwargs)
+
+
+def build_decision_adapter(*, wire_format: str | None = None, **kwargs: Any) -> SystemOneAdapter:
+    """Return the adapter for a decision-model endpoint.
+
+    Decision models are served by llama.cpp at ``/v1/systemone``.  There is no
+    wire-format choice to make, so ``wire_format`` is accepted only so callers
+    can pass the same options they pass to :func:`build_adapter`, and is ignored.
+    """
+    return SystemOneAdapter(**kwargs)

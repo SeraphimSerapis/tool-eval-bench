@@ -1,8 +1,9 @@
 # Adding a benchmark plugin
 
-A plugin is a benchmark that is not tool-calling: GSM8K, MMLU, and IFEval ship today, each scoring
-its own dataset through the same endpoint and reporting into the same run. A plugin owns its
-dataset, its prompting, and its scoring. It reuses the adapter, storage, and reporting layers.
+A plugin is a benchmark that is not tool-calling: GSM8K, MMLU, IFEval, needle, and decision
+models ship today. Each scores its own items through the same endpoint (decision models use
+`/v1/systemone`) and reports into the same run. A plugin owns its dataset, its prompting, and
+its scoring. It reuses the adapter, storage, and reporting layers.
 
 ## The contract
 

@@ -3,6 +3,8 @@
 OpenAI-compatible backends must expose `/v1/chat/completions` and support the
 `tools` and `tool_choice` request fields the tool-call scenarios use. The
 accuracy benchmarks (GSM8K, MMLU, IFEval, needle) need only chat completions.
+The decision-model benchmark needs llama.cpp's `/v1/systemone` instead, and
+needs no chat endpoint; see [decision-models.md](decision-models.md).
 
 - **vLLM** — primary target
 - **SGLang** — OpenAI-compatible model server

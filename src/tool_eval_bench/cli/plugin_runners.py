@@ -905,6 +905,218 @@ def _print_needle_grid(console: Console, result: Any) -> None:
     console.print(table)
 
 
+# ---------------------------------------------------------------------------
+# Decision models (--decision / --decision-only)
+# ---------------------------------------------------------------------------
+
+
+def _run_decision_benchmark(
+    console: Console,
+    model: str,
+    display_name: str,
+    base_url: str,
+    api_key: str | None,
+    args: argparse.Namespace,
+    *,
+    extra_params: dict[str, Any] | None = None,
+    output_dir: str | None = None,
+    run_context: Any | None = None,
+) -> None:
+    """Run the decision-model benchmark against ``/v1/systemone`` and display results."""
+    from rich.panel import Panel
+
+    from tool_eval_bench.adapters.factory import build_decision_adapter
+    from tool_eval_bench.cli.helpers import adapter_options
+    from tool_eval_bench.plugins.decision.dataset import build_items
+    from tool_eval_bench.plugins.decision.plugin import DecisionPlugin
+
+    items = build_items()
+    parallel = args.parallel
+    parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]{display_name}[/]\n"
+            f"[dim]{len(items)} requests · routing, moderation, urgency, yes/no, abstention · "
+            f"single forward pass{parallel_label}[/]",
+            title="[bold]⚖️  Decision Models — /v1/systemone[/]",
+            border_style="bright_cyan",
+        )
+    )
+
+    plugin = DecisionPlugin()
+    adapter = build_decision_adapter(**adapter_options(args))
+    result_holder: list = []
+
+    async def run() -> None:
+        with PluginProgressDisplay(console, total=len(items)) as display:
+
+            async def on_progress(current: int, total: int, item_info: dict) -> None:
+                display.tally.record(item_info)
+                display.advance(
+                    current,
+                    total,
+                    stats=tally_line(
+                        display.tally,
+                        rate=display.rate_per_minute(current),
+                        unit="req/min",
+                        accent="cyan",
+                    ),
+                    detail=(
+                        f"  {status_icon(item_info)} [bold]{item_info.get('id')}[/]  "
+                        f"[dim italic]{truncate(item_info.get('state'))}[/]"
+                    ),
+                )
+
+            try:
+                result = await plugin.run(
+                    adapter,
+                    model=model,
+                    base_url=base_url,
+                    api_key=api_key,
+                    timeout_seconds=args.timeout,
+                    on_progress=on_progress,
+                    items=items,
+                    concurrency=parallel,
+                )
+                result_holder.append(result)
+                rows = result.item_results
+                errs = sum(1 for r in rows if r["is_error"])
+                right = sum(1 for r in rows if r["correct"])
+                display.finish(
+                    completed=len(rows),
+                    stats=final_tally_line(
+                        correct=right,
+                        wrong=len(rows) - right - errs,
+                        errors=errs,
+                        score=right / len(rows) * 100 if rows else 0.0,
+                        rate=(
+                            len(rows) / result.duration_seconds * 60
+                            if result.duration_seconds > 0
+                            else 0
+                        ),
+                        unit="req/min",
+                        accent="cyan",
+                    ),
+                )
+            finally:
+                if hasattr(adapter, "aclose"):
+                    await adapter.aclose()
+
+    result = _execute_plugin(console, "Decision", run, result_holder)
+    if result is None:
+        return
+    details = result.details
+
+    console.print()
+    _print_decision_tables(console, result)
+    console.print()
+    console.print(
+        f"  [bold]Decision Accuracy:[/] [bold cyan]{result.score:.1f}%[/] "
+        f"({details['correct']}/{details['total']} base items)"
+    )
+    cal = details["calibration"]
+    console.print(
+        f"  [bold]Calibration:[/] ECE {cal['ece']:.3f} · Brier {cal['brier']:.3f} · "
+        f"{cal['high_confidence_errors']} confident mistake(s)"
+    )
+    errs = details.get("errors", 0)
+    if errs > 0:
+        console.print(f"  [bold yellow]⚠ {errs} errors[/] (counted as misses)")
+    console.print(f"  [bold]Rating:[/] {result.rating}")
+    lat = details["latency_ms"]
+    console.print(
+        f"  [dim]p50 {lat['p50']:.1f} ms · p95 {lat['p95']:.1f} ms · "
+        f"Duration: {result.duration_seconds:.1f}s · Input tokens: {result.total_tokens:,}[/]"
+    )
+
+    _finalize_plugin_run(
+        mode="decision",
+        title="Decision Models",
+        display_name=display_name,
+        result=result,
+        config={
+            "model": model,
+            "base_url": base_url,
+            "mode": "decision",
+            "items": len(items),
+        },
+        report_metrics=[
+            f"- **Accuracy**: **{result.score:.1f}%**",
+            f"- **ECE**: {cal['ece']:.3f}",
+            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
+        ],
+        report_lines=plugin.render_report_section(result),
+        output_dir=output_dir,
+        run_context=run_context,
+    )
+
+    console.print("\n  [dim]Report saved to runs/[/]\n")
+
+
+def _print_decision_tables(console: Console, result: Any) -> None:
+    """Print per-category accuracy, the reliability table, and the routing confusion matrix."""
+    from rich.table import Table
+
+    from tool_eval_bench.plugins.decision.render import bar
+
+    details = result.details
+
+    cats = Table(title="Accuracy by category", title_style="bold", border_style="bright_cyan")
+    cats.add_column("Category")
+    cats.add_column("Correct", justify="right")
+    cats.add_column("Accuracy", justify="right")
+    cats.add_column("")
+    for name, c in details["categories"].items():
+        cats.add_row(
+            name, f"{c['correct']}/{c['total']}", f"{c['accuracy']:.1f}%", bar(c["accuracy"] / 100)
+        )
+    console.print(cats)
+
+    bins = details["calibration"]["bins"]
+    if bins:
+        rel = Table(
+            title="Reliability (confidence vs accuracy)",
+            title_style="bold",
+            border_style="bright_cyan",
+        )
+        rel.add_column("Confidence", justify="right", style="dim")
+        rel.add_column("n", justify="right")
+        rel.add_column("Confidence")
+        rel.add_column("Accuracy")
+        for b in bins:
+            rel.add_row(
+                f"{b['low']:.1f}–{b['high']:.1f}",
+                str(b["count"]),
+                f"{bar(b['mean_confidence'])} {b['mean_confidence']:.2f}",
+                f"{bar(b['accuracy'])} {b['accuracy']:.2f}",
+            )
+        console.print(rel)
+
+    labels = details["confusion"]["labels"]
+    if labels:
+        matrix = details["confusion"]["matrix"]
+        conf = Table(
+            title="Routing confusion (gold rows, predicted columns)",
+            title_style="bold",
+            border_style="bright_cyan",
+        )
+        conf.add_column("", style="dim")
+        for label in labels:
+            conf.add_column(label, justify="right")
+        for gold in labels:
+            row = matrix.get(gold, {})
+            conf.add_row(
+                gold,
+                *[
+                    f"[green]{row.get(c, 0)}[/]" if c == gold else str(row.get(c, 0) or "·")
+                    for c in labels
+                ],
+            )
+        console.print(conf)
+
+
 PluginRunner = Callable[..., None]
 
 
@@ -927,7 +1139,7 @@ def run_selected_plugins(
     and rendering.  This function owns the common selection/invocation/stop
     lifecycle so combined and plugin-only modes cannot drift apart.
     """
-    for name in ("gsm8k", "mmlu", "ifeval", "needle"):
+    for name in ("gsm8k", "mmlu", "ifeval", "needle", "decision"):
         selected = getattr(args, name) or getattr(args, f"{name}_only")
         if not selected:
             continue

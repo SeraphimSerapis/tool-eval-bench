@@ -68,6 +68,11 @@ def models_url(base_url: str) -> str:
     return f"{_normalize_base(base_url)}/models"
 
 
+def systemone_url(base_url: str) -> str:
+    """Build the /v1/systemone URL that llama.cpp serves decision models on."""
+    return f"{_normalize_base(base_url)}/systemone"
+
+
 def root_url(base_url: str) -> str:
     """Strip a trailing ``/v1`` (and any trailing slash) from a base URL.
 

@@ -15,3 +15,16 @@ Fixture variants retain scenario IDs but record seed, version, and kind in compa
 fingerprints. This avoids multiplying the public registry for alternate environments.
 A variant does not replace a private held-out pack or establish empirical difficulty.
 Revisit the representation if variants need independently selectable public identities.
+
+## Decision-model scoring
+
+The decision-model benchmark scores accuracy on base items as its headline and reports
+calibration (ECE, Brier score, log loss) beside it, never folded in. A single blended number
+would hide whether accuracy or calibration moved, and the two predict different deployment
+risks. Routing variants (reversed and renamed options) are scored for robustness and excluded
+from the headline, because they reuse base messages and would triple the weight of routing.
+
+Items are built in with one question each. The wire format accepts several questions per
+request, which saves prefill, but a one-to-one map from question to gold label keeps
+calibration unambiguous. Revisit this if batched questions turn out to answer differently
+from single ones, which would be worth measuring on its own.

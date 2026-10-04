@@ -210,6 +210,9 @@ tool-eval-bench --ifeval-only --ifeval-limit 20
 # Needle in a haystack — long-context retrieval (no dataset download)
 tool-eval-bench --needle-only --needle-lengths 4 --needle-depths 5
 
+# Decision models — llama.cpp /v1/systemone (no dataset download, no chat preflight)
+tool-eval-bench --decision-only --base-url http://host:8084
+
 # Chained onto a full sweep, like --perf
 tool-eval-bench --hardmode --seed 42 --perf --needle
 
@@ -227,13 +230,15 @@ downloads. The needle benchmark generates its own cases and downloads nothing.
 | `--mmlu-only` | MMLU multitask knowledge |
 | `--ifeval-only` | IFEval instruction following |
 | `--needle-only` | Needle-in-a-haystack retrieval |
+| `--decision-only` | Decision-model scoring on `/v1/systemone` |
 | `--gsm8k-limit N` | Limit questions (default: 200) |
 | `--mmlu-limit N` | Limit questions (default: 500) |
 | `--ifeval-limit N` | Limit prompts (default: all 541) |
 | `--needle-lengths N` | Haystack sizes to probe (default: 4) |
 | `--needle-depths N` | Needle depths to probe (default: 5) |
 
-See [needle.md](needle.md) for the retrieval grid and how to read it.
+See [needle.md](needle.md) for the retrieval grid and how to read it, and
+[decision-models.md](decision-models.md) for the decision-model report.
 
 ## Understanding the JSON output
 

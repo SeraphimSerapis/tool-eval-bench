@@ -66,6 +66,7 @@ from tool_eval_bench.cli.perf import (
     run_llama_benchy as _run_llama_benchy,
 )
 from tool_eval_bench.cli.plugin_runners import (
+    _run_decision_benchmark,
     _run_gsm8k_benchmark,
     _run_ifeval_benchmark,
     _run_mmlu_benchmark,
@@ -508,7 +509,7 @@ def _check_endpoint_ready(
         )
 
 
-_PLUGIN_BENCHMARKS = ("gsm8k", "mmlu", "ifeval", "needle")
+_PLUGIN_BENCHMARKS = ("gsm8k", "mmlu", "ifeval", "needle", "decision")
 
 
 def _resolve_system_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -702,6 +703,8 @@ def _run_spec_bench_mode(target: _Target) -> bool:
             and not args.ifeval_only
             and not args.needle
             and not args.needle_only
+            and not args.decision
+            and not args.decision_only
         ):
             return True
     return False
@@ -979,16 +982,19 @@ def main() -> None:
             pass
         return
 
-    _check_endpoint_ready(
-        args,
-        console,
-        base_url=base_url,
-        model=model,
-        api_key=api_key,
-        wire_format=wire_format,
-        extra_params=extra_params,
-        headers=probe_headers,
-    )
+    # A decision model has no chat endpoint to preflight or warm; the plugin
+    # reports an unreachable or unsupported endpoint itself.
+    if not args.decision_only:
+        _check_endpoint_ready(
+            args,
+            console,
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            wire_format=wire_format,
+            extra_params=extra_params,
+            headers=probe_headers,
+        )
 
     run_context = _build_run_context(
         args,
@@ -1162,6 +1168,7 @@ def main() -> None:
             "mmlu": _run_mmlu_benchmark,
             "ifeval": _run_ifeval_benchmark,
             "needle": _run_needle_benchmark,
+            "decision": _run_decision_benchmark,
         },
         extra_params=extra_params or None,
         output_dir=args.output_dir,
@@ -1184,12 +1191,14 @@ def main() -> None:
             or args.ifeval_only
             or args.needle
             or args.needle_only
+            or args.decision
+            or args.decision_only
         )
         if not any_benchmark:
             console.print(
                 "\n  [yellow]⚠ --skip-tool-eval has no effect without "
                 "--perf, --perf-only, --spec-bench, --gsm8k, --mmlu, --ifeval, "
-                "or --needle.[/]\n"
+                "--needle, or --decision.[/]\n"
             )
         return
 
