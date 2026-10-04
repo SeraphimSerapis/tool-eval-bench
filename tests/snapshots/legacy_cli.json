@@ -781,6 +781,26 @@
   {
     "choices": null,
     "default": false,
+    "dest": "decision_live",
+    "flags": [
+      "--decision-live"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 0.5,
+    "dest": "decision_live_interval",
+    "flags": [
+      "--decision-live-interval"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
     "dest": "spec_bench",
     "flags": [
       "--spec-bench"

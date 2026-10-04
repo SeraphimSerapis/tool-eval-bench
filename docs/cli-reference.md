@@ -213,6 +213,9 @@ tool-eval-bench --needle-only --needle-lengths 4 --needle-depths 5
 # Decision models — llama.cpp /v1/systemone (no dataset download, no chat preflight)
 tool-eval-bench --decision-only --base-url http://host:8084
 
+# Live canary monitor for a decision model (runs until Ctrl+C)
+tool-eval-bench decision-live --base-url http://host:8084
+
 # Chained onto a full sweep, like --perf
 tool-eval-bench --hardmode --seed 42 --perf --needle
 

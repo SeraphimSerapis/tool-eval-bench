@@ -171,7 +171,7 @@ anthropic` pins it for a gateway root that serves several formats.
 | **Context pressure** | Pre-fill a share of the window before each scenario to find where quality slips | [context-pressure](docs/context-pressure.md) |
 | **Speculative decoding** | Acceptance rate, effective tokens per second, speedup, plus a live monitor | [speculative-decoding](docs/speculative-decoding.md) |
 | **Accuracy** | GSM8K, MMLU, and IFEval through the same adapter | [benchmarks](docs/benchmarks.md) |
-| **Decision models** | Single-pass option scoring on llama.cpp `/v1/systemone`: accuracy, calibration, and option-order robustness | [decision-models](docs/decision-models.md) |
+| **Decision models** | Single-pass option scoring on llama.cpp `/v1/systemone`: accuracy, calibration, and option-order robustness, plus a live canary monitor | [decision-models](docs/decision-models.md) |
 
 An asterisk on a prefill rate marks an estimate from time to first content token.
 The [throughput guide](docs/benchmarks.md) explains when that estimate is used.
@@ -216,6 +216,7 @@ design: [docs/methodology.md](docs/methodology.md).
 | `bench` | Throughput, speculative-decoding, or context-pressure benchmarks |
 | `plugin` | Run GSM8K, MMLU, IFEval, needle-in-a-haystack, or decision models |
 | `spec-live` | Monitor speculative-decoding metrics |
+| `decision-live` | Monitor a decision model with live canary probes |
 | `compare` | Compare stored runs or Markdown reports |
 | `history`, `leaderboard`, `export` | Inspect or export persisted results |
 | `resume` | Continue an incomplete run |

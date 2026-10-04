@@ -604,6 +604,18 @@
       "type": "bool"
     },
     {
+      "default": false,
+      "description": "Live-monitor a decision model with canary probes (runs until Ctrl+C)",
+      "name": "decision_live",
+      "type": "bool"
+    },
+    {
+      "default": 0.5,
+      "description": "Pause between canary probes for --decision-live in seconds",
+      "name": "decision_live_interval",
+      "type": "float"
+    },
+    {
       "default": null,
       "description": "Compare against a previous run (use 'latest' for most recent)",
       "name": "diff",
@@ -679,6 +691,12 @@
     "compare-report": {
       "alias_for": "compare",
       "description": "Alias for compare --report"
+    },
+    "decision-live": {
+      "description": "Live-monitor a decision model with canary probes",
+      "legacy_flags": [
+        "decision_live"
+      ]
     },
     "export": {
       "description": "Export stored runs",

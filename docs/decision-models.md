@@ -111,6 +111,43 @@ urg-01  ✗  It would be nice to have a dark mode at some point.
 Choice options are listed most likely first. Score levels are listed in scale
 order. `◀ gold` marks the correct answer and `◀ pred` the model's pick.
 
+## Live monitor
+
+`decision-live` watches a decision model while it runs, the way `spec-live` watches
+speculative decoding.
+
+```bash
+tool-eval-bench decision-live --base-url http://host:8084
+tool-eval-bench --decision-live --decision-live-interval 0.25   # flat spelling, faster probes
+```
+
+It sends one built-in item at a time, in a fixed mixed order, scores the answer
+against its gold label, and redraws the screen. Ctrl+R resets the session and Ctrl+C
+exits. A server without `/v1/systemone` stops the command with a message before the
+screen opens.
+
+| Panel | Shows |
+|---|---|
+| now | The latest message, its probability bars, `◀ gold` and `◀ predicted` marks, latency, and input tokens |
+| quality | Rolling accuracy and ECE over the last 100 probes with trend lines, mean confidence, session accuracy, and confident mistakes |
+| by category | Session accuracy per category |
+| confidence histogram | How many of the last 100 answers fell in each confidence bin |
+| server | Latency p50 and p95, then requests per second, input tokens per second, and slot and queue counts from `/metrics` |
+
+A wrong answer at 90% confidence or more raises a banner for a few seconds. Three
+failed probes in a row show "model unreachable" and the probes keep going.
+
+The server panel reads the llama.cpp counters on `/metrics` (`--metrics-url` points
+it elsewhere). The counters include other clients' requests, so on a shared server
+the requests-per-second figure rises above the monitor's own rate when someone else
+is using the model. Without `/metrics` the server panel shows latency only.
+
+The monitor measures the model with synthetic traffic. It cannot see the decisions
+your application gets, and the server's counters carry no decisions, only load.
+
+`--decision-live-interval SEC` sets the pause between probes (default 0.5). The
+other connection flags work as they do elsewhere.
+
 ## Design notes
 
 **Accuracy is the headline and calibration stays separate.** Folding ECE into one

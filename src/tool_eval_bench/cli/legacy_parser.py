@@ -472,6 +472,18 @@ def _make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run ONLY the decision-model benchmark (skip tool-call scenarios and chat preflight)",
     )
+    decision_grp.add_argument(
+        "--decision-live",
+        action="store_true",
+        help="Live-monitor a decision model with canary probes (runs until Ctrl+C)",
+    )
+    decision_grp.add_argument(
+        "--decision-live-interval",
+        type=float,
+        default=0.5,
+        metavar="SEC",
+        help="Pause between canary probes for --decision-live in seconds (default: 0.5)",
+    )
 
     # -- Speculative decoding benchmark ------------------------------------
     spec_grp = parser.add_argument_group("speculative decoding benchmark")
