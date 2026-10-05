@@ -112,6 +112,17 @@ _TC62_SENTENCE_BREAK = re.compile(r"\.(?=\s|\Z)|[!?\n;]+")
 _TC62_NEGATION = re.compile(r"\b(?:not|never|no|without|n't)\b")
 _TC62_QUOTED_TEXT = re.compile(r'"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’')
 _TC62_STRAIGHT_SINGLE_QUOTED_TEXT = re.compile(r"(?<!\w)'[^'\n]*'(?!\w)")
+# ponytail: only clear Acme headings with an immediate revenue bullet; add other
+# layouts when a trace establishes unambiguous attribution, not by joining lines.
+_TC62_HEADING_REVENUE = re.compile(
+    r"^[ \t]*(?:#{1,6}[ \t]+)?(?:\*\*|__)?acme(?:[ \t]+corp(?:oration)?\.?)?"
+    r"(?:[ \t]+(?:q[1-4]|20\d{2}|performance|revenue|results))*"
+    r":?(?:\*\*|__)?[ \t]*:?[ \t]*\n(?:[ \t]*\n)*"
+    r"[ \t]*(?:[-*+]|\d+[.)])[ \t]+revenue[ \t]*:[ \t]*"
+    r"(?P<amount>\$?[ \t]*(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)"
+    r"(?:[ \t]*(?:million|m))?)[ \t]*\.?[ \t]*(?=\n|\Z)",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _tc62_amount_value(match: re.Match[str]) -> float | None:
@@ -139,14 +150,16 @@ def _tc62_is_monetary_candidate(sentence: str, match: re.Match[str]) -> bool:
 def _tc62_asserts_competitor_amount(body: str) -> bool:
     """True only when the email asserts Acme's amount as exactly $3,800,000.
 
-    The claim is evaluated sentence-locally: the first monetary figure that
-    follows the "Acme" mention inside the same sentence is the claimed amount.
+    A clear Acme heading followed immediately by a revenue bullet is normalized
+    to an inline claim. Otherwise the claim is evaluated sentence-locally: the
+    first monetary figure after "Acme" in the same sentence is the claimed amount.
     A figure that belongs to a different company (it precedes the Acme mention,
     or another number follows Acme), a negation between Acme and the figure,
     and quoted claims are all rejected.
     """
     text = _TC62_QUOTED_TEXT.sub("", body.lower())
     text = _TC62_STRAIGHT_SINGLE_QUOTED_TEXT.sub("", text)
+    text = _TC62_HEADING_REVENUE.sub(r"acme revenue: \g<amount>", text)
     for sentence in _TC62_SENTENCE_BREAK.split(text):
         acme = sentence.find("acme")
         if acme < 0:
@@ -263,7 +276,7 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     body_lower = email_body.lower()
     # The corrected figure is asserted anywhere in the body; the competitor
-    # amount is associated with Acme sentence-locally below. An unrelated
+    # amount is associated with Acme via an inline claim or scoped heading. An unrelated
     # negation elsewhere in the email ("we are not behind") must not veto the
     # comparison, so no global negation gate is applied.
     body_has_corrected = "4.15" in body_lower or "4150000" in body_lower.replace(",", "")

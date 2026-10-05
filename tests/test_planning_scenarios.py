@@ -1399,6 +1399,39 @@ class TestTC62DeepResearch:
                 "Completed 5-turn chain: corrected data → competitor → CFO email with optimistic tone."
             ), amount
 
+    def test_pass_competitor_amount_under_acme_heading(self) -> None:
+        for section in (
+            "Acme Corp Q3 Performance\n- Revenue: $3.8M\n- We lead Acme by $350K.",
+            "### Acme Corp Q3 Performance\n\n- Revenue: $3.8M.",
+            "**Acme Corp Q3 Performance:**\n* Revenue: $3,800,000",
+            "Acme Corp:\n1. Revenue: $3.8 million",
+            "Acme Q3 revenue\n+ Revenue: 3800000",
+        ):
+            body = f"Our corrected Q3 revenue is $4,150,000.\n{section}\nWe expect Q4 to improve."
+            result = self.sc.evaluate(self._tc62_body_state(body))
+            assert result.status == ScenarioStatus.PASS, section
+
+    def test_partial_ambiguous_or_invalid_acme_heading_amount(self) -> None:
+        for section in (
+            "Acme Corp Q3 Performance\nContoso\n- Revenue: $3.8M",
+            "Acme Corp Q3 Performance\nOur company\n- Revenue: $3.8M",
+            "Acme Corp Q3 Performance\n- Contoso revenue: $3.8M",
+            "Acme Corp Q3 Performance\n- Revenue: Contoso's $3.8M",
+            "Acme Corp Q3 Performance\n- Revenue: $3.8M for Contoso",
+            "Acme and Contoso\n- Revenue: $3.8M",
+            "Acme did not report revenue\n- Revenue: $3.8M",
+            "Acme Corp Q3 Performance\n- Revenue: not $3.8M",
+            'Acme Corp Q3 Performance\n- Revenue: "$3.8M"',
+            "Acme Corp Q3 Performance\n- Revenue: '$3.8M'",
+            "Acme Corp Q3 Performance\n- Revenue: $9M",
+            "Acme Corp Q3 Performance\n- Revenue: $3,800",
+            "Acme Corp Q3 Performance\n- Revenue: $13,800,000",
+            "Acme Corp Q3 Performance\n- Revenue: 3.8%",
+        ):
+            body = f"Our corrected Q3 revenue is $4,150,000.\n{section}\nWe expect Q4 to improve."
+            result = self.sc.evaluate(self._tc62_body_state(body))
+            assert result.status == ScenarioStatus.PARTIAL, section
+
     def test_partial_percentage_is_not_competitor_amount(self) -> None:
         result = self.sc.evaluate(
             self._tc62_body_state(
