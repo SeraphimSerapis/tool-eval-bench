@@ -78,7 +78,7 @@ async def test_detection_and_deployment_metadata(monkeypatch, base_url, health):
 @pytest.mark.parametrize("body", [MODELS, {"data": []}, {"data": [None]}, [], None])
 def test_initial_discovery_and_false_positives(body):
     response = httpx.Response(200, json=body)
-    expected = ("tensorfold", "TensorFold") if body == MODELS else ("vllm", "inference server")
+    expected = ("tensorfold", "TensorFold") if body == MODELS else ("unknown", "inference server")
     assert detect_backend_from_response(response, 8080) == expected
 
 

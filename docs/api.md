@@ -271,8 +271,9 @@ with RunRepository() as repo:
 
 ## Notes
 
-- The `backend` parameter is a **label** for reports. OpenAI-compatible
-  backends use the OpenAI adapter; Gemini can use its native adapter when
+- The `backend` parameter is a **label** for reports and defaults to `unknown`.
+  Pass a known engine label explicitly, including `halogen` for Halogen Flash.
+  OpenAI-compatible backends use the OpenAI adapter; Gemini can use its native adapter when
   `wire_format="gemini"` or the URL selects it.
 - The `base_url` should be the server root **without** `/v1`
   (e.g. `http://localhost:8080`). The adapter appends `/v1/chat/completions`

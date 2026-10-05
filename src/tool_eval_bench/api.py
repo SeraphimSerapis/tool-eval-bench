@@ -81,7 +81,7 @@ async def run_benchmark(
     *,
     model: str,
     base_url: str,
-    backend: str = "vllm",
+    backend: str = "unknown",
     api_key: str | None = None,
     scenarios: list[ScenarioDefinition] | None = None,
     short: bool = False,
@@ -115,7 +115,8 @@ async def run_benchmark(
         model: Model name/path to evaluate.
         base_url: Server base URL (e.g. ``http://localhost:8000``).
         backend: Backend label — ``vllm``, ``litellm``, ``llamacpp``, ``sglang``,
-            ``gemini``, ``ninfer``, or ``tensorfold``.
+            ``gemini``, ``ninfer``, ``tensorfold``, or ``halogen``. Defaults to
+            ``unknown``; the request format is still detected from the endpoint.
         api_key: Optional API key for authenticated endpoints.
         scenarios: Explicit scenario list.  If *None*, ``short`` controls
             the default set (15 core vs 69 full).

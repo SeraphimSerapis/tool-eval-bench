@@ -60,6 +60,15 @@ tool-eval-bench run --short --base-url http://127.0.0.1:8080/v1 --seed 42
 See [TensorFold compatibility](docs/backends.md#tensorfold) for deployment
 metadata limits, structured-output setup, and speculative metrics.
 
+Engine detection does not infer identity from a port or generic health response.
+llama.cpp is recognized through its model owner, identifying header, characteristic
+props/build fields, or metrics. Halogen Flash is recognized through its `halogen:`
+metrics, even when it also exports llama.cpp-compatible names. Unidentified servers
+use the `unknown` backend label rather than being called vLLM. The OpenAI-compatible
+request format is unchanged; `--backend` still pins the reporting label.
+The Python API also defaults to `backend="unknown"`; pass a known label explicitly.
+See [backend identification](docs/backends.md#backend-identification).
+
 ### Exercise controlled fixture variants
 
 ```bash

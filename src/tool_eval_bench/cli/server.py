@@ -14,55 +14,27 @@ from typing import Any
 
 import httpx
 
-from tool_eval_bench.utils.metadata import backend_from_models
+from tool_eval_bench.utils.metadata import backend_from_response
 
 # Ports to scan on localhost.  Order matters — first match wins.
-# The backend_hint is a *guess* used only when the server doesn't identify
-# itself via response headers.  Ports used by multiple backends (8080, 8081)
-# get a generic "vllm" hint that the user can override with --backend.
+# A listening port is not engine identity. Unknown servers keep a neutral label.
 DISCOVERY_PORTS: list[tuple[int, str, str]] = [
     # (port, backend_hint, human_label)
-    (8000, "vllm", "vLLM"),
-    (8080, "vllm", "inference server"),  # vLLM, llama.cpp, or custom
-    (8081, "vllm", "inference server"),  # common alt port
-    (8082, "vllm", "inference server"),  # common alt port
-    (30000, "vllm", "SGLang"),
-    (4000, "litellm", "LiteLLM"),
-    (3000, "litellm", "LiteLLM"),
-    (11434, "litellm", "Ollama"),
-    (5000, "vllm", "TGI"),
+    (8000, "unknown", "inference server"),
+    (8080, "unknown", "inference server"),  # vLLM, llama.cpp, or custom
+    (8081, "unknown", "inference server"),  # common alt port
+    (8082, "unknown", "inference server"),  # common alt port
+    (30000, "unknown", "inference server"),
+    (4000, "unknown", "inference server"),
+    (3000, "unknown", "inference server"),
+    (11434, "unknown", "inference server"),
+    (5000, "unknown", "inference server"),
 ]
 
 
 def detect_backend_from_response(resp: Any, port: int) -> tuple[str, str]:
-    """Identify a distinctive model owner, then check response headers.
-
-    vLLM sets ``server: vllm``, SGLang sets ``server: sglang``,
-    llama.cpp sets ``server: llama.cpp``.  Falls back to port-based hint.
-    """
-    try:
-        owner = backend_from_models(resp.json())
-    except (AttributeError, ValueError):
-        owner = None
-    if owner:
-        return owner
-
-    server_header = ""
-    if hasattr(resp, "headers"):
-        server_header = resp.headers.get("server", "").lower()
-
-    if "vllm" in server_header:
-        return "vllm", "vLLM"
-    if "sglang" in server_header:
-        return "vllm", "SGLang"  # SGLang uses OpenAI-compat, same adapter
-    if "llama" in server_header:
-        return "llamacpp", "llama.cpp"
-
-    # Fall back to port-based hint
-    for p, backend, label in DISCOVERY_PORTS:
-        if p == port:
-            return backend, label
-    return "vllm", "inference server"
+    """Identify model ownership or headers; never infer an engine from its port."""
+    return backend_from_response(resp) or ("unknown", "inference server")
 
 
 def _headless_error(error_code: str, message: str, *, exit_code: int = 1) -> None:
@@ -106,8 +78,7 @@ def discover_server(
     Returns ``None`` if no server is found.
 
     The backend is identified from the server's response headers when
-    possible (vLLM, SGLang, and llama.cpp advertise themselves), falling
-    back to a port-based guess.
+    possible, otherwise reported as an unidentified inference server.
 
     When *headless* is True, emits a JSONL event on stderr.
     Otherwise prints to console.
