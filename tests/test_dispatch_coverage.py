@@ -344,16 +344,20 @@ def test_regular_perf_keeps_only_successful_samples(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.parametrize(
-    ("cli_backend", "hint", "expect_probe_called"),
+    ("cli_backend", "hint", "no_probe_engine", "expect_probe_called"),
     [
         # No --backend given: the server is actually probed, and its answer
         # (not a hardcoded "vllm" default) becomes the report's backend label.
-        (None, ("llamacpp", "llama.cpp"), True),
-        (None, ("sglang", "SGLang"), True),
-        # Probe is inconclusive: falls back to the historical "vllm" default.
-        (None, None, True),
+        (None, ("llamacpp", "llama.cpp"), False, True),
+        (None, ("sglang", "SGLang"), False, True),
+        (None, ("halogen", "Halogen Flash"), False, True),
+        # An inconclusive or disabled probe keeps a neutral label.
+        (None, None, False, True),
+        (None, None, True, False),
         # User pinned --backend explicitly: detection must not run at all.
-        ("vllm", None, False),
+        ("vllm", None, False, False),
+        ("halogen", None, False, False),
+        ("unknown", None, False, False),
     ],
 )
 def test_dispatch_detects_backend_for_explicit_base_url(
@@ -361,6 +365,7 @@ def test_dispatch_detects_backend_for_explicit_base_url(
     capsys: pytest.CaptureFixture[str],
     cli_backend: str | None,
     hint: tuple[str, str] | None,
+    no_probe_engine: bool,
     expect_probe_called: bool,
 ) -> None:
     """A remote --base-url must be probed for its real backend, not
@@ -372,7 +377,10 @@ def test_dispatch_detects_backend_for_explicit_base_url(
     from tool_eval_bench.cli import dispatch, plugin_runners
     from tool_eval_bench.utils import metadata
 
+    contexts: list[dict] = []
+
     async def context(**kwargs):
+        contexts.append(kwargs)
         return None
 
     calls: list[str] = []
@@ -399,11 +407,14 @@ def test_dispatch_detects_backend_for_explicit_base_url(
     ]
     if cli_backend:
         argv += ["--backend", cli_backend]
+    if no_probe_engine:
+        argv += ["--no-probe-engine"]
     monkeypatch.setattr(sys, "argv", argv)
 
     dispatch.main()
 
     assert bool(calls) == expect_probe_called
+    assert contexts[0]["backend"] == (cli_backend or (hint[0] if hint else "unknown"))
 
     out = capsys.readouterr().out
     if hint is not None:

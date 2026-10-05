@@ -696,10 +696,10 @@ class TestBackendDetection:
         resp = MagicMock()
         resp.headers = {"server": "sglang/0.4.6"}
         backend, label = _detect_backend_from_response(resp, 30000)
-        assert backend == "vllm"  # Same adapter
+        assert backend == "sglang"
         assert label == "SGLang"
 
-    def test_falls_back_to_port_hint(self):
+    def test_generic_header_does_not_use_port_hint(self):
         from tool_eval_bench.cli.server import (
             detect_backend_from_response as _detect_backend_from_response,
         )
@@ -707,8 +707,8 @@ class TestBackendDetection:
         resp = MagicMock()
         resp.headers = {"server": "uvicorn"}  # Generic
         backend, label = _detect_backend_from_response(resp, 4000)
-        assert backend == "litellm"
-        assert label == "LiteLLM"
+        assert backend == "unknown"
+        assert label == "inference server"
 
     def test_unknown_port_returns_generic(self):
         from tool_eval_bench.cli.server import (
@@ -718,7 +718,7 @@ class TestBackendDetection:
         resp = MagicMock()
         resp.headers = {}
         backend, label = _detect_backend_from_response(resp, 9999)
-        assert backend == "vllm"
+        assert backend == "unknown"
         assert label == "inference server"
 
 

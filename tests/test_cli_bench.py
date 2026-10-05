@@ -232,7 +232,7 @@ class TestDetectBackendFromResponse:
         resp = MagicMock()
         resp.headers = {"server": "sglang"}
         backend, label = _detect_backend_from_response(resp, 8000)
-        assert backend == "vllm"
+        assert backend == "sglang"
         assert label == "SGLang"
 
     def test_detects_llamacpp_from_server_header(self) -> None:
@@ -246,7 +246,7 @@ class TestDetectBackendFromResponse:
         assert backend == "llamacpp"
         assert label == "llama.cpp"
 
-    def test_falls_back_to_port_hint(self) -> None:
+    def test_known_port_without_identity_stays_unknown(self) -> None:
         from tool_eval_bench.cli.server import (
             detect_backend_from_response as _detect_backend_from_response,
         )
@@ -254,8 +254,8 @@ class TestDetectBackendFromResponse:
         resp = MagicMock()
         resp.headers = {}
         backend, label = _detect_backend_from_response(resp, 4000)
-        assert backend == "litellm"
-        assert label == "LiteLLM"
+        assert backend == "unknown"
+        assert label == "inference server"
 
     def test_falls_back_to_generic_for_unknown_port(self) -> None:
         from tool_eval_bench.cli.server import (
@@ -265,7 +265,7 @@ class TestDetectBackendFromResponse:
         resp = MagicMock()
         resp.headers = {}
         backend, label = _detect_backend_from_response(resp, 12345)
-        assert backend == "vllm"
+        assert backend == "unknown"
         assert label == "inference server"
 
 

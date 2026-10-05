@@ -20,6 +20,30 @@ needs no chat endpoint; see [decision-models.md](decision-models.md).
   which also covers gateways that front other models with it, such as OpenCode
   Zen; detected from the URL, or pinned with `--format anthropic`
 
+## Backend identification
+
+The CLI identifies engines using their native metrics namespace, model ownership,
+identifying HTTP headers, or characteristic engine endpoints. llama.cpp exposes
+`owned_by: "llamacpp"`, a `Server: llama.cpp` header on current builds, and `/props`
+with build information or generation settings and slot count. Generic JSON from
+`/health` or `/props` does not identify an engine. Ports locate a server, not its type.
+
+Halogen Flash 0.16.2 [documents](https://github.com/peonist-ai/halogen-flash-server)
+both `halogen:` and llama.cpp-compatible `llamacpp:` metrics. Its native namespace
+wins regardless of scrape order. It uses the existing OpenAI-compatible adapter;
+`--backend halogen` pins the reporting label when metrics are hidden. Version,
+context size, and slot count are not inferred from these metric names.
+
+When detection is inconclusive or disabled, the CLI records `unknown` rather than
+assuming vLLM. The public Python API also defaults to `backend="unknown"`.
+`--backend`, `TOOL_EVAL_BACKEND`, and provider labels still override CLI detection.
+An unknown label does not change the request format; `--format` selects that
+independently. `openai` identifies the hosted OpenAI API, not every compatible server.
+
+New labels and discovered metadata affect comparison fingerprints for new runs.
+Historical records are not rewritten. Unknown metadata is not proof that two
+deployments match; keep known engine labels explicit when a proxy hides identity.
+
 ## How the adapter talks to a server
 
 The adapter sends real `tools` and `tool_choice` in the request and parses

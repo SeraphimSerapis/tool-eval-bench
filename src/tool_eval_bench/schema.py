@@ -52,7 +52,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
     {
         "name": "backend",
         "type": "string",
-        "default": "vllm",
+        "default": "unknown",
         "choices": [
             "vllm",
             "litellm",
@@ -63,8 +63,10 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
             "anthropic",
             "ninfer",
             "tensorfold",
+            "halogen",
+            "unknown",
         ],
-        "description": "Backend label for reports",
+        "description": "Backend label for reports (CLI auto-detects; otherwise unknown)",
     },
     {
         "name": "base_url",

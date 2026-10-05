@@ -860,13 +860,8 @@ def main() -> None:
         backend = wire_format
         backend_explicit = True
 
-    # Authoritative backend detection: a port-based guess (from localhost
-    # auto-discovery, above) or a hardcoded default both get overridden here
-    # by actually asking the server what it is — via its /metrics namespace,
-    # llama.cpp's /props /health fingerprint, or vLLM's /version endpoint.
-    # This is what tells a remote llama.cpp box apart from vLLM/SGLang instead
-    # of silently defaulting to "vllm". Skipped when the user pinned --backend
-    # / TOOL_EVAL_BACKEND explicitly, or opted out of engine probing.
+    # Identify the engine independently of the request format. Local discovery
+    # may have found only an unidentified server. Explicit labels are preserved.
     if not backend_explicit and base_url and not args.probe and not args.no_probe_engine:
         from tool_eval_bench.utils.metadata import probe_backend_hint as _probe_backend_hint
 
@@ -883,7 +878,7 @@ def main() -> None:
 
     # Default backend if still unset (detection above was inconclusive, or skipped)
     if not backend:
-        backend = "vllm"
+        backend = "unknown"
 
     # --probe: check if server is reachable and exit
     if args.probe:

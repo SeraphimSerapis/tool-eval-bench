@@ -116,7 +116,7 @@ replaces it.
 | `--dry-run` | List scenarios that would run (no server needed) |
 | `--base-url URL` | Server endpoint |
 | `--model NAME` | Model name (auto-detected if omitted) |
-| `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp`, `sglang`, `gemini`, `openai`, `anthropic`, `ninfer` |
+| `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp`, `sglang`, `gemini`, `openai`, `anthropic`, `ninfer`, `tensorfold`, `halogen`, `unknown`. Auto-detected when omitted; otherwise `unknown`. |
 | `--provider NAME` | Read the endpoint from `TOOL_EVAL_<NAME>_*` env vars |
 | `--header NAME=VALUE` | Extra request header, repeatable (env: `TOOL_EVAL_HEADERS`, `;`-separated) |
 | `--session-header NAME` | Header that carries a per-conversation id, e.g. `x-opencode-session` (env: `TOOL_EVAL_SESSION_HEADER`) |

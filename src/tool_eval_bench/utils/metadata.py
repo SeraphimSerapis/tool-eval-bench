@@ -190,12 +190,15 @@ async def _probe_models(
     except ValueError as exc:
         logger.debug("models probe returned non-JSON: %s", exc)
         return probe
+    identity = backend_from_response(resp)
+    if identity:
+        probe["engine_name"] = identity[1]
     data = body.get("data") if isinstance(body, dict) else None
     if isinstance(data, list) and data:
         first = data[0] if isinstance(data[0], dict) else {}
         probe["server_model_id"] = first.get("id")
         probe["server_model_root"] = first.get("root")
-        probe["owned_by"] = first.get("owned_by")  # NInfer fingerprints here
+        probe["owned_by"] = first.get("owned_by")
         # vLLM exposes max_model_len in model metadata
         if "max_model_len" in first:
             probe["max_model_len"] = first["max_model_len"]
@@ -225,7 +228,7 @@ async def _probe_vllm_version(
 
 
 async def _probe_llamacpp(base_url: str, *, session: _ProbeSession | None = None) -> dict[str, Any]:
-    """Probe /props or /health (llama.cpp endpoints)."""
+    """Identify llama.cpp from declared identity or characteristic build/props fields."""
     async with _probe_session(session) as active:
         for path in ("/props", "/health"):
             resp = await _probe_get(
@@ -238,6 +241,18 @@ async def _probe_llamacpp(base_url: str, *, session: _ProbeSession | None = None
             except ValueError:
                 continue
             if not isinstance(body, dict):
+                continue
+            identity = backend_from_response(resp)
+            has_build = isinstance(body.get("build_info"), str) and bool(body["build_info"])
+            has_build_number = type(body.get("build_number")) is int
+            has_props = (
+                isinstance(body.get("default_generation_settings"), dict)
+                and type(body.get("total_slots")) is int
+                and body["total_slots"] > 0
+            )
+            if identity != ("llamacpp", "llama.cpp") and not (
+                has_build or has_build_number or has_props
+            ):
                 continue
             result: dict[str, Any] = {"engine_name": "llama.cpp"}
             if "build_info" in body:
@@ -278,56 +293,41 @@ async def _probe_litellm(
     return {}
 
 
-# Each engine namespaces its own Prometheus metrics, which turns out to be a
-# far more reliable fingerprint than HTTP headers: vLLM's OpenAI server runs on
-# uvicorn and doesn't set an identifying ``Server`` header, and llama.cpp's
-# cpp-httplib server doesn't either. Order matters only in that the first
-# matching non-comment line wins.
+# Prefer an engine's native namespace over compatibility aliases. Halogen
+# deliberately exports llama.cpp metrics too; scrape order must not decide identity.
 _METRICS_BACKEND_PREFIXES: tuple[tuple[str, str, str], ...] = (
+    ("halogen:", "halogen", "Halogen Flash"),
     ("tensorfold:", "tensorfold", "TensorFold"),
     ("vllm:", "vllm", "vLLM"),
-    ("llamacpp:", "llamacpp", "llama.cpp"),
     ("sglang:", "sglang", "SGLang"),
     ("sglang_", "sglang", "SGLang"),  # SGLang >=0.5.4 renamed the metric prefix
+    ("llamacpp:", "llamacpp", "llama.cpp"),
 )
 
 
 def detect_backend_from_metrics(text: str) -> tuple[str, str] | None:
     """Identify the backend from its Prometheus ``/metrics`` namespace.
 
-    Returns ``(backend, label)`` for the first recognized metric-name prefix,
+    Returns ``(backend, label)`` for the most specific recognized namespace,
     or ``None`` if the text doesn't match a known engine.
     """
-    for line in text.splitlines():
-        if not line or line[0] == "#":
-            continue
-        for prefix, backend, label in _METRICS_BACKEND_PREFIXES:
-            if line.startswith(prefix):
-                return backend, label
+    lines = [line for line in text.splitlines() if line and not line.startswith("#")]
+    for prefix, backend, label in _METRICS_BACKEND_PREFIXES:
+        if any(line.startswith(prefix) for line in lines):
+            return backend, label
     return None
 
 
 async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple[str, str] | None:
-    """Best-effort identification of vllm/llamacpp/sglang for an arbitrary server.
+    """Best-effort identification of an arbitrary inference server.
 
-    Tried in order of specificity, so a generic signal can never outvote a
-    distinctive one:
+    Check native metrics namespaces, vLLM's version endpoint, model ownership
+    or identifying headers, then characteristic llama.cpp props/build fields.
+    A generic health response is not an identity. Compatibility metrics yield
+    to an engine's own namespace, regardless of scrape order.
 
-    1. The ``/metrics`` namespace — see :func:`detect_backend_from_metrics`.
-       Unambiguous, but llama.cpp's ``--metrics`` flag is opt-in.
-    2. vLLM's ``/version`` — llama.cpp 404s this, so it cannot false-positive.
-    3. The ``owned_by`` marker on ``/v1/models`` (TensorFold, NInfer, SGLang).  SGLang
-       often runs with ``/metrics`` disabled; without this rung ``--perf``
-       defaults the backend to vLLM and llama-benchy 400s on a streaming
-       ``return_token_ids`` request.
-    4. llama.cpp's ``/props``/``/health``.  Deliberately last: ``/health``
-       is generic enough that other engines answer it, and vLLM only avoids
-       matching here because its ``/health`` body is empty.
-
-    All four share one connection pool, and the ladder stops early once a
-    probe proves the endpoint unreachable rather than spending the timeout
-    again on each remaining rung.  Best-effort throughout; returns ``None`` if
-    nothing matched.
+    All probes share one connection pool and stop after a connect failure.
+    Returns ``None`` when the endpoint does not identify itself.
     """
     async with _probe_session(None) as active:
         headers = _auth_headers(api_key)
@@ -340,10 +340,7 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
         if await _probe_vllm_version(base_url, api_key, session=active):
             return "vllm", "vLLM"
 
-        # /v1/models owned_by, checked before the generic /health fallback.
-        # NInfer answers /health with 200 {"status":"ok"} and would otherwise
-        # look like llama.cpp.  SGLang without /metrics would otherwise default
-        # to vLLM, which breaks llama-benchy (stream + return_token_ids).
+        # Model ownership and headers work even with metrics disabled.
         owned = await _probe_owned_by(base_url, api_key, session=active)
         if owned:
             return owned
@@ -404,6 +401,7 @@ _OWNED_BY_BACKENDS: dict[str, tuple[str, str]] = {
     "tensorfold": ("tensorfold", "TensorFold"),
     "ninfer": ("ninfer", "NInfer"),
     "sglang": ("sglang", "SGLang"),
+    "llamacpp": ("llamacpp", "llama.cpp"),
 }
 
 
@@ -417,14 +415,30 @@ def backend_from_models(body: Any) -> tuple[str, str] | None:
     return None
 
 
+def backend_from_response(resp: Any) -> tuple[str, str] | None:
+    """Read declared model ownership or an identifying Server header."""
+    try:
+        owner = backend_from_models(resp.json())
+    except (AttributeError, ValueError):
+        owner = None
+    if owner:
+        return owner
+    server = resp.headers.get("server", "").lower()
+    for marker, backend, label in (
+        ("llama.cpp", "llamacpp", "llama.cpp"),
+        ("vllm", "vllm", "vLLM"),
+        ("sglang", "sglang", "SGLang"),
+        ("litellm", "litellm", "LiteLLM"),
+    ):
+        if re.match(rf"^{re.escape(marker)}(?:/|\s|$)", server):
+            return backend, label
+    return None
+
+
 async def _probe_owned_by(
     base_url: str, api_key: str | None, *, session: _ProbeSession | None = None
 ) -> tuple[str, str] | None:
-    """Identify the engine from /v1/models ``owned_by`` when that field is distinctive.
-
-    NInfer would otherwise match llama.cpp's generic /health.  SGLang without
-    /metrics would otherwise default to vLLM.
-    """
+    """Identify the engine from /v1/models ownership or response headers."""
     async with _probe_session(session) as active:
         resp = await _probe_get(
             active,
@@ -434,11 +448,7 @@ async def _probe_owned_by(
         )
     if resp is None or resp.status_code != 200:
         return None
-    try:
-        body = resp.json()
-    except ValueError:
-        return None
-    return backend_from_models(body)
+    return backend_from_response(resp)
 
 
 async def _probe_tensorfold(
@@ -500,6 +510,8 @@ async def _probe_engine(
             result.update(await _probe_vllm_version(base_url, api_key, session=active))
         elif backend_l in ("llamacpp", "llama.cpp", "llama_cpp"):
             result.update(await _probe_llamacpp(base_url, session=active))
+        elif backend_l == "halogen":
+            result["engine_name"] = "Halogen Flash"
         elif backend_l == "litellm":
             result.update(await _probe_litellm(base_url, api_key, session=active))
         elif backend_l == "sglang":
@@ -521,9 +533,7 @@ async def _probe_engine(
                     result.update(info)
                     break
             else:
-                if result.get("owned_by") == "ninfer":
-                    result["engine_name"] = "NInfer"
-                else:
+                if "engine_name" not in result:
                     result.update(await _probe_llamacpp(base_url, session=active))
 
     # Infer quantization from model name

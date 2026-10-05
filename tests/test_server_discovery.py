@@ -55,7 +55,7 @@ async def test_discovery_skips_connection_errors_and_uses_models_fallback(
 
     result = await server._discover_async()
 
-    assert result == ("http://localhost:4000", "vllm", "SGLang", 4000)
+    assert result == ("http://localhost:4000", "sglang", "SGLang", 4000)
 
 
 def test_discover_server_renders_interactive_success(monkeypatch: pytest.MonkeyPatch) -> None:

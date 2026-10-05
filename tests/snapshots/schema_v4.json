@@ -22,10 +22,12 @@
         "openai",
         "anthropic",
         "ninfer",
-        "tensorfold"
+        "tensorfold",
+        "halogen",
+        "unknown"
       ],
-      "default": "vllm",
-      "description": "Backend label for reports",
+      "default": "unknown",
+      "description": "Backend label for reports (CLI auto-detects; otherwise unknown)",
       "name": "backend",
       "type": "string"
     },
