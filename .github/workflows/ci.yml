@@ -46,6 +46,11 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: '0.10.8'
+          # The uv cache key is identical across jobs on the same lock, so if
+          # every job saved, whichever post step finished second lost the
+          # write-once race and logged a cache warning. `test` installs the
+          # superset of extras, so only it saves; the rest restore from it.
+          save-cache: false
 
       - name: Install from the committed lock
         run: uv sync --locked --extra dev --python 3.13
@@ -171,6 +176,8 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: '0.10.8'
+          # The uv cache is saved by the `test` job; see the comment there.
+          save-cache: false
 
       - name: Install from the committed lock
         run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
