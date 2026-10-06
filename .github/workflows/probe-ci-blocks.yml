@@ -1,0 +1,34 @@
+# Temporary probe replicating the exact parallel blocks from ci.yml.
+name: probe-ci-blocks
+on:
+  push:
+    branches: [ci/parallel-steps]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup
+        run: echo setup
+      - parallel:
+          - name: Pytest
+            run: >
+              echo one
+              two
+              three
+          - name: Test llama-benchy integration
+            env:
+              COVERAGE_FILE: .coverage.perf
+            run: >
+              echo four
+              five
+      - name: Critical module coverage
+        run: echo cov
+      - parallel:
+          - name: Build image
+            run: docker build -t x .
+          - name: Build isolated wheel
+            run: |
+              echo pip install --upgrade pip build
+              echo build --wheel
+      - name: Done
+        run: echo done
