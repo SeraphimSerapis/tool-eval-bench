@@ -46,6 +46,11 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: '0.10.8'
+          # The uv cache key is identical across jobs on the same lock, so if
+          # every job saved, whichever post step finished second lost the
+          # write-once race and logged a cache warning. `test` installs the
+          # superset of extras, so only it saves; the rest restore from it.
+          save-cache: false
 
       - name: Install from the committed lock
         run: uv sync --locked --extra dev --python 3.13
@@ -87,30 +92,38 @@ jobs:
       - name: Install from the committed lock
         run: uv sync --locked --extra dev --extra perf --python 3.13
 
-      - name: Pytest
-        run: >
-          uv run pytest --tb=short -q
-          --ignore=tests/test_llama_benchy.py
-          -m "not live"
-          --randomly-seed=104729
-          --cov=tool_eval_bench --cov-report=term-missing --cov-report=json
-          --cov-fail-under=80
+      # The two suites are independent; overlapping the llama-benchy run
+      # behind the main suite shortens the job. Both share the venv created by
+      # the sync step, which has already completed.
+      - parallel:
+          - name: Pytest
+            run: >
+              uv run pytest --tb=short -q
+              --ignore=tests/test_llama_benchy.py
+              -m "not live"
+              --randomly-seed=104729
+              --cov=tool_eval_bench --cov-report=term-missing --cov-report=json
+              --cov-fail-under=80
+
+          # A separate invocation because llama_benchy.py is omitted from the
+          # project's coverage config: it is unreachable without the perf extra, so
+          # counting it in the main run would depress the floor for everyone. Its
+          # own gate is stricter than the project's, and .coveragerc.perf is what
+          # lifts the omission for this one step.
+          - name: Test llama-benchy integration
+            env:
+              # pytest-cov writes `.coverage` in cwd; the parallel main suite
+              # writes the same file, so keep the two data files apart.
+              COVERAGE_FILE: .coverage.perf
+            run: >
+              uv run pytest --tb=short -q
+              tests/test_llama_benchy.py tests/test_llama_benchy_redaction.py
+              -m "not live" --randomly-seed=181081
+              --cov=tool_eval_bench.runner.llama_benchy
+              --cov-config=.coveragerc.perf --cov-report=term-missing --cov-fail-under=95
 
       - name: Critical module coverage
         run: uv run python scripts/check_module_coverage.py coverage.json
-
-      # A separate invocation because llama_benchy.py is omitted from the
-      # project's coverage config: it is unreachable without the perf extra, so
-      # counting it in the main run would depress the floor for everyone. Its
-      # own gate is stricter than the project's, and .coveragerc.perf is what
-      # lifts the omission for this one step.
-      - name: Test llama-benchy integration
-        run: >
-          uv run pytest --tb=short -q
-          tests/test_llama_benchy.py tests/test_llama_benchy_redaction.py
-          -m "not live" --randomly-seed=181081
-          --cov=tool_eval_bench.runner.llama_benchy
-          --cov-config=.coveragerc.perf --cov-report=term-missing --cov-fail-under=95
 
       - name: Upload coverage report
         # A reviewer cannot see what a pull request did to coverage without it.
@@ -165,6 +178,8 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: '0.10.8'
+          # The uv cache is saved by the `test` job; see the comment there.
+          save-cache: false
 
       - name: Install from the committed lock
         run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
@@ -223,8 +238,17 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Build image
-        run: docker build -t tool-eval-bench:ci .
+      # The docker build is the long pole; the wheel build is independent of
+      # it. The lock check stays sequential because it pip-installs uv into the
+      # same interpreter the wheel build's pip upgrade would touch.
+      - parallel:
+          - name: Build image
+            run: docker build -t tool-eval-bench:ci .
+
+          - name: Build isolated wheel
+            run: |
+              python -m pip install --upgrade pip build
+              python -m build --wheel
 
       - name: Verify the committed dependency lock
         run: |
@@ -259,11 +283,6 @@ jobs:
             --build-arg BUILD_VERSION="0.0.0+g$(git -C "$worktree" rev-parse --short HEAD)" \
             -t tool-eval-bench:worktree "$worktree"
           docker run --rm tool-eval-bench:worktree --version | grep -F '+g'
-
-      - name: Build isolated wheel
-        run: |
-          python -m pip install --upgrade pip build
-          python -m build --wheel
 
       - name: Install wheel in a clean environment
         run: |

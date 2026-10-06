@@ -37,6 +37,8 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: '0.10.8'
+          # The uv cache is saved by CI's `test` job; see the comment there.
+          save-cache: false
 
       - name: Audit dependencies for known vulnerabilities
         # Audits the locked dependency set rather than an installed environment.
