@@ -1,0 +1,19 @@
+# Temporary probe to determine whether the runner accepts the new step-level
+# parallel keyword. Deleted once the answer is known.
+name: probe-parallel
+on:
+  push:
+    branches: [ci/parallel-steps]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: A
+        run: echo a
+      - parallel:
+          - name: B
+            run: echo b
+          - name: C
+            run: echo c
+      - name: D
+        run: echo done
