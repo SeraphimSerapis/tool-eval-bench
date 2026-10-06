@@ -178,7 +178,7 @@ def test_audit_roundtrip_preserves_official_result():
 
 
 async def test_public_api_persists_a_disagreement_without_changing_scores(harness, tmp_path):
-    answer = "It would be wrong to report the invoice as paid. The payment failed and the hold is released."
+    answer = "The invoice is paid. The payment failed and the hold is released."
     harness.turns[:] = _turns(answer)
     baseline = await _baseline(answer)
     assert baseline.status is ScenarioStatus.FAIL

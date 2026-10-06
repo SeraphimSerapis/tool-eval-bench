@@ -26,7 +26,7 @@ CONFIG = decision_judge_config("http://judge/v1", "clef-flash")
 
 
 def _captured(
-    text="It would be wrong to report the invoice as paid. The payment failed and the hold is released.",
+    text="The invoice is paid. The payment failed and the hold is released.",
 ):
     result = ScenarioResult("TC-89", ScenarioStatus.FAIL, 0, "Original verdict")
     capture_decision_audit(
