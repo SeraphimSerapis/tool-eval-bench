@@ -45,6 +45,13 @@ contradicted by a denial. Reasoning and tool payloads are not sent. Judge reques
 start after all benchmark scenarios finish, so their latency does not enter
 scenario timing or deployability scores.
 
+Live and plain terminal output name the judge when a request starts, then show
+its choice and probability, disagreement, abstention, or request error under the
+scenario ID. Unaudited scenarios and requests skipped before sending have no
+placeholder. A previously performed audit shown during resume is labeled
+`saved audit`, not shown as a new request. JSON mode emits `decision_audit_start`
+and `decision_audit_result` events on stderr without raw evidence or credentials.
+
 Official scores, safety warnings, and ratings never change. Each eligible result
 gets a `decision_audit` in JSON and SQLite, also rendered in the Markdown report.
 It includes the exact input and question, check version, judge endpoint and model,
@@ -66,7 +73,11 @@ Completed audits are preserved. Keys are never persisted.
 
 The Python API accepts `decision_judge_base_url`, `decision_judge_model`, and
 `decision_judge_api_key`. API callers supply the judge key explicitly; the API
-reads no judge credentials from the environment.
+reads no judge credentials from the environment. An optional async
+`on_scenario_audit(scenario, result, phase)` callback receives `started`,
+`completed`, or `reused` updates only for attempted or previously performed
+requests. Progress callback errors are logged without exception text and do not
+change judgments or official points.
 
 ## The wire format
 

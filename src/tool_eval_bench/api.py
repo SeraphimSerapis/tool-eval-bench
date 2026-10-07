@@ -30,6 +30,7 @@ from tool_eval_bench import __version__
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.domain.scenarios import (
+    OnScenarioAudit,
     OnScenarioResult,
     OnScenarioStart,
     ScenarioDefinition,
@@ -107,6 +108,7 @@ async def run_benchmark(
     decision_judge_base_url: str | None = None,
     decision_judge_model: str | None = None,
     decision_judge_api_key: str | None = None,
+    on_scenario_audit: OnScenarioAudit | None = None,
 ) -> dict[str, Any]:
     """Run tool-eval-bench programmatically and return structured results.
 
@@ -159,6 +161,8 @@ async def run_benchmark(
         decision_judge_model: Required model name when answer auditing is enabled.
         decision_judge_api_key: Judge-only credential. Never inherited from api_key
             or environment variables in the Python API.
+        on_scenario_audit: Async callback receiving (scenario, result, phase).
+            Phases are started, completed, and reused. Not called for skipped audits.
 
     Returns:
         A versioned JSON-serializable dict containing ``run_id``, ``config``,
@@ -209,6 +213,7 @@ async def run_benchmark(
             decision_judge_base_url=decision_judge_base_url,
             decision_judge_model=decision_judge_model,
             decision_judge_api_key=decision_judge_api_key,
+            on_scenario_audit=on_scenario_audit,
         )
 
     return format_result(run_data)

@@ -66,6 +66,13 @@ An optional TC-89 answer audit appears as `decision_audit` within an eligible
 versioned check, judge identity, probabilities, latency, and disagreement with
 the deterministic payment-claim check. It never changes official scores or safety
 warnings. Unconfigured runs retain the original JSON shape.
+`on_scenario_audit` receives updates when an actual judge request starts and
+finishes, or when a previously performed audit is reused during resume. It is
+not called for unaudited scenarios, empty evidence, or oversized inputs that
+never reach the judge. The callback receives `(scenario, result, phase)` with
+phase `started`, `completed`, or `reused`; audit data is in
+`result.decision_audit`. A failed request still emits a completed update with
+status `unavailable`. Callback errors cannot change a judgment or official score.
 See [answer audits](decision-models.md#answer-audits).
 
 ## Parameters
@@ -100,6 +107,7 @@ result = asyncio.run(run_benchmark(
     decision_judge_api_key=None,   # judge-only key; no environment fallback
     on_scenario_start=None,
     on_scenario_result=None,
+    on_scenario_audit=None,  # async (scenario, result, phase): started/completed/reused
     persist=True,         # False = skip SQLite + Markdown
     output_dir=None,      # default: ./runs/
 ))

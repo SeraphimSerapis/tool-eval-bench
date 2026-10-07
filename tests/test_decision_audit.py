@@ -7,11 +7,13 @@ import asyncio
 import copy
 import json
 from dataclasses import replace
+from io import StringIO
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
+from rich.console import Console
 from scenario_replay import SCENARIOS, ReplayAdapter, turn
 
 from tests.conftest import open_repository
@@ -24,6 +26,7 @@ from tool_eval_bench.application.decision_audit import (
     run_decision_audit,
 )
 from tool_eval_bench.application.service import BenchmarkService
+from tool_eval_bench.cli import dispatch
 from tool_eval_bench.cli.dispatch import (
     _decision_judge_kwargs,
     _resume_config_mismatches,
@@ -303,6 +306,25 @@ async def test_ineligible_scenarios_never_create_or_contact_a_judge(harness, hel
     assert "decision_audit" not in data["scores"]["scenario_results"][0]
 
 
+async def test_api_callback_reports_actual_judge_requests(harness):
+    events = []
+
+    async def on_audit(scenario, result, phase):
+        events.append((scenario.id, phase, len(harness.requests), result.points))
+
+    data = await run_benchmark(
+        model="benchmark-model",
+        base_url="http://benchmark.test/v1",
+        scenarios=[SCENARIO],
+        persist=False,
+        decision_judge_base_url=JUDGE_URL,
+        decision_judge_model="clef-flash",
+        on_scenario_audit=on_audit,
+    )
+    assert events == [("TC-89", "started", 0, 2), ("TC-89", "completed", 1, 2)]
+    assert data["scores"]["scenario_results"][0]["decision_audit"]["request_started"] is True
+
+
 async def test_forbidden_email_is_not_excused_by_a_semantic_denial(harness):
     harness.turns.insert(
         -1,
@@ -574,9 +596,62 @@ def test_cli_json_mode_forwards_judge_flags_and_isolated_key(harness, monkeypatc
         "benchmark-secret",
         args,
     )
-    data = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    audit_events = [
+        json.loads(line)
+        for line in captured.err.splitlines()
+        if json.loads(line)["event"].startswith("decision_audit_")
+    ]
+    assert [event["event"] for event in audit_events] == [
+        "decision_audit_start",
+        "decision_audit_result",
+    ]
+    assert all(event["model"] == "clef-flash" for event in audit_events)
     assert data["scores"]["scenario_results"][0]["decision_audit"]["status"] == "completed"
     assert harness.requests[0].headers["Authorization"] == "Bearer judge-secret"
+
+
+@pytest.mark.parametrize("mode", ["plain", "live"])
+def test_terminal_modes_show_actual_judge_activity(harness, monkeypatch, capsys, mode):
+    args = make_parser().parse_args(
+        [
+            "--scenarios",
+            "TC-89",
+            "--decision-judge-base-url",
+            JUDGE_URL,
+            "--decision-judge-model",
+            "clef-flash",
+        ]
+    )
+    console = Console(file=StringIO(), width=200, no_color=True)
+    if mode == "live":
+        original = dispatch.BenchmarkDisplay
+
+        def display_factory(*args, **kwargs):
+            display = original(*args, **kwargs)
+            display.console = console
+            return display
+
+        monkeypatch.setattr(dispatch, "BenchmarkDisplay", display_factory)
+        run = dispatch._run_with_live_display
+    else:
+        run = dispatch._run_plain
+    run(
+        BenchmarkService(repo=None, reporter=None),
+        console,
+        "benchmark",
+        "benchmark",
+        "unknown",
+        "http://benchmark.test/v1",
+        None,
+        args,
+    )
+    output = console.file.getvalue() + capsys.readouterr().out
+    assert "TC-89  Audit · clef-flash: judging..." in output
+    assert "no_payment_claim (96.0%)" in output
+    assert "official score unchanged" in output
+    assert len(harness.requests) == 1
 
 
 @pytest.mark.parametrize(

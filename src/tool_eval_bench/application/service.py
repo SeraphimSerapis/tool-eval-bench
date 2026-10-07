@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from datetime import datetime
+from functools import partial
 from typing import Any, cast
 
 import httpx
@@ -31,6 +32,7 @@ from tool_eval_bench.domain.models import (
     RunContext,
 )
 from tool_eval_bench.domain.scenarios import (
+    OnScenarioAudit,
     OnScenarioResult,
     OnScenarioStart,
     ScenarioDefinition,
@@ -155,6 +157,7 @@ class BenchmarkService:
         decision_judge_base_url: str | None = None,
         decision_judge_model: str | None = None,
         decision_judge_api_key: str | None = None,
+        on_scenario_audit: OnScenarioAudit | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
 
@@ -380,6 +383,13 @@ class BenchmarkService:
                             result.decision_audit,
                             config=judge_config,
                             api_key=decision_judge_api_key,
+                            on_progress=(
+                                partial(
+                                    on_scenario_audit, scenario_by_id[result.scenario_id], result
+                                )
+                                if on_scenario_audit is not None
+                                else None
+                            ),
                         )
                         if audit_checkpoint is not None:
                             await audit_checkpoint(
