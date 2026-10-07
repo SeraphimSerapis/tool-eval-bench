@@ -42,7 +42,7 @@ repos:
         stages: [pre-push]
       - id: pytest-check
         name: pytest (required suite)
-        entry: .venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py -m "not live" -x -q --tb=line --no-header --randomly-seed=104729
+        entry: .venv/bin/python -m pytest tests/ --ignore=tests/test_llama_benchy.py -m "not live" -x -q --tb=line --no-header --randomly-seed=104729 -n auto --maxprocesses=4
         language: system
         pass_filenames: false
         always_run: true
