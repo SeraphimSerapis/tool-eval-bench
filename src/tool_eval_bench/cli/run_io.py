@@ -8,7 +8,7 @@ import sys
 from statistics import mean, stdev
 from typing import Any
 
-from tool_eval_bench.domain.scenarios import ScenarioDefinition, ScenarioResult
+from tool_eval_bench.domain.scenarios import AuditPhase, ScenarioDefinition, ScenarioResult
 
 
 async def stderr_progress_start(scenario: ScenarioDefinition, idx: int, total: int) -> None:
@@ -38,6 +38,36 @@ async def stderr_progress_result(
         "total": total,
         "duration_seconds": round(result.duration_seconds, 2),
     }
+    sys.stderr.write(json.dumps(message) + "\n")
+    sys.stderr.flush()
+
+
+async def stderr_progress_audit(
+    scenario: ScenarioDefinition, result: ScenarioResult, phase: AuditPhase
+) -> None:
+    """Emit summary-only judge events; never send raw audit evidence to stderr."""
+    if not result.was_decision_audited:
+        return
+    audit = result.decision_audit or {}
+    message: dict[str, Any] = {
+        "event": "decision_audit_start" if phase == "started" else "decision_audit_result",
+        "scenario_id": scenario.id,
+        "model": audit.get("model"),
+        "check_id": audit.get("check_id"),
+    }
+    if phase != "started":
+        for key in (
+            "status",
+            "choice",
+            "probabilities",
+            "disagreement",
+            "elapsed_ms",
+            "error_type",
+        ):
+            if key in audit:
+                message[key] = audit[key]
+        if phase == "reused":
+            message["reused"] = True
     sys.stderr.write(json.dumps(message) + "\n")
     sys.stderr.flush()
 

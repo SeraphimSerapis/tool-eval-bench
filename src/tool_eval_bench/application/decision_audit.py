@@ -4,14 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urlsplit
 
 from tool_eval_bench.domain.decision import ChoiceAnswer, ChoiceQuestion, DecisionBackend
-from tool_eval_bench.domain.scenarios import ScenarioDefinition, ScenarioResult, ScenarioState
+from tool_eval_bench.domain.scenarios import (
+    AuditPhase,
+    ScenarioDefinition,
+    ScenarioResult,
+    ScenarioState,
+)
 from tool_eval_bench.utils.urls import endpoint_identity
+
+logger = logging.getLogger(__name__)
 
 AUDIT_TIMEOUT_SECONDS = 10.0
 # ponytail: conservative byte cap for an 8k context; use tokenizer-aware sizing
@@ -87,12 +96,24 @@ async def run_decision_audit(
     *,
     config: dict[str, Any],
     api_key: str | None = None,
+    on_progress: Callable[[AuditPhase], Awaitable[None]] | None = None,
 ) -> None:
     """Complete captured evidence in place; errors never become scenario failures."""
+
+    async def notify(phase: AuditPhase) -> None:
+        if on_progress is not None:
+            try:
+                await on_progress(phase)
+            except Exception as exc:  # noqa: BLE001 — progress cannot fail an audit
+                logger.warning("Decision audit progress callback failed: %s", type(exc).__name__)
+
     audit.update(model=config["model"], base_url=config["base_url"])
     audit.setdefault("elapsed_ms", 0.0)
     if audit["status"] != "pending":
+        if audit.get("request_started") or audit["status"] in {"completed", "abstained"}:
+            await notify("reused")
         return
+    request_started = False
     started = time.perf_counter()
     try:
         wire = audit["question"]
@@ -107,6 +128,9 @@ async def run_decision_audit(
         if request_bytes > MAX_AUDIT_REQUEST_BYTES:
             audit.update(status="unavailable", error_type="InputTooLarge")
             return
+        request_started = True
+        audit["request_started"] = True
+        await notify("started")
         decision = await asyncio.wait_for(
             adapter.decide(
                 model=config["model"],
@@ -147,3 +171,5 @@ async def run_decision_audit(
         audit.update(status="unavailable", error_type=type(exc).__name__)
     finally:
         audit["elapsed_ms"] = (time.perf_counter() - started) * 1000
+        if request_started and audit["status"] != "pending":
+            await notify("completed")

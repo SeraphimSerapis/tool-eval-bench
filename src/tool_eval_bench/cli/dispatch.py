@@ -39,7 +39,7 @@ from tool_eval_bench.cli import model_probe as _model_probe
 from tool_eval_bench.cli.compare_report import (
     run_compare_report_command as _run_compare_report_command,
 )
-from tool_eval_bench.cli.display import BenchmarkDisplay
+from tool_eval_bench.cli.display import BenchmarkDisplay, decision_audit_line
 from tool_eval_bench.cli.helpers import (
     emit_headless_error as _headless_error,
 )
@@ -104,6 +104,7 @@ from tool_eval_bench.cli.run_io import aggregate_trials as _aggregate_trials
 from tool_eval_bench.cli.run_io import bootstrap_ci as _bootstrap_ci  # noqa: F401
 from tool_eval_bench.cli.run_io import emit_json_output as _emit_json_output
 from tool_eval_bench.cli.run_io import median as _median  # noqa: F401
+from tool_eval_bench.cli.run_io import stderr_progress_audit as _stderr_progress_audit
 from tool_eval_bench.cli.run_io import stderr_progress_result as _stderr_progress_result
 from tool_eval_bench.cli.run_io import stderr_progress_start as _stderr_progress_start
 from tool_eval_bench.cli.server import (
@@ -123,6 +124,7 @@ from tool_eval_bench.domain.errors import (
 )
 from tool_eval_bench.domain.models import ChatMessage
 from tool_eval_bench.domain.scenarios import (
+    AuditPhase,
     Category,
     ScenarioDefinition,
     ScenarioResult,
@@ -304,6 +306,14 @@ async def _plain_on_result(
 ) -> None:
     style = STATUS_STYLE.get(result.status, "?")
     print(f"{style}  ({result.points}/2) {DIM}{result.summary}{RESET}")
+
+
+async def _plain_on_audit(
+    scenario: ScenarioDefinition, result: ScenarioResult, phase: AuditPhase
+) -> None:
+    line = decision_audit_line(scenario.id, result, phase)
+    if line is not None:
+        print(line.plain, flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1528,6 +1538,8 @@ def _run_with_live_display(
 
     async def run_trial(*, show: bool = False) -> dict:
         callbacks: dict = _decision_judge_kwargs(args)
+        if callbacks:
+            callbacks["on_scenario_audit"] = display.on_scenario_audit
         if show:
             callbacks["on_scenario_start"] = display.on_scenario_start
             callbacks["on_scenario_result"] = display.on_scenario_result
@@ -1743,6 +1755,7 @@ def _run_json(
             **_decision_judge_kwargs(args),
             on_scenario_start=_stderr_progress_start,
             on_scenario_result=_stderr_progress_result,
+            on_scenario_audit=_stderr_progress_audit,
         )
 
     try:
@@ -1818,6 +1831,8 @@ def _run_plain(
 
     async def run(*, show: bool = False) -> dict:
         callbacks: dict = _decision_judge_kwargs(args)
+        if callbacks:
+            callbacks["on_scenario_audit"] = _plain_on_audit
         if show:
             callbacks["on_scenario_start"] = _plain_on_start
             callbacks["on_scenario_result"] = _plain_on_result

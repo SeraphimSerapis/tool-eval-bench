@@ -1,0 +1,1 @@
+**Per-scenario judge output** names the decision model and shows its finding, probability, disagreements, abstentions, or request errors in live and plain output. JSON mode emits audit progress events on stderr, and the Python API exposes an audit callback. Scenarios with no judge request get no placeholder; saved judgments are labeled separately. Official scores stay unchanged.

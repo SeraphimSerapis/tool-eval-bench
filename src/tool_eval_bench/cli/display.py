@@ -23,6 +23,7 @@ from rich.text import Text
 from tool_eval_bench.adapters.openai_compat import RateLimitStatus
 from tool_eval_bench.cli.timeout_advice import infrastructure_note, timeout_advice
 from tool_eval_bench.domain.scenarios import (
+    AuditPhase,
     Category,
     FailureKind,
     ModelScoreSummary,
@@ -34,7 +35,11 @@ from tool_eval_bench.evals.scenarios import (
     ALL_DISPLAY_DETAILS,
     ALL_SCENARIOS_WITH_HARDMODE,
 )
-from tool_eval_bench.storage.reports._common import PP_ESTIMATED_NOTE, sample_pp_estimated
+from tool_eval_bench.storage.reports._common import (
+    PP_ESTIMATED_NOTE,
+    safe_label_text,
+    sample_pp_estimated,
+)
 
 # ---------------------------------------------------------------------------
 # Style constants
@@ -89,6 +94,42 @@ RATING_COLORS = {
 # ---------------------------------------------------------------------------
 # Display
 # ---------------------------------------------------------------------------
+
+
+def decision_audit_line(scenario_id: str, result: ScenarioResult, phase: AuditPhase) -> Text | None:
+    """Render real judge activity as literal text, without skipped placeholders."""
+    if not result.was_decision_audited:
+        return None
+    audit = result.decision_audit or {}
+    model = safe_label_text(str(audit.get("model", "")))
+    if not model:
+        return None
+    line = Text(f"  {safe_label_text(scenario_id)}  Audit · {model}: ", style="cyan")
+    if phase == "started":
+        line.append("judging...")
+        return line
+    status = audit.get("status")
+    if status == "unavailable":
+        line.append(
+            f"unavailable ({safe_label_text(str(audit.get('error_type', 'request error')))})",
+            style="yellow",
+        )
+    else:
+        if status == "abstained":
+            line.append("abstained · ", style="yellow")
+        choice = str(audit.get("choice", ""))
+        line.append(safe_label_text(choice))
+        probability = audit.get("probabilities", {}).get(choice)
+        if isinstance(probability, int | float):
+            line.append(f" ({probability:.1%})")
+        if audit.get("disagreement") is True:
+            line.append(" · disagrees with deterministic check", style="yellow")
+        elif audit.get("disagreement") is False:
+            line.append(" · agrees with deterministic check", style="dim")
+    if phase == "reused":
+        line.append(" · saved audit", style="dim")
+    line.append("; official score unchanged", style="dim")
+    return line
 
 
 class BenchmarkDisplay:
@@ -183,6 +224,13 @@ class BenchmarkDisplay:
 
         # Update the footer
         self._refresh_footer()
+
+    async def on_scenario_audit(
+        self, scenario: ScenarioDefinition, result: ScenarioResult, phase: AuditPhase
+    ) -> None:
+        line = decision_audit_line(scenario.id, result, phase)
+        if line is not None:
+            self.console.print(line)
 
     def on_rate_limit(self, status: RateLimitStatus) -> None:
         """Record throttling from the adapter (shown in the footer, not logged)."""

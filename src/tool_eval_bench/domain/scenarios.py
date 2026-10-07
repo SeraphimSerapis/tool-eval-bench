@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from tool_eval_bench.domain.decision import ChoiceQuestion
 
@@ -404,6 +404,17 @@ class ScenarioResult:
             self.status == ScenarioStatus.FAIL and self.failure_kind in INFRASTRUCTURE_FAILURE_KINDS
         )
 
+    @property
+    def was_decision_audited(self) -> bool:
+        """A request was attempted, or a successful older audit is available."""
+        return bool(
+            self.decision_audit
+            and (
+                self.decision_audit.get("request_started")
+                or self.decision_audit.get("status") in {"completed", "abstained"}
+            )
+        )
+
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "scenario_id": self.scenario_id,
@@ -649,3 +660,7 @@ OnScenarioResult = Callable[[ScenarioDefinition, ScenarioResult, int, int], Awai
 
 OnScenarioEvaluated = Callable[[ScenarioDefinition, ScenarioState, ScenarioResult], Awaitable[None]]
 """Capture structured evidence after evaluation, before the state is discarded."""
+
+AuditPhase = Literal["started", "completed", "reused"]
+OnScenarioAudit = Callable[[ScenarioDefinition, ScenarioResult, AuditPhase], Awaitable[None]]
+"""Report attempted or saved judge activity, never unevaluated placeholders."""

@@ -303,6 +303,11 @@ exact input, versioned rubric, model, latency, and any disagreement. An audit
 error is an unavailable judgment, not a model failure. Held-out scenarios are
 never sent to the judge.
 
+Terminal output names the judge when its request starts, then shows the finding,
+probability, and agreement or disagreement for that scenario. Unaudited scenarios
+and skipped requests get no placeholder. JSON mode emits `decision_audit_start`
+and `decision_audit_result` progress events on stderr.
+
 Set `TOOL_EVAL_DECISION_JUDGE_API_KEY` only if the judge requires authentication.
 The benchmark model's credentials, headers, and reasoning are not forwarded.
 Auditing is off unless both judge connection flags are supplied.
