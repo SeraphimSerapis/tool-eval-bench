@@ -33,6 +33,7 @@ from rich.console import Console
 
 from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
 from tool_eval_bench.adapters.wire_format import resolve_wire_format as _resolve_wire_format
+from tool_eval_bench.application.decision_audit import decision_judge_config
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.cli import model_probe as _model_probe
 from tool_eval_bench.cli.compare_report import (
@@ -188,6 +189,10 @@ def _resume_config_mismatches(
         "seed": args.seed,
         "reference_date": args.reference_date,
         "system_prompt": getattr(args, "system_prompt", None),
+        "decision_judge": decision_judge_config(
+            getattr(args, "decision_judge_base_url", None),
+            getattr(args, "decision_judge_model", None),
+        ),
         "scenario_ids": [scenario.id for scenario in scenarios],
         "concurrency": args.parallel,
         "error_rate": args.error_rate,
@@ -206,7 +211,7 @@ def _resume_config_mismatches(
         # A run on the built-in prompt persists no system_prompt key at all, so
         # absence means "built-in": resuming it with an override would otherwise
         # merge two personas into one result.
-        or (key == "system_prompt" and previous.get(key) != value)
+        or (key in {"system_prompt", "decision_judge"} and previous.get(key) != value)
     ]
 
 
@@ -512,6 +517,17 @@ def _check_endpoint_ready(
 _PLUGIN_BENCHMARKS = ("gsm8k", "mmlu", "ifeval", "needle", "decision")
 
 
+def _decision_judge_kwargs(args: argparse.Namespace) -> dict[str, Any]:
+    base_url = getattr(args, "decision_judge_base_url", None)
+    if base_url is None:
+        return {}
+    return {
+        "decision_judge_base_url": base_url,
+        "decision_judge_model": getattr(args, "decision_judge_model", None),
+        "decision_judge_api_key": os.environ.get("TOOL_EVAL_DECISION_JUDGE_API_KEY"),
+    }
+
+
 def _resolve_system_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """Materialize ``--system-prompt-file`` into ``args.system_prompt``.
 
@@ -760,6 +776,19 @@ def main() -> None:
     # text on args.system_prompt.
     _resolve_system_prompt(args, parser)
     _drop_unused_system_prompt(args, console)
+    try:
+        judge_config = decision_judge_config(
+            getattr(args, "decision_judge_base_url", None),
+            getattr(args, "decision_judge_model", None),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    if judge_config is not None and (
+        getattr(args, "command", None) not in {None, "run", "resume"}
+        or not _sends_system_prompt(args)
+        or args.context_pressure_sweep is not None
+    ):
+        parser.error("Decision judge audits require a run or resume of tool-call scenarios")
 
     if _handle_local_command(
         args,
@@ -1498,7 +1527,7 @@ def _run_with_live_display(
     display.start()
 
     async def run_trial(*, show: bool = False) -> dict:
-        callbacks: dict = {}
+        callbacks: dict = _decision_judge_kwargs(args)
         if show:
             callbacks["on_scenario_start"] = display.on_scenario_start
             callbacks["on_scenario_result"] = display.on_scenario_result
@@ -1711,6 +1740,7 @@ def _run_json(
             wire_format=wire_format,
             extra_headers=getattr(args, "_request_headers", None),
             session_header=getattr(args, "_session_header", None),
+            **_decision_judge_kwargs(args),
             on_scenario_start=_stderr_progress_start,
             on_scenario_result=_stderr_progress_result,
         )
@@ -1787,7 +1817,7 @@ def _run_plain(
     started = time.time()
 
     async def run(*, show: bool = False) -> dict:
-        callbacks: dict = {}
+        callbacks: dict = _decision_judge_kwargs(args)
         if show:
             callbacks["on_scenario_start"] = _plain_on_start
             callbacks["on_scenario_result"] = _plain_on_result

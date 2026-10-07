@@ -117,6 +117,22 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "default": False,
         "description": "Check server reachability and exit (0 = ready, 1 = not found)",
     },
+    # -- Decision judge audit --
+    {
+        "name": "decision_judge_base_url",
+        "type": "string",
+        "default": None,
+        "description": "Independent /v1/systemone endpoint for TC-89 audits; scores stay unchanged",
+    },
+    {
+        "name": "decision_judge_model",
+        "type": "string",
+        "default": None,
+        "description": (
+            "Judge model (requires decision_judge_base_url); judge-only key via "
+            "TOOL_EVAL_DECISION_JUDGE_API_KEY"
+        ),
+    },
     # -- Sampling --
     {
         "name": "temperature",

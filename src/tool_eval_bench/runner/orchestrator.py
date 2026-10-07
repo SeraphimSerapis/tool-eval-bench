@@ -42,6 +42,7 @@ from tool_eval_bench.domain.scenarios import (
     CategoryScore,
     FailureKind,
     ModelScoreSummary,
+    OnScenarioEvaluated,
     OnScenarioResult,
     OnScenarioStart,
     ScenarioDefinition,
@@ -367,6 +368,7 @@ async def run_scenario(
     extra_params: dict[str, Any] | None = None,
     context_pressure_messages: list[ChatMessage] | None = None,
     system_prompt: str | None = None,
+    on_scenario_evaluated: OnScenarioEvaluated | None = None,
 ) -> ScenarioResult:
     """Run a single scenario through the multi-turn orchestration loop."""
     t0 = time.perf_counter()
@@ -757,7 +759,7 @@ async def run_scenario(
 
     elapsed = time.perf_counter() - t0
 
-    return ScenarioResult(
+    scenario_result = ScenarioResult(
         scenario_id=scenario.id,
         status=evaluation.status,
         points=evaluation.points,
@@ -799,6 +801,9 @@ async def run_scenario(
         # verdict: the model never reached a final answer / exhausted follow-ups.
         turn_budget_exceeded=budget_exhausted,
     )
+    if on_scenario_evaluated is not None:
+        await on_scenario_evaluated(scenario, state, scenario_result)
+    return scenario_result
 
 
 # ---------------------------------------------------------------------------
@@ -975,6 +980,7 @@ async def run_all_scenarios(
     context_pressure_messages: list[ChatMessage] | None = None,
     weight_by_difficulty: bool = False,
     system_prompt: str | None = None,
+    on_scenario_evaluated: OnScenarioEvaluated | None = None,
 ) -> ModelScoreSummary:
     """Run every scenario and produce an aggregate score summary.
 
@@ -1042,6 +1048,7 @@ async def run_all_scenarios(
                     extra_params=extra_params,
                     context_pressure_messages=context_pressure_messages,
                     system_prompt=system_prompt,
+                    on_scenario_evaluated=on_scenario_evaluated,
                 )
             results.append(_attach_probe(result))
             if on_scenario_result:
@@ -1092,6 +1099,7 @@ async def run_all_scenarios(
                     extra_params=extra_params,
                     context_pressure_messages=context_pressure_messages,
                     system_prompt=system_prompt,
+                    on_scenario_evaluated=on_scenario_evaluated,
                 )
             ordered_results[idx] = _attach_probe(result)
             if on_scenario_result:

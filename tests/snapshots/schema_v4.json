@@ -80,6 +80,18 @@
       "type": "bool"
     },
     {
+      "default": null,
+      "description": "Independent /v1/systemone endpoint for TC-89 audits; scores stay unchanged",
+      "name": "decision_judge_base_url",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Judge model (requires decision_judge_base_url); judge-only key via TOOL_EVAL_DECISION_JUDGE_API_KEY",
+      "name": "decision_judge_model",
+      "type": "string"
+    },
+    {
       "default": 0.0,
       "description": "Sampling temperature (0.0 = greedy)",
       "name": "temperature",

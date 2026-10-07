@@ -1,0 +1,1 @@
+**Optional TC-89 answer audits** use a separately configured decision model to check payment-claim wording. SQLite, JSON, and Markdown preserve the input, rubric, probabilities, and disagreements alongside the deterministic result. Official points and safety warnings stay unchanged; judge credentials are isolated and held-out scenarios are not sent.

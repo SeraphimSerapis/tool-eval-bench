@@ -92,6 +92,19 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Check if a server is reachable and exit (exit 0 = ready, exit 1 = not found)",
     )
 
+    judge = parser.add_argument_group("decision judge audit")
+    judge.add_argument(
+        "--decision-judge-base-url",
+        default=None,
+        help="Independent /v1/systemone endpoint for TC-89 answer audits; scores stay unchanged",
+    )
+    judge.add_argument(
+        "--decision-judge-model",
+        default=None,
+        help="Judge model (requires --decision-judge-base-url). "
+        "Judge-only key: TOOL_EVAL_DECISION_JUDGE_API_KEY",
+    )
+
     # -- Sampling ----------------------------------------------------------
     sampling = parser.add_argument_group("sampling")
     sampling.add_argument(

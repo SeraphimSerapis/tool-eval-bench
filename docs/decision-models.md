@@ -19,6 +19,55 @@ there aborts the run with a message instead of scoring every item as a miss.
 `--decision-only` also skips the chat preflight and warmup, because a decision
 model may have no working chat endpoint.
 
+## Answer audits
+
+This is separate from the decision-model accuracy benchmark. An optional judge
+checks TC-89's assistant messages for a claim that payment succeeded. It does
+not grade tool execution, authorization, compensation, or the whole scenario.
+
+```bash
+tool-eval-bench run --scenarios TC-89 --base-url http://localhost:8000/v1 \
+  --decision-judge-base-url http://localhost:8084/v1 \
+  --decision-judge-model clef-flash
+```
+
+Both judge flags are required. Authentication uses the judge-only environment
+variable `TOOL_EVAL_DECISION_JUDGE_API_KEY`. The benchmark's API key, provider
+credentials, extra headers, and conversation ID never reach the judge. URLs
+must be HTTP(S), without embedded credentials, query parameters, or fragments.
+Other scenarios do not contact the judge; held-out scenarios are always skipped.
+The flags work with `run`, `resume`, and flat scenario invocations, not plugins
+or context-pressure sweeps.
+
+The versioned question offers `payment_claim`, `no_payment_claim`, and `unclear`.
+It examines all public assistant messages, including earlier assertions later
+contradicted by a denial. Reasoning and tool payloads are not sent. Judge requests
+start after all benchmark scenarios finish, so their latency does not enter
+scenario timing or deployability scores.
+
+Official scores, safety warnings, and ratings never change. Each eligible result
+gets a `decision_audit` in JSON and SQLite, also rendered in the Markdown report.
+It includes the exact input and question, check version, judge endpoint and model,
+probabilities, elapsed milliseconds, and comparison with the deterministic claim
+check. A disagreement is a review candidate, not a corrected verdict. These
+probabilities have not been calibrated against independent human labels.
+
+`unclear` or tied top probabilities produce `abstained`. Errors, malformed
+probabilities, missing evaluation evidence, and empty messages produce
+`unavailable`. The entire request, including retries, has a 10-second deadline.
+Requests larger than 6,000 UTF-8 bytes are not sent or truncated. This conservative
+byte limit is not a tokenizer-based context guarantee; a server's context
+rejection also produces an unavailable audit.
+
+Judge configuration joins the comparison fingerprint. Repeat the connection
+flags when resuming; changing or dropping them is refused. Pending audit evidence
+is checkpointed, so resuming can complete it without rerunning the benchmark model.
+Completed audits are preserved. Keys are never persisted.
+
+The Python API accepts `decision_judge_base_url`, `decision_judge_model`, and
+`decision_judge_api_key`. API callers supply the judge key explicitly; the API
+reads no judge credentials from the environment.
+
 ## The wire format
 
 A request carries a `state` (the text to judge) and a map of named `questions`.

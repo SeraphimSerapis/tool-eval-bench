@@ -7,6 +7,7 @@ titles, summaries, and traces.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -317,6 +318,40 @@ def write_scenario_report(
                 details.append(f"parallel tool turns: {turns}")
             details.extend(r.state_checkpoints)
             md.append(f"- **{r.scenario_id}**: {'; '.join(details)}")
+
+    audits = [
+        r
+        for r in summary.scenario_results
+        if r.decision_audit is not None and r.scenario_id not in held_out_ids
+    ]
+    if audits:
+        md.extend(
+            [
+                "",
+                "## Decision-model audits",
+                "",
+                "Audits do not change official points, safety warnings, or ratings. "
+                "Disagreements are candidates for review, not corrected verdicts. "
+                "Probabilities are uncalibrated.",
+                "",
+            ]
+        )
+        for r in audits:
+            audit = r.decision_audit or {}
+            md.extend(
+                [
+                    f"### {_markdown_heading(r.scenario_id)} semantic audit",
+                    "",
+                    f"Deterministic check: {_markdown_table_cell(audit.get('deterministic_choice', 'unavailable'))}",
+                    f"Audit: {_markdown_table_cell(audit.get('status', 'unavailable'))}; "
+                    f"choice: {_markdown_table_cell(audit.get('choice', 'unavailable'))}",
+                    "",
+                ]
+            )
+            if audit.get("disagreement") is True:
+                md.extend(["Semantic disagreement with the deterministic payment-claim check.", ""])
+            md.extend(_trace_block(json.dumps(audit, ensure_ascii=False, indent=2)))
+            md.append("")
 
     # Trace section
     md.extend(["", "## Traces", ""])
