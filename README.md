@@ -313,6 +313,11 @@ field: [docs/api.md](docs/api.md).
 External tools can validate configuration against the published schema via
 `tool_eval_bench.schema.get_schema()`.
 
+Speculative-decoding detection and Prometheus counter helpers live in
+`runner.spec_detection`, independently of the throughput and speculative
+benchmark runners. Existing imports of these helpers from `runner.speculative`
+remain supported.
+
 ## Documentation
 
 - **Getting results:** [CLI reference](docs/cli-reference.md) ·

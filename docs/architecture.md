@@ -168,12 +168,17 @@ difference is what makes Python the right language for an evaluator.
 | `orchestrator.py` | Multi-turn tool-call loop, with a default of 8 turns and per-scenario overrides |
 | `service.py` | Compatibility re-export of the application-owned `BenchmarkService` |
 | `throughput.py` | Built-in streaming pp/tg measurement |
-| `speculative.py` | Spec-decode / MTP benchmarking (acceptance rate, effective t/s) |
+| `spec_detection.py` | Spec-decode detection, Prometheus counters, and metric scraping; no dependency on benchmark runners |
+| `speculative.py` | Spec-decode / MTP benchmarking (acceptance rate, effective t/s); compatibility exports for detection helpers |
 | `spec_live.py` | Live monitor data layer (Prometheus scraping, delta computation) |
 | `llama_benchy.py` | External llama-benchy subprocess integration |
 | `context_pressure.py` | Filler generation, calibration, prefix-cache busting |
 | `judge.py` | LLM-as-judge for failed scenario analysis (WIP) |
 | `async_tools.py` | Async tool execution simulation (polling-style tools) |
+
+`throughput` and `speculative` both use `spec_detection`; only `speculative`
+depends on `throughput` for streaming and prompt construction. Keeping detection
+independent prevents a cyclic import between the two benchmark runners.
 
 ### `adapters/` — HTTP Clients
 

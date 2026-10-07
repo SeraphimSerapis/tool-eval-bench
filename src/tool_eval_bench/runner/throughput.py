@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tool_eval_bench.domain.measurement import MeasurementClient, MeasurementClientFactory
+from tool_eval_bench.runner.spec_detection import detect_spec_decoding
 from tool_eval_bench.utils.openai_compat import (
     completion_stream_error,
     max_tokens_retry_payload,
@@ -1022,8 +1023,6 @@ async def run_throughput_matrix(
         spec_detected = False
         spec_method_name = ""
         try:
-            from tool_eval_bench.runner.speculative import detect_spec_decoding
-
             spec_info = await detect_spec_decoding(client, base_url, api_key)
             if spec_info.active:
                 spec_detected = True
