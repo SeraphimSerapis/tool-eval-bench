@@ -182,6 +182,10 @@ anthropic` pins it for a gateway root that serves several formats.
 | **Accuracy** | GSM8K, MMLU, and IFEval through the same adapter | [benchmarks](docs/benchmarks.md) |
 | **Decision models** | Single-pass option scoring on llama.cpp `/v1/systemone`: accuracy, calibration, and option-order robustness, plus a live canary monitor | [decision-models](docs/decision-models.md) |
 
+TC-74 accepts confirmation ranges such as `14:00–14:45` and `2:00–2:45 PM` for
+its authorized 2pm, 45-minute event. Stated start and end times must match;
+incorrect 12-hour times are rejected just like incorrect 24-hour times.
+
 An asterisk on a prefill rate marks an estimate from time to first content token.
 The [throughput guide](docs/benchmarks.md) explains when that estimate is used.
 
