@@ -61,6 +61,13 @@ The top-level `final_score`, `rating`, `safety_warnings`, `deployability`,
 and `total_scenarios` fields are promoted from the nested `scores` dict for
 easy consumption by leaderboard pipelines and external integrators.
 
+An optional TC-89 answer audit appears as `decision_audit` within an eligible
+`scores.scenario_results` item. It records the exact input and question,
+versioned check, judge identity, probabilities, latency, and disagreement with
+the deterministic payment-claim check. It never changes official scores or safety
+warnings. Unconfigured runs retain the original JSON shape.
+See [answer audits](decision-models.md#answer-audits).
+
 ## Parameters
 
 ```python
@@ -88,6 +95,9 @@ result = asyncio.run(run_benchmark(
     extra_headers=None,    # e.g. {"User-Agent": "my-agent/1.0"}
     session_header=None,   # e.g. "x-opencode-session"; one id per scenario
     system_prompt=None,    # replaces the built-in prompt; date line still appended
+    decision_judge_base_url=None,  # separate /v1/systemone endpoint, TC-89 audit only
+    decision_judge_model=None,     # required if the judge URL is set
+    decision_judge_api_key=None,   # judge-only key; no environment fallback
     on_scenario_start=None,
     on_scenario_result=None,
     persist=True,         # False = skip SQLite + Markdown

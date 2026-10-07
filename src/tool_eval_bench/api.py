@@ -104,6 +104,9 @@ async def run_benchmark(
     extra_headers: Mapping[str, str] | None = None,
     session_header: str | None = None,
     system_prompt: str | None = None,
+    decision_judge_base_url: str | None = None,
+    decision_judge_model: str | None = None,
+    decision_judge_api_key: str | None = None,
 ) -> dict[str, Any]:
     """Run tool-eval-bench programmatically and return structured results.
 
@@ -151,6 +154,12 @@ async def run_benchmark(
             the comparison fingerprint, so runs with different prompts are not
             grouped together.
 
+        decision_judge_base_url: Optional independent /v1/systemone endpoint for
+            TC-89 answer auditing. Does not change official scores.
+        decision_judge_model: Required model name when answer auditing is enabled.
+        decision_judge_api_key: Judge-only credential. Never inherited from api_key
+            or environment variables in the Python API.
+
     Returns:
         A versioned JSON-serializable dict containing ``run_id``, ``config``,
         ``scores``, ``metadata``, and optionally ``report_path``.
@@ -197,6 +206,9 @@ async def run_benchmark(
             extra_headers=extra_headers,
             session_header=session_header,
             system_prompt=system_prompt,
+            decision_judge_base_url=decision_judge_base_url,
+            decision_judge_model=decision_judge_model,
+            decision_judge_api_key=decision_judge_api_key,
         )
 
     return format_result(run_data)

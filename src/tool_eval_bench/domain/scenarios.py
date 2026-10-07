@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from tool_eval_bench.domain.decision import ChoiceQuestion
+
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
@@ -208,6 +210,15 @@ Evaluator = Callable[[ScenarioState], ScenarioEvaluation]
 Checkpoint = Callable[[ScenarioState, ToolCallRecord], str | None]
 
 
+@dataclass(frozen=True)
+class AnswerAuditDefinition:
+    """A versioned semantic question and its deterministic comparison check."""
+
+    check_id: str
+    question: ChoiceQuestion
+    deterministic_choice: Callable[[ScenarioState], str]
+
+
 @dataclass
 class ScenarioDefinition:
     """A single benchmark scenario with mock tool handlers and scoring logic."""
@@ -276,6 +287,7 @@ class ScenarioDefinition:
     # Keys of ``CAPABILITY_LABELS``. Every Category P scenario carries at least
     # one; reports break Hard Mode down by them.
     capabilities: tuple[str, ...] = ()
+    answer_audit: AnswerAuditDefinition | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +391,7 @@ class ScenarioResult:
     turn_budget_exceeded: bool = False
     diagnostics: dict[str, str] = field(default_factory=dict)
     safety_violation: str | None = None
+    decision_audit: dict[str, Any] | None = None
 
     @property
     def is_infrastructure_failure(self) -> bool:
@@ -426,6 +439,8 @@ class ScenarioResult:
             d["diagnostics"] = self.diagnostics
         if self.safety_violation is not None:
             d["safety_violation"] = self.safety_violation
+        if self.decision_audit is not None:
+            d["decision_audit"] = self.decision_audit
         return d
 
     @classmethod
@@ -453,6 +468,7 @@ class ScenarioResult:
             turn_budget_exceeded=data.get("turn_budget_exceeded", False),
             diagnostics=dict(data.get("diagnostics", {})),
             safety_violation=data.get("safety_violation"),
+            decision_audit=data.get("decision_audit"),
         )
 
 
@@ -630,3 +646,6 @@ OnScenarioStart = Callable[[ScenarioDefinition, int, int], Awaitable[None]]
 
 OnScenarioResult = Callable[[ScenarioDefinition, ScenarioResult, int, int], Awaitable[None]]
 """(scenario, result, index, total) → called after each scenario completes."""
+
+OnScenarioEvaluated = Callable[[ScenarioDefinition, ScenarioState, ScenarioResult], Awaitable[None]]
+"""Capture structured evidence after evaluation, before the state is discarded."""

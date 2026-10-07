@@ -13,8 +13,13 @@ from typing import Any, cast
 
 import httpx
 
-from tool_eval_bench.adapters.factory import build_adapter
+from tool_eval_bench.adapters.factory import build_adapter, build_decision_adapter
 from tool_eval_bench.adapters.openai_compat import RateLimitObserver
+from tool_eval_bench.application.decision_audit import (
+    capture_decision_audit,
+    decision_judge_config,
+    run_decision_audit,
+)
 from tool_eval_bench.application.finalization import finalize_completed_run
 from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.domain.adapters import BackendAdapter
@@ -31,6 +36,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioDefinition,
     ScenarioReportMetadata,
     ScenarioResult,
+    ScenarioState,
 )
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 from tool_eval_bench.runner.orchestrator import run_all_scenarios, score_results
@@ -146,6 +152,9 @@ class BenchmarkService:
         extra_headers: Mapping[str, str] | None = None,
         session_header: str | None = None,
         system_prompt: str | None = None,
+        decision_judge_base_url: str | None = None,
+        decision_judge_model: str | None = None,
+        decision_judge_api_key: str | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
 
@@ -156,6 +165,9 @@ class BenchmarkService:
         ``resume_scenarios`` retains definitions that are not in the rerun
         subset, including held-out pack and Hard Mode scenarios.
         """
+        judge_config = decision_judge_config(
+            decision_judge_base_url, decision_judge_model, decision_judge_api_key
+        )
         adapter = self._adapter_for(
             backend,
             base_url,
@@ -231,6 +243,7 @@ class BenchmarkService:
             context_pressure_config=context_pressure_config,
             weight_by_difficulty=weight_by_difficulty,
             system_prompt=system_prompt,
+            decision_judge=judge_config,
         )
         run_config = build_run_config(
             settings,
@@ -246,6 +259,11 @@ class BenchmarkService:
         # interrupted long run can be resumed instead of thrown away.
         self._claim_run(run_id, model, run_config, metadata)
         checkpointing_result_cb = self._checkpointing_callback(run_id, on_scenario_result)
+
+        async def capture_audit(
+            scenario: ScenarioDefinition, state: ScenarioState, result: ScenarioResult
+        ) -> None:
+            capture_decision_audit(scenario, state, result)
 
         # Run all scenarios (close adapter connection pool when done)
         try:
@@ -270,6 +288,7 @@ class BenchmarkService:
                 context_pressure_messages=context_pressure_messages,
                 weight_by_difficulty=weight_by_difficulty,
                 system_prompt=system_prompt,
+                **({"on_scenario_evaluated": capture_audit} if judge_config is not None else {}),
             )
         except BaseException:
             # Covers KeyboardInterrupt and CancelledError as well as errors —
@@ -332,6 +351,51 @@ class BenchmarkService:
                 len(merged_results),
                 summary.final_score,
             )
+
+        # Audit after all benchmark requests so judge latency cannot distort
+        # per-scenario timing or delay sibling model requests under concurrency.
+        if judge_config is not None:
+            scenario_by_id = {s.id: s for s in report_scenarios}
+            audit_results = [
+                result
+                for result in summary.scenario_results
+                if scenario_by_id[result.scenario_id].answer_audit is not None
+                and not scenario_by_id[result.scenario_id].held_out
+            ]
+            if audit_results:
+                judge = build_decision_adapter()  # No benchmark headers or session identity.
+                audit_checkpoint = self._checkpointing_callback(run_id, None)
+                try:
+                    for index, result in enumerate(audit_results):
+                        if result.decision_audit is None:
+                            definition = scenario_by_id[result.scenario_id].answer_audit
+                            assert definition is not None  # noqa: S101 — filtered above
+                            result.decision_audit = {
+                                "status": "unavailable",
+                                "check_id": definition.check_id,
+                                "error_type": "NoEvaluationEvidence",
+                            }
+                        await run_decision_audit(
+                            judge,
+                            result.decision_audit,
+                            config=judge_config,
+                            api_key=decision_judge_api_key,
+                        )
+                        if audit_checkpoint is not None:
+                            await audit_checkpoint(
+                                scenario_by_id[result.scenario_id],
+                                result,
+                                index,
+                                len(audit_results),
+                            )
+                except BaseException:
+                    self._mark_interrupted(run_id)
+                    raise
+                finally:
+                    try:
+                        await judge.aclose()
+                    except Exception as exc:  # noqa: BLE001 — cleanup cannot fail a run
+                        logger.warning("Could not close decision judge: %s", type(exc).__name__)
 
         # Persist
         run_data = {

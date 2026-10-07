@@ -106,6 +106,26 @@
   },
   {
     "choices": null,
+    "default": null,
+    "dest": "decision_judge_base_url",
+    "flags": [
+      "--decision-judge-base-url"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "decision_judge_model",
+    "flags": [
+      "--decision-judge-model"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": 0.0,
     "dest": "temperature",
     "flags": [

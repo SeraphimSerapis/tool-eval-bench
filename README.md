@@ -286,6 +286,28 @@ across a change is refused — and the run report marks that one was used.
 [`examples/system-prompt-function.txt`](examples/system-prompt-function.txt) is a
 minimal override that constrains the model to verified output.
 
+### Optional answer audits
+
+A separate decision model can audit TC-89's payment-claim detection:
+
+```bash
+tool-eval-bench run --scenarios TC-89 --base-url http://localhost:8000/v1 \
+  --decision-judge-base-url http://localhost:8084/v1 \
+  --decision-judge-model clef-flash
+```
+
+The judge scores the meaning of all assistant messages using `/v1/systemone`.
+Official points, safety warnings, and ratings stay deterministic. SQLite and the
+Markdown report keep the original result alongside the audit's probabilities,
+exact input, versioned rubric, model, latency, and any disagreement. An audit
+error is an unavailable judgment, not a model failure. Held-out scenarios are
+never sent to the judge.
+
+Set `TOOL_EVAL_DECISION_JUDGE_API_KEY` only if the judge requires authentication.
+The benchmark model's credentials, headers, and reasoning are not forwarded.
+Auditing is off unless both judge connection flags are supplied.
+See [answer audit limits and API configuration](docs/decision-models.md#answer-audits).
+
 ## Programmatic API
 
 ```python

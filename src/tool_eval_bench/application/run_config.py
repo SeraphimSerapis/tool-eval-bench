@@ -59,6 +59,7 @@ class RunSettings:
     context_pressure_config: dict[str, Any] | None
     weight_by_difficulty: bool
     system_prompt: str | None = None
+    decision_judge: dict[str, Any] | None = None
 
 
 def build_run_config(
@@ -97,6 +98,8 @@ def build_run_config(
     # in) does not move; the resume check reads a missing key as "built-in".
     if settings.system_prompt is not None:
         config["system_prompt"] = settings.system_prompt
+    if settings.decision_judge is not None:
+        config["decision_judge"] = settings.decision_judge
     variants = {s.id: s.variant_metadata for s in scenarios if s.variant_metadata}
     if variants:
         config["scenario_variants"] = variants
