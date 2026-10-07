@@ -10,6 +10,7 @@ needs no chat endpoint; see [decision-models.md](decision-models.md).
 - **SGLang** — OpenAI-compatible model server
 - **LiteLLM** — proxy for multiple backends
 - **llama.cpp** — lightweight local inference
+- **Strata** — OpenAI-compatible model server, identified by its declared health service or build information
 - **NInfer** — OpenAI-compatible inference engine, detected via `/v1/models`
 - **TensorFold** serves MLX and CUDA models through the existing OpenAI adapter;
   detected by `owned_by: "tensorfold"` or the `tensorfold:` metrics namespace
@@ -74,6 +75,27 @@ OpenAI-compatible backends use `OpenAICompatibleAdapter`; native Gemini and the
 Anthropic Messages API each use their own adapter. If you hit a backend-specific
 issue, please
 [open an issue](https://github.com/SeraphimSerapis/tool-eval-bench/issues).
+
+## Strata
+
+```bash
+tool-eval-bench run --short --backend strata --base-url http://127.0.0.1:8080 --seed 42
+# Drop --short to run the standard suite. The /v1 form of the base URL also works.
+```
+
+[Strata](https://github.com/Niko1221/Strata) uses the existing OpenAI-compatible
+adapter, including streaming tool calls. Automatic detection recognizes
+`service: "strata"` in `/health` or `build_info: "Strata <version>"` in `/props`.
+Its llama.cpp-compatible generation settings alone do not establish Strata identity.
+The default JSON `/metrics` response is not treated as Prometheus data.
+
+The metadata probe sends bearer authentication to `/props`, records the declared
+engine version, effective context window and slot count, and leaves absent GPU
+and speculative-decoding metadata unknown. Quantization inferred from a model
+name is a heuristic; a custom alias does not prove which checkpoint is loaded.
+Tool-choice and structured-output capabilities remain response-probed, not assumed
+from the backend label. Use `--no-think` when a comparison deliberately disables
+reasoning, and keep that setting identical across models.
 
 ## TensorFold
 

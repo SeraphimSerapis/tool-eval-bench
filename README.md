@@ -1,7 +1,7 @@
 # tool-eval-bench
 
 A tool-calling quality benchmark for LLMs in agentic workflows, built for
-self-hosted serving stacks: **vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**,
+self-hosted serving stacks: **vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**, **Strata**,
 **NInfer**, **TensorFold**, and hosted **Gemini** and **Anthropic**.
 
 Each scenario observes one assistant conversation with mock tools. It does not

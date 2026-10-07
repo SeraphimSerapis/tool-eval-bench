@@ -227,12 +227,14 @@ async def _probe_vllm_version(
     return {}
 
 
-async def _probe_llamacpp(base_url: str, *, session: _ProbeSession | None = None) -> dict[str, Any]:
-    """Identify llama.cpp from declared identity or characteristic build/props fields."""
+async def _probe_props(
+    base_url: str, api_key: str | None = None, *, session: _ProbeSession | None = None
+) -> dict[str, Any]:
+    """Read llama.cpp-compatible metadata, preserving Strata's declared identity."""
     async with _probe_session(session) as active:
         for path in ("/props", "/health"):
             resp = await _probe_get(
-                active, f"{_root_url(base_url)}{path}", headers={}, what=f"llama.cpp {path}"
+                active, f"{_root_url(base_url)}{path}", headers=_auth_headers(api_key), what=path
             )
             if resp is None or resp.status_code != 200:
                 continue
@@ -243,6 +245,23 @@ async def _probe_llamacpp(base_url: str, *, session: _ProbeSession | None = None
             if not isinstance(body, dict):
                 continue
             identity = backend_from_response(resp)
+            if identity == ("strata", "Strata"):
+                result: dict[str, Any] = {"engine_name": "Strata"}
+                build = body.get("build_info")
+                if isinstance(build, str) and build.startswith("Strata ") and build[7:].strip():
+                    result["engine_version"] = build[7:].strip()
+                settings = body.get("default_generation_settings")
+                window = (
+                    settings.get("n_ctx") if isinstance(settings, dict) else body.get("max_context")
+                )
+                if type(window) is int and window > 0:
+                    result["max_model_len"] = window
+                slots = body.get("total_slots")
+                if type(slots) is int and slots > 0:
+                    result["slot_count"] = slots
+                return result
+            if identity and identity != ("llamacpp", "llama.cpp"):
+                continue
             has_build = isinstance(body.get("build_info"), str) and bool(body["build_info"])
             has_build_number = type(body.get("build_number")) is int
             has_props = (
@@ -254,7 +273,7 @@ async def _probe_llamacpp(base_url: str, *, session: _ProbeSession | None = None
                 has_build or has_build_number or has_props
             ):
                 continue
-            result: dict[str, Any] = {"engine_name": "llama.cpp"}
+            result = {"engine_name": "llama.cpp"}
             if "build_info" in body:
                 result["engine_version"] = str(body["build_info"])
             elif "build_number" in body:
@@ -345,8 +364,13 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
         if owned:
             return owned
 
-        if await _probe_llamacpp(base_url, session=active):
-            return "llamacpp", "llama.cpp"
+        props = await _probe_props(base_url, api_key, session=active)
+        if props:
+            return (
+                ("strata", "Strata")
+                if props["engine_name"] == "Strata"
+                else ("llamacpp", "llama.cpp")
+            )
 
     return None
 
@@ -366,6 +390,12 @@ def _guess_quantization(model_name: str | None) -> str | None:
     gguf_match = re.search(r"(Q\d+_K_?\w?)", upper)
     if gguf_match:
         return gguf_match.group(1)
+    native_gguf = re.search(
+        r"(?<![A-Z0-9])((?:IQ[1-4]_(?:XXS|XS|S|M|NL)|Q[2-8]_[01]|TQ[12]_0))(?![A-Z0-9])",
+        upper,
+    )
+    if native_gguf:
+        return native_gguf.group(1)
     mlx_match = re.search(r"MLX-(\d+)BIT", upper)
     if mlx_match:
         return f"MLX-{mlx_match.group(1)}bit"
@@ -398,6 +428,7 @@ _HOSTED_ENGINE_NAMES: dict[str, str] = {
 }
 
 _OWNED_BY_BACKENDS: dict[str, tuple[str, str]] = {
+    "strata": ("strata", "Strata"),
     "tensorfold": ("tensorfold", "TensorFold"),
     "ninfer": ("ninfer", "NInfer"),
     "sglang": ("sglang", "SGLang"),
@@ -416,13 +447,21 @@ def backend_from_models(body: Any) -> tuple[str, str] | None:
 
 
 def backend_from_response(resp: Any) -> tuple[str, str] | None:
-    """Read declared model ownership or an identifying Server header."""
+    """Read declared ownership, Strata metadata, or an identifying Server header."""
+    body = None
     try:
-        owner = backend_from_models(resp.json())
+        body = resp.json()
+        owner = backend_from_models(body)
     except (AttributeError, ValueError):
         owner = None
     if owner:
         return owner
+    if isinstance(body, dict):
+        build = body.get("build_info")
+        if body.get("service") == "strata" or (
+            isinstance(build, str) and re.match(r"^Strata(?:\s|$)", build)
+        ):
+            return "strata", "Strata"
     server = resp.headers.get("server", "").lower()
     for marker, backend, label in (
         ("llama.cpp", "llamacpp", "llama.cpp"),
@@ -508,8 +547,8 @@ async def _probe_engine(
             result.update(await _probe_tensorfold(base_url, api_key, session=active))
         elif backend_l == "vllm":
             result.update(await _probe_vllm_version(base_url, api_key, session=active))
-        elif backend_l in ("llamacpp", "llama.cpp", "llama_cpp"):
-            result.update(await _probe_llamacpp(base_url, session=active))
+        elif backend_l in ("strata", "llamacpp", "llama.cpp", "llama_cpp"):
+            result.update(await _probe_props(base_url, api_key, session=active))
         elif backend_l == "halogen":
             result["engine_name"] = "Halogen Flash"
         elif backend_l == "litellm":
@@ -534,7 +573,7 @@ async def _probe_engine(
                     break
             else:
                 if "engine_name" not in result:
-                    result.update(await _probe_llamacpp(base_url, session=active))
+                    result.update(await _probe_props(base_url, api_key, session=active))
 
     # Infer quantization from model name
     if "quantization" not in result:

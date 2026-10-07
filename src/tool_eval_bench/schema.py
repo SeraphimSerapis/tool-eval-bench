@@ -64,6 +64,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
             "ninfer",
             "tensorfold",
             "halogen",
+            "strata",
             "unknown",
         ],
         "description": "Backend label for reports (CLI auto-detects; otherwise unknown)",
