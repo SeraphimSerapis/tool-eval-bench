@@ -68,6 +68,10 @@ env -u FORCE_COLOR .venv/bin/python -m pytest \
   --randomly-seed=104729
 ```
 
+Add `-n auto --maxprocesses=4` to run the suite in parallel with `pytest-xdist`.
+The pre-push hook does, which takes it from about 15 seconds to about 7. CI runs
+it serially so the coverage floors stay comparable.
+
 `FORCE_COLOR` only needs to be unset in environments that define it globally;
 it can cause Rich rendering tests to emit ANSI codes into captured output.
 The project venv is important: using system Python can silently skip async test
