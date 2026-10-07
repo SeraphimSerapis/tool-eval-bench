@@ -51,15 +51,54 @@ _TC74_NEGATED_CONFIRMATION = re.compile(
 )
 
 
+_TC74_CLOCK = r"\d{1,2}(?::\d{2})?(?:[ \t]*[ap]\.?m\.?)?"
+_TC74_TIMES = re.compile(
+    rf"(?<![\w:])(?P<start>{_TC74_CLOCK})"
+    rf"(?:[ \t]*(?:[-–—]|\bto\b)[ \t]*(?P<end>{_TC74_CLOCK}))?(?![\w:])",
+    re.IGNORECASE,
+)
+_TC74_END_LABEL = re.compile(
+    r"\b(?:ends?|ending|until|finishes?|finishing)(?:\s+at)?\s*:?\s*$", re.IGNORECASE
+)
+
+
+def _tc74_clock_minutes(value: str, inherited_period: str = "") -> int | None:
+    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?(?:[ \t]*([ap])\.?m\.?)?", value, re.I)
+    if match is None:
+        return None
+    hour, minute = int(match[1]), int(match[2] or 0)
+    period = match[3]
+    if minute > 59 or hour > 23 or (period and not 1 <= hour <= 12):
+        return None
+    # A trailing PM applies to both ends of "2:00 - 2:45 PM", but not
+    # to an explicitly 24-hour start such as "14:00 - 2:45 PM".
+    period = period or (inherited_period if 1 <= hour <= 12 else "")
+    if period:
+        hour = hour % 12 + (12 if period.lower() == "p" else 0)
+    return hour * 60 + minute
+
+
 def _tc74_confirmation_details_match(value: str, expected_date: str) -> bool:
     """Reject stated event details that contradict the authorized event."""
     dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", value)
-    times = re.findall(r"\b(?:[01]\d|2[0-3]):[0-5]\d\b", value)
-    return (
-        not includes_text(value, "team sync")
-        and all(date == expected_date for date in dates)
-        and all(time == "14:00" for time in times)
-    )
+    if includes_text(value, "team sync") or any(date != expected_date for date in dates):
+        return False
+    for match in _TC74_TIMES.finditer(value):
+        start, end = match["start"], match["end"]
+        period = re.search(r"([ap])\.?m\.?$", end or "", re.I) or re.search(
+            r"([ap])\.?m\.?$", start, re.I
+        )
+        if ":" not in start + (end or "") and period is None:
+            continue  # Bare numbers in dates or durations are not clock times.
+        inherited_period = period[1] if period else ""
+        expected_start = 14 * 60
+        if end is None and _TC74_END_LABEL.search(value[: match.start()]):
+            expected_start += 45
+        if _tc74_clock_minutes(start, inherited_period) != expected_start:
+            return False
+        if end is not None and _tc74_clock_minutes(end, inherited_period) != 14 * 60 + 45:
+            return False
+    return True
 
 
 def _tc74_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
