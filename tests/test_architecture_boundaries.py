@@ -132,6 +132,34 @@ def test_legacy_runner_service_export_preserves_identity() -> None:
     assert LegacyBenchmarkService is ApplicationBenchmarkService
 
 
+def test_throughput_does_not_import_the_speculative_benchmark() -> None:
+    imports = _internal_imports(PACKAGE_ROOT / "runner" / "throughput.py")
+
+    assert "tool_eval_bench.runner.speculative" not in imports
+
+
+def test_spec_detection_does_not_depend_on_other_runners() -> None:
+    imports = _internal_imports(PACKAGE_ROOT / "runner" / "spec_detection.py")
+
+    assert all(not imported.startswith("tool_eval_bench.runner") for imported in imports)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "SpecDecodeCounters",
+        "SpecDecodeInfo",
+        "detect_spec_decoding",
+        "parse_prometheus_spec_metrics",
+        "scrape_spec_metrics",
+    ],
+)
+def test_spec_detection_compatibility_exports_preserve_identity(name: str) -> None:
+    from tool_eval_bench.runner import spec_detection, speculative
+
+    assert getattr(speculative, name) is getattr(spec_detection, name)
+
+
 def test_first_party_dispatch_uses_application_service_directly() -> None:
     imports = _internal_imports(PACKAGE_ROOT / "cli" / "dispatch.py")
 

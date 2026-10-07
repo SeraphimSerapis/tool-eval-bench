@@ -134,7 +134,7 @@ async def test_throughput_matrix_sweep_and_exact_prompt(monkeypatch: pytest.Monk
     monkeypatch.setattr(throughput, "calibrate", async_return(cfg))
     monkeypatch.setattr(throughput, "estimate_latency", async_return(2.0))
     monkeypatch.setattr(
-        speculative,
+        throughput,
         "detect_spec_decoding",
         async_return(speculative.SpecDecodeInfo(active=True, method="mtp")),
     )
