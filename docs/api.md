@@ -47,15 +47,30 @@ from tool_eval_bench import run_benchmark  # same function
 | `run_id` | str | Unique run identifier |
 | `config` | dict | Full configuration used |
 | `scores` | dict | Detailed per-category and per-scenario scores |
-| `metadata` | dict | System/backend metadata |
+| `metadata` | dict | Run context: environment, run parameters, backend label, and engine facts |
 | `report_path` | str/None | Path to Markdown report (when `persist=True`) |
 | `weighted_score` | int/None | 0–100 difficulty-weighted score (when `weight_by_difficulty=True`) |
 
-The `metadata` dictionary contains the best-effort backend facts used in
-reports and comparison fingerprints. `slot_count` records the llama.cpp server
-slot count from `/props.total_slots`. It is request concurrency capacity, not a
-physical GPU count. `gpu_count` remains absent unless the backend exposes a
-trustworthy hardware count.
+The `metadata` dictionary is the run context that `tool-eval-bench --json` records,
+with the same keys for the same server. It carries the local environment
+(`tool_version`, `git_sha`, `hostname`, `platform_info`, `python_version`), the run
+parameters (`model`, `backend`, redacted `base_url`, `temperature`, `max_turns`,
+`timeout_seconds`, `seed`, `scenario_selector`, `trials`, `parallel`, `error_rate`,
+`thinking_enabled`, `max_tokens`, and `extra_params` or `system_prompt` when set),
+and the best-effort engine facts used in reports and comparison fingerprints
+(`engine_name`, `engine_version`, `server_model_id`, `server_model_root`,
+`max_model_len`, `quantization`, `slot_count`, `spec_decoding`). Keys whose value
+is unknown are omitted. `slot_count` records the llama.cpp server slot count from
+`/props.total_slots`. It is request concurrency capacity, not a physical GPU count.
+`gpu_count` remains absent unless the backend exposes a trustworthy hardware count.
+If the context cannot be built, the run still completes and `metadata` falls back
+to a smaller dictionary of host facts and the `/v1/models` probe.
+
+Earlier releases always recorded that smaller dictionary for API runs. Its keys map as follows:
+`host` is now `hostname`, `platform` is `platform_info`, `config.model`,
+`config.backend` and `config.base_url` are top-level `model`, `backend` and `base_url`,
+and the `backend_probe` fields are top-level `server_model_id`, `server_model_root`
+and `max_model_len`. `pid` is no longer recorded.
 
 The top-level `final_score`, `rating`, `safety_warnings`, `deployability`,
 and `total_scenarios` fields are promoted from the nested `scores` dict for
@@ -84,7 +99,7 @@ result = asyncio.run(run_benchmark(
     base_url="http://localhost:8000",
 
     # Optional — defaults shown
-    backend="vllm",
+    backend="unknown",    # detected from the server; any other label is kept
     api_key=None,
     scenarios=None,       # explicit list, or use short=True/False
     short=False,          # True = core 15, False = standard 69
@@ -110,6 +125,7 @@ result = asyncio.run(run_benchmark(
     on_scenario_audit=None,  # async (scenario, result, phase): started/completed/reused
     persist=True,         # False = skip SQLite + Markdown
     output_dir=None,      # default: ./runs/
+    probe_engine=True,    # False = no detection or engine metadata requests
 ))
 ```
 
@@ -289,10 +305,23 @@ with RunRepository() as repo:
 
 ## Notes
 
-- The `backend` parameter is a **label** for reports and defaults to `unknown`.
-  Pass a known engine label explicitly, including `halogen` for Halogen Flash.
-  OpenAI-compatible backends use the OpenAI adapter; Gemini can use its native adapter when
-  `wire_format="gemini"` or the URL selects it.
+- The `backend` parameter is a **label** for reports. Left at its `unknown`
+  default, it is detected the way the CLI detects it: a hosted Gemini or Anthropic
+  endpoint is labelled by its wire format without any probe request, and any other
+  server is identified from its `/metrics` namespace, vLLM's `/version`, the identity
+  it declares, or llama.cpp's `/props`. A server that does not identify itself stays
+  `unknown`, and a failed probe never fails the run. Any other value, such as
+  `halogen` behind a proxy that hides `/metrics`, is kept as given and skips detection.
+  Engine metadata is still read for an explicit label, as the CLI does.
+- `probe_engine=False` sends no detection or engine metadata requests, like the CLI's
+  `--no-probe-engine`. A hosted endpoint is still named by its wire format; any other
+  label stays as passed, and `metadata` carries no engine facts.
+- The backend label and engine facts are part of the comparison fingerprint. Runs that
+  recorded `unknown` before detection existed do not share a fingerprint with new runs
+  against the same server.
+- The label does not choose the request format. OpenAI-compatible backends use the
+  OpenAI adapter; Gemini can use its native adapter when `wire_format="gemini"` or the
+  URL selects it.
 - The `base_url` should be the server root **without** `/v1`
   (e.g. `http://localhost:8080`). The adapter appends `/v1/chat/completions`
   automatically. If you include `/v1`, it will be detected and not duplicated.

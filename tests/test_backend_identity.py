@@ -304,6 +304,7 @@ async def test_public_api_defaults_to_unknown_without_changing_adapter(monkeypat
 
     run = AsyncMock(return_value={"scores": {}})
     monkeypatch.setattr(BenchmarkService, "run_benchmark", run)
+    _install(monkeypatch, lambda request: httpx.Response(404))
     await run_benchmark(model="m", base_url="http://test", persist=False, scenarios=[])
     assert run.call_args.kwargs["backend"] == "unknown"
     assert run.call_args.kwargs["wire_format"] is None

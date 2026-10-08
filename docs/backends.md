@@ -64,8 +64,10 @@ wins regardless of scrape order. It uses the existing OpenAI-compatible adapter;
 context size, and slot count are not inferred from these metric names.
 
 When detection is inconclusive or disabled, the CLI records `unknown` rather than
-assuming vLLM. The public Python API also defaults to `backend="unknown"`.
-`--backend`, `TOOL_EVAL_BACKEND`, and provider labels still override CLI detection.
+assuming vLLM. The public Python API runs the same detection when `backend` is left
+at its `unknown` default, and `probe_engine=False` disables it like `--no-probe-engine`.
+`--backend`, `TOOL_EVAL_BACKEND`, and provider labels still override CLI detection, and
+an explicit `backend=` overrides it in the API.
 An unknown label does not change the request format; `--format` selects that
 independently. `openai` identifies the hosted OpenAI API, not every compatible server.
 

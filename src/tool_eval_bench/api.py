@@ -27,6 +27,7 @@ from contextlib import ExitStack, closing
 from typing import Any
 
 from tool_eval_bench import __version__
+from tool_eval_bench.application.run_context import build_run_context, detect_backend
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.domain.scenarios import (
@@ -39,6 +40,7 @@ from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
 from tool_eval_bench.schema import ARGS_SCHEMA  # noqa: F401 — public re-export
 from tool_eval_bench.storage.db import RunRepository
 from tool_eval_bench.storage.reports import MarkdownReporter
+from tool_eval_bench.utils.system_prompt import normalize_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,7 @@ async def run_benchmark(
     decision_judge_model: str | None = None,
     decision_judge_api_key: str | None = None,
     on_scenario_audit: OnScenarioAudit | None = None,
+    probe_engine: bool = True,
 ) -> dict[str, Any]:
     """Run tool-eval-bench programmatically and return structured results.
 
@@ -120,9 +123,14 @@ async def run_benchmark(
         model: Model name/path to evaluate.
         base_url: Server base URL (e.g. ``http://localhost:8000``).
         backend: Backend label — ``vllm``, ``litellm``, ``llamacpp``, ``sglang``,
-            ``gemini``, ``ninfer``, ``tensorfold``, ``halogen``, ``strata``, or
-            ``tabbyapi``. Defaults to ``unknown``; the request format is still
-            detected from the endpoint.
+            ``gemini``, ``openai`` (the hosted OpenAI API), ``anthropic``,
+            ``ninfer``, ``tensorfold``, ``halogen``, ``strata``, or ``tabbyapi``.
+            Any value other than ``unknown`` (the default, any case) or an empty
+            string is kept as given. Otherwise a hosted Gemini or Anthropic
+            endpoint is labelled by its wire format, and any other server is
+            probed the way the CLI probes it; a server that does not identify
+            itself is recorded as ``unknown``. The label only names the server:
+            the request format is detected from the endpoint.
         api_key: Optional API key for authenticated endpoints.
         scenarios: Explicit scenario list.  If *None*, ``short`` controls
             the default set (15 core vs 69 full).
@@ -164,18 +172,51 @@ async def run_benchmark(
             or environment variables in the Python API.
         on_scenario_audit: Async callback receiving (scenario, result, phase).
             Phases are started, completed, and reused. Not called for skipped audits.
+        probe_engine: When *True* (default), identify the server and read its
+            engine metadata (name, version, context window, quantization) into
+            ``metadata``. *False* sends no detection requests, like the CLI's
+            ``--no-probe-engine``.
 
     Returns:
         A versioned JSON-serializable dict containing ``run_id``, ``config``,
-        ``scores``, ``metadata``, and optionally ``report_path``.
+        ``scores``, ``metadata``, and optionally ``report_path``. ``metadata``
+        is the run context the CLI records, so both report the same fields
+        for the same server.
     """
-    # Resolve scenario set
+    # Resolve scenario set, labelled the way the CLI labels its selection.
     if scenarios is not None:
         resolved = scenarios
+        selector = ", ".join(s.id for s in scenarios)
     elif short:
         resolved = list(SCENARIOS)
+        selector = f"short ({len(resolved)})"
     else:
         resolved = list(ALL_SCENARIOS)
+        selector = f"all ({len(resolved)})"
+
+    # Validated before any probe request, so a bad prompt fails without I/O.
+    if system_prompt is not None:
+        system_prompt = normalize_system_prompt(system_prompt)
+
+    backend = await detect_backend(
+        backend, base_url=base_url, api_key=api_key, wire_format=wire_format, probe=probe_engine
+    )
+    run_context = await build_run_context(
+        model=model,
+        backend=backend,
+        base_url=base_url,
+        api_key=api_key,
+        scenario_selector=selector,
+        temperature=temperature,
+        max_turns=max_turns,
+        timeout_seconds=timeout_seconds,
+        seed=seed,
+        parallel=concurrency,
+        error_rate=error_rate,
+        extra_params=extra_params,
+        system_prompt=system_prompt,
+        probe_engine=probe_engine,
+    )
 
     # Build service with optional persistence.  The repository owns a SQLite
     # connection, so it is closed once the run finishes rather than left to
@@ -207,6 +248,7 @@ async def run_benchmark(
             alpha=alpha,
             weight_by_difficulty=weight_by_difficulty,
             extra_params=extra_params,
+            run_context=run_context,
             wire_format=wire_format,
             extra_headers=extra_headers,
             session_header=session_header,
