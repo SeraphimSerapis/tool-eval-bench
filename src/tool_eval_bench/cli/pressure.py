@@ -17,6 +17,7 @@ from typing import Any
 from rich.console import Console
 
 from tool_eval_bench.application.finalization import finalize_completed_run
+from tool_eval_bench.domain.models import RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,7 @@ def run_pressure_sweep(
     persist_plugin_run: Any = None,
     metadata_for_storage: Any = None,
     label: str | None = None,
+    run_context: RunContext | None = None,
 ) -> None:
     """Run scenarios at increasing context pressure and report breaking point."""
     from rich.panel import Panel
@@ -111,6 +113,7 @@ def run_pressure_sweep(
         compute_fill_budget,
         detect_context_size,
         detect_kv_capacity,
+        llamacpp_reported_context,
     )
     from tool_eval_bench.runner.orchestrator import run_all_scenarios
 
@@ -145,7 +148,13 @@ def run_pressure_sweep(
         context_size: int | None = args.context_size
         if context_size is None:
             context_size = asyncio.run(
-                detect_context_size(base_url, model, api_key, client_factory=HTTPMeasurementClient)
+                detect_context_size(
+                    base_url,
+                    model,
+                    api_key,
+                    client_factory=HTTPMeasurementClient,
+                    reported_context=llamacpp_reported_context(run_context),
+                )
             )
         if context_size is None:
             console.print(

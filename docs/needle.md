@@ -80,11 +80,13 @@ stopping at the first dip.
 ## Context window detection
 
 The window comes from `/v1/models` (`max_model_len`, `context_window`, or
-`max_tokens`), capped by the KV cache capacity that vLLM reports on `/metrics`,
-on the same reasoning the [context pressure](context-pressure.md) sweep uses: a
-server may have allocated far less cache than the model architecture allows, and
-a haystack it cannot hold measures the deployment rather than the model. Hybrid
-attention models are exempt from the cap.
+`max_tokens`), TensorFold's `/health`, or llama.cpp's `/props` `n_ctx` recorded
+in the run metadata, in that order. It is capped by the KV cache capacity that
+vLLM reports on `/metrics`, on the same reasoning the
+[context pressure](context-pressure.md) sweep uses: a server may have allocated
+far less cache than the model architecture allows, and a haystack it cannot hold
+measures the deployment rather than the model. Hybrid attention models are
+exempt from the cap.
 
 When detection fails, pass `--context-size` explicitly.
 

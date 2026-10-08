@@ -430,6 +430,102 @@ class TestNeedleRunner:
 
         assert "Could not auto-detect the context window" in console.export_text()
 
+    @pytest.mark.parametrize(
+        ("context_size", "expected"),
+        [pytest.param(None, 81920, id="reported"), pytest.param(8192, 8192, id="explicit-wins")],
+    )
+    def test_llamacpp_reported_window_sizes_the_haystack(
+        self, monkeypatch: pytest.MonkeyPatch, context_size: int | None, expected: int
+    ) -> None:
+        import httpx
+        from rich.console import Console
+
+        from tool_eval_bench.adapters import measurement
+        from tool_eval_bench.cli import plugin_runners
+        from tool_eval_bench.domain.models import RunContext
+
+        class Client:
+            """llama-server's listing names its window only inside ``meta``."""
+
+            async def __aenter__(self) -> Client:
+                return self
+
+            async def __aexit__(self, *exc: object) -> bool:
+                return False
+
+            async def models(self) -> httpx.Response:
+                body = {"data": [{"id": "gemma4", "meta": {"n_ctx": 81920}}]}
+                return httpx.Response(200, json=body, request=httpx.Request("GET", "http://t"))
+
+            async def metrics(self, *, metrics_url: str | None = None) -> httpx.Response:
+                return httpx.Response(404)
+
+        monkeypatch.setattr(measurement, "HTTPMeasurementClient", lambda **kw: Client())
+        run_context = RunContext(
+            tool_version="test",
+            git_sha=None,
+            hostname="host",
+            platform_info="linux",
+            python_version="3.13",
+            model="gemma4",
+            backend="llamacpp",
+            base_url="http://t",
+            engine_name="llama.cpp",
+            max_model_len=81920,
+        )
+
+        resolved = plugin_runners._resolve_needle_context_size(
+            Console(record=True),
+            "http://t",
+            "gemma4",
+            None,
+            _needle_args(context_size=context_size),
+            run_context=run_context,
+        )
+
+        assert resolved == expected
+
+    def test_needle_run_hands_its_run_context_to_detection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from rich.console import Console
+
+        from tool_eval_bench.cli import plugin_runners
+        from tool_eval_bench.domain.models import RunContext
+        from tool_eval_bench.runner import context_pressure
+
+        seen: list[Any] = []
+
+        async def no_context(*a: Any, **k: Any) -> None:
+            seen.append(k.get("reported_context"))
+            return None
+
+        monkeypatch.setattr(context_pressure, "detect_context_size", no_context)
+        run_context = RunContext(
+            tool_version="test",
+            git_sha=None,
+            hostname="host",
+            platform_info="linux",
+            python_version="3.13",
+            model="m",
+            backend="llamacpp",
+            base_url="url",
+            engine_name="llama.cpp",
+            max_model_len=4096,
+        )
+
+        plugin_runners._run_needle_benchmark(
+            Console(record=True),
+            "m",
+            "Display",
+            "url",
+            None,
+            _needle_args(context_size=None),
+            run_context=run_context,
+        )
+
+        assert seen == [4096]
+
 
 # ---------------------------------------------------------------------------
 # Flat invocation

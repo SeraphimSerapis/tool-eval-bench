@@ -166,7 +166,7 @@ These run alongside the tool-call scenarios, or on their own with `--skip-tool-e
 | `--spec-live-interval S` | Seconds between scrapes (default: 1.0) |
 | `--context-pressure R` | Fill the context to ratio R (0–1) before each scenario |
 | `--context-pressure-sweep A-B` | Sweep pressure from A to B in `--sweep-steps` levels (default: 5) |
-| `--context-size N` | Override the detected context window |
+| `--context-size N` | Override the detected context window (`/v1/models`, TensorFold `/health`, or llama.cpp `/props`) |
 
 `--temperature` applies to spec-bench requests as well; greedy is the default and the report
 records the value, since acceptance falls as sampling temperature rises.

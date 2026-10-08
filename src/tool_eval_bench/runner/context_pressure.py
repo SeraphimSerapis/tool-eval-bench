@@ -15,9 +15,12 @@ Usage::
 ``client_factory`` is supplied by the application composition layer.
 
 Auto-detection strategy for context size:
-  1. ``/v1/models`` → ``max_model_len`` (vLLM)
-  2. ``/v1/models`` → ``context_window`` or ``max_tokens`` (LiteLLM / others)
-  3. Fall back to ``--context-size`` CLI override (required if auto-detect fails)
+  1. ``--context-size`` CLI override, when given
+  2. ``/v1/models`` → ``max_model_len`` (vLLM)
+  3. ``/v1/models`` → ``context_window`` or ``max_tokens`` (LiteLLM / others)
+  4. TensorFold ``/health`` → ``context_length``
+  5. llama.cpp ``/props`` → ``default_generation_settings.n_ctx``, as already
+     recorded in the run context (see :func:`llamacpp_reported_context`)
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ from tool_eval_bench.domain.filler import (
     build_filler_text,
 )
 from tool_eval_bench.domain.measurement import MeasurementClientFactory
-from tool_eval_bench.domain.models import ChatMessage
+from tool_eval_bench.domain.models import ChatMessage, RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -230,12 +233,34 @@ async def detect_kv_capacity(
     )
 
 
+def llamacpp_reported_context(run_context: RunContext | None) -> int | None:
+    """Return the context window llama-server reported, if the run context holds one.
+
+    The run-context probe records ``/props`` ``default_generation_settings.n_ctx``
+    as ``max_model_len`` for llama.cpp. Upstream that value is the per-request
+    limit, so it is taken as-is, never multiplied or divided by ``total_slots``.
+    Older builds set it to ``n_ctx / n_parallel``; current builds report
+    ``n_ctx_slot()``, the sequence context capped by ``--kv-unified-per-slot``
+    and the model's training context. Under ``--kv-unified`` every slot reports
+    the whole shared pool, which one request can fill only while it runs alone.
+
+    Only llama.cpp qualifies. vLLM and TensorFold windows already come from
+    :func:`detect_context_size`'s own probes, and the semantics of other servers'
+    llama-server-shaped ``/props`` have not been verified.
+    """
+    if run_context is None or run_context.engine_name != "llama.cpp":
+        return None
+    window = run_context.max_model_len
+    return window if type(window) is int and window > 0 else None
+
+
 async def detect_context_size(
     base_url: str,
     model: str,
     api_key: str | None = None,
     *,
     client_factory: MeasurementClientFactory,
+    reported_context: int | None = None,
 ) -> int | None:
     """Auto-detect context window size from /v1/models.
 
@@ -244,8 +269,31 @@ async def detect_context_size(
       - context_window (LiteLLM)
       - max_tokens (generic)
 
+    ``reported_context`` is a window the caller already read from the server,
+    such as :func:`llamacpp_reported_context`. It applies only when the model
+    listing declares none, so the listing keeps precedence.
+
     Returns the context size in tokens, or None if detection fails.
     """
+    detected = await _detect_from_model_listing(
+        base_url, model, api_key, client_factory=client_factory
+    )
+    if detected is None and reported_context is not None and reported_context > 0:
+        logger.info(
+            "Detected context size: %d tokens (via server-reported run metadata)",
+            reported_context,
+        )
+        return reported_context
+    return detected
+
+
+async def _detect_from_model_listing(
+    base_url: str,
+    model: str,
+    api_key: str | None,
+    *,
+    client_factory: MeasurementClientFactory,
+) -> int | None:
     try:
         async with client_factory(base_url=base_url, api_key=api_key, timeout=10.0) as client:
             resp = await client.models()
@@ -619,6 +667,7 @@ async def prepare_context_pressure(
     metrics_url: str | None = None,
     *,
     client_factory: MeasurementClientFactory,
+    reported_context: int | None = None,
 ) -> ContextPressureConfig:
     """Detect context size and build the pressure config.
 
@@ -628,7 +677,8 @@ async def prepare_context_pressure(
 
     Detection order:
       1. ``--context-size`` override (used as-is, no KV cap applied)
-      2. ``max_model_len`` from ``/v1/models`` — capped by KV capacity
+      2. ``max_model_len`` from ``/v1/models``, then ``reported_context``
+         (see :func:`detect_context_size`), capped by KV capacity
          from ``/metrics`` (vLLM) if available
 
     Returns a fully populated ContextPressureConfig. If auto-detection
@@ -639,12 +689,16 @@ async def prepare_context_pressure(
         logger.info("Using user-provided context size: %d", ctx_size)
     else:
         detected_context = await detect_context_size(
-            base_url, model, api_key, client_factory=client_factory
+            base_url,
+            model,
+            api_key,
+            client_factory=client_factory,
+            reported_context=reported_context,
         )
         if detected_context is None:
             raise ValueError(
-                "Could not auto-detect context window size from /v1/models. "
-                "Please provide --context-size explicitly "
+                "Could not auto-detect context window size from /v1/models "
+                "or the engine probe. Please provide --context-size explicitly "
                 "(e.g. --context-size 32768)."
             )
 

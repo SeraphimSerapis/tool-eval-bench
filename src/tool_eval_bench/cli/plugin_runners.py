@@ -676,18 +676,29 @@ def _resolve_needle_context_size(
     model: str,
     api_key: str | None,
     args: argparse.Namespace,
+    run_context: Any | None = None,
 ) -> int | None:
     """Return the effective context window, or ``None`` when it cannot be found."""
     import asyncio
 
     from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
-    from tool_eval_bench.runner.context_pressure import detect_context_size, detect_kv_capacity
+    from tool_eval_bench.runner.context_pressure import (
+        detect_context_size,
+        detect_kv_capacity,
+        llamacpp_reported_context,
+    )
 
     if args.context_size:
         return int(args.context_size)
 
     context_size = asyncio.run(
-        detect_context_size(base_url, model, api_key, client_factory=HTTPMeasurementClient)
+        detect_context_size(
+            base_url,
+            model,
+            api_key,
+            client_factory=HTTPMeasurementClient,
+            reported_context=llamacpp_reported_context(run_context),
+        )
     )
     if context_size is None:
         console.print(
@@ -738,7 +749,9 @@ def _run_needle_benchmark(
 
     seed = getattr(args, "seed", None)
 
-    context_size = _resolve_needle_context_size(console, base_url, model, api_key, args)
+    context_size = _resolve_needle_context_size(
+        console, base_url, model, api_key, args, run_context=run_context
+    )
     if context_size is None:
         return
 

@@ -116,7 +116,10 @@ The metadata probe reads llama-server's `/props`, sending `--api-key` when one i
 given. It records `build_info` as the engine version, `total_slots` as the slot
 count, and `default_generation_settings.n_ctx` as the context window. That
 `n_ctx` is the per-slot context, so it is the longest single request the server
-accepts, the same limit vLLM reports as `max_model_len`.
+accepts, the same limit vLLM reports as `max_model_len`. Context pressure, the
+pressure sweep, and the needle benchmark size themselves from it, so llama.cpp
+needs `--context-size` only when the probe is off (`--no-probe-engine`) or the
+server reports no usable `n_ctx`.
 
 Quantization still comes from the model name when the name identifies a specific
 type, such as `Q8_0` or `UD-Q4_K_XL`. The GGUF file type cannot make that
