@@ -351,12 +351,14 @@ def test_regular_perf_keeps_only_successful_samples(monkeypatch: pytest.MonkeyPa
         (None, ("llamacpp", "llama.cpp"), False, True),
         (None, ("sglang", "SGLang"), False, True),
         (None, ("halogen", "Halogen Flash"), False, True),
+        (None, ("tabbyapi", "TabbyAPI"), False, True),
         # An inconclusive or disabled probe keeps a neutral label.
         (None, None, False, True),
         (None, None, True, False),
         # User pinned --backend explicitly: detection must not run at all.
         ("vllm", None, False, False),
         ("halogen", None, False, False),
+        ("tabbyapi", None, False, False),
         ("unknown", None, False, False),
     ],
 )

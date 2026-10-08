@@ -55,7 +55,7 @@ async def test_identity_and_authenticated_metadata(monkeypatch, base_url, backen
     assert all(not request.url.path.startswith("/v1/props") for request in requests)
 
 
-@pytest.mark.parametrize("props_status", [403, 404])
+@pytest.mark.parametrize("props_status", [403, 404, 503])
 async def test_health_identity_without_props(monkeypatch, props_status):
     def respond(request):
         if request.url.path == "/health":
@@ -66,6 +66,77 @@ async def test_health_identity_without_props(monkeypatch, props_status):
     assert await metadata.probe_backend_hint("http://test") == ("strata", "Strata")
     info = await metadata._probe_engine("http://test", None, "strata")
     assert info == {"engine_name": "Strata", "max_model_len": 32768}
+
+
+# Strata sets build_info only when its version is known (serve/server.py _props).
+UNVERSIONED_PROPS = {key: value for key, value in PROPS.items() if key != "build_info"}
+
+
+@pytest.mark.parametrize("backend", ["strata", "unknown"])
+async def test_health_service_wins_over_unversioned_llama_props(monkeypatch, backend):
+    def respond(request):
+        body = {"/v1/models": MODELS, "/props": UNVERSIONED_PROPS, "/health": HEALTH}.get(
+            request.url.path
+        )
+        return httpx.Response(200, json=body) if body else httpx.Response(404)
+
+    install_transport(monkeypatch, respond)
+    assert await metadata.probe_backend_hint("http://test") == ("strata", "Strata")
+    info = await metadata._probe_engine("http://test", None, backend)
+    assert info["engine_name"] == "Strata"
+    assert "engine_version" not in info
+    assert info["max_model_len"] == 32768
+    assert info["slot_count"] == 1
+
+
+def _strata_with_service(monkeypatch, service):
+    health = {**HEALTH, "service": service}
+
+    def respond(request):
+        body = {"/props": UNVERSIONED_PROPS, "/health": health}.get(request.url.path)
+        return httpx.Response(200, json=body) if body else httpx.Response(404)
+
+    install_transport(monkeypatch, respond)
+
+
+@pytest.mark.parametrize("service", ["strata", "Strata", "STRATA", " strata "])
+async def test_health_service_ignores_case(monkeypatch, service):
+    _strata_with_service(monkeypatch, service)
+    assert await metadata.probe_backend_hint("http://test") == ("strata", "Strata")
+
+
+@pytest.mark.parametrize("service", ["stratagem", "strata-proxy", "", None, 1, ["strata"]])
+async def test_other_services_leave_the_llama_props_fallback(monkeypatch, service):
+    _strata_with_service(monkeypatch, service)
+    assert await metadata.probe_backend_hint("http://test") == ("llamacpp", "llama.cpp")
+
+
+@pytest.mark.parametrize("path", ["/v1/models", "/health", "/.well-known/serviceinfo"])
+async def test_build_info_names_strata_only_on_props(monkeypatch, path):
+    def respond(request):
+        if request.url.path == path:
+            return httpx.Response(200, json={"build_info": "Strata 0.1.40.3", "data": []})
+        return httpx.Response(404)
+
+    install_transport(monkeypatch, respond)
+    assert await metadata.probe_backend_hint("http://test") is None
+
+
+async def test_health_supplies_the_window_when_props_lacks_n_ctx(monkeypatch):
+    props = {"build_info": "Strata\t0.2", "default_generation_settings": {}, "total_slots": 2}
+
+    def respond(request):
+        body = {"/props": props, "/health": {**HEALTH, "max_context": 8192}}.get(request.url.path)
+        return httpx.Response(200, json=body) if body else httpx.Response(404)
+
+    install_transport(monkeypatch, respond)
+    info = await metadata._probe_engine("http://test", None, "strata")
+    assert info == {
+        "engine_name": "Strata",
+        "engine_version": "0.2",
+        "max_model_len": 8192,
+        "slot_count": 2,
+    }
 
 
 @pytest.mark.parametrize("window", [True, 0, -1, "32768", None])
@@ -96,6 +167,11 @@ async def test_invalid_capacity_is_not_inferred(monkeypatch, window):
         {"data": [{"id": "strata", "owned_by": "user"}]},
         {"build_info": None},
         [],
+        # Strata's markers are endpoint fields, not something any body can claim.
+        {"service": "strata"},
+        {"build_info": "Strata 0.1.40.3"},
+        # Upstream Strata sends no owned_by, so the name means nothing there.
+        {"data": [{"id": "m", "owned_by": "strata"}]},
     ],
 )
 def test_unrelated_responses_do_not_identify_strata(body):

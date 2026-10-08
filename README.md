@@ -2,7 +2,7 @@
 
 A tool-calling quality benchmark for LLMs in agentic workflows, built for
 self-hosted serving stacks: **vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**, **Strata**,
-**NInfer**, **TensorFold**, and hosted **Gemini** and **Anthropic**.
+**TabbyAPI**, **NInfer**, **TensorFold**, and hosted **Gemini** and **Anthropic**.
 
 Each scenario observes one assistant conversation with mock tools. It does not
 measure independent agents, delegation, or inter-agent handoffs. Localization
@@ -61,8 +61,11 @@ See [TensorFold compatibility](docs/backends.md#tensorfold) for deployment
 metadata limits, structured-output setup, and speculative metrics.
 
 Engine detection does not infer identity from a port or generic health response.
-llama.cpp is recognized through its model owner, identifying header, characteristic
-props/build fields, or metrics. Halogen Flash is recognized through its `halogen:`
+A server's declared identity wins over compatibility shapes: model owner, `Server`
+header, `/health` service, `/.well-known/serviceinfo`, or `/props` build name. That is
+how Strata and TabbyAPI are told apart from the llama.cpp-style `/props` they both
+serve. llama.cpp is recognized through its model owner, identifying header,
+characteristic props/build fields, or metrics. Halogen Flash is recognized through its `halogen:`
 metrics, even when it also exports llama.cpp-compatible names. Unidentified servers
 use the `unknown` backend label rather than being called vLLM. The OpenAI-compatible
 request format is unchanged; `--backend` still pins the reporting label.

@@ -65,19 +65,95 @@ async def test_an_unreachable_endpoint_stops_the_engine_probes_too(client) -> No
     assert len(dead.urls) == 1
 
 
+LADDER = {"/metrics", "/version", "/v1/models", "/health", "/.well-known/serviceinfo", "/props"}
+
+
+def _paths(client: _CountingClient) -> list[str]:
+    return [url.removeprefix("http://localhost:8000") for url in client.urls]
+
+
 @pytest.mark.asyncio
 async def test_a_responding_endpoint_still_walks_every_rung(client) -> None:
-    """A 404 says something about the server; it must not end the sequence."""
+    """A 404 says something about the server; it must not end the sequence.
+
+    Each endpoint is asked once: later rungs reuse answers earlier ones fetched.
+    """
     answering = client()
 
     assert await metadata.probe_backend_hint("http://localhost:8000") is None
-    assert [url.rsplit("/", 1)[-1] for url in answering.urls] == [
-        "metrics",
-        "version",
-        "models",
-        "props",
-        "health",
-    ]
+    paths = _paths(answering)
+    assert len(paths) == len(set(paths)), f"fetched an endpoint twice: {paths}"
+    assert set(paths) == LADDER
+
+
+@pytest.mark.asyncio
+async def test_unlabelled_engine_probe_asks_each_endpoint_once(client) -> None:
+    answering = client()
+
+    assert await metadata._probe_engine("http://localhost:8000", None, "unknown") == {}
+    paths = _paths(answering)
+    assert len(paths) == len(set(paths)), f"fetched an endpoint twice: {paths}"
+    assert set(paths) == LADDER - {"/metrics"}
+
+
+@pytest.mark.asyncio
+async def test_separate_probe_calls_do_not_share_answers(client) -> None:
+    answering = client()
+
+    await metadata.probe_backend_hint("http://localhost:8000")
+    await metadata.probe_backend_hint("http://localhost:8000")
+
+    paths = _paths(answering)
+    assert sorted(paths) == sorted([*LADDER, *LADDER])
+
+
+class _KeyedClient:
+    """Refuses requests without the key, and fails to connect on /dead."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None]] = []
+
+    async def get(self, url: str, headers: dict[str, str] | None = None) -> httpx.Response:
+        auth = (headers or {}).get("Authorization")
+        self.calls.append((url, auth))
+        if url.endswith("/dead"):
+            raise httpx.ConnectError("connection refused")
+        status = 200 if auth == "Bearer k" else 401
+        return httpx.Response(status, request=httpx.Request("GET", url))
+
+
+@pytest.mark.asyncio
+async def test_a_keyless_refusal_does_not_answer_a_keyed_request() -> None:
+    keyed = _KeyedClient()
+    session = metadata._ProbeSession(keyed)
+    url = "http://test/props"
+
+    refused = await metadata._probe_get(session, url, headers={}, what="t")
+    accepted = await metadata._probe_get(
+        session, url, headers={"Authorization": "Bearer k"}, what="t"
+    )
+
+    assert refused is not None and refused.status_code == 401
+    assert accepted is not None and accepted.status_code == 200
+    assert keyed.calls == [(url, None), (url, "Bearer k")]
+
+
+@pytest.mark.asyncio
+async def test_an_answer_survives_a_later_connect_failure() -> None:
+    keyed = _KeyedClient()
+    session = metadata._ProbeSession(keyed)
+    headers = {"Authorization": "Bearer k"}
+
+    first = await metadata._probe_get(session, "http://test/props", headers=headers, what="t")
+    assert await metadata._probe_get(session, "http://test/dead", headers=headers, what="t") is None
+    assert session.unreachable
+
+    again = await metadata._probe_get(session, "http://test/props", headers=headers, what="t")
+    assert again is first
+    assert (
+        await metadata._probe_get(session, "http://test/other", headers=headers, what="t") is None
+    )
+    assert [url for url, _ in keyed.calls] == ["http://test/props", "http://test/dead"]
 
 
 @pytest.mark.asyncio
