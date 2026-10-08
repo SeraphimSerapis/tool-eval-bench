@@ -36,6 +36,7 @@ from tool_eval_bench.adapters.wire_format import resolve_wire_format as _resolve
 from tool_eval_bench.application.decision_audit import decision_judge_config
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.cli import model_probe as _model_probe
+from tool_eval_bench.cli.command_registry import PLUGIN_FLAG_STEMS
 from tool_eval_bench.cli.compare_report import (
     run_compare_report_command as _run_compare_report_command,
 )
@@ -524,9 +525,6 @@ def _check_endpoint_ready(
         )
 
 
-_PLUGIN_BENCHMARKS = ("gsm8k", "mmlu", "ifeval", "needle", "decision")
-
-
 def _decision_judge_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     base_url = getattr(args, "decision_judge_base_url", None)
     if base_url is None:
@@ -589,7 +587,7 @@ def _sends_system_prompt(args: argparse.Namespace) -> bool:
     if args.spec_live or args.decision_live or args.perf_only:
         return False
     other_benchmarks = args.perf or any(
-        getattr(args, name) or getattr(args, f"{name}_only") for name in _PLUGIN_BENCHMARKS
+        getattr(args, stem) or getattr(args, f"{stem}_only") for stem in PLUGIN_FLAG_STEMS.values()
     )
     if args.spec_bench and (args.skip_tool_eval or not other_benchmarks):
         return False
@@ -597,7 +595,7 @@ def _sends_system_prompt(args: argparse.Namespace) -> bool:
         return True
     if args.skip_tool_eval:
         return False
-    return not any(getattr(args, f"{name}_only") for name in _PLUGIN_BENCHMARKS)
+    return not any(getattr(args, f"{stem}_only") for stem in PLUGIN_FLAG_STEMS.values())
 
 
 def _drop_unused_system_prompt(args: argparse.Namespace, console: Console) -> None:
@@ -729,8 +727,8 @@ def _run_spec_bench_mode(target: _Target) -> bool:
             and not args.ifeval_only
             and not args.needle
             and not args.needle_only
-            and not args.decision
-            and not args.decision_only
+            and not args.decision_bench
+            and not args.decision_bench_only
         ):
             return True
     return False
@@ -1044,7 +1042,7 @@ def main() -> None:
 
     # A decision model has no chat endpoint to preflight or warm; the plugin
     # reports an unreachable or unsupported endpoint itself.
-    if not args.decision_only:
+    if not args.decision_bench_only:
         _check_endpoint_ready(
             args,
             console,
@@ -1251,14 +1249,14 @@ def main() -> None:
             or args.ifeval_only
             or args.needle
             or args.needle_only
-            or args.decision
-            or args.decision_only
+            or args.decision_bench
+            or args.decision_bench_only
         )
         if not any_benchmark:
             console.print(
                 "\n  [yellow]⚠ --skip-tool-eval has no effect without "
                 "--perf, --perf-only, --spec-bench, --gsm8k, --mmlu, --ifeval, "
-                "--needle, or --decision.[/]\n"
+                "--needle, or --decision-bench.[/]\n"
             )
         return
 

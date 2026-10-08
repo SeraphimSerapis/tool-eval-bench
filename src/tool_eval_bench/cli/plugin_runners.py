@@ -9,6 +9,7 @@ from typing import Any
 
 from rich.console import Console
 
+from tool_eval_bench.cli.command_registry import PLUGIN_FLAG_STEMS
 from tool_eval_bench.cli.helpers import metadata_for_storage as _metadata_for_storage
 from tool_eval_bench.cli.helpers import persist_plugin_run as _persist_plugin_run
 from tool_eval_bench.cli.plugin_datasets import load_dataset_with_progress
@@ -906,7 +907,7 @@ def _print_needle_grid(console: Console, result: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Decision models (--decision / --decision-only)
+# Decision models (--decision-bench / --decision-bench-only)
 # ---------------------------------------------------------------------------
 
 
@@ -1139,8 +1140,8 @@ def run_selected_plugins(
     and rendering.  This function owns the common selection/invocation/stop
     lifecycle so combined and plugin-only modes cannot drift apart.
     """
-    for name in ("gsm8k", "mmlu", "ifeval", "needle", "decision"):
-        selected = getattr(args, name) or getattr(args, f"{name}_only")
+    for name, stem in PLUGIN_FLAG_STEMS.items():
+        selected = getattr(args, stem) or getattr(args, f"{stem}_only")
         if not selected:
             continue
         runners[name](
@@ -1154,6 +1155,6 @@ def run_selected_plugins(
             output_dir=output_dir,
             run_context=run_context,
         )
-        if getattr(args, f"{name}_only"):
+        if getattr(args, f"{stem}_only"):
             return True
     return False

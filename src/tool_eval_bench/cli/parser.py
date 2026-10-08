@@ -15,6 +15,7 @@ from tool_eval_bench.cli.command_registry import (
     COMMAND_REGISTRY,
     COMMAND_SPECS,
     KNOWN_COMMANDS,
+    PLUGIN_FLAG_STEMS,
 )
 
 
@@ -121,7 +122,7 @@ def make_parser() -> argparse.ArgumentParser:
 def _plugin_argv(argv: list[str]) -> list[str]:
     parser = _command_help("plugin", include_legacy_options=False)
     args, remainder = parser.parse_known_args(argv)
-    prefix = f"--{args.benchmark}"
+    prefix = "--" + PLUGIN_FLAG_STEMS[args.benchmark].replace("_", "-")
     translated = [f"{prefix}-only"]
     if args.shots is not None:
         if args.benchmark == "ifeval":

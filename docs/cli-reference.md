@@ -223,7 +223,7 @@ tool-eval-bench --ifeval-only --ifeval-limit 20
 tool-eval-bench --needle-only --needle-lengths 4 --needle-depths 5
 
 # Decision models — llama.cpp /v1/systemone (no dataset download, no chat preflight)
-tool-eval-bench --decision-only --base-url http://host:8084
+tool-eval-bench --decision-bench-only --base-url http://host:8084
 
 # Live canary monitor for a decision model (runs until Ctrl+C)
 tool-eval-bench decision-live --base-url http://host:8084
@@ -245,7 +245,7 @@ downloads. The needle benchmark generates its own cases and downloads nothing.
 | `--mmlu-only` | MMLU multitask knowledge |
 | `--ifeval-only` | IFEval instruction following |
 | `--needle-only` | Needle-in-a-haystack retrieval |
-| `--decision-only` | Decision-model scoring on `/v1/systemone` |
+| `--decision-bench-only` | Decision-model scoring on `/v1/systemone` |
 | `--gsm8k-limit N` | Limit questions (default: 200) |
 | `--mmlu-limit N` | Limit questions (default: 500) |
 | `--ifeval-limit N` | Limit prompts (default: all 541) |

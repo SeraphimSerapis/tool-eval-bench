@@ -131,6 +131,40 @@ def test_removed_noop_flags_are_rejected() -> None:
         parse_cli_args(_make_parser, ["--perf-legacy-only"])
 
 
+@pytest.mark.parametrize(
+    ("argv", "bench", "only"),
+    [
+        (["--decision-bench"], True, False),
+        (["--decision-bench-only"], False, True),
+        (["bench", "--decision-bench"], True, False),
+    ],
+)
+def test_decision_bench_flags_parse(argv: list[str], bench: bool, only: bool) -> None:
+    _, args = parse_cli_args(_make_parser, argv)
+    assert args.decision_bench is bench
+    assert args.decision_bench_only is only
+    assert not hasattr(args, "decision")
+    assert not hasattr(args, "decision_only")
+
+
+@pytest.mark.parametrize(
+    ("flag", "error"),
+    [
+        # argparse prefix matching would accept ``--decision`` if it named one
+        # option; it must stay ambiguous rather than alias ``--decision-bench``.
+        ("--decision", "ambiguous option: --decision could match"),
+        ("--decision-only", "unrecognized arguments: --decision-only"),
+    ],
+)
+def test_pre_rename_decision_flags_are_rejected(
+    capsys: pytest.CaptureFixture[str], flag: str, error: str
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        parse_cli_args(_make_parser, [flag])
+    assert exc_info.value.code == 2
+    assert error in capsys.readouterr().err
+
+
 def test_schema_v7_describes_every_command() -> None:
     schema = get_schema()
     assert schema["schema_version"] == "7"
@@ -217,8 +251,9 @@ def test_subprocess_help_is_command_specific(command: str, included: str, exclud
     # Focused help must stay well short of the flat parser's (270+ lines);
     # ``bench`` carries every connection and sampling flag and sits nearest.
     # The shared run-control group's --system-prompt/--system-prompt-file pair
-    # added six lines to the usage and options blocks (196 -> 202), and the
-    # --decision/--decision-only pair added four more (202 -> 206).
+    # added six lines to the usage and options blocks (196 -> 202), the decision
+    # benchmark pair added four more (202 -> 206), and its longer
+    # --decision-bench/--decision-bench-only names wrap onto two more (206 -> 208).
     assert len(completed.stdout.splitlines()) < 210
 
 

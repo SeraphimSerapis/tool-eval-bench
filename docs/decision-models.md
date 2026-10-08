@@ -9,15 +9,15 @@ This benchmark measures how accurate those probabilities are and whether the
 model can be trusted when it says it is confident.
 
 ```bash
-tool-eval-bench --decision-only --base-url http://host:8084   # just this benchmark
-tool-eval-bench --decision                                    # after the tool-call scenarios
-tool-eval-bench plugin decision --base-url http://host:8084   # the subcommand spelling
+tool-eval-bench --decision-bench-only --base-url http://host:8084   # just this benchmark
+tool-eval-bench --decision-bench                                    # after the tool-call scenarios
+tool-eval-bench plugin decision --base-url http://host:8084         # the subcommand spelling
 ```
 
 The server must expose `/v1/systemone`. A server that answers 404, 405, or 501
 there aborts the run with a message instead of scoring every item as a miss.
-`--decision-only` also skips the chat preflight and warmup, because a decision
-model may have no working chat endpoint.
+`--decision-bench-only` also skips the chat preflight and warmup, because a
+decision model may have no working chat endpoint.
 
 ## Answer audits
 

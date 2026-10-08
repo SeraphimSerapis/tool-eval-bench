@@ -672,18 +672,18 @@ class TestRegistration:
 
     def test_flat_flags_default_off(self) -> None:
         args = _parse(["--short"])
-        assert args.decision is False and args.decision_only is False
+        assert args.decision_bench is False and args.decision_bench_only is False
 
-    def test_plugin_subcommand_selects_decision_only(self) -> None:
+    def test_plugin_subcommand_selects_decision_bench_only(self) -> None:
         args = _parse(["plugin", "decision"])
-        assert args.decision_only is True
+        assert args.decision_bench_only is True
 
     @pytest.mark.parametrize("flag", ["--shots", "--limit"])
     def test_flags_the_plugin_does_not_have_are_rejected(self, flag: str) -> None:
         with pytest.raises(SystemExit):
             _parse(["plugin", "decision", flag, "3"])
 
-    def test_decision_only_stops_before_tool_scenarios_and_runs_after_needle(self) -> None:
+    def test_decision_bench_only_stops_before_tool_scenarios_and_runs_after_needle(self) -> None:
         from rich.console import Console
 
         from tool_eval_bench.cli.plugin_runners import run_selected_plugins
@@ -699,7 +699,7 @@ class TestRegistration:
             "d",
             "u",
             None,
-            _parse(["--needle", "--decision-only"]),
+            _parse(["--needle", "--decision-bench-only"]),
             runners={n: runner(n) for n in ("gsm8k", "mmlu", "ifeval", "needle", "decision")},
             extra_params=None,
             output_dir=None,
