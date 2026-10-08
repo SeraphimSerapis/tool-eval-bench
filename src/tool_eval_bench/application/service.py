@@ -332,9 +332,12 @@ class BenchmarkService:
             for pr in resume_prior_results:
                 if pr.get("scenario_id") not in existing_ids:
                     merged_results.append(ScenarioResult.from_dict(pr))
-            scenario_by_id = {
-                s.id: s for s in [*(resume_scenarios or []), *ALL_SCENARIOS, *resolved]
-            }
+            # The registry is only a fallback for callers that omit
+            # resume_scenarios. It ranks below the run's own definitions and
+            # gets the run's variants, or preserved outcomes would be recorded
+            # as unvarianted and move the run's fingerprint.
+            registry = apply_variants(ALL_SCENARIOS, variant_seed)
+            scenario_by_id = {s.id: s for s in [*registry, *(resume_scenarios or []), *resolved]}
             missing_ids = {r.scenario_id for r in merged_results} - scenario_by_id.keys()
             if missing_ids:
                 raise ValueError(
@@ -344,7 +347,7 @@ class BenchmarkService:
             ordered_ids = list(
                 dict.fromkeys(
                     s.id
-                    for s in [*(resume_scenarios or []), *ALL_SCENARIOS, *resolved]
+                    for s in [*(resume_scenarios or []), *registry, *resolved]
                     if s.id in result_by_id
                 )
             )
