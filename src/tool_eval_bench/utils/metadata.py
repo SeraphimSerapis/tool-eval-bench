@@ -656,18 +656,28 @@ async def _probe_strata(
 async def _probe_tabbyapi(
     base_url: str, api_key: str | None, *, session: _ProbeSession
 ) -> dict[str, Any]:
-    """Read TabbyAPI's capacity from ``/props``.
+    """Read TabbyAPI's loaded model from ``/v1/model`` and its capacity from ``/props``.
+
+    ``/v1/models`` lists the whole model directory for admin access, which every
+    request gets when authentication is disabled, and puts dummy aliases such as
+    ``gpt-3.5-turbo`` first when those are enabled. Its first entry is therefore
+    not necessarily the loaded model, so the loaded card's ``id`` replaces it.
 
     TabbyAPI reports neither its own version nor its model backend's, so
     ``engine_version`` stays unknown rather than borrowed from elsewhere.
     """
     result: dict[str, Any] = {"engine_name": "TabbyAPI"}
-    props = await _probe_json(
-        session,
-        f"{_root_url(base_url)}/props",
-        headers=_auth_headers(api_key),
-        what="TabbyAPI /props",
+    root = _root_url(base_url)
+    headers = _auth_headers(api_key)
+    loaded = await _probe_json(
+        session, f"{root}/v1/model", headers=headers, what="TabbyAPI /v1/model"
     )
+    model_id = loaded.get("id") if loaded else None
+    if isinstance(model_id, str) and model_id.strip():
+        result["server_model_id"] = model_id
+        # Any root came from the same list entry the loaded ID replaces.
+        result["server_model_root"] = None
+    props = await _probe_json(session, f"{root}/props", headers=headers, what="TabbyAPI /props")
     if props:
         result.update(_props_capacity(props))
     return result

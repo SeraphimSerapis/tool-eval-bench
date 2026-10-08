@@ -42,9 +42,18 @@ SERVICEINFO = {
     "api": {"openai": {"name": "OpenAI API", "relative_url": "/v1", "version": 1}},
 }
 HEALTH = {"status": "healthy", "issues": []}
+# /v1/model returns the loaded model's full card; the list entries carry no parameters.
+LOADED = {
+    "id": MODEL_ID,
+    "object": "model",
+    "owned_by": "tabbyAPI",
+    "parameters": {"max_seq_len": 16384, "max_batch_size": 4, "cache_mode": "FP16"},
+}
 
 
-def install_tabby(monkeypatch, *, auth: bool, models=MODELS, serviceinfo=None, props=None):
+def install_tabby(
+    monkeypatch, *, auth: bool, models=MODELS, serviceinfo=None, props=None, loaded=None
+):
     """Serve a TabbyAPI-shaped endpoint and return the list of requests it saw."""
     requests: list[httpx.Request] = []
     real_client = httpx.AsyncClient
@@ -58,13 +67,15 @@ def install_tabby(monkeypatch, *, auth: bool, models=MODELS, serviceinfo=None, p
             if serviceinfo is not None:
                 return serviceinfo()
             return httpx.Response(200, json=SERVICEINFO, headers={"server": "uvicorn"})
-        protected = {"/v1/models": models, "/props": PROPS}
+        protected = {"/v1/models": models, "/v1/model": LOADED, "/props": PROPS}
         if path not in protected:
             return httpx.Response(404, json={"detail": "Not Found"})
         if auth and request.headers.get("authorization") != f"Bearer {KEY}":
             return httpx.Response(401, json={"detail": "Please provide an API key"})
         if path == "/props" and props is not None:
             return props()
+        if path == "/v1/model" and loaded is not None:
+            return loaded()
         return httpx.Response(200, json=protected[path], headers={"server": "uvicorn"})
 
     monkeypatch.setattr(
@@ -93,9 +104,11 @@ async def test_identity_and_metadata(monkeypatch, auth, api_key, backend):
     assert context.max_model_len == 16384
     assert context.slot_count == 4
     assert context.quantization == "EXL3"
-    props_requests = [r for r in requests if r.url.path == "/props"]
-    assert props_requests, "metadata probe never read /props"
-    assert all(r.headers.get("authorization") == _bearer(api_key) for r in props_requests)
+    assert context.server_model_id == MODEL_ID
+    for path in ("/props", "/v1/model"):
+        seen = [r for r in requests if r.url.path == path]
+        assert seen, f"metadata probe never read {path}"
+        assert all(r.headers.get("authorization") == _bearer(api_key) for r in seen)
 
 
 async def test_keyed_server_without_a_key_is_identified_by_serviceinfo(monkeypatch):
@@ -134,10 +147,91 @@ async def test_serviceinfo_beats_a_readable_llama_props(monkeypatch):
 async def test_keyed_server_without_a_loaded_model_records_only_its_name(
     monkeypatch, props, backend
 ):
-    install_tabby(monkeypatch, auth=True, models={"object": "list", "data": []}, props=props)
+    install_tabby(
+        monkeypatch,
+        auth=True,
+        models={"object": "list", "data": []},
+        props=props,
+        loaded=props,  # /v1/model has the same check_model_container dependency
+    )
 
     assert await metadata.probe_backend_hint("http://test", KEY) == ("tabbyapi", "TabbyAPI")
     assert await metadata._probe_engine("http://test", KEY, backend) == {"engine_name": "TabbyAPI"}
+
+
+# What /v1/models returns for an admin key, or any request with auth disabled: the
+# model directory, in directory order, with the loaded model anywhere in it.
+CATALOG = {
+    "object": "list",
+    "data": [
+        {"id": "Llama-3.1-70B-Instruct-AWQ", "object": "model", "owned_by": "tabbyAPI"},
+        {"id": MODEL_ID, "object": "model", "owned_by": "tabbyAPI"},
+    ],
+}
+# use_dummy_models puts these aliases ahead of every other entry.
+DUMMY_FIRST = {
+    "object": "list",
+    "data": [{"id": "gpt-3.5-turbo", "object": "model", "owned_by": "tabbyAPI"}, *CATALOG["data"]],
+}
+
+
+@pytest.mark.parametrize("models", [CATALOG, DUMMY_FIRST], ids=["admin-catalog", "dummy-first"])
+@pytest.mark.parametrize("backend", ["tabbyapi", "unknown"])
+@pytest.mark.parametrize(("auth", "api_key"), [(False, None), (True, KEY)], ids=["no-auth", "key"])
+async def test_loaded_model_beats_the_first_list_entry(monkeypatch, models, backend, auth, api_key):
+    install_tabby(monkeypatch, auth=auth, models=models)
+
+    context = await metadata.collect_run_context(
+        model="anything", backend=backend, base_url="http://test/v1", api_key=api_key
+    )
+    assert context.server_model_id == MODEL_ID
+    # Quantization follows the loaded model, not the AWQ checkpoint listed first.
+    assert context.quantization == "EXL3"
+
+
+async def test_loaded_model_drops_the_root_of_the_replaced_entry(monkeypatch):
+    # TabbyAPI sends no root, but a rewriting proxy might; the quantization guess
+    # prefers root, so the replaced entry's root must not survive.
+    first = {"id": "Llama-3.1-70B-Instruct-AWQ", "root": "meta/Llama-3.1-70B-Instruct-AWQ"}
+    install_tabby(monkeypatch, auth=True, models={"object": "list", "data": [first]})
+
+    context = await metadata.collect_run_context(
+        model="anything", backend="tabbyapi", base_url="http://test/v1", api_key=KEY
+    )
+    assert context.server_model_id == MODEL_ID
+    assert context.server_model_root is None
+    assert context.quantization == "EXL3"
+
+
+async def test_loaded_model_id_is_recorded_verbatim(monkeypatch):
+    # The id is a directory name that chat requests must match exactly; do not strip it.
+    padded = {**LOADED, "id": f" {MODEL_ID} "}
+    install_tabby(monkeypatch, auth=True, loaded=lambda: httpx.Response(200, json=padded))
+
+    info = await metadata._probe_engine("http://test", KEY, "tabbyapi")
+    assert info["server_model_id"] == f" {MODEL_ID} "
+
+
+@pytest.mark.parametrize(
+    "loaded",
+    [
+        lambda: httpx.Response(404, json={"detail": "Not Found"}),
+        lambda: httpx.Response(200, text="<html>proxy error</html>"),
+        lambda: httpx.Response(200, json=[LOADED]),
+        lambda: httpx.Response(200, json={"object": "model"}),
+        lambda: httpx.Response(200, json={"id": None}),
+        lambda: httpx.Response(200, json={"id": 7}),
+        lambda: httpx.Response(200, json={"id": ""}),
+        lambda: httpx.Response(200, json={"id": "   "}),
+    ],
+    ids=["route-absent", "html", "list-body", "no-id", "null-id", "int-id", "empty", "blank"],
+)
+async def test_unusable_loaded_card_keeps_the_list_entry(monkeypatch, loaded):
+    install_tabby(monkeypatch, auth=True, models=CATALOG, loaded=loaded)
+
+    info = await metadata._probe_engine("http://test", KEY, "tabbyapi")
+    assert info["server_model_id"] == "Llama-3.1-70B-Instruct-AWQ"
+    assert info["slot_count"] == 4  # /props is still read
 
 
 @pytest.mark.parametrize("owner", ["tabbyAPI", "TABBYAPI", "tabbyapi", " tabbyAPI "])
