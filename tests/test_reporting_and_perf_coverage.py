@@ -246,6 +246,7 @@ def test_llama_benchy_cli_success_and_unavailable(monkeypatch: pytest.MonkeyPatc
     assert "failed" in output
 
 
+@pytest.mark.usefixtures("no_dns")
 def test_spec_bench_cli_renders_metrics_and_persists(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -391,6 +392,7 @@ def test_benchy_progress_tracker_legacy_request_end_without_id() -> None:
     assert tracker.completed_runs == 2
 
 
+@pytest.mark.usefixtures("no_dns")
 def test_llama_benchy_cli_progress_never_exceeds_total_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -484,6 +486,9 @@ def test_llama_benchy_cli_progress_never_exceeds_total_runs(
         depths=depths,
         concurrency_levels=concurrency_levels,
         runs=runs,
+        # An explicit tokenizer skips resolution, which reads the host's
+        # HuggingFace cache and then probes the fake host's /props endpoint.
+        tokenizer="fake/tokenizer",
     )
 
     assert result == [ok]

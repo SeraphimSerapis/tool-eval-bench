@@ -662,6 +662,7 @@ class TestCli:
         assert "decision-live" in commands_schema()
 
 
+@pytest.mark.usefixtures("no_dns")
 def test_the_cli_reports_damaged_data_and_exits(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -674,10 +675,19 @@ def test_the_cli_reports_damaged_data_and_exits(
 
     monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
     monkeypatch.setattr(live, "load_cases", broken)
+    # --no-probe-engine skips backend detection, which would GET http://h:1/metrics.
     monkeypatch.setattr(
         sys,
         "argv",
-        ["tool-eval-bench", "--model", "m", "--base-url", "http://h:1", "--decision-live"],
+        [
+            "tool-eval-bench",
+            "--model",
+            "m",
+            "--base-url",
+            "http://h:1",
+            "--no-probe-engine",
+            "--decision-live",
+        ],
     )
     with pytest.raises(SystemExit) as exit_info:
         dispatch.main()
