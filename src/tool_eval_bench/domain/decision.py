@@ -22,7 +22,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeGuard
 
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
@@ -63,15 +63,53 @@ class ScoreQuestion:
 
 @dataclass(frozen=True)
 class YesNoQuestion:
-    """A yes/no question (the wire type is ``noul``)."""
+    """A yes/no question (the wire type is ``noul``).
+
+    ``criteria`` optionally describes what ``true`` and ``false`` mean.  It is
+    part of the input when present, so it is sent unchanged.
+    """
 
     instructions: str
+    criteria: Mapping[str, str] | None = None
 
     def to_wire(self) -> dict[str, Any]:
-        return {"type": "noul", "instructions": self.instructions}
+        wire: dict[str, Any] = {"type": "noul", "instructions": self.instructions}
+        if self.criteria is not None:
+            wire["criteria"] = dict(self.criteria)
+        return wire
 
 
 DecisionQuestion = ChoiceQuestion | ScoreQuestion | YesNoQuestion
+
+# What a request judges: free text, or a JSON object such as a ticket with the
+# account behind it.  An object is sent as JSON, not flattened into text.
+DecisionState = str | Mapping[str, Any]
+
+
+def question_from_wire(raw: Mapping[str, Any]) -> DecisionQuestion:
+    """Build a typed question from its wire form, the inverse of ``to_wire``.
+
+    Raises ``ValueError`` for an unknown type or a field of the wrong shape, so
+    a malformed dataset row fails before it reaches a server.
+    """
+    kind = raw.get("type")
+    instructions = raw.get("instructions")
+    criteria = raw.get("criteria")
+    if not isinstance(instructions, str):
+        raise ValueError(f"{kind!r} question has no string 'instructions'")
+    if kind == "choice" and _is_str_map(criteria):
+        return ChoiceQuestion(instructions, dict(criteria))
+    if kind == "score" and isinstance(criteria, list) and all(isinstance(c, str) for c in criteria):
+        return ScoreQuestion(instructions, tuple(criteria))
+    if kind == "noul" and (criteria is None or _is_str_map(criteria)):
+        return YesNoQuestion(instructions, None if criteria is None else dict(criteria))
+    raise ValueError(f"unsupported or malformed {kind!r} question")
+
+
+def _is_str_map(value: object) -> TypeGuard[Mapping[str, str]]:
+    return isinstance(value, Mapping) and all(
+        isinstance(k, str) and isinstance(v, str) for k, v in value.items()
+    )
 
 
 @dataclass(frozen=True)
@@ -116,7 +154,7 @@ class DecisionBackend(ABC):
         self,
         *,
         model: str,
-        state: str,
+        state: DecisionState,
         questions: Mapping[str, DecisionQuestion],
         timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         api_key: str | None = None,

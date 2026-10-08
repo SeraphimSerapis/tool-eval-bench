@@ -1019,6 +1019,7 @@ def main() -> None:
         from tool_eval_bench.cli.decision_live_display import run_decision_live
         from tool_eval_bench.cli.helpers import adapter_options
         from tool_eval_bench.domain.decision import DecisionUnsupportedError
+        from tool_eval_bench.plugins.decision.typed_decisions import DatasetIntegrityError
 
         try:
             asyncio.run(
@@ -1035,7 +1036,7 @@ def main() -> None:
             )
         except KeyboardInterrupt:
             pass
-        except DecisionUnsupportedError as exc:
+        except (DecisionUnsupportedError, DatasetIntegrityError) as exc:
             console.print(f"\n[bold red]Decision monitor error:[/] {exc}")
             sys.exit(1)
         return

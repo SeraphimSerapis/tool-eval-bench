@@ -1,11 +1,10 @@
-"""Aggregate metrics over scored decision items: calibration, ordinal error, robustness."""
+"""Metrics over scored decisions: distance from a gold distribution and calibration."""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
-from typing import Any
+from dataclasses import dataclass
 
 HIGH_CONFIDENCE = 0.9
 
@@ -62,6 +61,37 @@ def mean(values: Sequence[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
+# Stands in for a predicted probability of exactly 0 where the gold is not 0,
+# which would make KL infinite.  The value matches the third-party scorer that
+# reproduced the typed-decisions card's KL figures: prima-ratio's
+# benchmarks/typed_decisions_bench.py, from discussion #5 on the dataset page.
+KL_FLOOR = 1e-12
+
+
+def kl_divergence(
+    gold: Mapping[str, float], predicted: Mapping[str, float], *, floor: float = KL_FLOOR
+) -> float:
+    """KL(gold ‖ predicted) in nats, summed over the answers gold supports.
+
+    An answer with gold probability 0 contributes nothing.  A predicted
+    probability below ``floor``, including a missing answer, counts as ``floor``.
+    """
+    return sum(
+        g * math.log(g / max(predicted.get(k, 0.0), floor)) for k, g in gold.items() if g > 0
+    )
+
+
+def brier_score(gold: Mapping[str, float], predicted: Mapping[str, float]) -> float:
+    """Squared distance between two distributions over the same answers, in [0, 2]."""
+    keys = gold.keys() | predicted.keys()
+    return sum((predicted.get(k, 0.0) - gold.get(k, 0.0)) ** 2 for k in keys)
+
+
+def argmax(distribution: Mapping[str, float]) -> str:
+    """The most likely answer.  A tie goes to the answer listed first."""
+    return max(distribution, key=lambda k: distribution[k])
+
+
 def percentile(values: Sequence[float], q: float) -> float:
     """Linear-interpolated percentile, ``q`` in [0, 100]; 0 for no values."""
     if not values:
@@ -70,57 +100,3 @@ def percentile(values: Sequence[float], q: float) -> float:
     rank = (len(ordered) - 1) * q / 100
     lo, hi = math.floor(rank), math.ceil(rank)
     return ordered[lo] + (ordered[hi] - ordered[lo]) * (rank - lo)
-
-
-def confusion_matrix(
-    pairs: Sequence[tuple[str, str]], labels: Sequence[str]
-) -> dict[str, dict[str, int]]:
-    """Count ``(gold, predicted)`` pairs.  Predictions outside ``labels`` are counted
-    under their own name, so a hallucinated option is visible rather than dropped."""
-    matrix: dict[str, dict[str, int]] = {label: {} for label in labels}
-    for gold, predicted in pairs:
-        row = matrix.setdefault(gold, {})
-        row[predicted] = row.get(predicted, 0) + 1
-    return matrix
-
-
-@dataclass(frozen=True)
-class Robustness:
-    """How stable answers are when the options are reordered or renamed.
-
-    ``invariance`` is the share of variant items whose answer, mapped back to
-    the base item's option names, equals the base item's answer.  Accuracy and
-    invariance differ: a model can be wrong the same way twice.
-    """
-
-    shuffled_accuracy: float | None
-    shuffled_invariance: float | None
-    opaque_accuracy: float | None
-    opaque_invariance: float | None
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-def robustness(
-    base: Mapping[str, tuple[str, bool]],
-    variants: Mapping[str, Sequence[tuple[str, str, bool]]],
-) -> Robustness:
-    """Compute variant accuracy and invariance against the base answers.
-
-    ``base`` maps a base item id to ``(predicted, correct)``.  ``variants`` maps
-    a variant kind to ``(base_id, predicted_in_base_names, correct)`` triples.
-    A kind with no answered pairs yields ``None`` for both measures.
-    """
-
-    def measure(kind: str) -> tuple[float | None, float | None]:
-        rows = [(b, p, c) for b, p, c in variants.get(kind, ()) if b in base]
-        if not rows:
-            return None, None
-        accuracy = sum(c for _, _, c in rows) / len(rows) * 100
-        invariance = sum(p == base[b][0] for b, p, _ in rows) / len(rows) * 100
-        return accuracy, invariance
-
-    shuffled = measure("shuffled")
-    opaque = measure("opaque")
-    return Robustness(shuffled[0], shuffled[1], opaque[0], opaque[1])

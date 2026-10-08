@@ -1,8 +1,7 @@
-"""Decision-model benchmark: single-pass scoring of caller-supplied options."""
+"""Decision-model benchmark: single-pass scoring on the typed-decisions test split."""
 
 from __future__ import annotations
 
-from tool_eval_bench.plugins.decision.dataset import DecisionItem, build_items
 from tool_eval_bench.plugins.decision.plugin import DecisionPlugin
 
-__all__ = ["DecisionItem", "DecisionPlugin", "build_items"]
+__all__ = ["DecisionPlugin"]

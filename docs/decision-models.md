@@ -6,7 +6,9 @@ llama.cpp serves these models at `/v1/systemone`. Typical jobs are routing,
 moderation, and urgency triage.
 
 This benchmark measures how accurate those probabilities are and whether the
-model can be trusted when it says it is confident.
+model can be trusted when it says it is confident. It scores the test split of
+[Typed Decisions](#third-party-data-typed-decisions), a public third-party
+dataset of 400 cases that ships with this package.
 
 ```bash
 tool-eval-bench --decision-bench-only --base-url http://host:8084   # just this benchmark
@@ -15,7 +17,7 @@ tool-eval-bench plugin decision --base-url http://host:8084         # the subcom
 ```
 
 The server must expose `/v1/systemone`. A server that answers 404, 405, or 501
-there aborts the run with a message instead of scoring every item as a miss.
+there aborts the run with a message instead of scoring every case as a miss.
 `--decision-bench-only` also skips the chat preflight and warmup, because a
 decision model may have no working chat endpoint.
 
@@ -81,38 +83,43 @@ change judgments or official points.
 
 ## The wire format
 
-A request carries a `state` (the text to judge) and a map of named `questions`.
-Each question has a type and required `instructions`.
+A request carries a `state` and a map of named `questions`. The state is either
+text or a JSON object, such as a support thread with the account behind it; an
+object is sent as JSON, not flattened. Each question has a type and required
+`instructions`.
 
 | Type | Options | Answer |
 |---|---|---|
 | `choice` | `criteria`: a map of option name to description | `choice`, a probability per option, `confidence` |
 | `score` | `criteria`: a list of level descriptions | expected `score`, a probability per level |
-| `noul` | none | `noul`, the probability of "yes" |
+| `noul` | optional `criteria` describing `true` and `false` | `noul`, the probability of "yes" |
 
 `model` selects a model in router mode and is ignored by a single-model server.
 The response reports `output_tokens: 0`, because nothing is generated.
 
 ## What a run does
 
-Every item is one request with one question. There are 63 base items, plus 48
-routing variants that test robustness, so a run is 111 requests.
+A run sends each of the 400 Typed Decisions test cases once: the case's state and
+all five of its questions in one request, so a run is 400 requests and 2,000
+decisions. The dataset card's leaderboard was scored the same way, and the card
+warns that asking one question per request changes the answers, so this shape is
+what keeps a score comparable with the card.
 
-| Category | Question type | Items | What it tests |
-|---|---|---|---|
-| routing | `choice`, 4 teams | 24 | 16 plain items, plus 8 harder ones with negation, typos, and no keyword to match |
-| moderation | `choice`, 3 classes | 10 | Normal, spam, and abusive messages |
-| urgency | `score`, 4 levels | 9 | Whether the expected level lands near the gold level |
-| yes-no | `noul` | 12 | Anger, refund requests, and personal contact details |
-| abstain | `choice` with a `none` option | 8 | Whether the model declines when no option fits |
+| Workflow | Cases | What the model decides |
+|---|---|---|
+| `agent_trace_observability` | 100 | Whether an agent run needs human review, and how urgently |
+| `customer_service` | 100 | The right response and action for a customer thread and account |
+| `invoice_processing` | 100 | Pay, hold, or reject a vendor bill against its order and delivery |
+| `security_incidents` | 100 | Close, investigate, or contain a security alert, given machine history |
 
-The two routing variants ask each routing item again with different options.
-`shuffled` lists the options in reverse order. `opaque` renames them to
-meaningless labels and keeps only the descriptions, so a model that memorised the
-word "billing" fails and one that reads the criteria passes.
+Each workflow asks the same five questions of every case, 20 question schemas in
+all: 600 `noul`, 600 `choice`, and 800 `score` decisions. Every gold answer is a
+probability distribution.
 
-The headline score is accuracy on the 63 base items. Variants never count toward
-it. They feed the robustness section.
+The dataset stores each state as a JSON string. The benchmark decodes it and sends
+`state` as a JSON object. Sending the string verbatim, as one public harness does,
+is the alternative; on d1 it changed about 8% of the most likely answers without
+changing accuracy.
 
 A decision model is deterministic, so a run needs one pass. `--temperature`,
 `--seed`, and extra sampling parameters have no effect. `--parallel` sets how many
@@ -120,56 +127,115 @@ requests are in flight.
 
 ## Reading the result
 
-The terminal prints three tables, then the summary. The Markdown report holds the
-same views plus a trace of every request.
+The terminal prints accuracy by question type and by workflow, a reliability
+table, then the summary. The Markdown report adds a per-question table, the most
+confident disagreements, and a trace of every decision with both distributions.
 
-**Accuracy by category.** Shows where a model is weak. A small model that routes
-perfectly but misreads urgency has a different profile from one that is uniformly
-mediocre.
+**What a score means.** Gold is the mean of three samples from a teacher model of
+roughly 4B-class capability, so a score measures agreement with that teacher, not
+correctness. A model better than the teacher can score lower wherever the teacher
+is wrong. The dataset card gives two reference points: a prior that ignores the
+input and answers each question's label frequencies scores 0.470 accuracy, and a
+fresh teacher sample agrees with gold built from the others 0.735 of the time.
+Scores well above 0.735 mean a model is learning the teacher's habits. Per-question
+ceilings range from 0.560 to 0.937, so read the per-question table as well as the
+average.
 
-**Calibration.** The probabilities are the product, so they should mean what they
-say. The report gives:
+**Rating.** The stars use only the card's two reference points: ★ at or below the
+47.0% prior, ★★ above it, and ★★★ at or above the teacher's 73.5% self-agreement.
+A run in which every request failed gets no stars; its rating reads "Incomplete: no
+successful cases", because its 0% measures the connection, not the model.
 
-- **ECE**, the count-weighted gap between confidence and accuracy over ten
-  confidence bins. 0 is perfect.
-- **Brier score**, the squared distance from the one-hot gold answer. 0 is best and
-  2 is worst.
-- **Log loss**, which punishes a low probability on the gold answer.
-- **Confident mistakes**, the number of wrong answers given at 90% confidence or
-  more. These are the failures that cause damage in a router, because nothing
-  flags them for review.
+**Metrics.** All are averaged over decisions, not cases.
 
-The reliability table groups predictions by confidence. A calibrated model has
-accuracy close to confidence in every row. Accuracy above confidence means the
-model under-claims. Accuracy below it means the model over-claims.
+- **Accuracy**: the prediction's most likely answer equals the gold `label`. The
+  label is always one of the gold's most likely answers; in the 35 decisions where
+  two gold answers tie, it is the dataset's own pick. A tie in the prediction goes
+  to the option listed first.
+- **KL from gold**: KL(gold ‖ prediction) in nats, summed over the answers the gold
+  gives nonzero probability. A predicted probability of exactly 0 there would make
+  KL infinite, so it counts as 1e-12, the floor a third-party harness used when it
+  reproduced the card's figures. Lower is better.
+- **Brier**: the sum over a question's answers of the squared difference between
+  predicted and gold probability. 0 is best and 2 is worst.
+- **ECE**: top-label expected calibration error over ten equal-width confidence
+  bins, where confidence is the top predicted probability and a hit is a correct
+  answer as defined above. The card does not publish its ECE definition, and
+  submitters report that they could not reproduce it, so this is the standard
+  definition and its values are not comparable with the card's ECE column.
 
-Confidence here is the probability of the predicted answer, taken from
-`probabilities`. The server's own `confidence` field is a different figure and is
-kept in the raw response.
+The card names the four leaderboard metrics without formulas. KL and Brier follow
+the definitions submitters used to reproduce the card's numbers. A model that puts
+equal probability on every option scores KL 0.444 and Brier 0.238 here, which
+matches the card's Uniform reference row and is checked by a test. Accuracy and
+ECE for that model depend on how its ties are broken, so they do not pin a
+definition.
 
-**Routing confusion matrix.** Gold team on the rows, predicted team on the columns.
-A prediction outside the option list gets its own column.
+For the prediction, a yes/no answer becomes `true` at the `noul` probability and
+`false` at the rest. A `choice` or `score` answer uses its `probabilities`; the
+server's `choice` and `confidence` fields are not used.
 
-**Urgency scale.** Mean absolute error of the expected level against the gold
-level, and the share of items within one level. Exact-match accuracy alone treats
-"today" for "right now" the same as "can wait" for "right now".
+**Errors count as misses.** A request that times out or returns a malformed
+response costs every decision in its case; the adapter rejects a response with one
+bad answer as a whole. Errors count against accuracy and mark the run
+`incomplete`. KL, Brier, and calibration cover answered decisions only.
 
-**Robustness.** For each variant, accuracy and invariance. Invariance is the share
-of answers that match the model's answer to the original item, right or wrong.
-Low shuffled invariance means position bias.
+To compare with published models, see the leaderboard on the
+[dataset card](https://huggingface.co/datasets/LocalLLaMA/typed-decisions). Its
+rows scored with `train` in the training data are not comparable with zero-shot
+rows, and only accuracy, KL, and Brier are computed the same way here.
 
 ## Reading a trace
 
 ```
-urg-01  ✗  It would be nice to have a dark mode at some point.
-    0  ░░░░░░░░░░ 0.031  ◀ gold
-    1  █░░░░░░░░░ 0.107
-    2  █░░░░░░░░░ 0.133
-    3  ███████░░░ 0.729  ◀ pred
+agent_trace_observability_000001  {"agent": {"autonomy": "unsupervised", "model": "internal-agent-v1"}, ...
+  needs_review (noul)  ✗  pred true  gold false  KL 0.268  Brier 0.260
+      pred  true=0.611 false=0.389
+      gold  true=0.250 false=0.750
+  urgency (score)  ✗  pred 3  gold 1  KL 1.711  Brier 0.591
+      pred  0=0.073 1=0.030 2=0.434 3=0.463
+      gold  0=0.433 1=0.433 2=0.113 3=0.020
 ```
 
-Choice options are listed most likely first. Score levels are listed in scale
-order. `◀ gold` marks the correct answer and `◀ pred` the model's pick.
+Each case starts with a preview of its state, then one line per question with the
+predicted and gold label, followed by both distributions in the same option order.
+Gold ties happen (`urgency` above); the dataset's label breaks them.
+
+## Third-party data: Typed Decisions
+
+The items are not ours. They are the `test` split of
+[Typed Decisions](https://huggingface.co/datasets/LocalLLaMA/typed-decisions),
+published on Hugging Face by the LocalLLaMA organization under the Apache License
+2.0. The dataset card names no individual authors.
+
+- Pinned to revision `e039ebffcc280174dd354227424fb2b249f191de`, file
+  `all/test-00000-of-00001.parquet`.
+- Stored in `src/tool_eval_bench/plugins/decision/vendor/typed_decisions/` with the
+  dataset's `LICENSE` and a `NOTICE` describing provenance and changes. Both ship in
+  the wheel and the sdist next to the data.
+- Rows are unmodified apart from format conversion: Parquet became gzipped JSON
+  Lines, the `state`, `questions`, and `gold` columns were decoded from JSON
+  strings, and the columns the benchmark does not use (`split`, `factors`,
+  `label_agreement`, `n_questions`) were dropped.
+- The `train` split is not included. Several published models were fine-tuned on
+  it, so it is not benchmark material.
+- Every report and terminal summary names the dataset, revision, and license.
+  Stored results record the dataset id and revision, and both enter the run's
+  comparison fingerprint, so runs on another revision are not compared.
+
+`scripts/vendor_typed_decisions.py` produces the file. It downloads the pinned
+revision, checks the source file's sha256, converts it, and writes `manifest.json`
+with the hashes. The loader checks the data against the manifest on every run and
+refuses a file that was edited by hand. To update the data, change the pinned
+revision and hash in the script and run it:
+
+```bash
+uv run --no-project --with pyarrow python scripts/vendor_typed_decisions.py
+```
+
+pyarrow is needed only for that script and is not a project dependency. A missing,
+truncated, or edited data file stops the benchmark and the live monitor with a
+`DatasetIntegrityError` message.
 
 ## Live monitor
 
@@ -181,32 +247,37 @@ tool-eval-bench decision-live --base-url http://host:8084
 tool-eval-bench --decision-live --decision-live-interval 0.25   # flat spelling, faster probes
 ```
 
-It sends one built-in item at a time, in a fixed mixed order, scores the answer
-against its gold label, and redraws the screen. Ctrl+R resets the session and Ctrl+C
-exits. A server without `/v1/systemone` stops the command with a message before the
-screen opens.
+Each probe is one Typed Decisions test case: its state and all five questions in
+one request, as in a benchmark run. The monitor cycles the 400 cases in a fixed
+shuffled order, scores each answer against its gold as the benchmark does, and
+redraws the screen. Ctrl+R resets the session and Ctrl+C exits. A server without
+`/v1/systemone` stops the command with a message before the screen opens.
 
 | Panel | Shows |
 |---|---|
-| now | The latest message, its probability bars, `◀ gold` and `◀ predicted` marks, latency, and input tokens |
-| quality | Rolling accuracy and ECE over the last 100 probes with trend lines, mean confidence, session accuracy, and confident mistakes |
-| by category | Session accuracy per category |
-| confidence histogram | How many of the last 100 answers fell in each confidence bin |
-| server | Latency p50 and p95, then requests per second, input tokens per second, and slot and queue counts from `/metrics` |
+| now | The latest case: how many of its five answers match gold, a state preview, then each question with its type, top probability, prediction, and the gold label when they differ, plus latency and input tokens |
+| quality | Rolling accuracy and ECE over the last 100 decisions (20 cases) with trend lines, Brier against the gold distribution, mean confidence, session accuracy, and confident mistakes |
+| by question type | Session accuracy for `noul`, `choice`, and `score` |
+| confidence histogram | How many of the last 100 decisions fell in each confidence bin |
+| server | Request latency p50 and p95, input tokens the monitor has sent, then requests per second, input tokens per second, and slot and queue counts from `/metrics` |
 
-A wrong answer at 90% confidence or more raises a banner for a few seconds. Three
-failed probes in a row show "model unreachable" and the probes keep going.
+The footer credits the dataset. A wrong answer at 90% confidence or more raises a
+banner for a few seconds, naming the most confident one when a case has several.
+Three failed probes in a row show "model unreachable" and the probes keep going.
 
 The server panel reads the llama.cpp counters on `/metrics` (`--metrics-url` points
 it elsewhere). The counters include other clients' requests, so on a shared server
 the requests-per-second figure rises above the monitor's own rate when someone else
-is using the model. Without `/metrics` the server panel shows latency only.
+is using the model. Without `/metrics` the server panel shows latency and input
+tokens only.
 
 The monitor measures the model with synthetic traffic. It cannot see the decisions
 your application gets, and the server's counters carry no decisions, only load.
 
-`--decision-live-interval SEC` sets the pause between probes (default 0.5). The
-other connection flags work as they do elsewhere.
+`--decision-live-interval SEC` sets the pause between probes (default 0.5). A probe
+carries five questions, but they share one state, so its prefill is about twice that
+of a single question; the input-token figures in the now and server panels show the
+real cost. The other connection flags work as they do elsewhere.
 
 ## Design notes
 
@@ -215,13 +286,13 @@ number would hide which one moved. A model with 90% accuracy and an ECE of 0.25 
 a different deployment risk from one with 85% and 0.03, and a single score erases
 that.
 
-**Variants are scored apart from the base items.** They reuse the base messages,
-so counting them would weight routing three times as heavily as the other
-categories.
+**The data is vendored, not downloaded.** A run works offline, and the item set
+cannot change under a stored result. The cost is a 99 KB file in the package and a
+script to rerun when the dataset gets a new revision.
 
-**Items are built in and single-question.** There is no download. The wire format
-allows several questions per request, which is where a server saves prefill.
-This benchmark asks one at a time so each probability maps to one gold label.
+**One request per case.** Typed Decisions asks five questions about one state, and
+the card's scores come from sending them together. Asking them one at a time
+would cost prefill and produce numbers that do not compare with anyone else's.
 
 **Errors count as misses.** A request that times out or returns a malformed answer
 is a wrong answer in the headline and marks the run `incomplete`.
@@ -229,5 +300,9 @@ is a wrong answer in the headline and marks the run `incomplete`.
 ## Programmatic use
 
 `build_decision_adapter()` returns an adapter that makes decision requests and
-chat requests over one HTTP client. `DecisionPlugin.run` raises `ValueError` for an
-adapter that cannot make decision requests.
+chat requests over one HTTP client. `DecisionPlugin().run(adapter, model=...,
+base_url=...)` scores all 400 Typed Decisions cases; `cases=load_cases()[:40]`
+narrows that to a subset. `load_cases` and `dataset_info` live in
+`tool_eval_bench.plugins.decision.typed_decisions`. `DecisionPlugin.run` raises
+`ValueError` for an adapter that cannot make decision requests or an empty `cases`
+list, and `DatasetIntegrityError`, a `ValueError`, when the vendored data fails its check.

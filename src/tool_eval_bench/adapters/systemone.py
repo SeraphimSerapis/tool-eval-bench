@@ -20,6 +20,7 @@ from tool_eval_bench.domain.decision import (
     DecisionQuestion,
     DecisionRequestError,
     DecisionResult,
+    DecisionState,
     DecisionUnsupportedError,
     parse_answers,
 )
@@ -39,7 +40,7 @@ class SystemOneAdapter(OpenAICompatibleAdapter, DecisionBackend):
         self,
         *,
         model: str,
-        state: str,
+        state: DecisionState,
         questions: Mapping[str, DecisionQuestion],
         timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         api_key: str | None = None,
@@ -50,7 +51,7 @@ class SystemOneAdapter(OpenAICompatibleAdapter, DecisionBackend):
         # single-model server, so it is always sent.
         payload: dict[str, Any] = {
             "model": model,
-            "state": state,
+            "state": state if isinstance(state, str) else dict(state),
             "questions": {name: q.to_wire() for name, q in questions.items()},
         }
         headers: dict[str, str] = {"Content-Type": "application/json"}
