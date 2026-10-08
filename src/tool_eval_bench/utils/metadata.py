@@ -261,7 +261,13 @@ async def _probe_vllm_version(
 async def _probe_props(
     base_url: str, api_key: str | None = None, *, session: _ProbeSession | None = None
 ) -> dict[str, Any]:
-    """Read llama.cpp build and slot metadata from ``/props``, then ``/health``."""
+    """Read llama.cpp build, capacity and file type from ``/props``, then ``/health``.
+
+    ``default_generation_settings.n_ctx`` is llama-server's per-slot context,
+    which spans the whole KV cache under ``--kv-unified``, capped by
+    ``--kv-unified-per-slot`` and the model's training context. Either way it
+    is the longest single request, which is what ``max_model_len`` means for vLLM.
+    """
     async with _probe_session(session) as active:
         for path in ("/props", "/health"):
             resp = await _probe_get(
@@ -299,8 +305,10 @@ async def _probe_props(
                 result["engine_version"] = str(body["build_info"])
             elif "build_number" in body:
                 result["engine_version"] = f"b{body['build_number']}"
-            if "total_slots" in body:
-                result["slot_count"] = body.get("total_slots")
+            result.update(_props_capacity(body))
+            quantization = _llamacpp_quantization(body.get("model_ftype"))
+            if quantization:
+                result["quantization"] = quantization
             return result
     return {}
 
@@ -578,6 +586,57 @@ _GGUF_NATIVE_TYPE = re.compile(
 # ik_llama.cpp's IQ4_K, a different type, from reading as Q4_K.
 _GGUF_K_QUANT = re.compile(r"(?<![A-Z0-9])(Q\d+_K(?:_(?:XL|[SML]))?)")
 
+# llama_ftype_name() in llama.cpp's src/llama-model-loader.cpp, which /props
+# reports as model_ftype, mapped to the labels _guess_quantization produces.
+# Exact matches only. "(guessed) ..." names a type inferred from tensor counts,
+# which turns an unrecognized tensor type into "all F32", and anything unlisted
+# falls back to the model-name heuristic rather than being stored raw.
+_LLAMACPP_FTYPES: dict[str, str] = {
+    "all F32": "FP32",
+    "F16": "FP16",
+    "BF16": "BF16",
+    "Q1_0": "Q1_0",
+    "Q2_0": "Q2_0",
+    "Q4_0": "Q4_0",
+    "Q4_1": "Q4_1",
+    "Q5_0": "Q5_0",
+    "Q5_1": "Q5_1",
+    "Q8_0": "Q8_0",
+    "MXFP4 MoE": "MXFP4",
+    "NVFP4": "NVFP4",
+    # llama-quantize calls the medium Q2_K preset plain "Q2_K".
+    "Q2_K - Medium": "Q2_K",
+    "Q2_K - Small": "Q2_K_S",
+    "Q3_K - Small": "Q3_K_S",
+    "Q3_K - Medium": "Q3_K_M",
+    "Q3_K - Large": "Q3_K_L",
+    "Q4_K - Small": "Q4_K_S",
+    "Q4_K - Medium": "Q4_K_M",
+    "Q5_K - Small": "Q5_K_S",
+    "Q5_K - Medium": "Q5_K_M",
+    "Q6_K": "Q6_K",
+    "TQ1_0 - 1.69 bpw ternary": "TQ1_0",
+    "TQ2_0 - 2.06 bpw ternary": "TQ2_0",
+    "IQ2_XXS - 2.0625 bpw": "IQ2_XXS",
+    "IQ2_XS - 2.3125 bpw": "IQ2_XS",
+    "IQ2_S - 2.5 bpw": "IQ2_S",
+    "IQ2_M - 2.7 bpw": "IQ2_M",
+    "IQ3_XS - 3.3 bpw": "IQ3_XS",
+    "IQ3_XXS - 3.0625 bpw": "IQ3_XXS",
+    "IQ1_S - 1.5625 bpw": "IQ1_S",
+    "IQ1_M - 1.75 bpw": "IQ1_M",
+    "IQ4_NL - 4.5 bpw": "IQ4_NL",
+    "IQ4_XS - 4.25 bpw": "IQ4_XS",
+    "IQ3_S - 3.4375 bpw": "IQ3_S",
+    # LLAMA_FTYPE_MOSTLY_IQ3_M, despite the name.
+    "IQ3_S mix - 3.66 bpw": "IQ3_M",
+}
+
+
+def _llamacpp_quantization(ftype: Any) -> str | None:
+    """Return the label for a llama.cpp ``model_ftype``, or None if it is not a known name."""
+    return _LLAMACPP_FTYPES.get(ftype) if isinstance(ftype, str) else None
+
 
 # Backend labels that name a vendor API rather than a self-hosted engine.
 _HOSTED_ENGINE_NAMES: dict[str, str] = {
@@ -750,7 +809,13 @@ async def _probe_engine(
         elif backend_l == "tabbyapi":
             result.update(await _probe_tabbyapi(base_url, api_key, session=active))
         elif backend_l in _LLAMACPP_LABELS:
-            result.update(await _probe_props(base_url, api_key, session=active))
+            props = await _probe_props(base_url, api_key, session=active)
+            # A GGUF file type cannot tell UD-Q4_K_XL or Q4_K_L from Q4_K_M, so
+            # it only fills in for a name that identifies no specific type.
+            name = result.get("server_model_root") or result.get("server_model_id")
+            if _guess_quantization(name) not in (None, "GGUF"):
+                props.pop("quantization", None)
+            result.update(props)
         elif backend_l == "halogen":
             result["engine_name"] = "Halogen Flash"
         elif backend_l == "litellm":
