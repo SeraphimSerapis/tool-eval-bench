@@ -290,3 +290,122 @@ async def test_report_failure_does_not_store_completed_run(
     )
     # Checkpoints survive so the completed scenarios can be recovered.
     repo.clear_checkpoints.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pass_resume_scenarios", [True, False])
+async def test_resume_with_variants_keeps_preserved_scenarios_varianted(
+    monkeypatch: pytest.MonkeyPatch, pass_resume_scenarios: bool
+) -> None:
+    """A preserved outcome must be merged under the variant that produced it.
+
+    The public registry holds unvarianted definitions. If it outranks the
+    run's own definitions, a resumed ``--variant-seed`` run records the
+    preserved scenarios as unvarianted and lands in a different cohort.
+    API callers may omit ``resume_scenarios``, so the registry fallback must be
+    varianted too.
+    """
+    from tool_eval_bench.application import service as service_module
+    from tool_eval_bench.application.run_config import RunSettings, build_run_config
+    from tool_eval_bench.application.service import BenchmarkService
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
+    from tool_eval_bench.evals.variants import apply_variants
+    from tool_eval_bench.runner.orchestrator import score_results
+
+    seed = 7
+    registry = {s.id: s for s in ALL_SCENARIOS}
+    prior, rerun = registry["TC-07"], registry["TC-08"]
+    varianted = apply_variants([prior, rerun], seed)
+    rerun_result = ScenarioResult(
+        scenario_id=rerun.id, status=ScenarioStatus.PASS, points=2, summary="passed"
+    )
+    monkeypatch.setattr(
+        service_module,
+        "run_all_scenarios",
+        AsyncMock(return_value=score_results([rerun_result], [varianted[1]])),
+    )
+    reporter = MagicMock()
+    reporter.write_scenario_report.return_value = "report.md"
+    service = BenchmarkService(repo=MagicMock(), reporter=reporter)
+    monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
+
+    result = await service.run_benchmark(
+        model="test-model",
+        backend="vllm",
+        base_url="http://localhost:8000",
+        scenarios=[rerun],
+        variant_seed=seed,
+        run_context=_run_context(),
+        resume_run_id="existing-run",
+        resume_prior_results=[
+            {"scenario_id": prior.id, "status": "pass", "points": 2, "summary": "passed"}
+        ],
+        resume_scenarios=[prior, rerun] if pass_resume_scenarios else None,
+    )
+
+    assert result["config"]["scenario_ids"] == ["TC-07", "TC-08"]
+    assert result["config"]["scenario_variants"] == {s.id: s.variant_metadata for s in varianted}
+    fresh_config = build_run_config(
+        RunSettings(
+            model="test-model",
+            backend="vllm",
+            base_url="http://localhost:8000",
+            temperature=0.0,
+            timeout_seconds=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            max_turns=8,
+            seed=None,
+            reference_date=None,
+            concurrency=1,
+            error_rate=0.0,
+            alpha=0.7,
+            extra_params=None,
+            context_pressure_config=None,
+            weight_by_difficulty=False,
+        ),
+        scenarios=varianted,
+        metadata=result["metadata"],
+    )
+    assert result["config"]["config_fingerprint"] == fresh_config["config_fingerprint"]
+
+
+@pytest.mark.asyncio
+async def test_resume_prefers_run_definitions_over_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A same-ID registry definition must not replace the run's own on resume.
+
+    Rescoring, report metadata, and the decision audit all read the merged
+    definitions; the report metadata is the cheapest one to observe.
+    """
+    from dataclasses import replace
+
+    from tool_eval_bench.application import service as service_module
+    from tool_eval_bench.application.service import BenchmarkService
+    from tool_eval_bench.runner.orchestrator import score_results
+
+    registry_prior = _scenario("PRIOR-A", Category.A)
+    run_prior = replace(registry_prior, title="run definition")
+    monkeypatch.setattr(service_module, "ALL_SCENARIOS", [registry_prior])
+    monkeypatch.setattr(
+        service_module, "run_all_scenarios", AsyncMock(return_value=score_results([], []))
+    )
+    reporter = MagicMock()
+    reporter.write_scenario_report.return_value = "report.md"
+    service = BenchmarkService(repo=MagicMock(), reporter=reporter)
+    monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
+
+    await service.run_benchmark(
+        model="test-model",
+        backend="vllm",
+        base_url="http://localhost:8000",
+        scenarios=[],
+        run_context=_run_context(),
+        resume_run_id="existing-run",
+        resume_prior_results=[
+            {"scenario_id": "PRIOR-A", "status": "pass", "points": 2, "summary": "passed"}
+        ],
+        resume_scenarios=[run_prior],
+    )
+
+    report_metadata = reporter.write_scenario_report.call_args.kwargs["scenario_metadata"]
+    assert report_metadata["PRIOR-A"].title == "run definition"
