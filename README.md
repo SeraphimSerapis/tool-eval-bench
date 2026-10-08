@@ -69,7 +69,8 @@ characteristic props/build fields, or metrics. Halogen Flash is recognized throu
 metrics, even when it also exports llama.cpp-compatible names. Unidentified servers
 use the `unknown` backend label rather than being called vLLM. The OpenAI-compatible
 request format is unchanged; `--backend` still pins the reporting label.
-The Python API also defaults to `backend="unknown"`; pass a known label explicitly.
+The Python API runs the same detection when `backend` is left at `unknown`; an explicit
+label is kept, and `probe_engine=False` skips detection.
 See [backend identification](docs/backends.md#backend-identification).
 
 ### Exercise controlled fixture variants

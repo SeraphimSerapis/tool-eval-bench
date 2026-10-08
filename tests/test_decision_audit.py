@@ -38,6 +38,7 @@ from tool_eval_bench.domain.decision import ChoiceAnswer, DecisionResult, YesNoA
 from tool_eval_bench.domain.scenarios import ScenarioResult, ScenarioState, ScenarioStatus
 from tool_eval_bench.runner.orchestrator import run_scenario
 from tool_eval_bench.storage.reports import MarkdownReporter
+from tool_eval_bench.utils import metadata
 
 SCENARIO = SCENARIOS["TC-89"]
 JUDGE_URL = "http://judge.test/v1"
@@ -126,6 +127,8 @@ def harness(monkeypatch):
 
     monkeypatch.setattr(BenchmarkService, "_adapter_for", model_adapter)
     monkeypatch.setattr(service, "_collect_metadata_safe", AsyncMock(return_value={}))
+    monkeypatch.setattr(metadata, "probe_backend_hint", AsyncMock(return_value=None))
+    monkeypatch.setattr(metadata, "_probe_engine", AsyncMock(return_value={}))
     monkeypatch.setattr(service, "build_decision_adapter", judge_factory)
     return argparse.Namespace(
         requests=requests,

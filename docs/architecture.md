@@ -219,6 +219,7 @@ Shared infrastructure:
 | `service.py` | `BenchmarkService` — composes concrete adapters, scenario orchestration, SQLite persistence, and Markdown reporting |
 | `finalization.py` | Completes interrupted or checkpointed runs and builds the final persisted summary |
 | `run_config.py` | `RunSettings` and the persisted config, including the `config_fingerprint` that decides which runs are comparable |
+| `run_context.py` | Backend detection and `RunContext` collection for the Python API, using the same probes as the CLI |
 | `run_queries.py` | Read queries against stored runs, each owning the repository's lifetime |
 
 ### `storage/` — Persistence

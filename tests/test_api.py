@@ -178,6 +178,16 @@ class TestArgsSchema:
 class TestRunBenchmark:
     """Test the programmatic run_benchmark entry point."""
 
+    @pytest.fixture(autouse=True)
+    def no_detection(self, monkeypatch):
+        """These tests cover forwarding; detection has its own module."""
+
+        async def keep(backend, **kwargs):
+            return backend
+
+        monkeypatch.setattr("tool_eval_bench.api.detect_backend", keep)
+        monkeypatch.setattr("tool_eval_bench.api.build_run_context", AsyncMock(return_value=None))
+
     @pytest.fixture()
     def mock_service(self):
         """Create a mock BenchmarkService that returns a fake run_data."""
