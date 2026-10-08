@@ -239,7 +239,12 @@ async def test_context_failure_falls_back_to_legacy_metadata(monkeypatch):
     assert result["metadata"]["config"]["backend"] == "vllm"
 
 
-def _cli_metadata(monkeypatch: pytest.MonkeyPatch, extra: list[str]) -> dict[str, Any]:
+def _cli_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    extra: list[str],
+    *,
+    base_url: tuple[str, ...] = ("--base-url", "http://test"),
+) -> dict[str, Any]:
     """Run the CLI's own detection and context collection, then stop."""
     from tool_eval_bench.cli import dispatch
 
@@ -254,7 +259,7 @@ def _cli_metadata(monkeypatch: pytest.MonkeyPatch, extra: list[str]) -> dict[str
     monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
     monkeypatch.setattr(dispatch, "_check_endpoint_ready", lambda *a, **k: None)
     monkeypatch.setattr(dispatch, "_run_throughput_mode", stop)
-    argv = ["tool-eval-bench", "--model", "m", "--base-url", "http://test"]
+    argv = ["tool-eval-bench", "--model", "m", *base_url]
     monkeypatch.setattr(sys, "argv", [*argv, "--scenarios", "TC-01", "--json", *extra])
 
     dispatch.main()
@@ -278,6 +283,8 @@ NON_DEFAULT_API: dict[str, Any] = {
     "error_rate": 0.1,
     "system_prompt": "  Be terse.  ",
 }
+THINKING_OFF_KWARGS = {"chat_template_kwargs": {"enable_thinking": False}}
+THINKING_ON_KWARGS = {"chat_template_kwargs": {"enable_thinking": True}}
 
 
 @pytest.mark.parametrize(
@@ -285,6 +292,11 @@ NON_DEFAULT_API: dict[str, Any] = {
     [
         *((server, [], {}) for server in sorted(SERVERS)),
         ("llamacpp", NON_DEFAULT_CLI, NON_DEFAULT_API),
+        (
+            "llamacpp",
+            ["--backend-kwargs", json.dumps(THINKING_OFF_KWARGS)],
+            {"extra_params": THINKING_OFF_KWARGS},
+        ),
     ],
 )
 def test_cli_and_api_record_the_same_metadata(monkeypatch, capsys, server, cli_args, api_kwargs):
@@ -296,3 +308,55 @@ def test_cli_and_api_record_the_same_metadata(monkeypatch, capsys, server, cli_a
     assert api == cli
     stderr_events = [json.loads(line) for line in capsys.readouterr().err.splitlines() if line]
     assert {"event": "backend_detected", "backend": server} in stderr_events
+
+
+@pytest.mark.parametrize(
+    ("cli_args", "thinking_enabled"),
+    [
+        ([], True),
+        (["--no-think"], False),
+        (["--backend-kwargs", json.dumps(THINKING_OFF_KWARGS)], False),
+        # --backend-kwargs wins over --no-think, so thinking is requested.
+        (["--no-think", "--backend-kwargs", json.dumps(THINKING_ON_KWARGS)], True),
+    ],
+)
+def test_cli_records_thinking_as_sent(monkeypatch, cli_args, thinking_enabled):
+    serve(monkeypatch, SERVERS["llamacpp"])
+
+    recorded = _cli_metadata(monkeypatch, cli_args)
+
+    assert recorded["thinking_enabled"] is thinking_enabled
+
+
+def test_cli_detection_that_raises_leaves_the_run_unknown(monkeypatch):
+    serve(monkeypatch, SERVERS["vllm"])
+    monkeypatch.setattr(metadata, "probe_backend_hint", AsyncMock(side_effect=RuntimeError("x")))
+
+    assert _cli_metadata(monkeypatch, [])["backend"] == "unknown"
+
+
+def test_explicit_unknown_is_kept_by_the_cli_but_detected_by_the_api(monkeypatch):
+    # Deliberate: "unknown" is the API's default, so it cannot mean "keep as given" there.
+    serve(monkeypatch, SERVERS["vllm"])
+    hint = AsyncMock(wraps=metadata.probe_backend_hint)
+    monkeypatch.setattr(metadata, "probe_backend_hint", hint)
+
+    assert _cli_metadata(monkeypatch, ["--backend", "unknown"])["backend"] == "unknown"
+    hint.assert_not_called()
+
+    assert asyncio.run(_run(backend="unknown"))["metadata"]["backend"] == "vllm"
+    hint.assert_called_once()
+
+
+@pytest.mark.parametrize(("server", "backend"), [("llamacpp", "llamacpp"), (None, "sglang")])
+def test_cli_keeps_a_discovered_label_only_when_the_probe_is_inconclusive(
+    monkeypatch, server, backend
+):
+    from tool_eval_bench.cli import dispatch
+
+    serve(monkeypatch, SERVERS[server] if server else {})
+    for name in ("TOOL_EVAL_BASE_URL", "TOOL_EVAL_HOST"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(dispatch, "_discover_server", lambda **k: ("http://test", "sglang"))
+
+    assert _cli_metadata(monkeypatch, [], base_url=())["backend"] == backend
