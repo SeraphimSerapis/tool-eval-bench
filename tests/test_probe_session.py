@@ -1,16 +1,30 @@
-"""Probing an endpoint must cost one connection, and one timeout at worst.
+"""Probing an endpoint must cost one connection pool, and two timeouts at worst.
 
 Each probe used to open its own `AsyncClient` and the ladder ran to the end
 regardless, so a wrong `--base-url` spent `_PROBE_TIMEOUT` per rung before the
-run could start.
+run could start. A refused connection ends the ladder at once; a server that
+accepts connections and never answers ends it after two timeouts in a row.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
 
+from tool_eval_bench.api import run_benchmark
+from tool_eval_bench.application import service as service_module
+from tool_eval_bench.application.service import BenchmarkService
+from tool_eval_bench.domain.scenarios import ScenarioResult, ScenarioStatus
+from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
+from tool_eval_bench.runner.orchestrator import score_results
 from tool_eval_bench.utils import metadata
+
+_REAL_CLIENT = httpx.AsyncClient
 
 
 class _CountingClient:
@@ -172,3 +186,164 @@ async def test_the_whole_ladder_shares_one_connection_pool(
     await metadata.probe_backend_hint("http://localhost:8000")
 
     assert built == 1, f"opened {built} clients for one endpoint"
+
+
+# -- A server that accepts connections and never answers ---------------------
+
+TIMEOUTS = [httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout]
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch, handler) -> list[str]:
+    """Route every probe through *handler* and return the paths it was asked for."""
+    paths: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return handler(request)
+
+    monkeypatch.setattr(
+        metadata.httpx,
+        "AsyncClient",
+        lambda **kw: _REAL_CLIENT(transport=httpx.MockTransport(respond), **kw),
+    )
+    return paths
+
+
+def _hang(timeout: type[httpx.TimeoutException]):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise timeout("timed out", request=request)
+
+    return handler
+
+
+def _latch_records(caplog: pytest.LogCaptureFixture) -> list[tuple[int, str]]:
+    return [
+        (r.levelno, r.message)
+        for r in caplog.records
+        if r.name == metadata.__name__ and r.levelno >= logging.INFO
+    ]
+
+
+def _latch_message(purpose: str) -> str:
+    return (
+        "The server did not answer 2 probes in a row within 5 s; "
+        f"skipping the remaining {purpose} probes"
+    )
+
+
+@pytest.mark.parametrize("timeout", TIMEOUTS)
+async def test_a_silent_server_stops_the_ladder_after_two_timeouts(
+    monkeypatch, caplog, timeout
+) -> None:
+    paths = _serve(monkeypatch, _hang(timeout))
+
+    with caplog.at_level(logging.INFO, logger=metadata.__name__):
+        assert await metadata.probe_backend_hint("http://test") is None
+
+    assert paths == ["/metrics", "/version"]
+    # INFO, never WARNING: the CLI has no logging config, so a warning would
+    # print plain text on stderr, which --json reserves for JSON lines.
+    assert _latch_records(caplog) == [(logging.INFO, _latch_message("backend detection"))]
+
+
+@pytest.mark.parametrize("timeout", TIMEOUTS)
+async def test_a_silent_server_stops_the_engine_probes_after_two_timeouts(
+    monkeypatch, caplog, timeout
+) -> None:
+    paths = _serve(monkeypatch, _hang(timeout))
+
+    with caplog.at_level(logging.INFO, logger=metadata.__name__):
+        context = await metadata.collect_run_context(
+            model="m", backend="unknown", base_url="http://test"
+        )
+
+    assert paths == ["/v1/models", "/version"]
+    assert _latch_records(caplog) == [(logging.INFO, _latch_message("engine metadata"))]
+    assert context.model == "m"
+    assert context.engine_name is None
+    assert context.server_model_id is None
+    assert context.max_model_len is None
+
+
+async def test_one_slow_endpoint_does_not_end_the_ladder(monkeypatch) -> None:
+    """llama-server answers /metrics from its task queue, behind a decode step."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/metrics":
+            raise httpx.ReadTimeout("busy", request=request)
+        body = {
+            "/v1/models": {"data": [{"id": "m", "owned_by": "llamacpp"}]},
+            "/props": {"build_info": "b1-abc", "total_slots": 1},
+        }.get(request.url.path)
+        return httpx.Response(200, json=body) if body else httpx.Response(404)
+
+    _serve(monkeypatch, handler)
+
+    assert await metadata.probe_backend_hint("http://test") == ("llamacpp", "llama.cpp")
+
+
+async def test_an_answer_between_timeouts_resets_the_count() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/slow"):
+            raise httpx.ReadTimeout("slow", request=request)
+        return httpx.Response(404)
+
+    async with _REAL_CLIENT(transport=httpx.MockTransport(handler)) as client:
+        session = metadata._ProbeSession(client)
+
+        async def get(path: str) -> httpx.Response | None:
+            return await metadata._probe_get(session, f"http://test{path}", headers={}, what=path)
+
+        await get("/slow1")
+        await get("/fine")
+        await get("/slow2")
+        assert not session.unreachable, "two timeouts with an answer between them latched"
+
+        await get("/slow3")
+        assert session.unreachable
+        assert await get("/fine2") is None
+
+
+async def test_a_silent_server_still_lets_an_api_run_start(monkeypatch) -> None:
+    scenario = next(s for s in ALL_SCENARIOS if s.id == "TC-01")
+    summary = score_results([ScenarioResult("TC-01", ScenarioStatus.PASS, 2, "ok")], [scenario])
+    run_all = AsyncMock(return_value=summary)
+    monkeypatch.setattr(service_module, "run_all_scenarios", run_all)
+    monkeypatch.setattr(BenchmarkService, "_adapter_for", lambda *a, **k: object())
+    paths = _serve(monkeypatch, _hang(httpx.ReadTimeout))
+
+    result = await run_benchmark(
+        model="m", base_url="http://test", scenarios=[scenario], persist=False
+    )
+
+    run_all.assert_awaited_once()
+    assert result["status"] == "completed"
+    assert result["metadata"]["backend"] == "unknown"
+    # Detection and metadata are separate sessions: two timeouts each, not one per rung.
+    assert paths == ["/metrics", "/version", "/v1/models", "/version"]
+
+
+async def test_a_real_socket_that_never_answers_costs_two_timeouts(monkeypatch) -> None:
+    """End to end over TCP: httpx raises ReadTimeout and the ladder stops."""
+    connections = 0
+
+    async def accept_and_ignore(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        nonlocal connections
+        connections += 1
+        await reader.read()  # until the client gives up and closes
+        writer.close()
+
+    server = await asyncio.start_server(accept_and_ignore, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr(metadata, "_PROBE_TIMEOUT", 0.25)
+    try:
+        started = time.monotonic()
+        assert await metadata.probe_backend_hint(f"http://127.0.0.1:{port}") is None
+        elapsed = time.monotonic() - started
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert connections == 2
+    # The full ladder is six rungs, 1.5 s at this timeout.
+    assert elapsed < 1.5
