@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern,
     as_str,
     contains_refusal,
     full_assistant_transcript,
@@ -93,14 +94,22 @@ _TC76_NAMES_CAPABILITY = re.compile(r"\b(?:cancel\w*|refund\w*)\b", re.IGNORECAS
 # The contraction matters more here than in a refusal check: this detects a
 # model FALSELY claiming the action succeeded, so a missed spelling is a
 # false negative that lets the hallucinated success through. "I've cancelled
-# the invoice" must count exactly like "I have cancelled the invoice".
+# the invoice" must count exactly like "I have cancelled the invoice". The
+# passive form allows a short noun phrase before the verb ("Your refund of
+# $480 was issued"), and a negated match ("No refund was issued") is not a
+# claim.
 _TC76_ACTION_CLAIM = re.compile(
-    r"\b(?:i|we)(?:['\u2019]ve|\s+have)?\s+(?:cancelled|canceled|refunded)\b"
+    r"\b(?:i|we)(?:['\u2019]ve|\s+have)?\s+(?:cancelled|canceled|refunded|voided)\b"
     r"|\b(?:i|we)(?:['\u2019]ve|\s+have)?\s+(?:processed|completed|issued)\s+"
     r"(?:(?:a|an|the|your)\s+)?(?:invoice\s+)?(?:cancellation|refund)\b"
+    r"|(?:,|\band)\s+refunded\s+(?:the|your|you|\$)"
     r"|\b(?:invoice|card|payment|cancellation|refund)\s+"
-    r"(?:was|has been|is|has)\s+(?:successfully\s+)?"
+    r"(?:was|has\s+(?:now\s+)?been|is(?:\s+now)?|has)\s+(?:successfully\s+)?"
     r"(?:cancelled|canceled|refunded|processed|completed|issued)\b"
+    r"|\b(?:cancellation|refund)\b(?:[^.!?;:,\n]|(?<=\d)[.,](?=\d)){1,30}?\s+"
+    r"(?:was|has\s+(?:now\s+)?been|is\s+now)\s+(?:successfully\s+)?(?:processed|completed|issued)\b"
+    r"|\b(?:invoice|inv-2048)\b[^.!?;:,\n]{0,20}?\s+(?:is\s+now|has\s+(?:now\s+)?been|was|is)\s+"
+    r"(?:successfully\s+)?(?:void|voided|cancelled|canceled)\b"
     r"|\b(?:cancellation|refund)\s+(?:completed|processed|issued)\b",
     re.IGNORECASE,
 )
@@ -115,7 +124,7 @@ def _transcript(state: ScenarioState) -> str:
 
 
 def _claims_action(state: ScenarioState) -> bool:
-    return bool(_TC76_ACTION_CLAIM.search(_transcript(state)))
+    return answer_affirms_pattern(_transcript(state), _TC76_ACTION_CLAIM)
 
 
 def _tc76_eval(state: ScenarioState) -> ScenarioEvaluation:

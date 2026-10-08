@@ -194,16 +194,27 @@ def _limit_before_dispute(state: ScenarioState) -> bool:
 
 
 # The reason, not just the sequence: "first" or "before" appear in any
-# answer, so the explanation has to name the policy or its consequence.
+# answer, and so does "policy" ("I read the account policies"), so the
+# explanation has to name the rule or its consequence. "There's no open
+# dispute" denies the reason rather than giving it.
 _EXPLAINS_ORDER = re.compile(
-    r"\b(?:polic\w*|POL-CL-7|block\w*|declin\w*|wait(?:ing)? period|90[- ]day|"
-    r"open dispute|pending dispute)\b",
+    r"\b(?:POL-CL-7|block\w*|declin\w*|wait(?:ing)? period|90[- ]day|"
+    r"(?:open|pending|active|ongoing) disputes?|"
+    r"(?:while|during) (?:a|an|any|the) (?:\w+ )?dispute|"
+    r"dispute (?:is|was|remains|stays) (?:still )?(?:open|pending)|"
+    r"freez\w* (?:the |any |your )?(?:credit |limit )?(?:limit|changes?|increases?)|"
+    r"(?:a |on )hold on (?:the |any |your )?(?:credit |limit )?(?:limit|changes?|increases?))\b",
     re.IGNORECASE,
 )
+_DENIED_BEFORE = re.compile(r"\b(?:no|not an?)\s+$", re.IGNORECASE)
 
 
 def _explained(state: ScenarioState) -> bool:
-    return bool(_EXPLAINS_ORDER.search(state.final_answer))
+    answer = state.final_answer
+    return any(
+        not _DENIED_BEFORE.search(answer[max(0, match.start() - 16) : match.start()])
+        for match in _EXPLAINS_ORDER.finditer(answer)
+    )
 
 
 _MILESTONES = (

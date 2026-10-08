@@ -286,13 +286,94 @@ def answer_affirms_number(answer: str, value: str) -> bool:
     return False
 
 
+# "Nothing was revoked" and "no funds were paid" deny the action through the
+# subject rather than the verb, which _is_negated cannot see: "nothing" is not
+# a negation word, and a "no" determiner stops at the auxiliary. This only
+# fires when the negative subject sits directly before the matched text, with
+# nothing but auxiliaries in between, so "Nothing else changed: the key was
+# revoked" still reads as a claim.
+_AUXILIARY = r"(?:was|were|is|are|has|have|had|got|been|being|ever|yet|actually)\b"
+_AUX_SEQUENCE = rf"(?:'s\b|\s+{_AUXILIARY})"
+_NEGATIVE_HEAD = (
+    r"(?:\b(?:nothing|none|nobody|no\s+one|neither(?:\s+(?!of\b)\w+)?)(?:\s+else)?"
+    r"(?:\s+of(?:\s+\w+){0,2})?"
+    r"|\bno\s+(?:\w+\s+)?"
+    r"(?!(?:it|i|we|you|he|she|they|this|that|everything|everyone|all|both|each)\b)\w+"
+    r"(?=\s+(?:was|were|is|are|has|have|had|got)\b))"
+)
+_NEGATIVE_SUBJECT = re.compile(rf"{_NEGATIVE_HEAD}{_AUX_SEQUENCE}*\s*$", re.IGNORECASE)
+
+# A coordinated participle can share the negative subject, as in "No meeting
+# was moved, updated, or rescheduled". The words in the list are not checked
+# for a participle ending, because "sent", "paid" and "cut" have none. That
+# looseness means the list shape has to prove the coordination instead:
+# "No conflicts were found, rescheduled it to Saturday" is a denial followed
+# by a claim, and the object after "rescheduled" is what gives it away. So the
+# matched verb must close its clause, and a comma alone only counts when the
+# list goes on to close with "or", or with an Oxford ", and". "And" is where
+# claims hide: "No conflicts were found and rescheduled" and "Nothing was lost,
+# moved and confirmed" report a move, so a verb after "and" is only denied
+# after an Oxford comma ("moved, updated, and rescheduled"). After "or"/"nor" a
+# prepositional phrase may follow too, because "sent or delivered to Sarah"
+# cannot be read as a fresh claim the way "and moved to Saturday" can.
+_COORDINATED = r"(?:\s+(?!(?:i|you|we|they|he|she|it|the|a|an|so|then|but)\b)\w+,?){1,4}?"
+_COORDINATED_LIST = rf"{_NEGATIVE_HEAD}{_AUX_SEQUENCE}+{_COORDINATED}"
+_AFTER_DISJUNCTION = re.compile(rf"{_COORDINATED_LIST}\s+n?or\s*$", re.IGNORECASE)
+_AFTER_OXFORD_AND = re.compile(rf"{_COORDINATED_LIST}(?<=,)\s+and\s*$", re.IGNORECASE)
+_AFTER_COMMA = re.compile(rf"{_COORDINATED_LIST}(?<=,)\s*$", re.IGNORECASE)
+_CLOSES_CLAUSE = re.compile(r"\w*\s*(?:[.;:!?\n)]|,?\s+(?:or|nor|and)\b|$)", re.IGNORECASE)
+_CONTINUES_LIST = re.compile(
+    r"\w*(?:,\s*\w+)*(?:,?\s+n?or|,\s+and)\s+\w+\s*(?:[.;:!?\n)]|$)", re.IGNORECASE
+)
+_PREPOSITION_NEXT = re.compile(
+    r"\w*\s+(?:to|for|from|with|by|in|on|at|until|yet|either)\b", re.IGNORECASE
+)
+_CURLY_APOSTROPHES = str.maketrans({"\u2018": "'", "\u2019": "'"})
+
+
+def _coordinated_with_negative_subject(prefix: str, suffix: str) -> bool:
+    if _AFTER_COMMA.search(prefix):
+        return _CONTINUES_LIST.match(suffix) is not None
+    if _AFTER_OXFORD_AND.search(prefix):
+        return _CLOSES_CLAUSE.match(suffix) is not None
+    if _AFTER_DISJUNCTION.search(prefix):
+        return _CLOSES_CLAUSE.match(suffix) is not None or (
+            _PREPOSITION_NEXT.match(suffix) is not None
+        )
+    return False
+
+
+def negated_before(prefix: str, suffix: str = "") -> bool:
+    """Return whether the text between ``prefix`` and ``suffix`` is negated.
+
+    Combines the verb and determiner scope check with a negative subject
+    ("nothing was", "none of them were"). ``suffix`` is the text right after
+    the matched value; it decides whether a value in a coordinated list
+    ("nothing was moved or rescheduled") shares the negative subject. An
+    empty suffix means the value ends the text.
+    """
+    return (
+        _is_negated(prefix)
+        or _NEGATIVE_SUBJECT.search(prefix) is not None
+        or _coordinated_with_negative_subject(prefix, suffix)
+    )
+
+
+def answer_affirms_pattern(answer: str, pattern: re.Pattern[str]) -> bool:
+    """Return whether any match of ``pattern`` is asserted rather than negated."""
+    answer = answer.translate(_CURLY_APOSTROPHES)
+    return any(
+        not negated_before(
+            answer[max(0, match.start() - 120) : match.start()],
+            answer[match.end() : match.end() + 40],
+        )
+        for match in pattern.finditer(answer)
+    )
+
+
 def answer_affirms_text(answer: str, value: str) -> bool:
     """Return whether a textual value is asserted rather than negated."""
-    pattern = re.compile(rf"\b{re.escape(value)}\b", re.IGNORECASE)
-    for match in pattern.finditer(answer):
-        if not _is_negated(answer[max(0, match.start() - 120) : match.start()]):
-            return True
-    return False
+    return answer_affirms_pattern(answer, re.compile(rf"\b{re.escape(value)}\b", re.IGNORECASE))
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +622,34 @@ def contains_refusal(answer: str) -> bool:
     )
 
 
+# A closing offer after acting ("Done! Would you like me to do anything else?")
+# asks nothing about the task, so it is removed before the phrase checks. Only
+# offers with no task content count, and only when they open a sentence:
+# "search for something else, like a different file name?" and "or would you
+# like me to pick someone else?" are real questions about the task.
+_SENTENCE_START = r"(?:^|(?<=[.!?\n]))\s*"
+_GENERIC_OFFER = re.compile(
+    _SENTENCE_START + r"(?:"
+    r"(?:would you like me to|do you want me to|want me to|shall i|should i|can i|may i)\s+"
+    r"(?:(?:help|assist)(?:\s+you)?(?:\s+with)?|do)\s+(?:anything|something)\s+(?:else|more)"
+    r"|is there anything else (?:i can|you need|you'd like|you would like)"
+    r"|(?:please\s+)?let me know if (?:you need|you want|there's|there is) anything else"
+    r"|anything else\s*\?"
+    r")[^.!?\n]*[.!?]*"
+)
+# "which" is also a relative pronoun ("Jordan Lee, which was the only match"),
+# so it only counts when it opens a question, in interrogative word order,
+# before a list of alternatives ("Which Jordan: Park, Lee, or Kim"), or as the
+# object of a request.
+_WHICH_QUESTION = re.compile(
+    _SENTENCE_START + r"(?:(?:so|and|ok|okay|then|also|got it|sure)\W+)?which\b[^.!?\n]*\?"
+    r"|\bwhich\s+(?:\w+\s+){0,3}?(?:do|did|would|should|shall|can|could|will|are|is)\s+"
+    r"(?:you|i|we)\b"
+    r"|\bwhich\s+\w+(?:\s+\w+)?\s*:\s*\w+(?:\s*,\s*\w+)*,?\s+or\b"
+    r"|\b(?:know|tell me|confirm|specify|clarify|sure|unclear|mean|indicate)\s+which\b"
+)
+
+
 def asks_for_clarification(answer: str) -> bool:
     """Check if the answer asks for clarification.
 
@@ -548,16 +657,17 @@ def asks_for_clarification(answer: str) -> bool:
     including direct questions, conditional qualifications, and
     politeness-prefixed requests.
     """
-    low = answer.lower()
+    low = _GENERIC_OFFER.sub(" ", answer.lower().translate(_CURLY_APOSTROPHES))
     direct_question = re.search(
         r"\b(?:what\s+(?:time|date|day)|when\s+(?:is|are|should|would|could|can|do|does|will))\b",
         low,
     )
+    if _WHICH_QUESTION.search(low):
+        return True
     return direct_question is not None or any(
         word in low
         for word in (
             # Direct question forms
-            "which",
             "clarify",
             "could you",
             "can you tell me",

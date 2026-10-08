@@ -48,9 +48,8 @@ def _tc36_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 def _asks_recipient_and_content(state: ScenarioState) -> bool:
     answer = state.final_answer.lower()
-    asks_recipient = any(
-        word in answer for word in ("who", "recipient", "to whom", "email address")
-    )
+    # Word boundaries: a bare "who" substring also matched "whole".
+    asks_recipient = bool(re.search(r"\b(?:who|whom|recipients?|email address)\b", answer))
     asks_subject = "subject" in answer or "what should the subject" in answer
     asks_body = bool(re.search(r"\b(?:body|message|content|say|write|tell them)\b", answer))
     # The recipient is the one detail that cannot be inferred at all, so it is
@@ -71,11 +70,9 @@ def _tc36_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer.lower()
 
     # Check if model asked for clarification
-    asks_clarification = any(
+    asks_clarification = bool(re.search(r"\b(?:who|whom|recipients?)\b", answer)) or any(
         phrase in answer
         for phrase in [
-            "who",
-            "recipient",
             "to whom",
             "what should",
             "subject",

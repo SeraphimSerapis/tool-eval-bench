@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from dataclasses import replace
 from typing import Any
 
@@ -19,6 +20,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str,
     full_assistant_transcript,
+    negated_before,
     tool_calls_by_name,
     with_noise,
 )
@@ -152,11 +154,87 @@ def _tc87_handle(
     return with_noise({"error": f"Unsupported tool {call.name}."}, call.name)
 
 
+# Claim shapes rather than four literal phrases, so "That's every one of them"
+# and "here is the full list" count. These are not claims: a plan ("I'll fetch
+# all of them") or a negation ("I don't have the complete list") in the same
+# clause, a progress report anywhere in the sentence ("that's everything so
+# far", "first page only; the full list needs more requests"), a question or
+# offer ("Do you want the full list?"), and the list as the subject of what is
+# still missing ("The full list requires more pages").
+_COMPLETENESS_CLAIM = re.compile(
+    r"\b(?:all|every)\s+(?:of\s+)?(?:the\s+)?(?:(?:\d+|six)\s+)?(?:open\s+)?(?:p1\s+)?incidents?\b"
+    r"|\b(?:6|six)\s+(?:open\s+)?(?:p1\s+)?incidents\b"
+    r"|\b(?:\d+|one|two|three|four|five|seven|eight)\s+(?:open\s+)?(?:p1\s+)?incidents?\s+"
+    r"in\s+total\b"
+    r"|\b(?:complete|full|entire|whole)\s+(?:incident\s+)?list\b"
+    r"|\bevery\s+(?:single\s+)?one\s+of\s+them\b"
+    r"|\ball\s+of\s+them\b"
+    r"|\bthat(?:'s|\s+is)\s+everything\b"
+    r"|\bthat\s+covers\s+everything\b",
+    re.IGNORECASE,
+)
+_CLAUSE_BOUNDARY = re.compile(r"[.!?;,:\n]|\b(?:and|but|while)\b", re.IGNORECASE)
+_SENTENCE_BOUNDARY = re.compile(r"[.!?\n]")
+_PLAN = re.compile(
+    r"\b(?:will|going to|need to|needs to|have to|has to|until|once|before|after|if|let me|"
+    r"let's|keep|continue|continuing|"
+    r"to (?:get|retrieve|fetch|collect|gather|see|confirm|find|list|compile|build))\b|'ll\b",
+    re.IGNORECASE,
+)
+_PARTIAL = re.compile(
+    r"\b(?:so far|for now|yet|until now|on (?:this|the first) page|remaining pages|partial|"
+    r"(?:only|just) (?:the )?first page|first page only|page one only|more requests|"
+    r"(?<!no )more pages? (?:remain|left|to go))\b",
+    re.IGNORECASE,
+)
+_OFFER = re.compile(
+    r"\b(?:should i|shall i|do you want|would you like|want me to)\b", re.IGNORECASE
+)
+_STILL_MISSING = re.compile(
+    r"\s+(?:still\s+)?(?:needs?|requires?|would\s+need|will\s+need|is\s+longer|has\s+more|"
+    r"spans?\s+more|takes?\s+more)\b",
+    re.IGNORECASE,
+)
+
+
 def _claims_completeness(state: ScenarioState) -> bool:
-    return any(
-        phrase in full_assistant_transcript(state).lower()
-        for phrase in ("all incidents", "complete list", "6 incidents", "six incidents")
-    )
+    transcript = full_assistant_transcript(state).replace("\u2019", "'")
+    # Boundaries are found once and bisected, so a long answer that repeats a
+    # claim shape in one sentence stays linear instead of rescanning the
+    # sentence for every match.
+    boundary_ends = [b.end() for b in _SENTENCE_BOUNDARY.finditer(transcript)]
+    sentence_starts = [0, *boundary_ends]
+    clause_ends = [b.end() for b in _CLAUSE_BOUNDARY.finditer(transcript)]
+    offers = list(_OFFER.finditer(transcript))
+    offer_starts = [offer.start() for offer in offers]
+    partial_sentences: dict[tuple[int, int], bool] = {}
+    for match in _COMPLETENESS_CLAIM.finditer(transcript):
+        sentence_left = sentence_starts[bisect_right(sentence_starts, match.start()) - 1]
+        clause = bisect_right(clause_ends, match.start()) - 1
+        left = max(sentence_left, clause_ends[clause] if clause >= 0 else 0, match.start() - 200)
+        next_boundary = bisect_right(boundary_ends, match.end())
+        sentence_right = (
+            boundary_ends[next_boundary] if next_boundary < len(boundary_ends) else len(transcript)
+        )
+        key = (sentence_left, sentence_right)
+        if key not in partial_sentences:
+            sentence = transcript[sentence_left:sentence_right]
+            partial_sentences[key] = bool(_PARTIAL.search(sentence)) or sentence.rstrip().endswith(
+                "?"
+            )
+        offer = bisect_right(offer_starts, sentence_left - 1)
+        offered = offer < len(offers) and offers[offer].end() <= match.start()
+        before = transcript[left : match.start()]
+        if (
+            _PLAN.search(before)
+            or partial_sentences[key]
+            or offered
+            or _STILL_MISSING.match(transcript, match.end())
+        ):
+            continue
+        if not negated_before(before, transcript[match.end() : match.end() + 40]):
+            return True
+    return False
 
 
 def _tc87_eval(

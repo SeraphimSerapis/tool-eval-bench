@@ -91,11 +91,27 @@ def _tc16_weather_result_is_munich(payload: Any) -> bool:
     )
 
 
+_MORE_GERMAN_MARKERS = re.compile(
+    r"\b(?:hat|bei|mit|bedeckt\w*|teilweise|leicht|momentan|zurzeit)\b", re.IGNORECASE
+)
+_ENGLISH_FUNCTION_WORDS = re.compile(
+    r"\b(?:the|is|it's|and|with|weather|currently|cloudy|partly|degrees|of)\b", re.IGNORECASE
+)
+_ECHOED_QUESTION = re.compile(r"wie ist das wetter in münchen gerade\??", re.IGNORECASE)
+
+
 def _answer_in_german(state: ScenarioState) -> bool:
-    answer_lower = re.sub(r"[*_`]", "", state.final_answer.lower())
-    # Shared place and unit names cannot establish German. A grammatical marker
-    # also accepts terse answers without rewarding a minimum word count.
-    return len(_GERMAN_MARKERS.findall(answer_lower)) >= 1
+    answer_lower = re.sub(r"[*_`]", "", state.final_answer.lower()).replace("\u2019", "'")
+    # Quoting the user's German question supplies German words to any answer.
+    answer_lower = _ECHOED_QUESTION.sub(" ", answer_lower)
+    # Shared place and unit names cannot establish German, and neither can a
+    # German word quoted in an English answer ("the Wetter in Munich is 14°C
+    # and cloudy"), so markers have to outnumber English function words. A
+    # terse answer ("Aktuell 14 °C.") has no English words and passes on one.
+    german = set(_GERMAN_MARKERS.findall(answer_lower))
+    german |= set(_MORE_GERMAN_MARKERS.findall(answer_lower))
+    english = set(_ENGLISH_FUNCTION_WORDS.findall(answer_lower))
+    return len(german) > len(english)
 
 
 @forbid_unrequested_side_effects()
