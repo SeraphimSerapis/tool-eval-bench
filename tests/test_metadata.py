@@ -356,7 +356,9 @@ class TestProbeEngine:
         props_resp = _mock_response(200, {"build_number": 42})
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
-            return_value=_mock_async_client([models_resp, version_resp, health_resp, props_resp]),
+            return_value=_mock_async_client(
+                [models_resp, version_resp, health_resp, _mock_response(404), props_resp]
+            ),
         ):
             result = await _probe_engine("http://localhost:9999", None, "unknown")
 
@@ -522,7 +524,9 @@ class TestProbeBackendHint:
         props_resp = _mock_response(200, {"build_info": "1234", "total_slots": 1})
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
-            return_value=_mock_async_client([metrics_resp, version_resp, ninfer_resp, props_resp]),
+            return_value=_mock_async_client(
+                [metrics_resp, version_resp, ninfer_resp, _mock_response(404), props_resp]
+            ),
         ):
             result = await probe_backend_hint("http://localhost:8080")
 
@@ -616,7 +620,7 @@ class TestProbeBackendHint:
     async def test_returns_none_when_nothing_matches(self) -> None:
         from tool_eval_bench.utils.metadata import probe_backend_hint
 
-        responses = [_mock_response(404) for _ in range(5)]
+        responses = [_mock_response(404) for _ in range(6)]
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
             return_value=_mock_async_client(responses),

@@ -2,7 +2,7 @@
 
 A tool-calling quality benchmark for LLMs in agentic workflows, built for
 self-hosted serving stacks: **vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**, **Strata**,
-**NInfer**, **TensorFold**, and hosted **Gemini** and **Anthropic**.
+**NInfer**, **TensorFold**, **TabbyAPI**, and hosted **Gemini** and **Anthropic**.
 
 Each scenario observes one assistant conversation with mock tools. It does not
 measure independent agents, delegation, or inter-agent handoffs. Localization
@@ -67,7 +67,9 @@ metrics, even when it also exports llama.cpp-compatible names. Unidentified serv
 use the `unknown` backend label rather than being called vLLM. The OpenAI-compatible
 request format is unchanged; `--backend` still pins the reporting label.
 The Python API also defaults to `backend="unknown"`; pass a known label explicitly.
-See [backend identification](docs/backends.md#backend-identification).
+TabbyAPI is recognized through its model owner or service-info declaration, before
+its llama.cpp-compatible props. See [TabbyAPI](docs/backends.md#tabbyapi) and
+[backend identification](docs/backends.md#backend-identification).
 
 ### Exercise controlled fixture variants
 

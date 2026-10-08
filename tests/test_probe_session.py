@@ -75,6 +75,7 @@ async def test_a_responding_endpoint_still_walks_every_rung(client) -> None:
         "metrics",
         "version",
         "models",
+        "serviceinfo",
         "props",
         "health",
     ]

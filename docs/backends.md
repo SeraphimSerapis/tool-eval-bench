@@ -97,6 +97,34 @@ Tool-choice and structured-output capabilities remain response-probed, not assum
 from the backend label. Use `--no-think` when a comparison deliberately disables
 reasoning, and keep that setting identical across models.
 
+## TabbyAPI
+
+```bash
+tool-eval-bench run --short --base-url http://127.0.0.1:5000/v1 --seed 42
+# Pin the reporting label if a proxy hides discovery endpoints:
+tool-eval-bench run --short --backend tabbyapi --base-url http://127.0.0.1:5000/v1
+```
+
+[TabbyAPI](https://github.com/theroyallab/tabbyAPI) uses the existing
+OpenAI-compatible adapter. Detection recognizes `owned_by: "tabbyAPI"` in
+`/v1/models` or `software.name: "TabbyAPI"` in `/.well-known/serviceinfo` before
+considering llama.cpp-compatible `/props`. Matching is case-insensitive and
+does not guess from the port or model name.
+
+Authenticated, read-only metadata probes prefer `/v1/model` for the loaded
+model ID, `parameters.max_seq_len` and `parameters.max_batch_size`, falling
+back to `/props` for missing capacity. This avoids reporting the first model
+in an admin's catalog or a dummy model alias as the loaded checkpoint. The
+slot count describes declared batch capacity, not measured concurrency.
+
+Current TabbyAPI uses ExLlamaV3, but these endpoints do not declare its library
+version. Reports identify the server as **TabbyAPI** and leave the engine
+version unknown; service-info's top-level `version` is a schema version.
+EXL3/EXL2 quantization inferred from a model name remains a heuristic. Cache
+precision is not weight quantization, and neither GPU count nor speculative
+decoding is inferred from the server name. No model is loaded or unloaded by
+the metadata probes.
+
 ## TensorFold
 
 ```bash

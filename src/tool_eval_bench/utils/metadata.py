@@ -364,6 +364,9 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
         if owned:
             return owned
 
+        if await _probe_tabby_identity(base_url, api_key, session=active):
+            return "tabbyapi", "TabbyAPI"
+
         props = await _probe_props(base_url, api_key, session=active)
         if props:
             return (
@@ -428,6 +431,7 @@ _HOSTED_ENGINE_NAMES: dict[str, str] = {
 }
 
 _OWNED_BY_BACKENDS: dict[str, tuple[str, str]] = {
+    "tabbyapi": ("tabbyapi", "TabbyAPI"),
     "strata": ("strata", "Strata"),
     "tensorfold": ("tensorfold", "TensorFold"),
     "ninfer": ("ninfer", "NInfer"),
@@ -457,6 +461,10 @@ def backend_from_response(resp: Any) -> tuple[str, str] | None:
     if owner:
         return owner
     if isinstance(body, dict):
+        software = body.get("software")
+        name = software.get("name") if isinstance(software, dict) else None
+        if isinstance(name, str) and name.lower() == "tabbyapi":
+            return "tabbyapi", "TabbyAPI"
         build = body.get("build_info")
         if body.get("service") == "strata" or (
             isinstance(build, str) and re.match(r"^Strata(?:\s|$)", build)
@@ -519,6 +527,63 @@ async def _probe_tensorfold(
     return result
 
 
+async def _probe_tabby_identity(
+    base_url: str, api_key: str | None, *, session: _ProbeSession
+) -> bool:
+    """TabbyAPI declares its software separately from llama.cpp-compatible props."""
+    resp = await _probe_get(
+        session,
+        f"{_root_url(base_url)}/.well-known/serviceinfo",
+        headers=_auth_headers(api_key),
+        what="TabbyAPI service info",
+    )
+    return (
+        resp is not None
+        and resp.status_code == 200
+        and backend_from_response(resp) == ("tabbyapi", "TabbyAPI")
+    )
+
+
+async def _probe_tabbyapi(
+    base_url: str, api_key: str | None, *, session: _ProbeSession
+) -> dict[str, Any]:
+    """Read the loaded model, not an admin's first model or a dummy alias.
+
+    Service-info's top-level version describes its schema, not ExLlama or
+    TabbyAPI. Neither endpoint currently declares an inference-library version.
+    """
+    result: dict[str, Any] = {"engine_name": "TabbyAPI"}
+    for path in ("/v1/model", "/props"):
+        resp = await _probe_get(
+            session, f"{_root_url(base_url)}{path}", headers=_auth_headers(api_key), what=path
+        )
+        if resp is None or resp.status_code != 200:
+            continue
+        try:
+            body = resp.json()
+        except ValueError:
+            continue
+        if not isinstance(body, dict):
+            continue
+        if path == "/v1/model":
+            model_id = body.get("id")
+            if isinstance(model_id, str) and model_id:
+                result["server_model_id"] = model_id
+            settings = body.get("parameters")
+            settings = settings if isinstance(settings, dict) else {}
+            window, slots = settings.get("max_seq_len"), settings.get("max_batch_size")
+        else:
+            settings = body.get("default_generation_settings")
+            window = settings.get("n_ctx") if isinstance(settings, dict) else None
+            slots = body.get("total_slots")
+        for key, value in (("max_model_len", window), ("slot_count", slots)):
+            if type(value) is int and value > 0:
+                result.setdefault(key, value)
+        if "max_model_len" in result and "slot_count" in result:
+            break
+    return result
+
+
 async def _probe_engine(
     base_url: str,
     api_key: str | None,
@@ -543,7 +608,9 @@ async def _probe_engine(
         result.update(await _probe_models(base_url, api_key, session=active))
 
         # Backend-specific probes
-        if backend_l == "tensorfold" or str(result.get("owned_by", "")).lower() == "tensorfold":
+        if backend_l == "tabbyapi" or result.get("engine_name") == "TabbyAPI":
+            result.update(await _probe_tabbyapi(base_url, api_key, session=active))
+        elif backend_l == "tensorfold" or str(result.get("owned_by", "")).lower() == "tensorfold":
             result.update(await _probe_tensorfold(base_url, api_key, session=active))
         elif backend_l == "vllm":
             result.update(await _probe_vllm_version(base_url, api_key, session=active))
@@ -573,7 +640,10 @@ async def _probe_engine(
                     break
             else:
                 if "engine_name" not in result:
-                    result.update(await _probe_props(base_url, api_key, session=active))
+                    if await _probe_tabby_identity(base_url, api_key, session=active):
+                        result.update(await _probe_tabbyapi(base_url, api_key, session=active))
+                    else:
+                        result.update(await _probe_props(base_url, api_key, session=active))
 
     # Infer quantization from model name
     if "quantization" not in result:
