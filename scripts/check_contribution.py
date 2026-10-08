@@ -62,10 +62,10 @@ def _is_test_file(path: str) -> bool:
     return path.startswith("tests/")
 
 
-def _added_fragments(added_files: set[str]) -> list[str]:
+def _written_fragments(written_files: set[str]) -> list[str]:
     return sorted(
         path
-        for path in added_files
+        for path in written_files
         if path.startswith("changelog.d/") and path != "changelog.d/README.md"
     )
 
@@ -74,10 +74,19 @@ def evaluate_policy(
     *,
     event: dict[str, Any],
     changed_files: set[str],
-    added_files: set[str],
+    written_files: set[str],
     fragment_contents: dict[str, str | None],
+    released_fragments: set[str] | None = None,
 ) -> list[str]:
-    """Return actionable policy failures for one pull request."""
+    """Return actionable policy failures for one pull request.
+
+    ``written_files`` holds files the pull request added, plus fragments it
+    edited in a way a reader would see. An edited fragment satisfies the
+    changelog requirement: towncrier deletes fragments when it builds a
+    release, so a fragment still on the base branch describes unreleased work,
+    and correcting it is how a follow-up should amend that work.
+    ``released_fragments`` are edited fragments the base branch no longer has.
+    """
     pull_request = _pull_request(event)
     labels = _labels(pull_request)
     errors: list[str] = []
@@ -107,7 +116,13 @@ def evaluate_policy(
                 "instead."
             )
 
-        fragments = _added_fragments(added_files)
+        for path in sorted(released_fragments or ()):
+            errors.append(
+                f"Changelog fragment {path} was already released. Rebase, drop that edit, and "
+                "add a new fragment instead."
+            )
+
+        fragments = _written_fragments(written_files)
         for path in fragments:
             name = Path(path).name
             if not FRAGMENT_NAME.fullmatch(name):
@@ -125,8 +140,8 @@ def evaluate_policy(
         if runtime_changed and not valid_fragments:
             errors.append(
                 "Runtime or packaging files changed without a changelog fragment. Add "
-                "changelog.d/<issue-or-+slug>.<type>.md or ask a maintainer to apply the "
-                "skip-changelog label."
+                "changelog.d/<issue-or-+slug>.<type>.md, update the unreleased fragment "
+                "this change amends, or ask a maintainer to apply the skip-changelog label."
             )
 
     return errors
@@ -142,6 +157,10 @@ def _git_files(root: Path, base_sha: str, head_sha: str, *, diff_filter: str) ->
                 "diff",
                 "--name-only",
                 "-z",
+                # Without this, a renamed file lists only its new path, so
+                # moving a module out of src/ escaped the rules, and a renamed
+                # fragment was neither added nor modified.
+                "--no-renames",
                 f"--diff-filter={diff_filter}",
                 f"{base_sha}...{head_sha}",
                 "--",
@@ -158,6 +177,22 @@ def _git_files(root: Path, base_sha: str, head_sha: str, *, diff_filter: str) ->
             "(git fetch origin '+refs/pull/<number>/head') and rerun."
         ) from exc
     return {path.decode("utf-8") for path in result.stdout.split(b"\0") if path}
+
+
+def _merge_base(root: Path, base_sha: str, head_sha: str) -> str:
+    result = subprocess.run(  # noqa: S603
+        ["git", "merge-base", base_sha, head_sha],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            f"Cannot find the merge base of {base_sha} and {head_sha}: "
+            f"{result.stderr.strip() or 'git merge-base failed'}."
+        )
+    return result.stdout.strip()
 
 
 def _git_file_text(root: Path, head_sha: str, path: str) -> str | None:
@@ -210,13 +245,27 @@ def main(argv: list[str] | None = None) -> int:
     head_sha = args.head_sha or _sha(pull_request, "head")
     root = args.root.resolve()
     changed_files = _git_files(root, base_sha, head_sha, diff_filter="ACDMR")
-    added_files = _git_files(root, base_sha, head_sha, diff_filter="A")
-    fragments = _added_fragments(added_files)
+    written_files = _git_files(root, base_sha, head_sha, diff_filter="A")
+    released_fragments: set[str] = set()
+    merge_base = _merge_base(root, base_sha, head_sha)
+    for path in _written_fragments(_git_files(root, base_sha, head_sha, diff_filter="M")):
+        before = _git_file_text(root, merge_base, path)
+        after = _git_file_text(root, head_sha, path)
+        # Whitespace, line-ending, or mode-only edits change nothing a reader sees.
+        if before is not None and after is not None and before.split() == after.split():
+            continue
+        # A branch cut before a release can still edit a fragment that release removed.
+        if _git_file_text(root, base_sha, path) is None:
+            released_fragments.add(path)
+            continue
+        written_files.add(path)
+    fragments = _written_fragments(written_files)
     errors = evaluate_policy(
         event=event,
         changed_files=changed_files,
-        added_files=added_files,
+        written_files=written_files,
         fragment_contents={path: _git_file_text(root, head_sha, path) for path in fragments},
+        released_fragments=released_fragments,
     )
 
     if errors:
