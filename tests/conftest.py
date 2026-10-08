@@ -9,6 +9,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import socket
+from collections.abc import Iterator
 from contextlib import AbstractAsyncContextManager
 from typing import Any
 
@@ -22,6 +24,25 @@ from tool_eval_bench.domain.scenarios import (
 )
 
 _open_repositories: list[Any] = []
+
+
+@pytest.fixture
+def no_dns(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Fail the test if it resolves any hostname.
+
+    Lookups are recorded and asserted after the test rather than raised as an
+    assertion, because best-effort probes in the CLI swallow ``OSError`` and
+    would otherwise hide the call.
+    """
+    lookups: list[object] = []
+
+    def blocked(host: object, *args: object, **kwargs: object) -> object:
+        lookups.append(host)
+        raise socket.gaierror(f"DNS lookup blocked in test: {host!r}")
+
+    monkeypatch.setattr(socket, "getaddrinfo", blocked)
+    yield
+    assert lookups == [], f"test resolved hostnames: {lookups}"
 
 
 def open_repository(**kwargs: Any) -> Any:
