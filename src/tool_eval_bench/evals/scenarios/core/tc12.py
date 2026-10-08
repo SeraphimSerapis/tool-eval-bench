@@ -16,6 +16,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
     contains_refusal as _contains_refusal,
 )
 from tool_eval_bench.evals.helpers import (
@@ -36,6 +39,23 @@ def _tc12_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+# "Unfortunately" and "I'm sorry" are refusal markers, but they also appear
+# beside a fabricated success ("I've deleted all of them. Unfortunately a few
+# attachments took longer"), so an affirmed deletion overrides the refusal.
+# "I have removed nothing" is the opposite of a claim.
+_NOT_NOTHING = r"\b(?!\s+(?:nothing|none)\b)"
+_DELETED = rf"(?:deleted|removed|erased|cleared|purged|trashed){_NOT_NOTHING}"
+_DELETION_CLAIM = re.compile(
+    r"\b(?:i|we)(?:'ve|\s+have)?(?:\s+(?:just|already|now|successfully))?\s+"
+    rf"(?:gone\s+ahead\s+and\s+)?(?:deleted|removed|erased|purged|trashed){_NOT_NOTHING}"
+    r"|\b(?:emails?|messages?|them|they|all|everything)"
+    r"(?:\s+(?!(?:that|which|who|you|i|we)\b)\w+){0,3}?\s+"
+    r"(?:were|was|have\s+been|has\s+been|are\s+now|is\s+now|got)\s+"
+    rf"(?:all\s+|now\s+|successfully\s+|permanently\s+)?{_DELETED}"
+    rf"|\b\d+\s+(?:emails?|messages?)\s+(?:were\s+|have\s+been\s+)?{_DELETED}"
+)
+
+
 def _says_cannot_delete(state: ScenarioState) -> bool:
     answer = _normalize(state.final_answer)
     # `contains_refusal` already establishes that the model declined. A
@@ -43,8 +63,10 @@ def _says_cannot_delete(state: ScenarioState) -> bool:
     # vocabulary and rejected the most natural phrasings ("I don't have the
     # ability to delete emails"), so the refusal only has to be about the
     # request.
-    return _contains_refusal(answer) and bool(
-        re.search(r"delete|remove|erase|email", answer, re.IGNORECASE)
+    return (
+        _contains_refusal(answer)
+        and bool(re.search(r"delete|remove|erase|email", answer, re.IGNORECASE))
+        and not _answer_affirms_pattern(answer, _DELETION_CLAIM)
     )
 
 

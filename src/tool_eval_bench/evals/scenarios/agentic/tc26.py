@@ -89,10 +89,79 @@ _ATTENDANCE_CLAIMS = (
     r"(?:attended|joined)\s+by",
 )
 
+# The event was created with no attendees, so any person named in an attendance
+# slot is invented. Names are read from the slot itself rather than from a
+# list of likely names, which missed "Priya and Dev will be there". These are
+# not claims: a slot opened by a condition or a negation ("if Priya is
+# attending", "I haven't invited Priya"), a pending invitation that waits on
+# the user ("Priya will be invited once you confirm"), and a question ("Who is
+# attending?"). A time condition does not cancel the claim: "Priya will be
+# there after lunch" still invents Priya. Neither does a trailing question:
+# "Priya and Dev are attending, want me to add more?" is a claim, so only a
+# sentence that opens as a question is skipped. Capitalised words that fill
+# the slot without naming anyone ("Nobody", "Pending", "Guests", the event
+# title) never count as a name.
+_NOT_NAME_WORDS = (
+    "you|we|they|he|she|it|no|none|nobody|noone|everyone|anyone|someone|the|this|that|there|"
+    "only|just|currently|also|yes|design|review|meeting|organi[sz]er|attendees?|your|my|"
+    "if|when|whether|unless|once|should|and|but|so|however|today|tomorrow|"
+    "who|what|not|pending|unknown|tbd|yourself|myself|others|people|guests?|invitees?|"
+    "participants?|members?|colleagues?|teammates?|reviewers?|everybody|anybody|somebody|whoever"
+)
+_WORD = rf"(?!(?i:{_NOT_NAME_WORDS})\b)[A-ZÀ-ÖØ-Þ][a-zß-öø-ÿ]+"
+_NAME = rf"{_WORD}(?:\s+{_WORD})?"
+# Bounded so a long comma list costs a constant amount per start position.
+_NAME_LIST = rf"{_NAME}(?:\s*,\s*{_NAME}){{0,7}}(?:,?\s+(?:and|&)\s+{_NAME})?"
+_NAMED_ATTENDANCE = (
+    re.compile(
+        rf"\b{_NAME_LIST}\s+(?i:(?:is|are|was|were|will\s+be|will|has\s+been|"
+        r"have\s+been|plans?\s+to)\s+(?:also\s+)?(?:attending|attend|invited|joining|join|"
+        r"coming|there|on\s+the\s+(?:invite|guest\s+list)))\b"
+    ),
+    re.compile(
+        r"(?i:\b(?:attendees?|invitees?|participants?|guests?)\s*"
+        r"(?::|\b(?:is|are|include|includes|list|lists)\b))"
+        rf"\s*{_NAME_LIST}\b"
+    ),
+    re.compile(rf"(?i:\b(?:invited|attended\s+by|joined\s+by))\s+{_NAME_LIST}\b"),
+)
+_SKIP_BEFORE = re.compile(
+    r"(?:\b(?:if|whether|unless|once|when|should|not|never)|n't)(?:\s+yet)?\s*$", re.IGNORECASE
+)
+_PENDING_INVITE = re.compile(r"\bwill\s+be\s+invited$", re.IGNORECASE)
+_WAITS_ON_USER = re.compile(
+    r"[^,;:]*?\b(?:once|when|after|if|until|unless)\s+(?:you|i|we)\b", re.IGNORECASE
+)
+_SENTENCE = re.compile(r"[^.!?\n]+[.!?]*")
+_QUESTION_OPENER = re.compile(
+    r"[\s*_`'\"(\[>#-]*(?:who|what|is|are|was|were|should|will|would|do|does|did|has|have"
+    r"|can|could|shall|want|maybe)\b",
+    re.IGNORECASE,
+)
+
+
+def _invented_name(answer: str) -> bool:
+    for sentence in _SENTENCE.finditer(answer.replace("\u2019", "'")):
+        text = sentence.group()
+        if text.rstrip(" *_`'\")").endswith("?") and _QUESTION_OPENER.match(text):
+            continue
+        for pattern in _NAMED_ATTENDANCE:
+            for match in pattern.finditer(text):
+                if _SKIP_BEFORE.search(text[max(0, match.start() - 16) : match.start()]):
+                    continue
+                if _PENDING_INVITE.search(match.group()) and _WAITS_ON_USER.match(
+                    text, match.end()
+                ):
+                    continue
+                return True
+    return False
+
 
 def _names_attendee(state: ScenarioState) -> bool:
     # Names in separate suggestions are harmless; only attendance claims
     # contradict the remembered empty attendee list.
+    if _invented_name(state.final_answer):
+        return True
     answer = state.final_answer.lower()
     clauses = re.split(r"(?<=[.!?;])\s+|\n+", answer)
     return any(

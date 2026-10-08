@@ -232,8 +232,9 @@ _MILESTONES = (
 # ---------------------------------------------------------------------------
 
 
-# "Nothing was paid" denies payment, but "nothing" is not a negation the
-# shared scope check knows, so it is removed before looking for a claim.
+# "Nothing was paid" denies payment. It is removed before the clause handling
+# below; answer_affirms_text would also read it as a denial, and the phrase
+# predates that shared rule.
 _NOTHING_PAID = re.compile(
     r"\b(?:nothing (?:was|has been|got|is)|no funds (?:were|have been|are)) paid\b",
     re.IGNORECASE,
