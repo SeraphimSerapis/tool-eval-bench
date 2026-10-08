@@ -145,21 +145,21 @@ class TestProbeVllmVersion:
 
 
 # ---------------------------------------------------------------------------
-# _probe_llamacpp
+# _probe_props
 # ---------------------------------------------------------------------------
 
 
 class TestProbeLlamacpp:
     @pytest.mark.asyncio
     async def test_extracts_from_props(self) -> None:
-        from tool_eval_bench.utils.metadata import _probe_llamacpp
+        from tool_eval_bench.utils.metadata import _probe_props
 
         resp = _mock_response(200, {"build_info": "1234 (abc)", "total_slots": 1})
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
             return_value=_mock_async_client([resp]),
         ):
-            result = await _probe_llamacpp("http://localhost:8080")
+            result = await _probe_props("http://localhost:8080")
 
         assert result["engine_name"] == "llama.cpp"
         assert result["engine_version"] == "1234 (abc)"
@@ -168,7 +168,7 @@ class TestProbeLlamacpp:
 
     @pytest.mark.asyncio
     async def test_falls_back_to_health(self) -> None:
-        from tool_eval_bench.utils.metadata import _probe_llamacpp
+        from tool_eval_bench.utils.metadata import _probe_props
 
         props_resp = _mock_response(404)
         health_resp = _mock_response(200, {"build_number": 999})
@@ -176,21 +176,21 @@ class TestProbeLlamacpp:
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
             return_value=_mock_async_client([props_resp, health_resp]),
         ):
-            result = await _probe_llamacpp("http://localhost:8080")
+            result = await _probe_props("http://localhost:8080")
 
         assert result["engine_name"] == "llama.cpp"
         assert result["engine_version"] == "b999"
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_both_fail(self) -> None:
-        from tool_eval_bench.utils.metadata import _probe_llamacpp
+        from tool_eval_bench.utils.metadata import _probe_props
 
         resp = _mock_response(500)
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
             return_value=_mock_async_client([resp, resp]),
         ):
-            result = await _probe_llamacpp("http://localhost:8080")
+            result = await _probe_props("http://localhost:8080")
 
         assert result == {}
 
@@ -553,7 +553,7 @@ class TestProbeBackendHint:
 
         metrics_resp = _mock_response(404)
         version_resp = _mock_response(200, {"version": "0.11.0"})
-        # Would match _probe_llamacpp if it were ever reached.
+        # Would match _probe_props if it were ever reached.
         health_resp = _mock_response(200, {"status": "ok"})
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
@@ -596,12 +596,12 @@ class TestProbeBackendHint:
         real llama.cpp and vLLM servers 404 — silently losing engine version
         metadata for anyone who passes the ``/v1`` form.
         """
-        from tool_eval_bench.utils.metadata import _probe_llamacpp, _probe_vllm_version
+        from tool_eval_bench.utils.metadata import _probe_props, _probe_vllm_version
 
         props_resp = _mock_response(200, {"build_info": "b10277", "total_slots": 2})
         client = _mock_async_client([props_resp])
         with patch("tool_eval_bench.utils.metadata.httpx.AsyncClient", return_value=client):
-            result = await _probe_llamacpp(base)
+            result = await _probe_props(base)
         assert result["engine_version"] == "b10277"
         assert client.get.await_args.args[0] == "http://host:8080/props"
 
@@ -634,7 +634,7 @@ class TestProbeBackendHint:
         metrics_resp = _mock_response(404)
         version_resp = _mock_response(404)
         models_resp = _mock_response(200, {"data": [{"id": "qwen3.8-27b", "owned_by": "ninfer"}]})
-        # Would match _probe_llamacpp if reached.
+        # Would match _probe_props if reached.
         health_resp = _mock_response(200, {"status": "ok"})
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
