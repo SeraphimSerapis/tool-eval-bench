@@ -104,6 +104,26 @@ Anthropic Messages API each use their own adapter. If you hit a backend-specific
 issue, please
 [open an issue](https://github.com/SeraphimSerapis/tool-eval-bench/issues).
 
+## llama.cpp
+
+The metadata probe reads llama-server's `/props`, sending `--api-key` when one is
+given. It records `build_info` as the engine version, `total_slots` as the slot
+count, and `default_generation_settings.n_ctx` as the context window. That
+`n_ctx` is the per-slot context, so it is the longest single request the server
+accepts, the same limit vLLM reports as `max_model_len`.
+
+Quantization still comes from the model name when the name identifies a specific
+type, such as `Q8_0` or `UD-Q4_K_XL`. The GGUF file type cannot make that
+distinction: Unsloth's `UD-Q4_K_XL` and bartowski's `Q4_K_L` files both declare
+`Q4_K_M`. When the name identifies none, as with an alias such as `gemma4` or a
+filename that only says `GGUF`, the probe fills in `model_ftype`, the file type
+the server loaded. llama-server reports it from build b9927 (July 2026). Its
+names are normalized to the same labels: `Q4_K - Medium` becomes `Q4_K_M`,
+`IQ2_XXS - 2.0625 bpw` becomes `IQ2_XXS`, and `F16` becomes `FP16`. A file type
+marked `(guessed)`, an unknown one, or an older build without the field leaves
+quantization unknown unless the name supplies it. A `/props` that names another
+server, such as Strata, contributes nothing to the llama.cpp probe.
+
 ## Strata
 
 ```bash

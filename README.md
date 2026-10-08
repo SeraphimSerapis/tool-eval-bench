@@ -120,9 +120,9 @@ runs:
   the rating is capped at three stars.
 - **`config_fingerprint`.** Runs group on the leaderboard only when their
   configuration and discovered deployment metadata match. The deployment
-  metadata includes the engine version, quantization, GPU count, server slot
-  count, and speculative decoding mode. Two scores from different cohorts are
-  not a comparison.
+  metadata includes the engine version, context window, quantization, GPU count,
+  server slot count, and speculative decoding mode. Two scores from different
+  cohorts are not a comparison.
 
 To read past runs back:
 
