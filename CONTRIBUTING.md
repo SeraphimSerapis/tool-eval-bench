@@ -101,7 +101,12 @@ The `contributor-policy` check rejects mechanical omissions before maintainer
 review:
 
 - Production Python changes need a corresponding change under `tests/`.
-- Runtime and packaging changes need a new, nonempty `changelog.d/` fragment.
+- Runtime and packaging changes need a nonempty `changelog.d/` fragment. A new
+  fragment works, and so does an edit to an existing one: fragments are deleted
+  at release, so any fragment already on `main` describes unreleased work that a
+  follow-up may correct. The edit has to change the text. Deleting a fragment or
+  changing only whitespace or line endings does not count. If a release removed
+  the fragment after your branch started, rebase and add a new fragment instead.
 - `CHANGELOG.md` must not be edited directly because towncrier generates it.
 - Pull requests from forks must enable **Allow edits from maintainers**.
 
@@ -280,7 +285,7 @@ Before submitting a pull request:
 - [ ] `.venv/bin/mypy` passes.
 - [ ] The required pytest suite passes.
 - [ ] README is updated when applicable.
-- [ ] A changelog fragment was added under `changelog.d/` when applicable.
+- [ ] A changelog fragment was added or updated under `changelog.d/` when applicable.
 - [ ] No secrets, live endpoints, generated reports, or unrelated changes are
       included.
 - [ ] The PR description lists the validation performed.

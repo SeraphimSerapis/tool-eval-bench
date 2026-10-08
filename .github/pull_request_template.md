@@ -12,12 +12,12 @@
 
 ## Changelog and documentation
 
-<!-- Link the new changelog.d/ fragment and documentation changes, or explain why neither applies. -->
+<!-- Link the new or updated changelog.d/ fragment and documentation changes, or explain why neither applies. -->
 
 ## Contributor checklist
 
 - [ ] This PR contains one focused, logically related change.
 - [ ] Regression tests were added or a maintainer applied `tests-not-needed`.
-- [ ] A `changelog.d/` fragment was added or a maintainer applied `skip-changelog`.
+- [ ] A `changelog.d/` fragment was added or updated, or a maintainer applied `skip-changelog`.
 - [ ] Fork PRs enable **Allow edits from maintainers**.
 - [ ] No credentials, live endpoints, generated run artifacts, or unrelated formatting changes are included.
