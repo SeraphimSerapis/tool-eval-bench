@@ -1,81 +1,73 @@
-"""Score one decision answer against its gold label."""
+"""Score one decision answer against its soft gold distribution."""
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from tool_eval_bench.domain.decision import (
     ChoiceAnswer,
     ChoiceQuestion,
     DecisionAnswer,
+    DecisionQuestion,
     ScoreAnswer,
     ScoreQuestion,
     YesNoAnswer,
     YesNoQuestion,
 )
-from tool_eval_bench.plugins.decision.dataset import DecisionItem
-
-# Keeps log loss finite when a model gives the gold answer probability 0.
-_PROBABILITY_FLOOR = 1e-12
+from tool_eval_bench.plugins.decision.metrics import argmax, brier_score, kl_divergence
+from tool_eval_bench.plugins.decision.typed_decisions import GoldAnswer
 
 
 @dataclass(frozen=True)
-class ItemScore:
-    """The outcome for one answered item.
+class SoftScore:
+    """The outcome for one answered question whose gold is a distribution.
 
-    ``distribution`` maps each answer (option name, score level, or yes/no) to
-    its probability.  ``confidence`` is the probability of the predicted answer,
-    which is what calibration compares against correctness.
+    ``distribution`` is the prediction over the question's answers, in the
+    question's order.  ``confidence`` is its top probability.
     """
 
     predicted: str
     gold: str
     correct: bool
     confidence: float
-    p_gold: float
+    kl: float
     brier: float
-    log_loss: float
     distribution: dict[str, float]
-    # Score questions only: distance of the expected level from the gold level.
-    level_error: float | None = None
 
 
-def score_item(item: DecisionItem, answer: DecisionAnswer) -> ItemScore:
-    """Grade ``answer`` against ``item.gold``.
+def answer_distribution(question: DecisionQuestion, answer: DecisionAnswer) -> dict[str, float]:
+    """The answer's probability for each of the question's answers.
 
-    Raises ``ValueError`` when the answer type does not match the question type.
+    Yes/no answers are keyed ``true`` and ``false``, as typed-decisions gold is.
+    An answer the server left out has probability 0.  Raises ``ValueError``
+    when the answer type does not match the question type.
     """
-    question = item.question
     if isinstance(question, ChoiceQuestion) and isinstance(answer, ChoiceAnswer):
-        return _grade(
-            dict(answer.probabilities),
-            predicted=answer.choice,
-            gold=str(item.gold),
-        )
+        return {k: answer.probabilities.get(k, 0.0) for k in question.options}
     if isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
-        distribution = dict(answer.probabilities)
-        predicted = max(distribution, key=lambda k: distribution[k])
-        graded = _grade(distribution, predicted=predicted, gold=str(item.gold))
-        return replace(graded, level_error=abs(answer.score - int(item.gold)))
+        levels = [str(i) for i in range(len(question.levels))]
+        return {k: answer.probabilities.get(k, 0.0) for k in levels}
     if isinstance(question, YesNoQuestion) and isinstance(answer, YesNoAnswer):
-        distribution = {"yes": answer.probability_yes, "no": 1.0 - answer.probability_yes}
-        predicted = "yes" if answer.probability_yes >= 0.5 else "no"
-        return _grade(distribution, predicted=predicted, gold="yes" if item.gold else "no")
+        return {"true": answer.probability_yes, "false": 1.0 - answer.probability_yes}
     raise ValueError(f"{type(answer).__name__} does not answer a {type(question).__name__}")
 
 
-def _grade(distribution: dict[str, float], *, predicted: str, gold: str) -> ItemScore:
-    p_gold = distribution.get(gold, 0.0)
-    return ItemScore(
+def score_against_gold(
+    question: DecisionQuestion, answer: DecisionAnswer, gold: GoldAnswer
+) -> SoftScore:
+    """Grade ``answer`` against a soft gold.
+
+    Correct means the prediction's most likely answer is the gold label.
+    KL and Brier compare the whole prediction with the gold distribution.
+    """
+    distribution = answer_distribution(question, answer)
+    predicted = argmax(distribution)
+    return SoftScore(
         predicted=predicted,
-        gold=gold,
-        correct=predicted == gold,
-        confidence=distribution.get(predicted, 0.0),
-        p_gold=p_gold,
-        # Multi-class Brier: squared distance from the one-hot gold vector, so
-        # 0 is perfect and 2 is maximally wrong and confident.
-        brier=sum((p - (1.0 if k == gold else 0.0)) ** 2 for k, p in distribution.items()),
-        log_loss=-math.log(max(p_gold, _PROBABILITY_FLOOR)),
+        gold=gold.label,
+        correct=predicted == gold.label,
+        confidence=distribution[predicted],
+        kl=kl_divergence(gold.probabilities, distribution),
+        brier=brier_score(gold.probabilities, distribution),
         distribution=distribution,
     )

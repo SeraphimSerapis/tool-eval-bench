@@ -1,8 +1,9 @@
 """Markdown rendering for the decision-model report.
 
-The report is the visualization: text bars for probability distributions,
-a reliability table, and a confusion matrix.  Bars use block characters so they
-survive any Markdown viewer and a terminal.
+The report is the visualization: accuracy bars per question type, workflow, and
+question, a reliability table, and the predicted and gold distribution of every
+decision.  Bars use block characters so they survive any Markdown viewer and a
+terminal.
 """
 
 from __future__ import annotations
@@ -11,6 +12,10 @@ from typing import Any
 
 from tool_eval_bench.domain.plugin import BenchmarkResult
 from tool_eval_bench.plugins.decision.metrics import HIGH_CONFIDENCE
+from tool_eval_bench.plugins.decision.typed_decisions import (
+    PRIOR_ACCURACY,
+    TEACHER_CEILING_ACCURACY,
+)
 
 _BAR_WIDTH = 10
 # How many confident mistakes to list before pointing at the full trace.
@@ -28,146 +33,101 @@ def _cell(text: str, limit: int = 90) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
+def attribution_line(d: dict[str, Any]) -> str:
+    """Credit the third-party dataset a typed-decisions result was scored on."""
+    return (
+        f"Data: {d['attribution']}. Third-party data, unmodified apart from format "
+        "conversion; see NOTICE next to the data file."
+    )
+
+
+def metric_text(value: float | None) -> str:
+    """Three decimals, or n/a when no decision was answered."""
+    return "n/a" if value is None else f"{value:.3f}"
+
+
 def render_report(result: BenchmarkResult) -> list[str]:
     d = result.details
-    rows = result.item_results
-    lines = [
-        "## Decision Models — Single-Pass Scoring",
+    cal = d["calibration"]
+    return [
+        "## Decision Models — Typed Decisions",
         "",
-        f"**Accuracy:** {result.score:.1f}% ({d['correct']}/{d['total']} base items)",
+        f"> {attribution_line(d)}",
+        "",
+        f"**Accuracy:** {result.score:.1f}% ({d['correct']}/{d['total']} decisions)",
+        f"**KL from gold:** {metric_text(d['kl'])} · **Brier:** {metric_text(d['brier'])} · "
+        f"**ECE:** {cal['ece']:.3f}",
         f"**Rating:** {result.rating}",
-        f"**Requests:** {d['requests']} ({d['errors']} errors)",
+        f"**Requests:** {d['cases']} cases, all questions of a case in one request "
+        f"({d['errors']} decision errors)",
         f"**Duration:** {result.duration_seconds:.1f}s · **Input tokens:** {result.total_tokens:,}",
         "",
-        *_categories(d),
-        *_calibration(d),
-        *_confusion(d),
-        *_ordinal(d),
-        *_robustness(d),
-        *_latency(d),
-        *_mistakes(rows),
-        *_trace(rows),
-    ]
-    return lines
-
-
-def _categories(d: dict[str, Any]) -> list[str]:
-    cats = d.get("categories", {})
-    if not cats:
-        return []
-    lines = [
-        "### Accuracy by Category",
+        "Gold is the mean of three samples from a teacher model of roughly 4B-class "
+        "capability, so these scores measure agreement with that teacher, not "
+        f"correctness. The dataset card puts a prior that ignores the input at "
+        f"{PRIOR_ACCURACY:.1%} accuracy and the teacher's agreement with itself at "
+        f"{TEACHER_CEILING_ACCURACY:.1%}. The rating uses those two points: ★ at or "
+        "below the prior, ★★ above it, ★★★ at or above the teacher's self-agreement. "
+        "Ceilings differ a lot between questions, so read the per-question table too.",
         "",
-        "| Category | Correct | Total | Accuracy | |",
-        "|---|---|---|---|---|",
+        "Accuracy compares the most likely answer with the gold label. KL is "
+        "KL(gold ‖ prediction) in nats and Brier the summed squared difference from "
+        "the gold distribution, both averaged per decision. ECE is top-label over ten "
+        "bins; the card's ECE definition is unpublished, so this ECE is not "
+        "comparable with the card's.",
+        "",
+        *_table("By Question Type", "Type", d["by_type"]),
+        *_table("By Workflow", "Workflow", d["by_workflow"]),
+        *_table("By Question", "Question", d["by_question"]),
+        *_calibration(cal),
+        *_latency(d),
+        *_mistakes(result.item_results),
+        *_trace(result.item_results),
     ]
-    for name, c in cats.items():
+
+
+def _table(title: str, label: str, groups: dict[str, dict[str, Any]]) -> list[str]:
+    lines = [
+        f"### {title}",
+        "",
+        f"| {label} | Correct | Total | Accuracy | KL | Brier | |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for name, g in groups.items():
         lines.append(
-            f"| {name} | {c['correct']} | {c['total']} | {c['accuracy']:.1f}% "
-            f"| `{bar(c['accuracy'] / 100)}` |"
+            f"| {name} | {g['correct']} | {g['total']} | {g['accuracy']:.1f}% "
+            f"| {metric_text(g['kl'])} | {metric_text(g['brier'])} | `{bar(g['accuracy'] / 100)}` |"
         )
     return [*lines, ""]
 
 
-def _calibration(d: dict[str, Any]) -> list[str]:
-    cal = d.get("calibration", {})
+def _calibration(cal: dict[str, Any]) -> list[str]:
     bins = cal.get("bins", [])
     if not bins:
         return []
     lines = [
         "### Calibration",
         "",
-        f"- **ECE:** {cal['ece']:.3f} (0 is perfectly calibrated)",
-        f"- **Brier score:** {cal['brier']:.3f} (0 best, 2 worst)",
-        f"- **Log loss:** {cal['log_loss']:.3f}",
-        f"- **Mean confidence:** {cal['mean_confidence']:.1%} against "
-        f"{d['accuracy'] / 100:.1%} accuracy on answered base items",
-        f"- **Confident mistakes** (wrong at ≥{HIGH_CONFIDENCE:.0%} confidence): "
-        f"{cal['high_confidence_errors']}",
+        f"- **ECE:** {cal['ece']:.3f} (top-label, ten bins, against the gold label)",
+        f"- **Mean confidence:** {cal['mean_confidence']:.1%}",
+        f"- **Confident disagreements** (≥{HIGH_CONFIDENCE:.0%}): {cal['high_confidence_errors']}",
         "",
-        "Each row groups predictions by stated confidence. A calibrated model has "
-        "accuracy close to confidence in every row.",
-        "",
-        "| Confidence | n | Mean confidence | Accuracy | Gap | Confidence · Accuracy |",
-        "|---|---|---|---|---|---|",
+        "| Confidence | n | Mean confidence | Accuracy | Gap |",
+        "|---|---|---|---|---|",
     ]
     for b in bins:
-        gap = b["accuracy"] - b["mean_confidence"]
         lines.append(
             f"| {b['low']:.1f}–{b['high']:.1f} | {b['count']} | {b['mean_confidence']:.2f} "
-            f"| {b['accuracy']:.2f} | {gap:+.2f} "
-            f"| `{bar(b['mean_confidence'])}` `{bar(b['accuracy'])}` |"
+            f"| {b['accuracy']:.2f} | {b['accuracy'] - b['mean_confidence']:+.2f} |"
         )
     return [*lines, ""]
 
 
-def _confusion(d: dict[str, Any]) -> list[str]:
-    conf = d.get("confusion", {})
-    labels: list[str] = conf.get("labels", [])
-    if not labels:
-        return []
-    matrix: dict[str, dict[str, int]] = conf["matrix"]
-    # A prediction outside the option list is a hallucinated label; keep its column.
-    extras = sorted({p for row in matrix.values() for p in row} - set(labels))
-    columns = [*labels, *extras]
-    lines = [
-        "### Routing Confusion Matrix",
-        "",
-        "Rows are the gold team, columns are the predicted team.",
-        "",
-        "| gold \\ predicted | " + " | ".join(columns) + " |",
-        "|---|" + "---|" * len(columns),
-    ]
-    for gold in labels:
-        row = matrix.get(gold, {})
-        cells = [
-            f"**{row.get(c, 0)}**" if c == gold else str(row.get(c, 0) or "·") for c in columns
-        ]
-        lines.append(f"| {gold} | " + " | ".join(cells) + " |")
-    return [*lines, ""]
-
-
-def _ordinal(d: dict[str, Any]) -> list[str]:
-    o = d.get("ordinal", {})
-    if not o.get("count"):
-        return []
-    return [
-        "### Urgency Scale",
-        "",
-        f"- **Mean absolute error:** {o['mae']:.2f} levels (expected level against gold)",
-        f"- **Within one level:** {o['within_one']:.1f}%",
-        "",
-    ]
-
-
-def _robustness(d: dict[str, Any]) -> list[str]:
-    r = d.get("robustness", {})
-    if all(v is None for v in r.values()):
-        return []
-
-    def pct(value: float | None) -> str:
-        return "n/a" if value is None else f"{value:.1f}%"
-
-    return [
-        "### Robustness",
-        "",
-        "Routing items asked again with the options changed. Invariance is the share of "
-        "answers that match the original answer, right or wrong.",
-        "",
-        "| Variant | Accuracy | Invariance |",
-        "|---|---|---|",
-        f"| Options in reverse order | {pct(r.get('shuffled_accuracy'))} "
-        f"| {pct(r.get('shuffled_invariance'))} |",
-        f"| Options renamed to opaque labels | {pct(r.get('opaque_accuracy'))} "
-        f"| {pct(r.get('opaque_invariance'))} |",
-        "",
-    ]
-
-
 def _latency(d: dict[str, Any]) -> list[str]:
-    lat = d.get("latency_ms", {})
-    if not lat:
+    if not d["answered"]:
+        # With no successful request there is no latency to report, only zeros.
         return []
+    lat = d["latency_ms"]
     return [
         "### Latency",
         "",
@@ -177,43 +137,23 @@ def _latency(d: dict[str, Any]) -> list[str]:
     ]
 
 
-def _distribution_lines(row: dict[str, Any]) -> list[str]:
-    dist: dict[str, float] = row["distribution"]
-    width = max(len(k) for k in dist)
-    lines = []
-    # Score levels read best in scale order; options read best most likely first.
-    if row["question_type"] == "ScoreQuestion":
-        ordered = sorted(dist.items(), key=lambda kv: int(kv[0]))
-    else:
-        ordered = sorted(dist.items(), key=lambda kv: -kv[1])
-    for name, p in ordered:
-        marks = []
-        if name == row["gold"]:
-            marks.append("gold")
-        if name == row["predicted"]:
-            marks.append("pred")
-        suffix = f"  ◀ {'+'.join(marks)}" if marks else ""
-        lines.append(f"    {name:<{width}}  {bar(p)} {p:.3f}{suffix}")
-    return lines
-
-
 def _mistakes(rows: list[dict[str, Any]]) -> list[str]:
-    wrong = [r for r in rows if r["variant"] == "base" and not r["is_error"] and not r["correct"]]
+    wrong = [r for r in rows if not r["is_error"] and not r["correct"]]
     if not wrong:
         return []
     wrong.sort(key=lambda r: -r["confidence"])
     lines = [
-        f"### Mistakes ({len(wrong)} base items)",
+        f"### Disagreements with Gold ({len(wrong)} decisions)",
         "",
-        "Most confident first. A confident mistake is worse than an uncertain one.",
+        "Most confident first.",
         "",
-        "| Item | Message | Gold | Predicted | Confidence |",
+        "| Decision | Gold | Gold p | Predicted | Confidence |",
         "|---|---|---|---|---|",
     ]
     for r in wrong[:_MAX_MISTAKES]:
         lines.append(
-            f"| {r['id']} | {_cell(r['state'])} | {r['gold']} | {r['predicted']} "
-            f"| {r['confidence']:.2f} |"
+            f"| {r['id']} | {r['gold']} | {r['gold_distribution'].get(r['gold'], 0.0):.2f} "
+            f"| {r['predicted']} | {r['confidence']:.2f} |"
         )
     if len(wrong) > _MAX_MISTAKES:
         lines.append("")
@@ -221,22 +161,35 @@ def _mistakes(rows: list[dict[str, Any]]) -> list[str]:
     return [*lines, ""]
 
 
+def _pairs(dist: dict[str, float], order: list[str] | None = None) -> str:
+    keys = [k for k in order or [] if k in dist]
+    keys += [k for k in dist if k not in keys]
+    return " ".join(f"{k}={dist[k]:.3f}" for k in keys)
+
+
 def _trace(rows: list[dict[str, Any]]) -> list[str]:
     lines = [
         "### Full Trace",
         "",
         "<details>",
-        f"<summary>Probability distribution for all {len(rows)} requests</summary>",
+        f"<summary>Predicted and gold distribution for all {len(rows)} decisions</summary>",
         "",
         "```",
     ]
+    case_id = None
     for r in rows:
+        if r["case_id"] != case_id:
+            case_id = r["case_id"]
+            lines.append(f"{case_id}  {_cell(r['state_preview'], 100)}")
         if r["is_error"]:
-            lines.append(f"{r['id']}  ERROR  {r.get('error', '')}")
-            lines.append(f"    {_cell(r['state'], 100)}")
+            lines.append(f"  {r['question']} ({r['question_type']})  ERROR  {r.get('error', '')}")
             continue
         mark = "✓" if r["correct"] else "✗"
-        lines.append(f"{r['id']}  {mark}  {_cell(r['state'], 100)}")
-        lines.extend(_distribution_lines(r))
+        lines.append(
+            f"  {r['question']} ({r['question_type']})  {mark}  pred {r['predicted']}  "
+            f"gold {r['gold']}  KL {r['kl']:.3f}  Brier {r['brier']:.3f}"
+        )
+        lines.append(f"      pred  {_pairs(r['distribution'])}")
+        lines.append(f"      gold  {_pairs(r['gold_distribution'], list(r['distribution']))}")
     lines.extend(["```", "", "</details>", ""])
     return lines

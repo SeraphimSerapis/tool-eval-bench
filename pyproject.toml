@@ -130,7 +130,13 @@ Issues = "https://github.com/SeraphimSerapis/tool-eval-bench/issues"
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-tool_eval_bench = ["evals/yaml_scenarios/*.yaml", "py.typed"]
+# The typed-decisions file must ship with its LICENSE, NOTICE, and manifest; the
+# glob keeps them together.
+tool_eval_bench = [
+  "evals/yaml_scenarios/*.yaml",
+  "plugins/decision/vendor/typed_decisions/*",
+  "py.typed",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

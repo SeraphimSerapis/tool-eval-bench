@@ -1,8 +1,9 @@
 """Logic behind the live decision-model monitor.
 
 Everything here is display-free so it can be tested without a terminal.  The
-monitor sends one canary item at a time to the model, scores it against its gold
-label, and folds the outcome into rolling statistics.  A separate scrape of the
+monitor sends one typed-decisions case at a time to the model, all five
+questions in one request, scores each answer against its gold distribution,
+and folds the five decisions into rolling statistics.  A separate scrape of the
 server's Prometheus endpoint adds load figures, which show traffic from other
 clients too.
 """
@@ -19,8 +20,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from tool_eval_bench.domain.decision import DecisionBackend
-from tool_eval_bench.plugins.decision.dataset import QUESTION_NAME, DecisionItem, build_items
-from tool_eval_bench.plugins.decision.evaluator import score_item
+from tool_eval_bench.plugins.decision.evaluator import score_against_gold
 from tool_eval_bench.plugins.decision.metrics import (
     HIGH_CONFIDENCE,
     expected_calibration_error,
@@ -28,97 +28,125 @@ from tool_eval_bench.plugins.decision.metrics import (
     percentile,
     reliability_bins,
 )
+from tool_eval_bench.plugins.decision.typed_decisions import (
+    QUESTION_TYPES,
+    TypedDecisionCase,
+    load_cases,
+)
 
-# Probes in the rolling window, and points kept for each trend line.
+# Decisions in the rolling quality window (20 cases), requests in the latency
+# window, and points kept for each trend line.
 ROLLING_WINDOW = 100
+LATENCY_WINDOW = 100
 TREND_LEN = 60
 HISTOGRAM_BINS = 10
-# A fixed shuffle keeps one canary cycle from running a whole category in a row.
+# A fixed shuffle keeps one canary cycle from running a whole workflow in a row.
 _CANARY_SEED = 1729
 
 
 @dataclass(frozen=True)
 class ProbeEvent:
-    """One scored canary request."""
+    """One scored decision from a canary request."""
 
-    item_id: str
-    category: str
-    state: str
+    decision_id: str
+    question: str
+    question_type: str
     gold: str
     predicted: str
     correct: bool
     confidence: float
     brier: float
-    distribution: Mapping[str, float]
-    is_score_scale: bool
-    latency_ms: float
-    input_tokens: int
-    at: float
 
     @property
     def confident_mistake(self) -> bool:
         return not self.correct and self.confidence >= HIGH_CONFIDENCE
 
 
-def canary_items() -> Iterator[DecisionItem]:
-    """Cycle the base items forever in a fixed, mixed order."""
-    items = build_items(variants=False)
-    random.Random(_CANARY_SEED).shuffle(items)
+@dataclass(frozen=True)
+class CaseProbe:
+    """One canary request: a case and the scored decision for each of its questions."""
+
+    case_id: str
+    state: str
+    decisions: tuple[ProbeEvent, ...]
+    latency_ms: float
+    input_tokens: int
+
+    @property
+    def correct(self) -> int:
+        return sum(d.correct for d in self.decisions)
+
+
+def canary_cases(cases: list[TypedDecisionCase] | None = None) -> Iterator[TypedDecisionCase]:
+    """Cycle the typed-decisions test cases forever in a fixed, mixed order."""
+    order = list(cases) if cases is not None else load_cases()
+    random.Random(_CANARY_SEED).shuffle(order)
     while True:
-        yield from items
+        yield from order
 
 
 async def probe_once(
     adapter: DecisionBackend,
-    item: DecisionItem,
+    case: TypedDecisionCase,
     *,
     model: str,
     base_url: str,
     api_key: str | None,
     timeout_seconds: float,
-) -> ProbeEvent:
-    """Send one item and score the answer.  Raises on transport or parse failure."""
+) -> CaseProbe:
+    """Send one case and score every answer.  Raises on transport or parse failure."""
     result = await adapter.decide(
         model=model,
-        state=item.state,
-        questions={QUESTION_NAME: item.question},
+        state=case.state,
+        questions=case.questions,
         timeout_seconds=timeout_seconds,
         api_key=api_key,
         base_url=base_url,
     )
-    score = score_item(item, result.answers[QUESTION_NAME])
-    return ProbeEvent(
-        item_id=item.id,
-        category=item.category,
-        state=item.state,
-        gold=score.gold,
-        predicted=score.predicted,
-        correct=score.correct,
-        confidence=score.confidence,
-        brier=score.brier,
-        distribution=score.distribution,
-        is_score_scale=type(item.question).__name__ == "ScoreQuestion",
+    decisions = []
+    for name, question in case.questions.items():
+        score = score_against_gold(question, result.answers[name], case.gold[name])
+        decisions.append(
+            ProbeEvent(
+                decision_id=f"{case.id}/{name}",
+                question=name,
+                question_type=case.question_type(name),
+                gold=score.gold,
+                predicted=score.predicted,
+                correct=score.correct,
+                confidence=score.confidence,
+                brier=score.brier,
+            )
+        )
+    return CaseProbe(
+        case_id=case.id,
+        state=case.state_preview,
+        decisions=tuple(decisions),
         latency_ms=result.elapsed_ms,
         input_tokens=result.input_tokens,
-        at=time.time(),
     )
 
 
 @dataclass
 class LiveStats:
-    """Session and rolling statistics over the probes seen so far."""
+    """Session and rolling statistics over the decisions seen so far."""
 
     window: int = ROLLING_WINDOW
     events: deque[ProbeEvent] = field(init=False)
+    latencies: deque[float] = field(default_factory=lambda: deque(maxlen=LATENCY_WINDOW))
+    probes: int = 0
     total: int = 0
     correct: int = 0
     errors: int = 0
     confident_mistakes: int = 0
-    categories: dict[str, list[int]] = field(default_factory=lambda: defaultdict(lambda: [0, 0]))
+    input_tokens: int = 0
+    question_types: dict[str, list[int]] = field(
+        default_factory=lambda: defaultdict(lambda: [0, 0])
+    )
     accuracy_trend: deque[float] = field(default_factory=lambda: deque(maxlen=TREND_LEN))
     ece_trend: deque[float] = field(default_factory=lambda: deque(maxlen=TREND_LEN))
     latency_trend: deque[float] = field(default_factory=lambda: deque(maxlen=TREND_LEN))
-    last_event: ProbeEvent | None = None
+    last_probe: CaseProbe | None = None
     last_miss: ProbeEvent | None = None
     last_error: str | None = None
     started: float = field(default_factory=time.time)
@@ -130,22 +158,27 @@ class LiveStats:
         """Forget the session, as Ctrl+R does in the speculative-decoding monitor."""
         self.__init__(window=self.window)  # type: ignore[misc]
 
-    def record(self, event: ProbeEvent) -> None:
-        self.events.append(event)
-        self.last_event = event
-        self.total += 1
-        stats = self.categories[event.category]
-        stats[1] += 1
-        if event.correct:
-            self.correct += 1
-            stats[0] += 1
-        else:
-            self.last_miss = event
-        if event.confident_mistake:
-            self.confident_mistakes += 1
+    def record(self, probe: CaseProbe) -> None:
+        self.last_probe = probe
+        self.probes += 1
+        self.input_tokens += probe.input_tokens
+        self.latencies.append(probe.latency_ms)
+        for event in probe.decisions:
+            self.events.append(event)
+            self.total += 1
+            stats = self.question_types[event.question_type]
+            stats[1] += 1
+            if event.correct:
+                self.correct += 1
+                stats[0] += 1
+            else:
+                self.last_miss = event
+            if event.confident_mistake:
+                self.confident_mistakes += 1
+        # One trend point per request, so the lines move at the probe rate.
         self.accuracy_trend.append(self.rolling_accuracy)
         self.ece_trend.append(self.rolling_ece)
-        self.latency_trend.append(event.latency_ms)
+        self.latency_trend.append(probe.latency_ms)
 
     def record_error(self, message: str) -> None:
         self.errors += 1
@@ -163,6 +196,10 @@ class LiveStats:
         return expected_calibration_error(bins)
 
     @property
+    def rolling_brier(self) -> float:
+        return mean([e.brier for e in self.events])
+
+    @property
     def rolling_confidence(self) -> float:
         return mean([e.confidence for e in self.events])
 
@@ -170,18 +207,22 @@ class LiveStats:
     def session_accuracy(self) -> float:
         return self.correct / self.total if self.total else 0.0
 
-    def category_accuracy(self) -> dict[str, float]:
-        return {c: ok / n for c, (ok, n) in self.categories.items() if n}
+    def type_accuracy(self) -> dict[str, float]:
+        """Session accuracy per question type, yes/no first, as the dataset lists them."""
+        rank = {t: i for i, t in enumerate(QUESTION_TYPES)}
+        ordered = sorted(self.question_types.items(), key=lambda kv: rank.get(kv[0], len(rank)))
+        return {t: ok / n for t, (ok, n) in ordered if n}
 
     def confidence_histogram(self) -> list[int]:
-        """Probe counts per confidence bin over the rolling window."""
+        """Decision counts per confidence bin over the rolling window."""
         counts = [0] * HISTOGRAM_BINS
         for e in self.events:
             counts[min(int(e.confidence * HISTOGRAM_BINS), HISTOGRAM_BINS - 1)] += 1
         return counts
 
     def latency_percentiles(self) -> tuple[float, float]:
-        values = [e.latency_ms for e in self.events]
+        """Request latency over the last ``LATENCY_WINDOW`` requests."""
+        values = list(self.latencies)
         return percentile(values, 50), percentile(values, 95)
 
 

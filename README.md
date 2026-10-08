@@ -184,7 +184,7 @@ anthropic` pins it for a gateway root that serves several formats.
 | **Context pressure** | Pre-fill a share of the window before each scenario to find where quality slips | [context-pressure](docs/context-pressure.md) |
 | **Speculative decoding** | Acceptance rate, effective tokens per second, speedup, plus a live monitor | [speculative-decoding](docs/speculative-decoding.md) |
 | **Accuracy** | GSM8K, MMLU, and IFEval through the same adapter | [benchmarks](docs/benchmarks.md) |
-| **Decision models** | Single-pass option scoring on llama.cpp `/v1/systemone`: accuracy, calibration, and option-order robustness, plus a live canary monitor | [decision-models](docs/decision-models.md) |
+| **Decision models** | Single-pass option scoring on llama.cpp `/v1/systemone` against the Typed Decisions test split: accuracy, KL and Brier against soft gold distributions, and calibration, plus a live canary monitor | [decision-models](docs/decision-models.md) |
 
 TC-74 accepts confirmation ranges such as `14:00–14:45` and `2:00–2:45 PM` for
 its authorized 2pm, 45-minute event. Stated start and end times must match;
@@ -393,3 +393,15 @@ Scenario methodology adapted from
 [ToolCall-15](https://github.com/stevibe/ToolCall-15) by
 [stevibe](https://x.com/stevibe) (MIT License). Licensed under the
 [MIT License](LICENSE).
+
+### Third-party data
+
+The decision-model benchmark ships the `test` split of
+[Typed Decisions](https://huggingface.co/datasets/LocalLLaMA/typed-decisions),
+published by the LocalLLaMA organization on Hugging Face under the Apache License
+2.0, pinned to revision `e039ebffcc280174dd354227424fb2b249f191de`. The rows are
+unmodified apart from format conversion. The dataset's license and a notice
+describing the changes sit next to the data in
+[`src/tool_eval_bench/plugins/decision/vendor/typed_decisions/`](src/tool_eval_bench/plugins/decision/vendor/typed_decisions/NOTICE)
+and ship in every build. This project's MIT license does not cover that data. See
+[decision models](docs/decision-models.md#third-party-data-typed-decisions).

@@ -1,9 +1,9 @@
 """Rich Live terminal dashboard for decision models.
 
-Powers ``--decision-live``.  Sends one canary item at a time to the model and
-draws the probability distribution it returns, rolling accuracy and calibration,
-a confidence histogram, latency, and the server's load counters.  Ctrl+R resets
-the session and Ctrl+C exits.
+Powers ``--decision-live``.  Sends one typed-decisions case at a time to the
+model and draws each of its five answers against gold, rolling accuracy, Brier
+and calibration, a confidence histogram, latency, and the server's load
+counters.  Ctrl+R resets the session and Ctrl+C exits.
 """
 
 from __future__ import annotations
@@ -29,14 +29,15 @@ from tool_eval_bench.domain.decision import DecisionUnsupportedError
 from tool_eval_bench.plugins.decision.live import (
     HISTOGRAM_BINS,
     ROLLING_WINDOW,
+    CaseProbe,
     LiveStats,
     LoadTrend,
-    ProbeEvent,
-    canary_items,
+    canary_cases,
     probe_once,
     scrape_server_load,
 )
 from tool_eval_bench.plugins.decision.render import bar
+from tool_eval_bench.plugins.decision.typed_decisions import dataset_info
 from tool_eval_bench.utils.urls import metrics_request_target, redact_url
 
 logger = logging.getLogger(__name__)
@@ -79,39 +80,37 @@ def _quality_style(accuracy: float) -> str:
     return "bright_green" if accuracy >= 0.85 else "yellow" if accuracy >= 0.6 else "bright_red"
 
 
-def _now_panel(event: ProbeEvent | None, spinner: str) -> Panel:
-    if event is None:
+def _now_panel(probe: CaseProbe | None, spinner: str) -> Panel:
+    if probe is None:
         body: RenderableType = Text("  waiting for the first answer…", style="dim italic")
         return Panel(body, title=f"{spinner} now", border_style="dim")
 
-    mark = Text("✓ ", style="bold green") if event.correct else Text("✗ ", style="bold red")
+    right, total = probe.correct, len(probe.decisions)
     lines: list[RenderableType] = [
         Text.assemble(
-            mark,
-            Text(f"{event.item_id}  ", style="bold"),
-            Text(event.state, style="italic"),
+            Text(f"{right}/{total}  ", style="bold green" if right == total else "bold yellow"),
+            Text(f"{probe.case_id}  ", style="bold"),
+            Text(_clip(probe.state, 70), style="italic dim"),
+            no_wrap=True,
+            overflow="ellipsis",
         )
     ]
-    if event.is_score_scale:
-        ordered = sorted(event.distribution.items(), key=lambda kv: int(kv[0]))
-    else:
-        ordered = sorted(event.distribution.items(), key=lambda kv: -kv[1])
-    width = max(len(name) for name, _ in ordered)
-    for name, p in ordered:
-        is_gold, is_pred = name == event.gold, name == event.predicted
-        style = "bright_green" if is_gold and is_pred else "bright_red" if is_pred else "cyan"
-        row = Text(f"  {name:<{width}}  ")
-        row.append(bar(p, _BAR_WIDTH), style=style if (is_gold or is_pred) else "dim")
-        row.append(f" {p:5.3f}", style="bold" if is_pred else "")
-        if is_gold:
-            row.append("  ◀ gold", style="green")
-        if is_pred and not is_gold:
-            row.append("  ◀ predicted", style="red")
+    width = max(len(d.question) for d in probe.decisions)
+    for d in probe.decisions:
+        row = Text("  ")
+        row.append("✓ " if d.correct else "✗ ", style="bold green" if d.correct else "bold red")
+        row.append(f"{d.question:<{width}}  ", style="bold")
+        row.append(f"{d.question_type:<6}  ", style="dim")
+        row.append(bar(d.confidence, _BAR_WIDTH), style="bright_green" if d.correct else "red")
+        row.append(f" {d.confidence:5.3f}  ")
+        row.append(f"pred {d.predicted}", style="bold" if d.correct else "bold red")
+        if not d.correct:
+            row.append(f"  gold {d.gold}", style="green")
         lines.append(row)
     lines.append(
-        Text(f"  {event.latency_ms:.0f} ms · {event.input_tokens} input tokens", style="dim")
+        Text(f"  {probe.latency_ms:.0f} ms · {probe.input_tokens:,} input tokens", style="dim")
     )
-    border = "green" if event.correct else "red"
+    border = "green" if right == total else "yellow" if right else "red"
     return Panel(Group(*lines), title=f"{spinner} now", border_style=border)
 
 
@@ -124,7 +123,7 @@ def _quality_panel(stats: LiveStats) -> Panel:
     acc = stats.rolling_accuracy
     style = _quality_style(acc)
     grid.add_row(
-        f"accuracy ({min(len(stats.events), ROLLING_WINDOW)} probes)",
+        f"accuracy ({min(len(stats.events), ROLLING_WINDOW)} decisions)",
         Text.assemble(Text(bar(acc, _BAR_WIDTH), style=style), Text(f" {acc:6.1%}", style=style)),
         _trend(list(stats.accuracy_trend), style, ceiling=1.0),
     )
@@ -133,6 +132,11 @@ def _quality_panel(stats: LiveStats) -> Panel:
         "calibration error (ECE)",
         Text(f"{ece:.3f}", style="bold"),
         _trend(list(stats.ece_trend), "cyan"),
+    )
+    grid.add_row(
+        "Brier vs gold",
+        Text(f"{stats.rolling_brier:.3f}", style="bold"),
+        Text("0 matches the gold distribution", style="dim"),
     )
     grid.add_row(
         "mean confidence",
@@ -148,25 +152,27 @@ def _quality_panel(stats: LiveStats) -> Panel:
     return Panel(grid, title="quality", border_style="bright_cyan")
 
 
-def _categories_panel(stats: LiveStats) -> Panel:
-    accuracy = stats.category_accuracy()
+def _types_panel(stats: LiveStats) -> Panel:
+    accuracy = stats.type_accuracy()
     if not accuracy:
-        return Panel(Text("  no data yet", style="dim"), title="by category", border_style="dim")
+        return Panel(
+            Text("  no data yet", style="dim"), title="by question type", border_style="dim"
+        )
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="dim", no_wrap=True)
     grid.add_column(no_wrap=True)
     grid.add_column(justify="right", style="dim", no_wrap=True)
-    for category, value in accuracy.items():
-        seen = stats.categories[category][1]
+    for question_type, value in accuracy.items():
+        seen = stats.question_types[question_type][1]
         grid.add_row(
-            category,
+            question_type,
             Text.assemble(
                 Text(bar(value, _BAR_WIDTH), style=_quality_style(value)),
                 Text(f" {value:5.1%}", style="bold"),
             ),
             f"n={seen}",
         )
-    return Panel(grid, title="by category", border_style="bright_cyan")
+    return Panel(grid, title="by question type", border_style="bright_cyan")
 
 
 def _histogram_panel(stats: LiveStats) -> Panel:
@@ -196,6 +202,11 @@ def _server_panel(stats: LiveStats, trend: LoadTrend) -> Panel:
         "latency",
         Text(f"p50 {p50:.0f} ms · p95 {p95:.0f} ms", style="bold"),
         _trend(list(stats.latency_trend), "yellow"),
+    )
+    grid.add_row(
+        "input tokens",
+        Text(f"{stats.input_tokens:,}", style="bold"),
+        Text("sent by this monitor", style="dim"),
     )
     load = trend.latest
     if load is None:
@@ -236,9 +247,8 @@ def _alerts(stats: LiveStats, flash: str | None, unreachable: bool) -> list[Rend
         lines.append(
             Text.assemble(
                 Text("  last miss  ", style="dim"),
-                Text(f"{miss.item_id} ", style="bold"),
-                Text(f"gold {miss.gold}, predicted {miss.predicted} at {miss.confidence:.2f}  "),
-                Text(_clip(miss.state, 40), style="italic dim"),
+                Text(f"{miss.decision_id} ", style="bold"),
+                Text(f"gold {miss.gold}, predicted {miss.predicted} at {miss.confidence:.2f}"),
             )
         )
     return lines
@@ -253,6 +263,7 @@ def build_dashboard(
     tick: int,
     flash: str | None = None,
     unreachable: bool = False,
+    attribution: str | None = None,
 ) -> RenderableType:
     """Compose the whole screen.  Pure, so it can be rendered in a test."""
     spinner = _ACTIVITY_FRAMES[tick % len(_ACTIVITY_FRAMES)]
@@ -262,18 +273,20 @@ def build_dashboard(
         Text(f"  {url}", style="dim"),
         Text(
             f"  up {_format_uptime(time.time() - stats.started)} · "
-            f"{stats.total} probes · {stats.errors} errors",
+            f"{stats.probes} cases · {stats.total} decisions · {stats.errors} failed cases",
             style="dim",
         ),
     )
     middle = Table.grid(expand=True, padding=(0, 1))
     middle.add_column(ratio=1)
     middle.add_column(ratio=1)
-    middle.add_row(_categories_panel(stats), _histogram_panel(stats))
+    middle.add_row(_types_panel(stats), _histogram_panel(stats))
     footer = Text("  Ctrl+R reset session · Ctrl+C quit", style="dim")
+    if attribution:
+        footer.append(f"\n  Cases: {attribution}")
     return Group(
         header,
-        _now_panel(stats.last_event, spinner),
+        _now_panel(stats.last_probe, spinner),
         _quality_panel(stats),
         middle,
         _server_panel(stats, trend),
@@ -339,18 +352,22 @@ async def run_decision_live(
 ) -> None:
     """Run the live decision monitor until Ctrl+C.
 
-    Raises ``DecisionUnsupportedError`` before the screen is taken over when the
-    server has no decision endpoint, so the message lands in the normal terminal.
+    Raises ``DecisionUnsupportedError`` when the server has no decision endpoint
+    and ``DatasetIntegrityError`` when the vendored data fails its check, both
+    before the screen is taken over, so the message lands in the normal terminal.
     """
+    attribution = dataset_info().attribution
+    cases = canary_cases()
+    # canary_cases() is lazy: pulling the first case loads and checks the data,
+    # so a damaged file fails here, before there is an adapter to close.
+    first = next(cases)
     adapter = build_decision_adapter(**(adapter_options or {}))
-    items = canary_items()
     scrape_url, scrape_headers = metrics_request_target(base_url, metrics_url, api_key)
 
     stats = LiveStats()
     trend = LoadTrend()
     # A first probe outside the alternate screen surfaces an unsupported
     # endpoint as a normal error instead of an empty dashboard.
-    first = next(items)
     try:
         stats.record(
             await probe_once(
@@ -390,17 +407,24 @@ async def run_decision_live(
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
             with Live(
-                build_dashboard(stats, trend, model_name=model, url=shown_url, tick=tick),
+                build_dashboard(
+                    stats,
+                    trend,
+                    model_name=model,
+                    url=shown_url,
+                    tick=tick,
+                    attribution=attribution,
+                ),
                 console=console,
                 refresh_per_second=4,
                 screen=True,
             ) as live:
                 while not stop.is_set():
-                    item = next(items)
+                    case = next(cases)
                     probe = asyncio.create_task(
                         probe_once(
                             adapter,
-                            item,
+                            case,
                             model=model,
                             base_url=base_url,
                             api_key=api_key,
@@ -416,7 +440,7 @@ async def run_decision_live(
                         probe.cancel()
                         break
                     try:
-                        event = probe.result()
+                        outcome = probe.result()
                     except DecisionUnsupportedError:
                         raise
                     except Exception as exc:
@@ -424,11 +448,13 @@ async def run_decision_live(
                         stats.record_error(f"{type(exc).__name__}: {exc}")
                     else:
                         consecutive_failures = 0
-                        stats.record(event)
-                        if event.confident_mistake:
+                        stats.record(outcome)
+                        mistakes = [d for d in outcome.decisions if d.confident_mistake]
+                        if mistakes:
+                            worst = max(mistakes, key=lambda d: d.confidence)
                             flash = (
-                                f"⚠ CONFIDENT MISTAKE  {event.item_id}: predicted "
-                                f"{event.predicted} at {event.confidence:.2f}, gold {event.gold}"
+                                f"⚠ CONFIDENT MISTAKE  {worst.decision_id}: predicted "
+                                f"{worst.predicted} at {worst.confidence:.2f}, gold {worst.gold}"
                             )
                             flash_left = _FLASH_TICKS
 
@@ -450,6 +476,7 @@ async def run_decision_live(
                             tick=tick,
                             flash=flash,
                             unreachable=consecutive_failures >= _UNREACHABLE_AFTER,
+                            attribution=attribution,
                         )
                     )
 

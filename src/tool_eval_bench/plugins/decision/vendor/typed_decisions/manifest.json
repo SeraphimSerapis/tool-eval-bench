@@ -1,0 +1,24 @@
+{
+  "generated_by": "scripts/vendor_typed_decisions.py (do not edit by hand)",
+  "dataset": "LocalLLaMA/typed-decisions",
+  "url": "https://huggingface.co/datasets/LocalLLaMA/typed-decisions",
+  "revision": "e039ebffcc280174dd354227424fb2b249f191de",
+  "license": "Apache-2.0",
+  "split": "test",
+  "source": {
+    "path": "all/test-00000-of-00001.parquet",
+    "sha256": "4f294f218ea1da27f3efef936359389c62ea4d3973a41457732990f1d31b647c"
+  },
+  "data": {
+    "path": "test.jsonl.gz",
+    "rows": 400,
+    "columns": [
+      "id",
+      "workflow",
+      "state",
+      "questions",
+      "gold"
+    ],
+    "jsonl_sha256": "78a228c8be4244389a9977f8bafa8068cadac20ba8879c94116c963e0902831f"
+  }
+}

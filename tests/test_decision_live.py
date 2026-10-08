@@ -12,45 +12,70 @@ import httpx
 import pytest
 from rich.console import Console
 
-from tests.test_decision import FakeDecisionBackend
+from tests.test_decision_typed import (
+    FakeTypedBackend,
+    _hand_case,
+    _right_on_yes_no_only,
+)
 from tool_eval_bench.cli import decision_live_display as display
 from tool_eval_bench.domain.decision import (
+    ChoiceAnswer,
+    ChoiceQuestion,
+    DecisionAnswer,
     DecisionBackend,
     DecisionQuestion,
     DecisionResult,
+    DecisionState,
     DecisionUnsupportedError,
+    ScoreAnswer,
+    ScoreQuestion,
+    YesNoAnswer,
+    YesNoQuestion,
 )
-from tool_eval_bench.plugins.decision.dataset import build_items
+from tool_eval_bench.plugins.decision import live
 from tool_eval_bench.plugins.decision.live import (
     HISTOGRAM_BINS,
+    LATENCY_WINDOW,
+    CaseProbe,
     LiveStats,
     LoadTrend,
     ProbeEvent,
     ServerLoad,
-    canary_items,
+    canary_cases,
     parse_server_load,
     probe_once,
     scrape_server_load,
+)
+from tool_eval_bench.plugins.decision.typed_decisions import (
+    DatasetIntegrityError,
+    GoldAnswer,
+    load_cases,
 )
 
 
 def _event(**overrides: Any) -> ProbeEvent:
     defaults: dict[str, Any] = {
-        "item_id": "route-01",
-        "category": "routing",
-        "state": "charged twice",
+        "decision_id": "customer_service_000001/category",
+        "question": "category",
+        "question_type": "choice",
         "gold": "billing",
         "predicted": "billing",
         "correct": True,
         "confidence": 0.9,
         "brier": 0.02,
-        "distribution": {"billing": 0.9, "shipping": 0.1},
-        "is_score_scale": False,
-        "latency_ms": 20.0,
-        "input_tokens": 40,
-        "at": 1000.0,
     }
     return ProbeEvent(**{**defaults, **overrides})
+
+
+def _probe(*events: ProbeEvent, **overrides: Any) -> CaseProbe:
+    defaults: dict[str, Any] = {
+        "case_id": "customer_service_000001",
+        "state": '{"thread": ["charged twice"]}',
+        "decisions": events or (_event(),),
+        "latency_ms": 20.0,
+        "input_tokens": 40,
+    }
+    return CaseProbe(**{**defaults, **overrides})
 
 
 LLAMA_METRICS = """\
@@ -69,67 +94,63 @@ llamacpp:n_busy_slots_per_decode 1
 
 
 class TestCanary:
-    def test_cycles_every_base_item_and_repeats(self) -> None:
-        base = build_items(variants=False)
-        gen = canary_items()
-        first_cycle = [next(gen).id for _ in range(len(base))]
-        second_cycle = [next(gen).id for _ in range(len(base))]
-        assert sorted(first_cycle) == sorted(i.id for i in base)
+    def test_cycles_every_test_case_and_repeats(self) -> None:
+        cases = load_cases()
+        gen = canary_cases()
+        first_cycle = [next(gen).id for _ in range(len(cases))]
+        second_cycle = [next(gen).id for _ in range(len(cases))]
+        assert sorted(first_cycle) == sorted(c.id for c in cases)
         assert first_cycle == second_cycle
 
     def test_order_is_mixed_and_stable(self) -> None:
-        first_ten = [i for _, i in zip(range(10), canary_items(), strict=False)]
-        again = [i for _, i in zip(range(10), canary_items(), strict=False)]
-        # A fixed shuffle: the same every run, and not one category in a row.
-        assert [i.id for i in first_ten] == [i.id for i in again]
-        assert len({i.category for i in first_ten}) > 1
+        first_ten = [c.id for _, c in zip(range(10), canary_cases(), strict=False)]
+        again = [c.id for _, c in zip(range(10), canary_cases(), strict=False)]
+        # A fixed shuffle: the same every run, and not one workflow in a row.
+        assert first_ten == again
+        assert len({i.rsplit("_", 1)[0] for i in first_ten}) > 1
+
+    def test_takes_an_explicit_case_list(self) -> None:
+        cases = [_hand_case("a1", "alpha"), _hand_case("b1", "beta")]
+        gen = canary_cases(cases)
+        assert sorted(next(gen).id for _ in range(2)) == ["a1", "b1"]
 
 
 class TestProbeOnce:
     @pytest.mark.asyncio
-    async def test_scores_the_answer_against_the_gold_label(self) -> None:
-        items = build_items(variants=False)
-        item = items[0]
-        event = await probe_once(
-            FakeDecisionBackend(items, confidence=0.8),  # type: ignore[arg-type]
-            item,
-            model="m",
-            base_url="u",
-            api_key=None,
-            timeout_seconds=1.0,
+    async def test_one_request_scores_every_question_of_the_case(self) -> None:
+        case = _hand_case("a1", "alpha")
+        backend = FakeTypedBackend([case], _right_on_yes_no_only)
+        probe = await probe_once(
+            backend, case, model="m", base_url="u", api_key=None, timeout_seconds=1.0
         )
-        assert event.item_id == item.id and event.correct
-        assert event.confidence == pytest.approx(0.8)
-        assert event.latency_ms == 5.0 and event.input_tokens == 10
-        assert not event.confident_mistake
+        assert backend.calls == 1
+        assert probe.case_id == "a1"
+        assert [d.decision_id for d in probe.decisions] == ["a1/flag", "a1/pick", "a1/level"]
+        assert [d.question for d in probe.decisions] == ["flag", "pick", "level"]
+        assert [d.question_type for d in probe.decisions] == ["noul", "choice", "score"]
+        assert [d.correct for d in probe.decisions] == [True, False, False]
+        assert probe.correct == 1
+        assert probe.latency_ms == 40.0 and probe.input_tokens == 100
+        assert probe.state == '{"id": "a1"}'
 
     @pytest.mark.asyncio
-    async def test_a_wrong_answer_at_high_confidence_is_a_confident_mistake(self) -> None:
-        items = build_items(variants=False)
-        wrong = next(i for i in items if i.category == "routing" and i.gold != "billing")
-        event = await probe_once(
-            FakeDecisionBackend(items, confidence=0.95, always_first=True),  # type: ignore[arg-type]
-            wrong,
+    async def test_scores_against_the_gold_distribution(self) -> None:
+        case = _hand_case("a1", "alpha")
+        probe = await probe_once(
+            FakeTypedBackend([case], _right_on_yes_no_only),
+            case,
             model="m",
             base_url="u",
             api_key=None,
             timeout_seconds=1.0,
         )
-        assert not event.correct and event.confident_mistake
-
-    @pytest.mark.asyncio
-    async def test_score_questions_are_flagged_for_scale_ordering(self) -> None:
-        items = build_items(variants=False)
-        urgency = next(i for i in items if i.category == "urgency")
-        event = await probe_once(
-            FakeDecisionBackend(items),  # type: ignore[arg-type]
-            urgency,
-            model="m",
-            base_url="u",
-            api_key=None,
-            timeout_seconds=1.0,
-        )
-        assert event.is_score_scale
+        flag, pick, level = probe.decisions
+        # yes/no: (0.9 - 0.8)^2 + (0.1 - 0.2)^2
+        assert flag.brier == pytest.approx(0.02)
+        assert pick.gold == "b" and pick.predicted == "a"
+        # 90% on the wrong answer is a confident mistake.
+        assert pick.confident_mistake and level.confident_mistake
+        assert not flag.confident_mistake
 
 
 # ---------------------------------------------------------------------------
@@ -141,47 +162,67 @@ class TestLiveStats:
     def test_empty_stats_are_zero_not_an_error(self) -> None:
         stats = LiveStats()
         assert stats.rolling_accuracy == 0.0 and stats.rolling_ece == 0.0
-        assert stats.session_accuracy == 0.0 and stats.category_accuracy() == {}
+        assert stats.rolling_brier == 0.0
+        assert stats.session_accuracy == 0.0 and stats.type_accuracy() == {}
         assert stats.latency_percentiles() == (0.0, 0.0)
 
-    def test_records_accuracy_by_category_and_remembers_the_last_miss(self) -> None:
+    def test_folds_every_decision_of_a_case_and_remembers_the_last_miss(self) -> None:
         stats = LiveStats()
-        stats.record(_event(item_id="a"))
-        miss = _event(item_id="b", category="urgency", correct=False, confidence=0.6)
-        stats.record(miss)
-        assert stats.total == 2 and stats.correct == 1
-        assert stats.session_accuracy == 0.5
-        assert stats.category_accuracy() == {"routing": 1.0, "urgency": 0.0}
-        assert stats.last_miss is miss and stats.last_event is miss
+        miss = _event(
+            decision_id="c/urgency", question="urgency", question_type="score", correct=False
+        )
+        probe = _probe(_event(), _event(question_type="noul"), miss)
+        stats.record(probe)
+        assert (stats.probes, stats.total, stats.correct) == (1, 3, 2)
+        assert stats.session_accuracy == pytest.approx(2 / 3)
+        assert list(stats.type_accuracy().items()) == [
+            ("noul", 1.0),
+            ("choice", 1.0),
+            ("score", 0.0),
+        ]
+        assert stats.last_miss is miss and stats.last_probe is probe
+
+    def test_tokens_and_latency_count_once_per_request(self) -> None:
+        stats = LiveStats()
+        stats.record(_probe(_event(), _event(), latency_ms=10.0, input_tokens=900))
+        stats.record(_probe(_event(), _event(), latency_ms=30.0, input_tokens=800))
+        assert stats.input_tokens == 1700
+        assert stats.latency_percentiles() == (20.0, pytest.approx(29.0))
+        assert list(stats.latency_trend) == [10.0, 30.0]
+        assert len(stats.accuracy_trend) == 2
+
+    def test_rolling_brier_is_the_mean_over_decisions(self) -> None:
+        stats = LiveStats()
+        stats.record(_probe(_event(brier=0.1), _event(brier=0.3)))
+        assert stats.rolling_brier == pytest.approx(0.2)
 
     def test_only_a_confident_wrong_answer_counts_as_a_confident_mistake(self) -> None:
         stats = LiveStats()
-        stats.record(_event(correct=False, confidence=0.89))
-        stats.record(_event(correct=True, confidence=0.99))
+        stats.record(
+            _probe(_event(correct=False, confidence=0.89), _event(correct=True, confidence=0.99))
+        )
         assert stats.confident_mistakes == 0
-        stats.record(_event(correct=False, confidence=0.9))
+        stats.record(_probe(_event(correct=False, confidence=0.9)))
         assert stats.confident_mistakes == 1
 
-    def test_the_rolling_window_forgets_old_probes_but_the_session_does_not(self) -> None:
+    def test_the_rolling_window_forgets_old_decisions_but_the_session_does_not(self) -> None:
         stats = LiveStats(window=3)
-        for _ in range(3):
-            stats.record(_event(correct=False, confidence=0.5))
-        for _ in range(3):
-            stats.record(_event(correct=True, confidence=0.5))
+        stats.record(_probe(*[_event(correct=False, confidence=0.5)] * 3))
+        stats.record(_probe(*[_event(correct=True, confidence=0.5)] * 3))
         assert stats.rolling_accuracy == 1.0
         assert stats.session_accuracy == 0.5 and stats.total == 6
 
     def test_overconfidence_shows_up_in_rolling_ece(self) -> None:
         stats = LiveStats()
-        for ok in (True, True, False, False):
-            stats.record(_event(correct=ok, confidence=0.95))
+        stats.record(
+            _probe(*(_event(correct=ok, confidence=0.95) for ok in (True, True, False, False)))
+        )
         assert stats.rolling_ece == pytest.approx(0.45)
         assert stats.rolling_confidence == pytest.approx(0.95)
 
     def test_histogram_puts_certainty_in_the_last_bin(self) -> None:
         stats = LiveStats()
-        stats.record(_event(confidence=1.0))
-        stats.record(_event(confidence=0.05))
+        stats.record(_probe(_event(confidence=1.0), _event(confidence=0.05)))
         counts = stats.confidence_histogram()
         assert len(counts) == HISTOGRAM_BINS
         assert counts[0] == 1 and counts[-1] == 1 and sum(counts) == 2
@@ -189,23 +230,24 @@ class TestLiveStats:
     def test_trends_are_bounded(self) -> None:
         stats = LiveStats()
         for _ in range(200):
-            stats.record(_event())
+            stats.record(_probe())
         assert len(stats.accuracy_trend) == len(stats.ece_trend) == 60
 
     def test_errors_do_not_count_as_probes(self) -> None:
         stats = LiveStats()
         stats.record_error("TimeoutError: slow")
-        assert stats.errors == 1 and stats.total == 0
+        assert stats.errors == 1 and stats.total == 0 and stats.probes == 0
         assert stats.last_error == "TimeoutError: slow"
 
     def test_reset_clears_the_session_but_keeps_the_window_size(self) -> None:
         stats = LiveStats(window=7)
-        stats.record(_event(correct=False, confidence=0.99))
+        stats.record(_probe(_event(correct=False, confidence=0.99)))
         stats.record_error("x")
         stats.reset()
-        assert (stats.total, stats.errors, stats.confident_mistakes) == (0, 0, 0)
+        assert (stats.total, stats.probes, stats.errors, stats.confident_mistakes) == (0, 0, 0, 0)
+        assert stats.input_tokens == 0 and stats.last_probe is None
         assert stats.last_miss is None and stats.window == 7 and not stats.events
-        assert stats.events.maxlen == 7
+        assert stats.events.maxlen == 7 and stats.latencies.maxlen == LATENCY_WINDOW
 
 
 # ---------------------------------------------------------------------------
@@ -313,38 +355,45 @@ class TestDashboard:
         assert "no /metrics" in text
         assert "Ctrl+R reset" in text
 
-    def test_shows_the_current_distribution_with_gold_and_prediction_marked(self) -> None:
+    def test_shows_every_decision_of_the_current_case(self) -> None:
         stats = LiveStats()
         stats.record(
-            _event(
-                correct=False,
-                predicted="shipping",
-                confidence=0.7,
-                distribution={"billing": 0.3, "shipping": 0.7},
+            _probe(
+                _event(
+                    decision_id="c1/needs_human",
+                    question="needs_human",
+                    question_type="noul",
+                    predicted="true",
+                ),
+                _event(
+                    decision_id="c1/category",
+                    correct=False,
+                    predicted="shipping",
+                    gold="billing",
+                    confidence=0.7,
+                ),
+                case_id="c1",
+                input_tokens=1674,
             )
         )
         text = _render(**_dashboard_args(stats))
-        assert "◀ gold" in text and "◀ predicted" in text
-        assert "0.700" in text and "20 ms" in text
-        assert "last miss" in text and "route-01" in text
+        assert "1/2" in text and "c1" in text
+        assert "needs_human" in text and "pred true" in text
+        assert "pred shipping" in text and "gold billing" in text and "0.700" in text
+        assert "20 ms" in text and "1,674 input tokens" in text
+        assert "last miss" in text and "c1/category" in text
 
-    def test_score_levels_are_drawn_in_scale_order(self) -> None:
+    def test_shows_brier_tokens_and_accuracy_by_question_type(self) -> None:
         stats = LiveStats()
-        stats.record(
-            _event(
-                item_id="urg-01",
-                category="urgency",
-                gold="0",
-                predicted="3",
-                correct=False,
-                is_score_scale=True,
-                distribution={"3": 0.7, "2": 0.2, "1": 0.07, "0": 0.03},
-            )
-        )
+        stats.record(_probe(_event(brier=0.25), _event(question_type="score", correct=False)))
         text = _render(**_dashboard_args(stats))
-        rows = [ln.split()[1] for ln in text.splitlines() if ln.startswith("│   ")]
-        levels = [r for r in rows if r in {"0", "1", "2", "3"}]
-        assert levels == ["0", "1", "2", "3"]
+        assert "Brier vs gold" in text and "0.135" in text
+        assert "by question type" in text and "choice" in text and "score" in text
+        assert "1 cases · 2 decisions · 0 failed cases" in text
+
+    def test_credits_the_dataset(self) -> None:
+        text = _render(**_dashboard_args(attribution="Typed Decisions (LocalLLaMA/x), Apache-2.0"))
+        assert "Cases: Typed Decisions (LocalLLaMA/x), Apache-2.0" in text
 
     def test_shows_server_load_when_it_is_available(self) -> None:
         trend = LoadTrend()
@@ -363,9 +412,9 @@ class TestDashboard:
         assert "CONFIDENT MISTAKE" in text
         assert "model unreachable: ConnectError: refused" in text
 
-    def test_a_long_message_in_the_last_miss_is_clipped(self) -> None:
+    def test_a_long_state_is_clipped(self) -> None:
         stats = LiveStats()
-        stats.record(_event(correct=False, state="word " * 60))
+        stats.record(_probe(state="word " * 60))
         text = _render(**_dashboard_args(stats))
         assert "…" in text
         assert all(len(line) <= 120 for line in text.splitlines())
@@ -434,7 +483,7 @@ class _FailingBackend(DecisionBackend):
         self,
         *,
         model: str,
-        state: str,
+        state: DecisionState,
         questions: Mapping[str, DecisionQuestion],
         timeout_seconds: float = 60.0,
         api_key: str | None = None,
@@ -489,62 +538,97 @@ def harness(monkeypatch: pytest.MonkeyPatch):
     return run, handlers, removed, buffer
 
 
+def _confidently_first(_name: str, question: DecisionQuestion, _gold: GoldAnswer) -> DecisionAnswer:
+    """97% on the first answer of every question, whatever the case says."""
+    if isinstance(question, YesNoQuestion):
+        return YesNoAnswer(0.97)
+    if isinstance(question, ChoiceQuestion):
+        names = list(question.options)
+        rest = 0.03 / (len(names) - 1)
+        return ChoiceAnswer(names[0], {n: 0.97 if i == 0 else rest for i, n in enumerate(names)})
+    assert isinstance(question, ScoreQuestion)
+    levels = len(question.levels)
+    rest = 0.03 / (levels - 1)
+    return ScoreAnswer(0.0, {str(i): 0.97 if i == 0 else rest for i in range(levels)})
+
+
 class TestRunLoop:
     @pytest.mark.asyncio
     async def test_probes_until_interrupted_and_detaches_its_handlers(self, harness: Any) -> None:
         run, handlers, removed, _ = harness
-        backend = FakeDecisionBackend(build_items(variants=False))
+        backend = FakeTypedBackend(load_cases())
         waits = await run(backend, cycles=4)
         # One probe before the screen opens, then one per cycle.
         assert backend.calls == 1 + waits == 5
         assert set(removed) == {signal.SIGINT, signal.SIGTERM}
-        last_frame = _CapturingLive.frames[-1]
-        buffer = StringIO()
-        Console(file=buffer, width=120).print(last_frame)
-        assert "5 probes" in buffer.getvalue()
+        text = _frame_text(_CapturingLive.frames[-1])
+        assert "5 cases · 25 decisions" in text
+        assert "Cases: Typed Decisions (LocalLLaMA/typed-decisions" in text
+
+    @pytest.mark.asyncio
+    async def test_every_probe_sends_a_whole_case(self, harness: Any) -> None:
+        run, *_ = harness
+        cases = load_cases()
+        seen: list[int] = []
+
+        class Counting(FakeTypedBackend):
+            async def decide(self, **kwargs: Any) -> DecisionResult:
+                seen.append(len(kwargs["questions"]))
+                return await super().decide(**kwargs)
+
+        await run(Counting(cases), cycles=3)
+        assert seen == [5, 5, 5, 5]
 
     @pytest.mark.asyncio
     async def test_ctrl_r_resets_the_session(self, harness: Any) -> None:
         run, *_ = harness
-        backend = FakeDecisionBackend(build_items(variants=False))
-        await run(backend, cycles=3, reset_on=2)
-        buffer = StringIO()
-        Console(file=buffer, width=120).print(_CapturingLive.frames[-1])
-        # Reset after cycle 2 leaves only the third cycle's probe in the session.
-        assert " 1 probes" in buffer.getvalue()
+        await run(FakeTypedBackend(load_cases()), cycles=3, reset_on=2)
+        # Reset after cycle 2 leaves only the third cycle's case in the session.
+        assert " 1 cases · 5 decisions" in _frame_text(_CapturingLive.frames[-1])
 
     @pytest.mark.asyncio
     async def test_an_unsupported_endpoint_stops_before_the_screen_opens(
         self, harness: Any
     ) -> None:
         run, handlers, removed, _ = harness
-        backend = FakeDecisionBackend(build_items(variants=False), unsupported=True)
         with pytest.raises(DecisionUnsupportedError):
-            await run(backend, cycles=3)
+            await run(FakeTypedBackend([], unsupported=True), cycles=3)
         assert not handlers and not removed
+
+    @pytest.mark.asyncio
+    async def test_damaged_data_stops_before_an_adapter_exists(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        built: list[object] = []
+
+        def broken(*_a: Any) -> Any:
+            raise DatasetIntegrityError("typed-decisions data has sha256 abc")
+
+        monkeypatch.setattr(live, "load_cases", broken)
+        monkeypatch.setattr(display, "build_decision_adapter", lambda **_kw: built.append(1))
+        with pytest.raises(DatasetIntegrityError, match="sha256 abc"):
+            await display.run_decision_live("http://h:1", model="laya")
+        # No adapter, so no HTTP client left open behind the error.
+        assert not built
 
     @pytest.mark.asyncio
     async def test_a_dead_model_shows_a_banner_instead_of_crashing(self, harness: Any) -> None:
         run, *_ = harness
-        backend = _FailingBackend()
-        await run(backend, cycles=5)
-        buffer = StringIO()
-        Console(file=buffer, width=120).print(_CapturingLive.frames[-1])
-        text = buffer.getvalue()
+        await run(_FailingBackend(), cycles=5)
+        text = _frame_text(_CapturingLive.frames[-1])
         assert "model unreachable" in text and "TimeoutError" in text
 
     @pytest.mark.asyncio
     async def test_a_confident_mistake_raises_the_banner(self, harness: Any) -> None:
         run, *_ = harness
-        items = build_items(variants=False)
-        backend = FakeDecisionBackend(items, confidence=0.97, always_first=True)
-        await run(backend, cycles=len(items))
-        texts = []
-        for frame in _CapturingLive.frames:
-            buffer = StringIO()
-            Console(file=buffer, width=120).print(frame)
-            texts.append(buffer.getvalue())
-        assert any("CONFIDENT MISTAKE" in t for t in texts)
+        await run(FakeTypedBackend(load_cases(), _confidently_first), cycles=5)
+        assert any("CONFIDENT MISTAKE" in _frame_text(f) for f in _CapturingLive.frames)
+
+
+def _frame_text(frame: Any) -> str:
+    buffer = StringIO()
+    Console(file=buffer, width=120).print(frame)
+    return buffer.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -576,3 +660,28 @@ class TestCli:
         from tool_eval_bench.cli.command_registry import commands_schema
 
         assert "decision-live" in commands_schema()
+
+
+def test_the_cli_reports_damaged_data_and_exits(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import sys
+
+    from tool_eval_bench.cli import dispatch
+
+    def broken(*_a: Any) -> Any:
+        raise DatasetIntegrityError("typed-decisions data has sha256 abc")
+
+    monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
+    monkeypatch.setattr(live, "load_cases", broken)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tool-eval-bench", "--model", "m", "--base-url", "http://h:1", "--decision-live"],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        dispatch.main()
+    assert exit_info.value.code == 1
+    out = capsys.readouterr().out
+    assert "Decision monitor error:" in out and "sha256 abc" in out
+    assert "Traceback" not in out

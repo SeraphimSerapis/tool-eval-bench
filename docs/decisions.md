@@ -18,13 +18,14 @@ Revisit the representation if variants need independently selectable public iden
 
 ## Decision-model scoring
 
-The decision-model benchmark scores accuracy on base items as its headline and reports
-calibration (ECE, Brier score, log loss) beside it, never folded in. A single blended number
-would hide whether accuracy or calibration moved, and the two predict different deployment
-risks. Routing variants (reversed and renamed options) are scored for robustness and excluded
-from the headline, because they reuse base messages and would triple the weight of routing.
+The decision-model benchmark scores headline accuracy against the gold label on the pinned
+Typed Decisions test split and reports KL divergence, Brier score, and ECE beside it, never
+folded in. A blended number would hide whether accuracy or calibration moved, and the two
+predict different deployment risks.
 
-Items are built in with one question each. The wire format accepts several questions per
-request, which saves prefill, but a one-to-one map from question to gold label keeps
-calibration unambiguous. Revisit this if batched questions turn out to answer differently
-from single ones, which would be worth measuring on its own.
+Each case is one request carrying all five questions about its state. Sending one question
+per request was rejected: the dataset card says answers change when questions are split, so
+scores would stop being comparable with its published figures. The hand-written items were
+dropped rather than kept beside the dataset, because they gave no external reference point.
+
+Revisit when the pinned dataset revision changes or the card publishes its ECE definition.

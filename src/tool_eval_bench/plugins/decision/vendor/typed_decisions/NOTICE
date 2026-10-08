@@ -1,0 +1,29 @@
+Typed Decisions, test split
+===========================
+
+The file test.jsonl.gz in this directory is third-party data. It is not part of
+tool-eval-bench's own MIT-licensed code, and its authors do not endorse this
+project.
+
+Dataset:   Typed Decisions (LocalLLaMA/typed-decisions)
+Publisher: the LocalLLaMA organization on Hugging Face. The dataset card names
+           no individual authors.
+Source:    https://huggingface.co/datasets/LocalLLaMA/typed-decisions
+Revision:  e039ebffcc280174dd354227424fb2b249f191de
+File:      all/test-00000-of-00001.parquet (the test split, 400 cases)
+License:   Apache License 2.0, as declared on the dataset card. The full text is
+           in LICENSE in this directory.
+
+Changes from the source, made by scripts/vendor_typed_decisions.py:
+
+- Converted from Parquet to gzipped JSON Lines.
+- Kept the id, workflow, state, questions and gold columns and dropped the rest
+  (split, factors, label_agreement, n_questions).
+- Decoded the state, questions and gold columns from JSON strings into JSON
+  objects.
+
+No row was added, removed, reordered or edited. manifest.json records the
+sha256 of the source file, which the script checks before converting, and of
+the converted data, which tool-eval-bench checks before every run.
+
+The train split is deliberately not included.

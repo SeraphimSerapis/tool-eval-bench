@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -923,15 +924,25 @@ def _run_decision_benchmark(
     output_dir: str | None = None,
     run_context: Any | None = None,
 ) -> None:
-    """Run the decision-model benchmark against ``/v1/systemone`` and display results."""
+    """Score a decision model on the typed-decisions test split and display results."""
+    from rich.markup import escape
     from rich.panel import Panel
 
     from tool_eval_bench.adapters.factory import build_decision_adapter
     from tool_eval_bench.cli.helpers import adapter_options
-    from tool_eval_bench.plugins.decision.dataset import build_items
     from tool_eval_bench.plugins.decision.plugin import DecisionPlugin
+    from tool_eval_bench.plugins.decision.render import attribution_line, metric_text
+    from tool_eval_bench.plugins.decision.typed_decisions import (
+        DatasetIntegrityError,
+        dataset_info,
+        load_cases,
+    )
 
-    items = build_items()
+    try:
+        info = dataset_info()
+    except DatasetIntegrityError as exc:
+        console.print(f"\n[bold red]Decision error:[/] {escape(str(exc))}")
+        sys.exit(1)
     parallel = args.parallel
     parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
 
@@ -939,8 +950,9 @@ def _run_decision_benchmark(
     console.print(
         Panel(
             f"[bold]{display_name}[/]\n"
-            f"[dim]{len(items)} requests · routing, moderation, urgency, yes/no, abstention · "
-            f"single forward pass{parallel_label}[/]",
+            f"[dim]Typed Decisions {info.split} split · every question of a case in one "
+            f"request · single forward pass{parallel_label}[/]\n"
+            f"[dim]{escape(info.attribution)}[/]",
             title="[bold]⚖️  Decision Models — /v1/systemone[/]",
             border_style="bright_cyan",
         )
@@ -951,26 +963,25 @@ def _run_decision_benchmark(
     result_holder: list = []
 
     async def run() -> None:
-        with PluginProgressDisplay(console, total=len(items)) as display:
+        try:
+            cases = load_cases()
+            total = sum(len(c.questions) for c in cases)
+            with PluginProgressDisplay(console, total=total) as display:
 
-            async def on_progress(current: int, total: int, item_info: dict) -> None:
-                display.tally.record(item_info)
-                display.advance(
-                    current,
-                    total,
-                    stats=tally_line(
-                        display.tally,
-                        rate=display.rate_per_minute(current),
-                        unit="req/min",
-                        accent="cyan",
-                    ),
-                    detail=(
-                        f"  {status_icon(item_info)} [bold]{item_info.get('id')}[/]  "
-                        f"[dim italic]{truncate(item_info.get('state'))}[/]"
-                    ),
-                )
+                async def on_progress(current: int, total: int, item_info: dict) -> None:
+                    display.tally.record(item_info)
+                    display.advance(
+                        current,
+                        total,
+                        stats=tally_line(
+                            display.tally,
+                            rate=display.rate_per_minute(current),
+                            unit="decisions/min",
+                            accent="cyan",
+                        ),
+                        detail=f"  {status_icon(item_info)} [bold]{item_info.get('id')}[/]",
+                    )
 
-            try:
                 result = await plugin.run(
                     adapter,
                     model=model,
@@ -978,7 +989,7 @@ def _run_decision_benchmark(
                     api_key=api_key,
                     timeout_seconds=args.timeout,
                     on_progress=on_progress,
-                    items=items,
+                    cases=cases,
                     concurrency=parallel,
                 )
                 result_holder.append(result)
@@ -997,40 +1008,42 @@ def _run_decision_benchmark(
                             if result.duration_seconds > 0
                             else 0
                         ),
-                        unit="req/min",
+                        unit="decisions/min",
                         accent="cyan",
                     ),
                 )
-            finally:
-                if hasattr(adapter, "aclose"):
-                    await adapter.aclose()
+        finally:
+            if hasattr(adapter, "aclose"):
+                await adapter.aclose()
 
     result = _execute_plugin(console, "Decision", run, result_holder)
     if result is None:
         return
     details = result.details
+    cal = details["calibration"]
 
     console.print()
     _print_decision_tables(console, result)
     console.print()
     console.print(
         f"  [bold]Decision Accuracy:[/] [bold cyan]{result.score:.1f}%[/] "
-        f"({details['correct']}/{details['total']} base items)"
+        f"({details['correct']}/{details['total']} decisions)"
     )
-    cal = details["calibration"]
     console.print(
-        f"  [bold]Calibration:[/] ECE {cal['ece']:.3f} · Brier {cal['brier']:.3f} · "
-        f"{cal['high_confidence_errors']} confident mistake(s)"
+        f"  [bold]Distance from gold:[/] KL {metric_text(details['kl'])} · "
+        f"Brier {metric_text(details['brier'])} · "
+        f"ECE {cal['ece']:.3f} · {cal['high_confidence_errors']} confident disagreement(s)"
     )
     errs = details.get("errors", 0)
     if errs > 0:
-        console.print(f"  [bold yellow]⚠ {errs} errors[/] (counted as misses)")
+        console.print(f"  [bold yellow]⚠ {errs} decision errors[/] (counted as misses)")
     console.print(f"  [bold]Rating:[/] {result.rating}")
     lat = details["latency_ms"]
     console.print(
-        f"  [dim]p50 {lat['p50']:.1f} ms · p95 {lat['p95']:.1f} ms · "
+        f"  [dim]p50 {lat['p50']:.1f} ms · p95 {lat['p95']:.1f} ms per request · "
         f"Duration: {result.duration_seconds:.1f}s · Input tokens: {result.total_tokens:,}[/]"
     )
+    console.print(f"  [dim]{escape(attribution_line(details))}[/]")
 
     _finalize_plugin_run(
         mode="decision",
@@ -1041,12 +1054,20 @@ def _run_decision_benchmark(
             "model": model,
             "base_url": base_url,
             "mode": "decision",
-            "items": len(items),
+            # Runs on another item set or revision must not share a fingerprint.
+            "dataset": details["dataset"],
+            "dataset_revision": details["dataset_revision"],
+            "dataset_split": details["dataset_split"],
+            "cases": details["cases"],
         },
         report_metrics=[
             f"- **Accuracy**: **{result.score:.1f}%**",
+            f"- **KL from gold**: {metric_text(details['kl'])}",
+            f"- **Brier**: {metric_text(details['brier'])}",
             f"- **ECE**: {cal['ece']:.3f}",
             f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
+            f"- **Dataset**: {details['dataset']} ({details['dataset_split']} split, "
+            f"revision `{details['dataset_revision']}`)",
         ],
         report_lines=plugin.render_report_section(result),
         output_dir=output_dir,
@@ -1057,23 +1078,34 @@ def _run_decision_benchmark(
 
 
 def _print_decision_tables(console: Console, result: Any) -> None:
-    """Print per-category accuracy, the reliability table, and the routing confusion matrix."""
+    """Print accuracy and distance from gold by question type and workflow, then reliability."""
     from rich.table import Table
 
-    from tool_eval_bench.plugins.decision.render import bar
+    from tool_eval_bench.plugins.decision.render import bar, metric_text
 
     details = result.details
 
-    cats = Table(title="Accuracy by category", title_style="bold", border_style="bright_cyan")
-    cats.add_column("Category")
-    cats.add_column("Correct", justify="right")
-    cats.add_column("Accuracy", justify="right")
-    cats.add_column("")
-    for name, c in details["categories"].items():
-        cats.add_row(
-            name, f"{c['correct']}/{c['total']}", f"{c['accuracy']:.1f}%", bar(c["accuracy"] / 100)
-        )
-    console.print(cats)
+    for title, label, key in (
+        ("Accuracy by question type", "Type", "by_type"),
+        ("Accuracy by workflow", "Workflow", "by_workflow"),
+    ):
+        table = Table(title=title, title_style="bold", border_style="bright_cyan")
+        table.add_column(label)
+        table.add_column("Correct", justify="right")
+        table.add_column("Accuracy", justify="right")
+        table.add_column("KL", justify="right")
+        table.add_column("Brier", justify="right")
+        table.add_column("")
+        for name, g in details[key].items():
+            table.add_row(
+                name,
+                f"{g['correct']}/{g['total']}",
+                f"{g['accuracy']:.1f}%",
+                metric_text(g["kl"]),
+                metric_text(g["brier"]),
+                bar(g["accuracy"] / 100),
+            )
+        console.print(table)
 
     bins = details["calibration"]["bins"]
     if bins:
@@ -1094,28 +1126,6 @@ def _print_decision_tables(console: Console, result: Any) -> None:
                 f"{bar(b['accuracy'])} {b['accuracy']:.2f}",
             )
         console.print(rel)
-
-    labels = details["confusion"]["labels"]
-    if labels:
-        matrix = details["confusion"]["matrix"]
-        conf = Table(
-            title="Routing confusion (gold rows, predicted columns)",
-            title_style="bold",
-            border_style="bright_cyan",
-        )
-        conf.add_column("", style="dim")
-        for label in labels:
-            conf.add_column(label, justify="right")
-        for gold in labels:
-            row = matrix.get(gold, {})
-            conf.add_row(
-                gold,
-                *[
-                    f"[green]{row.get(c, 0)}[/]" if c == gold else str(row.get(c, 0) or "·")
-                    for c in labels
-                ],
-            )
-        console.print(conf)
 
 
 PluginRunner = Callable[..., None]
