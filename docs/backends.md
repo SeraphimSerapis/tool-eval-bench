@@ -26,7 +26,7 @@ needs no chat endpoint; see [decision-models.md](decision-models.md).
 
 Detection runs in a fixed order and stops at the first answer:
 
-1. A native Prometheus namespace on `/metrics` (`halogen:`, `tensorfold:`, `vllm:`,
+1. A native Prometheus namespace on `/metrics` (`halogen:`, `tensorfold:`, `strata:`, `vllm:`,
    `sglang:` or `sglang_`, then `llamacpp:`).
 2. vLLM's `/version`.
 3. The identity a server declares about itself: `owned_by` in `/v1/models`, an
@@ -55,7 +55,11 @@ records no llama.cpp engine metadata.
 
 Probes send `--api-key` as a bearer token, only to URLs on the `--base-url` origin,
 and do not follow redirects. A missing key, a 401, or a malformed body skips that
-endpoint rather than failing the run.
+endpoint rather than failing the run. Each probe waits 5 s. A refused connection
+ends the remaining probes at once, and so do two timeouts in a row with no answer
+between them, so a server that accepts connections but never replies costs at most
+about 20 s of probing, 10 s for detection and 10 s for engine metadata. A single slow
+endpoint, such as llama.cpp's `/metrics` while it is decoding, only skips itself.
 
 Halogen Flash 0.16.2 [documents](https://github.com/peonist-ai/halogen-flash-server)
 both `halogen:` and llama.cpp-compatible `llamacpp:` metrics. Its native namespace
@@ -139,7 +143,10 @@ adapter, including streaming tool calls. Automatic detection recognizes
 Strata adds `build_info` only when it knows its version, so `/health` identifies
 builds that report none. Its llama.cpp-compatible generation settings alone do not
 establish Strata identity. The default JSON `/metrics` response is not treated as
-Prometheus data.
+Prometheus data. Strata serves its Prometheus text format only when asked, through
+`Accept: text/plain` or `?format=prometheus`, which the probes do not send. That
+format repeats Strata's metrics under vLLM's `vllm:` names, so detection checks its
+`strata:` namespace first and never labels it vLLM.
 
 The metadata probe sends bearer authentication to `/props`, records the declared
 engine version, effective context window and slot count, and leaves absent GPU

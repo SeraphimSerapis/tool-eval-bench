@@ -127,7 +127,8 @@ class _ProbeSession:
     the same host.  And the ladder is sequential by design, so an endpoint that
     is simply not there used to burn ``_PROBE_TIMEOUT`` once per rung before
     the run could start.  ``unreachable`` latches on the first connect-level
-    failure and every later probe returns immediately.
+    failure, or on ``_TIMEOUTS_BEFORE_UNREACHABLE`` timeouts in a row, and
+    every later probe returns immediately.
 
     Responses are also remembered, because identifying a server and then
     reading its metadata asks the same endpoints twice.  The cache key is the
@@ -135,20 +136,32 @@ class _ProbeSession:
     request.
     """
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, purpose: str = "metadata") -> None:
         self.client = client
+        self.purpose = purpose
         self.unreachable = False
+        self.consecutive_timeouts = 0
         self.responses: dict[tuple[str, str | None], httpx.Response | None] = {}
 
 
+# A host that accepts the connection and then never answers fails every probe
+# by timeout, so it would otherwise cost _PROBE_TIMEOUT per rung. One timeout
+# alone is not that: llama-server answers /metrics through its task queue,
+# which waits behind a decode step, while /props and /models answer at once.
+# Two in a row with no answer between them is.
+_TIMEOUTS_BEFORE_UNREACHABLE = 2
+
+
 @asynccontextmanager
-async def _probe_session(session: _ProbeSession | None) -> AsyncIterator[_ProbeSession]:
+async def _probe_session(
+    session: _ProbeSession | None, purpose: str = "metadata"
+) -> AsyncIterator[_ProbeSession]:
     """Yield *session*, or open a short-lived one for a standalone probe."""
     if session is not None:
         yield session
         return
     async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
-        yield _ProbeSession(client)
+        yield _ProbeSession(client, purpose)
 
 
 async def _probe_get(
@@ -158,8 +171,8 @@ async def _probe_get(
 
     A refusal or a 404 says something about the server and leaves the session
     usable.  A connect failure says the host is not answering at all, so it
-    latches ``unreachable`` and short-circuits the rest of the ladder.  An
-    answer already received stays valid after that.
+    latches ``unreachable`` and short-circuits the rest of the ladder, and so
+    do consecutive timeouts.  An answer already received stays valid after that.
     """
     key = (url, headers.get("Authorization"))
     if key in session.responses:
@@ -172,8 +185,24 @@ async def _probe_get(
     except (httpx.ConnectError, httpx.ConnectTimeout, OSError) as exc:
         session.unreachable = True
         logger.debug("%s probe failed, endpoint unreachable: %s", what, exc)
+    except httpx.TimeoutException as exc:
+        session.consecutive_timeouts += 1
+        logger.debug("%s probe timed out: %r", what, exc)
+        if session.consecutive_timeouts >= _TIMEOUTS_BEFORE_UNREACHABLE:
+            session.unreachable = True
+            # INFO, not WARNING: the CLI configures no logging, so a warning
+            # reaches stderr as plain text and breaks --json's JSON-lines stderr.
+            logger.info(
+                "The server did not answer %d probes in a row within %s s; "
+                "skipping the remaining %s probes",
+                session.consecutive_timeouts,
+                _PROBE_TIMEOUT,
+                session.purpose,
+            )
     except httpx.HTTPError as exc:
         logger.debug("%s probe failed: %s", what, exc)
+    else:
+        session.consecutive_timeouts = 0
     session.responses[key] = resp
     return resp
 
@@ -343,9 +372,13 @@ async def _probe_litellm(
 
 # Prefer an engine's native namespace over compatibility aliases. Halogen
 # deliberately exports llama.cpp metrics too; scrape order must not decide identity.
+# Strata's Prometheus format (serve/prometheus.py, chosen by Accept: text/plain
+# or ?format=prometheus) uses vLLM's names plus a strata: namespace; its
+# default JSON /metrics matches nothing here.
 _METRICS_BACKEND_PREFIXES: tuple[tuple[str, str, str], ...] = (
     ("halogen:", "halogen", "Halogen Flash"),
     ("tensorfold:", "tensorfold", "TensorFold"),
+    ("strata:", "strata", "Strata"),
     ("vllm:", "vllm", "vLLM"),
     ("sglang:", "sglang", "SGLang"),
     ("sglang_", "sglang", "SGLang"),  # SGLang >=0.5.4 renamed the metric prefix
@@ -480,10 +513,11 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
     identity. Compatibility metrics yield to an engine's own namespace,
     regardless of scrape order.
 
-    All probes share one connection pool and stop after a connect failure.
-    Returns ``None`` when the endpoint does not identify itself.
+    All probes share one connection pool and stop after a connect failure or
+    consecutive timeouts. Returns ``None`` when the endpoint does not identify
+    itself.
     """
-    async with _probe_session(None) as active:
+    async with _probe_session(None, "backend detection") as active:
         headers = _auth_headers(api_key)
         resp = await _probe_get(active, _metrics_url(base_url), headers=headers, what="/metrics")
         if resp is not None and resp.status_code == 200:
@@ -786,7 +820,7 @@ async def _probe_engine(
         # wasted round trip against the vendor's servers.
         return {"engine_name": _HOSTED_ENGINE_NAMES[backend_l]}
 
-    async with _probe_session(None) as active:
+    async with _probe_session(None, "engine metadata") as active:
         # Always probe /v1/models (works for all self-hosted backends)
         result.update(await _probe_models(base_url, api_key, session=active))
 

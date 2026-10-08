@@ -308,3 +308,109 @@ async def test_public_api_defaults_to_unknown_without_changing_adapter(monkeypat
     await run_benchmark(model="m", base_url="http://test", persist=False, scenarios=[])
     assert run.call_args.kwargs["backend"] == "unknown"
     assert run.call_args.kwargs["wire_format"] is None
+
+
+# Strata's /metrics in the Prometheus text format, from serve/prometheus.py
+# render() at Niko1221/Strata@fb58e0d for an idle server. Trimmed to fewer
+# families and buckets; every kept line is verbatim and in upstream order.
+STRATA_PROMETHEUS = """\
+# HELP vllm:num_requests_running Requests reading their prompt or generating.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{model_name="Qwen3-8B"} 0
+# HELP vllm:prompt_tokens_total Prompt tokens of the finished requests.
+# TYPE vllm:prompt_tokens_total counter
+vllm:prompt_tokens_total{model_name="Qwen3-8B"} 1200
+# HELP vllm:spec_decode_num_accepted_tokens_total MTP draft tokens accepted.
+# TYPE vllm:spec_decode_num_accepted_tokens_total counter
+vllm:spec_decode_num_accepted_tokens_total{model_name="Qwen3-8B"} 0
+# HELP vllm:time_to_first_token_seconds Time to the first token.
+# TYPE vllm:time_to_first_token_seconds histogram
+vllm:time_to_first_token_seconds_bucket{model_name="Qwen3-8B",le="0.001"} 0
+vllm:time_to_first_token_seconds_bucket{model_name="Qwen3-8B",le="+Inf"} 0
+vllm:time_to_first_token_seconds_sum{model_name="Qwen3-8B"} 0.0
+vllm:time_to_first_token_seconds_count{model_name="Qwen3-8B"} 0
+# HELP strata:live_state 1 for what the engine is doing (live.state).
+# TYPE strata:live_state gauge
+strata:live_state{model_name="Qwen3-8B",state="unloaded"} 0
+strata:live_state{model_name="Qwen3-8B",state="idle"} 1
+strata:live_state{model_name="Qwen3-8B",state="reading"} 0
+strata:live_state{model_name="Qwen3-8B",state="generating"} 0
+# HELP strata:engine_max_context The engine's context (engine.max_context).
+# TYPE strata:engine_max_context gauge
+strata:engine_max_context{model_name="Qwen3-8B"} 32768
+"""
+
+# The default JSON /metrics, which Service.metrics() returns, compacted as
+# Strata's _json() sends it.
+STRATA_METRICS_JSON = {
+    "engine": {"model": "Qwen3-8B", "max_context": 32768, "images": False},
+    "live": {"state": "idle", "queued": 0},
+    "requests": [],
+    "totals": {"requests": 3, "prompt_tokens": 1200, "output_tokens": 300},
+}
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_strata_prometheus_metrics_name_strata_not_vllm(reverse):
+    # Strata exports vLLM's metric names so vLLM dashboards read it unchanged.
+    lines = STRATA_PROMETHEUS.splitlines()
+    if reverse:
+        lines.reverse()
+    assert metadata.detect_backend_from_metrics("\n".join(lines)) == ("strata", "Strata")
+
+
+def test_vllm_metrics_without_a_strata_namespace_stay_vllm():
+    vllm_only = "\n".join(line for line in STRATA_PROMETHEUS.splitlines() if "strata:" not in line)
+    assert metadata.detect_backend_from_metrics(vllm_only) == ("vllm", "vLLM")
+    assert metadata.detect_backend_from_metrics("# HELP strata:live_state x\n") is None
+
+
+def test_strata_default_json_metrics_name_no_engine():
+    text = httpx.Response(200, json=STRATA_METRICS_JSON).text
+    assert metadata.detect_backend_from_metrics(text) is None
+
+
+def _strata(*, prometheus: bool):
+    """A Strata server: no /version, a declared /health service, versioned /props.
+
+    With *prometheus*, /metrics serves the text format, as Strata does for
+    ``Accept: text/plain`` or ``?format=prometheus``. Otherwise it applies
+    Strata's own negotiation, which gives the probe's ``Accept: */*`` JSON.
+    """
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/metrics":
+            accept = request.headers.get("accept", "")
+            negotiated = "text/plain" in accept or "openmetrics" in accept
+            if prometheus or negotiated or "format=prometheus" in str(request.url.query):
+                return httpx.Response(200, text=STRATA_PROMETHEUS)
+            return httpx.Response(200, json=STRATA_METRICS_JSON)
+        body = {
+            "/v1/models": {"object": "list", "data": [{"id": "m", "object": "model"}]},
+            "/health": {"status": "ok", "max_context": 32768, "service": "strata"},
+            "/props": {
+                "default_generation_settings": {"n_ctx": 32768, "params": {}},
+                "total_slots": 2,
+                "build_info": "Strata 0.1.40.3",
+            },
+        }.get(path)
+        return httpx.Response(200, json=body) if body else httpx.Response(404)
+
+    return respond
+
+
+@pytest.mark.parametrize("prometheus", [False, True])
+async def test_strata_is_identified_whichever_metrics_format_it_serves(monkeypatch, prometheus):
+    _install(monkeypatch, _strata(prometheus=prometheus))
+
+    hint = await metadata.probe_backend_hint("http://test")
+    context = await metadata.collect_run_context(
+        model="m", backend=hint[0] if hint else "unknown", base_url="http://test"
+    )
+
+    assert hint == ("strata", "Strata")
+    assert context.engine_name == "Strata"
+    assert context.engine_version == "0.1.40.3"
+    assert context.max_model_len == 32768
+    assert context.slot_count == 2
