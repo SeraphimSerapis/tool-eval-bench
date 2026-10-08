@@ -150,6 +150,14 @@ reports no version for itself or for its model backend, so the engine version st
 empty rather than guessed. Quantization comes from the model name, for example
 `EXL3` in `Qwen3-8B-exl3-4.0bpw`, and is a heuristic.
 
+The recorded server model ID comes from `/v1/model`, which describes the model
+loaded when the run starts and has the same key and loaded-model requirements as
+`/props`. The first `/v1/models` entry is only a fallback: with an admin key, or with
+authentication disabled, that list is the whole model directory, and dummy model
+aliases come first when they are enabled. With TabbyAPI's inline model loading
+enabled, a request for a different model loads that model mid-run, and the recorded
+ID and capacity still describe the one loaded at the start.
+
 ## TensorFold
 
 ```bash
