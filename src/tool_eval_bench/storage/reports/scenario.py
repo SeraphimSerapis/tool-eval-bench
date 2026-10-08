@@ -30,6 +30,23 @@ from tool_eval_bench.storage.reports._common import (
     report_filename,
 )
 
+_AUDIT_ORDER = {
+    "disagreement": 0,
+    "abstained": 1,
+    "unavailable": 2,
+    "pending": 3,
+    "agreement": 4,
+}
+
+
+def _audit_outcome(audit: Mapping[str, Any]) -> str:
+    status = audit.get("status")
+    if status == "completed":
+        return "disagreement" if audit.get("disagreement") is True else "agreement"
+    if status in ("abstained", "pending"):
+        return str(status)
+    return "unavailable"
+
 
 def write_scenario_report(
     root: Path,
@@ -319,12 +336,16 @@ def write_scenario_report(
             details.extend(r.state_checkpoints)
             md.append(f"- **{r.scenario_id}**: {'; '.join(details)}")
 
-    audits = [
-        r
-        for r in summary.scenario_results
-        if r.decision_audit is not None and r.scenario_id not in held_out_ids
-    ]
+    audits = sorted(
+        (
+            r
+            for r in summary.scenario_results
+            if r.decision_audit is not None and r.scenario_id not in held_out_ids
+        ),
+        key=lambda r: _AUDIT_ORDER[_audit_outcome(r.decision_audit or {})],
+    )
     if audits:
+        outcomes = [_audit_outcome(r.decision_audit or {}) for r in audits]
         md.extend(
             [
                 "",
@@ -332,10 +353,33 @@ def write_scenario_report(
                 "",
                 "Audits do not change official points, safety warnings, or ratings. "
                 "Disagreements are candidates for review, not corrected verdicts. "
-                "Probabilities are uncalibrated.",
+                "Probabilities are uncalibrated. Assistant text can steer the judge: "
+                "4 of 21 synthetic prompt injections flipped its verdict.",
                 "",
+                f"{len(audits)} checks: {outcomes.count('agreement')} agree, "
+                f"{outcomes.count('disagreement')} disagree, "
+                f"{outcomes.count('abstained')} abstained, "
+                f"{outcomes.count('unavailable')} unavailable, "
+                f"{outcomes.count('pending')} pending.",
+                "",
+                "| Scenario | Check | Deterministic | Judge | p | Status |",
+                "|---|---|---|---|---:|---|",
             ]
         )
+        for r, outcome in zip(audits, outcomes, strict=True):
+            audit = r.decision_audit or {}
+            choice = audit.get("choice")
+            probability = (audit.get("probabilities") or {}).get(choice)
+            cells = [
+                r.scenario_id,
+                audit.get("check_id", ""),
+                audit.get("deterministic_choice", "unavailable"),
+                choice or "",
+                f"{probability:.2f}" if isinstance(probability, float | int) else "",
+                outcome,
+            ]
+            md.append("| " + " | ".join(_markdown_table_cell(str(c)) for c in cells) + " |")
+        md.append("")
         for r in audits:
             audit = r.decision_audit or {}
             md.extend(
@@ -349,7 +393,9 @@ def write_scenario_report(
                 ]
             )
             if audit.get("disagreement") is True:
-                md.extend(["Semantic disagreement with the deterministic payment-claim check.", ""])
+                # Audits saved before labels existed were all TC-89's.
+                label = _markdown_table_cell(audit.get("label", "payment-claim check"))
+                md.extend([f"Semantic disagreement with the deterministic {label}.", ""])
             md.extend(_trace_block(json.dumps(audit, ensure_ascii=False, indent=2)))
             md.append("")
 

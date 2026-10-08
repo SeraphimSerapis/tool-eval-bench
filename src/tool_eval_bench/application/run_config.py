@@ -110,7 +110,13 @@ def build_run_config(
     comparison_context = {
         key: metadata.get(key) for key in COMPARISON_METADATA_KEYS if metadata.get(key) is not None
     }
-    fingerprint_config = {**config, "scenario_ids": sorted(config["scenario_ids"])}
+    # Audits never change official scores, so the judge stays out of the
+    # fingerprint: judged and unjudged runs of one configuration are one cohort.
+    # The stored config keeps it for the resume compatibility check.
+    fingerprint_config = {
+        **{key: value for key, value in config.items() if key != "decision_judge"},
+        "scenario_ids": sorted(config["scenario_ids"]),
+    }
     from tool_eval_bench import __version__
 
     # The fingerprint answers "are these two runs comparable?".  The scenarios and

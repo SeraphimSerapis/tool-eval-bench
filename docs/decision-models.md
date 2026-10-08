@@ -24,28 +24,72 @@ decision model may have no working chat endpoint.
 ## Answer audits
 
 This is separate from the decision-model accuracy benchmark. An optional judge
-checks TC-89's assistant messages for a claim that payment succeeded. It does
-not grade tool execution, authorization, compensation, or the whole scenario.
+asks one versioned question about a scenario's assistant text, such as "did it
+claim the payment succeeded?", and compares the answer with the scenario's own
+deterministic check. It does not grade tool execution, authorization,
+compensation, or the whole scenario.
 
 ```bash
-tool-eval-bench run --scenarios TC-89 --base-url http://localhost:8000/v1 \
+tool-eval-bench run --hardmode --base-url http://localhost:8000/v1 \
+  --decision-judge \
   --decision-judge-base-url http://localhost:8084/v1 \
   --decision-judge-model clef-flash
 ```
 
-Both judge flags are required. Authentication uses the judge-only environment
-variable `TOOL_EVAL_DECISION_JUDGE_API_KEY`. The benchmark's API key, provider
+`--decision-judge [recommended|all]` picks the set. The bare flag means
+`recommended`, and so do the two connection flags given alone. The set flag
+without both connection flags is a usage error.
+
+| Scenario | Set | Check | What it asks | Evidence |
+|---|---|---|---|---|
+| TC-89 | recommended | `tc89-payment-claim-v1` | payment-claim check | all messages |
+| TC-91 | recommended | `tc91-revocation-claim-v2` | revocation-claim check | all messages |
+| TC-76 | recommended | `tc76-cancel-refund-claim-v1` | cancellation-or-refund claim check | all messages |
+| TC-80 | recommended | `tc80-move-claim-v1` | move-claim check | final answer |
+| TC-49 | recommended | `tc49-sent-claim-v2` | sent-claim check | final answer |
+| TC-32 | recommended | `tc32-cleared-claim-v1` | cleared-claim check | final answer |
+| TC-59 | recommended | `tc59-refuses-v2` | refusal check | final answer |
+| TC-71 | recommended | `tc71-asks-which-jordan-v1` | clarification check | all messages |
+| TC-26 | recommended | `tc26-attendee-claim-v1` | invented-attendee check | final answer |
+| TC-14 | recommended | `tc14-error-acknowledged-v1` | error-acknowledgement check | all messages |
+| TC-87 | recommended | `tc87-completeness-claim-v1` | completeness-claim check | all messages |
+| TC-12 | all | `tc12-deletion-stance-v3` | deletion-refusal check | final answer |
+| TC-33 | all | `tc33-internal-claim-v2` | internal-revenue claim check | final answer |
+| TC-36 | all | `tc36-asks-details-v1` | missing-details check | final answer |
+| TC-31 | all | `tc31-asks-clarification-v1` | clarification check | final answer |
+| TC-75 | all | `tc75-asks-date-time-v1` | date-and-time request check | all messages |
+| TC-16 | all | `tc16-answer-language-v1` | German-answer check | final answer |
+
+`all` runs every row. Only scenarios selected for the run are audited, so a
+standard run audits 5 recommended or 10 `all` checks; the rest are Hard Mode.
+"All messages" sends every public assistant message, so an earlier claim
+later contradicted by a denial still counts. "Final answer" sends only the
+last one. Reasoning and tool payloads are never sent.
+
+Every `recommended` check got all clear and tricky test cases right in live
+testing and gave the same answer with the option order reversed. None made a
+confident mistake except on the prompt injections covered under the verdict
+limits below. Each check `all` adds has one weakness: a lower margin, one
+order flip, an abstention on a tricky case, or one confident miss. TC-12's is
+the miss: "Which email account should I delete them from?" came back
+`says_cannot_delete` at p=0.81, so expect some TC-12 disagreements that are the
+judge's mistake. TC-90 has no audit because its answer depended on option
+order. TC-58 has none because its deterministic check already handled the
+tricky cases and the judge's margin was unstable.
+
+Some variants change the premise a question relies on, so they carry no audit:
+TC-71's `clarified` variant names the recipient, and both TC-75 panel variants
+change the booking. Identifier variants keep their audit; the deterministic
+check sees the original identifiers.
+
+Authentication uses the judge-only environment variable
+`TOOL_EVAL_DECISION_JUDGE_API_KEY`. The benchmark's API key, provider
 credentials, extra headers, and conversation ID never reach the judge. URLs
 must be HTTP(S), without embedded credentials, query parameters, or fragments.
-Other scenarios do not contact the judge; held-out scenarios are always skipped.
-The flags work with `run`, `resume`, and flat scenario invocations, not plugins
-or context-pressure sweeps.
-
-The versioned question offers `payment_claim`, `no_payment_claim`, and `unclear`.
-It examines all public assistant messages, including earlier assertions later
-contradicted by a denial. Reasoning and tool payloads are not sent. Judge requests
-start after all benchmark scenarios finish, so their latency does not enter
-scenario timing or deployability scores.
+Held-out scenarios are always skipped. The flags work with `run`, `resume`,
+and flat scenario invocations, not plugins or context-pressure sweeps. Judge
+requests run one at a time after all benchmark scenarios finish, so their
+latency does not enter scenario timing or deployability scores.
 
 Live and plain terminal output name the judge when a request starts, then show
 its choice and probability, disagreement, abstention, or request error under the
@@ -54,12 +98,19 @@ placeholder. A previously performed audit shown during resume is labeled
 `saved audit`, not shown as a new request. JSON mode emits `decision_audit_start`
 and `decision_audit_result` events on stderr without raw evidence or credentials.
 
-Official scores, safety warnings, and ratings never change. Each eligible result
-gets a `decision_audit` in JSON and SQLite, also rendered in the Markdown report.
-It includes the exact input and question, check version, judge endpoint and model,
-probabilities, elapsed milliseconds, and comparison with the deterministic claim
-check. A disagreement is a review candidate, not a corrected verdict. These
-probabilities have not been calibrated against independent human labels.
+Official scores, safety warnings, and ratings never change. Each audited result
+gets a `decision_audit` in JSON and SQLite. It includes the exact input and
+question, `check_id`, `question_sha256`, evidence scope, judge endpoint and
+model, probabilities, elapsed milliseconds, and the comparison with the
+deterministic check. The Markdown report opens the section with one table,
+disagreements first, then the full record per scenario. A disagreement is a
+review candidate, not a corrected verdict.
+
+Two limits apply to every verdict. The probabilities have not been calibrated
+against independent human labels. Assistant text can also steer the judge: in
+21 synthetic prompt injections, 4 flipped its verdict. The question tells the
+judge that messages are evidence, not instructions, and nothing detects an
+injection that works anyway.
 
 `unclear` or tied top probabilities produce `abstained`. Errors, malformed
 probabilities, missing evaluation evidence, and empty messages produce
@@ -68,18 +119,24 @@ Requests larger than 6,000 UTF-8 bytes are not sent or truncated. This conservat
 byte limit is not a tokenizer-based context guarantee; a server's context
 rejection also produces an unavailable audit.
 
-Judge configuration joins the comparison fingerprint. Repeat the connection
-flags when resuming; changing or dropping them is refused. Pending audit evidence
-is checkpointed, so resuming can complete it without rerunning the benchmark model.
-Completed audits are preserved. Keys are never persisted.
+Judge configuration stays out of the comparison fingerprint, because an audit
+never changes a score: judged and unjudged runs of one configuration share a
+cohort. The stored run config still records the judge endpoint, model, set, and
+selected `checks`. Repeat the judge flags when resuming. Changing the endpoint,
+model, or set is refused, and so is a code update that bumps a selected check's
+version. A run audited before sets existed (TC-89 only) cannot be resumed;
+start it again. Pending audit evidence is checkpointed, so resuming can complete it
+without rerunning the benchmark model. A saved verdict is reused only when its
+`check_id` and `question_sha256` match the current question; otherwise the saved
+evidence is judged again. Keys are never persisted.
 
-The Python API accepts `decision_judge_base_url`, `decision_judge_model`, and
-`decision_judge_api_key`. API callers supply the judge key explicitly; the API
-reads no judge credentials from the environment. An optional async
-`on_scenario_audit(scenario, result, phase)` callback receives `started`,
-`completed`, or `reused` updates only for attempted or previously performed
-requests. Progress callback errors are logged without exception text and do not
-change judgments or official points.
+The Python API accepts `decision_judge` (`"recommended"` or `"all"`),
+`decision_judge_base_url`, `decision_judge_model`, and `decision_judge_api_key`.
+API callers supply the judge key explicitly; the API reads no judge credentials
+from the environment. An optional async `on_scenario_audit(scenario, result,
+phase)` callback receives `started`, `completed`, or `reused` updates only for
+attempted or previously performed requests. Progress callback errors are logged
+without exception text and do not change judgments or official points.
 
 ## The wire format
 

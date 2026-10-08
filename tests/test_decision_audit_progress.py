@@ -33,6 +33,7 @@ def _captured(
         SCENARIO,
         ScenarioState(final_answer=text, assistant_messages=[text] if text else []),
         result,
+        judge_set="recommended",
     )
     return result
 

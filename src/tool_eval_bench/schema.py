@@ -10,7 +10,8 @@ Usage::
     from tool_eval_bench.schema import ARGS_SCHEMA
 
 The schema is a list of dicts, one per argument, with type, default,
-choices, and description.  This is NOT JSON Schema — it's a lightweight
+choices, and description.  An argument whose value is optional also has
+``const``, the value the bare flag takes.  This is NOT JSON Schema — it's a lightweight
 format optimized for recipe validation and CLI introspection.
 
 Every *public* parser argument (i.e. not decorated with
@@ -27,11 +28,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from tool_eval_bench.application.decision_audit import (
+    DECISION_JUDGE_SETS,
+    DEFAULT_DECISION_JUDGE_SET,
+)
 from tool_eval_bench.cli.command_registry import commands_schema
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 # Argument schema version — bump when adding/removing/renaming args.
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "8"
 
 COMMANDS_SCHEMA: dict[str, dict[str, Any]] = commands_schema()
 
@@ -121,10 +126,21 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
     },
     # -- Decision judge audit --
     {
+        "name": "decision_judge",
+        "type": "string",
+        "default": None,
+        "const": DEFAULT_DECISION_JUDGE_SET,
+        "choices": list(DECISION_JUDGE_SETS),
+        "description": (
+            "Answer-audit set; the bare flag and the connection flags alone mean "
+            "recommended. Requires decision_judge_base_url and decision_judge_model"
+        ),
+    },
+    {
         "name": "decision_judge_base_url",
         "type": "string",
         "default": None,
-        "description": "Independent /v1/systemone endpoint for TC-89 audits; scores stay unchanged",
+        "description": "Independent /v1/systemone endpoint for answer audits; scores stay unchanged",
     },
     {
         "name": "decision_judge_model",

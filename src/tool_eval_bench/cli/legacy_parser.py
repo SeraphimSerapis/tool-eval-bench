@@ -5,6 +5,10 @@ from __future__ import annotations
 import argparse
 
 from tool_eval_bench.adapters.wire_format import WIRE_FORMATS
+from tool_eval_bench.application.decision_audit import (
+    DECISION_JUDGE_SETS,
+    DEFAULT_DECISION_JUDGE_SET,
+)
 from tool_eval_bench.cli.command_registry import COMMAND_SPECS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
@@ -94,9 +98,19 @@ def _make_parser() -> argparse.ArgumentParser:
 
     judge = parser.add_argument_group("decision judge audit")
     judge.add_argument(
+        "--decision-judge",
+        nargs="?",
+        const=DEFAULT_DECISION_JUDGE_SET,
+        default=None,
+        choices=DECISION_JUDGE_SETS,
+        help="Answer-audit set: recommended (11 scenarios, the default when only the "
+        "connection flags are given) or all (17). Requires --decision-judge-base-url "
+        "and --decision-judge-model",
+    )
+    judge.add_argument(
         "--decision-judge-base-url",
         default=None,
-        help="Independent /v1/systemone endpoint for TC-89 answer audits; scores stay unchanged",
+        help="Independent /v1/systemone endpoint for answer audits; scores stay unchanged",
     )
     judge.add_argument(
         "--decision-judge-model",

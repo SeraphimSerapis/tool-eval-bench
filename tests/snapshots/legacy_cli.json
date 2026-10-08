@@ -105,6 +105,19 @@
     "required": false
   },
   {
+    "choices": [
+      "recommended",
+      "all"
+    ],
+    "default": null,
+    "dest": "decision_judge",
+    "flags": [
+      "--decision-judge"
+    ],
+    "nargs": "?",
+    "required": false
+  },
+  {
     "choices": null,
     "default": null,
     "dest": "decision_judge_base_url",

@@ -27,6 +27,7 @@ from contextlib import ExitStack, closing
 from typing import Any
 
 from tool_eval_bench import __version__
+from tool_eval_bench.application.decision_audit import DecisionJudgeSet
 from tool_eval_bench.application.run_context import build_run_context, detect_backend
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
@@ -107,6 +108,7 @@ async def run_benchmark(
     extra_headers: Mapping[str, str] | None = None,
     session_header: str | None = None,
     system_prompt: str | None = None,
+    decision_judge: DecisionJudgeSet | None = None,
     decision_judge_base_url: str | None = None,
     decision_judge_model: str | None = None,
     decision_judge_api_key: str | None = None,
@@ -165,8 +167,12 @@ async def run_benchmark(
             the comparison fingerprint, so runs with different prompts are not
             grouped together.
 
+        decision_judge: Which answer audits to run: ``"recommended"`` (11
+            scenarios) or ``"all"`` (17). *None* with a judge URL means
+            ``"recommended"``; a set without a judge URL is a ``ValueError``.
         decision_judge_base_url: Optional independent /v1/systemone endpoint for
-            TC-89 answer auditing. Does not change official scores.
+            answer auditing. Does not change official scores. The judge settings
+            are stored with the run but are not part of the comparison fingerprint.
         decision_judge_model: Required model name when answer auditing is enabled.
         decision_judge_api_key: Judge-only credential. Never inherited from api_key
             or environment variables in the Python API.
@@ -257,6 +263,7 @@ async def run_benchmark(
             decision_judge_model=decision_judge_model,
             decision_judge_api_key=decision_judge_api_key,
             on_scenario_audit=on_scenario_audit,
+            decision_judge=decision_judge,
         )
 
     return format_result(run_data)

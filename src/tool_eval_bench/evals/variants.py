@@ -84,6 +84,14 @@ def identity_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinit
             )
         return replace(result, summary=substitute(result.summary, replacements))
 
+    audit = scenario.answer_audit
+    if audit is not None:
+        original_choice = audit.deterministic_choice
+        audit = replace(
+            audit,
+            deterministic_choice=lambda state: original_choice(translated_state(state, inverse)),
+        )
+
     return replace(
         scenario,
         user_message=substitute(scenario.user_message, replacements),
@@ -91,6 +99,7 @@ def identity_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinit
         tools_override=substitute(scenario.tools_override, replacements),
         handle_tool_call=handle,
         evaluate=evaluate,
+        answer_audit=audit,
         variant_metadata={"version": VARIANT_VERSION, "seed": seed, "kind": "identifiers"},
     )
 
