@@ -89,9 +89,19 @@ PLUGIN_LEGACY = (
     "needle_only",
     "needle_depths",
     "needle_lengths",
-    "decision",
-    "decision_only",
+    "decision_bench",
+    "decision_bench_only",
 )
+# Plugin name -> stem of its flat flags (``--<stem>`` / ``--<stem>-only``) and
+# Namespace attributes. The decision plugin's flags are ``--decision-bench*``
+# so they cannot be confused with the ``--decision-judge-*`` answer audit.
+PLUGIN_FLAG_STEMS = {
+    "gsm8k": "gsm8k",
+    "mmlu": "mmlu",
+    "ifeval": "ifeval",
+    "needle": "needle",
+    "decision": "decision_bench",
+}
 
 
 @dataclass(frozen=True)
@@ -177,8 +187,8 @@ COMMAND_SPECS = (
         "Run an external accuracy benchmark",
         translation="plugin",
         help_dests=CONNECTION + SAMPLING + RUN_CONTROL + OUTPUT,
-        legacy_flags=("gsm8k_only", "mmlu_only", "ifeval_only", "needle_only", "decision_only"),
-        choices=("gsm8k", "mmlu", "ifeval", "needle", "decision"),
+        legacy_flags=tuple(f"{stem}_only" for stem in PLUGIN_FLAG_STEMS.values()),
+        choices=tuple(PLUGIN_FLAG_STEMS),
     ),
     CommandSpec(
         "compare",

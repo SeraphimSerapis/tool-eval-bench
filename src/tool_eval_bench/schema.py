@@ -647,13 +647,13 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
     },
     # -- Decision models --
     {
-        "name": "decision",
+        "name": "decision_bench",
         "type": "bool",
         "default": False,
         "description": "Run the decision-model benchmark (/v1/systemone) after tool-call scenarios",
     },
     {
-        "name": "decision_only",
+        "name": "decision_bench_only",
         "type": "bool",
         "default": False,
         "description": "Run ONLY the decision-model benchmark (skip tool-call scenarios)",

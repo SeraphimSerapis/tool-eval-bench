@@ -476,12 +476,12 @@ def _make_parser() -> argparse.ArgumentParser:
     # -- Decision models ------------------------------------------------
     decision_grp = parser.add_argument_group("decision-model benchmark")
     decision_grp.add_argument(
-        "--decision",
+        "--decision-bench",
         action="store_true",
         help="Run the decision-model benchmark (llama.cpp /v1/systemone) after tool-call scenarios",
     )
     decision_grp.add_argument(
-        "--decision-only",
+        "--decision-bench-only",
         action="store_true",
         help="Run ONLY the decision-model benchmark (skip tool-call scenarios and chat preflight)",
     )

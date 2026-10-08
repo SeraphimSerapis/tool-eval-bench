@@ -610,13 +610,13 @@
     {
       "default": false,
       "description": "Run the decision-model benchmark (/v1/systemone) after tool-call scenarios",
-      "name": "decision",
+      "name": "decision_bench",
       "type": "bool"
     },
     {
       "default": false,
       "description": "Run ONLY the decision-model benchmark (skip tool-call scenarios)",
-      "name": "decision_only",
+      "name": "decision_bench_only",
       "type": "bool"
     },
     {
@@ -746,7 +746,7 @@
         "mmlu_only",
         "ifeval_only",
         "needle_only",
-        "decision_only"
+        "decision_bench_only"
       ]
     },
     "probe": {

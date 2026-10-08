@@ -781,9 +781,9 @@
   {
     "choices": null,
     "default": false,
-    "dest": "decision",
+    "dest": "decision_bench",
     "flags": [
-      "--decision"
+      "--decision-bench"
     ],
     "nargs": 0,
     "required": false
@@ -791,9 +791,9 @@
   {
     "choices": null,
     "default": false,
-    "dest": "decision_only",
+    "dest": "decision_bench_only",
     "flags": [
-      "--decision-only"
+      "--decision-bench-only"
     ],
     "nargs": 0,
     "required": false
