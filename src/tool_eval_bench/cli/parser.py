@@ -65,6 +65,8 @@ def _copy_legacy_options(parser: argparse.ArgumentParser, destinations: tuple[st
             )
             if source.nargs is not None:
                 kwargs["nargs"] = source.nargs
+            if source.const is not None:
+                kwargs["const"] = source.const
         parser.add_argument(*source.option_strings, **kwargs)
 
 

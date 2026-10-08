@@ -292,15 +292,19 @@ minimal override that constrains the model to verified output.
 
 ### Optional answer audits
 
-A separate decision model can audit TC-89's payment-claim detection:
+A separate decision model can audit what the model told the user, such as a
+claim that a payment went through or a question asking which contact was meant:
 
 ```bash
-tool-eval-bench run --scenarios TC-89 --base-url http://localhost:8000/v1 \
+tool-eval-bench run --hardmode --base-url http://localhost:8000/v1 \
+  --decision-judge \
   --decision-judge-base-url http://localhost:8084/v1 \
   --decision-judge-model clef-flash
 ```
 
-The judge scores the meaning of all assistant messages using `/v1/systemone`.
+`--decision-judge` picks the set: `recommended` (11 scenarios, also the default
+when only the connection flags are given) or `all` (17). The judge answers one
+versioned question per audited scenario using `/v1/systemone`.
 Official points, safety warnings, and ratings stay deterministic. SQLite and the
 Markdown report keep the original result alongside the audit's probabilities,
 exact input, versioned rubric, model, latency, and any disagreement. An audit
@@ -314,7 +318,9 @@ and `decision_audit_result` progress events on stderr.
 
 Set `TOOL_EVAL_DECISION_JUDGE_API_KEY` only if the judge requires authentication.
 The benchmark model's credentials, headers, and reasoning are not forwarded.
-Auditing is off unless both judge connection flags are supplied.
+Auditing is off unless both judge connection flags are supplied. Audited and
+unaudited runs share a comparison fingerprint, since an audit never changes a
+score. Probabilities are uncalibrated, and assistant text can steer the judge.
 See [answer audit limits and API configuration](docs/decision-models.md#answer-audits).
 
 ## Programmatic API

@@ -5,6 +5,8 @@ Ported from ToolCall-15's TypeScript types into idiomatic Python.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -210,13 +212,44 @@ Evaluator = Callable[[ScenarioState], ScenarioEvaluation]
 Checkpoint = Callable[[ScenarioState, ToolCallRecord], str | None]
 
 
+#: ``recommended`` audits passed every clear and tricky validation case; ``all``
+#: adds audits with one known weakness each. Selecting ``all`` includes both tiers.
+AuditTier = Literal["recommended", "all"]
+#: What the judge sees: every public assistant message, or only the final
+#: answer when the shadowed deterministic check reads nothing else.
+AuditEvidence = Literal["messages", "final_answer"]
+
+
 @dataclass(frozen=True)
 class AnswerAuditDefinition:
-    """A versioned semantic question and its deterministic comparison check."""
+    """A versioned semantic question and its deterministic comparison check.
+
+    ``check_id`` carries a manual ``-vN`` suffix. :attr:`question_sha256` ties
+    the version to the wording, so a pinned test fails when one changes
+    without the other.
+    """
 
     check_id: str
     question: ChoiceQuestion
     deterministic_choice: Callable[[ScenarioState], str]
+    #: Names the deterministic check in reports, e.g. "payment-claim check".
+    label: str
+    tier: AuditTier = "recommended"
+    evidence: AuditEvidence = "messages"
+
+    @property
+    def question_sha256(self) -> str:
+        """Hash of the wire question, option names included, and the evidence scope.
+
+        Keys are not sorted: option order is part of the question, because the
+        judge has shown position bias.
+        """
+        canonical = json.dumps(
+            {"question": self.question.to_wire(), "evidence": self.evidence},
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 @dataclass

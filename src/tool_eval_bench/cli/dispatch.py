@@ -33,7 +33,7 @@ from rich.console import Console
 
 from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
 from tool_eval_bench.adapters.wire_format import resolve_wire_format as _resolve_wire_format
-from tool_eval_bench.application.decision_audit import decision_judge_config
+from tool_eval_bench.application.decision_audit import decision_judge_config, with_selected_checks
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.cli import model_probe as _model_probe
 from tool_eval_bench.cli.command_registry import PLUGIN_FLAG_STEMS
@@ -180,6 +180,11 @@ def _resume_config_mismatches(
     from tool_eval_bench.evals.variants import apply_variants
 
     scenarios = apply_variants(scenarios, getattr(args, "variant_seed", None))
+    judge_config = decision_judge_config(
+        getattr(args, "decision_judge_base_url", None),
+        getattr(args, "decision_judge_model", None),
+        judge_set=getattr(args, "decision_judge", None),
+    )
     current = {
         "scenario_variants": {s.id: s.variant_metadata for s in scenarios if s.variant_metadata},
         "model": model,
@@ -192,9 +197,8 @@ def _resume_config_mismatches(
         "seed": args.seed,
         "reference_date": args.reference_date,
         "system_prompt": getattr(args, "system_prompt", None),
-        "decision_judge": decision_judge_config(
-            getattr(args, "decision_judge_base_url", None),
-            getattr(args, "decision_judge_model", None),
+        "decision_judge": (
+            with_selected_checks(judge_config, scenarios) if judge_config is not None else None
         ),
         "scenario_ids": [scenario.id for scenario in scenarios],
         "concurrency": args.parallel,
@@ -206,7 +210,7 @@ def _resume_config_mismatches(
     }
     # Older persisted runs predate some fields. Validate every condition they
     # did record, while modern runs receive the full strict comparison.
-    return [
+    mismatches = [
         key
         for key, value in current.items()
         if (key in previous and previous[key] != value)
@@ -216,6 +220,35 @@ def _resume_config_mismatches(
         # merge two personas into one result.
         or (key in {"system_prompt", "decision_judge"} and previous.get(key) != value)
     ]
+    if "decision_judge" in mismatches:
+        mismatches = [key for key in mismatches if key != "decision_judge"]
+        mismatches.append(
+            _judge_mismatch(previous.get("decision_judge"), current["decision_judge"])
+        )
+    return mismatches
+
+
+def _judge_mismatch(previous: Any, current: Any) -> str:
+    """Name the judge difference a user must undo to resume, when it is a set or check."""
+    if isinstance(previous, dict) and "set" not in previous:
+        # Audited before judge sets existed, which meant TC-89 only. No set
+        # reproduces that selection, so say why rather than name a bare key.
+        return "decision_judge (a TC-89-only audit from an earlier version)"
+    if not isinstance(previous, dict) or not isinstance(current, dict):
+        return "decision_judge"
+    if previous["set"] != current["set"]:
+        return f"decision_judge set (was {previous['set']}, now {current['set']})"
+    old_checks = set(previous.get("checks") or [])
+    new_checks = set(current.get("checks") or [])
+    if old_checks == new_checks:
+        # A URL or model change; the generic key already says enough.
+        return "decision_judge"
+    changes = []
+    if removed := sorted(old_checks - new_checks):
+        changes.append(f"was {', '.join(removed)}")
+    if added := sorted(new_checks - old_checks):
+        changes.append(f"now {', '.join(added)}")
+    return f"decision_judge checks ({'; '.join(changes)})"
 
 
 def _execution_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
@@ -533,6 +566,7 @@ def _decision_judge_kwargs(args: argparse.Namespace) -> dict[str, Any]:
         "decision_judge_base_url": base_url,
         "decision_judge_model": getattr(args, "decision_judge_model", None),
         "decision_judge_api_key": os.environ.get("TOOL_EVAL_DECISION_JUDGE_API_KEY"),
+        "decision_judge": getattr(args, "decision_judge", None),
     }
 
 
@@ -788,6 +822,7 @@ def main() -> None:
         judge_config = decision_judge_config(
             getattr(args, "decision_judge_base_url", None),
             getattr(args, "decision_judge_model", None),
+            judge_set=getattr(args, "decision_judge", None),
         )
     except ValueError as exc:
         parser.error(str(exc))

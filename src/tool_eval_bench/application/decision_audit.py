@@ -7,13 +7,15 @@ import json
 import logging
 import math
 import time
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections.abc import Awaitable, Callable, Iterable
+from typing import Any, get_args
 from urllib.parse import urlsplit
 
 from tool_eval_bench.domain.decision import ChoiceAnswer, ChoiceQuestion, DecisionBackend
 from tool_eval_bench.domain.scenarios import (
+    AnswerAuditDefinition,
     AuditPhase,
+    AuditTier,
     ScenarioDefinition,
     ScenarioResult,
     ScenarioState,
@@ -27,17 +29,33 @@ AUDIT_TIMEOUT_SECONDS = 10.0
 # if longer inputs are needed. Server context rejections remain unavailable audits.
 MAX_AUDIT_REQUEST_BYTES = 6000
 
+#: A judge set names the highest tier it includes: ``all`` also runs every
+#: ``recommended`` audit.
+DecisionJudgeSet = AuditTier
+DECISION_JUDGE_SETS: tuple[DecisionJudgeSet, ...] = get_args(AuditTier)
+DEFAULT_DECISION_JUDGE_SET: DecisionJudgeSet = "recommended"
+
 
 def decision_judge_config(
-    base_url: str | None, model: str | None, api_key: str | None = None
+    base_url: str | None,
+    model: str | None,
+    api_key: str | None = None,
+    judge_set: str | None = None,
 ) -> dict[str, Any] | None:
-    """Validate an independent connection without persisting its API key."""
+    """Validate an independent connection without persisting its API key.
+
+    Without ``judge_set`` a configured judge runs the ``recommended`` set.
+    """
     if base_url is None:
-        if model is not None or api_key is not None:
+        if model is not None or api_key is not None or judge_set is not None:
             raise ValueError("A decision judge requires a base URL and model")
         return None
     if not model or not model.strip():
         raise ValueError("A decision judge requires a model")
+    if judge_set is None:
+        judge_set = DEFAULT_DECISION_JUDGE_SET
+    elif judge_set not in DECISION_JUDGE_SETS:
+        raise ValueError(f"Decision judge set must be one of: {', '.join(DECISION_JUDGE_SETS)}")
     try:
         parsed = urlsplit(base_url)
         port = parsed.port
@@ -62,32 +80,117 @@ def decision_judge_config(
         "base_url": base_url,
         "endpoint_id": endpoint_identity(base_url),
         "model": model.strip(),
+        "set": judge_set,
     }
 
 
-def capture_decision_audit(
-    scenario: ScenarioDefinition, state: ScenarioState, result: ScenarioResult
-) -> None:
-    """Keep public assistant text, never reasoning or unrelated pack evidence."""
+def selected_audit(
+    scenario: ScenarioDefinition, judge_set: DecisionJudgeSet
+) -> AnswerAuditDefinition | None:
+    """The scenario's audit if ``judge_set`` includes its tier; never for held-out packs."""
     definition = scenario.answer_audit
     if definition is None or scenario.held_out:
-        return
-    messages = list(state.assistant_messages)
-    if state.final_answer and (not messages or messages[-1] != state.final_answer):
-        messages.append(state.final_answer)
-    audit: dict[str, Any] = {
-        "status": "pending",
+        return None
+    if judge_set == "recommended" and definition.tier != "recommended":
+        return None
+    return definition
+
+
+def with_selected_checks(
+    config: dict[str, Any], scenarios: Iterable[ScenarioDefinition]
+) -> dict[str, Any]:
+    """Record which checks the run's scenarios select, so resume can compare them.
+
+    A question version bump changes a ``check_id`` and therefore this list,
+    which the resume compatibility check refuses like a URL or model change.
+    """
+    checks = sorted(
+        definition.check_id
+        for scenario in scenarios
+        if (definition := selected_audit(scenario, config["set"])) is not None
+    )
+    return {**config, "checks": checks}
+
+
+def audit_metadata(definition: AnswerAuditDefinition) -> dict[str, Any]:
+    """Everything a later resume needs to judge saved evidence without current code."""
+    return {
         "check_id": definition.check_id,
         "question": definition.question.to_wire(),
+        "question_sha256": definition.question_sha256,
+        "evidence": definition.evidence,
+        "label": definition.label,
+    }
+
+
+def _has_text(messages: Iterable[str]) -> bool:
+    return any(message.strip() for message in messages)
+
+
+def capture_decision_audit(
+    scenario: ScenarioDefinition,
+    state: ScenarioState,
+    result: ScenarioResult,
+    *,
+    judge_set: DecisionJudgeSet,
+) -> None:
+    """Keep public assistant text, never reasoning or unrelated pack evidence."""
+    definition = selected_audit(scenario, judge_set)
+    if definition is None:
+        return
+    if definition.evidence == "final_answer":
+        messages = [state.final_answer] if state.final_answer else []
+    else:
+        messages = list(state.assistant_messages)
+        if state.final_answer and (not messages or messages[-1] != state.final_answer):
+            messages.append(state.final_answer)
+    audit: dict[str, Any] = {
+        "status": "pending",
+        **audit_metadata(definition),
         "input": json.dumps({"assistant_messages": messages}, ensure_ascii=False),
     }
     result.decision_audit = audit
     try:
         audit["deterministic_choice"] = definition.deterministic_choice(state)
-        if not any(message.strip() for message in messages):
+        if not _has_text(messages):
             audit.update(status="unavailable", error_type="NoAssistantMessages")
     except Exception as exc:  # noqa: BLE001 — an audit cannot fail the benchmark
         audit.update(status="unavailable", error_type=type(exc).__name__)
+
+
+def refresh_saved_audit(audit: dict[str, Any], definition: AnswerAuditDefinition) -> dict[str, Any]:
+    """Reuse a saved audit only if the current question produced it.
+
+    This is defence in depth. Resume already refuses a changed set or
+    ``check_id``, and the pinned hashes keep wording from changing without a
+    version bump, so a mismatch here means one of those guards was bypassed.
+    The saved evidence is then judged again with the current question,
+    without rerunning the benchmark model. Evidence captured for a different
+    scope, or a deterministic value the current options cannot express, is
+    reported unavailable rather than compared.
+    """
+    if (audit.get("check_id"), audit.get("question_sha256")) == (
+        definition.check_id,
+        definition.question_sha256,
+    ):
+        return audit
+    refreshed: dict[str, Any] = {"status": "pending", **audit_metadata(definition)}
+    refreshed.update({key: audit[key] for key in ("input", "deterministic_choice") if key in audit})
+    if "input" not in audit:
+        refreshed.update(status="unavailable", error_type="NoEvaluationEvidence")
+    elif "deterministic_choice" not in audit:
+        # The deterministic check raised at capture; keep what it raised.
+        refreshed.update(
+            status="unavailable", error_type=audit.get("error_type", "StaleAuditEvidence")
+        )
+    elif (
+        audit.get("evidence", "messages") != definition.evidence
+        or audit["deterministic_choice"] not in definition.question.options
+    ):
+        refreshed.update(status="unavailable", error_type="StaleAuditEvidence")
+    elif not _has_text(json.loads(audit["input"]).get("assistant_messages", [])):
+        refreshed.update(status="unavailable", error_type="NoAssistantMessages")
+    return refreshed
 
 
 async def run_decision_audit(

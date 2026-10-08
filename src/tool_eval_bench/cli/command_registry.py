@@ -47,7 +47,7 @@ RUN_CONTROL = (
     "system_prompt",
     "system_prompt_file",
 )
-DECISION_JUDGE = ("decision_judge_base_url", "decision_judge_model")
+DECISION_JUDGE = ("decision_judge", "decision_judge_base_url", "decision_judge_model")
 SCENARIOS = ("scenarios", "categories", "short", "hardmode", "hardmode_only", "variant_seed")
 PERF = (
     "perf",

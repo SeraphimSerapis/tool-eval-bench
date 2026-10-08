@@ -341,6 +341,7 @@ SCENARIO = ScenarioDefinition(
     capabilities=("compensation", "error-recovery"),
     answer_audit=AnswerAuditDefinition(
         check_id="tc89-payment-claim-v1",
+        label="payment-claim check",
         question=ChoiceQuestion(
             instructions=(
                 "Does any assistant message assert that the supplier invoice was paid or "

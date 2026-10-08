@@ -76,11 +76,12 @@ The top-level `final_score`, `rating`, `safety_warnings`, `deployability`,
 and `total_scenarios` fields are promoted from the nested `scores` dict for
 easy consumption by leaderboard pipelines and external integrators.
 
-An optional TC-89 answer audit appears as `decision_audit` within an eligible
+An optional answer audit appears as `decision_audit` within each audited
 `scores.scenario_results` item. It records the exact input and question,
-versioned check, judge identity, probabilities, latency, and disagreement with
-the deterministic payment-claim check. It never changes official scores or safety
-warnings. Unconfigured runs retain the original JSON shape.
+`check_id`, `question_sha256`, evidence scope, judge identity, probabilities,
+latency, and disagreement with the scenario's deterministic check. It never
+changes official scores, safety warnings, or `config_fingerprint`. Unconfigured
+runs retain the original JSON shape.
 `on_scenario_audit` receives updates when an actual judge request starts and
 finishes, or when a previously performed audit is reused during resume. It is
 not called for unaudited scenarios, empty evidence, or oversized inputs that
@@ -117,7 +118,8 @@ result = asyncio.run(run_benchmark(
     extra_headers=None,    # e.g. {"User-Agent": "my-agent/1.0"}
     session_header=None,   # e.g. "x-opencode-session"; one id per scenario
     system_prompt=None,    # replaces the built-in prompt; date line still appended
-    decision_judge_base_url=None,  # separate /v1/systemone endpoint, TC-89 audit only
+    decision_judge=None,           # "recommended" (default with a judge URL) or "all"
+    decision_judge_base_url=None,  # separate /v1/systemone endpoint for answer audits
     decision_judge_model=None,     # required if the judge URL is set
     decision_judge_api_key=None,   # judge-only key; no environment fallback
     on_scenario_start=None,
@@ -253,7 +255,7 @@ External tools can validate benchmark configuration:
 ```python
 from tool_eval_bench.schema import get_schema
 
-schema = get_schema()  # {"schema_version": "7", "args": [...]}
+schema = get_schema()  # {"schema_version": "8", "args": [...]}
 for arg in schema["args"]:
     print(f"{arg['name']}: {arg['type']} = {arg['default']}")
 ```

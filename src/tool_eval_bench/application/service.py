@@ -17,9 +17,14 @@ import httpx
 from tool_eval_bench.adapters.factory import build_adapter, build_decision_adapter
 from tool_eval_bench.adapters.openai_compat import RateLimitObserver
 from tool_eval_bench.application.decision_audit import (
+    DecisionJudgeSet,
+    audit_metadata,
     capture_decision_audit,
     decision_judge_config,
+    refresh_saved_audit,
     run_decision_audit,
+    selected_audit,
+    with_selected_checks,
 )
 from tool_eval_bench.application.finalization import finalize_completed_run
 from tool_eval_bench.application.run_config import RunSettings, build_run_config
@@ -160,6 +165,7 @@ class BenchmarkService:
         decision_judge_model: str | None = None,
         decision_judge_api_key: str | None = None,
         on_scenario_audit: OnScenarioAudit | None = None,
+        decision_judge: DecisionJudgeSet | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
 
@@ -171,7 +177,7 @@ class BenchmarkService:
         subset, including held-out pack and Hard Mode scenarios.
         """
         judge_config = decision_judge_config(
-            decision_judge_base_url, decision_judge_model, decision_judge_api_key
+            decision_judge_base_url, decision_judge_model, decision_judge_api_key, decision_judge
         )
         adapter = self._adapter_for(
             backend,
@@ -230,6 +236,8 @@ class BenchmarkService:
         # second interruption would overwrite its scenario identity and make a
         # later resume appear incompatible.
         config_scenarios = resume_scenarios or resolved
+        if judge_config is not None:
+            judge_config = with_selected_checks(judge_config, config_scenarios)
         # Captured once: the resume path below rebuilds the config against a
         # different scenario list, and the fingerprint must not otherwise move.
         settings = RunSettings(
@@ -265,10 +273,16 @@ class BenchmarkService:
         self._claim_run(run_id, model, run_config, metadata)
         checkpointing_result_cb = self._checkpointing_callback(run_id, on_scenario_result)
 
-        async def capture_audit(
-            scenario: ScenarioDefinition, state: ScenarioState, result: ScenarioResult
-        ) -> None:
-            capture_decision_audit(scenario, state, result)
+        evaluated_hook: dict[str, Any] = {}
+        if judge_config is not None:
+            judge_set: DecisionJudgeSet = judge_config["set"]
+
+            async def capture_audit(
+                scenario: ScenarioDefinition, state: ScenarioState, result: ScenarioResult
+            ) -> None:
+                capture_decision_audit(scenario, state, result, judge_set=judge_set)
+
+            evaluated_hook["on_scenario_evaluated"] = capture_audit
 
         # Run all scenarios (close adapter connection pool when done)
         try:
@@ -293,7 +307,7 @@ class BenchmarkService:
                 context_pressure_messages=context_pressure_messages,
                 weight_by_difficulty=weight_by_difficulty,
                 system_prompt=system_prompt,
-                **({"on_scenario_evaluated": capture_audit} if judge_config is not None else {}),
+                **evaluated_hook,
             )
         except BaseException:
             # Covers KeyboardInterrupt and CancelledError as well as errors —
@@ -362,24 +376,30 @@ class BenchmarkService:
         if judge_config is not None:
             scenario_by_id = {s.id: s for s in report_scenarios}
             audit_results = [
-                result
+                (result, definition)
                 for result in summary.scenario_results
-                if scenario_by_id[result.scenario_id].answer_audit is not None
-                and not scenario_by_id[result.scenario_id].held_out
+                if (
+                    definition := selected_audit(
+                        scenario_by_id[result.scenario_id], judge_config["set"]
+                    )
+                )
+                is not None
             ]
             if audit_results:
                 judge = build_decision_adapter()  # No benchmark headers or session identity.
                 audit_checkpoint = self._checkpointing_callback(run_id, None)
                 try:
-                    for index, result in enumerate(audit_results):
+                    for index, (result, definition) in enumerate(audit_results):
                         if result.decision_audit is None:
-                            definition = scenario_by_id[result.scenario_id].answer_audit
-                            assert definition is not None  # noqa: S101 — filtered above
                             result.decision_audit = {
                                 "status": "unavailable",
-                                "check_id": definition.check_id,
+                                **audit_metadata(definition),
                                 "error_type": "NoEvaluationEvidence",
                             }
+                        else:
+                            result.decision_audit = refresh_saved_audit(
+                                result.decision_audit, definition
+                            )
                         await run_decision_audit(
                             judge,
                             result.decision_audit,

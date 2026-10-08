@@ -82,8 +82,19 @@
       "type": "bool"
     },
     {
+      "choices": [
+        "recommended",
+        "all"
+      ],
+      "const": "recommended",
       "default": null,
-      "description": "Independent /v1/systemone endpoint for TC-89 audits; scores stay unchanged",
+      "description": "Answer-audit set; the bare flag and the connection flags alone mean recommended. Requires decision_judge_base_url and decision_judge_model",
+      "name": "decision_judge",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Independent /v1/systemone endpoint for answer audits; scores stay unchanged",
       "name": "decision_judge_base_url",
       "type": "string"
     },
@@ -772,5 +783,5 @@
       ]
     }
   },
-  "schema_version": "7"
+  "schema_version": "8"
 }

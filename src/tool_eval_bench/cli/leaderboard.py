@@ -149,11 +149,15 @@ def _shorten_model_name(name: str) -> str:
 
 
 def _cohort_fingerprint(config: dict[str, Any]) -> str:
-    """Fingerprint benchmark conditions shared across different models."""
+    """Fingerprint benchmark conditions shared across different models.
+
+    The decision judge is excluded like it is from ``config_fingerprint``:
+    audits never change scores, so they must not split a cohort.
+    """
     comparable = {
         key: value
         for key, value in config.items()
-        if key not in {"model", "base_url", "endpoint_id", "config_fingerprint"}
+        if key not in {"model", "base_url", "endpoint_id", "config_fingerprint", "decision_judge"}
     }
     return build_config_fingerprint(comparable)
 

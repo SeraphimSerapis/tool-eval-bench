@@ -135,7 +135,8 @@ replaces it.
 | `--weight-by-difficulty` | Weight scores by difficulty tier (harder scenarios count more) |
 | `--system-prompt TEXT` | Replace the built-in system prompt with TEXT for every scenario |
 | `--system-prompt-file PATH` | Read the system prompt override from a UTF-8 file, max 32 KiB (exclusive with `--system-prompt`) |
-| `--decision-judge-base-url URL` | Independent `/v1/systemone` endpoint for TC-89 answer auditing; official scores stay unchanged |
+| `--decision-judge [SET]` | Answer-audit set: `recommended` (11 scenarios; the bare flag, and the default when only the connection flags are given) or `all` (17). Needs both connection flags |
+| `--decision-judge-base-url URL` | Independent `/v1/systemone` endpoint for answer auditing; official scores stay unchanged |
 | `--decision-judge-model NAME` | Required judge model; authentication uses `TOOL_EVAL_DECISION_JUDGE_API_KEY`, never the benchmark's key |
 | `--alpha F` | Quality weight in the deployability composite (default: 0.7; speed gets 1 − alpha) |
 
@@ -170,13 +171,15 @@ These run alongside the tool-call scenarios, or on their own with `--skip-tool-e
 `--temperature` applies to spec-bench requests as well; greedy is the default and the report
 records the value, since acceptance falls as sampling temperature rises.
 
-### Auditing payment claims
+### Auditing answers
 
-Supply both `--decision-judge-base-url` and `--decision-judge-model` to audit
-TC-89's payment-claim check. All other scenarios, including held-out packs,
-remain unaudited. The flags apply to `run`, `resume`, and flat scenario invocations.
-Keep the same connection flags when resuming an audited run. Results include a
-separate `decision_audit`; no audit changes points or safety warnings.
+Supply both `--decision-judge-base-url` and `--decision-judge-model` to audit the
+selected scenarios' answers with the `recommended` set. Add `--decision-judge all`
+for the larger set. Scenarios outside the set, and held-out packs, remain
+unaudited. The flags apply to `run`, `resume`, and flat scenario invocations.
+Keep the same judge flags, including the set, when resuming an audited run.
+Results include a separate `decision_audit`; no audit changes points, safety
+warnings, or the run's comparison fingerprint.
 See [answer audits](decision-models.md#answer-audits) for input limits, abstention,
 credential isolation, and persisted evidence.
 
