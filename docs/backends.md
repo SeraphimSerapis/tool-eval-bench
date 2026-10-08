@@ -11,6 +11,7 @@ needs no chat endpoint; see [decision-models.md](decision-models.md).
 - **LiteLLM** — proxy for multiple backends
 - **llama.cpp** — lightweight local inference
 - **Strata** — OpenAI-compatible model server, identified by its declared health service or build information
+- **TabbyAPI** — OpenAI-compatible server, identified by its model owner or `/.well-known/serviceinfo`
 - **NInfer** — OpenAI-compatible inference engine, detected via `/v1/models`
 - **TensorFold** serves MLX and CUDA models through the existing OpenAI adapter;
   detected by `owned_by: "tensorfold"` or the `tensorfold:` metrics namespace
@@ -23,11 +24,38 @@ needs no chat endpoint; see [decision-models.md](decision-models.md).
 
 ## Backend identification
 
-The CLI identifies engines using their native metrics namespace, model ownership,
-identifying HTTP headers, or characteristic engine endpoints. llama.cpp exposes
-`owned_by: "llamacpp"`, a `Server: llama.cpp` header on current builds, and `/props`
-with build information or generation settings and slot count. Generic JSON from
-`/health` or `/props` does not identify an engine. Ports locate a server, not its type.
+Detection runs in a fixed order and stops at the first answer:
+
+1. A native Prometheus namespace on `/metrics` (`halogen:`, `tensorfold:`, `vllm:`,
+   `sglang:` or `sglang_`, then `llamacpp:`).
+2. vLLM's `/version`.
+3. The identity a server declares about itself: `owned_by` in `/v1/models`, an
+   identifying `Server` header, `service` in `/health`, `software.name` in
+   `/.well-known/serviceinfo`, or the product name at the start of `build_info` in
+   `/props`. Names must match exactly, ignoring case: `tabbyAPI` identifies TabbyAPI
+   and `tabby` identifies nothing.
+4. llama.cpp's characteristic `/props` or `/health` fields: build information or
+   number, or generation settings together with a slot count.
+
+Step 3 comes before step 4 because Strata and TabbyAPI both serve a
+llama-server-shaped `/props`. llama.cpp itself is identified in step 3 too, through
+`owned_by: "llamacpp"` or `Server: llama.cpp` on current builds. A `/props` response
+that names another server is never read as llama.cpp. Generic JSON from `/health`
+or `/props` does not identify an engine. Ports locate a server, not its type.
+
+Step 3 asks `/v1/models`, `/health`, `/.well-known/serviceinfo` and `/props` in that
+order, and the first declaration wins. A server whose `owned_by` is `llamacpp` but
+whose `/props` names Strata is labelled llama.cpp, with no llama.cpp build metadata,
+because that `/props` is not a llama.cpp build.
+
+An explicit `--backend` skips detection and is trusted, the same way
+`--backend halogen` is: `--backend strata` or `--backend tabbyapi` against llama.cpp
+reports that engine, and `--backend llamacpp` against a Strata that names itself
+records no llama.cpp engine metadata.
+
+Probes send `--api-key` as a bearer token, only to URLs on the `--base-url` origin,
+and do not follow redirects. A missing key, a 401, or a malformed body skips that
+endpoint rather than failing the run.
 
 Halogen Flash 0.16.2 [documents](https://github.com/peonist-ai/halogen-flash-server)
 both `halogen:` and llama.cpp-compatible `llamacpp:` metrics. Its native namespace
@@ -86,16 +114,41 @@ tool-eval-bench run --short --backend strata --base-url http://127.0.0.1:8080 --
 [Strata](https://github.com/Niko1221/Strata) uses the existing OpenAI-compatible
 adapter, including streaming tool calls. Automatic detection recognizes
 `service: "strata"` in `/health` or `build_info: "Strata <version>"` in `/props`.
-Its llama.cpp-compatible generation settings alone do not establish Strata identity.
-The default JSON `/metrics` response is not treated as Prometheus data.
+Strata adds `build_info` only when it knows its version, so `/health` identifies
+builds that report none. Its llama.cpp-compatible generation settings alone do not
+establish Strata identity. The default JSON `/metrics` response is not treated as
+Prometheus data.
 
 The metadata probe sends bearer authentication to `/props`, records the declared
 engine version, effective context window and slot count, and leaves absent GPU
-and speculative-decoding metadata unknown. Quantization inferred from a model
+and speculative-decoding metadata unknown. When `/props` has no context window,
+the probe reads `max_context` from `/health`. Quantization inferred from a model
 name is a heuristic; a custom alias does not prove which checkpoint is loaded.
 Tool-choice and structured-output capabilities remain response-probed, not assumed
 from the backend label. Use `--no-think` when a comparison deliberately disables
 reasoning, and keep that setting identical across models.
+
+## TabbyAPI
+
+```bash
+tool-eval-bench run --short --base-url http://127.0.0.1:5000/v1 --api-key "$TABBY_API_KEY" --seed 42
+# Pin the reporting label when a proxy hides identification endpoints:
+tool-eval-bench run --backend tabbyapi --base-url http://127.0.0.1:5000/v1 --seed 42
+```
+
+[TabbyAPI](https://github.com/theroyallab/tabbyAPI) uses the existing
+OpenAI-compatible adapter. Automatic detection recognizes `owned_by: "tabbyAPI"` in
+`/v1/models` or `software.name: "TabbyAPI"` in `/.well-known/serviceinfo`. The
+serviceinfo document needs no API key, so a keyed server is still identified when
+`--api-key` is missing. Its llama-server-style `/props` is not read as llama.cpp.
+
+`/props` answers once a model is loaded, with a key unless authentication is
+disabled. The probe then reads the context window and slot count from it, which
+TabbyAPI fills from the model's `max_seq_len` and `max_batch_size`. Otherwise both
+stay unknown. TabbyAPI
+reports no version for itself or for its model backend, so the engine version stays
+empty rather than guessed. Quantization comes from the model name, for example
+`EXL3` in `Qwen3-8B-exl3-4.0bpw`, and is a heuristic.
 
 ## TensorFold
 

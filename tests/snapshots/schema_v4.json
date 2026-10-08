@@ -25,6 +25,7 @@
         "tensorfold",
         "halogen",
         "strata",
+        "tabbyapi",
         "unknown"
       ],
       "default": "unknown",

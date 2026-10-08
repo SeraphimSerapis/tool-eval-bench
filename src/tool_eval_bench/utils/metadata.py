@@ -17,7 +17,7 @@ import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -128,11 +128,17 @@ class _ProbeSession:
     is simply not there used to burn ``_PROBE_TIMEOUT`` once per rung before
     the run could start.  ``unreachable`` latches on the first connect-level
     failure and every later probe returns immediately.
+
+    Responses are also remembered, because identifying a server and then
+    reading its metadata asks the same endpoints twice.  The cache key is the
+    URL plus the credential sent, so a keyless refusal never answers a keyed
+    request.
     """
 
     def __init__(self, client: Any) -> None:
         self.client = client
         self.unreachable = False
+        self.responses: dict[tuple[str, str | None], httpx.Response | None] = {}
 
 
 @asynccontextmanager
@@ -147,23 +153,48 @@ async def _probe_session(session: _ProbeSession | None) -> AsyncIterator[_ProbeS
 
 async def _probe_get(
     session: _ProbeSession, url: str, *, headers: dict[str, str], what: str
-) -> Any | None:
+) -> httpx.Response | None:
     """GET *url*, returning ``None`` rather than raising on any failure.
 
     A refusal or a 404 says something about the server and leaves the session
     usable.  A connect failure says the host is not answering at all, so it
-    latches ``unreachable`` and short-circuits the rest of the ladder.
+    latches ``unreachable`` and short-circuits the rest of the ladder.  An
+    answer already received stays valid after that.
     """
+    key = (url, headers.get("Authorization"))
+    if key in session.responses:
+        return session.responses[key]
     if session.unreachable:
         return None
+    resp = None
     try:
-        return await session.client.get(url, headers=headers)
+        resp = await session.client.get(url, headers=headers)
     except (httpx.ConnectError, httpx.ConnectTimeout, OSError) as exc:
         session.unreachable = True
         logger.debug("%s probe failed, endpoint unreachable: %s", what, exc)
     except httpx.HTTPError as exc:
         logger.debug("%s probe failed: %s", what, exc)
-    return None
+    session.responses[key] = resp
+    return resp
+
+
+async def _probe_json(
+    session: _ProbeSession, url: str, *, headers: dict[str, str], what: str
+) -> dict[str, Any] | None:
+    """GET *url* and return its body only when it is a 200 JSON object."""
+    resp = await _probe_get(session, url, headers=headers, what=what)
+    if resp is None or resp.status_code != 200:
+        return None
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def _positive_int(value: Any) -> int | None:
+    """Return *value* when it is a real positive int; bools and strings do not count."""
+    return value if type(value) is int and value > 0 else None
 
 
 def _auth_headers(api_key: str | None) -> dict[str, str]:
@@ -230,7 +261,7 @@ async def _probe_vllm_version(
 async def _probe_props(
     base_url: str, api_key: str | None = None, *, session: _ProbeSession | None = None
 ) -> dict[str, Any]:
-    """Read llama.cpp-compatible metadata, preserving Strata's declared identity."""
+    """Read llama.cpp build and slot metadata from ``/props``, then ``/health``."""
     async with _probe_session(session) as active:
         for path in ("/props", "/health"):
             resp = await _probe_get(
@@ -244,22 +275,12 @@ async def _probe_props(
                 continue
             if not isinstance(body, dict):
                 continue
-            identity = backend_from_response(resp)
-            if identity == ("strata", "Strata"):
-                result: dict[str, Any] = {"engine_name": "Strata"}
-                build = body.get("build_info")
-                if isinstance(build, str) and build.startswith("Strata ") and build[7:].strip():
-                    result["engine_version"] = build[7:].strip()
-                settings = body.get("default_generation_settings")
-                window = (
-                    settings.get("n_ctx") if isinstance(settings, dict) else body.get("max_context")
-                )
-                if type(window) is int and window > 0:
-                    result["max_model_len"] = window
-                slots = body.get("total_slots")
-                if type(slots) is int and slots > 0:
-                    result["slot_count"] = slots
-                return result
+            # Strata and TabbyAPI serve llama-server-shaped /props. A response
+            # that names its server is believed over its shape, and a build_info
+            # that names another server is never a llama.cpp build.
+            identity = _endpoint_identity(path, resp) or _declared(
+                "build_info", body.get("build_info")
+            )
             if identity and identity != ("llamacpp", "llama.cpp"):
                 continue
             has_build = isinstance(body.get("build_info"), str) and bool(body["build_info"])
@@ -273,7 +294,7 @@ async def _probe_props(
                 has_build or has_build_number or has_props
             ):
                 continue
-            result = {"engine_name": "llama.cpp"}
+            result: dict[str, Any] = {"engine_name": "llama.cpp"}
             if "build_info" in body:
                 result["engine_version"] = str(body["build_info"])
             elif "build_number" in body:
@@ -337,13 +358,119 @@ def detect_backend_from_metrics(text: str) -> tuple[str, str] | None:
     return None
 
 
+_IdentitySource = Literal["owned_by", "server", "service", "software", "build_info"]
+
+_STRATA = ("strata", "Strata")
+_TABBYAPI = ("tabbyapi", "TabbyAPI")
+
+# Names servers give themselves, keyed by where they give them. A lookup is an
+# exact, case-insensitive match on the value's leading name token, so
+# "Strata 0.1.40" names Strata and "tabby" names nothing. Declared identity is
+# checked before llama.cpp's /props shape, which Strata and TabbyAPI imitate.
+_DECLARED_IDENTITIES: dict[_IdentitySource, dict[str, tuple[str, str]]] = {
+    # /v1/models data[0].owned_by
+    "owned_by": {
+        "llamacpp": ("llamacpp", "llama.cpp"),
+        "ninfer": ("ninfer", "NInfer"),
+        "sglang": ("sglang", "SGLang"),
+        "tabbyapi": _TABBYAPI,
+        "tensorfold": ("tensorfold", "TensorFold"),
+    },
+    # HTTP Server header, product token before any "/version"
+    "server": {
+        "llama.cpp": ("llamacpp", "llama.cpp"),
+        "vllm": ("vllm", "vLLM"),
+        "sglang": ("sglang", "SGLang"),
+        "litellm": ("litellm", "LiteLLM"),
+    },
+    # /health service
+    "service": {"strata": _STRATA},
+    # /.well-known/serviceinfo software.name
+    "software": {"tabbyapi": _TABBYAPI},
+    # /props build_info; llama.cpp's "b6123-abc1234" names no server
+    "build_info": {"strata": _STRATA},
+}
+
+# Endpoint-specific identity fields, as a key path into the JSON body. Every
+# probed response is also checked for model ownership and its Server header.
+_DECLARED_FIELDS: dict[str, tuple[_IdentitySource, tuple[str, ...]]] = {
+    "/health": ("service", ("service",)),
+    "/.well-known/serviceinfo": ("software", ("software", "name")),
+    "/props": ("build_info", ("build_info",)),
+}
+
+
+def _declared(source: _IdentitySource, value: Any) -> tuple[str, str] | None:
+    """Look up the server *value* names; anything but a non-empty string names none."""
+    if not isinstance(value, str):
+        return None
+    token = re.split(r"[\s/]", value.strip(), maxsplit=1)[0].lower()
+    return _DECLARED_IDENTITIES[source].get(token) if token else None
+
+
+def backend_from_models(body: Any) -> tuple[str, str] | None:
+    """Read a distinctive model owner without guessing from its model ID."""
+    data = body.get("data") if isinstance(body, dict) else None
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return _declared("owned_by", data[0].get("owned_by"))
+    return None
+
+
+def backend_from_response(resp: Any) -> tuple[str, str] | None:
+    """Read declared model ownership or an identifying Server header."""
+    try:
+        owner = backend_from_models(resp.json())
+    except (AttributeError, ValueError):
+        owner = None
+    return owner or _declared("server", resp.headers.get("server"))
+
+
+def _endpoint_identity(path: str, resp: Any) -> tuple[str, str] | None:
+    """Return the identity a 200 response from *path* declares, if any."""
+    if resp is None or resp.status_code != 200:
+        return None
+    declared = backend_from_response(resp)
+    if declared or path not in _DECLARED_FIELDS:
+        return declared
+    source, keys = _DECLARED_FIELDS[path]
+    try:
+        value: Any = resp.json()
+    except ValueError:
+        return None
+    for key in keys:
+        value = value.get(key) if isinstance(value, dict) else None
+    return _declared(source, value)
+
+
+async def _probe_declared_identity(
+    base_url: str, api_key: str | None, *, session: _ProbeSession
+) -> tuple[str, str] | None:
+    """Ask each endpoint where a server may name itself, in a fixed order.
+
+    ``/.well-known/serviceinfo`` and ``/health`` answer without a key on
+    TabbyAPI and Strata, so identity survives a missing ``--api-key``.
+    """
+    root = _root_url(base_url)
+    for path in ("/v1/models", *_DECLARED_FIELDS):
+        resp = await _probe_get(
+            session, f"{root}{path}", headers=_auth_headers(api_key), what=f"identity {path}"
+        )
+        identity = _endpoint_identity(path, resp)
+        if identity:
+            return identity
+    return None
+
+
 async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple[str, str] | None:
     """Best-effort identification of an arbitrary inference server.
 
-    Check native metrics namespaces, vLLM's version endpoint, model ownership
-    or identifying headers, then characteristic llama.cpp props/build fields.
-    A generic health response is not an identity. Compatibility metrics yield
-    to an engine's own namespace, regardless of scrape order.
+    Check native metrics namespaces, then vLLM's version endpoint, then the
+    identity a server declares: model ownership, a Server header, the
+    ``/health`` service, ``/.well-known/serviceinfo``, or a ``/props`` build
+    name. Only then fall back to characteristic llama.cpp props/build fields,
+    since other servers copy that shape. A generic health response is not an
+    identity. Compatibility metrics yield to an engine's own namespace,
+    regardless of scrape order.
 
     All probes share one connection pool and stop after a connect failure.
     Returns ``None`` when the endpoint does not identify itself.
@@ -359,18 +486,12 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
         if await _probe_vllm_version(base_url, api_key, session=active):
             return "vllm", "vLLM"
 
-        # Model ownership and headers work even with metrics disabled.
-        owned = await _probe_owned_by(base_url, api_key, session=active)
-        if owned:
-            return owned
+        identity = await _probe_declared_identity(base_url, api_key, session=active)
+        if identity:
+            return identity
 
-        props = await _probe_props(base_url, api_key, session=active)
-        if props:
-            return (
-                ("strata", "Strata")
-                if props["engine_name"] == "Strata"
-                else ("llamacpp", "llama.cpp")
-            )
+        if await _probe_props(base_url, api_key, session=active):
+            return "llamacpp", "llama.cpp"
 
     return None
 
@@ -387,13 +508,10 @@ def _guess_quantization(model_name: str | None) -> str | None:
             return f"INT{int_match.group(1)}-AutoRound"
         return "AutoRound"
     # GGUF quantization levels like Q4_K_M, Q5_K_S (check before generic GGUF)
-    gguf_match = re.search(r"(Q\d+_K_?\w?)", upper)
+    gguf_match = _GGUF_K_QUANT.search(upper)
     if gguf_match:
         return gguf_match.group(1)
-    native_gguf = re.search(
-        r"(?<![A-Z0-9])((?:IQ[1-4]_(?:XXS|XS|S|M|NL)|Q[2-8]_[01]|TQ[12]_0))(?![A-Z0-9])",
-        upper,
-    )
+    native_gguf = _GGUF_NATIVE_TYPE.search(upper)
     if native_gguf:
         return native_gguf.group(1)
     mlx_match = re.search(r"MLX-(\d+)BIT", upper)
@@ -420,74 +538,53 @@ def _guess_quantization(model_name: str | None) -> str | None:
     return None
 
 
+# Non-K GGUF file types from llama.cpp's llama_ftype. The Q4_0_x_y ARM layouts
+# were dropped from GGUF, but files with those names exist and are not Q4_0.
+_GGUF_NATIVE_TYPES = (
+    "Q1_0",
+    "Q2_0",
+    "Q4_0",
+    "Q4_1",
+    "Q5_0",
+    "Q5_1",
+    "Q8_0",
+    "Q4_0_4_4",
+    "Q4_0_4_8",
+    "Q4_0_8_8",
+    "IQ1_S",
+    "IQ1_M",
+    "IQ2_XXS",
+    "IQ2_XS",
+    "IQ2_S",
+    "IQ2_M",
+    "IQ3_XXS",
+    "IQ3_XS",
+    "IQ3_S",
+    "IQ3_M",
+    "IQ4_NL",
+    "IQ4_XS",
+    "TQ1_0",
+    "TQ2_0",
+    "MXFP4",
+)
+# Longest first, and never followed by "_<digit>", so an unknown suffixed
+# layout returns None instead of being truncated to its base type.
+_GGUF_NATIVE_TYPE = re.compile(
+    r"(?<![A-Z0-9])("
+    + "|".join(sorted(_GGUF_NATIVE_TYPES, key=len, reverse=True))
+    + r")(?![A-Z0-9]|_\d)"
+)
+# K-quants with llama.cpp's S/M/L sizes and Unsloth's XL. The lookbehind keeps
+# ik_llama.cpp's IQ4_K, a different type, from reading as Q4_K.
+_GGUF_K_QUANT = re.compile(r"(?<![A-Z0-9])(Q\d+_K(?:_(?:XL|[SML]))?)")
+
+
 # Backend labels that name a vendor API rather than a self-hosted engine.
 _HOSTED_ENGINE_NAMES: dict[str, str] = {
     "gemini": "Google Gemini API",
     "openai": "OpenAI API",
     "anthropic": "Anthropic Messages API",
 }
-
-_OWNED_BY_BACKENDS: dict[str, tuple[str, str]] = {
-    "strata": ("strata", "Strata"),
-    "tensorfold": ("tensorfold", "TensorFold"),
-    "ninfer": ("ninfer", "NInfer"),
-    "sglang": ("sglang", "SGLang"),
-    "llamacpp": ("llamacpp", "llama.cpp"),
-}
-
-
-def backend_from_models(body: Any) -> tuple[str, str] | None:
-    """Read a distinctive model owner without guessing from its model ID."""
-    data = body.get("data") if isinstance(body, dict) else None
-    if isinstance(data, list) and data and isinstance(data[0], dict):
-        owner = data[0].get("owned_by")
-        if isinstance(owner, str):
-            return _OWNED_BY_BACKENDS.get(owner.lower())
-    return None
-
-
-def backend_from_response(resp: Any) -> tuple[str, str] | None:
-    """Read declared ownership, Strata metadata, or an identifying Server header."""
-    body = None
-    try:
-        body = resp.json()
-        owner = backend_from_models(body)
-    except (AttributeError, ValueError):
-        owner = None
-    if owner:
-        return owner
-    if isinstance(body, dict):
-        build = body.get("build_info")
-        if body.get("service") == "strata" or (
-            isinstance(build, str) and re.match(r"^Strata(?:\s|$)", build)
-        ):
-            return "strata", "Strata"
-    server = resp.headers.get("server", "").lower()
-    for marker, backend, label in (
-        ("llama.cpp", "llamacpp", "llama.cpp"),
-        ("vllm", "vllm", "vLLM"),
-        ("sglang", "sglang", "SGLang"),
-        ("litellm", "litellm", "LiteLLM"),
-    ):
-        if re.match(rf"^{re.escape(marker)}(?:/|\s|$)", server):
-            return backend, label
-    return None
-
-
-async def _probe_owned_by(
-    base_url: str, api_key: str | None, *, session: _ProbeSession | None = None
-) -> tuple[str, str] | None:
-    """Identify the engine from /v1/models ownership or response headers."""
-    async with _probe_session(session) as active:
-        resp = await _probe_get(
-            active,
-            f"{_root_url(base_url)}/v1/models",
-            headers=_auth_headers(api_key),
-            what="owned_by /v1/models",
-        )
-    if resp is None or resp.status_code != 200:
-        return None
-    return backend_from_response(resp)
 
 
 async def _probe_tensorfold(
@@ -519,6 +616,88 @@ async def _probe_tensorfold(
     return result
 
 
+def _props_capacity(props: dict[str, Any]) -> dict[str, Any]:
+    """Read the context window and slot count from a llama-server-shaped /props."""
+    result: dict[str, Any] = {}
+    settings = props.get("default_generation_settings")
+    window = _positive_int(settings.get("n_ctx")) if isinstance(settings, dict) else None
+    if window:
+        result["max_model_len"] = window
+    slots = _positive_int(props.get("total_slots"))
+    if slots:
+        result["slot_count"] = slots
+    return result
+
+
+async def _probe_strata(
+    base_url: str, api_key: str | None, *, session: _ProbeSession
+) -> dict[str, Any]:
+    """Read Strata's version and capacity; ``/props`` carries the version only when known."""
+    result: dict[str, Any] = {"engine_name": "Strata"}
+    root = _root_url(base_url)
+    headers = _auth_headers(api_key)
+    props = await _probe_json(session, f"{root}/props", headers=headers, what="Strata /props")
+    if props:
+        build = props.get("build_info")
+        parts = build.split(maxsplit=1) if isinstance(build, str) else []
+        if len(parts) == 2 and parts[0].lower() == "strata":
+            result["engine_version"] = parts[1].strip()
+        result.update(_props_capacity(props))
+    if "max_model_len" not in result:
+        health = await _probe_json(
+            session, f"{root}/health", headers=headers, what="Strata /health"
+        )
+        window = _positive_int(health.get("max_context")) if health else None
+        if window:
+            result["max_model_len"] = window
+    return result
+
+
+async def _probe_tabbyapi(
+    base_url: str, api_key: str | None, *, session: _ProbeSession
+) -> dict[str, Any]:
+    """Read TabbyAPI's capacity from ``/props``.
+
+    TabbyAPI reports neither its own version nor its model backend's, so
+    ``engine_version`` stays unknown rather than borrowed from elsewhere.
+    """
+    result: dict[str, Any] = {"engine_name": "TabbyAPI"}
+    props = await _probe_json(
+        session,
+        f"{_root_url(base_url)}/props",
+        headers=_auth_headers(api_key),
+        what="TabbyAPI /props",
+    )
+    if props:
+        result.update(_props_capacity(props))
+    return result
+
+
+_LLAMACPP_LABELS = ("llamacpp", "llama.cpp", "llama_cpp")
+# Labels with a dedicated branch in _probe_engine; anything else is unlabelled.
+_PROBED_LABELS = frozenset(
+    {"tensorfold", "vllm", "strata", "tabbyapi", "halogen", "litellm", "sglang", "ninfer"}
+    | set(_LLAMACPP_LABELS)
+)
+
+
+async def _identify_unlabelled(
+    base_url: str, api_key: str | None, *, session: _ProbeSession
+) -> tuple[str, str | None]:
+    """Choose the metadata probe for a server the caller did not label.
+
+    Returns ``(backend, engine_name)``. The name is None only for the llama.cpp
+    fallback, which nothing declared and only ``/props`` can confirm.
+    """
+    if await _probe_vllm_version(base_url, api_key, session=session):
+        return "vllm", "vLLM"
+    if await _probe_litellm(base_url, api_key, session=session):
+        return "litellm", "LiteLLM"
+    identity = await _probe_declared_identity(base_url, api_key, session=session)
+    # With no declared identity, only llama.cpp's characteristic /props shape is left.
+    return identity if identity else ("llamacpp", None)
+
+
 async def _probe_engine(
     base_url: str,
     api_key: str | None,
@@ -542,12 +721,25 @@ async def _probe_engine(
         # Always probe /v1/models (works for all self-hosted backends)
         result.update(await _probe_models(base_url, api_key, session=active))
 
-        # Backend-specific probes
-        if backend_l == "tensorfold" or str(result.get("owned_by", "")).lower() == "tensorfold":
+        identified_name: str | None = None
+        if str(result.get("owned_by", "")).lower() == "tensorfold":
+            backend_l = "tensorfold"
+        elif backend_l not in _PROBED_LABELS:
+            backend_l, identified_name = await _identify_unlabelled(
+                base_url, api_key, session=active
+            )
+
+        # Backend-specific probes. Responses are memoized, so a probe that
+        # _identify_unlabelled already ran costs no second request.
+        if backend_l == "tensorfold":
             result.update(await _probe_tensorfold(base_url, api_key, session=active))
         elif backend_l == "vllm":
             result.update(await _probe_vllm_version(base_url, api_key, session=active))
-        elif backend_l in ("strata", "llamacpp", "llama.cpp", "llama_cpp"):
+        elif backend_l == "strata":
+            result.update(await _probe_strata(base_url, api_key, session=active))
+        elif backend_l == "tabbyapi":
+            result.update(await _probe_tabbyapi(base_url, api_key, session=active))
+        elif backend_l in _LLAMACPP_LABELS:
             result.update(await _probe_props(base_url, api_key, session=active))
         elif backend_l == "halogen":
             result["engine_name"] = "Halogen Flash"
@@ -561,19 +753,11 @@ async def _probe_engine(
         elif backend_l == "ninfer":
             if result.get("owned_by") == "ninfer":
                 result["engine_name"] = "NInfer"
-        else:
-            # Try specific engine endpoints before model ownership and generic health.
-            for prober in (
-                lambda: _probe_vllm_version(base_url, api_key, session=active),
-                lambda: _probe_litellm(base_url, api_key, session=active),
-            ):
-                info = await prober()
-                if info:
-                    result.update(info)
-                    break
-            else:
-                if "engine_name" not in result:
-                    result.update(await _probe_props(base_url, api_key, session=active))
+
+        # A server identified only by a declaration, such as a Server header,
+        # has nothing for its metadata probe to read. It still has a name.
+        if identified_name:
+            result.setdefault("engine_name", identified_name)
 
     # Infer quantization from model name
     if "quantization" not in result:

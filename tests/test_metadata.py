@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -33,6 +34,17 @@ def _mock_async_client(responses: list[MagicMock]) -> MagicMock:
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
     client.aclose = AsyncMock()
+    return client
+
+
+def _routed_client(routes: dict[str, MagicMock]) -> MagicMock:
+    """Build a mock AsyncClient that answers by URL path and 404s the rest."""
+
+    async def respond(url: str, **kwargs: Any) -> MagicMock:
+        return routes.get(urlsplit(url).path, _mock_response(404))
+
+    client = _mock_async_client([])
+    client.get = AsyncMock(side_effect=respond)
     return client
 
 
@@ -280,6 +292,73 @@ class TestGuessQuantization:
         assert _guess_quantization(None) is None
         assert _guess_quantization("") is None
 
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            # K-quants keep precedence over a native type elsewhere in the name.
+            ("model-Q8_0-Q4_K_M.gguf", "Q4_K_M"),
+            ("Qwen3-8B-Q4_0-GGUF", "Q4_0"),
+            ("mistral-7b.Q5_1.gguf", "Q5_1"),
+            ("model-IQ4_XS-00001-of-00002.gguf", "IQ4_XS"),
+            ("model-iq3_xs", "IQ3_XS"),
+            ("bitnet-TQ1_0.gguf", "TQ1_0"),
+            ("model-Q1_0", "Q1_0"),
+            # Legacy ARM repack layouts are their own file type, not Q4_0.
+            ("llama-3-8b-Q4_0_4_4.gguf", "Q4_0_4_4"),
+            ("llama-3-8b-Q4_0_8_8.gguf", "Q4_0_8_8"),
+            # A letter suffix is not a further layout; only "_<digit>" is.
+            ("model-Q4_0_4_4_X", "Q4_0_4_4"),
+            ("gpt-oss-20b-MXFP4", "MXFP4"),
+            ("gpt-oss-20b-MXFP4_MOE.gguf", "MXFP4"),
+        ],
+    )
+    def test_native_gguf_types(self, name: str, expected: str) -> None:
+        from tool_eval_bench.utils.metadata import _guess_quantization
+
+        assert _guess_quantization(name) == expected
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("Qwen3-30B-A3B-UD-Q4_K_XL.gguf", "Q4_K_XL"),
+            ("model-UD-Q2_K_XL", "Q2_K_XL"),
+            ("model-UD-Q5_K_XL", "Q5_K_XL"),
+            ("model-UD-Q8_K_XL", "Q8_K_XL"),
+            ("model-Q6_K_L.gguf", "Q6_K_L"),
+            ("model-Q3_K_S", "Q3_K_S"),
+            ("model-Q6_K.gguf", "Q6_K"),
+            ("model.q5_k_m.gguf", "Q5_K_M"),
+        ],
+    )
+    def test_k_quants_keep_their_size_suffix(self, name: str, expected: str) -> None:
+        from tool_eval_bench.utils.metadata import _guess_quantization
+
+        assert _guess_quantization(name) == expected
+
+    @pytest.mark.parametrize("name", ["model-IQ4_K", "model-IQ4_KS", "model-IQ2_KL"])
+    def test_ik_llama_iq_k_types_are_not_k_quants(self, name: str) -> None:
+        from tool_eval_bench.utils.metadata import _guess_quantization
+
+        assert _guess_quantization(name) is None
+        assert _guess_quantization(f"{name}-GGUF") == "GGUF"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "model-Q3_0",
+            "model-Q6_0",
+            "model-Q7_1",
+            "model-IQ1_XXS",
+            "model-IQ4_M",
+            "model-Q4_0_9_9",
+        ],
+    )
+    def test_nonexistent_gguf_types_are_not_labelled(self, name: str) -> None:
+        from tool_eval_bench.utils.metadata import _guess_quantization
+
+        assert _guess_quantization(name) is None
+        assert _guess_quantization(f"{name}-GGUF") == "GGUF"
+
 
 # ---------------------------------------------------------------------------
 # _probe_engine
@@ -350,18 +429,20 @@ class TestProbeEngine:
     async def test_unknown_backend_tries_all(self) -> None:
         from tool_eval_bench.utils.metadata import _probe_engine
 
-        models_resp = _mock_response(200, {"data": [{"id": "fallback"}]})
-        version_resp = _mock_response(404)
-        health_resp = _mock_response(404)
-        props_resp = _mock_response(200, {"build_number": 42})
-        with patch(
-            "tool_eval_bench.utils.metadata.httpx.AsyncClient",
-            return_value=_mock_async_client([models_resp, version_resp, health_resp, props_resp]),
-        ):
+        client = _routed_client(
+            {
+                "/v1/models": _mock_response(200, {"data": [{"id": "fallback"}]}),
+                "/props": _mock_response(200, {"build_number": 42}),
+            }
+        )
+        with patch("tool_eval_bench.utils.metadata.httpx.AsyncClient", return_value=client):
             result = await _probe_engine("http://localhost:9999", None, "unknown")
 
         assert result["engine_name"] == "llama.cpp"
+        assert result["engine_version"] == "b42"
         assert result["server_model_id"] == "fallback"
+        urls = [call.args[0] for call in client.get.await_args_list]
+        assert len(urls) == len(set(urls)), "an endpoint was fetched twice"
 
     @pytest.mark.asyncio
     async def test_ninfer_backend_uses_owned_by_fingerprint(self) -> None:
@@ -516,14 +597,12 @@ class TestProbeBackendHint:
         """llama.cpp's --metrics flag is opt-in, so the /props path must work."""
         from tool_eval_bench.utils.metadata import probe_backend_hint
 
-        metrics_resp = _mock_response(404)
-        version_resp = _mock_response(404)  # llama.cpp 404s vLLM's /version
-        ninfer_resp = _mock_response(404)  # /v1/models checked before generic /props
-        props_resp = _mock_response(200, {"build_info": "1234", "total_slots": 1})
-        with patch(
-            "tool_eval_bench.utils.metadata.httpx.AsyncClient",
-            return_value=_mock_async_client([metrics_resp, version_resp, ninfer_resp, props_resp]),
-        ):
+        # llama.cpp 404s /metrics without --metrics, vLLM's /version, and the
+        # serviceinfo document; only its /props answers.
+        client = _routed_client(
+            {"/props": _mock_response(200, {"build_info": "1234", "total_slots": 1})}
+        )
+        with patch("tool_eval_bench.utils.metadata.httpx.AsyncClient", return_value=client):
             result = await probe_backend_hint("http://localhost:8080")
 
         assert result == ("llamacpp", "llama.cpp")
@@ -616,10 +695,9 @@ class TestProbeBackendHint:
     async def test_returns_none_when_nothing_matches(self) -> None:
         from tool_eval_bench.utils.metadata import probe_backend_hint
 
-        responses = [_mock_response(404) for _ in range(5)]
         with patch(
             "tool_eval_bench.utils.metadata.httpx.AsyncClient",
-            return_value=_mock_async_client(responses),
+            return_value=_routed_client({}),
         ):
             result = await probe_backend_hint("http://localhost:9999")
 
