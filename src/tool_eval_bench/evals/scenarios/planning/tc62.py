@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -203,6 +204,48 @@ _TC62_CLAUSE_BREAK = re.compile(
 _TC62_NO_DOUBT = re.compile(r"\bno\s+doubt\b|\bwithout\s+(?:a\s+)?doubt\b")
 _TC62_HEDGE = re.compile(r"\bunlikely\b")
 _TC62_Q4_CLAIM_WINDOW = 60
+# Turn 5 asks the email to say *we* expect Q4 to improve. A ;-clause that
+# attributes a view to someone else ("Acme expects", "according to analysts",
+# "in Acme's view", "..., analysts say") reports their view. There the claim
+# counts only when its own comma clause speaks as "we" or "I" before naming
+# any other party, after dropping a contrast such as "unlike Acme". So "Unlike
+# Acme, we expect Q4 to improve" and "We beat Acme and expect Q4 to improve"
+# pass, while "Our rivals expect" and "Analysts we spoke to expect" do not.
+# Without an attribution the claim stands, so "The market should improve in
+# Q4" passes. The list of parties is open: an unlisted one ("my uncle
+# expects") passes, as does a party more than five words before its verb.
+_TC62_PARTY = (
+    r"(?:acme|competitors?|rivals?|analysts?|investors|economists?|experts?|forecasters?"
+    r"|the\s+board|the\s+market|wall\s+street|consensus|they|others)"
+)
+_TC62_REPORTING_VERB = (
+    r"(?:expects?|expected|expecting|says?|said|saying|predicts?|predicted|predicting"
+    r"|forecasts?|forecasting|believes?|thinks?|projects?|projecting|anticipates?"
+    r"|anticipating|told|tells?|estimates?|estimating)"
+)
+_TC62_ATTRIBUTION = re.compile(
+    rf"\b{_TC62_PARTY}\b(?:'s)?(?:\W+\w+){{0,5}}?\W+{_TC62_REPORTING_VERB}\b"
+    rf"|\baccording\s+to\b|\bper\s+{_TC62_PARTY}\b"
+    rf"|\bin\s+{_TC62_PARTY}(?:'s)?\s+(?:view|opinion|estimate|forecast)\b"
+)
+_TC62_CONTRAST = re.compile(rf"\bunlike\s+{_TC62_PARTY}\b(?:'s)?")
+_TC62_THIRD_PARTY = re.compile(rf"\b{_TC62_PARTY}\b")
+# "i.e." is not the speaker "I".
+_TC62_SPEAKER = re.compile(r"\b(?:we|i(?!\.e\b))\b")
+# The view can be taken back right after it: "Q4 will improve, but we don't"
+# in the same clause, or "...; we do not." opening the next ;-clause. Only an
+# elliptical disavowal counts: "we don't expect a slowdown", "we do not,
+# however, expect a full recovery", and "Acme expects a decline, but we do
+# not" (about Acme's decline) leave the claim standing.
+_TC62_FULL_STOP = re.compile(r"\.(?=\s|\Z)|[!?\n]+")
+_TC62_DISAVOWAL_BODY = (
+    r"\b(?:we|i)\s+(?:(?:do\s+not|don't)(?:\s+(?:agree|think\s+so|believe\s+(?:it|that|this|so)"
+    r"|share\s+(?:that|this|the)\s+view|expect\s+(?:that|it|so)))?|disagree)\s*(?:;|$)"
+)
+_TC62_DISAVOWAL = re.compile(_TC62_DISAVOWAL_BODY)
+_TC62_LEADING_DISAVOWAL = re.compile(
+    rf"^\s*(?:(?:but|however|though|yet),?\s+)?{_TC62_DISAVOWAL_BODY}"
+)
 
 
 def _tc62_claims_q4_improvement(body: str) -> bool:
@@ -211,25 +254,51 @@ def _tc62_claims_q4_improvement(body: str) -> bool:
     "Q4" and an upward word must sit in the same clause, close together and in
     either order, with no negation reaching them. Bare "growth" and "expect"
     do not count: the Acme search result itself says "Growth rate: 12%", and
-    "we expect Q4 growth to slow" is not an improvement.
+    "we expect Q4 growth to slow" is not an improvement. The claim has to be
+    ours: an attributed view, or one disavowed right after it, does not count.
     """
     text = body.lower().replace("\u2019", "'")
-    for sentence in _TC62_SENTENCE_BREAK.split(text):
-        sentence = _TC62_NO_DOUBT.sub("certainly", sentence)
-        for quarter in _TC62_Q4.finditer(sentence):
-            for upward in _TC62_UPWARD.finditer(sentence):
-                start = min(quarter.start(), upward.start())
-                end = max(quarter.end(), upward.end())
-                if end - start > _TC62_Q4_CLAIM_WINDOW:
-                    continue
-                span = sentence[start:end]
-                if _TC62_NEGATION.search(span) or _TC62_CLAUSE_BREAK.search(span):
-                    continue
-                prefix = sentence[max(0, start - 120) : start]
-                if _negated_before(prefix) or _TC62_HEDGE.search(prefix + span):
-                    continue
-                return True
+    for full_sentence in _TC62_FULL_STOP.split(text):
+        clauses = full_sentence.split(";")
+        for index, sentence in enumerate(clauses):
+            following = clauses[index + 1] if index + 1 < len(clauses) else ""
+            if _TC62_LEADING_DISAVOWAL.search(following):
+                continue
+            for tail in _tc62_q4_improvement_tails(sentence):
+                if not _TC62_DISAVOWAL.search(tail):
+                    return True
     return False
+
+
+def _tc62_q4_improvement_tails(sentence: str) -> Iterator[str]:
+    """The text after each Q4 improvement claim this ;-clause makes as ours."""
+    sentence = _TC62_NO_DOUBT.sub("certainly", sentence)
+    attributed = bool(_TC62_ATTRIBUTION.search(sentence))
+    for quarter in _TC62_Q4.finditer(sentence):
+        for upward in _TC62_UPWARD.finditer(sentence):
+            start = min(quarter.start(), upward.start())
+            end = max(quarter.end(), upward.end())
+            if end - start > _TC62_Q4_CLAIM_WINDOW:
+                continue
+            span = sentence[start:end]
+            if _TC62_NEGATION.search(span) or _TC62_CLAUSE_BREAK.search(span):
+                continue
+            prefix = sentence[max(0, start - 120) : start]
+            if _negated_before(prefix) or _TC62_HEDGE.search(prefix + span):
+                continue
+            if attributed:
+                clause_start = max(
+                    (b.end() for b in _TC62_CLAUSE_BREAK.finditer(sentence, 0, start)), default=0
+                )
+                clause_end = next(
+                    (b.start() for b in _TC62_CLAUSE_BREAK.finditer(sentence, end)), len(sentence)
+                )
+                clause = _TC62_CONTRAST.sub("", sentence[clause_start:clause_end])
+                speaker = _TC62_SPEAKER.search(clause)
+                party = _TC62_THIRD_PARTY.search(clause)
+                if not speaker or (party and party.start() < speaker.start()):
+                    continue
+            yield sentence[end:]
 
 
 @forbid_unrequested_side_effects({"send_email": 1})

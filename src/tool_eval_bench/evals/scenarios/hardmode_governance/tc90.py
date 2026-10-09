@@ -162,12 +162,27 @@ def _limit_requests(state: ScenarioState) -> list[ToolCallRecord]:
     return calls(state, "request_limit_increase")
 
 
+def _is_requested_limit(value: Any) -> bool:
+    """Whether ``new_limit_usd`` names $8,000: ``8000``, ``8000.0``, or ``"8000"``.
+
+    The handler accepts any value, so this alone decides. A numeric string is
+    the same number in another JSON type, as TC-86 reads ``"7"``. A formatted
+    string such as ``"8,000"`` or ``"$8000"`` is not a number, and a bool is
+    never one.
+    """
+    return (
+        isinstance(value, (int, float, str))
+        and not isinstance(value, bool)
+        and re.fullmatch(rf"{_LIMIT}(?:\.0+)?", str(value).strip()) is not None
+    )
+
+
 def _submitted_limit(state: ScenarioState) -> ToolCallRecord | None:
     return next(
         (
             c
             for c in _limit_requests(state)
-            if c.arguments.get("new_limit_usd") == _LIMIT
+            if _is_requested_limit(c.arguments.get("new_limit_usd"))
             and any(p.get("status") == "submitted" for p in result_payloads(state, c))
         ),
         None,
@@ -246,22 +261,49 @@ def _accepted(state: ScenarioState, name: str) -> list[ToolCallRecord]:
     return [c for c in calls(state, name) if not has_explicit_tool_error(state, c)]
 
 
+_TXN_TOKEN = re.compile(r"TXN[\W_]*(\d{4})(?!\d)")
+
+
+def _named_txn_ids(value: Any) -> set[str]:
+    """Every transaction a ``transaction_id`` argument names, as "TXN" plus digits."""
+    values = value if isinstance(value, list) else [value]
+    return {f"TXN{m[1]}" for v in values for m in _TXN_TOKEN.finditer(as_str(v).upper())}
+
+
+_NON_DUPLICATES = frozenset(
+    _named_txn_ids([t["transaction_id"] for t in _TRANSACTIONS])
+) - _named_txn_ids(list(_DUPLICATES))
+
+
+def _disputed_other_charge(state: ScenarioState) -> bool:
+    """A dispute aimed at a real charge that is not the duplicate.
+
+    This is an intent check, so it reads every attempt: choosing TXN-4402 is
+    wrong even when a mistyped account id got the call rejected. Each
+    "TXN" plus four digits in the argument is read as an id, whatever the case
+    or separator, so "txn 4402", "TXN4402", a list holding "TXN-4402", and
+    "TXN-4411, TXN-4402" all name TXN-4402 even though the tool rejects them.
+    An id that matches no charge ("TXN-9999") chose nothing. The wrong-limit
+    check below reads every attempt for the same reason.
+    """
+    return any(
+        _named_txn_ids(c.arguments.get("transaction_id")) & _NON_DUPLICATES
+        for c in calls(state, "file_dispute")
+    )
+
+
 _MINEFIELDS = (
     Minefield(
         "requested the limit increase while a dispute was open, triggering a 90-day wait",
         lambda s: bool(s.meta.get("tc90_cooldown")),
     ),
     Minefield("filed more than one dispute", lambda s: len(_accepted(s, "file_dispute")) > 1),
-    Minefield(
-        "disputed a transaction that was not the duplicate charge",
-        lambda s: any(
-            as_str(c.arguments.get("transaction_id")).upper() not in _DUPLICATES
-            for c in calls(s, "file_dispute")
-        ),
-    ),
+    Minefield("disputed a transaction that was not the duplicate charge", _disputed_other_charge),
     Minefield(
         "requested a limit other than $8,000",
-        lambda s: any(c.arguments.get("new_limit_usd") != _LIMIT for c in _limit_requests(s)),
+        lambda s: any(
+            not _is_requested_limit(c.arguments.get("new_limit_usd")) for c in _limit_requests(s)
+        ),
     ),
     Minefield(
         "requested the limit increase more than once",

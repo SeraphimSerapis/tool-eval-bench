@@ -47,11 +47,34 @@ from tool_eval_bench.evals.scenarios.hardmode._shared import (
 
 # The window stops at a sentence or clause end: "apologies if you were not on
 # the original invite. The review is now scheduled" confirms the meeting.
-_TC74_NEGATED_CONFIRMATION = re.compile(
-    r"\b(?:do\s+not|don't|doesn't|didn't|isn't|wasn't|hasn't|not|never)\b"
-    r"[^.!?;\n]{0,80}\b(?:scheduled|confirmed)\b",
+_TC74_NEGATION = re.compile(
+    r"\b(?:do\s+not|don't|doesn't|didn't|isn't|wasn't|hasn't|not|never)\b", re.IGNORECASE
+)
+_TC74_CONFIRMATION_WINDOW = re.compile(
+    r"(?P<window>[^.!?;\n]{0,80}?)\b(?:scheduled|confirmed)\b", re.IGNORECASE
+)
+# A comma followed by a new subject starts a new clause ("if you are not free,
+# the review is scheduled"), unless a later comma before the keyword closes it
+# as an aside ("is not, the team says, scheduled" still denies it).
+_TC74_NEW_CLAUSE = re.compile(
+    r",\s*(?:(?:and|but|so|yet|or)\s+)?"
+    r"(?:the|this|it|we|i|you|your|our|everyone|both|mark|sarah)\b[^,]*$",
     re.IGNORECASE,
 )
+
+
+def _tc74_denies_confirmation(text: str) -> bool:
+    """Whether a negation reaches "scheduled" or "confirmed" in the same clause.
+
+    Each negation is scanned on its own: one regex over the whole text would let
+    "if you are not free, the review is not scheduled" consume the second "not"
+    inside the first, cut, match.
+    """
+    for negation in _TC74_NEGATION.finditer(text):
+        match = _TC74_CONFIRMATION_WINDOW.match(text, negation.end())
+        if match and not _TC74_NEW_CLAUSE.search(match["window"]):
+            return True
+    return False
 
 
 _TC74_CLOCK = r"\d{1,2}(?::\d{2})?(?:[ \t]*[ap]\.?m\.?)?"
@@ -239,7 +262,7 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
             or not subject
             or not body
             or not re.search(r"review|meeting|scheduled|confirmed", confirmation_text, re.I)
-            or _TC74_NEGATED_CONFIRMATION.search(confirmation_text)
+            or _tc74_denies_confirmation(confirmation_text)
             or not _tc74_confirmation_details_match(confirmation_text, expected_date)
             or not result_is_usable_if_present(state, call)
             or (

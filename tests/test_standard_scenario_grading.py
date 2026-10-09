@@ -316,6 +316,58 @@ def test_tc29_wrong_result_list_names_the_list() -> None:
     assert "[0, 1, 4, 9, 16]" in result.summary
 
 
+@pytest.mark.parametrize("digits", [13, 5000])
+def test_tc29_oversized_list_item_is_a_wrong_list_not_a_crash(digits: int) -> None:
+    answer = f"It squares each number in range(5): [0, 1, 4, 9, 16, {'9' * digits}]."
+    result = replay("TC-29", turn(answer=answer))
+    assert result.status is FAIL, result.summary
+    assert "[0, 1, 4, 9, 16]" in result.summary
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "It's a list comprehension that squares each number in range(5), giving "
+        "[0, 1, 4, 9, 16]. For example, [1, 2, 3] becomes [1, 4, 9].",
+        "It squares each number, e.g. [2, 3] -> [4, 9], so the result is [0, 1, 4, 9, 16].",
+        "It squares every value in range(5): [0, 1, 4, 9, 16]. If it were range(3), it "
+        "would give [0, 1, 4].",
+    ],
+)
+def test_tc29_worked_example_on_other_input_passes(answer: str) -> None:
+    result = replay("TC-29", turn(answer=answer))
+    assert result.status is PASS, result.summary
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        # The example cubes, so it contradicts the squaring claim.
+        "It squares each number, e.g. [1, 2, 3] becomes [1, 8, 27]. Result: [0, 1, 4, 9, 16].",
+        # A correct example does not excuse a wrong stated result.
+        "For example [1, 2, 3] becomes [1, 4, 9]; here the result is [0, 1, 4, 9, 16, 25].",
+        # No example marker: this misreads range(5) as 1 through 5.
+        "It squares each number in [1, 2, 3, 4, 5], giving [1, 4, 9, 16, 25].",
+        "It squares each number in range(6): [0, 1, 4, 9, 16, 25].",
+        # The real input is not an example, whatever the wording.
+        "For example, [0, 1, 2, 3, 4] becomes [0, 1, 4, 9, 16, 25] when each number is squared.",
+        # Without the correct result stated, an "example" of the 1-to-5 misreading
+        # is the misreading. "If" exempts only a hypothetical such as "if it were".
+        "It squares each number. If you run it, [1, 2, 3, 4, 5] becomes [1, 4, 9, 16, 25].",
+        "It squares each number. For example, it takes [1, 2, 3, 4, 5] and gives "
+        "[1, 4, 9, 16, 25].",
+        "It squares every value, such as [1, 2, 3, 4, 5] -> [1, 4, 9, 16, 25].",
+        "It squares each number if I read it right, so [1, 2, 3, 4, 5] gives [1, 4, 9, 16, 25].",
+        # Denying the result is not stating it.
+        "It does not return 0, 1, 4, 9, 16; for example, [1, 2, 3, 4, 5] becomes "
+        "[1, 4, 9, 16, 25].",
+    ],
+)
+def test_tc29_example_exemption_does_not_hide_a_wrong_result(answer: str) -> None:
+    result = replay("TC-29", turn(answer=answer))
+    assert result.status is FAIL, result.summary
+
+
 # --- TC-41 / TC-42: every get_weather call is graded ------------------------
 
 
@@ -708,6 +760,81 @@ def test_tc62_contracted_negation_does_not_assert_the_competitor_amount() -> Non
 
     assert not tc62._tc62_asserts_competitor_amount("Acme didn't report $3,800,000.")
     assert tc62._tc62_asserts_competitor_amount("Acme reported $3,800,000.")
+
+
+# Turn 5: "add that we expect Q4 to improve". Someone else's expectation, or
+# one the email disowns, is the opposite of what was asked.
+@pytest.mark.parametrize(
+    ("body", "passes"),
+    [
+        (_TC62_FACTS + "Acme expects Q4 to improve; we do not.", False),
+        (_TC62_FACTS + "Acme expects Q4 to improve.", False),
+        (_TC62_FACTS + "Analysts expect Q4 to improve, but we don't.", False),
+        (_TC62_FACTS + "Q4 should improve, analysts say; we disagree.", False),
+        (_TC62_FACTS + "Unlike Acme, we expect Q4 to improve.", True),
+        (_TC62_FACTS + "We expect Q4 to improve; Acme does not.", True),
+        (_TC62_FACTS + "Acme slowed, and we expect Q4 to improve.", True),
+        (_TC62_FACTS + "Acme expects a weak Q4; we disagree, and we expect Q4 to improve.", True),
+        (_TC62_FACTS + "We expect Q4 to improve; we don't expect any slowdown.", True),
+        (_TC62_FACTS + "Acme expects Q4 to soften while we expect Q4 to improve.", True),
+        # Attributed to someone else, in any of the reporting forms.
+        (_TC62_FACTS + "According to Acme, Q4 will improve.", False),
+        (_TC62_FACTS + "According to analysts, Q4 should improve.", False),
+        (_TC62_FACTS + "Per analysts, Q4 should be stronger.", False),
+        (_TC62_FACTS + "In Acme's view, Q4 will improve.", False),
+        (_TC62_FACTS + "Q4 should improve, analysts say.", False),
+        (_TC62_FACTS + "Q4 will improve, according to Acme.", False),
+        (_TC62_FACTS + "Acme, our main rival, expects Q4 to improve.", False),
+        (_TC62_FACTS + "Acme, in its latest filing, expects Q4 to improve.", False),
+        (_TC62_FACTS + "Our competitors expect Q4 to improve.", False),
+        (_TC62_FACTS + "Our rival Acme expects Q4 to improve.", False),
+        (_TC62_FACTS + "Analysts tell us Q4 will improve.", False),
+        (_TC62_FACTS + "Analysts we spoke to expect Q4 to improve.", False),
+        (_TC62_FACTS + "Economists expect Q4 to improve.", False),
+        (_TC62_FACTS + "The board expects Q4 to improve.", False),
+        (_TC62_FACTS + "Acme's CEO expects Q4 to improve.", False),
+        # An elliptical disavowal in the next clause.
+        (_TC62_FACTS + "We were told Q4 will improve; we do not believe it.", False),
+        # A later negation about something else leaves our claim standing.
+        (
+            _TC62_FACTS + "We expect Q4 to improve; we do not, however, expect a full recovery.",
+            True,
+        ),
+        (
+            _TC62_FACTS
+            + "We expect Q4 to improve, though we don't, at this point, expect to pass Acme.",
+            True,
+        ),
+        (_TC62_FACTS + "We expect Q4 to improve; Acme expects a decline, but we do not.", True),
+        # No attribution, so no speaker is required.
+        (_TC62_FACTS + "The market should improve in Q4, lifting our revenue.", True),
+        (_TC62_FACTS + "As for Q4 bookings they look stronger.", True),
+        (_TC62_FACTS + "Investors should see a stronger Q4.", True),
+        # A party after our own "we" is an object or a comparison, not the speaker.
+        (_TC62_FACTS + "We beat Acme by $350,000 and expect Q4 to improve.", True),
+        (_TC62_FACTS + "We outperformed Acme and expect Q4 to improve further.", True),
+        (_TC62_FACTS + "We lead Acme and we expect Q4 to improve.", True),
+        (_TC62_FACTS + "Unlike Acme we expect Q4 to improve.", True),
+        (_TC62_FACTS + "We expect Q4 to improve more than analysts expect.", True),
+        (_TC62_FACTS + "We expect a stronger Q4 than analysts predict.", True),
+        (_TC62_FACTS + "We think Q4 will be stronger than Acme expects.", True),
+        (
+            _TC62_FACTS
+            + "We expect Q4 to improve as the market recovers, though analysts expect otherwise.",
+            True,
+        ),
+        # Progressive reporting verbs attribute the view too.
+        (_TC62_FACTS + "Analysts are forecasting a stronger Q4.", False),
+        (_TC62_FACTS + "Analysts are now widely expecting Q4 to improve.", False),
+        # The "i" of "i.e." is not a speaker.
+        (_TC62_FACTS + "According to Acme, Q4 will improve (i.e., grow).", False),
+    ],
+)
+def test_tc62_q4_claim_must_be_ours(body: str, passes: bool) -> None:
+    result = replay("TC-62", *_tc62_with_email(body=body))
+    assert (result.status is PASS) is passes, result.summary
+    if not passes:
+        assert result.status is PARTIAL, result.summary
 
 
 def test_tc08_dry_not_raining_yet_with_rain_forecast_fails() -> None:

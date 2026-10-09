@@ -233,7 +233,15 @@ Wrong amounts, percentages, negated claims, and quoted figures still do not qual
 A company suffix such as "Acme Corp." does not end the sentence that carries the
 amount. The email must also say Q4 will improve, in one clause with no negation or hedge;
 "Q4 growth will slow" or "it is unlikely that Q4 will improve" does not count as the
-optimistic revision turn 5 asked for. Only the CFO may receive it, in `to`, `cc`, or `bcc`.
+optimistic revision turn 5 asked for. The expectation must be ours. When the clause
+attributes a view to another party ("Acme expects", "according to analysts", "per
+analysts", "in Acme's view", "..., analysts say"), the claim counts only if its own
+clause speaks as "we" or "I" before naming any other party, so "Unlike Acme, we expect
+Q4 to improve" and "We beat Acme and expect Q4 to improve" pass while "Our rivals expect
+Q4 to improve" does not. The list of parties is
+open, and an unattributed claim ("the market should improve in Q4") stands. A claim taken
+back right after it ("...; we do not", "..., but we don't believe it") does not count.
+Only the CFO may receive it, in `to`, `cc`, or `bcc`.
 
 Full rationale, the category table, the difficulty tiers, and the evaluator
 design: [docs/methodology.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/methodology.md).
