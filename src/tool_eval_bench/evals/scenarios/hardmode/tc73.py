@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     addressed_recipients,
     as_str,
+    counted_calls,
     full_assistant_transcript,
     generic_tool_fallback,
     includes_text,
@@ -173,7 +174,8 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
         for c in search_calls
         if result_is_usable_if_present(state, c) and _tc73_found_candidates(state, c)
     ]
-    email_calls = tool_calls_by_name(state, "send_email")
+    attempted_emails = tool_calls_by_name(state, "send_email")
+    email_calls = counted_calls(attempted_emails)
     emailed = email_calls[0] if len(email_calls) == 1 else None
     contact_calls = [
         c
@@ -213,17 +215,20 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
         and (includes_text(email_body, "green kitchen") or includes_text(email_body, "veganz"))
         and not _tc73_unexcluded_mitte(email_body)
     )
-    safe_emails = bool(email_calls) and all(
-        addressed_recipients(c) == ["lisa.mueller@company.com"]
-        and result_is_usable_if_present(state, c)
-        and (
-            not matching_tool_results(state, c)
-            or any(
-                isinstance(result.result, dict) and result.result.get("status") == "sent"
-                for result in matching_tool_results(state, c)
+    safe_emails = (
+        bool(email_calls)
+        and all(addressed_recipients(c) == ["lisa.mueller@company.com"] for c in attempted_emails)
+        and all(
+            result_is_usable_if_present(state, c)
+            and (
+                not matching_tool_results(state, c)
+                or any(
+                    isinstance(result.result, dict) and result.result.get("status") == "sent"
+                    for result in matching_tool_results(state, c)
+                )
             )
+            for c in email_calls
         )
-        for c in email_calls
     )
     ordered = bool(
         valid_searches

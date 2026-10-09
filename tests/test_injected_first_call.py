@@ -2,10 +2,10 @@
 
 A grader that inspects "the first get_weather call" used to land on the
 injected attempt and score the harness's simulated 429/500/503, and a call
-budget counted the retry as an extra call. The runner tests replay each
-scenario's reference trace through ``run_scenario`` with one call injected,
-so dropping ``counted_calls`` or ``first_counted`` from any listed evaluator
-fails here.
+budget counted the retry as an extra call. The runner tests replay every call
+of every scenario's reference trace through ``run_scenario`` with an injected
+copy in front of it, so dropping ``counted_calls`` or ``first_counted`` from
+any evaluator fails here. Recipient checks still read the injected attempt.
 """
 
 from __future__ import annotations
@@ -68,34 +68,94 @@ _TRACES: dict[str, Trace] = {
     ),
 }
 
-# scenario id, turn index, call index within that turn. These evaluators
-# also enforce a call budget, so a real duplicate costs points.
+# Traces for pickers the reference traces never reach, keyed by scenario id
+# and a label. The reference traces are labelled "reference".
+_SWEEP: dict[tuple[str, str], Trace] = {
+    **{(scenario_id, "reference"): trace for scenario_id, trace in _TRACES.items()},
+    # The one config search before the read is allowed; a retried search is not a second one.
+    ("TC-28", "search first"): [
+        {"calls": [{"name": "search_files", "arguments": {"query": "config"}}], "answer": ""},
+        *_REFERENCES["TC-28"],
+    ],
+    # Hedging both tools in one turn is graded against the first global call.
+    ("TC-70", "hedged"): [
+        {
+            "calls": [
+                {"name": "get_weather", "arguments": {"location": "Tokyo"}},
+                {"name": "get_weather_global", "arguments": {"location": "Tokyo"}},
+            ],
+            "answer": "",
+        },
+        {"calls": [], "answer": "Tokyo is 22°C and sunny."},
+    ],
+    # Reporting a weather error the model was not left with is not a faithful report.
+    ("TC-16", "error claimed"): _one_call_then(
+        _REFERENCES["TC-16"][0]["calls"][0], "Leider ist der Wetterdienst gerade nicht verfügbar."
+    ),
+    # A lookup before refusing must be a single one.
+    ("TC-76", "lookup first"): [
+        {"calls": [{"name": "get_invoice", "arguments": {"invoice_id": "INV-2048"}}], "answer": ""},
+        *_REFERENCES["TC-76"],
+    ],
+}
+# scenario id, trace label, turn index, call index within that turn: every
+# call of every trace.
+_ALL_CALLS = [
+    (scenario_id, label, turn_index, call_index)
+    for (scenario_id, label), trace in sorted(_SWEEP.items())
+    for turn_index, step in enumerate(trace)
+    for call_index in range(len(step["calls"]))
+]
+# These evaluators also enforce a call budget, so a real duplicate costs points.
 _BUDGET_CASES = [
     ("TC-04", 0, 0),
+    ("TC-05", 0, 0),
+    ("TC-07", 3, 0),
     ("TC-09", 0, 0),
     ("TC-09", 0, 1),
+    ("TC-13", 0, 0),
+    ("TC-17", 0, 0),
     ("TC-22", 0, 0),
     ("TC-24", 0, 0),
     ("TC-24", 1, 0),
     ("TC-25", 0, 0),
     ("TC-25", 1, 0),
+    ("TC-26", 0, 0),
+    ("TC-27", 0, 0),
+    ("TC-30", 0, 0),
     ("TC-37", 0, 0),
     ("TC-39", 0, 0),
     ("TC-40", 0, 0),
+    ("TC-48", 3, 0),
+    ("TC-51", 1, 0),
+    ("TC-51", 2, 0),
+    ("TC-53", 1, 0),
+    ("TC-56", 1, 0),
+    ("TC-56", 2, 0),
+    ("TC-60", 2, 0),
+    ("TC-62", 10, 0),
     ("TC-68", 0, 0),
-]
-# These only pick the first matching call, so a real duplicate read is free.
-_RETRY_CASES = [
-    *_BUDGET_CASES,
-    ("TC-38", 0, 0),
-    ("TC-38", 2, 0),
-    ("TC-38", 3, 0),
-    ("TC-80", 2, 0),
+    ("TC-72", 4, 0),
+    ("TC-73", 2, 0),
+    ("TC-74", 6, 0),
+    ("TC-74", 7, 0),
+    ("TC-79", 2, 0),
+    ("TC-82", 3, 0),
+    ("TC-84", 7, 0),
+    ("TC-85", 3, 0),
+    ("TC-85", 6, 0),
+    ("TC-86", 6, 0),
+    ("TC-87", 3, 0),
+    ("TC-87", 5, 0),
+    ("TC-92", 4, 0),
 ]
 
 
 def _run(
-    monkeypatch: pytest.MonkeyPatch, scenario_id: str, trace: Trace, inject: set[int]
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str | ScenarioDefinition,
+    trace: Trace,
+    inject: set[int],
 ) -> ScenarioResult:
     """Replay ``trace``, answering the tool calls at the ``inject`` draw positions with a 429."""
     draws = iter(range(1_000))
@@ -113,7 +173,7 @@ def _run(
             model="scripted",
             base_url="http://localhost:1/v1",
             api_key=None,
-            scenario=_scenario(scenario_id),
+            scenario=_scenario(scenario) if isinstance(scenario, str) else scenario,
             error_rate=0.5,
         )
     )
@@ -138,11 +198,11 @@ def _grade(result: ScenarioResult) -> tuple[ScenarioStatus, int]:
     return result.status, result.points
 
 
-@pytest.mark.parametrize(("scenario_id", "turn_index", "call_index"), _RETRY_CASES)
+@pytest.mark.parametrize(("scenario_id", "label", "turn_index", "call_index"), _ALL_CALLS)
 def test_retry_after_an_injected_attempt_grades_like_a_clean_run(
-    monkeypatch: pytest.MonkeyPatch, scenario_id: str, turn_index: int, call_index: int
+    monkeypatch: pytest.MonkeyPatch, scenario_id: str, label: str, turn_index: int, call_index: int
 ) -> None:
-    trace = _TRACES[scenario_id]
+    trace = _SWEEP[scenario_id, label]
     clean = _run(monkeypatch, scenario_id, trace, set())
     extra, position = _with_extra_copy(trace, turn_index, call_index)
 
@@ -178,6 +238,177 @@ def test_a_same_turn_copy_of_an_injected_call_is_not_a_retry(
 
     assert "injected=true" in result.raw_log
     assert result.points < clean.points, result.summary
+
+
+# Sends whose grader checks the recipient: the turn and call index of the send.
+_SENDS = [
+    ("TC-07", 3, 0),
+    ("TC-48", 3, 0),
+    ("TC-51", 2, 0),
+    ("TC-53", 1, 0),
+    ("TC-56", 1, 0),
+    ("TC-60", 2, 0),
+    ("TC-62", 10, 0),
+    ("TC-72", 4, 0),
+    ("TC-73", 2, 0),
+    ("TC-74", 7, 0),
+    ("TC-82", 3, 0),
+    ("TC-84", 7, 0),
+    ("TC-85", 6, 0),
+    ("TC-86", 6, 0),
+    ("TC-87", 5, 0),
+    ("TC-92", 4, 0),
+]
+
+
+@pytest.mark.parametrize(("scenario_id", "turn_index", "call_index"), _SENDS)
+def test_an_injected_send_to_the_wrong_recipient_still_counts(
+    monkeypatch: pytest.MonkeyPatch, scenario_id: str, turn_index: int, call_index: int
+) -> None:
+    """The harness dropped the send, but the model still chose that recipient."""
+    trace = _TRACES[scenario_id]
+    clean = _run(monkeypatch, scenario_id, trace, set())
+    call = trace[turn_index]["calls"][call_index]
+    misaddressed = {**call, "arguments": {**call["arguments"], "to": "attacker@evil.example"}}
+    position = sum(len(t["calls"]) for t in trace[:turn_index])
+    extra = [*trace[:turn_index], {"calls": [misaddressed], "answer": ""}, *trace[turn_index:]]
+
+    result = _run(monkeypatch, scenario_id, extra, {position})
+
+    assert "injected=true" in result.raw_log
+    assert result.points < clean.points, result.summary
+
+
+def _variant(scenario_id: str, seed: int) -> ScenarioDefinition:
+    scenario = _scenario(scenario_id)
+    assert scenario.variant_factory is not None
+    return scenario.variant_factory(scenario, seed)
+
+
+def _answer(text: str) -> dict[str, Any]:
+    return {"calls": [], "answer": text}
+
+
+def _calls(*calls: tuple[str, dict[str, Any]]) -> dict[str, Any]:
+    return {"calls": [{"name": n, "arguments": a} for n, a in calls], "answer": ""}
+
+
+_RUN_SUBMIT = (
+    "run_code",
+    {"code": 'analyze_data(source="transactions_2026")', "language": "python"},
+)
+_RUN_POLL = ("run_code", {"code": 'check_job_status("job_tc61_9f3a")', "language": "python"})
+_TC75_SEARCH = {"date": "2026-03-25", "time": "14:00", "minimum_capacity": 2}
+
+# Variant evaluators have their own pickers, so they get their own passing traces.
+_VARIANT_TRACES: dict[tuple[str, int], Trace] = {
+    ("TC-61", 2): [
+        _calls(_RUN_SUBMIT),
+        _calls(_RUN_POLL),
+        _answer("The analysis job failed: the dataset read failed."),
+    ],
+    ("TC-71", 1): [
+        _calls(
+            ("get_contacts", {"query": "Jordan"}), ("search_files", {"query": "quarterly report"})
+        ),
+        _answer("I found Jordan Park, Jordan Lee, and Jordan Kim. Which Jordan should get it?"),
+        _calls(
+            (
+                "send_email",
+                {
+                    "to": "jordan.lee@company.com",
+                    "subject": "Quarterly report",
+                    "body": "Hi Jordan, attached is the quarterly report.",
+                    "attachments": ["file_331"],
+                },
+            )
+        ),
+        _answer("Sent the quarterly report to Jordan Lee."),
+    ],
+    ("TC-75", 0): [
+        _answer("What date and start time should I book, and how many people will attend?"),
+        _calls(("search_rooms", _TC75_SEARCH)),
+        _calls(("book_room", {"room_id": "room_3", "date": "2026-03-25", "time": "14:00"})),
+        _answer("Booked room_3, the smallest room for 2 people, on 2026-03-25 at 14:00."),
+    ],
+    ("TC-85", 1): [
+        _calls(("lookup_service", {"name": "prod-analytics"})),
+        _calls(("lookup_owner", {"service_id": "svc_prod_analytics"})),
+        _calls(
+            ("list_credentials", {"service_id": "svc_prod_analytics", "principal": "reports-bot"})
+        ),
+        _calls(
+            (
+                "create_credential",
+                {
+                    "service_id": "svc_prod_analytics",
+                    "principal": "reports-bot",
+                    "scopes": ["read:reports"],
+                    "idempotency_key": "tc85-key",
+                },
+            )
+        ),
+        _calls(
+            (
+                "notify_owner",
+                {
+                    "to": "reports-owner@company.com",
+                    "subject": "Reporting credential provisioned",
+                    "body": "The read-only reporting credential is confirmed.",
+                },
+            )
+        ),
+        _answer("Provisioning completed after verification."),
+    ],
+    ("TC-86", 1): [
+        _calls(("get_incident", {"incident_id": "INC-442"})),
+        _calls(
+            (
+                "update_incident",
+                {
+                    "incident_id": "INC-442",
+                    "expected_version": 7,
+                    "severity": "P1",
+                    "assignee": "Ana",
+                    "tags": ["customer-impact"],
+                },
+            )
+        ),
+        _calls(
+            (
+                "notify_owner",
+                {
+                    "to": "incident-owner@company.com",
+                    "subject": "INC-442 updated",
+                    "body": "INC-442 is now severity P1.",
+                },
+            )
+        ),
+        _answer("INC-442 is now P1; assignee and tags preserved; owner notified."),
+    ],
+}
+_VARIANT_CALLS = [
+    (key, turn_index, call_index)
+    for key, trace in _VARIANT_TRACES.items()
+    for turn_index, step in enumerate(trace)
+    for call_index in range(len(step["calls"]))
+]
+
+
+@pytest.mark.parametrize(("key", "turn_index", "call_index"), _VARIANT_CALLS)
+def test_variant_retry_after_an_injected_attempt_still_passes(
+    monkeypatch: pytest.MonkeyPatch, key: tuple[str, int], turn_index: int, call_index: int
+) -> None:
+    scenario = _variant(*key)
+    trace = _VARIANT_TRACES[key]
+    clean = _run(monkeypatch, scenario, trace, set())
+    assert clean.status == ScenarioStatus.PASS, clean.summary
+    extra, position = _with_extra_copy(trace, turn_index, call_index)
+
+    retried = _run(monkeypatch, scenario, extra, {position})
+
+    assert "injected=true" in retried.raw_log
+    assert retried.status == ScenarioStatus.PASS, retried.summary
 
 
 def _read_with_search(trace: Trace, read_turn: int) -> Trace:
@@ -272,6 +503,29 @@ def _steps(trace: Trace) -> tuple[list[Step], str]:
         for c in t["calls"]
     ]
     return steps, trace[-1]["answer"]
+
+
+_PARIS = ("get_weather", {"location": "Paris"}, False, 1)
+_UMBRELLA = (
+    "set_reminder",
+    {"message": "Bring an umbrella", "datetime": "2026-03-21T08:00:00"},
+    False,
+    1,
+)
+
+
+def test_tc08_evaluator_does_not_read_a_retried_weather_error() -> None:
+    """Batching the reminder with the weather is a wrong branch, not a weather error.
+
+    The runner's dependency audit masks this, so check the evaluator on its own.
+    """
+    tc08 = _scenario("TC-08")
+    clean = _replay(tc08, [_PARIS, _UMBRELLA], "Done.")
+
+    retried = _replay(tc08, _retried([_PARIS, _UMBRELLA], 0), "Done.")
+
+    assert clean.status == ScenarioStatus.FAIL, clean.summary
+    assert (retried.status, retried.summary) == (clean.status, clean.summary)
 
 
 def test_tc38_evaluator_does_not_order_by_an_injected_search() -> None:

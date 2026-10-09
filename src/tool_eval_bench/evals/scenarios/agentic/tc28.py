@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -142,12 +143,13 @@ def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:
         # read-before-write, not a detour. Everything else is waste: a repeat
         # search, a search for an unrelated file, a search issued after the
         # read, or any other tool.
-        first_read = next(
-            index for index, call in enumerate(state.tool_calls) if call.name == "read_file"
-        )
+        # A retry after an --error-rate failure is the harness's repeat, not
+        # a stray call, so walk the counted calls.
+        calls = _counted_calls(state.tool_calls)
+        first_read = next(index for index, call in enumerate(calls) if call.name == "read_file")
         stray_calls = []
         allowed_discovery = 1
-        for index, call in enumerate(state.tool_calls):
+        for index, call in enumerate(calls):
             if call.name == "read_file":
                 continue
             if (

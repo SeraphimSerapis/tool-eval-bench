@@ -16,6 +16,7 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_number,
     answer_affirms_text,
     as_str,
+    first_counted,
     generic_tool_fallback,
     has_tool_call,
     includes_text,
@@ -136,14 +137,21 @@ def _tc70_eval(state: ScenarioState) -> ScenarioEvaluation:
     # result, is a legitimate parallel call — a strict turn ordering scored it
     # as never having used the right tool at all.
     positions = {id(call): index for index, call in enumerate(state.tool_calls)}
+    # A global attempt that --error-rate failed and the model retried is not
+    # where the recovery started.
+    first_global = first_counted(global_calls)
     hedged = bool(
         euro_calls
         and usable_global_calls
-        and euro_calls[0].turn == global_calls[0].turn
-        and positions.get(id(euro_calls[0]), -1) < positions.get(id(global_calls[0]), -1)
+        and first_global is not None
+        and euro_calls[0].turn == first_global.turn
+        and positions.get(id(euro_calls[0]), -1) < positions.get(id(first_global), -1)
     )
     recovered = bool(
-        euro_calls and usable_global_calls and (euro_calls[0].turn < global_calls[0].turn or hedged)
+        euro_calls
+        and usable_global_calls
+        and first_global is not None
+        and (euro_calls[0].turn < first_global.turn or hedged)
     )
     if used_global and not used_euro:
         # Verify the model surfaced actual weather data (temp 22 or condition).

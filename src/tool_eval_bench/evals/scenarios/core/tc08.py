@@ -150,7 +150,7 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
         # partial credit for the attempted chain without treating the reminder
         # as justified. A concrete non-rain result is a wrong branch instead.
         weather_result_is_error = any(
-            not _result_is_usable_if_present(state, call) for call in weather_calls
+            not _result_is_usable_if_present(state, call) for call in _counted_calls(weather_calls)
         )
         if weather_result_is_error:
             return _partial(
@@ -162,7 +162,7 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
             )
 
         reminder_result_is_error = any(
-            not _result_is_usable_if_present(state, call) for call in reminder_calls
+            not _result_is_usable_if_present(state, call) for call in _counted_calls(reminder_calls)
         )
         if reminder_result_is_error or not usable_reminder_calls:
             return _partial(

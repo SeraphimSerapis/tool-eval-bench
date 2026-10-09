@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     answer_affirms_text,
     as_str,
+    counted_calls,
     days_after_reference,
     positive_argument_contains,
     result_is_usable_if_present,
@@ -91,7 +92,8 @@ def _tc79_answer_is_truthful(answer: str) -> bool:
 def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
     weather = tool_calls_by_name(state, "get_weather")
     contacts = tool_calls_by_name(state, "get_contacts")
-    events = tool_calls_by_name(state, "create_calendar_event")
+    # An event that --error-rate failed and the model retried created nothing.
+    events = counted_calls(tool_calls_by_name(state, "create_calendar_event"))
     if not events:
         return _fail("Did not create the conditional event.")
     if len(events) > 1:

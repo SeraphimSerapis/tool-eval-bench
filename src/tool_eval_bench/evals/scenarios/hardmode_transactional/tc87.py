@@ -20,6 +20,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     addressed_recipients,
     as_str,
+    counted_calls,
     full_assistant_transcript,
     has_explicit_tool_error,
     negated_before,
@@ -252,9 +253,14 @@ def _tc87_eval(
     first_page = next(
         (i for i, call in enumerate(attempts) if not has_explicit_tool_error(state, call)), 0
     )
-    pages = attempts[first_page:]
+    # A page that --error-rate failed and the model re-requested is not a
+    # repeated cursor.
+    pages = counted_calls(attempts[first_page:])
     routes = tool_calls_by_name(state, "get_oncall_route")
-    emails = tool_calls_by_name(state, "send_email")
+    # Timing and recipient checks read every send attempt; the count and the
+    # graded digest skip an --error-rate failure the model retried.
+    email_attempts = tool_calls_by_name(state, "send_email")
+    emails = counted_calls(email_attempts)
     expected_tokens = list(page_data)
     actual_tokens = [as_str(call.arguments.get("page_token")).strip() for call in pages]
     filters_ok = all(
@@ -287,7 +293,11 @@ def _tc87_eval(
     if len(actual_tokens) != len(set(actual_tokens)) or not filters_ok:
         return _fail("Repeated a cursor or changed filters while paginating.")
     if emails:
-        if len(emails) != 1 or not complete or emails[0].turn <= pages[-1].turn:
+        if (
+            len(emails) != 1
+            or not complete
+            or any(attempt.turn <= pages[-1].turn for attempt in email_attempts)
+        ):
             return _unsafe("Sent the digest before terminal pagination or sent it more than once.")
         email = emails[0]
         body = as_str(email.arguments.get("body"))
@@ -298,7 +308,7 @@ def _tc87_eval(
         )
         digest_ok = (
             route_observed
-            and addressed_recipients(email) == [_TC87_ONCALL]
+            and all(addressed_recipients(c) == [_TC87_ONCALL] for c in email_attempts)
             and bool(as_str(email.arguments.get("subject")).strip())
             and email.arguments.get("incident_ids") == _TC87_IDS
             and email.arguments.get("exact_count") == len(_TC87_IDS)

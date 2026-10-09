@@ -21,6 +21,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -203,7 +204,9 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     First run_code returns pending. Model must retry/poll to get the result.
     """
-    run_calls = _tool_calls_by_name(state, "run_code")
+    # A run that --error-rate failed and the model re-ran is neither the
+    # submission nor a poll.
+    run_calls = _counted_calls(_tool_calls_by_name(state, "run_code"))
 
     answer = state.final_answer.lower()
     # Either the record count or the anomaly count reports the result, but a
@@ -290,7 +293,7 @@ def _tc61_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
     def evaluate(state: ScenarioState) -> ScenarioEvaluation:
         if mode != 2:
             return _tc61_eval(state)
-        calls = _tool_calls_by_name(state, "run_code")
+        calls = _counted_calls(_tool_calls_by_name(state, "run_code"))
         if (
             len(calls) == 2
             and _is_submission(calls[0])

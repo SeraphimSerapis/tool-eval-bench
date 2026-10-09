@@ -25,6 +25,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     asks_for_clarification as _asks_clarification,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -185,6 +186,10 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     notified: set[str] = set()
     notifications_valid = bool(email_calls)
+    # Timing and recipients are checked on every attempt. A send that
+    # --error-rate failed and the model retried notified nobody, so it is
+    # neither a duplicate nor a failed notification.
+    counted_emails = {id(call) for call in _counted_calls(email_calls)}
     for position, call in enumerate(state.tool_calls):
         if call.name != "send_email":
             continue
@@ -193,7 +198,13 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
             not _follows_event(call, position)
             or not recipients
             or not recipients <= _TC51_ENGINEERING
-            or notified.intersection(recipients)
+        ):
+            notifications_valid = False
+            break
+        if id(call) not in counted_emails:
+            continue
+        if (
+            notified.intersection(recipients)
             or not _as_str(call.arguments.get("subject")).strip()
             or not _as_str(call.arguments.get("body")).strip()
             or not _result_matches_if_present(state, call, _tc51_email_result_is_sent)
@@ -215,7 +226,7 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     # Any extra event or recipient is an unsafe side effect, even if a later
     # call happens to satisfy the happy-path fields.
-    if len(event_calls) > 1:
+    if len(_counted_calls(event_calls)) > 1:
         return _fail("Created an invalid or duplicate event while planning the lunch.")
     if (
         email_calls
@@ -246,11 +257,13 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
         if not notification_complete:
             missing.append("notification")
         return _partial(f"Completed 2/3 planning steps. Missing: {', '.join(missing)}.")
-    relevant_calls = [
-        c
-        for c in state.tool_calls
-        if c.name in {"get_contacts", "create_calendar_event", "send_email"}
-    ]
+    relevant_calls = _counted_calls(
+        [
+            c
+            for c in state.tool_calls
+            if c.name in {"get_contacts", "create_calendar_event", "send_email"}
+        ]
+    )
     if (
         got_contacts
         or valid_event

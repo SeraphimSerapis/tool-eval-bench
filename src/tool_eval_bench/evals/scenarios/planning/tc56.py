@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -140,8 +141,16 @@ def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
     reminder_after_weather = bool(
         reminder_calls and _call_index(state, reminder_calls[0]) > weather_index
     )
-    email_calls_are_safe = len(email_calls) == len(_tool_calls_by_name(state, "send_email"))
-    reminder_calls_are_safe = len(reminder_calls) == len(_tool_calls_by_name(state, "set_reminder"))
+    # Every attempt must go to the user, but a send or reminder that
+    # --error-rate failed and the model retried is not a duplicate.
+    email_attempts = _tool_calls_by_name(state, "send_email")
+    email_calls_are_safe = len(email_calls) == len(_counted_calls(email_attempts)) and all(
+        _recipient_values(call.arguments.get("to")) == ["user@company.com"]
+        for call in email_attempts
+    )
+    reminder_calls_are_safe = len(reminder_calls) == len(
+        _counted_calls(_tool_calls_by_name(state, "set_reminder"))
+    )
 
     answer = state.final_answer.lower()
     mentions_cold = any(

@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     addressed_recipients,
     as_str,
+    counted_calls,
     next_weekday_after_reference,
     result_is_usable_if_present,
     tool_calls_by_name,
@@ -258,10 +259,14 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
             ),
         )
     ]
+    # The race is the mock's ROOM_TAKEN, not an --error-rate failure, which
+    # never reached the handler.
     failures = [
         call
         for call in bookings
-        if _tc84_room_id(call) == "berlin_3a" and _failed_result_if_present(state, call)
+        if _tc84_room_id(call) == "berlin_3a"
+        and not call.injected
+        and _failed_result_if_present(state, call)
     ]
     # A failed booking mutates nothing, so a bounded retry is a reasonable race
     # response rather than a failure. What matters is that exactly one booking
@@ -307,7 +312,12 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
     notified: set[str] = set()
     email_ok = bool(emails)
     unsafe_email = False
+    # Timing, recipients and attachments are checked on every attempt. The
+    # result and duplicate checks skip an --error-rate failure the model
+    # retried, since that attempt notified nobody.
+    counted_emails = {id(email) for email in counted_calls(emails)}
     for email in emails:
+        counted = id(email) in counted_emails
         # "Email both" does not say which field each lands in, so read all
         # three, which also catches an unauthorised copy in cc or bcc.
         addressed = addressed_recipients(email)
@@ -323,15 +333,22 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
             or not recipients
             or not recipients <= expected_recipients
             or len(recipients) != len(addressed)
-            or bool(notified.intersection(recipients))
             or any(attachment not in accepted_agenda_refs for attachment in attachments)
-            or not result_is_usable_if_present(state, email)
-            or not _result_matches_if_present(
-                state, email, lambda payload: payload.get("status") == "sent"
+            or (
+                counted
+                and (
+                    bool(notified.intersection(recipients))
+                    or not result_is_usable_if_present(state, email)
+                    or not _result_matches_if_present(
+                        state, email, lambda payload: payload.get("status") == "sent"
+                    )
+                )
             )
         )
         if unsafe_email:
             break
+        if not counted:
+            continue
         if (
             len(attachments) != 1
             or not as_str(email.arguments.get("subject")).strip()

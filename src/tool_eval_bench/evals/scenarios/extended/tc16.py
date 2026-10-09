@@ -18,6 +18,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -165,7 +166,11 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
         _result_matches_if_present(state, call, _tc16_weather_result_is_munich)
         for call in matching_weather_calls
     )
-    weather_failed = any(_has_explicit_tool_error(state, call) for call in matching_weather_calls)
+    # Only an error the model was left with counts; a retried --error-rate
+    # failure was followed by a real result.
+    weather_failed = any(
+        _has_explicit_tool_error(state, call) for call in _counted_calls(matching_weather_calls)
+    )
     answered_about_error = generic_score >= 2 and weather_failed and not has_data
     if used_weather and answer_in_german and answered_about_error:
         if generic_score >= 4:

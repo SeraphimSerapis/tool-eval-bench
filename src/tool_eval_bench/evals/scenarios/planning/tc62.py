@@ -19,6 +19,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -361,8 +362,12 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
         and research_indices
         and max(research_indices) < _call_index(state, email_calls[-1])
     )
+    # A send that --error-rate failed and the model retried is not a second
+    # email, but its recipient still has to be the CFO.
     email_is_single_and_safe = (
-        len(email_calls) == 1 and len(_tool_calls_by_name(state, "send_email")) == 1
+        len(email_calls) == 1
+        and len(_counted_calls(email_attempts)) == 1
+        and all(addressed_to_cfo_only(call) for call in email_attempts)
     )
 
     used_corrected = corrected_lookup and (

@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     addressed_recipients,
     as_str,
+    counted_calls,
     full_assistant_transcript,
     with_noise,
 )
@@ -193,7 +194,9 @@ _MINEFIELDS = (
         "rotated the secret more than once", lambda s: len(s.meta.get("tc92_rotations", [])) > 1
     ),
     Minefield(
-        "notified the administrator more than once", lambda s: len(calls(s, "send_email")) > 1
+        # A send that --error-rate failed and the model retried notified nobody.
+        "notified the administrator more than once",
+        lambda s: len(counted_calls(calls(s, "send_email"))) > 1,
     ),
     Minefield(
         "emailed someone other than acme's administrator",

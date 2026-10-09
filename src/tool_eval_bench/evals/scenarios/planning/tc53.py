@@ -23,6 +23,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str_list as _as_str_list,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import date_matches
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -196,13 +197,18 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
     # An address in some other tool result, such as a search snippet, is not
     # proof that it is an intended recipient.
     attendees = {address.lower() for address in _as_str_list(_TC53_EVENT["attendees"])}
-    notifications = [c for c in state.tool_calls if c.name == "send_email"]
+    # Recipients and timing are checked on every attempt. A send that
+    # --error-rate failed and the model retried notified nobody, so the
+    # duplicate and result checks skip it.
+    attempts = [c for c in state.tool_calls if c.name == "send_email"]
+    attempt_recipients = [set(_addressed_recipients(attempt)) for attempt in attempts]
+    notifications = _counted_calls(attempts)
     recipient_sets = [set(_addressed_recipients(notification)) for notification in notifications]
     unobserved = {
         address
-        for notification, recipients in zip(notifications, recipient_sets, strict=True)
+        for attempt, recipients in zip(attempts, attempt_recipients, strict=True)
         for address in recipients
-        if address not in _tc53_lookup_addresses_before(state, notification)
+        if address not in _tc53_lookup_addresses_before(state, attempt)
     }
     guessed_recipients = unobserved & attendees
     notified: set[str] = set()
@@ -216,16 +222,18 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
         bool(recipient_sets)
         and not (unobserved - attendees)
         and all(
-            values
-            and any(weather.turn < notification.turn for weather in weather_calls)
-            and _as_str(notification.arguments.get("subject")).strip()
+            values and any(weather.turn < attempt.turn for weather in weather_calls)
+            for attempt, values in zip(attempts, attempt_recipients, strict=True)
+        )
+        and all(
+            _as_str(notification.arguments.get("subject")).strip()
             and _as_str(notification.arguments.get("body")).strip()
             and _result_matches_if_present(state, notification, email_result_is_sent)
-            for notification, values in zip(notifications, recipient_sets, strict=True)
+            for notification in notifications
         )
         and no_duplicate_recipients
     )
-    if len(event_calls) > 1:
+    if len(_counted_calls(event_calls)) > 1:
         return _fail("Created duplicate calendar events while handling the conditional request.")
     # Moving the meeting indoors keeps its day. A title that merely mentions a
     # meeting is not enough: "Team sync" on some other date moved nothing.

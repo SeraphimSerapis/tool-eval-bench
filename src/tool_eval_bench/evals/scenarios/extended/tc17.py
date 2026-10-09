@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     date_matches as _date_matches,
 )
@@ -80,7 +81,7 @@ def _tc17_event_result_is_created(payload: Any) -> bool:
 @forbid_unrequested_side_effects({"create_calendar_event": 1})
 def _tc17_eval(state: ScenarioState) -> ScenarioEvaluation:
     """Should create event at 14:00 Europe/Berlin, not UTC."""
-    event_calls = [c for c in state.tool_calls if c.name == "create_calendar_event"]
+    event_calls = _counted_calls([c for c in state.tool_calls if c.name == "create_calendar_event"])
     event = event_calls[0] if event_calls else None
     if not event:
         return _fail("Did not create the calendar event.")

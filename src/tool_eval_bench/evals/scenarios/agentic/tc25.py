@@ -110,7 +110,7 @@ def _tc25_eval(state: ScenarioState) -> ScenarioEvaluation:
     if len(reminder_calls) == 0:
         return _fail("Checked weather (5°C) but did not set the coat reminder.")
 
-    first_weather = _first_counted(weather_calls) or weather_calls[0]
+    first_weather = _counted_calls(weather_calls)[0]
     if any(call.turn <= first_weather.turn for call in reminder_calls):
         return _fail("Set the reminder before receiving the weather result.")
 
