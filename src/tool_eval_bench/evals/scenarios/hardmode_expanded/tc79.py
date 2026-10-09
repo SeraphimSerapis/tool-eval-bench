@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -139,7 +140,10 @@ def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
     required = [
         all(term in as_str(args.get("title")).lower() for term in ("outdoor", "review")),
         args.get("date") == days_after_reference(state, 1),
-        args.get("time") == "09:00",
+        # Seconds are the same moment. An offset is not accepted: the event
+        # carries a separate Europe/Lisbon timezone, so "09:00+01:00" would be
+        # a different time.
+        re.fullmatch(r"09:00(?::00)?", as_str(args.get("time")).strip()) is not None,
         args.get("timezone") == "Europe/Lisbon",
         args.get("duration_minutes") == 30,
         isinstance(attendee_values, list)

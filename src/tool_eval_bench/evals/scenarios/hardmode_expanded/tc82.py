@@ -124,7 +124,6 @@ def _tc82_eval(state: ScenarioState) -> ScenarioEvaluation:
     emails = tool_calls_by_name(state, "send_email")
     sent_avery = (
         len(emails) == 1
-        and emails[0].arguments.get("to") == "avery.patel@company.com"
         and addressed_recipients(emails[0]) == ["avery.patel@company.com"]
         and attachment_matches_observed_file(state, emails[0], "launch_checklist")
         and as_str(emails[0].arguments.get("subject")).strip()
