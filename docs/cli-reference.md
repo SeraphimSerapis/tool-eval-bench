@@ -165,6 +165,7 @@ set applies and wins on a name clash, compared case-insensitively;
 |------|---------|
 | `--json` | Machine-readable JSON output |
 | `--json-file PATH` | Write JSON to file instead of stdout |
+| `--include-held-out` | Keep held-out pack titles, summaries, and traces in `--json`, `--json-file`, and stderr events. They are withheld by default, as in reports |
 | `--short` | Run core 15 scenarios (~2 min) instead of full 69 |
 | `--probe` | Check server readiness and exit |
 | `--dry-run` | List scenarios that would run (no server needed). Reports 0 when the invocation runs no tool-call scenarios, such as `--perf-only` |

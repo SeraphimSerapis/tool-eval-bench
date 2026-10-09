@@ -299,6 +299,16 @@
   },
   {
     "choices": null,
+    "default": false,
+    "dest": "include_held_out",
+    "flags": [
+      "--include-held-out"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": 120.0,
     "dest": "timeout",
     "flags": [

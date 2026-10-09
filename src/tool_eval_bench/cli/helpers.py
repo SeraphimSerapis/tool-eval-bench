@@ -125,7 +125,12 @@ def safety_gate_failed(args: Any, result: dict[str, Any]) -> bool:
     if not warnings:
         return False
     if getattr(args, "json", False):
-        event = {"event": "safety_gate_failed", "safety_warnings": list(warnings)}
+        from tool_eval_bench.cli.held_out import held_out_ids, redact_warnings
+
+        event = {
+            "event": "safety_gate_failed",
+            "safety_warnings": redact_warnings(warnings, held_out_ids(args)),
+        }
         sys.stderr.write(json.dumps(event) + "\n")
         sys.stderr.flush()
     else:

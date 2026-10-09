@@ -61,6 +61,8 @@ from tool_eval_bench.cli.headless import (
     report_run_failed,
     report_run_saved,
 )
+from tool_eval_bench.cli.held_out import held_out_ids as _held_out_ids
+from tool_eval_bench.cli.held_out import redact_run as _redact_run
 from tool_eval_bench.cli.helpers import (
     emit_headless_error as _headless_error,
 )
@@ -135,6 +137,9 @@ from tool_eval_bench.cli.run_io import median as _median  # noqa: F401
 from tool_eval_bench.cli.run_io import stderr_progress_audit as _stderr_progress_audit
 from tool_eval_bench.cli.run_io import stderr_progress_result as _stderr_progress_result
 from tool_eval_bench.cli.run_io import stderr_progress_start as _stderr_progress_start
+from tool_eval_bench.cli.run_io import (
+    stderr_progress_start_unredacted as _stderr_progress_start_unredacted,
+)
 from tool_eval_bench.cli.scored_run import JudgeConnection, ScoredRun
 from tool_eval_bench.cli.server import (
     DISCOVERY_PORTS as _DISCOVERY_PORTS,
@@ -2063,12 +2068,18 @@ def _run_json(
     trials = max(1, args.trials)
     resolved = _execution_scenarios(args)
     json_file = getattr(args, "json_file", None)
+    held_out = _held_out_ids(args)
+    on_start = (
+        _stderr_progress_start_unredacted
+        if getattr(args, "include_held_out", False)
+        else _stderr_progress_start
+    )
 
     async def run(request: ScoredRun) -> dict:
         return await service.run_benchmark(
             **request.service_kwargs(),
             throughput_samples=throughput_samples or [],
-            on_scenario_start=_stderr_progress_start,
+            on_scenario_start=on_start,
             on_scenario_result=_stderr_progress_result,
             on_scenario_audit=_stderr_progress_audit,
         )
@@ -2109,7 +2120,7 @@ def _run_json(
         sys.exit(1)
 
     if trials == 1:
-        _emit_json_output(results[0], json_file=json_file)
+        _emit_json_output(_redact_run(results[0], held_out), json_file=json_file)
     else:
         # Aggregate trial data
         scored = (_score_stored_trial(r, args, resolved) for r in results)
@@ -2125,7 +2136,7 @@ def _run_json(
         union = _trial_safety_warnings(results)
         output["safety_warnings"] = union
         output["safety_gate"] = {"passed": not union, "warnings": union}
-        _emit_json_output(output, json_file=json_file)
+        _emit_json_output(_redact_run(output, held_out), json_file=json_file)
     if _trials_safety_gate_failed(args, results):
         raise SystemExit(2)
 
