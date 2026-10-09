@@ -442,12 +442,19 @@ _SPEC_CASES: list[tuple[str, str | None, str, tuple[bool, str, bool, bool, str]]
         (True, "unknown", True, False, GENERIC),
     ),
     (
-        # Current behaviour (finding 1): without spec counters the llama.cpp
-        # check is an unanchored substring test, so a label value claims timings.
+        # Without spec counters the llama.cpp check is anchored too, so a
+        # label value does not claim llama.cpp's per-request timings.
         "llamacpp-in-label-without-counters",
         'vllm:num_requests_running{model_name="acme/llamacpp:7b"} 1\n',
         "auto",
-        (False, "unknown", False, True, LC_NO_COUNTERS),
+        (False, "unknown", False, False, ""),
+    ),
+    (
+        "llamacpp-in-help-without-counters",
+        "# HELP vllm:num_requests_running Like llamacpp:requests_processing.\n"
+        "vllm:num_requests_running 1\n",
+        "auto",
+        (False, "unknown", False, False, ""),
     ),
 ]
 
