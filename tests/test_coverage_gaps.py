@@ -172,31 +172,106 @@ async def test_detect_spec_decoding_via_prometheus():
     assert info.method == "unknown"
 
 
-@pytest.mark.asyncio
-async def test_detect_spec_decoding_eagle():
-    body = "spec_decode_eagle_accepted 100\nspec_decode_num_draft_tokens 200\n"
+async def _detect_from_metrics(body: str):
     transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
     async with MeasurementTestClient(transport=transport) as client:
-        info = await detect_spec_decoding(client, "http://host:8000/v1")
-    assert info.method == "eagle"
+        return await detect_spec_decoding(client, "http://host:8000/v1")
+
+
+# vLLM v1 labels every speculative series with model_name and engine only
+# (vllm/v1/metrics/loggers.py, vllm/v1/spec_decode/metrics.py), so whatever a
+# deployment names its model ends up on these lines.
+_VLLM_SPEC_LINES = """\
+# HELP vllm:spec_decode_num_drafts_total Number of spec decoding drafts.
+# TYPE vllm:spec_decode_num_drafts_total counter
+vllm:spec_decode_num_drafts_total{{engine="0",model_name="{model}"}} 50.0
+# HELP vllm:spec_decode_num_draft_tokens_total Number of draft tokens.
+# TYPE vllm:spec_decode_num_draft_tokens_total counter
+vllm:spec_decode_num_draft_tokens_total{{engine="0",model_name="{model}"}} 200.0
+vllm:spec_decode_num_accepted_tokens_total{{engine="0",model_name="{model}"}} 100.0
+"""
 
 
 @pytest.mark.asyncio
-async def test_detect_spec_decoding_ngram():
-    body = "spec_decode_ngram_accepted 100\nspec_decode_num_draft_tokens 200\n"
-    transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-    async with MeasurementTestClient(transport=transport) as client:
-        info = await detect_spec_decoding(client, "http://host:8000/v1")
-    assert info.method == "ngram"
+@pytest.mark.parametrize(
+    "model",
+    [
+        "acme/eagle-7b",
+        "/models/ngram-lookup-test",
+        "deepseek-ai/DeepSeek-V3-MTP",
+        "qwen-multi_token-preview",
+        'org/method=\\"eagle\\"',
+    ],
+)
+async def test_detect_spec_decoding_ignores_method_words_in_model_name(model: str):
+    info = await _detect_from_metrics(_VLLM_SPEC_LINES.format(model=model))
+
+    assert info.active is True
+    assert info.method == "unknown"
 
 
 @pytest.mark.asyncio
-async def test_detect_spec_decoding_mtp():
-    body = "spec_decode_mtp_accepted 100\nspec_decode_num_draft_tokens 200\n"
-    transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
-    async with MeasurementTestClient(transport=transport) as client:
-        info = await detect_spec_decoding(client, "http://host:8000/v1")
-    assert info.method == "mtp"
+@pytest.mark.parametrize(
+    "body",
+    [
+        "# HELP vllm:spec_decode_num_draft_tokens_total EAGLE draft tokens.\n"
+        "vllm:spec_decode_num_draft_tokens_total 200\n",
+        "spec_decode_eagle_accepted 100\nspec_decode_num_draft_tokens 200\n",
+        'vllm:spec_decode_num_draft_tokens_total 200\nhttp_requests_total{method="ngram"} 1\n',
+    ],
+    ids=["help-text", "metric-name", "method-label-off-spec-series"],
+)
+async def test_detect_spec_decoding_ignores_method_words_outside_labels(body: str):
+    info = await _detect_from_metrics(body)
+
+    assert info.active is True
+    assert info.method == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_detect_spec_decoding_reads_llamacpp_scrape_as_unknown_method():
+    # Shape of a real llama-server /metrics with speculative decoding active.
+    body = (
+        "# HELP llamacpp:spec_decode_num_draft_tokens_total Speculative: Total draft tokens\n"
+        "# TYPE llamacpp:spec_decode_num_draft_tokens_total counter\n"
+        "llamacpp:spec_decode_num_draft_tokens_total 5017\n"
+        "llamacpp:spec_decode_num_accepted_tokens_total 1787\n"
+        "llamacpp:spec_decode_num_drafts_total 1261\n"
+        'llamacpp:spec_decode_num_accepted_tokens_per_pos_total{position="0"} 737\n'
+    )
+
+    info = await _detect_from_metrics(body)
+
+    assert info.method == "unknown"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        ('model_name="acme/ngram-7b",spec_method="eagle3"', "eagle3"),
+        ('speculative_method="NEXTN"', "mtp"),
+        ('method="ngram",model_name="acme/eagle-7b"', "ngram"),
+    ],
+)
+async def test_detect_spec_decoding_reads_explicit_method_label(labels: str, expected: str):
+    body = f"vllm:spec_decode_num_draft_tokens_total{{{labels}}} 200\n"
+
+    info = await _detect_from_metrics(body)
+
+    assert info.method == expected
+
+
+@pytest.mark.asyncio
+async def test_detect_spec_decoding_reads_spec_method_label_on_any_series():
+    body = (
+        "vllm:spec_decode_num_draft_tokens_total 200\n"
+        'exporter:speculative_config{spec_method="suffix"} 1\n'
+    )
+
+    info = await _detect_from_metrics(body)
+
+    assert info.method == "suffix"
 
 
 @pytest.mark.asyncio

@@ -1110,6 +1110,21 @@ vllm:spec_decode_num_draft_tokens_total{engine="0",spec_method="mtp"} 3000.0
         text = 'spec_decode_num_draft_tokens{method="eagle3"} 100\n'
         assert _detect_spec_method(text) == "eagle3"
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'vllm:spec_decode_num_draft_tokens_total{model_name="acme/method=eagle"} 100\n',
+            'vllm:spec_decode_num_draft_tokens_total{model_name="x",path="spec_method:ngram"} 1\n',
+            "# HELP vllm:spec_decode_num_drafts_total Drafts by method: eagle\n"
+            "vllm:spec_decode_num_drafts_total 10\n",
+        ],
+        ids=["model-name-value", "other-label-value", "help-text"],
+    )
+    def test_method_words_outside_a_method_label_are_ignored(self, text):
+        from tool_eval_bench.runner.spec_live import _detect_spec_method
+
+        assert _detect_spec_method(text) == "unknown"
+
     def test_method_in_parse_snapshot(self):
         """spec_method is populated by _parse_snapshot."""
         text = """\

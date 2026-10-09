@@ -6,7 +6,7 @@ Measures how much speculative decoding actually buys you on your deployment: acc
 Measures the **real-world effectiveness** of multi-token prediction (MTP), draft models, and n-gram speculative decoding. Standard t/s metrics don't capture these benefits — `--spec-bench` does.
 
 ```bash
-# Quick spec-decode benchmark (auto-detect method)
+# Quick spec-decode benchmark (method shows as unknown unless the server labels it)
 tool-eval-bench bench --spec-bench
 
 # Specify method + compare against known baseline
