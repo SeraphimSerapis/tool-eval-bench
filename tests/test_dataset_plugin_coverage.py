@@ -222,7 +222,7 @@ def test_plugin_runners_complete_cached_lifecycles(
         monkeypatch.setattr(cls, "run", run)
         monkeypatch.setattr(cls, "render_report_section", lambda self, result: ["report"])
     monkeypatch.setattr(
-        "tool_eval_bench.application.mode_runs.with_config_fingerprint", lambda value: value
+        "tool_eval_bench.application.mode_runs.with_config_fingerprint", lambda value, *_: value
     )
     persisted: list[dict] = []
     monkeypatch.setattr("tool_eval_bench.application.run_queries.persist_run", persisted.append)

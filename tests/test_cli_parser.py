@@ -316,7 +316,7 @@ def test_shared_plugin_finalization_writes_and_persists(
     monkeypatch.setattr("tool_eval_bench.application.run_queries.persist_run", persisted.append)
     monkeypatch.setattr(
         "tool_eval_bench.application.mode_runs.with_config_fingerprint",
-        lambda config: {**config, "config_fingerprint": "fingerprint"},
+        lambda config, *_: {**config, "config_fingerprint": "fingerprint"},
     )
     result = SimpleNamespace(
         score=75.0,
@@ -384,7 +384,7 @@ def test_finalize_plugin_run_renders_label_and_slugifies_filename(
     monkeypatch.setattr("tool_eval_bench.application.run_queries.persist_run", persisted.append)
     monkeypatch.setattr(
         "tool_eval_bench.application.mode_runs.with_config_fingerprint",
-        lambda config: {**config, "config_fingerprint": "fingerprint"},
+        lambda config, *_: {**config, "config_fingerprint": "fingerprint"},
     )
     result = SimpleNamespace(
         score=75.0,

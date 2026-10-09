@@ -48,9 +48,9 @@ def finalize_mode_run(
     output_dir: str | None,
 ) -> FinalizedRun:
     """Write the report, then persist the run, and return where it landed."""
-    config = with_config_fingerprint(run.config)
-    run_id = build_run_id(config)
     metadata = run_context.to_dict() if run_context is not None else {}
+    config = with_config_fingerprint(run.config, metadata)
+    run_id = build_run_id(config)
     if report.label:
         metadata["label"] = report.label
     run_data: dict[str, Any] = {

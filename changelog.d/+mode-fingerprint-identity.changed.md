@@ -1,0 +1,1 @@
+Context-pressure sweeps, spec-bench, throughput-only runs and plugins now fingerprint their stored config with the tool version, git SHA and discovered deployment facts, as scored runs already did. Runs from different commits or engine deployments no longer share a comparison group. New runs of these modes do not group with runs stored by earlier versions.

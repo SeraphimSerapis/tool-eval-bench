@@ -38,6 +38,14 @@ BASE_URL = "http://user:secret@gpu-box.internal:8000/v1"
 LABEL = "golden | label"
 
 
+@pytest.fixture(autouse=True)
+def _pin_tool_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fingerprint includes the package version, which moves with every commit."""
+    import tool_eval_bench
+
+    monkeypatch.setattr(tool_eval_bench, "__version__", "0.0.0+golden")
+
+
 def _context() -> RunContext:
     return RunContext(
         tool_version="0.0.0+golden",

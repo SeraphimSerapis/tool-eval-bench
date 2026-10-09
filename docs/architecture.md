@@ -278,7 +278,7 @@ Shared infrastructure:
 | Module | Purpose |
 |---|---|
 | `ids.py` | Unique run IDs and deterministic configuration fingerprints |
-| `fingerprint.py` | `with_config_fingerprint`: redacts the endpoint in a run config and adds its comparison fingerprint |
+| `fingerprint.py` | `comparison_fingerprint`, the one payload (config, deployment facts, tool version, git SHA) every run type fingerprints, and `with_config_fingerprint`, which redacts the endpoint in a mode-run config and adds that fingerprint |
 | `metadata.py` | System/backend metadata collection (engine probing) |
 | `openai_compat.py` | OpenAI-compatible request and response helpers |
 | `tokenizers.py` | Local tokenizer discovery for throughput prompts |
