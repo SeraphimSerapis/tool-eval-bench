@@ -12,7 +12,7 @@ from rich.console import Console
 
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
 from tool_eval_bench.domain.models import RunContext
-from tool_eval_bench.storage.reports.mode import ModeReport, ReportContext
+from tool_eval_bench.storage.reports.mode import ModeReport
 
 
 def execute_plugin(
@@ -38,6 +38,7 @@ def execute_plugin(
 
 
 def finalize_plugin_run(
+    console: Console,
     *,
     mode: str,
     title: str,
@@ -47,9 +48,10 @@ def finalize_plugin_run(
     report_metrics: list[str],
     report_lines: list[str],
     output_dir: str | None,
+    label: str | None,
     run_context: RunContext | None,
 ) -> str:
-    """Write and persist a completed plugin run through one invariant."""
+    """Write and persist a completed plugin run, then print where the report went."""
     finalized = finalize_mode_run(
         ModeRun(
             run_type=mode,
@@ -61,19 +63,17 @@ def finalize_plugin_run(
                 **result.details,
             },
             status="completed",
-            metadata_label=None,
         ),
         ModeReport(
             title=f"{title} Benchmark",
             display_name=display_name,
             mode=mode,
-            label=run_context.label if run_context is not None else None,
-            version_line=False,
-            context=ReportContext.NONE,
+            label=label,
             header=(*report_metrics, f"- **Rating**: {result.rating}"),
             body=tuple(report_lines),
         ),
         run_context=run_context,
         output_dir=output_dir,
     )
+    console.print(f"\n  [dim]Report saved to {finalized.report_path}[/]\n")
     return finalized.run_id

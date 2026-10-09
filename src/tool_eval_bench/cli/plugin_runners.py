@@ -174,6 +174,7 @@ def _run_gsm8k_benchmark(
 
     report_lines = plugin.render_report_section(result)
     _finalize_plugin_run(
+        console,
         mode="gsm8k",
         title="GSM8K",
         display_name=display_name,
@@ -194,10 +195,9 @@ def _run_gsm8k_benchmark(
         ],
         report_lines=report_lines,
         output_dir=output_dir,
+        label=getattr(args, "label", None),
         run_context=run_context,
     )
-
-    console.print("\n  [dim]Report saved to runs/[/]\n")
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +381,7 @@ def _run_mmlu_benchmark(
 
     report_lines = plugin.render_report_section(result)
     _finalize_plugin_run(
+        console,
         mode="mmlu",
         title="MMLU",
         display_name=display_name,
@@ -401,10 +402,9 @@ def _run_mmlu_benchmark(
         ],
         report_lines=report_lines,
         output_dir=output_dir,
+        label=getattr(args, "label", None),
         run_context=run_context,
     )
-
-    console.print("\n  [dim]Report saved to runs/[/]\n")
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +582,7 @@ def _run_ifeval_benchmark(
 
     report_lines = plugin.render_report_section(result)
     _finalize_plugin_run(
+        console,
         mode="ifeval",
         title="IFEval",
         display_name=display_name,
@@ -601,10 +602,9 @@ def _run_ifeval_benchmark(
         ],
         report_lines=report_lines,
         output_dir=output_dir,
+        label=getattr(args, "label", None),
         run_context=run_context,
     )
-
-    console.print("\n  [dim]Report saved to runs/[/]\n")
 
 
 # ---------------------------------------------------------------------------
@@ -841,6 +841,7 @@ def _run_needle_benchmark(
     )
 
     _finalize_plugin_run(
+        console,
         mode="needle",
         title="Needle in a Haystack",
         display_name=display_name,
@@ -862,10 +863,9 @@ def _run_needle_benchmark(
         ],
         report_lines=plugin.render_report_section(result),
         output_dir=output_dir,
+        label=getattr(args, "label", None),
         run_context=run_context,
     )
-
-    console.print("\n  [dim]Report saved to runs/[/]\n")
 
 
 def _print_needle_grid(console: Console, result: Any) -> None:
@@ -1029,6 +1029,7 @@ def _run_decision_benchmark(
     console.print(f"  [dim]{escape(attribution_line(details))}[/]")
 
     _finalize_plugin_run(
+        console,
         mode="decision",
         title="Decision Models",
         display_name=display_name,
@@ -1054,10 +1055,9 @@ def _run_decision_benchmark(
         ],
         report_lines=plugin.render_report_section(result),
         output_dir=output_dir,
+        label=getattr(args, "label", None),
         run_context=run_context,
     )
-
-    console.print("\n  [dim]Report saved to runs/[/]\n")
 
 
 def _print_decision_tables(console: Console, result: Any) -> None:

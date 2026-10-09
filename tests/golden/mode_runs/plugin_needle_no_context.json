@@ -40,8 +40,10 @@
       ],
       "effective_context": 1024
     },
-    "metadata": {},
-    "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
+    "metadata": {
+      "label": "golden | label"
+    },
+    "report_path": "<YYYY>/<MM>/<RUN_ID>--golden-label.md"
   },
-  "report": "# Needle in a Haystack Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: needle\n- **Retrieval Accuracy**: **50.0%**\n- **Effective Context**: 1,024 tokens\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## Needle in a Haystack — Retrieval\n\n**Retrieval Accuracy:** 50.0% (1/2)\n**Rating:** ★★★ Adequate\n**Context Window:** 8,192 tokens\n**Effective Context:** 1,024 tokens (largest fully retrieved length)\n**Duration:** 12.0s\n**Tokens:** 900\n\n### Retrieval Grid\n\nRows are needle depth, columns are haystack size.\n\n| Depth | 1K | 5K |\n|---|---|---|\n| 0% | ✅ | ❌ |\n| 100% | ❌ | ❌ |\n\n### Missed Needles (1 total)\n\n| Cell | Expected | Model response |\n|---|---|---|\n| `5120@100%` | `MAGIC-42` | I could not find it \\| sorry |\n"
+  "report": "# Needle in a Haystack Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: needle\n- **Label**: <code>golden | label</code>\n- **Retrieval Accuracy**: **50.0%**\n- **Effective Context**: 1,024 tokens\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## Needle in a Haystack — Retrieval\n\n**Retrieval Accuracy:** 50.0% (1/2)\n**Rating:** ★★★ Adequate\n**Context Window:** 8,192 tokens\n**Effective Context:** 1,024 tokens (largest fully retrieved length)\n**Duration:** 12.0s\n**Tokens:** 900\n\n### Retrieval Grid\n\nRows are needle depth, columns are haystack size.\n\n| Depth | 1K | 5K |\n|---|---|---|\n| 0% | ✅ | ❌ |\n| 100% | ❌ | ❌ |\n\n### Missed Needles (1 total)\n\n| Cell | Expected | Model response |\n|---|---|---|\n| `5120@100%` | `MAGIC-42` | I could not find it \\| sorry |\n"
 }

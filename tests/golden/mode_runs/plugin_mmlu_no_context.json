@@ -31,8 +31,10 @@
         }
       }
     },
-    "metadata": {},
-    "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
+    "metadata": {
+      "label": "golden | label"
+    },
+    "report_path": "<YYYY>/<MM>/<RUN_ID>--golden-label.md"
   },
-  "report": "# MMLU Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: mmlu\n- **Accuracy**: **66.7%**\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## MMLU — Massive Multitask Language Understanding\n\n**Accuracy:** 66.7% (2/3)\n**Rating:** ★★★ Adequate\n**Duration:** 12.0s\n**Tokens:** 900\n**Prompting:** 5-shot\n\n### Per-Category Accuracy\n\n| Category | Correct | Total | Accuracy |\n|---|---|---|---|\n| STEM | 2 | 3 | 66.7% |\n"
+  "report": "# MMLU Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: mmlu\n- **Label**: <code>golden | label</code>\n- **Accuracy**: **66.7%**\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## MMLU — Massive Multitask Language Understanding\n\n**Accuracy:** 66.7% (2/3)\n**Rating:** ★★★ Adequate\n**Duration:** 12.0s\n**Tokens:** 900\n**Prompting:** 5-shot\n\n### Per-Category Accuracy\n\n| Category | Correct | Total | Accuracy |\n|---|---|---|---|\n| STEM | 2 | 3 | 66.7% |\n"
 }

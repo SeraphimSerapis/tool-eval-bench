@@ -26,8 +26,10 @@
       "instructions_total": 6,
       "instruction_accuracy": 83.3
     },
-    "metadata": {},
-    "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
+    "metadata": {
+      "label": "golden | label"
+    },
+    "report_path": "<YYYY>/<MM>/<RUN_ID>--golden-label.md"
   },
-  "report": "# IFEval Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: ifeval\n- **Prompt Accuracy**: **66.7%**\n- **Instruction Accuracy**: **83.3%**\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## IFEval — Instruction Following Evaluation\n\n**Prompt-level Accuracy:** 66.7% (2/3)\n**Instruction-level Accuracy:** 83.3% (5/6)\n**Rating:** ★★★ Adequate\n**Duration:** 12.0s\n**Tokens:** 900\n"
+  "report": "# IFEval Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: ifeval\n- **Label**: <code>golden | label</code>\n- **Prompt Accuracy**: **66.7%**\n- **Instruction Accuracy**: **83.3%**\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## IFEval — Instruction Following Evaluation\n\n**Prompt-level Accuracy:** 66.7% (2/3)\n**Instruction-level Accuracy:** 83.3% (5/6)\n**Rating:** ★★★ Adequate\n**Duration:** 12.0s\n**Tokens:** 900\n"
 }

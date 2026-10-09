@@ -13,6 +13,15 @@ status and points in the Markdown report but withhold titles, summaries, and
 traces, so publishing a score does not publish the pack. Full traces stay in
 SQLite for local inspection.
 
+Context-pressure sweeps, spec-bench, `--perf-only` throughput runs, and plugin
+runs share one report header: run ID, date, mode, the `tool-eval-bench` version,
+the label, the facts that mode measured with, and the probed inference engine and
+host. They leave out the tool-eval Run Context table, because these modes do not
+use the scenario parameters it lists. When no RunContext could be built, the
+version line and the engine table are omitted and the rest of the report is
+unchanged. When only the engine probe fails, the engine table gives way to a
+short Environment table of host, platform, and Python version.
+
 ## Run ID
 
 Each execution gets a unique ID: `YYYY-MM-DDTHH-MM-SS.ffffffZ_<short_hash>`.
@@ -44,7 +53,10 @@ working tree has uncommitted changes.
 execution generates carries it: a `Label` row in the tool-eval Run Context table,
 a `- **Label**:` header line in the plugin, throughput, spec-decode, and
 pressure-sweep reports, and the persisted metadata shown in `history` and
-included in `export`.
+included in `export`. Sweep, spec-bench, throughput, and plugin runs take the
+label from the command line, so they keep it even when no RunContext could be
+built. Scored runs read it from the RunContext, so a scored run whose context
+could not be built has no label.
 
 Report filenames gain a safe slug of the label, so all files from one execution
 end with the same marker:

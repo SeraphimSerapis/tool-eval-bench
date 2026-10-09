@@ -10,27 +10,24 @@ import pytest
 from tool_eval_bench.application import mode_runs, run_queries
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
 from tool_eval_bench.domain.models import RunContext
-from tool_eval_bench.storage.reports.mode import ModeReport, ReportContext
+from tool_eval_bench.storage.reports.mode import ModeReport
 
 
-def _run(*, metadata_label: str | None = None) -> ModeRun:
+def _run() -> ModeRun:
     return ModeRun(
         run_type="spec-bench",
         config={"model": "m", "base_url": "http://user:secret@host:8000/v1", "mode": "spec-bench"},
         scores={"samples": 1},
         status="completed",
-        metadata_label=metadata_label,
     )
 
 
-def _report() -> ModeReport:
+def _report(*, label: str | None = None) -> ModeReport:
     return ModeReport(
         title="Speculative Decoding Benchmark",
         display_name="Display",
         mode="spec-bench",
-        label=None,
-        version_line=True,
-        context=ReportContext.ENGINE,
+        label=label,
         header=[],
         body=["## Results", ""],
     )
@@ -80,8 +77,8 @@ def test_persisted_run_points_at_the_written_report(
     context = _context()
 
     finalized = finalize_mode_run(
-        _run(metadata_label="nightly"),
-        _report(),
+        _run(),
+        _report(label="nightly"),
         run_context=context,
         output_dir=str(tmp_path),
     )
@@ -120,3 +117,16 @@ def test_persister_is_resolved_at_call_time(
     assert len(first) == 1
     assert [run["run_id"] for run in second] == [finalized.run_id]
     assert second[0]["metadata"] == {}
+
+
+def test_label_survives_a_missing_run_context(
+    tmp_path: Path, persisted: list[dict[str, Any]]
+) -> None:
+    """Without a RunContext the label still names the report and reaches metadata."""
+    finalized = finalize_mode_run(
+        _run(), _report(label="nightly"), run_context=None, output_dir=str(tmp_path)
+    )
+
+    assert persisted[0]["metadata"] == {"label": "nightly"}
+    assert finalized.report_path.name == f"{finalized.run_id}--nightly.md"
+    assert "- **Label**: " in finalized.report_path.read_text(encoding="utf-8")

@@ -32,7 +32,6 @@ class ModeRun:
     config: Mapping[str, Any]
     scores: dict[str, Any]
     status: Literal["completed", "failed"]
-    metadata_label: str | None
 
 
 @dataclass(frozen=True)
@@ -52,8 +51,8 @@ def finalize_mode_run(
     config = with_config_fingerprint(run.config)
     run_id = build_run_id(config)
     metadata = run_context.to_dict() if run_context is not None else {}
-    if run.metadata_label:
-        metadata["label"] = run.metadata_label
+    if report.label:
+        metadata["label"] = report.label
     run_data: dict[str, Any] = {
         "run_id": run_id,
         "run_type": run.run_type,

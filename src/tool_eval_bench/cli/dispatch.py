@@ -425,12 +425,16 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
             },
             scores=scores,
             status="failed" if failed_count else "completed",
-            metadata_label=None,
         ),
         throughput_report(
             target.display_name,
             throughput_samples,
-            label=run_context.label if run_context is not None else None,
+            label=args.label,
+            backend=target.backend,
+            # The same redacted form the run context stores, whatever --redact-url says.
+            server=_redact_url(target.base_url),
+            served_model=target.model,
+            model_root=run_context.server_model_root if run_context is not None else None,
         ),
         run_context=run_context,
         output_dir=args.output_dir,

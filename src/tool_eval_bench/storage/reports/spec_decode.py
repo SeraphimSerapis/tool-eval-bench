@@ -7,7 +7,7 @@ from typing import Any
 
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.spec_decode import per_position_acceptance
-from tool_eval_bench.storage.reports.mode import ModeReport, ReportContext, write_mode_report
+from tool_eval_bench.storage.reports.mode import ModeReport, write_mode_report
 
 
 def write_spec_decode_report(
@@ -314,8 +314,6 @@ def spec_decode_report(
         display_name=model,
         mode="spec-bench",
         label=label,
-        version_line=True,
-        context=ReportContext.ENGINE,
         header=tuple(header),
         body=tuple(md),
     )
