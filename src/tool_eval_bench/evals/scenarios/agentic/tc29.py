@@ -42,6 +42,7 @@ _TC29_SQUARING = re.compile(
     r"|\bmultipl\w*\s+(?:it|each\s+\w+|x)\s+by\s+itself\b",
     re.IGNORECASE,
 )
+_TC29_POWER_FORM = re.compile(r"\bx\s*\*\*\s*2\b|\bx\u00b2")
 _TC29_INT_LIST = re.compile(r"\[\s*(-?\d+(?:\s*,\s*-?\d+)*)\s*\]")
 # The result, and the range it iterates over, are the only lists a correct
 # explanation writes out.
@@ -79,16 +80,22 @@ def _tc29_eval(state: ScenarioState) -> ScenarioEvaluation:
     low_answer = answer.lower()
     # Naming the construct is not an explanation of what it computes. The
     # answer has to say the values are squared, and not deny it ("it doesn't
-    # square anything, it cubes").
-    explains_comprehension = _answer_affirms_pattern(answer, _TC29_SQUARING) and (
-        "list comprehension" in low_answer
-        or bool(
-            re.search(
-                r"\b(?:each|every|all)\s+(?:the\s+)?(?:numbers?|integers?|values?|elements?|items?)\b",
-                low_answer,
+    # square anything, it cubes"). Restating `x**2` counts as saying so only
+    # next to the construct's name: "It applies x**2 to each item." just
+    # echoes the question.
+    names_comprehension = "list comprehension" in low_answer
+    explains_comprehension = (
+        _answer_affirms_pattern(answer, _TC29_SQUARING)
+        and (
+            names_comprehension
+            or bool(
+                re.search(
+                    r"\b(?:each|every|all)\s+(?:the\s+)?(?:numbers?|integers?|values?|elements?|items?)\b",
+                    low_answer,
+                )
             )
         )
-    )
+    ) or (names_comprehension and _answer_affirms_pattern(answer, _TC29_POWER_FORM))
     wrong_list = _tc29_states_wrong_list(answer)
 
     if used_web:

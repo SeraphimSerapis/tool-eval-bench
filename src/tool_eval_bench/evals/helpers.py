@@ -413,19 +413,31 @@ def matching_tool_results(state: ScenarioState, call: ToolCallRecord) -> list[To
     return [result for result in state.tool_results if result.name == call.name]
 
 
-def address_observed_before(state: ScenarioState, call: ToolCallRecord, address: str) -> bool:
-    """Whether a tool result returned before ``call``'s turn contained ``address``.
+def address_observed_before(
+    state: ScenarioState,
+    call: ToolCallRecord,
+    address: str,
+    *,
+    sources: frozenset[str],
+) -> bool:
+    """Whether a ``sources`` tool result returned before ``call``'s turn contained ``address``.
 
     A correct address the model never looked up is a guess that happened to
     land: a real directory would not share the mock's naming convention. The
     lookup has to finish in an earlier turn, since a result returned in the
     same turn as the send could not have supplied the address.
+
+    Only the named lookup tools count. Many tools echo their arguments back,
+    so a guessed address passed to ``web_search`` or ``translate_text`` would
+    otherwise "observe" itself. The match is on the whole address, so
+    ``team@company.com`` is not found inside ``dev-team@company.com``.
     """
     needle = address.strip().lower()
+    pattern = re.compile(rf"(?<![\w.+-]){re.escape(needle)}(?![\w-]|\.\w)")
     return any(
-        needle in str(result.result).lower()
+        pattern.search(str(result.result).lower())
         for earlier in state.tool_calls
-        if earlier.turn < call.turn and earlier is not call
+        if earlier.turn < call.turn and earlier is not call and earlier.name in sources
         for result in matching_tool_results(state, earlier)
     )
 

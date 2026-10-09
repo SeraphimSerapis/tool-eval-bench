@@ -188,21 +188,29 @@ def _tc63_open_late(answer: str) -> bool:
 
 # Restaurants the search returns that fail at least one constraint.
 _TC63_COMPETITORS = ("luigi", "sushi palace", "burger joint")
-# A sentence that names a competitor to rule it out ("Luigi's closes at 9pm,
-# so go to Trattoria Bella") is not recommending it.
-_TC63_REJECTION_CUE = re.compile(
-    r"\b(?:clos(?:e|es|ed|ing)|not|no|never|instead|rather|but|however|unlike|avoid|skip"
-    r"|over|except)\b|n't\b|\b9\s*(?:pm|p\.m\.)|\b21:00\b"
+# A competitor is ruled out only by a cue aimed at it: one just before the name
+# ("Trattoria Bella instead of Luigi's") or one right after it in the same
+# clause ("Luigi's closes at 9pm, so go to Trattoria Bella"). A cue elsewhere
+# in the sentence does not count: "Luigi's over Trattoria Bella" and
+# "Trattoria Bella is fine, but Luigi's is better" both recommend Luigi's.
+_TC63_REJECTED_BEFORE = re.compile(
+    r"\b(?:instead\s+of|rather\s+than|over|unlike|except|not|avoid|skip|than|besides)"
+    r"\s+(?:\w+\s+){0,2}$"
+)
+_TC63_REJECTED_AFTER = re.compile(
+    r"^[^.!?;,]{0,40}?(?:\bclos\w*|n't\b|\bnot\b|\bnever\b|\b9\s*(?:pm|p\.m\.)|\b21:00\b)"
 )
 
 
 def _tc63_recommended_competitor(answer: str) -> str | None:
     """Return a competing restaurant the answer recommends, if any."""
     for sentence in re.split(r"(?<=[.!?])\s+|\n", answer.lower().replace("\u2019", "'")):
-        if _TC63_REJECTION_CUE.search(sentence):
-            continue
         for name in _TC63_COMPETITORS:
-            if name in sentence:
+            for mention in re.finditer(re.escape(name), sentence):
+                if _TC63_REJECTED_BEFORE.search(
+                    sentence[: mention.start()]
+                ) or _TC63_REJECTED_AFTER.search(sentence[mention.end() :]):
+                    continue
                 return name
     return None
 

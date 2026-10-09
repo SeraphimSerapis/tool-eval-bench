@@ -53,6 +53,9 @@ from tool_eval_bench.evals.scenarios.extended._shared import (
     _status_is_success,
 )
 
+# Only a directory lookup can supply the recipient address.
+_TC18_LOOKUPS = frozenset({"get_contacts"})
+
 
 def _tc18_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "translate_text":
@@ -162,7 +165,9 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _partial(
                 "Translated and emailed the message but issued duplicate or incorrect email mutations."
             )
-        if not _address_observed_before(state, went_through(emails)[0], "hans.mueller@firma.de"):
+        if not _address_observed_before(
+            state, went_through(emails)[0], "hans.mueller@firma.de", sources=_TC18_LOOKUPS
+        ):
             return _partial(
                 "Translated and emailed Hans at an address it never looked up with get_contacts."
             )

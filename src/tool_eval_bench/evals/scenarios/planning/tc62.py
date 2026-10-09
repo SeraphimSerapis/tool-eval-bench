@@ -14,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients as _addressed_recipients,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -28,9 +31,6 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
-)
-from tool_eval_bench.evals.helpers import (
-    recipient_values as _recipient_values,
 )
 from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
@@ -115,7 +115,8 @@ _TC62_AMOUNT_TOKEN = re.compile(
     re.IGNORECASE,
 )
 _TC62_SENTENCE_BREAK = re.compile(r"\.(?=\s|\Z)|[!?\n;]+")
-_TC62_NEGATION = re.compile(r"\b(?:not|never|no|without|n't)\b")
+# "n't" sits after a letter, so it takes no leading word boundary.
+_TC62_NEGATION = re.compile(r"\b(?:not|never|no|without)\b|n't\b")
 _TC62_QUOTED_TEXT = re.compile(r'"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’')
 _TC62_STRAIGHT_SINGLE_QUOTED_TEXT = re.compile(r"(?<!\w)'[^'\n]*'(?!\w)")
 # ponytail: only clear Acme headings with an immediate revenue bullet; add other
@@ -192,7 +193,14 @@ _TC62_UPWARD = re.compile(
     r"\b(?:improv\w*|better|strong(?:er)?|rebound\w*|pick(?:s|ing)?\s+up|accelerat\w*"
     r"|increas\w*|recover\w*|positive|optimistic|promising|bright\w*|upside)\b"
 )
-_TC62_SPAN_NEGATION = re.compile(r"\b(?:not|never|no|without)\b|n't\b")
+# A clause break between "Q4" and the upward word means the word describes
+# something else: "Q3 came in better than our draft, but Q4 will be weak."
+_TC62_CLAUSE_BREAK = re.compile(
+    r"[,;:](?!\d)|\b(?:but|while|whereas|however|although|though|yet)\b"
+)
+# "No doubt" strengthens the claim rather than negating it.
+_TC62_NO_DOUBT = re.compile(r"\bno\s+doubt\b|\bwithout\s+(?:a\s+)?doubt\b")
+_TC62_HEDGE = re.compile(r"\bunlikely\b")
 _TC62_Q4_CLAIM_WINDOW = 60
 
 
@@ -206,15 +214,18 @@ def _tc62_claims_q4_improvement(body: str) -> bool:
     """
     text = body.lower().replace("\u2019", "'")
     for sentence in _TC62_SENTENCE_BREAK.split(text):
+        sentence = _TC62_NO_DOUBT.sub("certainly", sentence)
         for quarter in _TC62_Q4.finditer(sentence):
             for upward in _TC62_UPWARD.finditer(sentence):
                 start = min(quarter.start(), upward.start())
                 end = max(quarter.end(), upward.end())
                 if end - start > _TC62_Q4_CLAIM_WINDOW:
                     continue
-                if _TC62_SPAN_NEGATION.search(sentence[start:end]):
+                span = sentence[start:end]
+                if _TC62_NEGATION.search(span) or _TC62_CLAUSE_BREAK.search(span):
                     continue
-                if _negated_before(sentence[max(0, start - 120) : start]):
+                prefix = sentence[max(0, start - 120) : start]
+                if _negated_before(prefix) or _TC62_HEDGE.search(prefix + span):
                     continue
                 return True
     return False
@@ -301,10 +312,11 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
     resolved_cfo = bool(cfo_contact_calls)
 
-    # `recipient_values` accepts the JSON-array form as well as a string, per
-    # the suite's recipient policy; the CFO must still be the only recipient.
+    # `addressed_recipients` reads to, cc, and bcc, and accepts the JSON-array
+    # form as well as a string, per the suite's recipient policy. The CFO must
+    # still be the only recipient, so a copy to anyone else does not pass.
     def addressed_to_cfo_only(call: ToolCallRecord) -> bool:
-        return _recipient_values(call.arguments.get("to")) == ["cfo@company.com"]
+        return _addressed_recipients(call) == ["cfo@company.com"]
 
     email_calls = [
         call

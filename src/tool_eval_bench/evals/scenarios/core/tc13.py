@@ -102,8 +102,11 @@ def _tc13_search_signature(call: ToolCallRecord) -> tuple[str, str]:
 _TC13_FILE_ID = re.compile(r"\bfile_\d+\b", re.IGNORECASE)
 _TC13_FILENAME = re.compile(r"\b[\w-]+\.(?:pdf|docx?|xlsx?|pptx?)\b", re.IGNORECASE)
 # "Found no matches" and "found that the search was empty" report the empty
-# result; they are not a claim to have located a file.
+# result; they are not a claim to have located a file. Neither is a passive or
+# second-person use: "which folder it's located in?", "if you've found it".
 _TC13_FOUND_CLAIM = re.compile(
+    r"(?<!\bis\s)(?<!\bare\s)(?<!\bwas\s)(?<!\bwere\s)(?<!\bbe\s)(?<!\bbeen\s)(?<!'s\s)"
+    r"(?<!\byou\s)(?<!\byou've\s)(?<!\bthey\s)"
     r"\b(?:found|located)\b(?!\s+(?:no|nothing|none|zero|0|that)\b)"
     r"|\bhere(?:'s|\s+is)\s+(?:the|your)\s+(?:johnson|file|document|proposal)",
     re.IGNORECASE,
@@ -195,7 +198,7 @@ def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
         # a filename the answer says it found is not.
         if _tc13_ungrounded_ids(state.final_answer, _tc13_search_result_text(state)):
             return _fail("Named a file id the empty search never returned.")
-        if _answer_affirms_pattern(state.final_answer, _TC13_FOUND_CLAIM):
+        if _answer_affirms_pattern(state.final_answer.replace("\u2019", "'"), _TC13_FOUND_CLAIM):
             return _fail("Claimed to have found a file after the search returned nothing.")
         return _pass("Asked for clarification after the empty result.")
     return _fail("Did not adapt after the empty search response.")

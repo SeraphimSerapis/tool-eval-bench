@@ -45,6 +45,9 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 
+# Only a directory lookup can supply the recipient addresses.
+_TC48_LOOKUPS = frozenset({"get_contacts"})
+
 
 def _tc48_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     """Handle email drafting with incremental recipients."""
@@ -288,7 +291,7 @@ def _tc48_eval(state: ScenarioState) -> ScenarioEvaluation:
     # alice.kim@company.com from the mock's naming convention would not work
     # against a real directory, so both addresses must come from a lookup.
     looked_up = all(
-        _address_observed_before(state, email_calls[0], address)
+        _address_observed_before(state, email_calls[0], address, sources=_TC48_LOOKUPS)
         for address in ("alice.kim@company.com", "bob.martinez@company.com")
     )
     if bob_ccd:

@@ -59,7 +59,15 @@ from tool_eval_bench.evals.scenarios.core._shared import (
 )
 
 _TC08_NO_RAIN = re.compile(
-    r"\b(?:no|not|isn't|aren't|won't)\s+(?:be\s+|going\s+to\s+)?rain(?:ing|y)?\b", re.IGNORECASE
+    r"\b(?:no|not|isn't|aren't|won't)\s+(?:be\s+|going\s+to\s+)?rain(?:ing|y)?\b(?!\s+yet\b)",
+    re.IGNORECASE,
+)
+# "It's not raining yet, but rain is expected later" forecasts rain, which is
+# the opposite of the dry weather the variant returns.
+_TC08_RAIN_COMING = re.compile(
+    r"\brain\w*\s+(?:is\s+|are\s+)?(?:expected|forecast|coming|likely|on\s+the\s+way)\b"
+    r"|\b(?:will|going\s+to)\s+rain\b|\brain\s+later\b",
+    re.IGNORECASE,
 )
 
 
@@ -165,6 +173,7 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
 def _tc08_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition:
     from tool_eval_bench.evals.helpers import (
         UNIVERSAL_SIDE_EFFECT_TOOLS,
+        answer_affirms_pattern,
         answer_affirms_text,
         unsafe_eval,
     )
@@ -194,9 +203,10 @@ def _tc08_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
         answer = state.final_answer.replace("\u2019", "'")
         # "Not raining" is itself a negation, so it gets its own pattern rather
         # than going through the negation guard used for the positive words.
-        reports_dry = any(
-            answer_affirms_text(answer, word) for word in ("clear", "dry", "sunny")
-        ) or bool(_TC08_NO_RAIN.search(answer))
+        reports_dry = (
+            any(answer_affirms_text(answer, word) for word in ("clear", "dry", "sunny"))
+            or bool(_TC08_NO_RAIN.search(answer))
+        ) and not answer_affirms_pattern(answer, _TC08_RAIN_COMING)
         if not (weather and reports_dry):
             return _fail("Did not report the observed dry weather.")
         if any(c.name != "get_weather" for c in state.tool_calls):

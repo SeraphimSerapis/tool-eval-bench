@@ -72,8 +72,11 @@ _TC28_CORRECTION_TO_LOCALHOST = re.compile(
     # a (wrong) description of the file.
     r"|(?<!is )(?<!'s )(?<!was )(?<!been )\bset(?:\s+[^\s.;!?]+){0,4}?\s+(?:to|as)"
     r"|\buse|\bmeant(?:\s+to\s+be)?|\b(?:typo|misspell\w*)\s+(?:of|for)"
-    r"|\b(?:correct(?:ed)?|right|proper|intended|fixed)(?:\s+\w+){0,2}?\s*(?:is|would\s+be|:)"
-    r"|\b(?:fix|correction)\s*:|->|=>|\u2192"
+    # "The correct value is localhost" names the fix; "the host is correct:
+    # localhost" calls the current value fine.
+    r"|(?<!is )(?<!'s )(?<!was )"
+    r"\b(?:correct(?:ed)?|right|proper|intended|fixed)(?:\s+\w+){0,2}?\s*(?:is|would\s+be|:)"
+    r"|\b(?:fix|correction)(?:\s+\w+){0,2}?\s*:|->|=>|\u2192"
     r")\s*[`'\"]?localhost\b"
 )
 # "I don't see a typo" carries a correction word, so it used to read as a fix.
