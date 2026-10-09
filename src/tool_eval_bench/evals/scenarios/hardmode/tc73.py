@@ -83,10 +83,15 @@ _TC73_EXCLUSION = re.compile(
     r"doesn.?t (?:meet|have|qualify|fit|work|offer|open)|"
     r"fails? (?:to )?(?:meet|match)|not a (?:match|fit|good fit))\b"
 )
-# Sentence ends and semicolons both separate claims: "Mitte Brasserie is my
-# pick; I skipped Veganz" recommends Mitte Brasserie.
-_TC73_SEGMENT = re.compile(r"(?<=[.!?\n])\s+|;\s*")
+# Sentence ends, line breaks, and semicolons all separate claims: "Mitte
+# Brasserie is my pick; I skipped Veganz" recommends Mitte Brasserie.
+_TC73_SEGMENT = re.compile(r"(?<=[.!?])\s+|\n\s*|;\s*")
 _TC73_OTHER_CANDIDATE = re.compile(r"green kitchen|veganz")
+# "I skipped Veganz Bistro": the exclusion's object is another candidate.
+_TC73_OBJECT_IS_OTHER = re.compile(r"\s+(?:the\s+)?(?:green kitchen|veganz)")
+# A next-segment exclusion is about Mitte Brasserie only when the segment
+# refers back to it ("It is closed"), not "I excluded places farther than 2km".
+_TC73_BACK_REFERENCE = re.compile(r"\b(?:it|it's|its|they|that one|this one|the brasserie|which)\b")
 
 
 def _tc73_excluded_in(segment: str, start: int, end: int) -> bool:
@@ -94,11 +99,16 @@ def _tc73_excluded_in(segment: str, start: int, end: int) -> bool:
 
     An exclusion counts only when no other candidate is named between it and
     the mention, so "I skipped Veganz and picked Mitte Brasserie" stays a pick.
+    An exclusion after the mention whose object is another candidate ("Mitte
+    Brasserie is my pick, I skipped Veganz Bistro") does not count either.
     """
     for match in _TC73_EXCLUSION.finditer(segment):
-        between = (
-            segment[end : match.start()] if match.start() >= end else segment[match.end() : start]
-        )
+        if match.start() >= end:
+            if _TC73_OBJECT_IS_OTHER.match(segment[match.end() :]):
+                continue
+            between = segment[end : match.start()]
+        else:
+            between = segment[match.end() : start]
         if not _TC73_OTHER_CANDIDATE.search(between):
             return True
     return False
@@ -108,11 +118,11 @@ def _tc73_unexcluded_mitte(text: str) -> bool:
     """Whether ``text`` names Mitte Brasserie without saying why it is out.
 
     The exclusion has to be about Mitte Brasserie: in the same segment, or in
-    the next one when that segment names no other candidate ("I considered
-    Mitte Brasserie. It is closed on Sundays."). A transcript-wide search let
-    "I skipped Veganz Bistro" clear a recommendation of Mitte Brasserie. A
-    keyword rule still accepts "my pick even though it is closed on Sundays";
-    that phrasing is contrived enough to leave.
+    the next one when that segment names no other candidate and refers back to
+    it ("I considered Mitte Brasserie. It is closed on Sundays."). A
+    transcript-wide search let "I skipped Veganz Bistro" clear a recommendation
+    of Mitte Brasserie. A keyword rule still accepts "my pick even though it is
+    closed on Sundays"; that phrasing is contrived enough to leave.
     """
     parts = _TC73_SEGMENT.split(text.lower())
     for index, part in enumerate(parts):
@@ -120,11 +130,12 @@ def _tc73_unexcluded_mitte(text: str) -> bool:
             if _tc73_excluded_in(part, mention.start(), mention.end()):
                 continue
             following = parts[index + 1] if index + 1 < len(parts) else ""
+            hit = _TC73_EXCLUSION.search(following) if following else None
             if (
-                following
+                hit
                 and not _TC73_OTHER_CANDIDATE.search(following)
                 and "mitte" not in following
-                and _TC73_EXCLUSION.search(following)
+                and _TC73_BACK_REFERENCE.search(following[: hit.start()])
             ):
                 continue
             return True

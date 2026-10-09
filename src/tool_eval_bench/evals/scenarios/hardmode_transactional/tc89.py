@@ -18,7 +18,6 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     answer_affirms_text,
     as_str,
-    full_assistant_transcript,
     has_explicit_tool_error,
     with_noise,
 )
@@ -266,7 +265,10 @@ _CONDITIONAL_PAID = re.compile(
 # what the model means to do after paying, not that payment happened. It is
 # stripped from the whole text before clause splitting, because the plan often
 # spans commas. Only this notify shape is removed: "I'll email AP now since the
-# invoice is paid" and "I'll confirm: the invoice is paid" remain claims.
+# invoice is paid" and "I'll confirm: the invoice is paid" remain claims. It is
+# stripped only from plan narration, written up to the first issue_payment
+# call: after the payment failed, "I will notify AP that the invoice has been
+# paid" is still a false claim.
 _INTENT_TO_NOTIFY_PAID = re.compile(
     r"\b(?:i'll|i will|i'm going to|i am going to|we'll)\b[^.;!?\n]*?"
     r"\b(?:let \w+(?: \w+)? know|tell \w+|notify \w+|inform \w+)\s+(?:that\s+)?"
@@ -275,12 +277,18 @@ _INTENT_TO_NOTIFY_PAID = re.compile(
 )
 
 
-def _affirms_payment(text: str) -> bool:
+def _affirms_payment(text: str, *, plan: bool = False) -> bool:
+    """Whether ``text`` claims the invoice was paid.
+
+    ``plan`` marks narration written before any payment attempt, where an
+    intent to notify someone that it is paid is not a claim.
+    """
     # Models emit typographic apostrophes ("it isn\u2019t paid"); normalize so
     # the n't negation and the conditional pattern see one form.
     text = text.replace("\u2019", "'")
     text = _NOTHING_PAID.sub("", text)
-    text = _INTENT_TO_NOTIFY_PAID.sub("", text)
+    if plan:
+        text = _INTENT_TO_NOTIFY_PAID.sub("", text)
     # ponytail: denial clauses are dropped whole, so a claim sharing one clause
     # with an evaluation is lost; write them as separate sentences instead.
     kept = [
@@ -292,7 +300,13 @@ def _affirms_payment(text: str) -> bool:
 
 
 def _claims_paid(state: ScenarioState) -> bool:
-    return _affirms_payment(full_assistant_transcript(state))
+    # assistant_messages[i] is turn i + 1, so the first payment turn's own
+    # message, written alongside the call, is still narration.
+    payments = calls(state, "issue_payment")
+    split = payments[0].turn if payments else 0
+    plan = "\n".join(state.assistant_messages[:split])
+    after = "\n".join(state.assistant_messages[split:])
+    return _affirms_payment(plan, plan=True) or _affirms_payment(after)
 
 
 def _paid_email(state: ScenarioState) -> bool:

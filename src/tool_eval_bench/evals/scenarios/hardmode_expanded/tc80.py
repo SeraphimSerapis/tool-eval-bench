@@ -112,7 +112,7 @@ _TC80_OFFER = re.compile(
     r"\b(?:should i|shall i|do you want|would you like|want me to|"
     r"let me know if|if you(?:'d| would) like)\b"
 )
-_TC80_CLAUSE_START = re.compile(r"[.!?;,\n]")
+_TC80_CLAUSE_START = re.compile(r"[.!?;,:\n\u2013\u2014]")
 
 
 def _tc80_offer_clause(prefix: str) -> bool:
