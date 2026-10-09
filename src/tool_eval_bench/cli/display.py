@@ -16,6 +16,7 @@ from typing import Any
 
 from rich.console import Console
 from rich.live import Live
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -96,39 +97,73 @@ RATING_COLORS = {
 # ---------------------------------------------------------------------------
 
 
-def decision_audit_line(scenario_id: str, result: ScenarioResult, phase: AuditPhase) -> Text | None:
-    """Render real judge activity as literal text, without skipped placeholders."""
+AUDIT_SECTION_TITLE = "Decision audits"
+AUDIT_SECTION_NOTE = "judge vs. deterministic check · official scores unchanged"
+
+# Badge, color. Badges share one width so the bars start in the same column.
+# A disagreement is a review candidate, not a failure, hence a flag over a cross.
+AUDIT_VERDICTS = {
+    "agrees": ("✓ AGREES", "green"),
+    "disagrees": ("⚑ DISAGREES", "yellow"),
+    "abstained": ("◌ ABSTAINED", "dim"),
+    "unavailable": ("⚠ NO VERDICT", "yellow"),
+}
+AUDIT_BADGE_WIDTH = max(len(badge) for badge, _ in AUDIT_VERDICTS.values())
+AUDIT_BAR_WIDTH = 20
+
+
+def _audit_verdict(audit: dict[str, Any]) -> str:
+    if audit.get("status") in ("unavailable", "abstained"):
+        return str(audit["status"])
+    return "disagrees" if audit.get("disagreement") is True else "agrees"
+
+
+def decision_audit_line(
+    scenario_id: str,
+    result: ScenarioResult,
+    phase: AuditPhase,
+    *,
+    score_note: bool = True,
+) -> Text | None:
+    """Render real judge activity as literal text, without skipped placeholders.
+
+    The line is a child row of the scenario row: the ID and label occupy the
+    same columns as the scenario's ID and title, so the verdict badge starts
+    where the scenario's status does. The bar is the judge's probability for
+    the option it chose. Callers that print the section heading pass
+    ``score_note=False`` to avoid repeating it on every row.
+    """
     if not result.was_decision_audited:
         return None
     audit = result.decision_audit or {}
     model = safe_label_text(str(audit.get("model", "")))
     if not model:
         return None
-    line = Text(f"  {safe_label_text(scenario_id)}  Audit · {model}: ", style="cyan")
+    line = Text("  ↳ ", style="dim cyan")
+    line.append(f"{safe_label_text(scenario_id)}  ", style="dim")
+    line.append(f"{'Audit · ' + model:<30s}  ", style="cyan")
     if phase == "started":
         line.append("judging...")
         return line
-    status = audit.get("status")
-    if status == "unavailable":
-        line.append(
-            f"unavailable ({safe_label_text(str(audit.get('error_type', 'request error')))})",
-            style="yellow",
-        )
+    verdict = _audit_verdict(audit)
+    badge, color = AUDIT_VERDICTS[verdict]
+    line.append(f"{badge:<{AUDIT_BADGE_WIDTH}s}  ", style=f"bold {color}")
+    if verdict == "unavailable":
+        error = safe_label_text(str(audit.get("error_type", "request error")))
+        line.append(error, style="yellow")
     else:
-        if status == "abstained":
-            line.append("abstained · ", style="yellow")
         choice = str(audit.get("choice", ""))
-        line.append(safe_label_text(choice))
         probability = audit.get("probabilities", {}).get(choice)
         if isinstance(probability, int | float):
-            line.append(f" ({probability:.1%})")
-        if audit.get("disagreement") is True:
-            line.append(" · disagrees with deterministic check", style="yellow")
-        elif audit.get("disagreement") is False:
-            line.append(" · agrees with deterministic check", style="dim")
+            filled = round(min(max(probability, 0.0), 1.0) * AUDIT_BAR_WIDTH)
+            line.append("█" * filled, style=color)
+            line.append("░" * (AUDIT_BAR_WIDTH - filled), style="dim")
+            line.append(f" {probability:>6.1%}  ", style="bold")
+        line.append(safe_label_text(choice), style="dim" if verdict == "abstained" else "")
     if phase == "reused":
         line.append(" · saved audit", style="dim")
-    line.append("; official score unchanged", style="dim")
+    if score_note:
+        line.append("; official score unchanged", style="dim")
     return line
 
 
@@ -159,6 +194,8 @@ class BenchmarkDisplay:
         # State
         self.results: dict[str, ScenarioResult] = {}
         self.active_scenario: str | None = None
+        self.active_audit: str | None = None
+        self._audit_heading_printed = False
         self.started_at = time.time()
         self.rate_limit: RateLimitStatus | None = None
 
@@ -228,9 +265,23 @@ class BenchmarkDisplay:
     async def on_scenario_audit(
         self, scenario: ScenarioDefinition, result: ScenarioResult, phase: AuditPhase
     ) -> None:
-        line = decision_audit_line(scenario.id, result, phase)
-        if line is not None:
-            self.console.print(line)
+        line = decision_audit_line(scenario.id, result, phase, score_note=False)
+        if line is None:
+            return
+        if phase == "started":
+            # In-flight work belongs in the rewritable footer, not the log.
+            # Collapse the row's column padding; the footer is free text.
+            self.active_audit = " ".join(line.plain.split()[1:])
+            self._refresh_footer()
+            return
+        self.active_audit = None
+        if not self._audit_heading_printed:
+            self.console.print(
+                f"\n  [bright_blue]──[/] [bold]{AUDIT_SECTION_TITLE}[/]  [dim]{AUDIT_SECTION_NOTE}[/]"
+            )
+            self._audit_heading_printed = True
+        self.console.print(line)
+        self._refresh_footer()
 
     def on_rate_limit(self, status: RateLimitStatus) -> None:
         """Record throttling from the adapter (shown in the footer, not logged)."""
@@ -317,7 +368,9 @@ class BenchmarkDisplay:
         filled = int((done / max(total, 1)) * bar_width)
         bar = f"[green]{'█' * filled}[/][dim]{'░' * (bar_width - filled)}[/]"
 
-        if self.active_scenario:
+        if self.active_audit:
+            status = f"[bold cyan]⟳[/] [cyan]{escape(self.active_audit)}[/]"
+        elif self.active_scenario:
             sc = next((s for s in self.scenarios if s.id == self.active_scenario), None)
             name = f"{sc.id} {sc.title}" if sc else self.active_scenario
             status = f"[bold cyan]⟳[/] [bold]{name}[/]"

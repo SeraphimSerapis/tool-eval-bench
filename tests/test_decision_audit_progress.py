@@ -62,22 +62,82 @@ async def test_started_and_completed_updates_show_judge_and_disagreement():
     display = BenchmarkDisplay("benchmark", "unknown", "http://benchmark")
     display.console = Console(file=StringIO(), width=200, no_color=True)
     adapter = _adapter()
+    footers = []
 
     async def progress(phase):
         assert adapter.decide.await_count == (0 if phase == "started" else 1)
         await display.on_scenario_audit(SCENARIO, result, phase)
+        footers.append(display._build_footer().plain)
 
     await run_decision_audit(
         adapter, result.decision_audit, config=CONFIG, base_url=JUDGE_URL, on_progress=progress
     )
     output = display.console.file.getvalue()
-    assert output.count("TC-89") == 2
-    assert "clef-flash" in output
-    assert "judging" in output
-    assert "no_payment_claim (96.0%)" in output
-    assert "disagrees" in output
-    assert "official score unchanged" in output
+    # In-flight work is footer-only; the log keeps the verdict.
+    assert "TC-89 Audit · clef-flash judging..." in footers[0]
+    assert "judging" not in footers[1]
+    assert "judging" not in output
+    assert output.count("TC-89") == 1
+    assert output.count("official scores unchanged") == 1
+    assert "⚑ DISAGREES" in output
+    assert "███████████████████░  96.0%  no_payment_claim" in output
     assert result.points == 0
+
+
+async def test_audit_row_aligns_with_scenario_row_and_heading_prints_once():
+    display = BenchmarkDisplay("benchmark", "unknown", "http://benchmark")
+    display.console = Console(file=StringIO(), width=200, no_color=True)
+    # TC-89's own title overflows the 30-column field, so use a title that fits.
+    reference = SCENARIOS["TC-01"]
+    scenario_row = display.console.render_str(
+        display._format_result_line(reference, ScenarioResult("TC-01", ScenarioStatus.FAIL, 0, "x"))
+    ).plain
+    first, second = _captured(), _captured()
+    for result in (first, second):
+        await run_decision_audit(
+            _adapter(), result.decision_audit, config=CONFIG, base_url=JUDGE_URL
+        )
+        await display.on_scenario_audit(SCENARIO, result, "completed")
+    lines = display.console.file.getvalue().splitlines()
+    rows = [line for line in lines if "TC-89" in line]
+    assert len(rows) == 2
+    assert sum("Decision audits" in line for line in lines) == 1
+    assert rows[0].index("TC-89") == scenario_row.index("TC-01")
+    assert rows[0].index("⚑") == scenario_row.index("❌"), "badge starts in the status column"
+
+
+def _completed(choice, probability, **fields):
+    result = ScenarioResult("TC-89", ScenarioStatus.FAIL, 0, "x")
+    result.decision_audit = {
+        "model": "clef-flash",
+        "request_started": True,
+        "status": "completed",
+        "choice": choice,
+        "probabilities": {choice: probability},
+        "disagreement": False,
+        **fields,
+    }
+    return decision_audit_line("TC-89", result, "completed", score_note=False).plain
+
+
+@pytest.mark.parametrize(
+    ("probability", "filled"),
+    [(0.0, 0), (0.024, 0), (0.026, 1), (0.5, 10), (1.0, 20), (1.7, 20), (-0.3, 0)],
+)
+def test_confidence_bar_is_proportional_and_clamped(probability, filled):
+    line = _completed("x", probability)
+    assert line.count("█") == filled
+    assert line.count("█") + line.count("░") == 20
+
+
+def test_bars_start_in_one_column_across_verdicts():
+    agrees = _completed("x", 0.5)
+    disagrees = _completed("x", 0.5, disagreement=True)
+    abstained = _completed("unclear", 0.5, status="abstained", disagreement=None)
+    assert "✓ AGREES" in agrees
+    assert "⚑ DISAGREES" in disagrees
+    assert "◌ ABSTAINED" in abstained
+    assert agrees.index("█") == disagrees.index("█") == abstained.index("█")
 
 
 @pytest.mark.parametrize("text", ["", "x" * MAX_AUDIT_REQUEST_BYTES])
@@ -119,9 +179,11 @@ async def test_abstention_and_plain_output_show_the_actual_model(capsys):
         on_progress=progress,
     )
     output = capsys.readouterr().out
-    assert "Audit · clef-flash: judging..." in output
-    assert "abstained · unclear (96.0%)" in output
-    assert "disagrees" not in output
+    assert "↳ TC-89  Audit · clef-flash" in output
+    assert "judging..." in output
+    assert "◌ ABSTAINED" in output
+    assert "DISAGREES" not in output
+    assert "96.0%  unclear" in output
     assert "official score unchanged" in output
 
 
@@ -149,7 +211,8 @@ async def test_failed_requests_emit_jsonl_results_without_raw_evidence(capsys):
     assert "input" not in messages[1]
     assert "secret" not in captured.err
     line = decision_audit_line("TC-89", result, "completed").plain
-    assert "clef-flash: unavailable (RuntimeError)" in line
+    assert "Audit · clef-flash" in line
+    assert line.rstrip().endswith("⚠ NO VERDICT  RuntimeError; official score unchanged")
     assert "official score unchanged" in line
 
 
@@ -188,7 +251,7 @@ async def test_saved_successful_audit_is_shown_without_a_new_request(capsys):
     adapter.decide.assert_awaited_once()
     captured = capsys.readouterr()
     assert "saved audit" in captured.out
-    assert "agrees with deterministic check" in captured.out
+    assert "✓ AGREES" in captured.out
     assert "judging" not in captured.out
     assert json.loads(captured.err)["reused"] is True
 

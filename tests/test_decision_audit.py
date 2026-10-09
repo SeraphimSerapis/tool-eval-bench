@@ -794,9 +794,11 @@ def test_terminal_modes_show_actual_judge_activity(harness, monkeypatch, capsys,
         args,
     )
     output = console.file.getvalue() + capsys.readouterr().out
-    assert "TC-89  Audit · clef-flash: judging..." in output
-    assert "no_payment_claim (96.0%)" in output
-    assert "official score unchanged" in output
+    assert "↳ TC-89  Audit · clef-flash" in output
+    # Live mode shows in-flight judging only in the transient footer.
+    assert ("judging..." in output) is (mode == "plain")
+    assert "96.0%  no_payment_claim" in output
+    assert "unchanged" in output
     assert len(harness.requests) == 1
 
 
