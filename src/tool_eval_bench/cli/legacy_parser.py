@@ -246,7 +246,7 @@ def _make_parser() -> argparse.ArgumentParser:
     run_ctrl.add_argument(
         "--no-warmup",
         action="store_true",
-        help="Skip the tool-eval-bench warm-up request (llama-benchy keeps its own warm-up)",
+        help="Skip our warm-up request; llama-benchy keeps its own",
     )
     run_ctrl.add_argument(
         "--no-preflight",
