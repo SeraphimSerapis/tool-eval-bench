@@ -8,12 +8,14 @@ Builds a RunContext with three tiers of metadata:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import platform
 import re
 import socket
 import subprocess
+import tomllib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -98,8 +100,15 @@ def _git_sha() -> str | None:
 
     A ``-dirty`` suffix is included when the working tree has uncommitted
     changes, because such a run is not reproducible from the SHA alone.
+
+    Being inside *a* work tree is not enough: a wheel installed into a
+    gitignored ``.venv`` of some other project sits inside that project's work
+    tree too. The work tree's top level must be the checkout that holds this
+    package under ``src/``, and its ``pyproject.toml`` must name this project.
     """
     package_root = Path(__file__).resolve().parent.parent
+    # <checkout>/src/tool_eval_bench -> <checkout>
+    source_root = package_root.parent.parent
 
     def _git(*args: str) -> str | None:
         try:
@@ -115,12 +124,28 @@ def _git_sha() -> str | None:
     if _git("rev-parse", "--is-inside-work-tree") != "true":
         logger.debug("Package at %s is not a git checkout", package_root)
         return None
+    toplevel = _git("rev-parse", "--show-toplevel")
+    if not toplevel or not _is_project_checkout(Path(toplevel), source_root):
+        logger.debug("Package at %s is not tracked by its own checkout", package_root)
+        return None
     sha = _git("rev-parse", "--short", "HEAD")
     if not sha:
         return None
     if _git("status", "--porcelain"):
         return f"{sha}-dirty"
     return sha
+
+
+def _is_project_checkout(toplevel: Path, source_root: Path) -> bool:
+    """Return whether *toplevel* is *source_root* and holds this project's pyproject."""
+    try:
+        if not os.path.samefile(toplevel, source_root):
+            return False
+        project = tomllib.loads((source_root / "pyproject.toml").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return False
+    table = project.get("project")
+    return isinstance(table, dict) and table.get("name") == "tool-eval-bench"
 
 
 def _tool_version() -> str:
@@ -196,11 +221,15 @@ async def _probe_get(
         return None
     resp = None
     try:
-        resp = await session.client.get(url, headers=headers)
-    except (httpx.ConnectError, httpx.ConnectTimeout, OSError) as exc:
+        # httpx's timeout bounds each read, not the response: a server that
+        # sends headers and then trickles its body would never trip it.
+        async with asyncio.timeout(_PROBE_TIMEOUT):
+            resp = await session.client.get(url, headers=headers)
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         session.unreachable = True
         logger.debug("%s probe failed, endpoint unreachable: %s", what, exc)
-    except httpx.TimeoutException as exc:
+    # Before OSError, which the builtin TimeoutError subclasses.
+    except (httpx.TimeoutException, TimeoutError) as exc:
         session.consecutive_timeouts += 1
         logger.debug("%s probe timed out: %r", what, exc)
         if session.consecutive_timeouts >= _TIMEOUTS_BEFORE_UNREACHABLE:
@@ -214,6 +243,9 @@ async def _probe_get(
                 _PROBE_TIMEOUT,
                 session.purpose,
             )
+    except OSError as exc:
+        session.unreachable = True
+        logger.debug("%s probe failed, endpoint unreachable: %s", what, exc)
     except httpx.HTTPError as exc:
         logger.debug("%s probe failed: %s", what, exc)
     else:
@@ -246,13 +278,34 @@ def _auth_headers(api_key: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
 
+def _listing_entry(data: list[Any], model: str | None) -> dict[str, Any] | None:
+    """Return the ``/v1/models`` entry that describes *model*, or None.
+
+    Multi-model servers (llama-swap, LiteLLM, Ollama, vLLM with LoRA modules)
+    list several entries in an order that says nothing about the model under
+    test, so the entry must match by ``id``. A single entry is trusted even when
+    its id differs, because llama.cpp lists its one model under a file path
+    rather than the name the client sends. Several entries and no match leave
+    the facts unknown rather than borrowed from another model.
+    """
+    entries = [entry for entry in data if isinstance(entry, dict)]
+    if model is not None:
+        match = next((entry for entry in entries if entry.get("id") == model), None)
+        if match is not None:
+            return match
+    if len(data) == 1 and entries:
+        return entries[0]
+    return None
+
+
 async def _probe_models(
     base_url: str,
     api_key: str | None,
     *,
+    model: str | None = None,
     session: _ProbeSession | None = None,
 ) -> dict[str, Any]:
-    """Probe /v1/models for model metadata."""
+    """Probe /v1/models for the metadata of *model*; see ``_listing_entry``."""
     probe: dict[str, Any] = {}
     async with _probe_session(session) as active:
         resp = await _probe_get(
@@ -270,13 +323,17 @@ async def _probe_models(
         probe["engine_name"] = identity[1]
     data = body.get("data") if isinstance(body, dict) else None
     if isinstance(data, list) and data:
+        # owned_by declares the engine (domain/engines.py), not the model, so
+        # it keeps coming from the first entry.
         first = data[0] if isinstance(data[0], dict) else {}
-        probe["server_model_id"] = first.get("id")
-        probe["server_model_root"] = first.get("root")
         probe["owned_by"] = first.get("owned_by")
-        # vLLM exposes max_model_len in model metadata
-        if "max_model_len" in first:
-            probe["max_model_len"] = first["max_model_len"]
+        entry = _listing_entry(data, model)
+        if entry is not None:
+            probe["server_model_id"] = entry.get("id")
+            probe["server_model_root"] = entry.get("root")
+            # vLLM exposes max_model_len in model metadata
+            if "max_model_len" in entry:
+                probe["max_model_len"] = entry["max_model_len"]
     return probe
 
 
@@ -775,11 +832,14 @@ async def _probe_engine(
     base_url: str,
     api_key: str | None,
     backend: str,
+    *,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Run the engine probes for *backend* and merge results. Best-effort.
 
     Every probe shares one connection pool, and an endpoint that stops
     answering ends the sequence rather than costing a timeout per probe.
+    *model* selects which ``/v1/models`` entry describes the run.
     """
     result: dict[str, Any] = {}
     profile = engine_profile(backend)
@@ -792,7 +852,7 @@ async def _probe_engine(
 
     async with _probe_session(None, "engine metadata") as active:
         # Always probe /v1/models (works for all self-hosted backends)
-        result.update(await _probe_models(base_url, api_key, session=active))
+        result.update(await _probe_models(base_url, api_key, model=model, session=active))
 
         identified_name: str | None = None
         if str(result.get("owned_by", "")).lower() == TENSORFOLD.declared_name("owned_by"):
@@ -888,7 +948,7 @@ async def collect_run_context(
     engine_info: dict[str, Any] = {}
     if probe_engine:
         try:
-            engine_info = await _probe_engine(base_url, api_key, backend)
+            engine_info = await _probe_engine(base_url, api_key, backend, model=model)
         except Exception as exc:
             logger.warning("Engine probe failed: %s", exc)
 
@@ -953,5 +1013,5 @@ async def collect_run_metadata(config: BenchmarkConfig) -> dict[str, Any]:
             # any credentials embedded in the URL's userinfo.
             "base_url": _redact(config.base_url),
         },
-        "backend_probe": await _probe_models(config.base_url, config.api_key),
+        "backend_probe": await _probe_models(config.base_url, config.api_key, model=config.model),
     }

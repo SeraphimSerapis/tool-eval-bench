@@ -133,12 +133,12 @@ different helpers under the same name.
 Registries, all built by `evals/scenarios/__init__.py`:
 - `SCENARIOS` — core 15 (used by `--short`)
 - `ALL_SCENARIOS` — full 69
-- `ALL_SCENARIOS_WITH_HARDMODE` — full 88
+- `ALL_SCENARIOS_WITH_HARDMODE` — full 92
 
 The CLI's public scenario selection follows these rules:
 
 - The default pool is the standard 69 scenarios.
-- `--hardmode` adds all 19 Category P scenarios. `--hardmode-only` selects
+- `--hardmode` adds all 23 Category P scenarios. `--hardmode-only` selects
   Category P alone.
 - Explicit IDs resolve against all 92 public scenarios, so
   `--scenarios TC-85` selects a Hard Mode scenario without `--hardmode`.
@@ -157,7 +157,7 @@ single call, a two-call chain, and restraint.
 
 This exists for [held-out packs](scenario-packs.md), where a third party needs
 private scenarios without shipping executable Python. It is not a migration
-path for the 88 public scenarios: the subset matches tool calls positionally
+path for the 92 public scenarios: the subset matches tool calls positionally
 and cannot inspect tool results, while 77% of the Python evaluators read the
 model's free text and 33% read what a tool returned. `answer_contains` reaches
 the PARTIAL tier, which is the one gap worth closing; the rest of the

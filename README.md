@@ -14,7 +14,7 @@ OpenAI-compatible `/v1/chat/completions` endpoints, scores each as pass, partial
 or fail, and writes a full conversation trace for every one. Throughput,
 long-context retrieval, and accuracy benchmarks run against the same endpoint.
 
-![tool-eval-bench benchmark output](docs/images/benchmark-output.png)
+![tool-eval-bench benchmark output](https://raw.githubusercontent.com/SeraphimSerapis/tool-eval-bench/main/docs/images/benchmark-output.png)
 
 ## Quickstart
 
@@ -27,8 +27,8 @@ uv tool install git+https://github.com/SeraphimSerapis/tool-eval-bench.git
 uv tool install 'tool-eval-bench[perf] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'
 ```
 
-Also available via [Docker](docs/docker.md) if you would rather not have a local
-Python, or as a [development checkout](CONTRIBUTING.md#development-setup).
+Also available via [Docker](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/docker.md) if you would rather not have a local
+Python, or as a [development checkout](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/CONTRIBUTING.md#development-setup).
 
 ### Run it
 
@@ -57,7 +57,7 @@ existing OpenAI-compatible adapter. Its default port is already scanned:
 tool-eval-bench run --short --base-url http://127.0.0.1:8080/v1 --seed 42
 ```
 
-See [TensorFold compatibility](docs/backends.md#tensorfold) for deployment
+See [TensorFold compatibility](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/backends.md#tensorfold) for deployment
 metadata limits, structured-output setup, and speculative metrics.
 
 Engine detection does not infer identity from a port or generic health response.
@@ -71,7 +71,7 @@ use the `unknown` backend label rather than being called vLLM. The OpenAI-compat
 request format is unchanged; `--backend` still pins the reporting label.
 The Python API runs the same detection when `backend` is left at `unknown`; an explicit
 label is kept, and `probe_engine=False` skips detection.
-See [backend identification](docs/backends.md#backend-identification).
+See [backend identification](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/backends.md#backend-identification).
 
 ### Exercise controlled fixture variants
 
@@ -90,7 +90,7 @@ Reports include paired small/crowded toolset deltas when both scenarios ran.
 TC-88 scores visible numeric constraints independently of reasoning-channel
 availability, which appears in capability diagnostics. Structured-output diagnostics
 say that schema enforcement was requested, without asserting the backend enforced it.
-See [methodology](docs/methodology.md#controlled-fixture-variants) for coverage and limits.
+See [methodology](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/methodology.md#controlled-fixture-variants) for coverage and limits.
 
 ### Read your report
 
@@ -177,21 +177,21 @@ anthropic` pins it for a gateway root that serves several formats.
 
 | | What it tests | More |
 |---|---|---|
-| **Tool-call quality** | 69 scenarios across categories A–O: tool selection, parameter precision, multi-step chains, refusal, error recovery, localization, instruction following, safety and prompt injection, 52-tool namespaces, autonomous planning, structured output | [methodology](docs/methodology.md) |
-| **Hard Mode** | 23 opt-in adversarial, stateful, and transactional scenarios for models that already score well, broken down by capability in reports | [hard-mode](docs/hard-mode.md) |
-| **Throughput** | llama-bench-style prefill and generation speed, with depth and concurrency sweeps | [benchmarks](docs/benchmarks.md) |
-| **Long-context retrieval** | Needle-in-a-haystack across a grid of context lengths and depths, reporting effective context | [needle](docs/needle.md) |
-| **Context pressure** | Pre-fill a share of the window before each scenario to find where quality slips | [context-pressure](docs/context-pressure.md) |
-| **Speculative decoding** | Acceptance rate, effective tokens per second, speedup, plus a live monitor | [speculative-decoding](docs/speculative-decoding.md) |
-| **Accuracy** | GSM8K, MMLU, and IFEval through the same adapter | [benchmarks](docs/benchmarks.md) |
-| **Decision models** | Single-pass option scoring on llama.cpp `/v1/systemone` against the Typed Decisions test split: accuracy, KL and Brier against soft gold distributions, and calibration, plus a live canary monitor | [decision-models](docs/decision-models.md) |
+| **Tool-call quality** | 69 scenarios across categories A–O: tool selection, parameter precision, multi-step chains, refusal, error recovery, localization, instruction following, safety and prompt injection, 52-tool namespaces, autonomous planning, structured output | [methodology](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/methodology.md) |
+| **Hard Mode** | 23 opt-in adversarial, stateful, and transactional scenarios for models that already score well, broken down by capability in reports | [hard-mode](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/hard-mode.md) |
+| **Throughput** | llama-bench-style prefill and generation speed, with depth and concurrency sweeps | [benchmarks](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/benchmarks.md) |
+| **Long-context retrieval** | Needle-in-a-haystack across a grid of context lengths and depths, reporting effective context | [needle](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/needle.md) |
+| **Context pressure** | Pre-fill a share of the window before each scenario to find where quality slips | [context-pressure](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/context-pressure.md) |
+| **Speculative decoding** | Acceptance rate, effective tokens per second, speedup, plus a live monitor | [speculative-decoding](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/speculative-decoding.md) |
+| **Accuracy** | GSM8K, MMLU, and IFEval through the same adapter | [benchmarks](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/benchmarks.md) |
+| **Decision models** | Single-pass option scoring on llama.cpp `/v1/systemone` against the Typed Decisions test split: accuracy, KL and Brier against soft gold distributions, and calibration, plus a live canary monitor | [decision-models](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/decision-models.md) |
 
 TC-74 accepts confirmation ranges such as `14:00–14:45` and `2:00–2:45 PM` for
 its authorized 2pm, 45-minute event. Stated start and end times must match;
 incorrect 12-hour times are rejected just like incorrect 24-hour times.
 
 An asterisk on a prefill rate marks an estimate from time to first content token.
-The [throughput guide](docs/benchmarks.md) explains when that estimate is used.
+The [throughput guide](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/benchmarks.md) explains when that estimate is used.
 
 Mock tool responses carry realistic payload noise — extra metadata, timestamps,
 nested objects — so a model has to extract the right field from a response
@@ -200,7 +200,7 @@ shaped like a real API's, not a hand-trimmed one.
 > **Scope.** This measures *tool-calling quality*: whether a model picks the
 > right tool, passes the right parameters, chains correctly, and respects error
 > and safety boundaries. It is not a full agentic system benchmark. See
-> [related work](docs/related-work.md) for how it compares to BFCL, PinchBench,
+> [related work](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/related-work.md) for how it compares to BFCL, PinchBench,
 > and Claw-Eval.
 
 ### Scoring
@@ -227,7 +227,7 @@ not carry that attribution across intervening text or another company heading.
 Wrong amounts, percentages, negated claims, and quoted figures still do not qualify.
 
 Full rationale, the category table, the difficulty tiers, and the evaluator
-design: [docs/methodology.md](docs/methodology.md).
+design: [docs/methodology.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/methodology.md).
 
 ## Commands
 
@@ -267,7 +267,7 @@ tool-eval-bench run --label "nightly qwen3 2026-08" --trials 3
 ```
 
 `tool-eval-bench COMMAND --help` lists a command's options; every flag and exit
-code is in [docs/cli-reference.md](docs/cli-reference.md). Flat invocations
+code is in [docs/cli-reference.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/cli-reference.md). Flat invocations
 (`tool-eval-bench --short`, `--history`) remain supported.
 
 Scenario IDs passed to `--scenarios` resolve against all 92, so `--scenarios
@@ -278,7 +278,7 @@ nothing, such as `--categories P` without `--hardmode`.
 
 Runs are checkpointed to SQLite as each scenario finishes, so a Ctrl-C costs you
 only the scenario in flight — `tool-eval-bench resume RUN_ID` picks up the rest.
-See [docs/artifacts.md](docs/artifacts.md).
+See [docs/artifacts.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/artifacts.md).
 
 `--system-prompt TEXT` (or `--system-prompt-file PATH`) replaces the built-in
 "helpful assistant" system prompt for every scenario in a run — useful for
@@ -288,7 +288,7 @@ stays authoritative, so relative-time scenarios keep working whatever the prompt
 says about today. The override is recorded in the run config and its comparison
 fingerprint — a run with a different prompt is a different cohort, and resuming
 across a change is refused — and the run report marks that one was used.
-[`examples/system-prompt-function.txt`](examples/system-prompt-function.txt) is a
+[`examples/system-prompt-function.txt`](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/examples/system-prompt-function.txt) is a
 minimal override that constrains the model to verified output.
 
 ### Optional answer audits
@@ -322,7 +322,7 @@ The benchmark model's credentials, headers, and reasoning are not forwarded.
 Auditing is off unless both judge connection flags are supplied. Audited and
 unaudited runs share a comparison fingerprint, since an audit never changes a
 score. Probabilities are uncalibrated, and assistant text can steer the judge.
-See [answer audit limits and API configuration](docs/decision-models.md#answer-audits).
+See [answer audit limits and API configuration](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/decision-models.md#answer-audits).
 
 ## Programmatic API
 
@@ -346,7 +346,7 @@ The call returns a versioned envelope with `final_score`, `rating`,
 `safety_warnings`, `deployability`, and `total_scenarios`, alongside the full
 per-scenario detail. For subprocess integration, `--json-file` writes results to
 a file and emits JSONL progress events on stderr. Every parameter and returned
-field: [docs/api.md](docs/api.md).
+field: [docs/api.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/api.md).
 
 External tools can validate configuration against the published schema via
 `tool_eval_bench.schema.get_schema()`.
@@ -358,23 +358,23 @@ remain supported.
 
 ## Documentation
 
-- **Getting results:** [CLI reference](docs/cli-reference.md) ·
-  [troubleshooting](docs/troubleshooting.md) ·
-  [run IDs, artifacts, and labels](docs/artifacts.md)
-- **The benchmarks:** [methodology](docs/methodology.md) ·
-  [hard mode](docs/hard-mode.md) · [needle](docs/needle.md) ·
-  [decision models](docs/decision-models.md) ·
-  [context pressure](docs/context-pressure.md) ·
-  [speculative decoding](docs/speculative-decoding.md) ·
-  [accuracy and throughput](docs/benchmarks.md) ·
-  [held-out packs](docs/scenario-packs.md)
-- **Running it elsewhere:** [backends](docs/backends.md) · [Docker](docs/docker.md)
-- **Building on it:** [Python API](docs/api.md) · [architecture](docs/architecture.md)
-- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) ·
-  [add a scenario](docs/adding-a-scenario.md) ·
-  [add a plugin](docs/adding-a-plugin.md) ·
-  [add a backend adapter](docs/adding-an-adapter.md)
-- **Context:** [related work](docs/related-work.md) · [releasing](RELEASING.md)
+- **Getting results:** [CLI reference](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/cli-reference.md) ·
+  [troubleshooting](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/troubleshooting.md) ·
+  [run IDs, artifacts, and labels](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/artifacts.md)
+- **The benchmarks:** [methodology](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/methodology.md) ·
+  [hard mode](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/hard-mode.md) · [needle](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/needle.md) ·
+  [decision models](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/decision-models.md) ·
+  [context pressure](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/context-pressure.md) ·
+  [speculative decoding](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/speculative-decoding.md) ·
+  [accuracy and throughput](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/benchmarks.md) ·
+  [held-out packs](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/scenario-packs.md)
+- **Running it elsewhere:** [backends](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/backends.md) · [Docker](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/docker.md)
+- **Building on it:** [Python API](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/api.md) · [architecture](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/architecture.md)
+- **Contributing:** [CONTRIBUTING.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/CONTRIBUTING.md) ·
+  [add a scenario](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/adding-a-scenario.md) ·
+  [add a plugin](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/adding-a-plugin.md) ·
+  [add a backend adapter](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/adding-an-adapter.md)
+- **Context:** [related work](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/related-work.md) · [releasing](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/RELEASING.md)
 
 ## Contributing
 
@@ -391,15 +391,15 @@ env -u FORCE_COLOR .venv/bin/python -m pytest tests/ \
 ```
 
 Setup, the full quality bar, and the pull request checklist are in
-[CONTRIBUTING.md](CONTRIBUTING.md). `CHANGELOG.md` is generated — record changes
-as fragments under [`changelog.d/`](changelog.d/README.md).
+[CONTRIBUTING.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/CONTRIBUTING.md). `CHANGELOG.md` is generated — record changes
+as fragments under [`changelog.d/`](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/changelog.d/README.md).
 
 ## Credits
 
 Scenario methodology adapted from
 [ToolCall-15](https://github.com/stevibe/ToolCall-15) by
 [stevibe](https://x.com/stevibe) (MIT License). Licensed under the
-[MIT License](LICENSE).
+[MIT License](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/LICENSE).
 
 ### Third-party data
 
@@ -409,6 +409,6 @@ published by the LocalLLaMA organization on Hugging Face under the Apache Licens
 2.0, pinned to revision `e039ebffcc280174dd354227424fb2b249f191de`. The rows are
 unmodified apart from format conversion. The dataset's license and a notice
 describing the changes sit next to the data in
-[`src/tool_eval_bench/plugins/decision/vendor/typed_decisions/`](src/tool_eval_bench/plugins/decision/vendor/typed_decisions/NOTICE)
+[`src/tool_eval_bench/plugins/decision/vendor/typed_decisions/`](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/src/tool_eval_bench/plugins/decision/vendor/typed_decisions/NOTICE)
 and ship in every build. This project's MIT license does not cover that data. See
-[decision models](docs/decision-models.md#third-party-data-typed-decisions).
+[decision models](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/decision-models.md#third-party-data-typed-decisions).

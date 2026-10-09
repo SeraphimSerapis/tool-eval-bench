@@ -87,10 +87,10 @@ Where `max_points = num_scenarios_in_category × 2`.
 | M | Autonomous Planning | 3 | Goal decomposition, open-ended research, conditional workflows |
 | N | Creative Composition | 3 | Cross-tool synthesis, data pipelines, notification workflows |
 | O | Structured Output | 6 | JSON schema compliance, tool→schema chaining, nested schemas, enum constraints, violation resistance |
-| P | Hard Mode _(opt-in)_ | 19 | Ceiling-breaking relevance, parallel-call, stateful, transactional, adversarial, format-sensitive, recovery, pagination, and reasoning-continuity scenarios |
+| P | Hard Mode _(opt-in)_ | 23 | Ceiling-breaking relevance, parallel-call, stateful, transactional, adversarial, format-sensitive, recovery, pagination, and reasoning-continuity scenarios |
 
 > **Hard Mode (Category P)** is excluded from the standard benchmark by default.
-> Enable with `--hardmode` to include all 19 scenarios, raising the total from 69 to 88.
+> Enable with `--hardmode` to include all 23 scenarios, raising the total from 69 to 92.
 > Use `--hardmode-only` for Category P alone. Explicit public IDs also resolve against the full
 > registry, so `--scenarios TC-85` selects that Hard Mode scenario without `--hardmode`. Explicit
 > IDs take precedence over `--short` and `--categories`; `--hardmode-only` remains restrictive.
@@ -100,8 +100,8 @@ Where `max_points = num_scenarios_in_category × 2`.
 
 ### Hard Mode scenarios
 
-Category P contains 19 deterministic scenarios. The registry and evaluators are split across
-`scenarios/hardmode/` (TC-70 to TC-74), `scenarios/hardmode_expanded/` (TC-75 to TC-84), and
+Category P contains 23 deterministic scenarios. The registry and evaluators are split across
+`scenarios/hardmode/` (TC-70 to TC-74), `scenarios/hardmode_expanded/` (TC-75 to TC-84),
 `scenarios/hardmode_transactional/` (TC-85 to TC-89), and `scenarios/hardmode_governance/` (TC-90 to TC-92).
 
 | ID | Scenario | Focus |
@@ -454,7 +454,7 @@ Each evaluator has unit tests covering at minimum:
 
 | File | Purpose |
 |---|---|
-| `tests/test_scenario_runner_contracts.py` | All 88 curated references replayed through production dispatch; empty-work, dependency, and raw-JSON mutations |
+| `tests/test_scenario_runner_contracts.py` | All 92 curated references replayed through production dispatch; empty-work, dependency, and raw-JSON mutations |
 | `tests/test_scenario_variants.py` | Seeded alternate outcomes, stale identifiers, and premature mutations |
 | `tests/test_scenarios.py` | Registry integrity, scoring, safety gating, trial aggregation |
 | `tests/test_evaluator_contract.py` | **Golden-trace contract tests** — PASS/FAIL/PARTIAL fixtures for all 15 base scenarios (TC-01–TC-15), including paraphrased refusals, wrong-order dependency chains, and common malformed argument patterns |
@@ -822,7 +822,7 @@ GSM8K, MMLU, and IFEval download their datasets from HuggingFace on first use
 (the needle benchmark generates its cases and downloads nothing):
 
 1. **Primary:** `datasets` library (direct git repo download, no rate limits).
-   Install with `pip install tool-eval-bench[hf]`.
+   Install the `[hf]` extra (`pip install -e '.[hf]'` in a checkout).
 2. **Fallback:** HuggingFace Datasets Server REST API with exponential backoff,
    `Retry-After` support, and resumable partial cache files.
 

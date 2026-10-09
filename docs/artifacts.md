@@ -38,7 +38,10 @@ Each execution gets a unique ID: `YYYY-MM-DDTHH-MM-SS.ffffffZ_<short_hash>`.
 
 The persisted URL masks its authority and drops query parameters. An opaque
 endpoint identity keeps retries against different deployments separate without
-recording the host or any credentials.
+recording the host or any credentials. Spellings of one base URL that build the
+same requests share an identity: `http://host:8000`, `http://host:8000/` and
+`http://host:8000/v1` are one endpoint. A native Gemini base keeps its API
+version, because a bare Gemini host means `v1beta`.
 
 ## Config fingerprint
 

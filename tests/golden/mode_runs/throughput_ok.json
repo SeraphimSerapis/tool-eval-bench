@@ -8,7 +8,7 @@
       "backend": "vllm",
       "base_url": "http://***:8000/v1",
       "mode": "perf-only",
-      "config_fingerprint": "3eff3a628f4e"
+      "config_fingerprint": "11d23a485784"
     },
     "scores": {
       "samples": 1,

@@ -57,7 +57,8 @@ records no llama.cpp engine metadata.
 
 Probes send `--api-key` as a bearer token, only to URLs on the `--base-url` origin,
 and do not follow redirects. A missing key, a 401, or a malformed body skips that
-endpoint rather than failing the run. Each probe waits 5 s. A refused connection
+endpoint rather than failing the run. Each probe waits at most 5 s in total, even for a
+body that arrives a byte at a time. A refused connection
 ends the remaining probes at once, and so do two timeouts in a row with no answer
 between them, so a server that accepts connections but never replies costs at most
 about 20 s of probing, 10 s for detection and 10 s for engine metadata. A single slow
@@ -192,7 +193,7 @@ empty rather than guessed. Quantization comes from the model name, for example
 
 The recorded server model ID comes from `/v1/model`, which describes the model
 loaded when the run starts and has the same key and loaded-model requirements as
-`/props`. The first `/v1/models` entry is only a fallback: with an admin key, or with
+`/props`. The `/v1/models` entry whose ID matches `--model` is only a fallback: with an admin key, or with
 authentication disabled, that list is the whole model directory, and dummy model
 aliases come first when they are enabled. With TabbyAPI's inline model loading
 enabled, a request for a different model loads that model mid-run, and the recorded
@@ -327,4 +328,4 @@ What the translation does and does not carry:
   400. The adapter drops them on that response and remembers the choice for the
   endpoint, so the benchmark's `temperature=0` costs one extra request per run
   rather than failing it.
-- Throughput sweeps (`--throughput`) and engine metrics remain OpenAI-only.
+- Throughput sweeps (`--perf`, `--perf-only`) and engine metrics remain OpenAI-only.

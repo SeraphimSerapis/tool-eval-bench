@@ -24,9 +24,14 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from tool_eval_bench.adapters.wire_format import detect_wire_format
 from tool_eval_bench.domain.scenarios import ScenarioDefinition
 from tool_eval_bench.utils.fingerprint import comparison_fingerprint
-from tool_eval_bench.utils.urls import endpoint_identity
+from tool_eval_bench.utils.urls import (
+    canonical_endpoint_path,
+    endpoint_identity,
+    legacy_endpoint_identities,
+)
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 
 #: The key :func:`build_run_config` stores the fingerprint under.
@@ -205,6 +210,24 @@ def _judge_mismatch(previous: Any, current: Any) -> str | None:
     return f"decision_judge checks ({'; '.join(changes)})"
 
 
+def _canonical_base_url(url: Any) -> Any:
+    """Canonicalise a stored, redacted base URL the way endpoint identities are."""
+    if not isinstance(url, str):
+        return url
+    return canonical_endpoint_path(url, wire_format=detect_wire_format(url))
+
+
+def _base_url_mismatch(previous: Any, current: Any) -> str | None:
+    """Ignore spellings of one base URL that build the same requests.
+
+    A redacted URL hides the host, so a Gemini URL is canonicalised like an
+    OpenAI one here. ``endpoint_id`` is compared too and keeps those apart.
+    """
+    if _canonical_base_url(previous) == _canonical_base_url(current):
+        return None
+    return "base_url"
+
+
 # Older stored runs predate some always-written keys, so resume validates only
 # the ones a run recorded.
 _LEGACY = ResumeCheck(Absent.SKIP)
@@ -227,17 +250,24 @@ RUN_CONFIG_FIELDS: tuple[ConfigField, ...] = (
         identifies_model=False,
         resume=_LEGACY,
     ),
+    # endpoint_id already tells endpoints apart, and this redacted string keeps
+    # spelling differences (a trailing slash, /v1) that the requests do not.
     ConfigField(
         "base_url",
         lambda i: _redact_url(i.settings.base_url),
         Presence.ALWAYS,
-        Fingerprint.INCLUDE,
+        Fingerprint.EXCLUDE,
         identifies_model=True,
-        resume=_LEGACY,
+        resume=ResumeCheck(Absent.SKIP, describe=_base_url_mismatch),
     ),
+    # The wire format comes from the URL, as auto-detection resolves it. The
+    # settings do not carry --format, so a native Gemini proxy on another host
+    # is canonicalised like an OpenAI endpoint.
     ConfigField(
         "endpoint_id",
-        lambda i: endpoint_identity(i.settings.base_url),
+        lambda i: endpoint_identity(
+            i.settings.base_url, wire_format=detect_wire_format(i.settings.base_url)
+        ),
         Presence.ALWAYS,
         Fingerprint.INCLUDE,
         identifies_model=True,
@@ -459,12 +489,18 @@ def build_run_config(
     return config
 
 
-def resume_mismatches(previous: dict[str, Any], current: dict[str, Any]) -> list[str]:
+def resume_mismatches(
+    previous: dict[str, Any], current: dict[str, Any], *, base_url: str | None = None
+) -> list[str]:
     """Name every scoring condition in which a stored run differs from the current one.
 
     Both arguments are configs from :func:`build_run_config` (``previous`` may
     come from an older version).  Messages follow stored key order.
+    ``base_url`` is the current run's unredacted URL. With it, a run stored
+    before endpoint identities were canonical still resumes under any spelling
+    of the same endpoint.
     """
+    previous = _with_current_endpoint_ids(previous, current, base_url)
     mismatches: list[str] = []
     for field in RUN_CONFIG_FIELDS:
         check = field.resume
@@ -481,3 +517,31 @@ def resume_mismatches(previous: dict[str, Any], current: dict[str, Any]) -> list
         if message is not None:
             mismatches.append(message)
     return mismatches
+
+
+def _with_current_endpoint_ids(
+    previous: dict[str, Any], current: dict[str, Any], base_url: str | None
+) -> dict[str, Any]:
+    """Treat an identity the old algorithm computed for this endpoint as the current one.
+
+    Identities used to keep ``/v1`` in the path. A run started before that
+    changed must still resume under any spelling of the same server, and the
+    stored hash cannot be recomputed, so every legacy identity a spelling of
+    the current URL could have produced is accepted instead. The judge, which
+    speaks the OpenAI format, carries its own URL in its stored config.
+    """
+    updated = dict(previous)
+    stored = previous.get("endpoint_id")
+    if base_url is not None and stored in legacy_endpoint_identities(
+        base_url, wire_format=detect_wire_format(base_url)
+    ):
+        updated["endpoint_id"] = current.get("endpoint_id")
+    old_judge, new_judge = previous.get("decision_judge"), current.get("decision_judge")
+    if (
+        isinstance(old_judge, dict)
+        and isinstance(new_judge, dict)
+        and isinstance(new_judge.get("base_url"), str)
+        and old_judge.get("endpoint_id") in legacy_endpoint_identities(new_judge["base_url"])
+    ):
+        updated["decision_judge"] = {**old_judge, "endpoint_id": new_judge.get("endpoint_id")}
+    return updated

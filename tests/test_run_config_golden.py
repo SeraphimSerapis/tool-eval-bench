@@ -189,7 +189,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "alpha": 0.7,
         "extra_params": None,
         "weight_by_difficulty": False,
-        "config_fingerprint": "fc14bde869b4",
+        "config_fingerprint": "0de29cc2c3a0",
     },
     "seed_date_extra": {
         "model": "m",
@@ -208,7 +208,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "alpha": 0.7,
         "extra_params": {"top_p": 0.9},
         "weight_by_difficulty": False,
-        "config_fingerprint": "fde8fae44039",
+        "config_fingerprint": "b302080119ae",
     },
     "flags": {
         "model": "m",
@@ -227,7 +227,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "alpha": 0.5,
         "extra_params": None,
         "weight_by_difficulty": True,
-        "config_fingerprint": "b1f9fbf0eab7",
+        "config_fingerprint": "962a229a51d2",
     },
     "system_prompt": {
         "model": "m",
@@ -247,7 +247,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "extra_params": None,
         "weight_by_difficulty": False,
         "system_prompt": "Be terse.",
-        "config_fingerprint": "1079af8660fb",
+        "config_fingerprint": "c6faff329d33",
     },
     "empty_system_prompt": {
         "model": "m",
@@ -267,7 +267,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "extra_params": None,
         "weight_by_difficulty": False,
         "system_prompt": "",
-        "config_fingerprint": "819459c4171e",
+        "config_fingerprint": "210bf940dbd1",
     },
     "judge": {
         "model": "m",
@@ -292,7 +292,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
             "model": "judge-model",
             "checks": ["tc89-payment-claim-v1"],
         },
-        "config_fingerprint": "fc14bde869b4",
+        "config_fingerprint": "0de29cc2c3a0",
     },
     "variants": {
         "model": "m",
@@ -312,7 +312,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "extra_params": None,
         "weight_by_difficulty": False,
         "scenario_variants": {"TC-01": {"seed": 0, "variant": "alt-names"}},
-        "config_fingerprint": "65ee65e0ae59",
+        "config_fingerprint": "c6489b51b0dc",
     },
     "pressure": {
         "model": "m",
@@ -337,7 +337,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
             "fill_tokens_target": 15000,
             "context_size": 32768,
         },
-        "config_fingerprint": "2e288611bf7d",
+        "config_fingerprint": "12194949d7a5",
     },
     "empty_pressure": {
         "model": "m",
@@ -356,7 +356,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "alpha": 0.7,
         "extra_params": None,
         "weight_by_difficulty": False,
-        "config_fingerprint": "fc14bde869b4",
+        "config_fingerprint": "0de29cc2c3a0",
     },
     "packs": {
         "model": "m",
@@ -382,7 +382,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
                 "scenario_count": 2,
             }
         ],
-        "config_fingerprint": "5e97561e0357",
+        "config_fingerprint": "646bc325a9ce",
     },
     "empty_packs": {
         "model": "m",
@@ -401,7 +401,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "alpha": 0.7,
         "extra_params": None,
         "weight_by_difficulty": False,
-        "config_fingerprint": "fc14bde869b4",
+        "config_fingerprint": "0de29cc2c3a0",
     },
     "everything": {
         "model": "m",
@@ -441,13 +441,13 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
                 "scenario_count": 2,
             }
         ],
-        "config_fingerprint": "4b5aa6c2508f",
+        "config_fingerprint": "30afdd939a12",
     },
     "credentialed_url": {
         "model": "m",
         "backend": "vllm",
         "base_url": "https://***:8443/v1",
-        "endpoint_id": "endpoint:da1104a7063f",
+        "endpoint_id": "endpoint:c1389f590fe8",
         "temperature": 0.0,
         "timeout_seconds": 120.0,
         "max_turns": 8,
@@ -460,7 +460,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "alpha": 0.7,
         "extra_params": None,
         "weight_by_difficulty": False,
-        "config_fingerprint": "476c2bec907e",
+        "config_fingerprint": "3841a211014f",
     },
     "reversed_order": {
         "model": "m",
@@ -479,7 +479,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "alpha": 0.7,
         "extra_params": None,
         "weight_by_difficulty": False,
-        "config_fingerprint": "fc14bde869b4",
+        "config_fingerprint": "0de29cc2c3a0",
     },
     "deployment_full": {
         "model": "m",
@@ -498,7 +498,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "alpha": 0.7,
         "extra_params": None,
         "weight_by_difficulty": False,
-        "config_fingerprint": "9a3073b8e377",
+        "config_fingerprint": "278d19769922",
     },
     "deployment_partial": {
         "model": "m",
@@ -517,7 +517,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "alpha": 0.7,
         "extra_params": None,
         "weight_by_difficulty": False,
-        "config_fingerprint": "6054623c5bbf",
+        "config_fingerprint": "26375144c37b",
     },
     "git_sha": {
         "model": "m",
@@ -536,7 +536,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
         "alpha": 0.7,
         "extra_params": None,
         "weight_by_difficulty": False,
-        "config_fingerprint": "db57b9781872",
+        "config_fingerprint": "47d9ce198d54",
     },
 }
 
@@ -733,9 +733,9 @@ EXPECTED_COHORTS: dict[str, str] = {
     "everything": "2afd758fb15a",
 }
 EXPECTED_ROWS: list[tuple[str, str, str, int]] = [
-    ("r2", "fc14bde869b4", "78bb227fb58d", 2),
-    ("r3", "2e288611bf7d", "e6443279647b", 1),
-    ("r4", "fc14bde869b4", "78bb227fb58d", 1),
+    ("r2", "0de29cc2c3a0", "78bb227fb58d", 2),
+    ("r3", "12194949d7a5", "e6443279647b", 1),
+    ("r4", "0de29cc2c3a0", "78bb227fb58d", 1),
     ("r5", "0cac0195d776", "78bb227fb58d", 1),
 ]
 

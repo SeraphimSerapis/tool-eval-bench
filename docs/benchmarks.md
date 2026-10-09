@@ -10,7 +10,10 @@ Pluggable accuracy benchmarks evaluate model knowledge and instruction-following
 **Recommended:** Install the `datasets` library for fast, rate-limit-free downloads directly from the HuggingFace git repo:
 
 ```bash
-pip install 'tool-eval-bench[hf]'
+uv tool install 'tool-eval-bench[hf] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'
+
+# or, in a checkout
+pip install -e '.[hf]'
 ```
 
 Without it, the tool falls back to the HuggingFace REST API (which has rate limits and may fail with HTTP 429 on large datasets like MMLU). Downloads are resumable either way — if interrupted, re-running picks up where it stopped.
@@ -49,7 +52,7 @@ tool-eval-bench bench --mmlu --ifeval --gsm8k        # all three after tool-eval
 
 ## Throughput benchmark
 
-Throughput measurement uses [llama-benchy](https://github.com/eugr/llama-benchy) — a dedicated benchmarking tool that provides multi-run statistics with mean ± std, proper latency estimation, and cache-busting. Install with `pip install 'tool-eval-bench[perf]'` or ensure `uvx` is on PATH. Progress is shown via a live Rich progress bar. For authenticated endpoints, the regular `--api-key` value is forwarded to llama-benchy's supported CLI option and redacted from logs. Because llama-benchy 0.4.x does not support environment-based credentials, the key may still be visible to process inspection by other users on the same host while the benchmark is running.
+Throughput measurement uses [llama-benchy](https://github.com/eugr/llama-benchy) — a dedicated benchmarking tool that provides multi-run statistics with mean ± std, proper latency estimation, and cache-busting. Install with `uv tool install 'tool-eval-bench[perf] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'` (or `pip install -e '.[perf]'` in a checkout) or ensure `uvx` is on PATH. Progress is shown via a live Rich progress bar. For authenticated endpoints, the regular `--api-key` value is forwarded to llama-benchy's supported CLI option and redacted from logs. Because llama-benchy 0.4.x does not support environment-based credentials, the key may still be visible to process inspection by other users on the same host while the benchmark is running.
 
 An asterisk on a prefill rate means the first response chunk arrived before the first content token. Older llama-benchy versions can count that early chunk as the end of prefill, so the displayed rate is estimated from end-to-end time to first content token. The numerator follows the benchmark phase: prompt plus depth for a standard run, depth for context load, and prompt for a prefix-cached follow-up. This estimate includes network and queue time; compare it with other estimated rates rather than directly measured prefill rates.
 

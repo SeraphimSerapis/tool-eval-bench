@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlparse, urlsplit
+from collections.abc import Callable
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from tool_eval_bench.domain.redaction import redact_url as redact_url
 from tool_eval_bench.domain.redaction import redact_urls as redact_urls
@@ -133,8 +134,71 @@ def _bearer(api_key: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
 
-def endpoint_identity(url: str) -> str:
-    """Return an opaque, credential-independent endpoint identity."""
+def canonical_endpoint_path(path: str, *, wire_format: str = "openai") -> str:
+    """Reduce a base URL, or just its path, to the root its requests are built from.
+
+    The OpenAI and Anthropic request builders treat ``…``, ``…/`` and ``…/v1``
+    as one base (``_normalize_base``, ``anthropic_base_url``), and the
+    Anthropic one also accepts a pasted ``…/v1/messages``, so those spellings
+    collapse to the root form. A Gemini base keeps its version segment: there a
+    bare host means ``v1beta``, so ``/v1`` is a different API.
+    """
+    trimmed = path.rstrip("/")
+    if wire_format == "gemini":
+        return trimmed
+    if wire_format == "anthropic" and trimmed.endswith("/messages"):
+        trimmed = trimmed[: -len("/messages")]
+    if trimmed.endswith("/v1"):
+        trimmed = trimmed[: -len("/v1")]
+    return trimmed
+
+
+def endpoint_identity(url: str, *, wire_format: str = "openai") -> str:
+    """Return an opaque, credential-independent endpoint identity.
+
+    Every spelling of a base URL that sends requests to the same place gets the
+    same identity; see :func:`canonical_endpoint_path`. ``wire_format`` defaults
+    to the OpenAI format, which is what plugin, mode-run and judge endpoints speak.
+    """
+    return _endpoint_hash(url, lambda path: canonical_endpoint_path(path, wire_format=wire_format))
+
+
+def legacy_endpoint_identity(url: str) -> str:
+    """Return the identity runs stored before endpoint paths were canonical.
+
+    It kept ``/v1`` in the path, so it differs from :func:`endpoint_identity`
+    only for a URL that names it.
+    """
+    return _endpoint_hash(url, lambda path: path.rstrip("/"))
+
+
+def legacy_endpoint_identities(url: str, *, wire_format: str = "openai") -> frozenset[str]:
+    """Every legacy identity a spelling of *url*'s endpoint could have been stored under.
+
+    Resume accepts any of them, because a stored identity is an opaque hash that
+    cannot be recomputed from the stored, redacted URL, and a run started as
+    ``…/v1`` may be resumed as the bare host. A candidate counts only when it is
+    itself a spelling of the same root: ``http://h/v1`` is not one of
+    ``http://h/v1/v1``. A URL ending in ``/messages`` is detected as the
+    Anthropic format whatever the host, so those candidates are checked under
+    that format.
+    """
+    parts = urlsplit(url)
+    root = canonical_endpoint_path(parts.path, wire_format=wire_format)
+    candidates = [
+        (root, wire_format),
+        (f"{root}/v1", wire_format),
+        (f"{root}/messages", "anthropic"),
+        (f"{root}/v1/messages", "anthropic"),
+    ]
+    return frozenset(
+        legacy_endpoint_identity(urlunsplit(parts._replace(path=path)))
+        for path, candidate_format in candidates
+        if canonical_endpoint_path(path, wire_format=candidate_format) == root
+    )
+
+
+def _endpoint_hash(url: str, canonical_path: Callable[[str], str]) -> str:
     parsed = urlsplit(url)
     if not parsed.hostname:
         return "endpoint:invalid"
@@ -149,7 +213,7 @@ def endpoint_identity(url: str) -> str:
             parsed.scheme.lower(),
             parsed.hostname.lower(),
             str(effective_port or ""),
-            parsed.path.rstrip("/") or "/",
+            canonical_path(parsed.path) or "/",
         )
     )
     return f"endpoint:{build_config_fingerprint({'endpoint': canonical})}"

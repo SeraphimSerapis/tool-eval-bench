@@ -230,7 +230,7 @@ def _resume_config_mismatches(
         metadata={},
         scenario_packs=scenario_packs,
     )
-    return resume_mismatches(previous, current)
+    return resume_mismatches(previous, current, base_url=base_url)
 
 
 def _execution_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
