@@ -97,6 +97,11 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > `--skip-tool-eval`), spec-bench stores the failed row, reports `run_failed`,
 > and carries on; otherwise it exits 1. An interrupt or error mid-run stores
 > the cells that finished as a failed run before exiting 1.
+>
+> A cell where only some runs failed keeps its row, averaged over the runs that
+> succeeded. Its stored result carries `failed_runs`, the scores carry the total,
+> the console line says how many failed, and the report names each such cell.
+> These partial failures do not mark the run `failed`.
 
 > **Comparing runs.** The stored config records the workload: `--pp`, `--tg`,
 > `--depth`, the selected prompt types, `--baseline-tgs`, and a SHA-256 of any

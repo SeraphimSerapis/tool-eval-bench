@@ -67,6 +67,7 @@ def test_stored_spec_bench_results_read_back_through_history_and_export(
     assert scores == listed["scores"]
     assert scores["samples"] == 2
     assert scores["failed"] == 1
+    assert scores["failed_runs"] == 0
     assert scores["results"] == [sample.to_result() for sample in ok]
     assert scores["results"][0]["effective_tg_tps"] == ok[0].effective_tg_tps
     # Failed samples are a count only, so their error text never reaches the row.
@@ -99,7 +100,7 @@ def test_every_cell_failing_is_stored_and_reported_as_a_failed_run(
 
     [listed] = run_queries.recent_runs()
     assert listed["status"] == "failed"
-    assert listed["scores"] == {"samples": 0, "failed": 2, "results": []}
+    assert listed["scores"] == {"samples": 0, "failed": 2, "failed_runs": 0, "results": []}
     [report] = (tmp_path / "runs").rglob("*.md")
     text = report.read_text(encoding="utf-8")
     assert "2 of 2 cell(s) failed on every run" in text
@@ -313,6 +314,29 @@ def test_custom_prompt_text_is_hashed_not_stored() -> None:
 
     assert "Translate this" not in json.dumps(config("Translate this"))
     assert config("one")["custom_prompts_sha256"] != config("two")["custom_prompts_sha256"]
+
+
+def test_failed_runs_inside_surviving_cells_are_stored_and_shown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from tool_eval_bench.application import run_queries
+
+    monkeypatch.chdir(tmp_path)
+    ok = _spec_samples("response", 1)
+    short = replace(ok[1], runs=2, failed_runs=1)
+
+    # Partial failures do not fail the run; only a cell with no successful run does.
+    assert _run_spec_bench(monkeypatch, tmp_path / "runs", [ok[0], short]) == (True, None)
+
+    [listed] = run_queries.recent_runs()
+    assert listed["status"] == "completed"
+    scores = listed["scores"]
+    assert scores["failed_runs"] == 1
+    assert [r["failed_runs"] for r in scores["results"]] == [0, 1]
+    [report] = (tmp_path / "runs").rglob("*.md")
+    assert "Some runs failed in 1 cell(s)" in report.read_text(encoding="utf-8")
 
 
 def test_to_result_keeps_derived_metrics_and_drops_per_step_arrays() -> None:
