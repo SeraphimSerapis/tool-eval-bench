@@ -280,6 +280,35 @@ def test_spec_bench_reports_the_saved_run(cli: Cli) -> None:
     assert _run_saved(events)["run_type"] == "spec-bench"
 
 
+def test_spec_bench_failed_cells_end_in_a_run_failed_event(cli: Cli) -> None:
+    """Spec-bench fails the way --perf-only does: saved row, run_failed, exit 1."""
+    from tool_eval_bench.runner import speculative
+    from tool_eval_bench.runner.speculative import SpecDecodeSample
+
+    samples = [SpecDecodeSample(prompt_type="filler", error="HTTP 503")]
+
+    async def fake_run(*args: Any, on_sample: Any, **kwargs: Any) -> list[Any]:
+        for index, sample in enumerate(samples):
+            await on_sample(sample, index, len(samples))
+        return samples
+
+    cli.monkeypatch.setattr(speculative, "run_spec_bench", fake_run)
+
+    outcome = cli.run(
+        *CONNECTION, "--spec-bench", "--depth", "0", "--json", "--output-dir", str(cli.tmp_path)
+    )
+
+    assert outcome.code == 1
+    events, envelope = _contract(outcome.out, outcome.err)
+    assert envelope is None
+    assert _run_saved(events)["status"] == "failed"
+    assert events[-1] == {
+        "event": "error",
+        "error": "run_failed",
+        "message": "Speculative decoding benchmark failed in 1 cell(s).",
+    }
+
+
 def test_pressure_sweep_reports_the_saved_run(cli: Cli) -> None:
     _patch_sweep(cli.monkeypatch)
 

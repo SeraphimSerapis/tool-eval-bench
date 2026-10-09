@@ -11,6 +11,7 @@ from __future__ import annotations
 from rich.table import Table
 from rich.text import Text
 
+from tool_eval_bench.domain.spec_decode import suggested_draft_window, window_utilization
 from tool_eval_bench.runner.spec_live import SpecLiveDelta
 
 # ---------------------------------------------------------------------------
@@ -296,9 +297,9 @@ def _efficiency_insight(delta: SpecLiveDelta) -> Text:
         text.append(" — draft tokens mostly rejected", style="dim")
 
     if win is not None and tau is not None and win > 0:
-        utilization = tau / win
-        if utilization < 0.3:
-            optimal = max(int(tau * 1.5), 2)
+        utilization = window_utilization(tau, win) or 0.0
+        optimal = suggested_draft_window(tau, win)
+        if utilization < 0.3 and optimal is not None:
             nst = delta.num_spec_tokens
             current_label = f"(current: {nst})" if nst else f"(current window ≈{win:.0f})"
             text.append(

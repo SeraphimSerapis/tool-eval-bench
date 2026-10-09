@@ -312,6 +312,10 @@ _SUM_COUNTER_KEYS = frozenset(
         "llamacpp_num_drafts",
     }
 )
+# Gauges are normally one engine's state (KV-cache percentage, say) and must not
+# be summed. Request counts are the exception: each vLLM data-parallel engine
+# reports its own queue, and the server's load is their sum.
+_SUM_GAUGE_KEYS = frozenset({"running_reqs", "waiting_reqs"})
 
 
 @dataclass
@@ -474,6 +478,11 @@ class SpecLiveDelta:
     # --- Instantaneous gauges (from current snapshot) ---
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
+    # True when the rate above is a gauge reading, or a zero with no token
+    # counter to confirm it. Only such a zero can be a gauge refreshing; a
+    # counter-derived zero means nothing was processed.
+    prompt_tps_is_gauge: bool = False
+    generation_tps_is_gauge: bool = False
     gpu_cache_pct: float = 0.0
     running_reqs: int = 0
     waiting_reqs: int = 0
@@ -515,8 +524,9 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
         if value is None:
             continue
         # Cumulative counters are additive across vLLM engines and llama.cpp
-        # workers.  Gauges are state for one engine and must not be summed.
-        if name in _SUM_COUNTER_KEYS:
+        # workers, and so are request counts.  Other gauges are state for one
+        # engine and must not be summed.
+        if name in _SUM_COUNTER_KEYS or name in _SUM_GAUGE_KEYS:
             setattr(snap, name, value)
         else:
             first = pattern.search(text)
@@ -697,6 +707,8 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
     # vLLM ≥0.8 where avg_*_throughput_toks_per_s gauges were removed).
     gen_tps = curr.generation_tps
     prompt_tps_val = curr.prompt_tps
+    gen_is_gauge = gen_tps > 0
+    prompt_is_gauge = prompt_tps_val > 0
 
     if gen_tps == 0 and dt > 0:
         d_gen_tokens = counter_delta(prev.generation_tokens_total, curr.generation_tokens_total)
@@ -711,8 +723,10 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
     # llama.cpp fallback: use llamacpp:predicted_tokens_seconds gauge directly
     if gen_tps == 0 and curr.llamacpp_predicted_tokens_seconds > 0:
         gen_tps = curr.llamacpp_predicted_tokens_seconds
+        gen_is_gauge = True
     if prompt_tps_val == 0 and curr.llamacpp_prompt_tokens_seconds > 0:
         prompt_tps_val = curr.llamacpp_prompt_tokens_seconds
+        prompt_is_gauge = True
 
     # llama.cpp counter-derived fallback for throughput
     if gen_tps == 0 and dt > 0:
@@ -729,6 +743,17 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
         )
         if d_lc_prompt > 0:
             prompt_tps_val = d_lc_prompt / dt
+
+    # A zero that a token counter confirms is idle. Without a counter it may
+    # be a gauge between refreshes, which the display may bridge briefly.
+    if gen_tps == 0:
+        gen_is_gauge = not (
+            curr.generation_tokens_total > 0 or curr.llamacpp_predicted_tokens_total > 0
+        )
+    if prompt_tps_val == 0:
+        prompt_is_gauge = not (
+            curr.prompt_tokens_total > 0 or curr.llamacpp_prompt_tokens_total > 0
+        )
 
     # Running / waiting requests: merge vLLM and llama.cpp
     running = curr.running_reqs
@@ -765,6 +790,8 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
         # Throughput (gauge or counter-derived fallback)
         prompt_tps=prompt_tps_val,
         generation_tps=gen_tps,
+        prompt_tps_is_gauge=prompt_is_gauge,
+        generation_tps_is_gauge=gen_is_gauge,
         # Instantaneous gauges — always from current snapshot (merged vLLM + llama.cpp)
         gpu_cache_pct=cache_frac * 100,
         running_reqs=int(running),

@@ -212,6 +212,51 @@ vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="1",position="0"} 40
         assert snap.has_spec_decode is False
         assert snap.has_llamacpp_metrics is False
 
+    def test_data_parallel_request_counts_are_summed(self):
+        """Each DP engine reports its own queue; the server's load is the total."""
+        text = """\
+vllm:num_requests_running{engine="0",model_name="m"} 3.0
+vllm:num_requests_running{engine="1",model_name="m"} 5.0
+vllm:num_requests_waiting{engine="0",model_name="m"} 1.0
+vllm:num_requests_waiting{engine="1",model_name="m"} 4.0
+vllm:gpu_cache_usage_perc{engine="0",model_name="m"} 0.25
+vllm:gpu_cache_usage_perc{engine="1",model_name="m"} 0.5
+"""
+        snap = _parse_snapshot(text)
+        delta = compute_delta(snap, snap)
+        assert (delta.running_reqs, delta.waiting_reqs) == (8, 5)
+        # A percentage is still one engine's state, not a sum.
+        assert snap.gpu_cache_usage == pytest.approx(0.25)
+
+
+class TestThroughputSource:
+    """compute_delta says whether a rate came from a gauge, so idle is not held."""
+
+    def test_gauge_reading_is_flagged_as_a_gauge(self):
+        prev = MetricsSnapshot(timestamp=100.0)
+        curr = MetricsSnapshot(timestamp=101.0, generation_tps=40.0, prompt_tps=90.0)
+        delta = compute_delta(prev, curr)
+        assert delta.generation_tps_is_gauge and delta.prompt_tps_is_gauge
+
+    def test_counter_derived_rate_is_not_a_gauge(self):
+        prev = MetricsSnapshot(timestamp=100.0, generation_tokens_total=100)
+        curr = MetricsSnapshot(timestamp=101.0, generation_tokens_total=150)
+        delta = compute_delta(prev, curr)
+        assert delta.generation_tps == pytest.approx(50.0)
+        assert delta.generation_tps_is_gauge is False
+
+    def test_a_zero_confirmed_by_a_counter_is_idle_not_a_flicker(self):
+        prev = MetricsSnapshot(timestamp=100.0, generation_tokens_total=150)
+        curr = MetricsSnapshot(timestamp=101.0, generation_tokens_total=150)
+        delta = compute_delta(prev, curr)
+        assert delta.generation_tps == 0.0
+        assert delta.generation_tps_is_gauge is False
+
+    def test_a_zero_without_a_counter_may_be_a_gauge_refreshing(self):
+        delta = compute_delta(MetricsSnapshot(timestamp=100.0), MetricsSnapshot(timestamp=101.0))
+        assert delta.generation_tps == 0.0
+        assert delta.generation_tps_is_gauge is True
+
 
 # ---------------------------------------------------------------------------
 # compute_delta
@@ -1619,7 +1664,8 @@ class TestDashboardSpecBadge:
         delta = self._make_delta(
             spec_method="mtp",
             cumulative_acceptance_rate=0.65,
-            cumulative_acceptance_length=0.65,
+            # τ counts the verifier's bonus token: 0.65 accepted drafts per step.
+            cumulative_acceptance_length=1.65,
             cumulative_draft_window=1.0,
             num_spec_tokens=1,
         )

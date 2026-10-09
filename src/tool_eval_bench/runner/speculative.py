@@ -5,7 +5,7 @@ Measures the *real-world effectiveness* of speculative decoding techniques
 t/s metrics fail to capture.
 
 Key metrics:
-- Effective t/s:      output tokens ÷ wall-clock time (user-perceived speed)
+- Effective t/s:      tokens after the first ÷ wall-clock time after the first token
 - Acceptance rate (α): % of draft tokens accepted by the verifier
 - Acceptance length:   avg output tokens per speculative step, including the verifier token
 - Speedup ratio:       effective t/s ÷ baseline t/s
@@ -194,23 +194,38 @@ class SpecDecodeSample:
 
     @property
     def effective_tg_tps(self) -> float:
-        """Output tokens ÷ wall-clock time — the metric users actually feel."""
+        """Decode rate after the first token, the metric users actually feel.
+
+        The first token arrives at TTFT, so the window after it holds the
+        other N − 1 tokens. That is the throughput baseline's formula, so a
+        run without speculation reports a 1.00x speedup over its own baseline,
+        and dividing by verify steps per second gives τ.
+        """
         if self.total_ms > 0 and self.tg_tokens > 0:
             # Subtract TTFT to measure generation phase only
             gen_ms = self.total_ms - self.ttft_ms if self.ttft_ms > 0 else self.total_ms
+            tokens = (
+                self.tg_tokens - 1 if self.ttft_ms > 0 and self.tg_tokens > 1 else self.tg_tokens
+            )
             if gen_ms > 0:
-                return self.tg_tokens / (gen_ms / 1000)
+                return tokens / (gen_ms / 1000)
         return 0.0
 
     @property
-    def goodput(self) -> float:
-        """Accepted tokens per second of wall-clock generation time."""
-        if self.accepted_tokens_delta is not None and self.total_ms > 0:
+    def goodput(self) -> float | None:
+        """Accepted draft tokens per second of wall-clock generation time.
+
+        None when the sample has no acceptance counters (SGLang, a server
+        without ``/metrics``, a proxy): output tokens are not accepted draft
+        tokens, so effective t/s is not a stand-in.
+        """
+        if self.accepted_tokens_delta is None:
+            return None
+        if self.total_ms > 0:
             gen_ms = self.total_ms - self.ttft_ms if self.ttft_ms > 0 else self.total_ms
             if gen_ms > 0:
                 return self.accepted_tokens_delta / (gen_ms / 1000)
-        # Fall back to effective t/s (all output tokens are "accepted" from user perspective)
-        return self.effective_tg_tps
+        return 0.0
 
     @property
     def speedup_ratio(self) -> float | None:
@@ -269,8 +284,10 @@ class SpecDecodeSample:
         """Average tokens drafted per speculative step.
 
         This reveals the configured draft window size. If draft_window=15
-        but acceptance_length=3.5, positions 4–15 are mostly wasted.
-        Compare with acceptance_length (τ) to assess optimal window tuning.
+        but acceptance_length=3.5, only 2.5 drafted tokens per step are
+        accepted (τ counts the verifier's bonus token), so positions 4–15 are
+        mostly wasted. ``domain.spec_decode.window_utilization`` turns the
+        pair into the fraction of drafted positions accepted.
         """
         if (
             self.draft_tokens_delta is not None

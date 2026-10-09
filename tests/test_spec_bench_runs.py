@@ -67,7 +67,8 @@ def test_pooling_weights_by_tokens_not_by_run() -> None:
     # Extensive fields are per-run means, so ratios read as pooled values.
     assert pooled.tg_tokens == 60
     assert pooled.total_ms == 700.0
-    assert pooled.effective_tg_tps == pytest.approx(120 / 1.2)
+    # Each run's first token arrived at TTFT: (99 + 19) tokens over (1.0 + 0.2) s.
+    assert pooled.effective_tg_tps == pytest.approx(118 / 1.2)
     assert pooled.verify_steps_per_s == pytest.approx(30 / 1.2)
     assert pooled.draft_window == pytest.approx(120 / 30)
     assert (pooled.prompt_type, pooled.spec_method, pooled.baseline_tg_tps) == (
@@ -140,7 +141,7 @@ def test_pooling_without_counters_still_pools_throughput() -> None:
     assert pooled.acceptance_rate is None
     assert pooled.acceptance_rate_range is None
     assert pooled.verify_steps_per_s is None
-    assert pooled.effective_tg_tps == pytest.approx(100 / 0.9)
+    assert pooled.effective_tg_tps == pytest.approx(99 / 0.9)
 
 
 def test_verify_steps_per_s_needs_steps_and_time() -> None:
@@ -306,7 +307,7 @@ def test_cli_omits_ceiling_when_a_baseline_was_given(
     sample.baseline_tg_tps = 50.0
     output = _cli_output(monkeypatch, tmp_path, [sample])
     assert "Speedup ceiling" not in output
-    assert "2.00x" in output
+    assert "1.98x" in output  # 99 t/s after the first token, over 50
 
 
 def test_report_lists_runs_temperature_range_and_steps(tmp_path: Path) -> None:
@@ -330,6 +331,32 @@ def test_report_lists_runs_temperature_range_and_steps(tmp_path: Path) -> None:
     assert "Runs per cell" not in sampled
 
 
+def _report(tmp_path: Path, sample: SpecDecodeSample) -> str:
+    path = write_spec_decode_report(tmp_path, "util", "m", [sample], temperature=0.0)
+    return path.read_text(encoding="utf-8")
+
+
+def test_report_utilization_is_100_percent_when_every_draft_is_accepted(tmp_path: Path) -> None:
+    # k=4 and every drafted token accepted: τ = 5, because τ counts the bonus token.
+    text = _report(tmp_path, _run(tg=500, total_ms=2100, drafted=400, accepted=400, steps=100))
+    assert "| Window Utilization | 100% |" in text
+    assert "[!WARNING]" not in text
+
+
+def test_report_low_utilization_counts_accepted_drafts_only(tmp_path: Path) -> None:
+    # k=4, α=20%: 0.8 drafts accepted per step, not τ = 1.8.
+    text = _report(tmp_path, _run(tg=180, total_ms=2100, drafted=400, accepted=80, steps=100))
+    assert "| Window Utilization | 20% |" in text
+    assert "Only 0.8 of 4 drafted positions are accepted" in text
+    assert "reducing `num_speculative_tokens` to ~2" in text
+
+
+def test_report_never_suggests_reducing_a_window_of_two_to_two(tmp_path: Path) -> None:
+    text = _report(tmp_path, _run(tg=120, total_ms=2100, drafted=200, accepted=20, steps=100))
+    assert "| Window Utilization | 10% |" in text
+    assert "num_speculative_tokens" not in text
+
+
 # ---------------------------------------------------------------------------
 # dispatch wiring
 # ---------------------------------------------------------------------------
@@ -350,7 +377,7 @@ def _dispatch_spec_bench(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> di
     monkeypatch.setattr(metadata, "collect_run_context", context)
     monkeypatch.setattr(plugin_runners, "run_selected_plugins", lambda *a, **k: False)
     kwargs: dict = {}
-    monkeypatch.setattr(dispatch, "_run_spec_bench", lambda *a, **k: kwargs.update(k))
+    monkeypatch.setattr(dispatch, "_run_spec_bench", lambda *a, **k: kwargs.update(k) or [])
     monkeypatch.setattr(
         sys,
         "argv",

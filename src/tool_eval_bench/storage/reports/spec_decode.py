@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from tool_eval_bench.domain.models import RunContext
-from tool_eval_bench.domain.spec_decode import per_position_acceptance
+from tool_eval_bench.domain.spec_decode import (
+    per_position_acceptance,
+    suggested_draft_window,
+    window_utilization,
+)
 from tool_eval_bench.storage.reports.mode import ModeReport, write_mode_report
 
 
@@ -30,8 +34,14 @@ def spec_decode_report(
     *,
     label: str | None,
     temperature: float | None,
+    failed: int = 0,
 ) -> ModeReport:
-    """Build the speculative decoding report content."""
+    """Build the speculative decoding report content.
+
+    *spec_samples* are the successful cells; *failed* counts the cells whose
+    every run failed. Their error text stays out of the report, as it does out
+    of the stored row, because it can quote the server URL.
+    """
     header: list[str] = []
 
     # Detect method
@@ -45,6 +55,25 @@ def spec_decode_report(
     if temperature is not None:
         note = " (greedy: a ceiling for sampled workloads)" if temperature == 0 else ""
         header.append(f"- **Temperature**: {temperature:g}{note}")
+    failed_note = (
+        [
+            "",
+            "> [!WARNING]",
+            f"> {failed} of {failed + len(spec_samples)} cell(s) failed on every run and "
+            "are not shown in this report.",
+        ]
+        if failed
+        else []
+    )
+    if not spec_samples:
+        return ModeReport(
+            title="Speculative Decoding Benchmark",
+            display_name=model,
+            mode="spec-bench",
+            label=label,
+            header=(*header, *failed_note),
+            body=("## Results", "", "No successful samples recorded.", ""),
+        )
 
     # Check if acceptance rate is available
     has_ar = any(getattr(s, "acceptance_rate", None) is not None for s in spec_samples)
@@ -81,6 +110,7 @@ def spec_decode_report(
                 "> of MTP / speculative decoding.",
             ]
         )
+    header.extend(failed_note)
 
     # Results table
     md = ["## Results", ""]
@@ -218,7 +248,7 @@ def spec_decode_report(
     if with_window:
         avg_window = sum(s.draft_window for s in with_window) / len(with_window)
         avg_tau = sum(s.acceptance_length for s in with_window) / len(with_window)
-        utilization = (avg_tau / avg_window * 100) if avg_window > 0 else 0
+        utilization = (window_utilization(avg_tau, avg_window) or 0.0) * 100
         avg_waste = (
             sum(s.waste_ratio for s in with_window if getattr(s, "waste_ratio", None) is not None)
             / len(with_window)
@@ -237,14 +267,15 @@ def spec_decode_report(
                 f"| Avg Waste | {avg_waste:.0f}% |",
             ]
         )
-        if utilization < 50:
-            optimal = max(int(avg_tau * 1.5), 2)
+        optimal = suggested_draft_window(avg_tau, avg_window)
+        if utilization < 50 and optimal is not None:
             md.extend(
                 [
                     "",
                     "> [!WARNING]",
                     f"> Window utilization is low ({utilization:.0f}%). "
-                    f"Only {avg_tau:.1f} of {avg_window:.0f} drafted positions are accepted on average.",
+                    f"Only {avg_tau - 1:.1f} of {avg_window:.0f} drafted positions are accepted "
+                    "on average.",
                     f"> Consider reducing `num_speculative_tokens` to ~{optimal} for better GPU efficiency.",
                 ]
             )
@@ -279,7 +310,8 @@ def spec_decode_report(
         [
             "## Interpretation Guide",
             "",
-            "- **Eff t/s** (Effective t/s): Output tokens ÷ wall-clock generation time. "
+            "- **Eff t/s** (Effective t/s): Tokens after the first ÷ wall-clock time after the "
+            "first token, the same window a throughput baseline uses. "
             "This is what users experience. Higher is better.",
             "- **Stream t/s**: Token generation rate measured from SSE stream timing. "
             "For standard decoding, this matches Eff t/s. For spec decode, Eff t/s "
@@ -288,10 +320,11 @@ def spec_decode_report(
             "Higher means the draft model/MTP heads predict well for this workload.",
             "- **Waste**: Fraction of drafted tokens rejected (1 − α). Lower is better. "
             "High waste means the draft model is poorly aligned with the target.",
-            "- **τ (length)**: Average acceptance length — tokens accepted per speculative step. "
+            "- **τ (length)**: Average acceptance length, the tokens produced per speculative step, "
+            "counting the verifier's own bonus token. "
             "Higher means more tokens generated per verification pass.",
             "- **Window**: Average tokens drafted per speculative step (the configured draft window). "
-            "Compare with τ to see window utilization.",
+            "Window utilization is (τ − 1) ÷ Window, the share of drafted positions accepted.",
             "- **Draft t/s**: Rate at which draft tokens are generated, regardless of acceptance. "
             "Compare with Eff t/s to see draft overhead.",
             "- **Steps/s**: Target-model verification passes per second. Without speculation "

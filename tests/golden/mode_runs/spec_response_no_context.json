@@ -10,7 +10,18 @@
       "method": "auto",
       "runs": 3,
       "temperature": 0.0,
-      "config_fingerprint": "064d74c89ff5"
+      "pp": 2048,
+      "tg": 128,
+      "depths": [
+        0,
+        4096
+      ],
+      "prompt_types": [
+        "filler",
+        "code"
+      ],
+      "baseline_tg_tps": null,
+      "config_fingerprint": "37e45a771cee"
     },
     "scores": {
       "samples": 2,
@@ -28,7 +39,7 @@
           "total_ms": 1500.0,
           "pp_tps": 4000.0,
           "tg_tps": 90.0,
-          "effective_tg_tps": 92.75362318840581,
+          "effective_tg_tps": 92.02898550724639,
           "goodput": 173.91304347826087,
           "baseline_tg_tps": null,
           "speedup_ratio": null,
@@ -62,7 +73,7 @@
           "total_ms": 1500.0,
           "pp_tps": 4000.0,
           "tg_tps": 90.0,
-          "effective_tg_tps": 92.75362318840581,
+          "effective_tg_tps": 92.02898550724639,
           "goodput": 130.43478260869566,
           "baseline_tg_tps": null,
           "speedup_ratio": null,
@@ -89,5 +100,5 @@
     "metadata": {},
     "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
   },
-  "report": "# Speculative Decoding Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: spec-bench\n- **Spec Method**: eagle3\n- **Temperature**: 0 (greedy: a ceiling for sampled workloads)\n- **Acceptance Source**: per-request response metrics (exact)\n\n## Results\n\n| Prompt | Depth | Eff t/s | Stream t/s | α (accept) | Waste | τ (length) | Window | Draft t/s | Steps/s | Speedup | TTFT (ms) | Total (ms) | Tokens |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n| filler | 0 | 92.8 | 90.0 | 80.0% | 20% | 2.5 | 3 | 217.4 | 72.5 | — | 120 | 1,500 | 128 |\n| code | 4096 | 92.8 | 90.0 | 60.0% | 40% | 2.5 | 3 | 217.4 | 72.5 | — | 120 | 1,500 | 128 |\n\n## Acceptance Rate by Prompt Type\n\n```\n      filler d0     ████████████████████████████████░░░░░░░░ 80.0%\n        code d4096  ████████████████████████░░░░░░░░░░░░░░░░ 60.0%\n```\n\n## Per-Prompt-Type Summary\n\n| Prompt Type | Avg Eff t/s | Avg Stream t/s | Avg α | Avg Waste | Avg Draft t/s |\n|---|---:|---:|---:|---:|---:|\n| code | 92.8 | 90.0 | 60.0% | 40% | 217.4 |\n| filler | 92.8 | 90.0 | 80.0% | 20% | 217.4 |\n\n## Draft Efficiency\n\n| Metric | Value |\n|---|---|\n| Avg Draft Window | 3 tokens/step |\n| Avg Acceptance Length (τ) | 2.5 tokens/step |\n| Window Utilization | 83% |\n| Avg Waste | 30% |\n\n## Per-Position Acceptance\n\nAcceptance rate at each draft position, aggregated over every step of every request. Verification stops at the first rejection, so a position is only reached when all earlier positions were accepted.\n\n| Position | Acceptance |\n|---:|---:|\n| 0 | 100.0% |\n| 1 | 66.7% |\n| 2 | 33.3% |\n\n## Interpretation Guide\n\n- **Eff t/s** (Effective t/s): Output tokens ÷ wall-clock generation time. This is what users experience. Higher is better.\n- **Stream t/s**: Token generation rate measured from SSE stream timing. For standard decoding, this matches Eff t/s. For spec decode, Eff t/s is typically higher.\n- **α (accept)**: Acceptance rate — % of draft tokens accepted by the verifier. Higher means the draft model/MTP heads predict well for this workload.\n- **Waste**: Fraction of drafted tokens rejected (1 − α). Lower is better. High waste means the draft model is poorly aligned with the target.\n- **τ (length)**: Average acceptance length — tokens accepted per speculative step. Higher means more tokens generated per verification pass.\n- **Window**: Average tokens drafted per speculative step (the configured draft window). Compare with τ to see window utilization.\n- **Draft t/s**: Rate at which draft tokens are generated, regardless of acceptance. Compare with Eff t/s to see draft overhead.\n- **Steps/s**: Target-model verification passes per second. Without speculation each pass yields one token, and a verification pass costs at least a plain decode pass, so this is a lower bound on the no-spec decode rate and Eff t/s ÷ Steps/s (≈ τ) is a ceiling on the speedup. `--baseline-tgs` gives the measured figure.\n- **Speedup**: Effective t/s ÷ baseline t/s. Values > 1.0x indicate spec decode is providing a benefit.\n\n> [!TIP]\n> Acceptance rates vary significantly by prompt type. Code and structured tasks\n> typically show higher acceptance rates than creative/open-ended generation\n> because future tokens are more predictable.\n"
+  "report": "# Speculative Decoding Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: spec-bench\n- **Spec Method**: eagle3\n- **Temperature**: 0 (greedy: a ceiling for sampled workloads)\n- **Acceptance Source**: per-request response metrics (exact)\n\n## Results\n\n| Prompt | Depth | Eff t/s | Stream t/s | α (accept) | Waste | τ (length) | Window | Draft t/s | Steps/s | Speedup | TTFT (ms) | Total (ms) | Tokens |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n| filler | 0 | 92.0 | 90.0 | 80.0% | 20% | 2.5 | 3 | 217.4 | 72.5 | — | 120 | 1,500 | 128 |\n| code | 4096 | 92.0 | 90.0 | 60.0% | 40% | 2.5 | 3 | 217.4 | 72.5 | — | 120 | 1,500 | 128 |\n\n## Acceptance Rate by Prompt Type\n\n```\n      filler d0     ████████████████████████████████░░░░░░░░ 80.0%\n        code d4096  ████████████████████████░░░░░░░░░░░░░░░░ 60.0%\n```\n\n## Per-Prompt-Type Summary\n\n| Prompt Type | Avg Eff t/s | Avg Stream t/s | Avg α | Avg Waste | Avg Draft t/s |\n|---|---:|---:|---:|---:|---:|\n| code | 92.0 | 90.0 | 60.0% | 40% | 217.4 |\n| filler | 92.0 | 90.0 | 80.0% | 20% | 217.4 |\n\n## Draft Efficiency\n\n| Metric | Value |\n|---|---|\n| Avg Draft Window | 3 tokens/step |\n| Avg Acceptance Length (τ) | 2.5 tokens/step |\n| Window Utilization | 50% |\n| Avg Waste | 30% |\n\n## Per-Position Acceptance\n\nAcceptance rate at each draft position, aggregated over every step of every request. Verification stops at the first rejection, so a position is only reached when all earlier positions were accepted.\n\n| Position | Acceptance |\n|---:|---:|\n| 0 | 100.0% |\n| 1 | 66.7% |\n| 2 | 33.3% |\n\n## Interpretation Guide\n\n- **Eff t/s** (Effective t/s): Tokens after the first ÷ wall-clock time after the first token, the same window a throughput baseline uses. This is what users experience. Higher is better.\n- **Stream t/s**: Token generation rate measured from SSE stream timing. For standard decoding, this matches Eff t/s. For spec decode, Eff t/s is typically higher.\n- **α (accept)**: Acceptance rate — % of draft tokens accepted by the verifier. Higher means the draft model/MTP heads predict well for this workload.\n- **Waste**: Fraction of drafted tokens rejected (1 − α). Lower is better. High waste means the draft model is poorly aligned with the target.\n- **τ (length)**: Average acceptance length, the tokens produced per speculative step, counting the verifier's own bonus token. Higher means more tokens generated per verification pass.\n- **Window**: Average tokens drafted per speculative step (the configured draft window). Window utilization is (τ − 1) ÷ Window, the share of drafted positions accepted.\n- **Draft t/s**: Rate at which draft tokens are generated, regardless of acceptance. Compare with Eff t/s to see draft overhead.\n- **Steps/s**: Target-model verification passes per second. Without speculation each pass yields one token, and a verification pass costs at least a plain decode pass, so this is a lower bound on the no-spec decode rate and Eff t/s ÷ Steps/s (≈ τ) is a ceiling on the speedup. `--baseline-tgs` gives the measured figure.\n- **Speedup**: Effective t/s ÷ baseline t/s. Values > 1.0x indicate spec decode is providing a benefit.\n\n> [!TIP]\n> Acceptance rates vary significantly by prompt type. Code and structured tasks\n> typically show higher acceptance rates than creative/open-ended generation\n> because future tokens are more predictable.\n"
 }
