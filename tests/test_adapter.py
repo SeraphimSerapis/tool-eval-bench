@@ -1789,6 +1789,57 @@ async def test_stream_fresh_id_on_each_fragment_of_one_call_keeps_merging() -> N
 
 
 @pytest.mark.asyncio
+async def test_stream_known_id_at_a_shared_index_routes_back_to_its_call() -> None:
+    body = _sse_lines(
+        _tool_call_chunk(call_id="a", name="get_weather", arguments='{"city": "Paris"'),
+        _tool_call_chunk(call_id="b", name="get_weather", arguments='{"city": "Berlin"}'),
+        _tool_call_chunk(call_id="a", arguments="}"),
+    )
+
+    result = await _stream(body)
+
+    assert [(c.id, c.arguments_str) for c in result.tool_calls] == [
+        ("a", '{"city": "Paris"}'),
+        ("b", '{"city": "Berlin"}'),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_id_less_continuations_follow_the_split_call() -> None:
+    """After a split, later deltas for that index belong to the newest call,
+    including when the server moves on to an explicit index the split took."""
+    body = _sse_lines(
+        _tool_call_chunk(call_id="a", name="get_weather"),
+        _tool_call_chunk(arguments='{"city": "Paris"}'),
+        _tool_call_chunk(call_id="b", name="get_weather"),
+        _tool_call_chunk(arguments='{"city": "Berlin"}'),
+        _tool_call_chunk(index=1, call_id="c", name="get_weather"),
+        _tool_call_chunk(index=1, arguments='{"city": "Rome"}'),
+    )
+
+    result = await _stream(body)
+
+    assert [(c.id, c.arguments) for c in result.tool_calls] == [
+        ("a", {"city": "Paris"}),
+        ("b", {"city": "Berlin"}),
+        ("c", {"city": "Rome"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_id_only_delta_after_complete_args_opens_no_call() -> None:
+    body = _sse_lines(
+        _tool_call_chunk(call_id="x1", name="get_weather", arguments='{"city": "Paris"}'),
+        json.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "x2"}]}}]}),
+    )
+
+    result = await _stream(body)
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].arguments == {"city": "Paris"}
+
+
+@pytest.mark.asyncio
 async def test_malformed_json_warning_redacts_the_url(caplog) -> None:
     adapter = OpenAICompatibleAdapter()
     adapter._client = httpx.AsyncClient(

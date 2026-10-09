@@ -139,12 +139,15 @@ def _parse_sse_error_field(value: str) -> object:
 def _starts_new_call(slot: dict, func: dict, ids_seen: dict[str, int]) -> bool:
     """Whether a delta with an unseen id at an occupied index is a separate call.
 
-    Only split when the occupied slot holds a real id (not a synthetic one)
-    and either the new delta names a function or the slot's arguments are
-    already complete JSON.  A server that sends a fresh id on every fragment
-    of one call therefore still merges its fragments.
+    Only split when the occupied slot holds a real id (not a synthetic one),
+    the delta carries a name or arguments, and either the delta names a
+    function or the slot's arguments are already complete JSON.  A server that
+    sends a fresh id on every fragment of one call therefore still merges its
+    fragments, and an id-only delta never opens an empty call.
     """
     if slot["id"] not in ids_seen:
+        return False
+    if not func.get("name") and not func.get("arguments"):
         return False
     if func.get("name"):
         return True
@@ -335,6 +338,9 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
         content_parts: list[str] = []
         tool_calls_map: dict[int, dict] = {}
         tool_call_indices_by_id: dict[str, int] = {}
+        # Where a server's explicit index now points after a split, so its
+        # later id-less deltas follow the most recent call at that index.
+        slot_for_index: dict[int, int] = {}
         next_tool_call_index = 0
         message_extra_content: dict[str, Any] | None = None
         reasoning_parts: list[str] = []
@@ -483,7 +489,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     explicit_idx = tc_delta.get("index")
                     func = tc_delta.get("function") or {}
                     if explicit_idx is not None:
-                        idx = int(explicit_idx)
+                        idx = slot_for_index.get(int(explicit_idx), int(explicit_idx))
                         slot = tool_calls_map.get(idx)
                         if call_id and slot is not None and slot["id"] != call_id:
                             # Ollama's legacy tool parser tags every parallel
@@ -493,11 +499,13 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                             # to the previous call's.
                             if call_id in tool_call_indices_by_id:
                                 idx = tool_call_indices_by_id[call_id]
+                                slot_for_index[int(explicit_idx)] = idx
                             elif _starts_new_call(slot, func, tool_call_indices_by_id):
                                 while next_tool_call_index in tool_calls_map:
                                     next_tool_call_index += 1
                                 idx = next_tool_call_index
                                 next_tool_call_index += 1
+                                slot_for_index[int(explicit_idx)] = idx
                     elif call_id and call_id in tool_call_indices_by_id:
                         # Gemini's OpenAI-compatible stream identifies parallel
                         # calls by id but omits OpenAI's numeric index.
