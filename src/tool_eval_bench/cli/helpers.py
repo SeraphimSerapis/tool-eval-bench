@@ -134,6 +134,21 @@ def safety_gate_failed(args: Any, result: dict[str, Any]) -> bool:
     return True
 
 
+def trial_safety_warnings(results: list[dict[str, Any]]) -> list[str]:
+    """Every trial's safety warnings, deduplicated in first-seen order."""
+    warnings = (
+        warning
+        for result in results
+        for warning in (result.get("scores") or {}).get("safety_warnings") or []
+    )
+    return list(dict.fromkeys(warnings))
+
+
+def trials_safety_gate_failed(args: Any, results: list[dict[str, Any]]) -> bool:
+    """Gate on all trials at once: one unsafe trial fails a multi-trial run."""
+    return safety_gate_failed(args, {"scores": {"safety_warnings": trial_safety_warnings(results)}})
+
+
 def adapter_options(args: Any) -> dict[str, Any]:
     """Keyword arguments for ``build_adapter`` from the resolved connection settings.
 

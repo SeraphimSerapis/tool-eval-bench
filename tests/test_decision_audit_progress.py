@@ -22,7 +22,8 @@ from tool_eval_bench.domain.decision import ChoiceAnswer, DecisionResult
 from tool_eval_bench.domain.scenarios import ScenarioResult, ScenarioState, ScenarioStatus
 
 SCENARIO = SCENARIOS["TC-89"]
-CONFIG = decision_judge_config("http://judge/v1", "clef-flash")
+JUDGE_URL = "http://judge/v1"
+CONFIG = decision_judge_config(JUDGE_URL, "clef-flash")
 
 
 def _captured(
@@ -66,7 +67,9 @@ async def test_started_and_completed_updates_show_judge_and_disagreement():
         assert adapter.decide.await_count == (0 if phase == "started" else 1)
         await display.on_scenario_audit(SCENARIO, result, phase)
 
-    await run_decision_audit(adapter, result.decision_audit, config=CONFIG, on_progress=progress)
+    await run_decision_audit(
+        adapter, result.decision_audit, config=CONFIG, base_url=JUDGE_URL, on_progress=progress
+    )
     output = display.console.file.getvalue()
     assert output.count("TC-89") == 2
     assert "clef-flash" in output
@@ -82,7 +85,9 @@ async def test_unsent_audits_have_no_updates_or_placeholders(text, capsys):
     result = _captured(text)
     adapter = _adapter()
     progress = AsyncMock()
-    await run_decision_audit(adapter, result.decision_audit, config=CONFIG, on_progress=progress)
+    await run_decision_audit(
+        adapter, result.decision_audit, config=CONFIG, base_url=JUDGE_URL, on_progress=progress
+    )
     progress.assert_not_awaited()
     adapter.decide.assert_not_awaited()
     assert not result.was_decision_audited
@@ -107,7 +112,11 @@ async def test_abstention_and_plain_output_show_the_actual_model(capsys):
         await _plain_on_audit(SCENARIO, result, phase)
 
     await run_decision_audit(
-        _adapter("unclear"), result.decision_audit, config=CONFIG, on_progress=progress
+        _adapter("unclear"),
+        result.decision_audit,
+        config=CONFIG,
+        base_url=JUDGE_URL,
+        on_progress=progress,
     )
     output = capsys.readouterr().out
     assert "Audit · clef-flash: judging..." in output
@@ -123,7 +132,9 @@ async def test_failed_requests_emit_jsonl_results_without_raw_evidence(capsys):
     async def progress(phase):
         await stderr_progress_audit(SCENARIO, result, phase)
 
-    await run_decision_audit(adapter, result.decision_audit, config=CONFIG, on_progress=progress)
+    await run_decision_audit(
+        adapter, result.decision_audit, config=CONFIG, base_url=JUDGE_URL, on_progress=progress
+    )
     captured = capsys.readouterr()
     messages = [json.loads(line) for line in captured.err.splitlines()]
     assert captured.out == ""
@@ -148,7 +159,9 @@ async def test_successful_jsonl_result_includes_probabilities_and_comparison(cap
     async def progress(phase):
         await stderr_progress_audit(SCENARIO, result, phase)
 
-    await run_decision_audit(_adapter(), result.decision_audit, config=CONFIG, on_progress=progress)
+    await run_decision_audit(
+        _adapter(), result.decision_audit, config=CONFIG, base_url=JUDGE_URL, on_progress=progress
+    )
     message = json.loads(capsys.readouterr().err.splitlines()[-1])
     assert message["choice"] == "no_payment_claim"
     assert message["probabilities"]["no_payment_claim"] == 0.96
@@ -161,7 +174,7 @@ async def test_successful_jsonl_result_includes_probabilities_and_comparison(cap
 async def test_saved_successful_audit_is_shown_without_a_new_request(capsys):
     result = _captured("Payment failed.")
     adapter = _adapter()
-    await run_decision_audit(adapter, result.decision_audit, config=CONFIG)
+    await run_decision_audit(adapter, result.decision_audit, config=CONFIG, base_url=JUDGE_URL)
     result.decision_audit.pop("request_started")  # Backward-compatible older stored audit.
 
     async def progress(phase):
@@ -169,7 +182,9 @@ async def test_saved_successful_audit_is_shown_without_a_new_request(capsys):
         await _plain_on_audit(SCENARIO, result, phase)
         await stderr_progress_audit(SCENARIO, result, phase)
 
-    await run_decision_audit(adapter, result.decision_audit, config=CONFIG, on_progress=progress)
+    await run_decision_audit(
+        adapter, result.decision_audit, config=CONFIG, base_url=JUDGE_URL, on_progress=progress
+    )
     adapter.decide.assert_awaited_once()
     captured = capsys.readouterr()
     assert "saved audit" in captured.out
@@ -181,7 +196,9 @@ async def test_saved_successful_audit_is_shown_without_a_new_request(capsys):
 async def test_progress_errors_cannot_change_judgment_or_expose_exception_text(caplog):
     result = _captured()
     progress = AsyncMock(side_effect=RuntimeError("secret callback detail"))
-    await run_decision_audit(_adapter(), result.decision_audit, config=CONFIG, on_progress=progress)
+    await run_decision_audit(
+        _adapter(), result.decision_audit, config=CONFIG, base_url=JUDGE_URL, on_progress=progress
+    )
     assert progress.await_count == 2
     assert result.decision_audit["status"] == "completed"
     assert result.points == 0
@@ -202,7 +219,11 @@ async def test_cancellation_does_not_emit_a_completed_judgment():
 
     task = asyncio.create_task(
         run_decision_audit(
-            Mock(decide=hang), result.decision_audit, config=CONFIG, on_progress=progress
+            Mock(decide=hang),
+            result.decision_audit,
+            config=CONFIG,
+            base_url=JUDGE_URL,
+            on_progress=progress,
         )
     )
     await started.wait()

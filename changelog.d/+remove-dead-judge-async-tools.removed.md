@@ -1,0 +1,1 @@
+**Unused `runner/judge.py` and `runner/async_tools.py`.** Neither module was reachable from the CLI or the Python API since the `--llm-judge` flag was removed. Both are deleted along with their tests. Answer auditing through `--decision-judge` is unaffected.

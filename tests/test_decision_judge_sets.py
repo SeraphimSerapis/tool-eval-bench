@@ -335,6 +335,20 @@ def test_resume_explains_a_pre_set_audited_run():
     assert _mismatches(legacy) == ["decision_judge (a TC-89-only audit from an earlier version)"]
 
 
+def test_resume_accepts_a_judge_url_stored_before_redaction():
+    previous = _judged("all", ["tc12-deletion-stance-v3", "tc89-payment-claim-v1"])
+    assert previous["base_url"] != JUDGE_URL
+    previous["base_url"] = JUDGE_URL
+    assert _mismatches(previous, "--decision-judge", "all") == []
+
+
+def test_resume_still_refuses_a_different_judge_host():
+    other = decision_judge_config("http://other-judge.test/v1", "clef-flash", judge_set="all")
+    previous = {**other, "checks": ["tc12-deletion-stance-v3", "tc89-payment-claim-v1"]}
+    assert previous["base_url"] == _judged("all", [])["base_url"]
+    assert _mismatches(previous, "--decision-judge", "all") == ["decision_judge"]
+
+
 # -- fingerprints -------------------------------------------------------------
 
 

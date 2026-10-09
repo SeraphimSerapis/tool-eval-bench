@@ -774,6 +774,131 @@ def test_safety_gate_exits_two(cli: Cli, mode_flags: list[str]) -> None:
         assert "SAFETY GATE: TC-01 leaked a secret" in outcome.err
 
 
+MODES = [
+    pytest.param([], id="live"),
+    pytest.param(["--no-live"], id="plain"),
+    pytest.param(["--json"], id="json"),
+]
+
+
+@pytest.mark.parametrize("mode_flags", MODES)
+def test_safety_gate_checks_every_trial(cli: Cli, mode_flags: list[str]) -> None:
+    """An unsafe first trial fails the gate, and every requested trial still runs."""
+    original = BenchmarkService.run_benchmark
+
+    async def run_benchmark(self: BenchmarkService, **kwargs: Any) -> dict[str, Any]:
+        cli.safety_warnings = {0: ["TC-01 leaked a secret"], 1: ["TC-01 sent mail"]}.get(
+            len(cli.runs), []
+        )
+        return await original(self, **kwargs)
+
+    cli.monkeypatch.setattr(BenchmarkService, "run_benchmark", run_benchmark)
+
+    outcome = cli.run(
+        *CONNECTION, "--scenarios", "TC-01", "--fail-on-safety", "--trials", "3", *mode_flags
+    )
+
+    assert outcome.code == 2
+    assert len(cli.runs) == 3
+    if mode_flags == ["--json"]:
+        union = ["TC-01 leaked a secret", "TC-01 sent mail"]
+        assert json.loads(outcome.out)["safety_warnings"] == union
+        assert json.loads(outcome.err.splitlines()[-1]) == {
+            "event": "safety_gate_failed",
+            "safety_warnings": union,
+        }
+
+
+@pytest.mark.parametrize("mode_flags", MODES)
+def test_resume_with_trials_runs_later_trials_fresh(cli: Cli, mode_flags: list[str]) -> None:
+    _store_interrupted_run(
+        [_checkpoint("TC-01", "pass"), _checkpoint("TC-02", "fail", failure_kind="timeout")]
+    )
+
+    outcome = cli.run(*RESUME_ARGV, "--trials", "2", *mode_flags)
+
+    assert outcome.code == 0
+    first, second = cli.run_kwargs
+    assert (first["scenarios"], first["resume_run_id"]) == (["TC-02"], "r-1")
+    assert (second["scenarios"], second["resume_run_id"]) == (["TC-01", "TC-02"], None)
+    assert (second["resume_prior_results"], second["resume_scenarios"]) == (None, None)
+
+
+@pytest.mark.parametrize("mode_flags", MODES[:2])
+def test_diff_latest_compares_with_the_run_before_this_one(cli: Cli, mode_flags: list[str]) -> None:
+    resolved = cli.record(
+        "tool_eval_bench.application.run_queries", "resolve_run", ("run-0", {"run_id": "run-0"})
+    )
+    diffs = cli.record("tool_eval_bench.cli.history", "print_diff")
+
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--diff", "latest", *mode_flags)
+
+    assert outcome.code == 0
+    assert resolved == [{"args": ("latest",), "run_type": "tool_eval", "status": "completed"}]
+    assert [call["args"][2] for call in diffs] == ["run-0"]
+
+
+def test_diff_latest_without_an_earlier_run_says_so(cli: Cli) -> None:
+    cli.record("tool_eval_bench.application.run_queries", "resolve_run", None)
+    diffs = cli.record("tool_eval_bench.cli.history", "print_diff")
+
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--diff", "latest", "--no-live")
+
+    assert outcome.code == 0
+    assert not diffs
+    assert "No previous runs found for comparison." in outcome.out
+
+
+def test_diff_is_ignored_with_json(cli: Cli, caplog: pytest.LogCaptureFixture) -> None:
+    resolved = cli.record("tool_eval_bench.application.run_queries", "resolve_run")
+
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--diff", "latest", "--json")
+
+    assert outcome.code == 0
+    assert not resolved
+    assert "--diff prints a console table and is ignored with --json" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (["--max-turns", "0"], "--max-turns must be at least 1"),
+        (["--error-rate", "nan"], "--error-rate must be between 0 and 1"),
+        (["--error-rate", "1.5"], "--error-rate must be between 0 and 1"),
+        (["--alpha", "2"], "--alpha must be between 0 and 1"),
+        (["--context-pressure", "1.5"], "--context-pressure must be between 0 and 1"),
+    ],
+)
+def test_out_of_range_run_settings_are_invalid_arguments(
+    cli: Cli, flags: list[str], message: str
+) -> None:
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", *flags, "--json")
+
+    assert outcome.code == 2
+    assert not cli.runs
+    error = json.loads(outcome.err.splitlines()[-1])
+    assert error["error"] == "invalid_arguments"
+    assert message in error["message"]
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--max-turns", "1"],
+        ["--error-rate", "0"],
+        ["--error-rate", "1"],
+        ["--alpha", "0"],
+        ["--alpha", "1"],
+        ["--context-pressure", "1", "--context-size", "32768"],
+    ],
+)
+def test_boundary_run_settings_are_accepted(cli: Cli, flags: list[str]) -> None:
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", *flags, "--json")
+
+    assert outcome.code == 0, outcome.out
+    assert len(cli.runs) == 1
+
+
 @pytest.mark.parametrize(
     ("mode_flags", "stream", "message"),
     [

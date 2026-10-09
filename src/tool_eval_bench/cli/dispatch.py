@@ -72,7 +72,11 @@ from tool_eval_bench.cli.helpers import (
     persist_plugin_run as _persist_plugin_run,  # noqa: F401  (cli.bench name)
 )
 from tool_eval_bench.cli.helpers import prior_results_for_resume
-from tool_eval_bench.cli.helpers import safety_gate_failed as _safety_gate_failed
+from tool_eval_bench.cli.helpers import (
+    safety_gate_failed as _safety_gate_failed,  # noqa: F401  (cli.bench name)
+)
+from tool_eval_bench.cli.helpers import trial_safety_warnings as _trial_safety_warnings
+from tool_eval_bench.cli.helpers import trials_safety_gate_failed as _trials_safety_gate_failed
 from tool_eval_bench.cli.history import compare_runs as _compare_runs
 from tool_eval_bench.cli.history import (
     print_diff as _print_diff,
@@ -273,6 +277,41 @@ def _score_stored_trial(
         alpha=args.alpha,
         weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
     )
+
+
+def _resolve_diff_target(args: argparse.Namespace) -> None:
+    """Fix ``--diff``'s comparison run before the scored run starts.
+
+    The run being benchmarked is stored when it finishes, so resolving
+    ``latest`` afterwards would compare the run with itself. ``latest`` means
+    the newest completed tool-call run. Leaves ``args._diff_target`` (None when
+    there is nothing to compare against); ``--json`` has no console diff.
+    """
+    args._diff_target = None
+    diff = getattr(args, "diff", None)
+    if not diff:
+        return
+    if args.json:
+        logger.warning("--diff prints a console table and is ignored with --json")
+        return
+    if diff.lower() != "latest":
+        args._diff_target = diff
+        return
+    from tool_eval_bench.application.run_queries import resolve_run
+
+    resolved = resolve_run(diff, run_type="tool_eval", status="completed")
+    args._diff_target = resolved[0] if resolved is not None else None
+
+
+def _show_diff(console: Console, results: list[ScenarioResult], args: argparse.Namespace) -> None:
+    """Print the ``--diff`` table against the run fixed by ``_resolve_diff_target``."""
+    if not getattr(args, "diff", None):
+        return
+    target = getattr(args, "_diff_target", None)
+    if target is None:
+        console.print("\n  [yellow]No previous runs found for comparison.[/]\n")
+        return
+    _print_diff(console, results, target)
 
 
 def _pack_attestations(args: Any) -> list[dict[str, Any]] | None:
@@ -906,6 +945,7 @@ def _prepare_args(
     # text on args.system_prompt.
     _resolve_system_prompt(args, parser)
     _drop_unused_system_prompt(args, console)
+    _validate_run_ranges(args, parser)
     try:
         judge_config = decision_judge_config(
             getattr(args, "decision_judge_base_url", None),
@@ -920,6 +960,25 @@ def _prepare_args(
         or args.context_pressure_sweep is not None
     ):
         parser.error("Decision judge audits require a run or resume of tool-call scenarios")
+
+
+def _validate_run_ranges(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Reject out-of-range run settings before any request.
+
+    Checked here rather than with an argparse ``type=`` so ``--json`` reports
+    them as ``invalid_arguments``. ``0 <= x <= 1`` also rejects NaN.
+    """
+    max_turns = getattr(args, "max_turns", None)
+    if max_turns is not None and max_turns < 1:
+        parser.error(f"--max-turns must be at least 1, got {max_turns}")
+    for flag, attr in (
+        ("--error-rate", "error_rate"),
+        ("--alpha", "alpha"),
+        ("--context-pressure", "context_pressure"),
+    ):
+        value = getattr(args, attr, None)
+        if value is not None and not (0.0 <= value <= 1.0):
+            parser.error(f"{flag} must be between 0 and 1, got {value}")
 
 
 def _validate_explicit_scenarios(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -1577,6 +1636,7 @@ def _run_scored_mode(
     trials = max(1, args.trials)
 
     _plan_resume(target, pressure)
+    _resolve_diff_target(args)
 
     if trials > 1 and not args.json:
         console.print(f"[dim]  Running {trials} trials for statistical measurement…[/]\n")
@@ -1771,6 +1831,7 @@ def _run_with_live_display(
             run_context=run_context,
         )
         result = await run_trial(request, show=True)
+        trial_results = [result]
 
         # When resuming, the service has already merged prior results into
         # result["scores"].  Use that merged summary for display instead of
@@ -1783,6 +1844,7 @@ def _run_with_live_display(
         if merged is not None:
             all_summaries.append(merged)
             display.set_finished(merged, throughput_samples=throughput_samples)
+            _show_diff(console, merged.scenario_results, args)
         else:
             all_results = [display.results[s.id] for s in scenarios if s.id in display.results]
             if all_results:
@@ -1794,10 +1856,7 @@ def _run_with_live_display(
                 )
                 all_summaries.append(summary)
                 display.set_finished(summary, throughput_samples=throughput_samples)
-
-                # --diff: compare against previous run
-                if args.diff:
-                    _print_diff(console, all_results, args.diff)
+                _show_diff(console, all_results, args)
             else:
                 display.stop()
 
@@ -1807,14 +1866,14 @@ def _run_with_live_display(
         if report_path:
             console.print(f"\n  [dim]📄 Full report: {report_path}[/]\n")
             report_paths.append(str(report_path))
-        if _safety_gate_failed(args, result):
-            raise SystemExit(2)
 
         # --- Trials 2..N: silent runs (same event loop) ---
         if trials > 1:
+            later = request.later_trial()
             for t in range(2, trials + 1):
                 console.print(f"  [dim]Running trial {t}/{trials}\u2026[/]", end=" ")
-                trial_result = await run_trial(request, show=False)
+                trial_result = await run_trial(later, show=False)
+                trial_results.append(trial_result)
 
                 # Collect report path
                 trial_rp = trial_result.get("report_path")
@@ -1846,6 +1905,8 @@ def _run_with_live_display(
                     scenario_packs=_pack_attestations(args),
                 )
                 console.print(f"  [dim]📊 Summary report: {summary_path}[/]\n")
+        if _trials_safety_gate_failed(args, trial_results):
+            raise SystemExit(2)
 
     try:
         asyncio.run(run_all_trials())
@@ -1908,9 +1969,10 @@ def _run_json(
             context_pressure_config=context_pressure_config,
             run_context=run_context,
         )
-        results = []
-        for _t in range(trials):
-            results.append(asyncio.run(run(request)))
+        results = [asyncio.run(run(request))]
+        later = request.later_trial()
+        for _t in range(1, trials):
+            results.append(asyncio.run(run(later)))
     except KeyboardInterrupt:
         emit_run_failed("interrupted")
         sys.exit(1)
@@ -1922,8 +1984,6 @@ def _run_json(
 
     if trials == 1:
         _emit_json_output(results[0], json_file=json_file)
-        if _safety_gate_failed(args, results[0]):
-            raise SystemExit(2)
     else:
         # Aggregate trial data
         scored = (_score_stored_trial(r, args, resolved) for r in results)
@@ -1933,9 +1993,12 @@ def _run_json(
         output = results[-1]  # last run as the primary result
         if agg:
             output["trial_statistics"] = agg
+        # The envelope's top-level safety_warnings is what consumers check, so
+        # it covers every trial; scores.safety_warnings stays the last trial's.
+        output["safety_warnings"] = _trial_safety_warnings(results)
         _emit_json_output(output, json_file=json_file)
-        if _safety_gate_failed(args, output):
-            raise SystemExit(2)
+    if _trials_safety_gate_failed(args, results):
+        raise SystemExit(2)
 
 
 def _run_plain(
@@ -1993,11 +2056,11 @@ def _run_plain(
             context_pressure_config=context_pressure_config,
             run_context=run_context,
         )
-        all_results_dicts = []
-        for t in range(1, trials + 1):
-            if t > 1:
-                console.print(f"\n[dim]  --- Trial {t}/{trials} ---[/]\n")
-            all_results_dicts.append(asyncio.run(run(request, show=True)))
+        all_results_dicts = [asyncio.run(run(request, show=True))]
+        later = request.later_trial()
+        for t in range(2, trials + 1):
+            console.print(f"\n[dim]  --- Trial {t}/{trials} ---[/]\n")
+            all_results_dicts.append(asyncio.run(run(later, show=True)))
     except KeyboardInterrupt:
         console.print("\n[bold red]Interrupted.[/]")
         sys.exit(1)
@@ -2015,8 +2078,13 @@ def _run_plain(
             f"[bold]Weighted Score: {scores['weighted_score']} / 100[/]  [dim](difficulty-weighted)[/]"
         )
     console.print(f"[dim]Completed in {elapsed:.1f}s[/]\n")
-    if _safety_gate_failed(args, all_results_dicts[-1]):
-        raise SystemExit(2)
+    if getattr(args, "diff", None):
+        # The diff follows the score above, so it compares the same (last) trial.
+        _show_diff(
+            console,
+            [ScenarioResult.from_dict(r) for r in scores.get("scenario_results") or []],
+            args,
+        )
 
     # Show trial statistics if multiple trials
     if trials > 1:
@@ -2044,6 +2112,8 @@ def _run_plain(
                 scenario_packs=_pack_attestations(args),
             )
             console.print(f"  [dim]📊 Summary report: {summary_path}[/]\n")
+    if _trials_safety_gate_failed(args, all_results_dicts):
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

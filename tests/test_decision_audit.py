@@ -224,6 +224,26 @@ async def test_public_api_persists_a_disagreement_without_changing_scores(harnes
     assert harness.judges[0]._client is None  # Closed and released.
 
 
+async def test_judge_host_is_redacted_everywhere_but_the_request(harness, tmp_path):
+    host = "judge.test"
+    with open_repository(db_path=str(tmp_path / "audit.sqlite")) as repo:
+        benchmark = BenchmarkService(repo=repo, reporter=MarkdownReporter(root=str(tmp_path)))
+        data = await _run(benchmark)
+        stored = repo.get(data["run_id"])
+    report = Path(data["report_path"]).read_text(encoding="utf-8")
+
+    assert data["config"]["decision_judge"]["base_url"] == JUDGE_CONFIG["base_url"]
+    assert data["scores"]["scenario_results"][0]["decision_audit"]["status"] == "completed"
+    assert host not in JUDGE_CONFIG["base_url"]
+    for where, text in [
+        ("result", json.dumps(data)),
+        ("sqlite", json.dumps(stored)),
+        ("report", report),
+    ]:
+        assert host not in text, where
+    assert harness.requests[0].url.host == host
+
+
 @pytest.mark.parametrize("answer", DENIALS + CLAIMS)
 async def test_all_messages_are_audited_with_no_official_overrides(harness, answer):
     # The mock validates wiring, not decision-model semantic accuracy.
@@ -501,7 +521,9 @@ async def test_invalid_choice_answers_are_unavailable(answer):
     adapter = Mock(
         decide=AsyncMock(return_value=DecisionResult(answers={"tc89-payment-claim-v1": answer}))
     )
-    await run_decision_audit(adapter, result.decision_audit, config=JUDGE_CONFIG)
+    await run_decision_audit(
+        adapter, result.decision_audit, config=JUDGE_CONFIG, base_url=JUDGE_URL
+    )
     assert result.decision_audit["status"] == "unavailable"
     assert result.decision_audit["error_type"] == "ValueError"
     assert result.points == 2
@@ -525,7 +547,9 @@ async def test_unclear_or_tied_answers_abstain(choice, tied):
             )
         )
     )
-    await run_decision_audit(adapter, result.decision_audit, config=JUDGE_CONFIG)
+    await run_decision_audit(
+        adapter, result.decision_audit, config=JUDGE_CONFIG, base_url=JUDGE_URL
+    )
     assert result.decision_audit["status"] == "abstained"
     assert result.decision_audit["disagreement"] is None
     assert result.points == 0

@@ -20,7 +20,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioResult,
     ScenarioState,
 )
-from tool_eval_bench.utils.urls import endpoint_identity
+from tool_eval_bench.utils.urls import endpoint_identity, redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +75,12 @@ def decision_judge_config(
         raise ValueError(
             "Decision judge URL must be HTTP(S), without credentials, query, or fragment"
         )
+    # The config is persisted and printed, so the host is masked like every
+    # other server URL. Requests use the raw URL, which callers pass to
+    # run_decision_audit separately; endpoint_id still tells two judges apart.
     return {
         "mode": "audit",
-        "base_url": base_url,
+        "base_url": redact_url(base_url),
         "endpoint_id": endpoint_identity(base_url),
         "model": model.strip(),
         "set": judge_set,
@@ -198,10 +201,15 @@ async def run_decision_audit(
     audit: dict[str, Any],
     *,
     config: dict[str, Any],
+    base_url: str,
     api_key: str | None = None,
     on_progress: Callable[[AuditPhase], Awaitable[None]] | None = None,
 ) -> None:
-    """Complete captured evidence in place; errors never become scenario failures."""
+    """Complete captured evidence in place; errors never become scenario failures.
+
+    ``base_url`` is the judge's unredacted URL and is only used for the
+    request. The audit records ``config["base_url"]``, which is redacted.
+    """
 
     async def notify(phase: AuditPhase) -> None:
         if on_progress is not None:
@@ -241,7 +249,7 @@ async def run_decision_audit(
                 questions={audit["check_id"]: question},
                 timeout_seconds=AUDIT_TIMEOUT_SECONDS,
                 api_key=api_key,
-                base_url=config["base_url"],
+                base_url=base_url,
             ),
             timeout=AUDIT_TIMEOUT_SECONDS,
         )

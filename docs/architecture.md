@@ -175,8 +175,6 @@ difference is what makes Python the right language for an evaluator.
 | `spec_live.py` | Live monitor data layer (Prometheus scraping, delta computation) |
 | `llama_benchy.py` | External llama-benchy subprocess integration |
 | `context_pressure.py` | Filler generation, calibration, prefix-cache busting |
-| `judge.py` | LLM-as-judge for failed scenario analysis (WIP) |
-| `async_tools.py` | Async tool execution simulation (polling-style tools) |
 
 `throughput` and `speculative` both use `spec_detection`; only `speculative`
 depends on `throughput` for streaming and prompt construction. Keeping detection

@@ -121,7 +121,15 @@ def median(values: list[float]) -> float:
 
 
 def aggregate_trials(summaries: list) -> dict:
-    """Compute score, category, and reliability statistics across trials."""
+    """Compute score, category, and reliability statistics across trials.
+
+    Per-scenario points, Pass@k, and Pass^k read only gradable results: an
+    infrastructure failure (timeout, connection error, 5xx) is excluded from a
+    trial's score, so it is excluded here too rather than counted as a miss. A
+    scenario no trial could grade drops out of the Pass@k and Pass^k
+    denominators. Scenarios and categories come from every trial, not only the
+    first.
+    """
     count = len(summaries)
     if count <= 1:
         return {}
@@ -130,19 +138,19 @@ def aggregate_trials(summaries: list) -> dict:
     total_points = [summary.total_points for summary in summaries]
     ci_low, ci_high = bootstrap_ci([float(score) for score in final_scores])
 
-    scenario_ids = [result.scenario_id for result in summaries[0].scenario_results]
+    points_by_scenario: dict[str, list[int]] = {}
+    for summary in summaries:
+        for result in summary.scenario_results:
+            graded = points_by_scenario.setdefault(result.scenario_id, [])
+            if not result.is_infrastructure_failure:
+                graded.append(result.points)
+
     scenario_stats: dict[str, dict] = {}
     pass_at_k_count = 0
     pass_hat_k_count = 0
-    for scenario_id in scenario_ids:
-        points = []
-        for summary in summaries:
-            result = next(
-                (item for item in summary.scenario_results if item.scenario_id == scenario_id),
-                None,
-            )
-            if result:
-                points.append(result.points)
+    for scenario_id, points in points_by_scenario.items():
+        if not points:
+            continue
         passed_once = any(point == 2 for point in points)
         passed_always = all(point == 2 for point in points)
         pass_at_k_count += passed_once
@@ -155,27 +163,24 @@ def aggregate_trials(summaries: list) -> dict:
             "pass_hat_k": passed_always,
         }
 
-    category_stats: dict[str, dict] = {}
-    for category_score in summaries[0].category_scores:
-        percentages = []
-        for summary in summaries:
-            matching = next(
-                (
-                    item
-                    for item in summary.category_scores
-                    if item.category == category_score.category
-                ),
-                None,
+    percentages_by_category: dict[Any, list[float]] = {}
+    labels: dict[Any, str] = {}
+    for summary in summaries:
+        for category_score in summary.category_scores:
+            labels.setdefault(category_score.category, category_score.label)
+            percentages_by_category.setdefault(category_score.category, []).append(
+                category_score.percent
             )
-            if matching:
-                percentages.append(matching.percent)
-        category_stats[category_score.category.value] = {
-            "label": category_score.label,
+    category_stats: dict[str, dict] = {
+        category.value: {
+            "label": labels[category],
             "mean_percent": round(mean(percentages), 1),
             "stddev_percent": round(stdev(percentages), 1) if len(percentages) > 1 else 0.0,
         }
+        for category, percentages in percentages_by_category.items()
+    }
 
-    total_scenarios = len(scenario_ids)
+    total_scenarios = len(scenario_stats)
     pass_at_k = round(100 * pass_at_k_count / total_scenarios, 1) if total_scenarios else 0.0
     pass_hat_k = round(100 * pass_hat_k_count / total_scenarios, 1) if total_scenarios else 0.0
     return {

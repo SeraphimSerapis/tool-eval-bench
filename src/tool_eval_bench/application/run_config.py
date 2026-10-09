@@ -187,6 +187,10 @@ def _pressure_fingerprint(value: dict[str, Any]) -> dict[str, Any]:
 
 def _judge_mismatch(previous: Any, current: Any) -> str | None:
     """Name the judge difference a user must undo to resume, when it is a set or check."""
+    if isinstance(previous, dict) and isinstance(previous.get("base_url"), str):
+        # Runs audited before judge URLs were redacted stored the raw URL.
+        # redact_url is idempotent, and endpoint_id still tells hosts apart.
+        previous = {**previous, "base_url": _redact_url(previous["base_url"])}
     if previous == current:
         return None
     if isinstance(previous, dict) and "set" not in previous:

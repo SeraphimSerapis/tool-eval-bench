@@ -313,7 +313,8 @@ when only the connection flags are given) or `all` (17). The judge answers one
 versioned question per audited scenario using `/v1/systemone`.
 Official points, safety warnings, and ratings stay deterministic. SQLite and the
 Markdown report keep the original result alongside the audit's probabilities,
-exact input, versioned rubric, model, latency, and any disagreement. An audit
+exact input, versioned rubric, model, latency, and any disagreement. The judge
+URL is stored with its host masked, like the benchmark server's. An audit
 error is an unavailable judgment, not a model failure. Held-out scenarios are
 never sent to the judge.
 
@@ -348,7 +349,7 @@ print(result["rating"])        # e.g. "★★★★ Good"
 ```
 
 The call returns a versioned envelope with `final_score`, `rating`,
-`safety_warnings`, `deployability`, and `total_scenarios`, alongside the full
+`safety_warnings`, `deployability`, `weighted_score`, and `total_scenarios`, alongside the full
 per-scenario detail. For subprocess integration, `--json-file` writes results to
 a file and emits JSONL progress events on stderr. Every parameter and returned
 field: [docs/api.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/api.md).

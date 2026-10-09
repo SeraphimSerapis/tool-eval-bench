@@ -12,11 +12,6 @@ import time
 
 import pytest
 
-from tool_eval_bench.runner.async_tools import (
-    AsyncToolExecutor,
-    AsyncToolSpec,
-    AsyncToolStatus,
-)
 from tool_eval_bench.runner.context_pressure import (
     ContextPressureConfig,
     build_pressure_messages,
@@ -63,23 +58,3 @@ def test_seeded_pressure_filler_stays_reproducible() -> None:
     assert _user_content(build_pressure_messages(config, seed=7)) == _user_content(
         build_pressure_messages(config, seed=7)
     )
-
-
-def test_async_tool_progress_survives_a_coarse_clock(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Simulated progress is measured over milliseconds, below a 15.6ms tick."""
-    import tool_eval_bench.runner.async_tools as module
-
-    ticks = iter([0.0, 0.0, 0.0])
-    monkeypatch.setattr(module.time, "monotonic", lambda: next(ticks, 0.0))
-
-    executor = AsyncToolExecutor()
-    executor.register_tool(
-        AsyncToolSpec(tool_name="fast", duration_ms=0.001, final_result={"ok": True})
-    )
-    started = executor.start_tool("fast")
-    time.sleep(0.01)
-
-    polled = executor.poll_tool(started.handle)
-
-    assert polled.status == AsyncToolStatus.COMPLETED
-    assert polled.result == {"ok": True}

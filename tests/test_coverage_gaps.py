@@ -1,9 +1,6 @@
-"""Tests to close coverage gaps across speculative, storage, noise, async_tools, and reports modules."""
+"""Tests to close coverage gaps across speculative, storage, noise, and reports modules."""
 
 from __future__ import annotations
-
-import json
-import time
 
 import httpx
 import pytest
@@ -30,14 +27,6 @@ from tool_eval_bench.evals.noise import (
     enrich_stock,
     enrich_translation,
     enrich_weather,
-)
-from tool_eval_bench.runner.async_tools import (
-    AsyncToolExecutor,
-    AsyncToolResult,
-    AsyncToolSpec,
-    AsyncToolStatus,
-    create_example_async_specs,
-    format_async_status,
 )
 from tool_eval_bench.runner.speculative import (
     SpecDecodeSample,
@@ -300,144 +289,6 @@ async def test_detect_spec_decoding_connection_error():
     async with MeasurementTestClient(transport=transport) as client:
         info = await detect_spec_decoding(client, "http://host:8000/v1")
     assert info.active is False
-
-
-# ---------------------------------------------------------------------------
-# async_tools: AsyncToolExecutor
-# ---------------------------------------------------------------------------
-
-
-class TestAsyncToolExecutor:
-    def test_start_unregistered_tool(self):
-        ex = AsyncToolExecutor()
-        r = ex.start_tool("unknown")
-        assert r.status == AsyncToolStatus.COMPLETED
-        assert "not registered" in str(r.result)
-
-    def test_start_registered_tool(self):
-        ex = AsyncToolExecutor()
-        ex.register_tool(AsyncToolSpec(tool_name="t", duration_ms=5000))
-        r = ex.start_tool("t")
-        assert r.status == AsyncToolStatus.PENDING
-        assert r.handle.startswith("async_t_")
-
-    def test_poll_unknown_handle(self):
-        ex = AsyncToolExecutor()
-        r = ex.poll_tool("no_such_handle")
-        assert r.status == AsyncToolStatus.FAILED
-
-    def test_poll_completed(self):
-        ex = AsyncToolExecutor()
-        ex.register_tool(
-            AsyncToolSpec(tool_name="fast", duration_ms=0.001, final_result={"ok": True})
-        )
-        r = ex.start_tool("fast")
-        time.sleep(0.01)
-        r2 = ex.poll_tool(r.handle)
-        assert r2.status == AsyncToolStatus.COMPLETED
-        assert r2.result == {"ok": True}
-
-    def test_poll_running_with_intermediate(self):
-        ex = AsyncToolExecutor()
-        ex.register_tool(
-            AsyncToolSpec(
-                tool_name="slow",
-                duration_ms=100_000,
-                supports_streaming=True,
-                intermediate_results=["partial_a", "partial_b"],
-            )
-        )
-        r = ex.start_tool("slow")
-        r2 = ex.poll_tool(r.handle)
-        assert r2.status == AsyncToolStatus.RUNNING
-        assert r2.progress_percent is not None
-
-    def test_cancel_tool(self):
-        ex = AsyncToolExecutor()
-        ex.register_tool(AsyncToolSpec(tool_name="c", duration_ms=100_000))
-        r = ex.start_tool("c")
-        cr = ex.cancel_tool(r.handle)
-        assert cr.status == AsyncToolStatus.CANCELLED
-
-    def test_cancel_unknown(self):
-        ex = AsyncToolExecutor()
-        cr = ex.cancel_tool("nope")
-        assert cr.status == AsyncToolStatus.CANCELLED
-
-    def test_simulated_failure(self):
-        ex = AsyncToolExecutor()
-        ex.register_tool(
-            AsyncToolSpec(
-                tool_name="fail",
-                duration_ms=0.001,
-                simulate_failure=True,
-                failure_at_percent=0.0,
-            )
-        )
-        r = ex.start_tool("fail")
-        time.sleep(0.01)
-        r2 = ex.poll_tool(r.handle)
-        assert r2.status == AsyncToolStatus.FAILED
-
-    def test_poll_unregistered_spec(self):
-        ex = AsyncToolExecutor()
-        ex._started_at["fake_unknown_1"] = time.monotonic()
-        r = ex.poll_tool("fake_unknown_1")
-        assert r.status == AsyncToolStatus.COMPLETED
-        assert "No spec" in str(r.result)
-
-
-# ---------------------------------------------------------------------------
-# async_tools: format_async_status
-# ---------------------------------------------------------------------------
-
-
-class TestFormatAsyncStatus:
-    def test_pending(self):
-        r = AsyncToolResult(status=AsyncToolStatus.PENDING, handle="h1")
-        s = format_async_status(r)
-        assert "pending" in s and "h1" in s
-
-    def test_running(self):
-        r = AsyncToolResult(status=AsyncToolStatus.RUNNING, handle="h2", progress_percent=0.5)
-        s = format_async_status(r)
-        parsed = json.loads(s)
-        assert parsed["status"] == "running"
-
-    def test_running_with_intermediate(self):
-        r = AsyncToolResult(
-            status=AsyncToolStatus.RUNNING,
-            handle="h3",
-            progress_percent=0.5,
-            intermediate_data={"x": 1},
-        )
-        s = format_async_status(r)
-        parsed = json.loads(s)
-        assert parsed["intermediate_data"] == {"x": 1}
-
-    def test_completed(self):
-        r = AsyncToolResult(status=AsyncToolStatus.COMPLETED, handle="h4", result=42)
-        s = format_async_status(r)
-        parsed = json.loads(s)
-        assert parsed["result"] == 42
-
-    def test_failed(self):
-        r = AsyncToolResult(status=AsyncToolStatus.FAILED, handle="h5", error="boom")
-        s = format_async_status(r)
-        assert "failed" in s and "boom" in s
-
-    def test_cancelled(self):
-        r = AsyncToolResult(status=AsyncToolStatus.CANCELLED, handle="h6")
-        s = format_async_status(r)
-        assert "cancelled" in s
-
-
-def test_create_example_async_specs():
-    specs = create_example_async_specs()
-    assert len(specs) == 3
-    names = {s.tool_name for s in specs}
-    assert "search_files" in names
-    assert "web_search" in names
 
 
 # ---------------------------------------------------------------------------

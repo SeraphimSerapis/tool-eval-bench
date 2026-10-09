@@ -382,8 +382,15 @@ class RunRepository:
             "report_path": row[8] if len(row) > 8 else None,
         }
 
-    def list(self, limit: int = 20, model: str | None = None) -> List[dict[str, Any]]:
-        """List recent runs, optionally filtered by model.
+    def list(
+        self,
+        limit: int = 20,
+        model: str | None = None,
+        *,
+        run_type: str | None = None,
+        status: str | None = None,
+    ) -> List[dict[str, Any]]:
+        """List recent runs, optionally filtered by model, run type, and status.
 
         Scenario results come back without ``raw_log``; listing is used by
         ``history``, ``leaderboard``, and ``export``, none of which read traces.
@@ -394,10 +401,14 @@ class RunRepository:
             "scores_json, metadata_json, run_type, report_path "
             "FROM scenario_runs"
         )
+        conditions: list[str] = []
         params: list[str | int] = []
-        if model:
-            query += " WHERE model = ?"
-            params.append(model)
+        for column, value in (("model", model), ("run_type", run_type), ("status", status)):
+            if value:
+                conditions.append(f"{column} = ?")
+                params.append(value)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
 
@@ -418,9 +429,15 @@ class RunRepository:
             for r in rows
         ]
 
-    def get_latest(self, model: str | None = None) -> dict | None:
-        """Get the most recent run, optionally for a specific model."""
-        runs = self.list(limit=1, model=model)
+    def get_latest(
+        self,
+        model: str | None = None,
+        *,
+        run_type: str | None = None,
+        status: str | None = None,
+    ) -> dict | None:
+        """Get the most recent run, optionally narrowed by model, run type, and status."""
+        runs = self.list(limit=1, model=model, run_type=run_type, status=status)
         if not runs:
             return None
         return self.get(runs[0]["run_id"])

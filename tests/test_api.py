@@ -59,7 +59,20 @@ class TestFormatResult:
                 "safety_warnings": ["TC-K1 failed"],
                 "deployability": 82,
                 "responsiveness": 72,
-                "max_points": 138,
+                "weighted_score": 84,
+                # TC-03 timed out: excluded from max_points, still a scenario.
+                "max_points": 4,
+                "excluded_scenarios": ["TC-03"],
+                "scenario_results": [
+                    {"scenario_id": "TC-01", "status": "pass", "points": 2},
+                    {"scenario_id": "TC-02", "status": "fail", "points": 0},
+                    {
+                        "scenario_id": "TC-03",
+                        "status": "fail",
+                        "points": 0,
+                        "failure_kind": "timeout",
+                    },
+                ],
             },
         }
         result = format_result(data)
@@ -68,7 +81,16 @@ class TestFormatResult:
         assert result["safety_warnings"] == ["TC-K1 failed"]
         assert result["deployability"] == 82
         assert result["responsiveness"] == 72
-        assert result["total_scenarios"] == 69  # 138 / 2
+        assert result["weighted_score"] == 84
+        assert result["total_scenarios"] == 3
+
+    def test_total_scenarios_counts_a_run_whose_every_scenario_was_excluded(self):
+        timed_out = {"scenario_id": "TC-01", "status": "fail", "points": 0}
+        result = format_result({"scores": {"max_points": 0, "scenario_results": [timed_out]}})
+        assert result["total_scenarios"] == 1
+
+    def test_weighted_score_is_none_without_difficulty_weighting(self):
+        assert format_result({"scores": {"final_score": 50}})["weighted_score"] is None
 
     def test_empty_scores_returns_none_fields(self):
         result = format_result({"scores": {}})
@@ -821,51 +843,6 @@ class TestRunRepositoryContextManager:
             # Some SQLite builds don't raise on closed connections
         except sqlite3.ProgrammingError:
             pass  # Expected — connection was closed
-
-
-# ---------------------------------------------------------------------------
-# async_tools: JSON safety
-# ---------------------------------------------------------------------------
-
-
-class TestAsyncToolsJsonSafety:
-    """Verify format_async_status produces valid JSON for all branches."""
-
-    def test_all_statuses_produce_valid_json(self):
-        from tool_eval_bench.runner.async_tools import (
-            AsyncToolResult,
-            AsyncToolStatus,
-            format_async_status,
-        )
-
-        for status in AsyncToolStatus:
-            result = AsyncToolResult(
-                status=status,
-                handle="test_handle_1",
-                error='Error with "quotes" and \\backslashes',
-                result={"key": "value"},
-                progress_percent=0.5,
-            )
-            output = format_async_status(result)
-            parsed = json.loads(output)  # Must not raise
-            assert isinstance(parsed, dict)
-            assert "status" in parsed
-
-    def test_special_chars_in_error_are_escaped(self):
-        from tool_eval_bench.runner.async_tools import (
-            AsyncToolResult,
-            AsyncToolStatus,
-            format_async_status,
-        )
-
-        result = AsyncToolResult(
-            status=AsyncToolStatus.FAILED,
-            handle="h1",
-            error='Error: "file not found" at path C:\\Users\\test',
-        )
-        output = format_async_status(result)
-        parsed = json.loads(output)
-        assert parsed["error"] == result.error  # Exact roundtrip
 
 
 # ---------------------------------------------------------------------------

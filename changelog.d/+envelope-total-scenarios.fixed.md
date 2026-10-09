@@ -1,0 +1,1 @@
+**`total_scenarios` and `weighted_score` in the result envelope.** `total_scenarios` counted only scored scenarios, so a run with timeouts reported fewer scenarios than it ran. It now counts every scenario with a result, infrastructure exclusions included. `weighted_score` is now promoted to the top level, as `docs/api.md` already documented.
