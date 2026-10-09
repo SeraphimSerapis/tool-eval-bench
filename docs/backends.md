@@ -157,7 +157,10 @@ active only once Strata has offered draft tokens.
 The metadata probe sends bearer authentication to `/props`, records the declared
 engine version, effective context window and slot count, and leaves absent GPU
 and speculative-decoding metadata unknown. When `/props` has no context window,
-the probe reads `max_context` from `/health`. Quantization inferred from a model
+the probe reads `max_context` from `/health`. That window is Strata's
+per-request limit, so context pressure, the pressure sweep, and the needle
+benchmark size themselves from it and need `--context-size` only when the probe
+is off (`--no-probe-engine`) or the engine has not finished starting. Quantization inferred from a model
 name is a heuristic; a custom alias does not prove which checkpoint is loaded.
 Tool-choice and structured-output capabilities remain response-probed, not assumed
 from the backend label. Use `--no-think` when a comparison deliberately disables

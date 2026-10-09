@@ -57,9 +57,9 @@ Otherwise the first of these that answers is used:
 
 1. `/v1/models`: `max_model_len` (vLLM), `context_window`, or `max_tokens`.
 2. TensorFold's `/health` `context_length`.
-3. llama.cpp's `/props` `default_generation_settings.n_ctx`, as recorded by the
-   engine probe in the run metadata. `--no-probe-engine` skips the probe, and
-   with it this source.
+3. llama.cpp's or Strata's `/props` `default_generation_settings.n_ctx`, or
+   Strata's `/health` `max_context`, as recorded by the engine probe in the run
+   metadata. `--no-probe-engine` skips the probe, and with it this source.
 
 That llama.cpp `n_ctx` is the per-request limit. Without `--kv-unified` it is
 already the server's `n_ctx` divided by its `--parallel` slots. With
@@ -67,6 +67,11 @@ already the server's `n_ctx` divided by its `--parallel` slots. With
 every slot reports the whole shared pool, and one request can fill it only while
 it runs alone. For high pressure on such a server, keep tool-eval-bench's
 `--parallel` at 1 or pass a smaller `--context-size`.
+
+Strata reports the context its engine announced at startup, the same value its
+`/metrics` exports as `strata:engine_max_context`. That is also a per-request
+limit: Strata refuses a request whose prompt and completion would not fit in it,
+and every `--batch` slot reports the same value.
 
 vLLM's KV cache capacity on `/metrics` then caps the result, except for hybrid
 attention models. If auto-detection fails, use `--context-size` to specify it
