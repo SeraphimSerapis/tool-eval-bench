@@ -1614,3 +1614,246 @@ async def test_stream_accepts_sse_data_without_space() -> None:
 
     assert result.content == "ok"
     await adapter.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Stream edge cases from non-OpenAI servers
+# ---------------------------------------------------------------------------
+
+
+def _tool_call_chunk(
+    *, index: int | None = 0, call_id: str | None = None, name: str = "", arguments: str = ""
+) -> str:
+    delta: dict = {"function": {"name": name, "arguments": arguments}}
+    if index is not None:
+        delta["index"] = index
+    if call_id is not None:
+        delta["id"] = call_id
+    return json.dumps({"choices": [{"delta": {"tool_calls": [delta]}}]})
+
+
+def _finish_chunk(reason: str) -> str:
+    return json.dumps({"choices": [{"delta": {}, "finish_reason": reason}]})
+
+
+async def _stream(body: str):
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=_mock_stream_transport(body))
+    try:
+        return await adapter.chat_completion(
+            model="m",
+            messages=[{"role": "user", "content": "hi"}],
+            base_url="http://localhost:8000",
+            stream=True,
+        )
+    finally:
+        await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_llamacpp_error_field_is_a_transport_error() -> None:
+    """llama-server before ggml-org/llama.cpp#16109 sends ``error:``, not ``data:``."""
+    partial = _tool_call_chunk(call_id="c1", name="get_weather", arguments='{"city":')
+    body = (
+        f"data: {partial}\n\n"
+        'error: {"code":500,"message":"Failed to decode the batch","type":"server_error"}\n\n'
+    )
+
+    result = await _stream(body)
+
+    assert result.transport_error_status == 500
+    assert result.transport_error_is_infrastructure is True
+    assert "Failed to decode the batch" in result.content
+    assert result.tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_stream_llamacpp_context_overflow_stays_infrastructure() -> None:
+    """The payload's integer ``code`` is not trusted: llama.cpp gives a context
+    overflow code 400, and grading that as the model's answer would be wrong."""
+    body = (
+        'error: {"code":400,"message":"request exceeds the context size",'
+        '"type":"exceed_context_size_error"}\n\n'
+    )
+
+    result = await _stream(body)
+
+    assert result.transport_error_status == 500
+    assert result.transport_error_is_infrastructure is True
+
+
+@pytest.mark.asyncio
+async def test_stream_error_field_that_is_not_json_is_still_an_error() -> None:
+    result = await _stream("error: backend crashed\n\n")
+
+    assert result.transport_error_status == 500
+    assert "backend crashed" in result.content
+
+
+@pytest.mark.asyncio
+async def test_stream_other_sse_fields_and_non_object_data_are_ignored() -> None:
+    body = 'event: ping\n\n: keep-alive\n\ndata: 5\n\ndata: "text"\n\n' + _sse_lines(
+        json.dumps({"choices": [{"delta": {"content": "ok"}}]})
+    )
+
+    result = await _stream(body)
+
+    assert result.content == "ok"
+    assert result.transport_error_status is None
+
+
+@pytest.mark.asyncio
+async def test_stream_length_stop_keeps_truncated_tool_args_malformed() -> None:
+    """A ``length`` stop is real truncation; repairing it would invent a valid call."""
+    body = _sse_lines(
+        _tool_call_chunk(call_id="c1", name="get_weather", arguments='{"city": "San Fr'),
+        _finish_chunk("length"),
+    )
+
+    result = await _stream(body)
+
+    assert result.finish_reason == "length"
+    assert result.tool_calls[0].arguments_str == '{"city": "San Fr'
+    assert result.tool_calls[0].arguments == {}
+
+
+@pytest.mark.asyncio
+async def test_stream_tool_calls_stop_still_repairs_missing_brace() -> None:
+    """GH-18 repair still applies when the stream finished normally."""
+    body = _sse_lines(
+        _tool_call_chunk(call_id="c1", name="get_weather", arguments='{"city": "Paris"'),
+        _finish_chunk("tool_calls"),
+    )
+
+    result = await _stream(body)
+
+    assert result.tool_calls[0].arguments == {"city": "Paris"}
+
+
+@pytest.mark.asyncio
+async def test_stream_parallel_calls_sharing_index_zero_stay_separate() -> None:
+    """Ollama's legacy parser tags every parallel call ``index: 0`` (ollama#15497)."""
+    body = _sse_lines(
+        _tool_call_chunk(call_id="call_a", name="get_weather", arguments='{"city": "Paris"}'),
+        _tool_call_chunk(call_id="call_b", name="get_weather", arguments='{"city": "Berlin"}'),
+        _finish_chunk("tool_calls"),
+    )
+
+    result = await _stream(body)
+
+    assert [(c.id, c.arguments) for c in result.tool_calls] == [
+        ("call_a", {"city": "Paris"}),
+        ("call_b", {"city": "Berlin"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_new_id_after_complete_args_splits_without_a_name() -> None:
+    body = _sse_lines(
+        _tool_call_chunk(call_id="call_a", name="get_weather", arguments='{"city": "Paris"}'),
+        _tool_call_chunk(call_id="call_b", arguments='{"city": "Berlin"}'),
+    )
+
+    result = await _stream(body)
+
+    assert [c.id for c in result.tool_calls] == ["call_a", "call_b"]
+    assert result.tool_calls[1].arguments == {"city": "Berlin"}
+
+
+@pytest.mark.asyncio
+async def test_stream_fragments_without_id_keep_merging() -> None:
+    body = _sse_lines(
+        _tool_call_chunk(call_id="call_a", name="get_weather", arguments='{"city": '),
+        _tool_call_chunk(arguments='"Paris"'),
+        _tool_call_chunk(arguments="}"),
+    )
+
+    result = await _stream(body)
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].arguments == {"city": "Paris"}
+
+
+@pytest.mark.asyncio
+async def test_stream_fresh_id_on_each_fragment_of_one_call_keeps_merging() -> None:
+    """Without a name and with the slot's arguments incomplete, a new id is a fragment."""
+    body = _sse_lines(
+        _tool_call_chunk(call_id="frag_1", name="get_weather", arguments='{"city": '),
+        _tool_call_chunk(call_id="frag_2", arguments='"Paris"}'),
+    )
+
+    result = await _stream(body)
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].arguments == {"city": "Paris"}
+
+
+@pytest.mark.asyncio
+async def test_stream_known_id_at_a_shared_index_routes_back_to_its_call() -> None:
+    body = _sse_lines(
+        _tool_call_chunk(call_id="a", name="get_weather", arguments='{"city": "Paris"'),
+        _tool_call_chunk(call_id="b", name="get_weather", arguments='{"city": "Berlin"}'),
+        _tool_call_chunk(call_id="a", arguments="}"),
+    )
+
+    result = await _stream(body)
+
+    assert [(c.id, c.arguments_str) for c in result.tool_calls] == [
+        ("a", '{"city": "Paris"}'),
+        ("b", '{"city": "Berlin"}'),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_id_less_continuations_follow_the_split_call() -> None:
+    """After a split, later deltas for that index belong to the newest call,
+    including when the server moves on to an explicit index the split took."""
+    body = _sse_lines(
+        _tool_call_chunk(call_id="a", name="get_weather"),
+        _tool_call_chunk(arguments='{"city": "Paris"}'),
+        _tool_call_chunk(call_id="b", name="get_weather"),
+        _tool_call_chunk(arguments='{"city": "Berlin"}'),
+        _tool_call_chunk(index=1, call_id="c", name="get_weather"),
+        _tool_call_chunk(index=1, arguments='{"city": "Rome"}'),
+    )
+
+    result = await _stream(body)
+
+    assert [(c.id, c.arguments) for c in result.tool_calls] == [
+        ("a", {"city": "Paris"}),
+        ("b", {"city": "Berlin"}),
+        ("c", {"city": "Rome"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_id_only_delta_after_complete_args_opens_no_call() -> None:
+    body = _sse_lines(
+        _tool_call_chunk(call_id="x1", name="get_weather", arguments='{"city": "Paris"}'),
+        json.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "x2"}]}}]}),
+    )
+
+    result = await _stream(body)
+
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].arguments == {"city": "Paris"}
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_warning_redacts_the_url(caplog) -> None:
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, text="<html>proxy</html>"))
+    )
+
+    with caplog.at_level("WARNING", logger="tool_eval_bench.adapters.openai_compat"):
+        result = await adapter.chat_completion(
+            model="m",
+            messages=[{"role": "user", "content": "hi"}],
+            base_url="http://user:S3CR3T@10.1.2.3:8000",
+        )
+    await adapter.aclose()
+
+    assert result.content == "[malformed response]"
+    assert "Malformed JSON" in caplog.text
+    assert "S3CR3T" not in caplog.text

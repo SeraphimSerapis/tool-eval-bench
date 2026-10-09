@@ -112,9 +112,9 @@ skip engine probing; any other name leaves detection alone.
 A provider also owns its extra headers: `TOOL_EVAL_<NAME>_HEADERS` and
 `TOOL_EVAL_<NAME>_SESSION_HEADER` replace the generic `TOOL_EVAL_HEADERS` and
 `TOOL_EVAL_SESSION_HEADER` when one is selected. `--header` adds to whichever
-set applies and wins on a name clash; `--session-header` overrides. Every
-request carries `User-Agent: tool-eval-bench/<version>` unless a header
-replaces it.
+set applies and wins on a name clash, compared case-insensitively;
+`--session-header` overrides. Every request carries
+`User-Agent: tool-eval-bench/<version>` unless a header replaces it.
 
 ## Key CLI flags
 

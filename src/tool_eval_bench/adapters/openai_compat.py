@@ -24,6 +24,7 @@ from tool_eval_bench.adapters.http_retry import (
     _backoff_delay,
     _rate_limit_delay,
     _retry_after_seconds,
+    stream_error_is_infrastructure,
 )
 from tool_eval_bench.domain.adapters import (
     RETRYABLE_STATUS_CODES,
@@ -124,6 +125,37 @@ def _repair_streamed_tool_args(s: str) -> str:
     except json.JSONDecodeError:
         logger.warning("Could not repair streamed tool-call arguments: %.80s", s)
         return s  # return original; let downstream parsing handle it
+
+
+def _parse_sse_error_field(value: str) -> object:
+    """The payload of a non-standard ``error:`` SSE field: JSON when it parses, else text."""
+    text = value.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text
+
+
+def _starts_new_call(slot: dict, func: dict, ids_seen: dict[str, int]) -> bool:
+    """Whether a delta with an unseen id at an occupied index is a separate call.
+
+    Only split when the occupied slot holds a real id (not a synthetic one),
+    the delta carries a name or arguments, and either the delta names a
+    function or the slot's arguments are already complete JSON.  A server that
+    sends a fresh id on every fragment of one call therefore still merges its
+    fragments, and an id-only delta never opens an empty call.
+    """
+    if slot["id"] not in ids_seen:
+        return False
+    if not func.get("name") and not func.get("arguments"):
+        return False
+    if func.get("name"):
+        return True
+    try:
+        json.loads(slot["arguments"])
+    except json.JSONDecodeError:
+        return False
+    return True
 
 
 def _normalize_tool_calls(raw_calls: list[dict] | None) -> list[ProviderToolCall]:
@@ -283,7 +315,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
         try:
             data = response.json()
         except Exception as exc:
-            logger.warning("Malformed JSON in response from %s: %s", url, exc)
+            logger.warning("Malformed JSON in response from %s: %s", _redact_url(url), exc)
             return ChatCompletionResult(
                 content="[malformed response]",
                 tool_calls=[],
@@ -306,6 +338,9 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
         content_parts: list[str] = []
         tool_calls_map: dict[int, dict] = {}
         tool_call_indices_by_id: dict[str, int] = {}
+        # Where a server's explicit index now points after a split, so its
+        # later id-less deltas follow the most recent call at that index.
+        slot_for_index: dict[int, int] = {}
         next_tool_call_index = 0
         message_extra_content: dict[str, Any] | None = None
         reasoning_parts: list[str] = []
@@ -377,18 +412,26 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     return self._parse_response(data, elapsed_ms)
 
             async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                payload_str = line[5:]
-                if payload_str.startswith(" "):
-                    payload_str = payload_str[1:]
-                if payload_str.strip() == "[DONE]":
-                    break
+                if line.startswith("error:"):
+                    # llama-server builds before ggml-org/llama.cpp#16109
+                    # (September 2025) report a mid-stream failure in a
+                    # non-standard ``error:`` field instead of ``data:``.
+                    chunk: dict[str, Any] = {"error": _parse_sse_error_field(line[6:])}
+                else:
+                    if not line.startswith("data:"):
+                        continue
+                    payload_str = line[5:]
+                    if payload_str.startswith(" "):
+                        payload_str = payload_str[1:]
+                    if payload_str.strip() == "[DONE]":
+                        break
 
-                try:
-                    chunk = json.loads(payload_str)
-                except json.JSONDecodeError:
-                    continue
+                    try:
+                        chunk = json.loads(payload_str)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(chunk, dict):
+                        continue
 
                 error = completion_stream_error(chunk)
                 if error is not None:
@@ -406,7 +449,9 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                         elapsed_ms=(time.perf_counter() - started) * 1000,
                         ttft_ms=ttft_ms,
                         transport_error_status=status,
-                        transport_error_is_infrastructure=status >= 500 or context_overflow,
+                        transport_error_is_infrastructure=stream_error_is_infrastructure(
+                            status, context_overflow=context_overflow
+                        ),
                     )
 
                 # Capture usage from final chunk (vLLM/OpenAI include this)
@@ -442,8 +487,25 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                 for tc_delta in delta.get("tool_calls") or []:
                     call_id = tc_delta.get("id")
                     explicit_idx = tc_delta.get("index")
+                    func = tc_delta.get("function") or {}
                     if explicit_idx is not None:
-                        idx = int(explicit_idx)
+                        idx = slot_for_index.get(int(explicit_idx), int(explicit_idx))
+                        slot = tool_calls_map.get(idx)
+                        if call_id and slot is not None and slot["id"] != call_id:
+                            # Ollama's legacy tool parser tags every parallel
+                            # call ``index: 0`` (ollama/ollama#15497).  Route a
+                            # known id back to its slot, and give a new call
+                            # its own slot instead of appending its arguments
+                            # to the previous call's.
+                            if call_id in tool_call_indices_by_id:
+                                idx = tool_call_indices_by_id[call_id]
+                                slot_for_index[int(explicit_idx)] = idx
+                            elif _starts_new_call(slot, func, tool_call_indices_by_id):
+                                while next_tool_call_index in tool_calls_map:
+                                    next_tool_call_index += 1
+                                idx = next_tool_call_index
+                                next_tool_call_index += 1
+                                slot_for_index[int(explicit_idx)] = idx
                     elif call_id and call_id in tool_call_indices_by_id:
                         # Gemini's OpenAI-compatible stream identifies parallel
                         # calls by id but omits OpenAI's numeric index.
@@ -473,7 +535,6 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                             "arguments": "",
                             "extra_content": None,
                         }
-                    func = tc_delta.get("function") or {}
                     if func.get("name"):
                         tool_calls_map[idx]["name"] = func["name"]
                     if func.get("arguments"):
@@ -500,8 +561,13 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
             # chunks or missing entirely (vLLM issue with batched token
             # streaming).  Apply the same repair logic used for the
             # round-trip message to ensure arguments are parseable.
+            # A ``length`` stop is real truncation, not a batching artefact:
+            # keep the arguments malformed so the trace shows the cut-off call
+            # instead of a plausible one with half its values.
             raw_args = tc["arguments"]
-            repaired_args = _repair_streamed_tool_args(raw_args)
+            repaired_args = (
+                raw_args if finish_reason == "length" else _repair_streamed_tool_args(raw_args)
+            )
             if repaired_args != raw_args:
                 logger.debug(
                     "Repaired streamed tool-call arguments for index %d: %.80s → %.80s",

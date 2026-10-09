@@ -21,7 +21,7 @@ from typing import TypeVar
 import httpx
 
 from tool_eval_bench.domain.adapters import RETRYABLE_STATUS_CODES
-from tool_eval_bench.utils.headers import USER_AGENT, attach_session_id
+from tool_eval_bench.utils.headers import USER_AGENT, attach_session_id, merge_headers
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 from tool_eval_bench.utils.urls import redact_urls as _redact_urls
 
@@ -63,6 +63,27 @@ def _error_body(response: httpx.Response) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _error_object(response: httpx.Response) -> dict | None:
+    """Return the body's ``error`` object, or None when it is absent or not a dict.
+
+    Google and OpenAI send ``{"error": {...}}``, but Hugging Face TGI and many
+    small gateways send ``{"error": "<message>"}``. A string there must not
+    break the retry loop.
+    """
+    data = _error_body(response)
+    if data is None:
+        return None
+    error = data.get("error")
+    return error if isinstance(error, dict) else None
+
+
+def _dict_entries(value: object) -> list[dict]:
+    """The dict entries of a JSON list, skipping anything else; [] for a non-list."""
+    if not isinstance(value, list):
+        return []
+    return [entry for entry in value if isinstance(entry, dict)]
+
+
 def _retry_delay_from_body(response: httpx.Response) -> float | None:
     """Parse Google's ``RetryInfo.retryDelay`` (e.g. ``"2s"``) from an error body.
 
@@ -70,12 +91,10 @@ def _retry_delay_from_body(response: httpx.Response) -> float | None:
     ``Retry-After`` as a header instead — but checking a body that doesn't have
     it is a harmless no-op, so both wire formats can share this helper.
     """
-    data = _error_body(response)
-    if data is None:
+    error = _error_object(response)
+    if error is None:
         return None
-    for detail in ((data.get("error") or {}).get("details")) or []:
-        if not isinstance(detail, dict):
-            continue
+    for detail in _dict_entries(error.get("details")):
         if not str(detail.get("@type", "")).endswith("RetryInfo"):
             continue
         raw = detail.get("retryDelay")
@@ -119,27 +138,35 @@ def _daily_quota_exhaustion(response: httpx.Response) -> str | None:
     so it is better to fail the request immediately with a clear reason than
     to silently burn the retry budget and surface as a generic timeout.
     """
-    data = _error_body(response)
-    if data is None:
+    error = _error_object(response)
+    if error is None:
         return None
-    error = data.get("error") or {}
     if error.get("status") != "RESOURCE_EXHAUSTED":
         return None
-    for detail in error.get("details") or []:
-        if not isinstance(detail, dict) or not str(detail.get("@type", "")).endswith(
-            "QuotaFailure"
-        ):
+    for detail in _dict_entries(error.get("details")):
+        if not str(detail.get("@type", "")).endswith("QuotaFailure"):
             continue
-        for violation in detail.get("violations") or []:
+        for violation in _dict_entries(detail.get("violations")):
             quota_id = str(violation.get("quotaId", ""))
             if "PerDay" in quota_id:
-                dims = violation.get("quotaDimensions") or {}
-                model = dims.get("model")
+                dims = violation.get("quotaDimensions")
+                model = dims.get("model") if isinstance(dims, dict) else None
                 limit = violation.get("quotaValue")
                 where = f" for {model}" if model else ""
                 how_many = f" (limit: {limit}/day)" if limit else ""
                 return f"Daily quota exhausted{where}{how_many}"
     return None
+
+
+def stream_error_is_infrastructure(status: int, *, context_overflow: bool = False) -> bool:
+    """Whether an error reported inside an HTTP 200 stream is an infrastructure failure.
+
+    Matches the retry policy: server errors and the retryable statuses (429
+    included) are the endpoint's fault, not the model's. ``context_overflow``
+    marks an error saying the prompt did not fit the server's context, which
+    is not something the model's answer caused either.
+    """
+    return status >= 500 or status in RETRYABLE_STATUS_CODES or context_overflow
 
 
 def _backoff_delay(attempt: int, response: httpx.Response | None = None) -> float:
@@ -309,7 +336,7 @@ class RetryingHTTPAdapter:
     ) -> dict[str, str]:
         """Merge the wire format's headers with the user's and the session id."""
         return attach_session_id(
-            {"User-Agent": USER_AGENT, **headers, **self._default_headers},
+            merge_headers({"User-Agent": USER_AGENT}, headers, self._default_headers),
             self._session_header,
             conversation_id,
         )

@@ -164,6 +164,19 @@ def test_main_merges_provider_headers_with_flags_and_mints_a_session_id(
     assert len(headers["x-opencode-session"]) == 32
 
 
+def test_main_flag_header_replaces_provider_header_of_any_case(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Header names are case-insensitive; httpx would otherwise send both values."""
+    monkeypatch.setenv("TOOL_EVAL_ZEN_BASE_URL", "https://opencode.ai/zen/go/v1/messages")
+    monkeypatch.setenv("TOOL_EVAL_ZEN_HEADERS", "User-Agent=env-agent")
+    monkeypatch.delenv("TOOL_EVAL_ZEN_SESSION_HEADER", raising=False)
+
+    seen = _probe_via_main(monkeypatch, ["--provider", "zen", "--header", "user-agent=flag-agent"])
+
+    assert seen["headers"] == {"user-agent": "flag-agent"}
+
+
 def test_main_reads_generic_headers_without_a_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TOOL_EVAL_BASE_URL", "http://gpu-box:8080")
     monkeypatch.setenv("TOOL_EVAL_HEADERS", "X-Generic=yes")

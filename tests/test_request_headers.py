@@ -15,6 +15,7 @@ from tool_eval_bench.adapters.gemini import GeminiAdapter
 from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
 from tool_eval_bench.adapters.requests import minimal_request
 from tool_eval_bench.cli.helpers import adapter_options
+from tool_eval_bench.cli.model_probe import _models_request
 from tool_eval_bench.domain.adapters import BackendAdapter, ChatCompletionResult
 from tool_eval_bench.domain.scenarios import ScenarioDefinition
 from tool_eval_bench.evals.scenarios import SCENARIOS
@@ -22,6 +23,7 @@ from tool_eval_bench.runner.orchestrator import run_scenario
 from tool_eval_bench.utils.headers import (
     USER_AGENT,
     attach_session_id,
+    merge_headers,
     parse_header_env,
     parse_header_pair,
     parse_header_pairs,
@@ -54,6 +56,23 @@ class TestParsing:
         assert parse_header_env("A=1; B: two ;") == {"A": "1", "B": "two"}
         assert parse_header_env(None) == {}
         assert parse_header_env("   ") == {}
+
+    def test_later_pairs_win_regardless_of_case(self) -> None:
+        assert parse_header_pairs(["User-Agent=a", "X=1", "user-agent=b"]) == {
+            "X": "1",
+            "user-agent": "b",
+        }
+
+    def test_merge_headers_overrides_case_insensitively(self) -> None:
+        merged = merge_headers(
+            {"User-Agent": "default", "Authorization": "Bearer k", "X-Keep": "1"},
+            None,
+            {"user-agent": "mine", "AUTHORIZATION": "Bearer other"},
+        )
+        assert merged == {"X-Keep": "1", "user-agent": "mine", "AUTHORIZATION": "Bearer other"}
+
+    def test_session_header_replaces_a_user_header_of_any_case(self) -> None:
+        assert attach_session_id({"X-S": "stale"}, "x-s", "conv") == {"x-s": "conv"}
 
     def test_attach_session_id(self) -> None:
         assert attach_session_id({"A": "1"}, None) == {"A": "1"}
@@ -125,6 +144,22 @@ class TestAdapters:
         second = _capture(adapter, _OPENAI_RESPONSE, base_url="http://x/v1").headers["x-s"]
         assert first != second
 
+    @pytest.mark.parametrize(
+        ("adapter_cls", "response", "base_url"),
+        [
+            (OpenAICompatibleAdapter, _OPENAI_RESPONSE, "http://x/v1"),
+            (AnthropicAdapter, _ANTHROPIC_RESPONSE, "https://api.anthropic.com"),
+        ],
+    )
+    @pytest.mark.parametrize("name", ["user-agent", "authorization"])
+    def test_user_header_override_is_case_insensitive(
+        self, adapter_cls: type, response: dict[str, Any], base_url: str, name: str
+    ) -> None:
+        """A lower-case user header replaces the adapter's own instead of joining it."""
+        adapter = adapter_cls(default_headers={name: "from-user"})
+        request = _capture(adapter, response, base_url=base_url)
+        assert request.headers.get_list(name) == ["from-user"]
+
     def test_user_headers_override_wire_format_headers(self) -> None:
         adapter = AnthropicAdapter(default_headers={"anthropic-version": "2099-01-01"})
         request = _capture(adapter, _ANTHROPIC_RESPONSE, base_url="https://api.anthropic.com")
@@ -164,6 +199,23 @@ class TestPreflightRequests:
         assert headers["Authorization"] == "Bearer other"
         assert headers["X-A"] == "1"
         assert headers["User-Agent"] == USER_AGENT
+
+    def test_minimal_request_overrides_case_insensitively(self) -> None:
+        _, _, headers = minimal_request(
+            "http://x", "m", "k", headers={"authorization": "Bearer other", "user-agent": "me"}
+        )
+        assert sorted(k for k in headers if k.lower() in ("authorization", "user-agent")) == [
+            "authorization",
+            "user-agent",
+        ]
+        assert headers["authorization"] == "Bearer other"
+        assert headers["user-agent"] == "me"
+
+    def test_models_request_overrides_case_insensitively(self) -> None:
+        _, headers = _models_request("http://x", "k", "openai", {"authorization": "Bearer o"})
+        assert {k: v for k, v in headers.items() if k.lower() == "authorization"} == {
+            "authorization": "Bearer o"
+        }
 
 
 class _RecordingAdapter(BackendAdapter):

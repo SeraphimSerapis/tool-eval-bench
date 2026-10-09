@@ -33,7 +33,7 @@ from typing import Any
 
 import httpx
 
-from tool_eval_bench.adapters.http_retry import RetryingHTTPAdapter
+from tool_eval_bench.adapters.http_retry import RetryingHTTPAdapter, stream_error_is_infrastructure
 from tool_eval_bench.adapters.wire_format import anthropic_messages_url
 from tool_eval_bench.domain.adapters import (
     RETRYABLE_STATUS_CODES,
@@ -598,7 +598,8 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                     if stop:
                         finish_reason = _finish_reason(stop)
                 elif kind == "error":
-                    stream_error = event.get("error") or {}
+                    error = event.get("error") or {}
+                    stream_error = error if isinstance(error, dict) else {"message": str(error)}
                     break
 
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -625,7 +626,7 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                 elapsed_ms=elapsed_ms,
                 ttft_ms=ttft_ms,
                 transport_error_status=status,
-                transport_error_is_infrastructure=status >= 500,
+                transport_error_is_infrastructure=stream_error_is_infrastructure(status),
             )
 
         return ChatCompletionResult(

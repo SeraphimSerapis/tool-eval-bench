@@ -44,12 +44,29 @@ def parse_header_pair(value: str) -> tuple[str, str]:
     return name, header_value
 
 
+def merge_headers(*layers: Mapping[str, str] | None) -> dict[str, str]:
+    """Merge header mappings; a later layer overrides an earlier one.
+
+    HTTP header names are case-insensitive, so ``user-agent`` replaces
+    ``User-Agent`` rather than travelling next to it. httpx would otherwise
+    send both. The overriding layer's spelling is kept.
+    """
+    merged: dict[str, str] = {}
+    for layer in layers:
+        for name, value in (layer or {}).items():
+            lowered = name.lower()
+            for existing in [key for key in merged if key.lower() == lowered]:
+                del merged[existing]
+            merged[name] = value
+    return merged
+
+
 def parse_header_pairs(values: Iterable[str] | None) -> dict[str, str]:
     """Parse repeated ``--header`` values into a mapping; later pairs win."""
     headers: dict[str, str] = {}
     for value in values or ():
         name, header_value = parse_header_pair(value)
-        headers[name] = header_value
+        headers = merge_headers(headers, {name: header_value})
     return headers
 
 
@@ -70,7 +87,6 @@ def attach_session_id(
     A missing id gets a fresh one: a single-shot request is its own
     conversation.  With no session header configured the headers pass through.
     """
-    merged = dict(headers)
-    if session_header:
-        merged[session_header] = conversation_id or uuid.uuid4().hex
-    return merged
+    if not session_header:
+        return dict(headers)
+    return merge_headers(headers, {session_header: conversation_id or uuid.uuid4().hex})

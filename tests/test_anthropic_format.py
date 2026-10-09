@@ -568,6 +568,24 @@ class TestStreamParsing:
         assert result.tool_calls == []
         assert "overloaded_error" in result.content
 
+    @pytest.mark.parametrize(
+        ("error", "status", "infrastructure"),
+        [
+            ({"type": "rate_limit_error", "message": "per-minute limit"}, 429, True),
+            ({"type": "api_error", "message": "boom"}, 500, True),
+            ({"type": "invalid_request_error", "message": "bad"}, 400, False),
+            ("gateway exploded", 500, True),
+        ],
+    )
+    def test_error_event_status_classification(
+        self, error: object, status: int, infrastructure: bool
+    ) -> None:
+        """A mid-stream 429 is infrastructure, as it is on the non-stream path."""
+        result = _stream(_events({"type": "error", "error": error}))
+
+        assert result.transport_error_status == status
+        assert result.transport_error_is_infrastructure is infrastructure
+
     def test_malformed_lines_are_skipped(self) -> None:
         result = _stream(
             [

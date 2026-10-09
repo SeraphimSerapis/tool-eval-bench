@@ -25,6 +25,8 @@ from tool_eval_bench.adapters.openai_compat import (
 from tool_eval_bench.adapters.openai_compat import (
     OpenAICompatibleAdapter as Adapter,
 )
+from tool_eval_bench.domain.scenarios import FailureKind
+from tool_eval_bench.runner.orchestrator import _classify_runtime_error
 
 _OK = {"choices": [{"message": {"role": "assistant", "content": "hi"}}]}
 
@@ -191,6 +193,99 @@ class TestDailyQuotaExhaustion:
 
         assert result.content == "hi"
         assert attempts["n"] == 2
+        await adapter.aclose()
+
+
+# Hugging Face TGI's ``ErrorResponse`` shape, also common on small gateways.
+_STRING_ERROR_BODY = {"error": "Model is overloaded", "error_type": "overloaded"}
+
+
+@pytest.fixture
+def instant_real_backoff(monkeypatch) -> None:
+    """Run the real delay functions, so they parse the error body, then wait 0s."""
+    real_rate_limit_delay = http_retry._rate_limit_delay
+    real_backoff_delay = http_retry._backoff_delay
+
+    def rate_limit_delay(attempt, response=None):
+        real_rate_limit_delay(attempt, response)
+        return 0.0
+
+    def backoff_delay(attempt, response=None):
+        real_backoff_delay(attempt, response)
+        return 0.0
+
+    monkeypatch.setattr(http_retry, "_rate_limit_delay", rate_limit_delay)
+    monkeypatch.setattr(http_retry, "_backoff_delay", backoff_delay)
+
+
+class TestNonDictErrorBodies:
+    """Error bodies that are not Google's ``{"error": {...}}`` must not crash retries."""
+
+    @pytest.mark.parametrize("status", [429, 503])
+    def test_string_error_has_no_retry_hint_or_daily_quota(self, status) -> None:
+        resp = httpx.Response(status, json=_STRING_ERROR_BODY)
+        assert _retry_after_seconds(resp, cap=60.0) is None
+        assert _daily_quota_exhaustion(resp) is None
+
+    def test_malformed_quota_entries_are_skipped(self) -> None:
+        body = {
+            "error": {
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    "junk",
+                    {
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": [
+                            "junk",
+                            {
+                                "quotaId": "GenerateRequestsPerDayPerProjectPerModel",
+                                "quotaDimensions": "global",
+                                "quotaValue": "20",
+                            },
+                        ],
+                    },
+                ],
+            }
+        }
+        resp = httpx.Response(429, json=body)
+        assert _daily_quota_exhaustion(resp) == "Daily quota exhausted (limit: 20/day)"
+
+    def test_non_list_details_are_ignored(self) -> None:
+        body = {"error": {"status": "RESOURCE_EXHAUSTED", "details": 5}}
+        resp = httpx.Response(429, json=body)
+        assert _daily_quota_exhaustion(resp) is None
+        assert _retry_after_seconds(resp, cap=60.0) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [429, 503])
+    async def test_string_error_body_is_retried(self, instant_real_backoff, status) -> None:
+        attempts = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                return httpx.Response(status, json=_STRING_ERROR_BODY)
+            return httpx.Response(200, json=_OK)
+
+        adapter = _adapter(handler)
+        result = await adapter.chat_completion(model="m", messages=[], base_url="http://x")
+
+        assert result.content == "hi"
+        assert attempts["n"] == 2
+        await adapter.aclose()
+
+    @pytest.mark.asyncio
+    async def test_persistent_string_error_is_a_server_error(self, instant_real_backoff) -> None:
+        """Once retries run out it must classify as infrastructure, not a model crash."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, json=_STRING_ERROR_BODY)
+
+        adapter = _adapter(handler, max_retries=1)
+        with pytest.raises(httpx.HTTPStatusError) as excinfo:
+            await adapter.chat_completion(model="m", messages=[], base_url="http://x")
+
+        assert _classify_runtime_error(excinfo.value) == FailureKind.SERVER_ERROR
         await adapter.aclose()
 
 

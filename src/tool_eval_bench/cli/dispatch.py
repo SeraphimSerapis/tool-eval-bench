@@ -154,6 +154,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.storage.reports import MarkdownReporter
 from tool_eval_bench.storage.reports.throughput import throughput_report
 from tool_eval_bench.utils.headers import attach_session_id as _attach_session_id
+from tool_eval_bench.utils.headers import merge_headers as _merge_headers
 from tool_eval_bench.utils.headers import parse_header_env as _parse_header_env
 from tool_eval_bench.utils.headers import parse_header_pairs as _parse_header_pairs
 from tool_eval_bench.utils.system_prompt import MAX_SYSTEM_PROMPT_BYTES, normalize_system_prompt
@@ -950,7 +951,7 @@ def _resolve_endpoint(
             env_headers = _parse_header_env(os.getenv("TOOL_EVAL_HEADERS"))
             session_header = args.session_header or os.getenv("TOOL_EVAL_SESSION_HEADER") or None
         # Headers merge rather than replace: a --header adds to the provider's.
-        request_headers = {**env_headers, **_parse_header_pairs(args.header)}
+        request_headers = _merge_headers(env_headers, _parse_header_pairs(args.header))
     except ValueError as exc:
         parser.error(str(exc))
     backend_explicit = bool(backend)

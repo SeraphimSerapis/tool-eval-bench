@@ -28,7 +28,7 @@ from typing import Any
 
 import httpx
 
-from tool_eval_bench.adapters.http_retry import RetryingHTTPAdapter
+from tool_eval_bench.adapters.http_retry import RetryingHTTPAdapter, stream_error_is_infrastructure
 from tool_eval_bench.adapters.wire_format import gemini_generate_url
 from tool_eval_bench.domain.adapters import (
     RETRYABLE_STATUS_CODES,
@@ -342,6 +342,29 @@ def _generation_config(
     return config
 
 
+def _completion_tokens(usage: dict[str, Any]) -> int | None:
+    """Generated tokens, thinking included, or None when usage reports neither.
+
+    ``candidatesTokenCount`` leaves out ``thoughtsTokenCount``.  Thought tokens
+    are generated and billed as output, and the OpenAI-compatible and Anthropic
+    adapters count reasoning in their completion tokens, so Gemini does too.
+    """
+    candidates = usage.get("candidatesTokenCount")
+    thoughts = usage.get("thoughtsTokenCount")
+    if candidates is None and thoughts is None:
+        return None
+    return (candidates or 0) + (thoughts or 0)
+
+
+def _stream_error(error: object) -> tuple[int, str]:
+    """HTTP status and message for an in-stream ``error`` value."""
+    if not isinstance(error, dict):
+        return 500, str(error)[:200]
+    code = error.get("code")
+    status = code if isinstance(code, int) and 400 <= code <= 599 else 500
+    return status, str(error.get("message") or error)[:200]
+
+
 def _parse_parts(
     parts: list[dict[str, Any]],
 ) -> tuple[list[str], list[str], list[ProviderToolCall]]:
@@ -542,6 +565,23 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
                     chunk = json.loads(chunk_str)
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(chunk, dict):
+                    continue
+
+                if chunk.get("error") is not None:
+                    # After HTTP 200 Gemini can still fail mid-stream with a
+                    # ``{"error": {...}}`` chunk.  Discard partial text and
+                    # calls, as the OpenAI-compatible adapter does, so the
+                    # failure is not graded as the model's answer.
+                    status, message = _stream_error(chunk["error"])
+                    return ChatCompletionResult(
+                        content=f"[server error {status}] {message}",
+                        raw_response=chunk,
+                        elapsed_ms=(time.perf_counter() - started) * 1000,
+                        ttft_ms=ttft_ms,
+                        transport_error_status=status,
+                        transport_error_is_infrastructure=stream_error_is_infrastructure(status),
+                    )
 
                 if chunk.get("usageMetadata"):
                     usage = chunk["usageMetadata"]
@@ -570,7 +610,7 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
             ttft_ms=ttft_ms,
             reasoning="".join(thoughts) or None,
             prompt_tokens=usage.get("promptTokenCount"),
-            completion_tokens=usage.get("candidatesTokenCount"),
+            completion_tokens=_completion_tokens(usage),
             finish_reason=finish_reason,
         )
 
@@ -626,6 +666,6 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
             elapsed_ms=elapsed_ms,
             reasoning="".join(thoughts) or None,
             prompt_tokens=usage.get("promptTokenCount"),
-            completion_tokens=usage.get("candidatesTokenCount"),
+            completion_tokens=_completion_tokens(usage),
             finish_reason=_finish_reason(candidates[0].get("finishReason")) if candidates else None,
         )

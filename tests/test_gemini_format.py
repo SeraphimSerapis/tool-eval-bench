@@ -541,6 +541,84 @@ class TestStreamParsing:
 
         assert result.content == "ok"
 
+    def _run(self, lines: list[str]):
+        return asyncio.run(
+            GeminiAdapter()._stream_request(_StreamClient(lines), "http://x", {}, {})  # type: ignore[arg-type]  # noqa: SLF001
+        )
+
+    def test_error_chunk_is_a_transport_error(self) -> None:
+        """Gemini can fail with ``{"error": ...}`` after HTTP 200; partial output is dropped."""
+        result = self._run(
+            [
+                'data: {"candidates": [{"content": {"parts": ['
+                '{"text": "par"}, {"functionCall": {"name": "f", "args": {}}}]}}]}',
+                'data: {"error": {"code": 503, "message": "The model is overloaded.",'
+                ' "status": "UNAVAILABLE"}}',
+            ]
+        )
+
+        assert result.transport_error_status == 503
+        assert result.transport_error_is_infrastructure is True
+        assert result.content == "[server error 503] The model is overloaded."
+        assert result.tool_calls == []
+
+    @pytest.mark.parametrize(
+        ("error", "status", "infrastructure"),
+        [
+            ({"code": 429, "message": "quota"}, 429, True),
+            ({"code": 400, "message": "bad request"}, 400, False),
+            ({"code": "UNAVAILABLE", "message": "x"}, 500, True),
+            ("backend crashed", 500, True),
+        ],
+    )
+    def test_error_chunk_status_classification(
+        self, error: object, status: int, infrastructure: bool
+    ) -> None:
+        result = self._run([f"data: {json.dumps({'error': error})}"])
+
+        assert result.transport_error_status == status
+        assert result.transport_error_is_infrastructure is infrastructure
+
+    def test_non_object_chunks_are_skipped(self) -> None:
+        result = self._run(
+            ["data: 5", 'data: {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}']
+        )
+
+        assert result.content == "ok"
+        assert result.transport_error_status is None
+
+    def test_completion_tokens_include_thinking_tokens(self) -> None:
+        """Thought tokens are generated output, as in the other adapters' counts."""
+        result = self._run(
+            [
+                'data: {"candidates": [{"content": {"parts": [{"text": "hi"}]}}],'
+                ' "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5,'
+                ' "thoughtsTokenCount": 200, "totalTokenCount": 215}}',
+            ]
+        )
+
+        assert result.prompt_tokens == 10
+        assert result.completion_tokens == 205
+
+    @pytest.mark.parametrize(
+        ("usage", "expected"),
+        [
+            ({"promptTokenCount": 1, "candidatesTokenCount": 5, "thoughtsTokenCount": 7}, 12),
+            ({"promptTokenCount": 1, "thoughtsTokenCount": 7}, 7),
+            ({"promptTokenCount": 1, "candidatesTokenCount": 5}, 5),
+            ({"promptTokenCount": 1}, None),
+        ],
+    )
+    def test_non_stream_completion_tokens_include_thinking_tokens(
+        self, usage: dict[str, int], expected: int | None
+    ) -> None:
+        result = GeminiAdapter._parse_response(  # noqa: SLF001
+            {"candidates": [{"content": {"parts": [{"text": "ok"}]}}], "usageMetadata": usage},
+            elapsed_ms=1.0,
+        )
+
+        assert result.completion_tokens == expected
+
     def test_sse_data_without_space_is_valid(self) -> None:
         adapter = GeminiAdapter()
         client = _StreamClient(
