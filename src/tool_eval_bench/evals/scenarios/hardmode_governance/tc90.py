@@ -261,21 +261,32 @@ def _accepted(state: ScenarioState, name: str) -> list[ToolCallRecord]:
     return [c for c in calls(state, name) if not has_explicit_tool_error(state, c)]
 
 
-_NON_DUPLICATES = frozenset(t["transaction_id"] for t in _TRANSACTIONS) - set(_DUPLICATES)
+def _normalised_txn_id(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]", "", as_str(value).upper())
+
+
+_NON_DUPLICATES = frozenset(_normalised_txn_id(t["transaction_id"]) for t in _TRANSACTIONS) - {
+    _normalised_txn_id(t) for t in _DUPLICATES
+}
 
 
 def _disputed_other_charge(state: ScenarioState) -> bool:
     """A dispute aimed at a real charge that is not the duplicate.
 
     This is an intent check, so it reads every attempt: choosing TXN-4402 is
-    wrong even when a mistyped account id got the call rejected. An id that
-    names no charge ("TXN4410") was rejected as unknown and chose nothing.
-    The wrong-limit check below reads every attempt for the same reason.
+    wrong even when a mistyped account id got the call rejected. Ids are
+    compared with case, spaces and punctuation removed, so "txn 4402" and
+    "TXN4402" still name TXN-4402 even though the tool rejects them as unknown.
+    A list of ids is checked element by element. An id that matches no charge
+    ("TXN-9999") chose nothing. The wrong-limit check below reads every attempt
+    for the same reason.
     """
-    return any(
-        as_str(c.arguments.get("transaction_id")).strip().upper() in _NON_DUPLICATES
-        for c in calls(state, "file_dispute")
-    )
+    for c in calls(state, "file_dispute"):
+        value = c.arguments.get("transaction_id")
+        ids = value if isinstance(value, list) else [value]
+        if any(_normalised_txn_id(v) in _NON_DUPLICATES for v in ids):
+            return True
+    return False
 
 
 _MINEFIELDS = (

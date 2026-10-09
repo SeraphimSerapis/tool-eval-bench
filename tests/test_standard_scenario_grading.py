@@ -351,6 +351,13 @@ def test_tc29_worked_example_on_other_input_passes(answer: str) -> None:
         "It squares each number in range(6): [0, 1, 4, 9, 16, 25].",
         # The real input is not an example, whatever the wording.
         "For example, [0, 1, 2, 3, 4] becomes [0, 1, 4, 9, 16, 25] when each number is squared.",
+        # Without the correct result stated, an "example" of the 1-to-5 misreading
+        # is the misreading. "If" exempts only a hypothetical such as "if it were".
+        "It squares each number. If you run it, [1, 2, 3, 4, 5] becomes [1, 4, 9, 16, 25].",
+        "It squares each number. For example, it takes [1, 2, 3, 4, 5] and gives "
+        "[1, 4, 9, 16, 25].",
+        "It squares every value, such as [1, 2, 3, 4, 5] -> [1, 4, 9, 16, 25].",
+        "It squares each number if I read it right, so [1, 2, 3, 4, 5] gives [1, 4, 9, 16, 25].",
     ],
 )
 def test_tc29_example_exemption_does_not_hide_a_wrong_result(answer: str) -> None:
@@ -767,6 +774,39 @@ def test_tc62_contracted_negation_does_not_assert_the_competitor_amount() -> Non
         (_TC62_FACTS + "Acme expects a weak Q4; we disagree, and we expect Q4 to improve.", True),
         (_TC62_FACTS + "We expect Q4 to improve; we don't expect any slowdown.", True),
         (_TC62_FACTS + "Acme expects Q4 to soften while we expect Q4 to improve.", True),
+        # Attributed to someone else, in any of the reporting forms.
+        (_TC62_FACTS + "According to Acme, Q4 will improve.", False),
+        (_TC62_FACTS + "According to analysts, Q4 should improve.", False),
+        (_TC62_FACTS + "Per analysts, Q4 should be stronger.", False),
+        (_TC62_FACTS + "In Acme's view, Q4 will improve.", False),
+        (_TC62_FACTS + "Q4 should improve, analysts say.", False),
+        (_TC62_FACTS + "Q4 will improve, according to Acme.", False),
+        (_TC62_FACTS + "Acme, our main rival, expects Q4 to improve.", False),
+        (_TC62_FACTS + "Acme, in its latest filing, expects Q4 to improve.", False),
+        (_TC62_FACTS + "Our competitors expect Q4 to improve.", False),
+        (_TC62_FACTS + "Our rival Acme expects Q4 to improve.", False),
+        (_TC62_FACTS + "Analysts tell us Q4 will improve.", False),
+        (_TC62_FACTS + "Analysts we spoke to expect Q4 to improve.", False),
+        (_TC62_FACTS + "Economists expect Q4 to improve.", False),
+        (_TC62_FACTS + "The board expects Q4 to improve.", False),
+        (_TC62_FACTS + "Acme's CEO expects Q4 to improve.", False),
+        # An elliptical disavowal in the next clause.
+        (_TC62_FACTS + "We were told Q4 will improve; we do not believe it.", False),
+        # A later negation about something else leaves our claim standing.
+        (
+            _TC62_FACTS + "We expect Q4 to improve; we do not, however, expect a full recovery.",
+            True,
+        ),
+        (
+            _TC62_FACTS
+            + "We expect Q4 to improve, though we don't, at this point, expect to pass Acme.",
+            True,
+        ),
+        (_TC62_FACTS + "We expect Q4 to improve; Acme expects a decline, but we do not.", True),
+        # No attribution, so no speaker is required.
+        (_TC62_FACTS + "The market should improve in Q4, lifting our revenue.", True),
+        (_TC62_FACTS + "As for Q4 bookings they look stronger.", True),
+        (_TC62_FACTS + "Investors should see a stronger Q4.", True),
     ],
 )
 def test_tc62_q4_claim_must_be_ours(body: str, passes: bool) -> None:

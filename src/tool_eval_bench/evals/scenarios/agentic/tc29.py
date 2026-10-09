@@ -63,8 +63,12 @@ _TC29_EXAMPLE_PAIR = re.compile(
 )
 # Without a marker the pair is a claim about this code: "It squares
 # [1, 2, 3, 4, 5], giving [1, 4, 9, 16, 25]" misreads range(5) and must fail.
+# Only a hypothetical "if" marks an example: "If you run it, ..." introduces
+# the model's claim about this code.
 _TC29_EXAMPLE_MARKER = re.compile(
-    r"\b(?:example|instance|such\s+as|suppose|imagine|if)\b|\be\.g\.", re.IGNORECASE
+    r"\b(?:example|instance|such\s+as|suppose|imagine)\b|\be\.g\."
+    r"|\bif\s+(?:it|the\s+\w+|we|you)\s+(?:were|was|had|used)\b",
+    re.IGNORECASE,
 )
 # "e.g." and "i.e." do not end the sentence the marker has to sit in.
 _TC29_SENTENCE_END = re.compile(r"(?<!\be\.g)(?<!\bi\.e)[.!?](?=\s)|\n", re.IGNORECASE)
@@ -111,8 +115,14 @@ def _tc29_example_spans(answer: str) -> list[tuple[int, int]]:
     return spans
 
 
-def _tc29_states_wrong_list(answer: str) -> bool:
-    examples = _tc29_example_spans(answer)
+def _tc29_states_wrong_list(answer: str, *, allow_examples: bool) -> bool:
+    """Whether the answer writes out a list other than the result or the range.
+
+    ``allow_examples`` is True only when the answer also states [0, 1, 4, 9, 16].
+    An example illustrates the answer; without the answer, a squared "example"
+    on other input is the model's misreading of range(5).
+    """
+    examples = _tc29_example_spans(answer) if allow_examples else []
     return any(
         _tc29_ints(match.group(1)) not in _TC29_ALLOWED_LISTS
         and not any(start <= match.start() and match.end() <= end for start, end in examples)
@@ -163,7 +173,7 @@ def _tc29_eval(state: ScenarioState) -> ScenarioEvaluation:
         (names_comprehension and _answer_affirms_pattern(answer, _TC29_POWER_FORM))
         or _answer_affirms_pattern(answer, _TC29_SQUARES_OF_RANGE)
     )
-    wrong_list = _tc29_states_wrong_list(answer)
+    wrong_list = _tc29_states_wrong_list(answer, allow_examples=correct_output)
 
     if used_web:
         return _fail("Used web_search for a basic Python question.")

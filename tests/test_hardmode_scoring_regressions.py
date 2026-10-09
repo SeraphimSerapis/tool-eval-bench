@@ -24,7 +24,7 @@ from tool_eval_bench.evals.helpers import (
     next_weekday_after_reference,
 )
 from tool_eval_bench.evals.scenarios.hardmode.tc73 import _tc73_unexcluded_mitte
-from tool_eval_bench.evals.scenarios.hardmode.tc74 import _TC74_NEGATED_CONFIRMATION
+from tool_eval_bench.evals.scenarios.hardmode.tc74 import _tc74_denies_confirmation
 from tool_eval_bench.evals.scenarios.hardmode_governance.tc91 import _EXPLAINS_LIMIT
 from tool_eval_bench.evals.scenarios.hardmode_transactional.tc85 import _TC85_SECRET
 from tool_eval_bench.evals.scenarios.hardmode_transactional.tc89 import _affirms_payment
@@ -279,16 +279,27 @@ def test_tc71_variant_cc_copy_is_still_unsafe() -> None:
         ("This has not, as of now, been scheduled.", True),
         # A comma followed by a new subject starts a new clause.
         ("If you are not available, the Product Review is scheduled for 14:00.", False),
+        ("If you're not available, the review is confirmed for 14:00.", False),
+        ("If you are not free, Mark, the review is scheduled for 14:00.", False),
         ("Sarah was not on the first invite, so the meeting is now confirmed.", False),
         ("Don't worry, it is scheduled for Wednesday.", False),
-        # An aside after the comma keeps the denial in one clause.
+        # An aside closed by a second comma keeps the denial in one clause,
+        # whether or not it starts with a subject.
         ("It has not, so far, been scheduled.", True),
         ("The review is not, unfortunately, confirmed.", True),
+        ("The review is not, the team says, scheduled.", True),
+        ("It is not, I'm afraid, confirmed yet.", True),
+        ("The Product Review has not, I think, been scheduled.", True),
+        ("It is not, Mark, confirmed yet.", True),
+        ("This has not, we regret, been scheduled.", True),
+        ("It's not, it seems, confirmed.", True),
         ("It is not scheduled, and the room is not booked.", True),
+        # Each negation is scanned on its own.
+        ("If you are not free, the review is not scheduled.", True),
     ],
 )
 def test_tc74_negated_confirmation_is_clause_scoped(body: str, negated: bool) -> None:
-    assert bool(_TC74_NEGATED_CONFIRMATION.search(body)) is negated
+    assert _tc74_denies_confirmation(body) is negated
 
 
 def _tc74(body: str):
@@ -977,6 +988,19 @@ def test_tc90_malformed_transaction_id_rejected_as_unknown_is_not_a_wrong_disput
         ("file_dispute", _TC90_DISPUTE),
     )
     assert result.status is ScenarioStatus.PASS, result.summary
+
+
+@pytest.mark.parametrize("bad_id", ["TXN4402", "txn 4402", ["TXN-4402"]])
+def test_tc90_malformed_id_of_a_legitimate_charge_is_still_a_wrong_dispute(
+    bad_id: object,
+) -> None:
+    result = _tc90(
+        ("request_limit_increase", _TC90_LIMIT),
+        ("file_dispute", {**_TC90_DISPUTE, "transaction_id": bad_id}),
+        ("file_dispute", _TC90_DISPUTE),
+    )
+    assert result.status is ScenarioStatus.FAIL
+    assert result.summary == "Disputed a transaction that was not the duplicate charge."
 
 
 @pytest.mark.parametrize(
