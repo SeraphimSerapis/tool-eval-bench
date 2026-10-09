@@ -35,12 +35,14 @@ def spec_decode_report(
     label: str | None,
     temperature: float | None,
     failed: int = 0,
+    stopped_early: bool = False,
 ) -> ModeReport:
     """Build the speculative decoding report content.
 
     *spec_samples* are the successful cells; *failed* counts the cells whose
     every run failed. Their error text stays out of the report, as it does out
-    of the stored row, because it can quote the server URL.
+    of the stored row, because it can quote the server URL. *stopped_early*
+    marks a run interrupted or aborted before every cell ran.
     """
     header: list[str] = []
 
@@ -55,16 +57,20 @@ def spec_decode_report(
     if temperature is not None:
         note = " (greedy: a ceiling for sampled workloads)" if temperature == 0 else ""
         header.append(f"- **Temperature**: {temperature:g}{note}")
-    failed_note = (
-        [
-            "",
-            "> [!WARNING]",
+    warnings: list[str] = []
+    if stopped_early:
+        warnings.append(
+            "> The run stopped before every cell ran. Only the cells that finished are counted."
+        )
+    if failed:
+        warnings.append(
             f"> {failed} of {failed + len(spec_samples)} cell(s) failed on every run and "
-            "are not shown in this report.",
-        ]
-        if failed
-        else []
-    )
+            "are not shown in this report."
+        )
+    # One alert; a bare ">" line keeps each warning its own paragraph.
+    failed_note: list[str] = []
+    for line in warnings:
+        failed_note.extend([">", line] if failed_note else ["", "> [!WARNING]", line])
     if not spec_samples:
         return ModeReport(
             title="Speculative Decoding Benchmark",

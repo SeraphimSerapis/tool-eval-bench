@@ -17,11 +17,11 @@
         4096
       ],
       "prompt_types": [
-        "filler",
-        "code"
+        "code",
+        "filler"
       ],
       "baseline_tg_tps": null,
-      "config_fingerprint": "9b4d4597449d"
+      "config_fingerprint": "6ff73547320e"
     },
     "scores": {
       "samples": 2,

@@ -109,7 +109,7 @@ def test_every_cell_failing_is_stored_and_reported_as_a_failed_run(
 def test_a_failed_cell_does_not_stop_a_combined_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """With --perf still to run, spec-bench stores its failed row and carries on."""
+    """A tool-call run follows (no --skip-tool-eval), so spec-bench stores and carries on."""
     from tool_eval_bench.application import run_queries
 
     monkeypatch.chdir(tmp_path)
@@ -205,6 +205,92 @@ def test_a_different_workload_is_a_different_cohort(change: dict[str, Any]) -> N
 def test_method_aliases_share_a_cohort() -> None:
     assert _fingerprint(spec_method="draft") == _fingerprint(spec_method="standalone")
     assert _fingerprint(spec_method="draft") == _fingerprint(spec_method="draft_model")
+
+
+def test_listing_order_does_not_split_a_cohort() -> None:
+    assert _fingerprint(depths=[0, 4096]) == _fingerprint(depths=[4096, 0])
+    assert _fingerprint(prompt_types=["filler", "code"]) == _fingerprint(
+        prompt_types=["code", "filler"]
+    )
+
+
+def _direct_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_run: Callable[..., Any],
+    **kwargs: Any,
+) -> tuple[Console, int | None]:
+    """Call cli.spec_bench.run_spec_bench directly; return its console and exit code."""
+    from tool_eval_bench.cli import spec_bench as cli_spec
+    from tool_eval_bench.runner import speculative
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(speculative, "run_spec_bench", fake_run)
+    console = Console(record=True, width=200)
+    try:
+        cli_spec.run_spec_bench(
+            console,
+            "m",
+            "m",
+            "http://h:1/v1",
+            None,
+            pp=16,
+            tg=16,
+            depths=[0, 4096],
+            output_dir=str(tmp_path / "runs"),
+            **kwargs,
+        )
+    except SystemExit as exc:
+        return console, int(exc.code or 0)
+    return console, None
+
+
+def test_start_panel_shows_the_canonical_method(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def fake_run(*args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    console, _ = _direct_run(monkeypatch, tmp_path, fake_run, spec_method="nextn")
+    text = console.export_text()
+    assert "method=mtp" in text
+    assert "method=nextn" not in text
+
+
+@pytest.mark.parametrize("raised", [KeyboardInterrupt(), RuntimeError("boom")])
+def test_a_run_stopped_midway_stores_the_finished_cells_as_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, raised: BaseException
+) -> None:
+    from tool_eval_bench.application import run_queries
+
+    finished = _spec_samples("response", 1)[0]
+
+    async def fake_run(*args: Any, on_sample: Callable[..., Any], **kwargs: Any) -> list[Any]:
+        await on_sample(finished, 0, 2)
+        raise raised
+
+    _, code = _direct_run(monkeypatch, tmp_path, fake_run)
+
+    assert code == 1
+    [listed] = run_queries.recent_runs()
+    assert listed["status"] == "failed"
+    assert listed["scores"]["samples"] == 1 and listed["scores"]["failed"] == 0
+    [report] = (tmp_path / "runs").rglob("*.md")
+    assert "The run stopped before every cell ran." in report.read_text(encoding="utf-8")
+
+
+def test_a_run_that_fails_before_any_cell_stores_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tool_eval_bench.application import run_queries
+
+    async def fake_run(*args: Any, **kwargs: Any) -> list[Any]:
+        raise RuntimeError("connection refused")
+
+    _, code = _direct_run(monkeypatch, tmp_path, fake_run)
+
+    assert code == 1
+    assert run_queries.recent_runs() == []
 
 
 def test_custom_prompt_text_is_hashed_not_stored() -> None:

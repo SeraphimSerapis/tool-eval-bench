@@ -93,13 +93,15 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > **Failed cells.** A cell that fails on every run is left out of the results,
 > and the run is stored with status `failed` and a report note saying how many
 > cells are missing, as `--perf-only` does. Under `--json` it ends in a
-> `run_failed` event. Spec-bench exits 1 when it is the last mode; with `--perf`
-> or a plugin still to run, it carries on.
+> `run_failed` event. When a tool-call run or plugin follows (no
+> `--skip-tool-eval`), spec-bench stores the failed row, reports `run_failed`,
+> and carries on; otherwise it exits 1. An interrupt or error mid-run stores
+> the cells that finished as a failed run before exiting 1.
 
 > **Comparing runs.** The stored config records the workload: `--pp`, `--tg`,
 > `--depth`, the selected prompt types, `--baseline-tgs`, and a SHA-256 of any
 > selected `--spec-prompt-file` text. Runs only share a comparison cohort when
-> all of these match. `--spec-method` aliases are stored under one name, so
+> all of these match; the order of depths and prompt types does not matter. `--spec-method` aliases are stored under one name, so
 > `draft` and `standalone` both read `draft_model`, and `nextn` reads `mtp`.
 
 ## Live speculative decoding monitor

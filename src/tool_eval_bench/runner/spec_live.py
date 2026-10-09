@@ -825,8 +825,12 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
             # SGLang documents these as independent active configuration
             # values.  With top-k drafting, draft tokens are not steps times
             # one, so do not divide the configured window by num_steps.
-            delta.cumulative_draft_window = curr.sglang_num_draft_tokens
-            delta.draft_window = curr.sglang_num_draft_tokens
+            # num_draft_tokens counts the root, the last verified token, which
+            # was never drafted, so the drafted window is one less and
+            # utilization is (τ − 1) ÷ (num_draft_tokens − 1).
+            window = curr.sglang_num_draft_tokens - 1
+            delta.cumulative_draft_window = window if window > 0 else None
+            delta.draft_window = delta.cumulative_draft_window
         if curr.sglang_num_steps is not None:
             delta.spec_num_steps = round(curr.sglang_num_steps)
         if curr.sglang_num_draft_tokens is not None:

@@ -309,6 +309,49 @@ def test_spec_bench_failed_cells_end_in_a_run_failed_event(cli: Cli) -> None:
     }
 
 
+def test_a_failed_spec_bench_in_a_combined_run_does_not_end_it(cli: Cli) -> None:
+    """With a scored run to follow, run_failed arrives mid-stream and the run goes on."""
+    from tool_eval_bench.runner import speculative
+    from tool_eval_bench.runner.speculative import SpecDecodeSample
+
+    _fake_benchy(cli, [_sample()])
+    samples = [SpecDecodeSample(prompt_type="filler", error="HTTP 503")]
+
+    async def fake_run(*args: Any, on_sample: Any, **kwargs: Any) -> list[Any]:
+        for index, sample in enumerate(samples):
+            await on_sample(sample, index, len(samples))
+        return samples
+
+    cli.monkeypatch.setattr(speculative, "run_spec_bench", fake_run)
+
+    outcome = cli.run(
+        *CONNECTION,
+        "--scenarios",
+        "TC-01",
+        "--perf",
+        "--spec-bench",
+        "--depth",
+        "0",
+        "--json",
+        "--output-dir",
+        str(cli.tmp_path),
+    )
+
+    # The exit status and the envelope belong to the scored run that followed.
+    assert outcome.code == 0
+    events, envelope = _contract(outcome.out, outcome.err)
+    assert envelope is not None and envelope["final_score"] == 90
+    failures = [event for event in events if event.get("error") == "run_failed"]
+    assert failures == [
+        {
+            "event": "error",
+            "error": "run_failed",
+            "message": "Speculative decoding benchmark failed in 1 cell(s).",
+        }
+    ]
+    assert cli.runs, "the scored run still ran"
+
+
 def test_pressure_sweep_reports_the_saved_run(cli: Cli) -> None:
     _patch_sweep(cli.monkeypatch)
 

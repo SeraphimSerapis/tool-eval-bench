@@ -978,12 +978,47 @@ sglang:num_queue_reqs{tp_rank="0",pp_rank="0"} 2
         assert delta.counter_metrics_available is False
         assert delta.cumulative_acceptance_rate == pytest.approx(0.40)
         assert delta.cumulative_acceptance_length == pytest.approx(1.40)
-        assert delta.cumulative_draft_window == pytest.approx(6.0)
+        # num_draft_tokens=6 counts the root token, so 5 positions were drafted.
+        assert delta.cumulative_draft_window == pytest.approx(5.0)
+        assert delta.num_spec_tokens == 6
         assert delta.spec_num_steps == 2
         assert delta.spec_cap_length == pytest.approx(4.0)
         assert delta.spec_block_accept_length == pytest.approx(3.2)
         assert delta.total_accepted == 0
         assert delta.total_drafted == 0
+
+    def test_utilization_excludes_the_root_token(self):
+        """topk=1, 3 steps: num_draft_tokens=4 is the root plus 3 drafts."""
+        from tool_eval_bench.domain.spec_decode import window_utilization
+
+        snap = MetricsSnapshot(
+            timestamp=101.0,
+            sglang_acceptance_rate=1.0,
+            sglang_acceptance_length=4.0,
+            sglang_num_draft_tokens=4,
+            sglang_spec_metrics_present=True,
+            spec_backend="sglang",
+        )
+        delta = compute_delta(MetricsSnapshot(timestamp=100.0), snap)
+        assert delta.cumulative_draft_window == pytest.approx(3.0)
+        # Every draft accepted: τ = 4, utilization (4 − 1) ÷ (4 − 1) = 100%.
+        tau, window = delta.cumulative_acceptance_length, delta.cumulative_draft_window
+        assert tau is not None and window is not None
+        assert window_utilization(tau, window) == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("num_draft_tokens", [0, 1])
+    def test_a_root_only_window_is_unknown(self, num_draft_tokens: int):
+        snap = MetricsSnapshot(
+            timestamp=101.0,
+            sglang_acceptance_rate=0.5,
+            sglang_acceptance_length=1.5,
+            sglang_num_draft_tokens=num_draft_tokens,
+            sglang_spec_metrics_present=True,
+            spec_backend="sglang",
+        )
+        delta = compute_delta(MetricsSnapshot(timestamp=100.0), snap)
+        assert delta.cumulative_draft_window is None
+        assert delta.draft_window is None
 
     def test_zero_gauges_are_present_but_not_summed(self):
         text = (
