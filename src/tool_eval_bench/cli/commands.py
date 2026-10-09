@@ -74,13 +74,9 @@ def resolve_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
     else:
         base = list(ALL_SCENARIOS)
 
+    # load_scenario_packs has already rejected IDs that collide with the
+    # public suite, whatever the selection flags.
     if pack_scenarios and not getattr(args, "pack_only", False):
-        public_ids = {s.id for s in base}
-        collisions = sorted(s.id for s in pack_scenarios if s.id in public_ids)
-        if collisions:
-            raise ValueError(
-                "Held-out pack scenario IDs collide with the public suite: " + ", ".join(collisions)
-            )
         base.extend(pack_scenarios)
 
     if args.scenarios:

@@ -107,8 +107,30 @@ def load_scenario_pack(directory: str | Path, *, held_out: bool = True) -> Scena
     )
 
 
+def reject_public_collisions(packs: Iterable[ScenarioPack]) -> None:
+    """Raise ValueError if a pack reuses a public scenario ID.
+
+    Checked against the complete public registry, Hard Mode included, rather
+    than whatever the run selected: a pack that loads without ``--hardmode``
+    must not start failing once it is added, and anything keyed by scenario ID
+    (live display titles, cross-run comparison) would conflate the two.
+    """
+    # Imported here: the registry is heavy, and evals.scenarios must stay free
+    # to import this module without a cycle.
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
+
+    public_ids = {scenario.id for scenario in ALL_SCENARIOS_WITH_HARDMODE}
+    collisions = sorted(
+        scenario.id for pack in packs for scenario in pack.scenarios if scenario.id in public_ids
+    )
+    if collisions:
+        raise ValueError(
+            "Held-out pack scenario IDs collide with the public suite: " + ", ".join(collisions)
+        )
+
+
 def load_scenario_packs(directories: list[str] | None) -> list[ScenarioPack]:
-    """Load every requested pack, rejecting IDs that collide across packs."""
+    """Load every requested pack, rejecting IDs that collide with each other or the public suite."""
     if not directories:
         return []
     packs = [load_scenario_pack(d) for d in directories]
@@ -121,4 +143,5 @@ def load_scenario_packs(directories: list[str] | None) -> list[ScenarioPack]:
                     f"{seen[scenario.id]!r} and {pack.name!r}"
                 )
             seen[scenario.id] = pack.name
+    reject_public_collisions(packs)
     return packs

@@ -218,6 +218,10 @@ class BenchmarkService:
                 raise ValueError(f"Unknown scenario IDs: {', '.join(sorted(missing))}")
         else:
             resolved = ALL_SCENARIOS
+        # A completed run with nothing in it would be stored and ranked as a
+        # real score of 0.  A resume may legitimately have nothing left to run.
+        if not resolved and resume_run_id is None:
+            raise ValueError("No scenarios to run")
         from tool_eval_bench.evals.variants import apply_variants
 
         resolved = apply_variants(resolved, variant_seed)

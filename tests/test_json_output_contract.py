@@ -155,6 +155,29 @@ def test_a_rejected_resume_is_a_run_failed_event(cli: Cli) -> None:
     assert cli.runs == []
 
 
+def test_an_empty_selection_does_not_block_a_mode_that_sends_no_scenarios(cli: Cli) -> None:
+    _fake_benchy(cli, [_sample()])
+
+    outcome = cli.run(
+        *CONNECTION, "--perf-only", "--categories", "P", "--json", "--output-dir", str(cli.tmp_path)
+    )
+
+    assert outcome.code == 0
+    events, _ = _contract(outcome.out, outcome.err)
+    assert _run_saved(events)["run_type"] == "perf"
+
+
+def test_an_empty_selection_does_not_block_a_resume(cli: Cli) -> None:
+    # The resume's own checkpoint decides what is left, so the run lookup is
+    # what fails here, not the selection.
+    outcome = cli.run("resume", "r-missing", *CONNECTION, "--categories", "P", "--json")
+
+    assert outcome.code == 1
+    events, _ = _contract(outcome.out, outcome.err)
+    assert events[-1]["error"] == "run_failed"
+    assert "not found in history" in events[-1]["message"]
+
+
 def test_an_interrupted_run_is_a_run_failed_event(cli: Cli) -> None:
     cli.service_error = KeyboardInterrupt()
 
@@ -313,6 +336,26 @@ def test_interactive_monitors_reject_json(cli: Cli, monitor: str) -> None:
         ),
         pytest.param(
             ["--dry-run", "--scenarios", "TC-999"], "Unknown scenarios: TC-999", id="dry-run"
+        ),
+        pytest.param(
+            [*CONNECTION, "--categories", "P"],
+            "No scenarios matched the selected filters; Category P is Hard Mode, so add --hardmode",
+            id="empty-selection-hardmode-category",
+        ),
+        pytest.param(
+            [*CONNECTION, "--short", "--categories", "K"],
+            "No scenarios matched the selected filters",
+            id="empty-selection-short",
+        ),
+        pytest.param(
+            [*CONNECTION, "--hardmode-only", "--categories", "A"],
+            "No scenarios matched the selected filters",
+            id="empty-selection-hardmode-only",
+        ),
+        pytest.param(
+            [*CONNECTION, "--categories", "P", "--context-pressure-sweep", "0.5-0.9"],
+            "No scenarios matched the selected filters",
+            id="empty-selection-sweep",
         ),
     ],
 )
