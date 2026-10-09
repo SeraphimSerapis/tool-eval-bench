@@ -1,0 +1,1 @@
+A single llama-benchy output line over 64 KiB, such as a validation error that echoes the request, no longer aborts the perf run and loses every finished cell. If reading llama-benchy's output fails for any other reason, the child process is now killed and reaped.

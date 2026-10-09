@@ -299,18 +299,43 @@ def sample_pp_estimated(sample: Any) -> bool:
     return getattr(sample, "pp_estimated", False) is True
 
 
+def benchy_row_label(sample: Any) -> str:
+    """Return the Test column label for one llama-benchy row.
+
+    The context-load row of an ``--enable-prefix-caching`` cell is prefixed
+    ``ctx``; otherwise it would read the same as the inference row when
+    ``pp`` equals the depth.
+    """
+    phase = "ctx " if getattr(sample, "is_context_prefill", False) is True else ""
+    return f"{phase}pp{sample.label_pp} tg{sample.tg_tokens} @ d{sample.label_depth}"
+
+
+def benchy_tokens_label(sample: Any) -> str:
+    """Return the Tokens column: prompt plus observed output when known.
+
+    ``tg_tokens`` is the configured limit. A model that stops early generates
+    fewer, and llama-benchy's progress stream reports how many.
+    """
+    observed = getattr(sample, "observed_tg_tokens", None)
+    if isinstance(observed, int | float) and not isinstance(observed, bool):
+        generated = f"{observed:.0f}" if float(observed).is_integer() else f"{observed:.1f}"
+    else:
+        generated = str(sample.tg_tokens)
+    return f"{sample.pp_tokens}+{generated}"
+
+
 def append_benchy_throughput_rows(md: list[str], ok_samples: list[Any]) -> None:
     """Append prefill/decode table rows and the estimated-prefill footnote."""
     for sample in ok_samples:
         conc_label = f" c{sample.concurrency}" if sample.concurrency > 1 else ""
-        label = f"pp{sample.label_pp} tg{sample.tg_tokens} @ d{sample.label_depth}{conc_label}"
+        label = f"{benchy_row_label(sample)}{conc_label}"
         pp_label = f"{sample.pp_tps:,.0f}"
         if sample_pp_estimated(sample):
             pp_label += "*"
         md.append(
             f"| {label} | {pp_label} | {sample.tg_tps:,.1f} "
             f"| {sample.ttft_ms:,.0f} | {sample.total_ms:,.0f} "
-            f"| {sample.pp_tokens}+{sample.tg_tokens} |"
+            f"| {benchy_tokens_label(sample)} |"
         )
     if any(sample_pp_estimated(sample) for sample in ok_samples):
         md.append("")

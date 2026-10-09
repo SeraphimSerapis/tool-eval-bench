@@ -17,6 +17,7 @@ from tool_eval_bench.runner.llama_benchy import (
     _stat_mean,
     parse_json_output,
 )
+from tool_eval_bench.storage.reports._common import append_benchy_throughput_rows
 
 pytestmark = pytest.mark.integration
 
@@ -605,11 +606,18 @@ class _MockProcess:
         self._returncode = returncode
         self._output_file = output_file
         self._write_json = write_json
+        # Mirrors asyncio.subprocess.Process: None until the child is reaped.
+        self.returncode: int | None = None
+        self.killed = False
 
     async def wait(self) -> int:
         if self._write_json is not None and self._output_file:
             Path(self._output_file).write_text(json.dumps(self._write_json), encoding="utf-8")
+        self.returncode = self._returncode
         return self._returncode
+
+    def kill(self) -> None:
+        self.killed = True
 
 
 def _capture_output_file(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -1558,10 +1566,10 @@ class TestRoleChunkGuard:
         assert sample.pp_estimated is True
         assert sample.label_pp == 2048
         assert sample.pp_tps == pytest.approx(2048 / 2.717, rel=1e-6)
-        # total_ms is est_ppt plus generation. Replacing est_ppt with e2e_ttft
-        # keeps total at or above the honest TTFT.
+        # total_ms is TTFT plus generation, which keeps it at or above the
+        # honest TTFT. Generation spans the 31 tokens after the first.
         assert sample.ttft_ms == pytest.approx(2_717.0)
-        assert sample.total_ms == pytest.approx(2_717.0 + 32 / 50.0 * 1000)
+        assert sample.total_ms == pytest.approx(2_717.0 + 31 / 50.0 * 1000)
 
     def test_short_prompt_role_chunk_is_rewritten(self):
         # 64 tokens over a 2.4 ms est_ppt is about 27k t/s, under any 50k
@@ -1743,3 +1751,398 @@ class TestRoleChunkGuard:
         )
         assert sample.pp_estimated is False
         assert sample.pp_tps == pytest.approx(claimed)
+
+
+# ---------------------------------------------------------------------------
+# Request-level outcomes from the progress stream
+# ---------------------------------------------------------------------------
+
+
+def _cell_entry(
+    *,
+    concurrency: int = 2,
+    depth: int = 0,
+    pp: int = 64,
+    tg: int = 32,
+    ctx: bool = False,
+    tg_req: float = 50.0,
+    e2e_ttft: float = 200.0,
+) -> dict:
+    return {
+        "concurrency": concurrency,
+        "context_size": depth,
+        "prompt_size": pp,
+        "response_size": tg,
+        "is_context_prefill_phase": ctx,
+        "pp_throughput": {"mean": 320.0},
+        "pp_req_throughput": {"mean": 320.0},
+        "tg_throughput": {"mean": tg_req * concurrency},
+        "tg_req_throughput": {"mean": tg_req},
+        "ttfr": {"mean": e2e_ttft},
+        "est_ppt": {"mean": e2e_ttft - 5},
+        "e2e_ttft": {"mean": e2e_ttft},
+    }
+
+
+def _request(
+    request_id: int,
+    *,
+    concurrency: int = 2,
+    depth: int = 0,
+    pp: int = 64,
+    tg: int = 32,
+    total_tokens: int = 32,
+    error: str = "",
+) -> list[dict]:
+    """The request_start/request_end pair llama-benchy 0.4 emits for one request."""
+    return [
+        {
+            "type": "request_start",
+            "request_id": request_id,
+            "prompt_size": pp,
+            "response_size": tg,
+            "context_size": depth,
+            "concurrency": concurrency,
+            "run_index": 0,
+        },
+        {
+            "type": "request_end",
+            "request_id": request_id,
+            "total_tokens": total_tokens,
+            "prompt_tokens": pp,
+            "decode_seconds": 0.1,
+            "error": error,
+        },
+    ]
+
+
+async def _run_with_events(
+    monkeypatch: pytest.MonkeyPatch,
+    benchmarks: list[dict],
+    events: list[object],
+    *,
+    prefix_caching: bool = False,
+):
+    from tool_eval_bench.runner.llama_benchy import run_llama_benchy
+
+    monkeypatch.setattr(
+        "tool_eval_bench.runner.llama_benchy.shutil.which",
+        lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+    )
+    output_file_ref = _capture_output_file(monkeypatch)
+
+    async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+        return _MockProcess(
+            stdout_lines=[f"{json.dumps(event)}\n" for event in events],
+            output_file=output_file_ref[0],
+            write_json={"prefix_caching_enabled": prefix_caching, "benchmarks": benchmarks},
+        )
+
+    monkeypatch.setattr(
+        "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec", mock_create
+    )
+    return await run_llama_benchy("http://localhost:8888/v1", "test-model")
+
+
+class TestPartiallyFailedCells:
+    """llama-benchy computes a cell from the requests that survived."""
+
+    async def test_one_failed_request_in_a_c2_cell_fails_the_cell(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = await _run_with_events(
+            monkeypatch,
+            [_cell_entry()],
+            [
+                *_request(1),
+                *_request(
+                    2,
+                    total_tokens=0,
+                    error="HTTP 500: boom for url 'http://user:pw@gpu-box.internal:8000/v1'",
+                ),
+            ],
+        )
+
+        (sample,) = result.samples
+        assert sample.tg_tps > 0, "the survivor's metrics are still parsed"
+        assert sample.error == (
+            "pp64 tg32 @ d0 c2: 1 request(s) failed: HTTP 500: boom for url 'http://***:8000/v1'"
+        )
+
+    async def test_a_cell_whose_requests_all_succeeded_stays_clean(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = await _run_with_events(monkeypatch, [_cell_entry()], [*_request(1), *_request(2)])
+
+        assert result.samples[0].error is None
+
+    async def test_a_failure_flags_only_its_own_cell(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        result = await _run_with_events(
+            monkeypatch,
+            [_cell_entry(concurrency=1), _cell_entry(concurrency=2)],
+            [
+                *_request(1, concurrency=1, error="HTTP 429: slow down"),
+                *_request(2, concurrency=2),
+                *_request(3, concurrency=2),
+            ],
+        )
+
+        assert [sample.error is not None for sample in result.samples] == [True, False]
+
+    async def test_prefix_caching_failure_flags_both_phase_rows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Progress events carry no phase, and both rows share one cell key, so
+        # a failure in either phase flags both. This pins that deliberate choice.
+        cell = {"concurrency": 1, "depth": 4096, "pp": 4096}
+        result = await _run_with_events(
+            monkeypatch,
+            [_cell_entry(**cell, ctx=True), _cell_entry(**cell)],
+            [*_request(1, **cell, error="HTTP 503: busy"), *_request(2, **cell)],
+            prefix_caching=True,
+        )
+
+        errors = [sample.error for sample in result.samples]
+        assert errors[0] is not None and errors[0].startswith("ctx pp4096 tg32 @ d4096 c1:")
+        assert errors[1] is not None and errors[1].startswith("pp4096 tg32 @ d4096 c1:")
+
+    async def test_json_lines_that_are_not_objects_are_not_events(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = await _run_with_events(
+            monkeypatch,
+            [_cell_entry()],
+            [123, ["HTTP 500"], "boom", None, *_request(1), *_request(2)],
+        )
+
+        (sample,) = result.samples
+        assert sample.error is None
+        assert sample.tg_tps > 0
+
+    def test_long_request_errors_are_truncated(self) -> None:
+        from tool_eval_bench.runner.throughput import ThroughputSample
+
+        error = _invalid_sample_error(
+            ThroughputSample(pp_tokens=64, tg_tokens=32, tg_tps=10.0),
+            ["HTTP 422: " + "E" * 100_000],
+        )
+
+        assert error is not None
+        assert len(error) < 400
+        assert error.endswith("…")
+
+    def test_an_all_zero_cell_keeps_its_message(self) -> None:
+        from tool_eval_bench.runner.throughput import ThroughputSample
+
+        sample = ThroughputSample(pp_tokens=64, tg_tokens=32)
+
+        assert _invalid_sample_error(sample, []) == (
+            "pp64 tg32 @ d0 c1: no usable throughput metrics"
+        )
+        assert (
+            _invalid_sample_error(sample, ["HTTP 400: bad"]) == "pp64 tg32 @ d0 c1: HTTP 400: bad"
+        )
+
+
+class TestObservedOutputTokens:
+    """``response_size`` is the configured tg; early EOS generates fewer tokens."""
+
+    async def test_total_and_tokens_use_the_observed_mean(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = await _run_with_events(
+            monkeypatch,
+            [_cell_entry(tg_req=20.0, e2e_ttft=100.0)],
+            [*_request(1, total_tokens=4), *_request(2, total_tokens=6)],
+        )
+
+        (sample,) = result.samples
+        assert sample.tg_tokens == 32, "the configured tg stays the cell key and label"
+        assert sample.observed_tg_tokens == pytest.approx(5.0)
+        # llama-benchy's rate covers the tokens after the first: 4 of a mean 5.
+        assert sample.total_ms == pytest.approx(100.0 + 4 / 20.0 * 1000)
+        assert sample.to_result()["observed_tg_tokens"] == pytest.approx(5.0)
+        md: list[str] = []
+        append_benchy_throughput_rows(md, [sample])
+        assert md[0].startswith("| pp64 tg32 @ d0 c2 |")
+        assert md[0].endswith("| 64+5 |")
+
+    async def test_failed_requests_do_not_count_toward_the_mean(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = await _run_with_events(
+            monkeypatch,
+            [_cell_entry()],
+            [*_request(1, total_tokens=8), *_request(2, total_tokens=0, error="HTTP 500: x")],
+        )
+
+        assert result.samples[0].observed_tg_tokens == pytest.approx(8.0)
+
+    async def test_without_progress_events_the_configured_tg_is_used(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = await _run_with_events(monkeypatch, [_cell_entry(tg_req=20.0, e2e_ttft=100.0)], [])
+
+        (sample,) = result.samples
+        assert sample.observed_tg_tokens is None
+        assert sample.total_ms == pytest.approx(100.0 + 31 / 20.0 * 1000)
+        assert "observed_tg_tokens" not in sample.to_result()
+        md: list[str] = []
+        append_benchy_throughput_rows(md, [sample])
+        assert md[0].endswith("| 64+32 |")
+
+
+class TestTotalMs:
+    """Total (ms) sits on the TTFT column's base: e2e_ttft plus generation."""
+
+    def test_concurrent_row_with_a_pre_content_chunk_is_not_below_ttft(self) -> None:
+        # llama-benchy 0.4.0 at c2 against a server that flushes a role chunk
+        # before a 500 ms prefill: est_ppt measures the chunk, not prefill.
+        entry = {
+            **_cell_entry(concurrency=2, tg=16, tg_req=96.0, e2e_ttft=506.4),
+            "ttfr": {"mean": 2.0},
+            "est_ppt": {"mean": 1.5},
+        }
+
+        sample = _parse_benchmark_entry(entry)
+
+        assert sample.total_ms == pytest.approx(506.4 + 15 / 96.0 * 1000)
+
+    def test_zero_est_ppt_still_gives_a_total(self) -> None:
+        # est_ppt is clamped to 0 when the latency probe is slower than ttfr.
+        entry = {**_cell_entry(tg=16, tg_req=95.0, e2e_ttft=400.0), "est_ppt": {"mean": 0.0}}
+
+        assert _parse_benchmark_entry(entry).total_ms == pytest.approx(400.0 + 15 / 95.0 * 1000)
+
+    def test_no_first_token_means_no_total(self) -> None:
+        entry = {**_cell_entry(), "e2e_ttft": None, "tg_req_throughput": None}
+
+        assert _parse_benchmark_entry(entry).total_ms == 0
+
+    @pytest.mark.parametrize("observed", [1.0, 0.0])
+    def test_a_single_token_adds_no_generation_time(self, observed: float) -> None:
+        entry = _cell_entry(tg_req=20.0, e2e_ttft=100.0)
+
+        sample = _parse_benchmark_entry(entry, observed_tg_tokens=observed)
+
+        assert sample.total_ms == pytest.approx(100.0)
+
+
+class TestContextPrefillRows:
+    def test_rows_are_distinguishable_when_pp_equals_depth(self) -> None:
+        cell = {"concurrency": 1, "depth": 4096, "pp": 4096}
+        parsed = parse_json_output(
+            {
+                "prefix_caching_enabled": True,
+                "benchmarks": [_cell_entry(**cell, ctx=True), _cell_entry(**cell)],
+            }
+        )
+
+        md: list[str] = []
+        append_benchy_throughput_rows(md, parsed.samples)
+
+        assert [row.split("|")[1].strip() for row in md] == [
+            "ctx pp4096 tg32 @ d4096",
+            "pp4096 tg32 @ d4096",
+        ]
+        assert [s.to_result().get("is_context_prefill") for s in parsed.samples] == [True, None]
+
+
+class TestPrefixCachingCachePrompt:
+    """``--no-cache`` sends ``cache_prompt: false``, which defeats llama.cpp's prefix reuse."""
+
+    @pytest.fixture(autouse=True)
+    def _benchy_on_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+
+    @staticmethod
+    def _extra_bodies(cmd: list[str]) -> list[str]:
+        return [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--extra-body"]
+
+    def test_prefix_caching_turns_cache_prompt_back_on(self) -> None:
+        cmd = _build_command("http://h/v1", "m", extra_args=["--enable-prefix-caching"])
+
+        assert "--no-cache" in cmd, "the per-request prompt suffix stays"
+        assert self._extra_bodies(cmd) == ["cache_prompt=true"]
+
+    def test_without_prefix_caching_nothing_is_added(self) -> None:
+        assert self._extra_bodies(_build_command("http://h/v1", "m")) == []
+
+    def test_a_user_cache_prompt_value_wins(self) -> None:
+        cmd = _build_command(
+            "http://h/v1",
+            "m",
+            extra_args=["--enable-prefix-caching", "--extra-body", "cache_prompt=false"],
+        )
+
+        assert self._extra_bodies(cmd) == ["cache_prompt=false"]
+
+    def test_not_needed_when_no_cache_is_off(self) -> None:
+        cmd = _build_command(
+            "http://h/v1", "m", no_cache=False, extra_args=["--enable-prefix-caching"]
+        )
+
+        assert self._extra_bodies(cmd) == []
+
+
+class TestLongOutputLines:
+    async def test_pipes_accept_lines_over_asyncios_default_limit(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A real child process printing a 100 KB error line does not abort the run."""
+        import sys
+        import textwrap
+
+        from tool_eval_bench.runner import llama_benchy
+
+        fake = tmp_path / "fake_benchy.py"
+        fake.write_text(
+            textwrap.dedent(
+                """
+                import json, sys
+                out = sys.argv[sys.argv.index("--save-result") + 1]
+                sys.stderr.write("HTTP 422: " + "E" * 100_000 + "\\n")
+                sys.stderr.flush()
+                json.dump({"benchmarks": [{"concurrency": 1, "context_size": 0,
+                    "prompt_size": 64, "response_size": 8,
+                    "pp_throughput": {"mean": 100.0}, "tg_throughput": {"mean": 50.0},
+                    "e2e_ttft": {"mean": 10.0}, "ttfr": {"mean": 10.0},
+                    "est_ppt": {"mean": 9.0}}]}, open(out, "w"))
+                """
+            )
+        )
+        monkeypatch.setattr(llama_benchy, "_find_llama_benchy", lambda: f"{sys.executable} {fake}")
+
+        result = await llama_benchy.run_llama_benchy("http://127.0.0.1:1/v1", "m")
+
+        assert result.samples[0].tg_tps == 50.0
+
+    async def test_a_reader_failure_kills_the_child(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tool_eval_bench.runner.llama_benchy import run_llama_benchy
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+
+        class _BrokenStream(_MockStream):
+            async def __anext__(self) -> bytes:
+                raise ValueError("Separator is found, but chunk is longer than limit")
+
+        proc = _MockProcess()
+        proc.stdout = _BrokenStream()
+
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return proc
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec", mock_create
+        )
+
+        with pytest.raises(ValueError):
+            await run_llama_benchy("http://localhost:8888/v1", "test-model")
+        assert proc.killed
+        assert proc.returncode is not None, "the killed child is reaped"

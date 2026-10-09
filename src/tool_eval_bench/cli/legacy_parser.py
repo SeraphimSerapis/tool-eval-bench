@@ -243,7 +243,11 @@ def _make_parser() -> argparse.ArgumentParser:
         metavar="RATE",
         help="Inject random tool errors at this rate (0.0–1.0) for robustness testing",
     )
-    run_ctrl.add_argument("--no-warmup", action="store_true", help="Skip server warm-up request")
+    run_ctrl.add_argument(
+        "--no-warmup",
+        action="store_true",
+        help="Skip our warm-up request; llama-benchy keeps its own",
+    )
     run_ctrl.add_argument(
         "--no-preflight",
         action="store_true",

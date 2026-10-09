@@ -586,3 +586,96 @@ async def test_estimate_latency_failure() -> None:
         latency = await estimate_latency(client, "http://localhost:8000", rounds=3)
 
     assert latency == 0.0
+
+
+# ---------------------------------------------------------------------------
+# HTTP error statuses on a streamed body
+# ---------------------------------------------------------------------------
+
+
+class _StreamedBody(httpx.AsyncByteStream):
+    """A body httpx has not buffered, as a real socket delivers it.
+
+    A ``Response(content=...)`` is already in memory, so reading it after the
+    stream context closed works in a test and fails in production.
+    """
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def __aiter__(self):  # type: ignore[override]
+        yield self._data
+
+
+def _sse_ok() -> httpx.Response:
+    return httpx.Response(
+        200,
+        stream=_StreamedBody(
+            (
+                _make_sse_line({"choices": [{"delta": {"content": "ok"}}]}) + "data: [DONE]\n\n"
+            ).encode()
+        ),
+        headers={"content-type": "text/event-stream"},
+    )
+
+
+async def _stream_against(handler, tok_cfg: TokenizerConfig) -> ThroughputSample:
+    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
+    from tool_eval_bench.runner.throughput import _stream_one
+
+    async with HTTPMeasurementClient(
+        base_url="http://gpu-box.internal:8000/v1",
+        timeout=5,
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        return await _stream_one(
+            client,
+            "http://gpu-box.internal:8000/v1",
+            "test-model",
+            [{"role": "user", "content": "hi"}],
+            5,
+            None,
+            tok_cfg,
+            temperature=0.7,
+        )
+
+
+async def test_stream_one_retries_a_streamed_400_without_token_ids_at_the_same_temperature() -> (
+    None
+):
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "return_token_ids" in body:
+            return httpx.Response(400, stream=_StreamedBody(b'{"error": "unknown field"}'))
+        return _sse_ok()
+
+    cfg = TokenizerConfig()
+    sample = await _stream_against(handler, cfg)
+
+    assert sample.error is None
+    assert sample.tg_tokens == 1
+    assert cfg.supports_return_token_ids is False
+    assert [("return_token_ids" in body, body["temperature"]) for body in bodies] == [
+        (True, 0.7),
+        (False, 0.7),
+    ]
+
+
+async def test_stream_one_returns_a_streamed_server_error_as_a_failed_sample() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(503, stream=_StreamedBody(b"overloaded"))
+
+    cfg = TokenizerConfig()
+    sample = await _stream_against(handler, cfg)
+
+    assert len(requests) == 1
+    assert sample.error is not None and "503" in sample.error
+    assert "gpu-box" not in sample.error
+    # A 5xx says nothing about the token_ids extension.
+    assert cfg.supports_return_token_ids is None
