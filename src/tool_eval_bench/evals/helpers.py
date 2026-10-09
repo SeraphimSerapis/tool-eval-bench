@@ -359,11 +359,18 @@ def negated_before(prefix: str, suffix: str = "") -> bool:
     )
 
 
-def answer_affirms_pattern(answer: str, pattern: re.Pattern[str]) -> bool:
-    """Return whether any match of ``pattern`` is asserted rather than negated."""
+def answer_affirms_pattern(
+    answer: str, pattern: re.Pattern[str], *, skip: Callable[[str], bool] | None = None
+) -> bool:
+    """Return whether any match of ``pattern`` is asserted rather than negated.
+
+    ``skip`` receives the normalised text before a match; the match is ignored
+    when it returns True.
+    """
     answer = answer.translate(_CURLY_APOSTROPHES)
     return any(
-        not negated_before(
+        not (skip is not None and skip(answer[: match.start()]))
+        and not negated_before(
             answer[max(0, match.start() - 120) : match.start()],
             answer[match.end() : match.end() + 40],
         )

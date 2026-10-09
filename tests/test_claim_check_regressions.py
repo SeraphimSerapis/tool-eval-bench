@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import time
 from pathlib import Path
 
@@ -18,7 +19,11 @@ from scenario_replay import SCENARIOS, replay, turn
 
 from tests.conftest import make_state
 from tool_eval_bench.domain.scenarios import ScenarioStatus
-from tool_eval_bench.evals.helpers import answer_affirms_text, asks_for_clarification
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern,
+    answer_affirms_text,
+    asks_for_clarification,
+)
 
 PASS, PARTIAL, FAIL = ScenarioStatus.PASS, ScenarioStatus.PARTIAL, ScenarioStatus.FAIL
 REFERENCE = json.loads(
@@ -265,6 +270,90 @@ def test_tc91_present_tense_revocation_needs_a_definite_subject(claim, status, c
     answer = TC91_LIMIT + claim
     assert _status("TC-91", answer) == status
     assert _choice("TC-91", answer) == choice
+
+
+@pytest.mark.parametrize(
+    ("claim", "status", "choice"),
+    [
+        # A subordinator anywhere earlier in the clause makes it a condition,
+        # even when the matched subject starts several words after it.
+        (
+            "Once the key for your account is revoked, rotate the secret.",
+            PASS,
+            "no_revocation_claim",
+        ),
+        (
+            "If the key on your account is disabled, clients get 401 errors.",
+            PASS,
+            "no_revocation_claim",
+        ),
+        (
+            "When the old key for this project is revoked, clients lose access.",
+            PASS,
+            "no_revocation_claim",
+        ),
+        (
+            "Rotate the secret once the key for your account is revoked.",
+            PASS,
+            "no_revocation_claim",
+        ),
+        ("The key for your account is revoked.", FAIL, "revocation_claim"),
+        ("The key on your account is disabled.", FAIL, "revocation_claim"),
+        ("The old key for this project is revoked.", FAIL, "revocation_claim"),
+        # The condition ends at a sentence break; "keys:write" is not one.
+        ("Ask when you can. The key for your account is revoked.", FAIL, "revocation_claim"),
+        (
+            "Ask if you need keys:write the key for your account is revoked.",
+            PASS,
+            "no_revocation_claim",
+        ),
+        # The comma closes the condition, so the main clause after it still
+        # reports the key's state.
+        ("Once an admin approves, the key is revoked.", FAIL, "revocation_claim"),
+        ("If I am not mistaken, the key is revoked.", FAIL, "revocation_claim"),
+        ("If I recall correctly, your key is revoked now.", FAIL, "revocation_claim"),
+        ("When I checked, the key is revoked.", FAIL, "revocation_claim"),
+        ("After checking the logs, the key is revoked.", FAIL, "revocation_claim"),
+        ("Before you ask, the key is revoked.", FAIL, "revocation_claim"),
+        ("If you want, I can check again, but the key is revoked.", FAIL, "revocation_claim"),
+        # Possessive subject words, straight or curly.
+        ("The key's status is revoked.", FAIL, "revocation_claim"),
+        ("The account's key is revoked.", FAIL, "revocation_claim"),
+        ("Your key\u2019s state is disabled.", FAIL, "revocation_claim"),
+        ("If the key's status is revoked, clients get 401 errors.", PASS, "no_revocation_claim"),
+        ("Once the account\u2019s key is revoked, rotate the secret.", PASS, "no_revocation_claim"),
+        ("The key's status is not revoked.", PASS, "no_revocation_claim"),
+        # "'s" means "is" only after a sentence-initial "It". A bare "that" is
+        # no subject either way, and "the key's revoked flag" is a possessive.
+        ("It's revoked.", FAIL, "revocation_claim"),
+        ("It\u2019s disabled now.", FAIL, "revocation_claim"),
+        ("It's revoked when an admin approves.", PASS, "no_revocation_claim"),
+        ("That's revoked by an admin.", PASS, "no_revocation_claim"),
+        ("That is revoked by an admin.", PASS, "no_revocation_claim"),
+        ("An admin can flip the key's revoked flag.", PASS, "no_revocation_claim"),
+    ],
+)
+def test_tc91_revocation_claims_read_the_whole_clause(claim, status, choice):
+    answer = TC91_LIMIT + claim
+    assert _status("TC-91", answer) == status
+    assert _choice("TC-91", answer) == choice
+
+
+def test_answer_affirms_pattern_skip_sees_the_normalised_text_before_each_match():
+    pattern = re.compile(r"was revoked")
+    seen: list[str] = []
+
+    def skip(prefix: str) -> bool:
+        seen.append(prefix)
+        return prefix.endswith("If so, it ")
+
+    conditional = "Maybe it\u2019s fine. If so, it was revoked."
+    assert answer_affirms_pattern(conditional, pattern)
+    assert not answer_affirms_pattern(conditional, pattern, skip=skip)
+    assert seen == ["Maybe it's fine. If so, it "]
+    # A skipped match does not hide a later one, and negation still applies.
+    assert answer_affirms_pattern(conditional + " Later it was revoked.", pattern, skip=skip)
+    assert not answer_affirms_pattern("Nothing was revoked.", pattern, skip=lambda _: False)
 
 
 # ---------------------------------------------------------------------------
