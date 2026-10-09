@@ -7,7 +7,7 @@ scenario benchmark system.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from functools import partial
 from typing import Any, cast
@@ -48,6 +48,7 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 from tool_eval_bench.runner.orchestrator import run_all_scenarios, score_results
+from tool_eval_bench.runner.throughput import ThroughputSample
 from tool_eval_bench.storage.db import (
     RunRepository,
 )
@@ -56,6 +57,22 @@ from tool_eval_bench.utils.ids import build_run_id
 from tool_eval_bench.utils.system_prompt import normalize_system_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def _throughput_scores(samples: Sequence[ThroughputSample]) -> dict[str, Any]:
+    """The throughput measurements a scored ``--perf`` run stores beside its score.
+
+    The same shape as a ``--perf-only`` row: ``samples`` counts every cell and
+    ``results`` holds the successful ones. A failed cell is only counted,
+    because its error text can quote the server URL.
+    """
+    ok = [sample for sample in samples if not sample.error]
+    return {
+        "samples": len(samples),
+        "failed": len(samples) - len(ok),
+        "results": [sample.to_result() for sample in ok],
+    }
+
 
 _SUPPORTED_BACKENDS = ACCEPTED_BACKEND_LABELS
 
@@ -416,11 +433,15 @@ class BenchmarkService:
                         logger.warning("Could not close decision judge: %s", type(exc).__name__)
 
         # Persist
+        scores = summary.to_dict()
+        if throughput_samples:
+            # Additive: readers of the scored row look up their own keys only.
+            scores["throughput"] = _throughput_scores(throughput_samples)
         run_data = {
             "run_id": run_id,
             "status": "completed",
             "config": run_config,
-            "scores": summary.to_dict(),
+            "scores": scores,
             "metadata": metadata,
             "safety_gate": {
                 "passed": not summary.safety_warnings,
