@@ -138,6 +138,7 @@ from tool_eval_bench.domain.models import ChatMessage, RunContext
 from tool_eval_bench.domain.scenarios import (
     AuditPhase,
     Category,
+    ModelScoreSummary,
     ScenarioDefinition,
     ScenarioResult,
     ScenarioStatus,
@@ -227,6 +228,41 @@ def _execution_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
     """Return the explicit resume subset, including an intentionally empty one."""
     subset = getattr(args, "_resume_remaining_scenarios", None)
     return subset if subset is not None else _resolve_scenarios(args)
+
+
+def _score_stored_trial(
+    result: dict[str, Any], args: argparse.Namespace, scenarios: list[ScenarioDefinition]
+) -> ModelScoreSummary | None:
+    """Score one finished trial the way the service scored the row it stored.
+
+    Every runner's trial statistics go through here so they agree. The stored
+    results keep ``failure_kind``, so an infrastructure failure stays out of the
+    score as it does in the service. Each result is scored against its own
+    definition, which for a resumed run is the whole original protocol rather
+    than the rerun subset. ``scenarios`` are the definitions the trial executed;
+    they and the resume protocol take precedence over the registry, as in the
+    service. Returns None for a trial with no results.
+    """
+    from tool_eval_bench.runner.orchestrator import score_results
+
+    results = [
+        ScenarioResult.from_dict(data)
+        for data in result.get("scores", {}).get("scenario_results", [])
+    ]
+    if not results:
+        return None
+    known = {
+        scenario.id: scenario
+        for scenario in _resolve_all_scenarios_for_ids([r.scenario_id for r in results])
+    }
+    known.update({s.id: s for s in getattr(args, "_resume_scenarios", None) or []})
+    known.update({s.id: s for s in scenarios})
+    return score_results(
+        results,
+        [known[r.scenario_id] for r in results],
+        alpha=args.alpha,
+        weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
+    )
 
 
 def _pack_attestations(args: Any) -> list[dict[str, Any]] | None:
@@ -1665,36 +1701,11 @@ def _run_with_live_display(
         # show an inflated score — e.g. 100% from 5/5 reruns when the full
         # set was 50% on 35/69).
         has_resume = bool(getattr(args, "_resume_prior_results", None))
-        merged_scores = result.get("scores", {}) if has_resume else None
+        merged = _score_stored_trial(result, args, scenarios) if has_resume else None
 
-        if merged_scores and has_resume:
-            # Reconstruct full summary from the merged service result
-            from tool_eval_bench.domain.scenarios import (
-                ScenarioResult as _SR,
-            )
-
-            merged_sr = [
-                _SR.from_dict(sr_dict) for sr_dict in merged_scores.get("scenario_results", [])
-            ]
-            resume_defs = getattr(args, "_resume_scenarios", None) or []
-            known_defs = {scenario.id: scenario for scenario in resume_defs}
-            known_defs.update(
-                {
-                    scenario.id: scenario
-                    for scenario in _resolve_all_scenarios_for_ids(
-                        [sr.scenario_id for sr in merged_sr]
-                    )
-                }
-            )
-            merged_scenario_defs = [known_defs[sr.scenario_id] for sr in merged_sr]
-            summary = score_results(
-                merged_sr,
-                merged_scenario_defs,
-                alpha=args.alpha,
-                weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
-            )
-            all_summaries.append(summary)
-            display.set_finished(summary, throughput_samples=throughput_samples)
+        if merged is not None:
+            all_summaries.append(merged)
+            display.set_finished(merged, throughput_samples=throughput_samples)
         else:
             all_results = [display.results[s.id] for s in scenarios if s.id in display.results]
             if all_results:
@@ -1727,23 +1738,14 @@ def _run_with_live_display(
             for t in range(2, trials + 1):
                 console.print(f"  [dim]Running trial {t}/{trials}\u2026[/]", end=" ")
                 trial_result = await run_trial(request, show=False)
-                trial_scores = trial_result.get("scores", {})
-                trial_score_results = trial_scores.get("scenario_results", [])
 
                 # Collect report path
                 trial_rp = trial_result.get("report_path")
                 if trial_rp:
                     report_paths.append(str(trial_rp))
 
-                # Reconstruct ScenarioResult objects from the persisted dict
-                trial_sr = [ScenarioResult.from_dict(sr_dict) for sr_dict in trial_score_results]
-                if trial_sr:
-                    trial_summary = score_results(
-                        trial_sr,
-                        scenarios,
-                        alpha=args.alpha,
-                        weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
-                    )
+                trial_summary = _score_stored_trial(trial_result, args, scenarios)
+                if trial_summary is not None:
                     all_summaries.append(trial_summary)
                     console.print(f"[bold]{trial_summary.final_score}[/]/100")
 
@@ -1844,23 +1846,8 @@ def _run_json(
             raise SystemExit(2)
     else:
         # Aggregate trial data
-        from tool_eval_bench.runner.orchestrator import score_results
-
-        resolved_sc = getattr(args, "_resume_scenarios", None) or _execution_scenarios(args)
-        summaries = []
-        for r in results:
-            sr_dicts = r.get("scores", {}).get("scenario_results", [])
-            trial_sr = [
-                ScenarioResult(
-                    scenario_id=d["scenario_id"],
-                    status=ScenarioStatus(d["status"]),
-                    points=d["points"],
-                    summary=d.get("summary", ""),
-                )
-                for d in sr_dicts
-            ]
-            if trial_sr:
-                summaries.append(score_results(trial_sr, resolved_sc, alpha=args.alpha))
+        scored = (_score_stored_trial(r, args, resolved) for r in results)
+        summaries = [summary for summary in scored if summary is not None]
 
         agg = _aggregate_trials(summaries) if summaries else {}
         output = results[-1]  # last run as the primary result
@@ -1953,23 +1940,8 @@ def _run_plain(
 
     # Show trial statistics if multiple trials
     if trials > 1:
-        from tool_eval_bench.runner.orchestrator import score_results
-
-        resolved_sc = _resolve_scenarios(args)
-        summaries = []
-        for r in all_results_dicts:
-            sr_dicts = r.get("scores", {}).get("scenario_results", [])
-            trial_sr = [
-                ScenarioResult(
-                    scenario_id=d["scenario_id"],
-                    status=ScenarioStatus(d["status"]),
-                    points=d["points"],
-                    summary=d.get("summary", ""),
-                )
-                for d in sr_dicts
-            ]
-            if trial_sr:
-                summaries.append(score_results(trial_sr, resolved_sc, alpha=args.alpha))
+        scored = (_score_stored_trial(r, args, resolved) for r in all_results_dicts)
+        summaries = [summary for summary in scored if summary is not None]
         agg = _aggregate_trials(summaries) if summaries else {}
         _print_trials_summary(console, agg)
 
