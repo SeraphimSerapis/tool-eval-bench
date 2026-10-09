@@ -79,8 +79,8 @@ def _detect_model(
 
     When *headless* is True (e.g. ``--json`` mode), the interactive picker is
     skipped: the first available model is auto-selected and a JSONL event is
-    emitted on stderr.  Connection errors produce structured JSON on stderr
-    and use differentiated exit codes (2 = connection, 3 = no models).
+    emitted on stderr.  Failures exit with the documented codes in both modes
+    (2 = connection, HTTP, or unreadable response; 3 = no models).
     """
     import httpx
 
@@ -119,7 +119,7 @@ def _detect_model(
             )
         console.print("[bold red]✗ cannot connect[/]")
         console.print(f"\n[red]Could not connect to {show_url}. Is the server running?[/]")
-        sys.exit(1)
+        sys.exit(2)
     except httpx.HTTPStatusError as exc:
         if headless:
             _headless_error(
@@ -131,12 +131,13 @@ def _detect_model(
         console.print(
             f"\n[red]Server returned {exc.response.status_code}. Check the URL and API key.[/]"
         )
-        sys.exit(1)
+        sys.exit(2)
     except Exception as exc:
         if headless:
             _headless_error(DETECTION_FAILED, str(exc), exit_code=2)
-        console.print(f"[bold red]✗ {exc}[/]")
-        sys.exit(1)
+        detail = _redact_urls(str(exc)) if show_url != base_url else str(exc)
+        console.print(f"[bold red]✗ {detail}[/]")
+        sys.exit(2)
 
     if used_fallback:
         if not headless:
@@ -145,23 +146,34 @@ def _detect_model(
                 "Check your server configuration.[/]"
             )
 
+    model_list: list[dict[str, Any]] = []
+    problem: str | None = None
     try:
         data = resp.json()
+    except ValueError:
+        problem = "invalid JSON"
+    else:
         # OpenAI lists under "data"; the native Gemini API lists under "models".
-        model_list = data.get("data") or data.get("models") or []
-    except Exception:
+        listed = (data.get("data") or data.get("models") or []) if isinstance(data, dict) else None
+        # The OpenAI shape is a list of objects; anything else is a bad body,
+        # not a model list to guess at.
+        if isinstance(listed, list) and all(isinstance(m, dict) for m in listed):
+            model_list = listed
+        else:
+            problem = "a model list that is not a list of objects"
+    if problem is not None:
         status_code = resp.status_code
         content_type = resp.headers.get("Content-Type", "unknown")
         body_snippet = resp.text[:200]
         err_msg = (
-            f"Server returned invalid JSON from /v1/models (HTTP {status_code}, "
+            f"Server returned {problem} from /v1/models (HTTP {status_code}, "
             f"Content-Type: {content_type}). Body snippet: {body_snippet!r}"
         )
         if headless:
             _headless_error(INVALID_RESPONSE, err_msg, exit_code=2)
         console.print("[bold red]✗ invalid response[/]")
         console.print(f"[red]{err_msg}[/]")
-        sys.exit(1)
+        sys.exit(2)
 
     # Build (api_id, display_name) pairs
     # vLLM: "id" is the served alias, "root" is the actual model path
@@ -183,7 +195,7 @@ def _detect_model(
             _headless_error(NO_MODELS, "The server returned an empty model list.", exit_code=3)
         console.print("[bold red]✗ no models found[/]")
         console.print("[red]The server returned an empty model list.[/]")
-        sys.exit(1)
+        sys.exit(3)
 
     if len(models) == 1:
         api_id, display = models[0]
@@ -240,6 +252,7 @@ def _probe_server(
     base_url: str,
     api_key: str | None,
     *,
+    display_url: str | None = None,
     headless: bool = False,
     wire_format: str = "openai",
     headers: Mapping[str, str] | None = None,
@@ -251,10 +264,12 @@ def _probe_server(
     wait until the server is ready.
 
     Exits 0 if the server responds to /v1/models, exit 1 otherwise.
+    Console lines show *display_url* (the ``--redact-url`` form) when given.
     """
     import httpx
 
     endpoint, request_headers = _models_request(base_url, api_key, wire_format, headers)
+    show_url = display_url or base_url
 
     async def _check() -> httpx.Response:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -277,7 +292,9 @@ def _probe_server(
             sys.stderr.write(json.dumps(msg) + "\n")
             sys.stderr.flush()
         else:
-            console.print(f"[bold red]✗[/] Server at {base_url} is not ready: {exc}")
+            # httpx quotes the request URL in its messages.
+            detail = _redact_urls(str(exc)) if show_url != base_url else str(exc)
+            console.print(f"[bold red]✗[/] Server at {show_url} is not ready: {detail}")
         sys.exit(1)
 
     if headless:
@@ -290,7 +307,7 @@ def _probe_server(
         sys.stderr.write(json.dumps(msg) + "\n")
         sys.stderr.flush()
     else:
-        console.print(f"[bold green]✓[/] Server at {base_url} is ready")
+        console.print(f"[bold green]✓[/] Server at {show_url} is ready")
         if model_ids:
             console.print(f"  Models: {', '.join(model_ids)}")
     sys.exit(0)

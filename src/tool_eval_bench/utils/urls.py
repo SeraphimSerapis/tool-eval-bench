@@ -24,7 +24,7 @@ def validate_http_url(url: str, *, what: str = "URL") -> str:
             f"{parsed.scheme or 'no scheme'!r}: {redact_url(url)}"
         )
     if not parsed.hostname:
-        raise ValueError(f"{what} is missing a host: {url}")
+        raise ValueError(f"{what} is missing a host: {redact_url(url)}")
     return url
 
 

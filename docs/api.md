@@ -106,7 +106,7 @@ result = asyncio.run(run_benchmark(
     scenarios=None,       # explicit list, or use short=True/False
     short=False,          # True = core 15, False = standard 69
     temperature=0.0,
-    timeout_seconds=60.0,
+    timeout_seconds=120.0,
     max_turns=8,
     seed=None,
     reference_date=None,  # "YYYY-MM-DD"

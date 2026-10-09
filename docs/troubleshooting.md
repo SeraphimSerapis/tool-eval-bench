@@ -17,9 +17,10 @@ Its exit code tells you where the problem is:
 | Exit | Meaning | Usual cause |
 |---|---|---|
 | 0 | Ready | |
-| 1 | Runtime error, or server not ready | The process is up but not serving yet |
-| 2 | Connection or HTTP error | Wrong host or port, or nothing listening |
-| 3 | No models found | The server started with zero models loaded |
+| 1 | Server not ready | Nothing listening, the process is still loading, or the model list returned an HTTP error |
+| 2 | No server found, or invalid arguments | Auto-discovery found nothing on localhost; pass `--base-url` |
+
+A scored run exits 2 for connection and HTTP errors and 3 when the server lists no models.
 
 ## The server is running but nothing is discovered
 

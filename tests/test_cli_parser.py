@@ -254,7 +254,9 @@ def test_subprocess_help_is_command_specific(command: str, included: str, exclud
     # added six lines to the usage and options blocks (196 -> 202), the decision
     # benchmark pair added four more (202 -> 206), and its longer
     # --decision-bench/--decision-bench-only names wrap onto two more (206 -> 208).
-    assert len(completed.stdout.splitlines()) < 210
+    # Listing --fail-on-safety, --scenario-pack/--pack-only, and --tokenizer,
+    # which bench already accepted, brought it to 227.
+    assert len(completed.stdout.splitlines()) < 230
 
 
 def test_module_execution_version_path() -> None:
@@ -422,3 +424,78 @@ def test_finalize_plugin_run_renders_label_and_slugifies_filename(
     text = reports[0].read_text(encoding="utf-8")
     assert f"- **Label**: <code>{LABEL}</code>" in text
     assert persisted[0]["metadata"]["label"] == LABEL
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["resume", "--json", "run-9"], {"resume": "run-9", "json": True}),
+        (["resume", "run-9", "--json"], {"resume": "run-9", "json": True}),
+        # The run ID may equal an option value; the positional is still found.
+        (["resume", "--label", "r-1", "r-1"], {"resume": "r-1", "label": "r-1"}),
+        (["resume", "--label", "lab", "r-2"], {"resume": "r-2", "label": "lab"}),
+        (["resume", "--header", "A=1", "run-9"], {"resume": "run-9", "header": ["A=1"]}),
+        (
+            ["plugin", "--base-url", "http://x", "gsm8k", "--limit", "5"],
+            {"gsm8k_only": True, "base_url": "http://x", "gsm8k_limit": 5},
+        ),
+        (
+            ["plugin", "--limit", "5", "--model", "m", "mmlu"],
+            {"mmlu_only": True, "model": "m", "mmlu_limit": 5},
+        ),
+    ],
+)
+def test_subcommand_options_may_precede_the_positional(
+    argv: list[str], expected: dict[str, object]
+) -> None:
+    _, args = parse_cli_args(_make_parser, argv)
+    for dest, value in expected.items():
+        assert getattr(args, dest) == value
+
+
+@pytest.mark.parametrize(
+    ("argv", "missing"),
+    [
+        (["resume", "--json"], "run_id"),
+        (["resume", "--label", "only-a-label"], "run_id"),
+        (["plugin", "--base-url", "http://x"], "benchmark"),
+    ],
+)
+def test_subcommand_without_its_positional_is_a_usage_error(
+    capsys: pytest.CaptureFixture[str], argv: list[str], missing: str
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        parse_cli_args(_make_parser, argv)
+    assert exc_info.value.code == 2
+    assert f"the following arguments are required: {missing}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("command", "flags"),
+    [
+        ("run", ["--fail-on-safety", "--scenario-pack", "--pack-only"]),
+        ("bench", ["--fail-on-safety", "--scenario-pack", "--pack-only", "--tokenizer"]),
+        ("resume", ["--fail-on-safety", "--scenario-pack", "--pack-only"]),
+    ],
+)
+def test_focused_help_lists_the_flags_each_command_accepts(command: str, flags: list[str]) -> None:
+    from tool_eval_bench.cli.parser import _command_help
+
+    text = _command_help(command).format_help()
+    for flag in flags:
+        assert flag in text
+
+
+def test_plugin_help_omits_the_safety_gate() -> None:
+    from tool_eval_bench.cli.parser import _command_help
+
+    # Plugins score no safety-critical scenarios, so the gate would never fire.
+    assert "--fail-on-safety" not in _command_help("plugin").format_help()
+
+
+def test_categories_help_names_every_category() -> None:
+    from tool_eval_bench.cli.legacy_parser import _make_parser as make_flat_parser
+    from tool_eval_bench.domain.scenarios import Category
+
+    text = " ".join(make_flat_parser().format_help().split())
+    assert f"Letters A–P map to the {len(list(Category))} benchmark categories" in text

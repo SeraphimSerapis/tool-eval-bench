@@ -1,0 +1,1 @@
+**A bad `--reference-date` fails before any work.** An invalid date was only caught by the benchmark service, after the pre-flight request, the warm-up, and any `--perf` sweep had run, and under `--json` it surfaced as a run failure. It is now rejected while the arguments are checked, with exit 2 and an `invalid_arguments` event under `--json`.

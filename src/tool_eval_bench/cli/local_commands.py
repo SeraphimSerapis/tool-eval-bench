@@ -11,6 +11,7 @@ from typing import Any
 from rich.console import Console
 
 from tool_eval_bench.cli.headless import exit_invalid_arguments
+from tool_eval_bench.cli.modes import sends_system_prompt
 from tool_eval_bench.domain.scenarios import CATEGORY_LABELS, Category
 
 
@@ -40,14 +41,19 @@ def _render_dry_run(
     console: Console,
     resolve_scenarios: Callable[[argparse.Namespace], list[Any]],
 ) -> None:
+    runs_scenarios = sends_system_prompt(args)
     try:
         scenarios = resolve_scenarios(args)
-        _validate_dry_run_selection(args, scenarios)
+        if runs_scenarios:
+            _validate_dry_run_selection(args, scenarios)
     except ValueError as exc:
         if args.json:
             exit_invalid_arguments(str(exc))
         console.print(f"\n[bold red]Error:[/] {exc}\n")
         raise SystemExit(2) from None
+    if not runs_scenarios:
+        # The selection flags are inert here: the invocation stops before the scenarios.
+        scenarios = []
     if args.json:
         category_counts: dict[str, int] = {}
         for scenario in scenarios:
@@ -84,6 +90,10 @@ def _render_dry_run(
         sys.stdout.write(json.dumps(output, indent=2) + "\n")
     else:
         console.print(f"\n[bold]Dry run:[/] {len(scenarios)} scenarios would execute\n")
+        if not runs_scenarios:
+            console.print("  This invocation runs no tool-call scenarios.\n")
+        elif args.resume:
+            console.print("  Resume: the remaining subset is decided when the run starts.\n")
         console.print(f"  Estimated time: ~{len(scenarios) * 0.3:.0f} minutes (at ~18s/scenario)\n")
         category_counts = {}
         for scenario in scenarios:
@@ -114,15 +124,26 @@ def handle_local_command(
 ) -> bool:
     """Handle a command that does not need inference-server discovery."""
     if args.history:
+        _reject_json(args, "--history")
         print_history(console)
     elif args.leaderboard:
+        _reject_json(args, "--leaderboard")
         print_leaderboard(console)
     elif args.export:
         export_runs(console, fmt=args.export, output=args.export_output)
     elif args.compare:
+        _reject_json(args, "--compare")
         compare_runs(console, args.compare[0], args.compare[1])
     elif args.dry_run:
         _render_dry_run(args, console, resolve_scenarios)
     else:
         return False
     return True
+
+
+def _reject_json(args: argparse.Namespace, flag: str) -> None:
+    """Refuse ``--json`` for a command that renders Rich tables to stdout."""
+    if args.json:
+        exit_invalid_arguments(
+            f"{flag} does not support --json; use --export json for machine-readable run data"
+        )

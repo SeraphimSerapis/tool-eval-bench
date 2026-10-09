@@ -27,6 +27,7 @@ import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -48,7 +49,6 @@ from tool_eval_bench.application.run_config import (
 from tool_eval_bench.application.run_context import build_run_context, identify_backend
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.cli import model_probe as _model_probe
-from tool_eval_bench.cli.command_registry import PLUGIN_FLAG_STEMS
 from tool_eval_bench.cli.compare_report import (
     run_compare_report_command as _run_compare_report_command,
 )
@@ -88,6 +88,9 @@ from tool_eval_bench.cli.leaderboard import export_runs as _export_runs
 from tool_eval_bench.cli.leaderboard import print_leaderboard as _print_leaderboard
 from tool_eval_bench.cli.legacy_parser import _make_parser  # noqa: F401
 from tool_eval_bench.cli.local_commands import handle_local_command as _handle_local_command
+from tool_eval_bench.cli.modes import any_plugin_selected as _any_plugin_selected
+from tool_eval_bench.cli.modes import mode_conflict as _mode_conflict
+from tool_eval_bench.cli.modes import sends_system_prompt as _sends_system_prompt
 from tool_eval_bench.cli.perf import (
     run_llama_benchy as _run_llama_benchy,
 )
@@ -371,6 +374,7 @@ def _probe_server(
     base_url: str,
     api_key: str | None,
     *,
+    display_url: str | None = None,
     headless: bool = False,
     wire_format: str = "openai",
     headers: Mapping[str, str] | None = None,
@@ -378,7 +382,13 @@ def _probe_server(
     """Compatibility wrapper preserving the historical asyncio patch seam."""
     _model_probe.asyncio = asyncio
     _model_probe._probe_server(
-        console, base_url, api_key, headless=headless, wire_format=wire_format, headers=headers
+        console,
+        base_url,
+        api_key,
+        display_url=display_url,
+        headless=headless,
+        wire_format=wire_format,
+        headers=headers,
     )
 
 
@@ -665,6 +675,7 @@ def _check_endpoint_ready(
     wire_format: str,
     extra_params: dict[str, Any],
     headers: Mapping[str, str] | None = None,
+    display_url: str | None = None,
 ) -> None:
     """Verify the model answers a real request, then warm the server.
 
@@ -683,6 +694,7 @@ def _check_endpoint_ready(
             temperature=args.temperature,
             extra_params=extra_params or None,
             headers=headers,
+            display_url=display_url,
         )
 
     if not args.no_warmup and not args.json:
@@ -739,39 +751,6 @@ def _resolve_system_prompt(args: argparse.Namespace, parser: argparse.ArgumentPa
         args.system_prompt = normalize_system_prompt(text)
     except ValueError as exc:
         parser.error(f"{source}: {exc}")
-
-
-def _any_plugin_selected(args: argparse.Namespace) -> bool:
-    """Whether any accuracy plugin runs, through ``--<plugin>`` or ``--<plugin>-only``."""
-    return any(
-        getattr(args, stem) or getattr(args, f"{stem}_only") for stem in PLUGIN_FLAG_STEMS.values()
-    )
-
-
-def _sends_system_prompt(args: argparse.Namespace) -> bool:
-    """Whether this invocation runs tool-call scenarios, the override's only consumer.
-
-    Also gates the checks that only matter when scenarios run, such as rejecting
-    an empty scenario selection.
-
-    Mirrors the routing in ``main()``: ``--perf-only``, ``--spec-live``, a lone
-    ``--spec-bench``, any ``--<plugin>-only`` run, and ``--skip-tool-eval`` all
-    stop before the scenarios; a context-pressure sweep is a scenario run.
-
-    Probe, ``--dry-run``, and the storage commands are not considered here: they
-    record nothing, so an unused flag is inert, and they already accept the rest
-    of the run-control group in silence.
-    """
-    if args.spec_live or args.decision_live or args.perf_only:
-        return False
-    other_benchmarks = args.perf or _any_plugin_selected(args)
-    if args.spec_bench and (args.skip_tool_eval or not other_benchmarks):
-        return False
-    if args.context_pressure_sweep is not None:
-        return True
-    if args.skip_tool_eval:
-        return False
-    return not any(getattr(args, f"{stem}_only") for stem in PLUGIN_FLAG_STEMS.values())
 
 
 def _drop_unused_system_prompt(args: argparse.Namespace, console: Console) -> None:
@@ -882,9 +861,10 @@ def _run_spec_bench_mode(target: _Target) -> bool:
             label=args.label,
             run_context=target.run_context,
         )
-        # If --spec-bench is the only mode, or user explicitly skipped tool-eval
-        if args.skip_tool_eval or (
-            not args.perf and not args.perf_only and not _any_plugin_selected(args)
+        # Done unless accuracy plugins or the scored run still follow;
+        # --skip-tool-eval drops only the scored run.
+        if not _any_plugin_selected(args) and (
+            args.skip_tool_eval or (not args.perf and not args.perf_only)
         ):
             # The failed row and its run_failed message are already out; as with
             # --perf-only, only the last mode turns a failed cell into exit 1.
@@ -957,7 +937,16 @@ def main() -> None:
     if headless:
         headless_usage_errors(parser)
     with json_logging(headless):
-        _run_cli(args, parser, console)
+        try:
+            _run_cli(args, parser, console)
+        except KeyboardInterrupt:
+            # The runners handle an interrupt during the scenarios; this covers
+            # the setup before them, so --json stderr stays JSON lines.
+            if headless:
+                emit_run_failed("interrupted")
+            else:
+                console.print("\n[bold red]Interrupted.[/]")
+            sys.exit(1)
 
 
 def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console) -> None:
@@ -978,6 +967,10 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser, console:
         # stdout carries only the result envelope; see cli.headless.
         console = HeadlessConsole()
     _validate_explicit_scenarios(args, parser)
+    if args.resume and not args.probe:
+        # _plan_resume reads the run again later; checking now keeps a bad
+        # target from costing the preflight, warm-up, and any perf sweep.
+        _load_resumable(args, console)
     endpoint = _resolve_endpoint(args, parser, console)
     if args.probe:
         _run_probe_mode(args, console, endpoint)
@@ -1034,6 +1027,9 @@ def _prepare_args(
     if args.json and (args.spec_live or args.decision_live):
         flag = "--spec-live" if args.spec_live else "--decision-live"
         parser.error(f"{flag} is an interactive monitor and cannot be combined with --json")
+    conflict = _mode_conflict(args)
+    if conflict is not None:
+        parser.error(conflict)
 
     # Resolve the system-prompt override from its file, if given, so every
     # downstream consumer (run, resume-compat check, RunContext) sees plain
@@ -1055,6 +1051,18 @@ def _prepare_args(
         or args.context_pressure_sweep is not None
     ):
         parser.error("Decision judge audits require a run or resume of tool-call scenarios")
+    if args.resume and (not _sends_system_prompt(args) or args.context_pressure_sweep is not None):
+        parser.error("--resume requires a run of tool-call scenarios")
+    # The service applies the same rule, but only after preflight, warm-up, and
+    # any perf sweep. The original string is kept: it is stored and fingerprinted.
+    if args.reference_date:
+        try:
+            datetime.strptime(args.reference_date, "%Y-%m-%d")
+        except ValueError:
+            parser.error(
+                f"Invalid --reference-date '{args.reference_date}'. "
+                "Expected format: YYYY-MM-DD (e.g. 2026-03-20)"
+            )
 
 
 def _validate_run_ranges(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -1219,6 +1227,7 @@ def _run_probe_mode(args: argparse.Namespace, console: Console, endpoint: _Endpo
         console,
         endpoint.base_url,
         endpoint.api_key,
+        display_url=_redact_url(endpoint.base_url) if args.redact_url else endpoint.base_url,
         headless=args.json,
         wire_format=endpoint.wire_format,
         headers=endpoint.probe_headers,
@@ -1381,6 +1390,7 @@ def _ready_target(target: _Target, probe_headers: Mapping[str, str]) -> _Target:
             wire_format=target.wire_format,
             extra_params=target.extra_params,
             headers=probe_headers,
+            display_url=target.display_url,
         )
 
     run_context = _build_run_context(
@@ -1524,7 +1534,7 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
             )
         # Auto-scale timeout for context pressure: large fills need
         # significant prefill time.  Without this, a 182K fill at the
-        # default 60s timeout will fail while the same level passes in
+        # default 120s timeout will fail while the same level passes in
         # a --context-pressure-sweep (which has its own auto-scaling).
         # Scaled from the target, not the calibrated count: the timeout is
         # persisted, fingerprinted, and checked on resume, and unseeded
@@ -1597,6 +1607,31 @@ def _skip_tool_eval_mode(target: _Target) -> bool:
     return True
 
 
+def _load_resumable(
+    args: argparse.Namespace, console: Console
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Read the ``--resume`` run and its checkpoints; exit 1 when it cannot resume."""
+    from tool_eval_bench.application.run_queries import resume_state
+
+    resumable = resume_state(args.resume)
+    if resumable is None:
+        report_run_failed(
+            console,
+            f"\n  [bold red]✗[/] Run '{args.resume}' not found in history.\n"
+            "  [dim]Use --history to list available runs.[/]\n",
+        )
+        sys.exit(1)
+    prev_run, prev_checkpoints = resumable
+    if prev_run.get("status") == "completed":
+        report_run_failed(
+            console,
+            "\n  [bold red]✗ Resume aborted: run is already completed[/]\n"
+            "  [dim]Completed scenario outcomes are immutable. Start a fresh run to retry.[/]\n",
+        )
+        sys.exit(1)
+    return prev_run, prev_checkpoints
+
+
 def _plan_resume(target: _Target, pressure: _PressureFill | None) -> None:
     """Preserve completed model outcomes under the original run ID.
 
@@ -1608,26 +1643,7 @@ def _plan_resume(target: _Target, pressure: _PressureFill | None) -> None:
     resume_prior_results: list[dict] | None = None
     resume_scenarios: list[ScenarioDefinition] | None = None
     if args.resume:
-        from tool_eval_bench.application.run_queries import resume_state
-
-        resumable = resume_state(args.resume)
-        prev_run = resumable[0] if resumable else None
-        prev_checkpoints = resumable[1] if resumable else []
-        if prev_run is None:
-            report_run_failed(
-                console,
-                f"\n  [bold red]✗[/] Run '{args.resume}' not found in history.\n"
-                "  [dim]Use --history to list available runs.[/]\n",
-            )
-            sys.exit(1)
-
-        if prev_run.get("status") == "completed":
-            report_run_failed(
-                console,
-                "\n  [bold red]✗ Resume aborted: run is already completed[/]\n"
-                "  [dim]Completed scenario outcomes are immutable. Start a fresh run to retry.[/]\n",
-            )
-            sys.exit(1)
+        prev_run, prev_checkpoints = _load_resumable(args, console)
 
         # Resolve before changing args.scenarios.  These definitions are needed
         # to rescore checkpointed Hard Mode and held-out-pack results.
@@ -2073,8 +2089,11 @@ def _run_json(
         sys.exit(1)
     except Exception as exc:
         # Shareable output like a report, so a quoted request URL is redacted.
-        error_data = {"error": _redact_urls(str(exc))}
-        _emit_json_output(error_data, json_file=json_file)
+        message = _redact_urls(str(exc))
+        # The error envelope predates run_failed and stays for consumers that
+        # read it; the event is what the documented error contract promises.
+        _emit_json_output({"error": message}, json_file=json_file, failed=True)
+        emit_run_failed(message)
         sys.exit(1)
 
     if trials == 1:

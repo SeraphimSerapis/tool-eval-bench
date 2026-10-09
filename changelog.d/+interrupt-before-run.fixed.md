@@ -1,0 +1,1 @@
+**Ctrl+C before the scenarios exits cleanly.** Interrupting during server discovery, pre-flight, or warm-up printed a Python traceback, which also broke the JSON-lines stream on stderr under `--json`. Console runs now print "Interrupted." and `--json` runs emit a `run_failed` event with the message `interrupted`, both with exit code 1.

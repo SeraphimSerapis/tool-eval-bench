@@ -78,12 +78,7 @@ def _command_help(command: str, *, include_legacy_options: bool = True) -> argpa
     )
     if command == "plugin":
         parser.add_argument("benchmark", choices=spec.choices)
-        parser.add_argument("--shots", type=int, metavar="N")
-        parser.add_argument("--limit", type=int, metavar="N")
-        parser.add_argument("--shuffle", action="store_true")
-        parser.add_argument("--subjects", metavar="LIST")
-        parser.add_argument("--depths", type=int, metavar="N")
-        parser.add_argument("--lengths", type=int, metavar="N")
+        _add_plugin_options(parser)
     elif command == "compare":
         parser.add_argument("--report", action="store_true")
         parser.add_argument("left", help="Run ID, or Markdown report with --report")
@@ -121,9 +116,63 @@ def make_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_plugin_options(parser: argparse.ArgumentParser) -> None:
+    """The ``plugin`` subcommand's own options, translated by :func:`_plugin_argv`."""
+    parser.add_argument("--shots", type=int, metavar="N")
+    parser.add_argument("--limit", type=int, metavar="N")
+    parser.add_argument("--shuffle", action="store_true")
+    parser.add_argument("--subjects", metavar="LIST")
+    parser.add_argument("--depths", type=int, metavar="N")
+    parser.add_argument("--lengths", type=int, metavar="N")
+
+
+class _Token(str):
+    """A distinct ``str`` object, so the token argparse picks can be found by identity."""
+
+
+def _take_positional(
+    argv: list[str], command: str, dest: str, *, plugin_options: bool = False
+) -> tuple[str | None, list[str]]:
+    """Split the token argparse assigns to positional *dest* out of *argv*.
+
+    The locating parser has every legacy option (plus the plugin options) with
+    its arity and nothing else, so it never takes an option's value for *dest*:
+    ``plugin --base-url http://x gsm8k`` finds ``gsm8k``. Types and choices are
+    left out; the real parse reports bad values. argparse reports values, not
+    positions, and the same string may also be an option value
+    (``--label r-1 r-1``), so each token is wrapped in its own ``str`` object
+    and the assigned value is matched by identity; argparse passes an untyped
+    positional's string through unchanged.
+    """
+    from tool_eval_bench.cli.legacy_parser import make_parser as make_legacy_parser
+
+    locator = argparse.ArgumentParser(prog=f"tool-eval-bench {command}", add_help=False)
+    # Same private access as _copy_legacy_options, pinned by the same snapshot.
+    for source in make_legacy_parser()._actions:
+        if not source.option_strings:
+            continue
+        if source.nargs == 0:
+            locator.add_argument(*source.option_strings, dest=source.dest, action="store_true")
+        else:
+            locator.add_argument(*source.option_strings, dest=source.dest, nargs=source.nargs)
+    if plugin_options:
+        _add_plugin_options(locator)
+    locator.add_argument(dest, nargs="?")
+    tokens = [_Token(value) for value in argv]
+    namespace, _ = locator.parse_known_args(tokens)
+    value = getattr(namespace, dest)
+    for index, token in enumerate(tokens):
+        if token is value:
+            return argv[index], argv[:index] + argv[index + 1 :]
+    return None, argv
+
+
 def _plugin_argv(argv: list[str]) -> list[str]:
     parser = _command_help("plugin", include_legacy_options=False)
-    args, remainder = parser.parse_known_args(argv)
+    benchmark, rest = _take_positional(argv, "plugin", "benchmark", plugin_options=True)
+    if benchmark is None:
+        parser.error("the following arguments are required: benchmark")
+    args, remainder = parser.parse_known_args([benchmark, *rest])
     prefix = "--" + PLUGIN_FLAG_STEMS[args.benchmark].replace("_", "-")
     translated = [f"{prefix}-only"]
     if args.shots is not None:
@@ -210,10 +259,10 @@ def translate_argv(argv: Sequence[str]) -> list[str]:
     if spec.translation == "export":
         return _export_argv(rest)
     if spec.translation == "resume":
-        parser = _command_help("resume")
-        if not rest or rest[0].startswith("-"):
-            parser.error("the following arguments are required: run_id")
-        return ["--resume", rest[0], *rest[1:]]
+        run_id, remaining = _take_positional(rest, "resume", "run_id")
+        if run_id is None:
+            _command_help("resume").error("the following arguments are required: run_id")
+        return ["--resume", run_id, *remaining]
     raise AssertionError(f"Unhandled command: {command}")
 
 
