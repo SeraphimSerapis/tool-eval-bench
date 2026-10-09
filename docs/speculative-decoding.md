@@ -49,6 +49,7 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > | **llama.cpp** | Current Prometheus counters, with per-request `timings` fallback | Full counter metrics on current builds; α % and waste ratio from response timings on older builds |
 > | **TensorFold** | MLX `speculative` or CUDA `tensorfold` request-local counts; otherwise `tensorfold:spec_decode_*` counter deltas | α % and waste ratio; step-based estimates stay unavailable without a step counter |
 > | **SGLang** | No request-local counter contract | Effective t/s remains available; use `spec-live` for the server's current acceptance gauges |
+> | **Strata** | Prometheus `vllm:spec_decode_*` counter deltas | α % and waste ratio; no draft-step counter, so τ and draft window stay unknown |
 >
 > **vLLM per-request metrics** are optional but worth turning on. Prometheus
 > counters are server-wide, so any concurrent traffic lands in the delta

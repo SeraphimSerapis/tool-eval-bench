@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 import httpx
@@ -969,14 +969,15 @@ def metrics_url_from_base(base_url: str) -> str:
 async def scrape_snapshot(
     client: httpx.AsyncClient,
     url: str,
-    api_key: str | None = None,
+    headers: Mapping[str, str],
 ) -> MetricsSnapshot | None:
-    """Scrape metrics endpoint and return a snapshot, or None on failure."""
-    headers: dict[str, str] = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    """Scrape metrics endpoint and return a snapshot, or None on failure.
+
+    *headers* come from ``metrics_request_target``, which scopes the bearer
+    token and asks for Prometheus text.
+    """
     try:
-        resp = await client.get(url, headers=headers, timeout=5.0)
+        resp = await client.get(url, headers=dict(headers), timeout=5.0)
         if resp.status_code != 200:
             return None
         return _parse_snapshot(resp.text)
