@@ -1,0 +1,20 @@
+{
+  "run_data": {
+    "run_id": "<RUN_ID>",
+    "run_type": "perf",
+    "status": "completed",
+    "config": {
+      "model": "m",
+      "backend": "vllm",
+      "base_url": "http://***:8000/v1",
+      "mode": "perf-only",
+      "config_fingerprint": "97552a792df5"
+    },
+    "scores": {
+      "samples": 1
+    },
+    "metadata": {},
+    "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
+  },
+  "report": "# Throughput Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: throughput-only\n\n## Results\n\n| Test | pp t/s | tg t/s | TTFT (ms) | Total (ms) | Tokens |\n|---|---:|---:|---:|---:|---:|\n| pp512 tg128 @ d0 | 5,000 | 95.0 | 100 | 1,400 | 512+128 |"
+}

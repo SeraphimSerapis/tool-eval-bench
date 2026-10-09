@@ -1,0 +1,31 @@
+{
+  "run_data": {
+    "run_id": "<RUN_ID>",
+    "run_type": "gsm8k",
+    "status": "completed",
+    "config": {
+      "model": "m",
+      "base_url": "http://***:8000/v1",
+      "mode": "gsm8k",
+      "n_shots": 8,
+      "limit": 3,
+      "temperature": 0.0,
+      "seed": 7,
+      "shuffle": false,
+      "config_fingerprint": "1c14eaa9f612"
+    },
+    "scores": {
+      "final_score": 67,
+      "accuracy": 66.7,
+      "rating": "★★★ Adequate",
+      "total": 3,
+      "correct": 2,
+      "errors": 0,
+      "answered": 3,
+      "completion_rate": 100.0
+    },
+    "metadata": {},
+    "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
+  },
+  "report": "# GSM8K Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: gsm8k\n- **Accuracy**: **66.7%**\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## GSM8K — Grade School Math\n\n- **Accuracy**: **66.7%** (2/3)\n- **Rating**: ★★★ Adequate\n- **Few-shot examples**: 8-shot CoT\n- **Dataset**: openai/gsm8k test (? total, 3 evaluated)\n- **Duration**: 12.0s\n- **Tokens consumed**: 900\n\n### Answer Extraction Methods\n\n| Method | Count |\n|---|---:|\n| unknown | 2 |\n| hash | 1 |\n\n### Error Analysis\n\n- **Total failures**: 1 / 3\n- **Wrong answer**: 1 — model produced a numeric answer that didn't match the ground truth\n\n### Failed Questions (1 total)\n\n| # | Question (excerpt) | Ground Truth | Extracted | Method | Response (excerpt) |\n|---:|---|---:|---:|---|---|\n| 2 | q2 | 3.0 | 9.0 | hash |  |\n\n### Detailed Failure Samples\n\n#### Question #2\n\n**Expected:** 3.0 · **Got:** 9.0 · **Method:** hash\n\n**Question:**\n\n> q2\n\n**Model response:** *(empty)*\n"
+}

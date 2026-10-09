@@ -1,0 +1,157 @@
+{
+  "run_data": {
+    "run_id": "<RUN_ID>",
+    "run_type": "decision",
+    "status": "completed",
+    "config": {
+      "model": "m",
+      "base_url": "http://***:8000/v1",
+      "mode": "decision",
+      "dataset": "LocalLLaMA/typed-decisions",
+      "dataset_revision": "e039ebffcc280174dd354227424fb2b249f191de",
+      "dataset_split": "test",
+      "cases": 3,
+      "config_fingerprint": "54eabd70423e"
+    },
+    "scores": {
+      "final_score": 93,
+      "accuracy": 93.33,
+      "rating": "★★★ At the teacher self-agreement ceiling",
+      "dataset": "LocalLLaMA/typed-decisions",
+      "dataset_revision": "e039ebffcc280174dd354227424fb2b249f191de",
+      "dataset_split": "test",
+      "dataset_license": "Apache-2.0",
+      "attribution": "Typed Decisions (LocalLLaMA/typed-decisions, test split, revision e039ebffcc28), Apache-2.0, https://huggingface.co/datasets/LocalLLaMA/typed-decisions",
+      "correct": 14,
+      "total": 15,
+      "cases": 3,
+      "answered": 15,
+      "errors": 0,
+      "completion_rate": 100.0,
+      "status": "completed",
+      "incomplete": false,
+      "kl": 0.0,
+      "brier": 0.0,
+      "calibration": {
+        "ece": 0.3824,
+        "mean_confidence": 0.5509,
+        "bins": [
+          {
+            "low": 0.3,
+            "high": 0.4,
+            "count": 1,
+            "mean_confidence": 0.3833,
+            "accuracy": 1.0
+          },
+          {
+            "low": 0.4,
+            "high": 0.5,
+            "count": 3,
+            "mean_confidence": 0.4289,
+            "accuracy": 0.6667
+          },
+          {
+            "low": 0.5,
+            "high": 0.6,
+            "count": 5,
+            "mean_confidence": 0.5487,
+            "accuracy": 1.0
+          },
+          {
+            "low": 0.6,
+            "high": 0.7,
+            "count": 5,
+            "mean_confidence": 0.62,
+            "accuracy": 1.0
+          },
+          {
+            "low": 0.7,
+            "high": 0.8,
+            "count": 1,
+            "mean_confidence": 0.75,
+            "accuracy": 1.0
+          }
+        ],
+        "high_confidence_errors": 0
+      },
+      "by_type": {
+        "noul": {
+          "correct": 3,
+          "total": 3,
+          "accuracy": 100.0,
+          "kl": 0.0,
+          "brier": 0.0
+        },
+        "choice": {
+          "correct": 6,
+          "total": 6,
+          "accuracy": 100.0,
+          "kl": 0.0,
+          "brier": 0.0
+        },
+        "score": {
+          "correct": 5,
+          "total": 6,
+          "accuracy": 83.33,
+          "kl": 0.0,
+          "brier": 0.0
+        }
+      },
+      "by_workflow": {
+        "agent_trace_observability": {
+          "correct": 14,
+          "total": 15,
+          "accuracy": 93.33,
+          "kl": 0.0,
+          "brier": 0.0
+        }
+      },
+      "by_question": {
+        "agent_trace_observability/action": {
+          "correct": 3,
+          "total": 3,
+          "accuracy": 100.0,
+          "kl": 0.0,
+          "brier": 0.0
+        },
+        "agent_trace_observability/needs_review": {
+          "correct": 3,
+          "total": 3,
+          "accuracy": 100.0,
+          "kl": 0.0,
+          "brier": 0.0
+        },
+        "agent_trace_observability/outcome": {
+          "correct": 3,
+          "total": 3,
+          "accuracy": 100.0,
+          "kl": 0.0,
+          "brier": 0.0
+        },
+        "agent_trace_observability/risk": {
+          "correct": 3,
+          "total": 3,
+          "accuracy": 100.0,
+          "kl": 0.0,
+          "brier": 0.0
+        },
+        "agent_trace_observability/urgency": {
+          "correct": 2,
+          "total": 3,
+          "accuracy": 66.67,
+          "kl": 0.0,
+          "brier": 0.0
+        }
+      },
+      "latency_ms": {
+        "mean": 40.0,
+        "p50": 40.0,
+        "p95": 40.0
+      },
+      "error_kinds": {}
+    },
+    "metadata": {},
+    "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
+  },
+  "report": "# Decision Models Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: decision\n- **Accuracy**: **93.3%**\n- **KL from gold**: 0.000\n- **Brier**: 0.000\n- **ECE**: 0.382\n- **Completion**: 100.0%\n- **Dataset**: LocalLLaMA/typed-decisions (test split, revision `e039ebffcc280174dd354227424fb2b249f191de`)\n- **Rating**: ★★★ At the teacher self-agreement ceiling\n\n## Decision Models — Typed Decisions\n\n> Data: Typed Decisions (LocalLLaMA/typed-decisions, test split, revision e039ebffcc28), Apache-2.0, https://huggingface.co/datasets/LocalLLaMA/typed-decisions. Third-party data, unmodified apart from format conversion; see NOTICE next to the data file.\n\n**Accuracy:** 93.3% (14/15 decisions)\n**KL from gold:** 0.000 · **Brier:** 0.000 · **ECE:** 0.382\n**Rating:** ★★★ At the teacher self-agreement ceiling\n**Requests:** 3 cases, all questions of a case in one request (0 decision errors)\n**Duration:** 12.0s · **Input tokens:** 300\n\nGold is the mean of three samples from a teacher model of roughly 4B-class capability, so these scores measure agreement with that teacher, not correctness. The dataset card puts a prior that ignores the input at 47.0% accuracy and the teacher's agreement with itself at 73.5%. The rating uses those two points: ★ at or below the prior, ★★ above it, ★★★ at or above the teacher's self-agreement. Ceilings differ a lot between questions, so read the per-question table too.\n\nAccuracy compares the most likely answer with the gold label. KL is KL(gold ‖ prediction) in nats and Brier the summed squared difference from the gold distribution, both averaged per decision. ECE is top-label over ten bins; the card's ECE definition is unpublished, so this ECE is not comparable with the card's.\n\n### By Question Type\n\n| Type | Correct | Total | Accuracy | KL | Brier | |\n|---|---|---|---|---|---|---|\n| noul | 3 | 3 | 100.0% | 0.000 | 0.000 | `██████████` |\n| choice | 6 | 6 | 100.0% | 0.000 | 0.000 | `██████████` |\n| score | 5 | 6 | 83.3% | 0.000 | 0.000 | `████████░░` |\n\n### By Workflow\n\n| Workflow | Correct | Total | Accuracy | KL | Brier | |\n|---|---|---|---|---|---|---|\n| agent_trace_observability | 14 | 15 | 93.3% | 0.000 | 0.000 | `█████████░` |\n\n### By Question\n\n| Question | Correct | Total | Accuracy | KL | Brier | |\n|---|---|---|---|---|---|---|\n| agent_trace_observability/action | 3 | 3 | 100.0% | 0.000 | 0.000 | `██████████` |\n| agent_trace_observability/needs_review | 3 | 3 | 100.0% | 0.000 | 0.000 | `██████████` |\n| agent_trace_observability/outcome | 3 | 3 | 100.0% | 0.000 | 0.000 | `██████████` |\n| agent_trace_observability/risk | 3 | 3 | 100.0% | 0.000 | 0.000 | `██████████` |\n| agent_trace_observability/urgency | 2 | 3 | 66.7% | 0.000 | 0.000 | `███████░░░` |\n\n### Calibration\n\n- **ECE:** 0.382 (top-label, ten bins, against the gold label)\n- **Mean confidence:** 55.1%\n- **Confident disagreements** (≥90%): 0\n\n| Confidence | n | Mean confidence | Accuracy | Gap |\n|---|---|---|---|---|\n| 0.3–0.4 | 1 | 0.38 | 1.00 | +0.62 |\n| 0.4–0.5 | 3 | 0.43 | 0.67 | +0.24 |\n| 0.5–0.6 | 5 | 0.55 | 1.00 | +0.45 |\n| 0.6–0.7 | 5 | 0.62 | 1.00 | +0.38 |\n| 0.7–0.8 | 1 | 0.75 | 1.00 | +0.25 |\n\n### Latency\n\n- **p50:** 40.0 ms · **p95:** 40.0 ms · **mean:** 40.0 ms per request\n\n### Disagreements with Gold (1 decisions)\n\nMost confident first.\n\n| Decision | Gold | Gold p | Predicted | Confidence |\n|---|---|---|---|---|\n| agent_trace_observability_000001/urgency | 1 | 0.43 | 0 | 0.43 |\n\n### Full Trace\n\n<details>\n<summary>Predicted and gold distribution for all 15 decisions</summary>\n\n```\nagent_trace_observability_000000  {\"agent\": {\"autonomy\": \"checkpointed\", \"model\": \"internal-agent-v1\"}, \"constraints\": [\"Do not excee…\n  action (choice)  ✓  pred continue  gold continue  KL 0.000  Brier 0.000\n      pred  continue=0.583 human_review=0.290 observe=0.090 stop=0.037\n      gold  continue=0.583 human_review=0.290 observe=0.090 stop=0.037\n  needs_review (noul)  ✓  pred false  gold false  KL 0.000  Brier 0.000\n      pred  true=0.357 false=0.643\n      gold  true=0.357 false=0.643\n  outcome (choice)  ✓  pred success  gold success  KL 0.000  Brier 0.000\n      pred  failure=0.073 harmful=0.003 partial=0.317 success=0.607\n      gold  failure=0.073 harmful=0.003 partial=0.317 success=0.607\n  risk (score)  ✓  pred 1  gold 1  KL 0.000  Brier 0.000\n      pred  0=0.300 1=0.617 2=0.077 3=0.007\n      gold  0=0.300 1=0.617 2=0.077 3=0.007\n  urgency (score)  ✓  pred 0  gold 0  KL 0.000  Brier 0.000\n      pred  0=0.533 1=0.383 2=0.077 3=0.007\n      gold  0=0.533 1=0.383 2=0.077 3=0.007\nagent_trace_observability_000001  {\"agent\": {\"autonomy\": \"unsupervised\", \"model\": \"internal-agent-v1\"}, \"constraints\": [\"Never disabl…\n  action (choice)  ✓  pred observe  gold observe  KL 0.000  Brier 0.000\n      pred  continue=0.333 human_review=0.187 observe=0.433 stop=0.047\n      gold  continue=0.333 human_review=0.187 observe=0.433 stop=0.047\n  needs_review (noul)  ✓  pred false  gold false  KL 0.000  Brier 0.000\n      pred  true=0.250 false=0.750\n      gold  true=0.250 false=0.750\n  outcome (choice)  ✓  pred success  gold success  KL 0.000  Brier 0.000\n      pred  failure=0.123 harmful=0.010 partial=0.233 success=0.633\n      gold  failure=0.123 harmful=0.010 partial=0.233 success=0.633\n  risk (score)  ✓  pred 0  gold 0  KL 0.000  Brier 0.000\n      pred  0=0.500 1=0.450 2=0.043 3=0.007\n      gold  0=0.500 1=0.450 2=0.043 3=0.007\n  urgency (score)  ✗  pred 0  gold 1  KL 0.000  Brier 0.000\n      pred  0=0.433 1=0.433 2=0.113 3=0.020\n      gold  0=0.433 1=0.433 2=0.113 3=0.020\nagent_trace_observability_000002  {\"agent\": {\"autonomy\": \"unsupervised\", \"model\": \"internal-agent-v3\"}, \"constraints\": [\"Do not touch…\n  action (choice)  ✓  pred continue  gold continue  KL 0.000  Brier 0.000\n      pred  continue=0.383 human_review=0.270 observe=0.313 stop=0.033\n      gold  continue=0.383 human_review=0.270 observe=0.313 stop=0.033\n  needs_review (noul)  ✓  pred false  gold false  KL 0.000  Brier 0.000\n      pred  true=0.407 false=0.593\n      gold  true=0.407 false=0.593\n  outcome (choice)  ✓  pred partial  gold partial  KL 0.000  Brier 0.000\n      pred  failure=0.167 harmful=0.017 partial=0.420 success=0.397\n      gold  failure=0.167 harmful=0.017 partial=0.420 success=0.397\n  risk (score)  ✓  pred 1  gold 1  KL 0.000  Brier 0.000\n      pred  0=0.383 1=0.533 2=0.083 3=0.000\n      gold  0=0.383 1=0.533 2=0.083 3=0.000\n  urgency (score)  ✓  pred 1  gold 1  KL 0.000  Brier 0.000\n      pred  0=0.067 1=0.600 2=0.283 3=0.050\n      gold  0=0.067 1=0.600 2=0.283 3=0.050\n```\n\n</details>\n"
+}

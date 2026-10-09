@@ -1,0 +1,66 @@
+{
+  "run_data": {
+    "run_id": "<RUN_ID>",
+    "run_type": "mmlu",
+    "status": "completed",
+    "config": {
+      "model": "m",
+      "base_url": "http://***:8000/v1",
+      "mode": "mmlu",
+      "n_shots": 5,
+      "limit": 3,
+      "temperature": 0.0,
+      "seed": 7,
+      "subjects": null,
+      "config_fingerprint": "7d3899166cae"
+    },
+    "scores": {
+      "final_score": 67,
+      "accuracy": 66.7,
+      "rating": "★★★ Adequate",
+      "total": 3,
+      "correct": 2,
+      "errors": 0,
+      "answered": 3,
+      "completion_rate": 100.0,
+      "categories": {
+        "STEM": {
+          "correct": 2,
+          "total": 3,
+          "accuracy": 66.7
+        }
+      }
+    },
+    "metadata": {
+      "tool_version": "0.0.0+golden",
+      "git_sha": "abc1234",
+      "hostname": "golden-host",
+      "platform_info": "Linux-golden",
+      "python_version": "3.13.0",
+      "model": "m",
+      "backend": "vllm",
+      "base_url": "http://***:8000/v1",
+      "temperature": 0.0,
+      "max_turns": 8,
+      "timeout_seconds": 120.0,
+      "seed": 7,
+      "scenario_selector": "TC-01,TC-02",
+      "trials": 1,
+      "parallel": 1,
+      "error_rate": 0.0,
+      "thinking_enabled": true,
+      "label": "golden | label",
+      "server_model_id": "org/model",
+      "server_model_root": "/models/org/model",
+      "engine_name": "vLLM",
+      "engine_version": "0.11.0",
+      "max_model_len": 32768,
+      "quantization": "fp8",
+      "gpu_count": 2,
+      "spec_decoding": "eagle3",
+      "slot_count": 4
+    },
+    "report_path": "<YYYY>/<MM>/<RUN_ID>--golden-label.md"
+  },
+  "report": "# MMLU Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: mmlu\n- **Label**: <code>golden | label</code>\n- **Accuracy**: **66.7%**\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## MMLU — Massive Multitask Language Understanding\n\n**Accuracy:** 66.7% (2/3)\n**Rating:** ★★★ Adequate\n**Duration:** 12.0s\n**Tokens:** 900\n**Prompting:** 5-shot\n\n### Per-Category Accuracy\n\n| Category | Correct | Total | Accuracy |\n|---|---|---|---|\n| STEM | 2 | 3 | 66.7% |\n"
+}

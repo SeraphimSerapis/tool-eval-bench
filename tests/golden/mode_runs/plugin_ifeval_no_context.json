@@ -1,0 +1,33 @@
+{
+  "run_data": {
+    "run_id": "<RUN_ID>",
+    "run_type": "ifeval",
+    "status": "completed",
+    "config": {
+      "model": "m",
+      "base_url": "http://***:8000/v1",
+      "mode": "ifeval",
+      "limit": 3,
+      "temperature": 0.0,
+      "seed": 7,
+      "config_fingerprint": "b30efe06df7d"
+    },
+    "scores": {
+      "final_score": 67,
+      "accuracy": 66.7,
+      "rating": "★★★ Adequate",
+      "total": 3,
+      "prompts_passed": 2,
+      "errors": 0,
+      "answered": 3,
+      "completion_rate": 100.0,
+      "prompt_accuracy": 66.7,
+      "instructions_passed": 5,
+      "instructions_total": 6,
+      "instruction_accuracy": 83.3
+    },
+    "metadata": {},
+    "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
+  },
+  "report": "# IFEval Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: ifeval\n- **Prompt Accuracy**: **66.7%**\n- **Instruction Accuracy**: **83.3%**\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## IFEval — Instruction Following Evaluation\n\n**Prompt-level Accuracy:** 66.7% (2/3)\n**Instruction-level Accuracy:** 83.3% (5/6)\n**Rating:** ★★★ Adequate\n**Duration:** 12.0s\n**Tokens:** 900\n"
+}

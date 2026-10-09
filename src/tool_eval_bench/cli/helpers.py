@@ -13,8 +13,11 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from tool_eval_bench.utils.ids import build_config_fingerprint
-from tool_eval_bench.utils.urls import endpoint_identity
+# Re-exported: the fingerprint now lives in utils, and CLI callers still import
+# it from here.
+from tool_eval_bench.utils.fingerprint import (
+    with_config_fingerprint as with_config_fingerprint,
+)
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 
 
@@ -29,33 +32,22 @@ def redact_url(url: str) -> str:
 
 
 def metadata_for_storage(run_context: Any | None) -> dict[str, Any]:
-    """Return JSON-safe persisted metadata for a plugin benchmark run."""
+    """Return JSON-safe persisted metadata for a plugin benchmark run.
+
+    No caller in ``src`` uses this; it is kept because ``cli.bench`` publishes it
+    as ``_metadata_for_storage``.  Mode runs build metadata in
+    ``application.mode_runs.finalize_mode_run``.
+    """
     return run_context.to_dict() if run_context is not None else {}
 
 
-def with_config_fingerprint(config: dict[str, Any]) -> dict[str, Any]:
-    """Return persist-safe config with a stable comparison fingerprint.
-
-    Plugin runs receive the real endpoint so requests can authenticate, but the
-    returned mapping is written to SQLite and reports.  Do not retain endpoint
-    hosts, URL userinfo, or query-string credentials there.  The opaque endpoint
-    identity keeps distinct deployments from being accidentally compared while
-    deliberately ignoring credentials and ephemeral query parameters.
-    """
-    persisted = dict(config)
-    fingerprint_config = dict(config)
-    base_url = config.get("base_url")
-    if isinstance(base_url, str):
-        persisted["base_url"] = _redact_url(base_url)
-        fingerprint_config["base_url"] = endpoint_identity(base_url)
-    return {
-        **persisted,
-        "config_fingerprint": build_config_fingerprint(fingerprint_config),
-    }
-
-
 def persist_plugin_run(run_data: dict[str, Any]) -> None:
-    """Persist a plugin result, surfacing mandatory-storage failures."""
+    """Persist a plugin result, surfacing mandatory-storage failures.
+
+    No caller in ``src`` uses this; it is kept because ``cli.bench`` publishes it
+    as ``_persist_plugin_run``.  Mode runs persist through
+    ``application.run_queries.persist_run``.
+    """
     from tool_eval_bench.application.run_queries import persist_run
 
     persist_run(run_data)

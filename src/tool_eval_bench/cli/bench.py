@@ -4,6 +4,15 @@ Implementation lives in :mod:`tool_eval_bench.cli.dispatch`.  Publishing the
 dispatch module under this historical name preserves private imports and
 monkeypatch seams used by existing integrations while keeping the entrypoint
 itself intentionally thin.
+
+``_metadata_for_storage``, ``_persist_plugin_run``, ``_with_config_fingerprint``
+and ``_parse_sweep_range`` stay importable from here, but patching them no
+longer changes how sweeps, spec-bench, throughput-only runs or plugins finalize.
+Those modes go through ``application.mode_runs.finalize_mode_run``; patch
+``application.run_queries.persist_run`` to intercept persistence,
+``application.mode_runs.write_mode_report`` to intercept the report, and
+``application.mode_runs.with_config_fingerprint`` (defined in
+``utils.fingerprint``) to change the stored config.
 """
 
 from __future__ import annotations

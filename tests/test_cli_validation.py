@@ -46,18 +46,3 @@ def test_parallel_must_be_positive_at_parse_time(argv: list[str]) -> None:
         parse_cli_args(_make_parser, argv)
 
     assert exc_info.value.code == 2
-
-
-def test_spec_bench_finalization_persists_report_path() -> None:
-    from tool_eval_bench.cli.spec_bench import _report_then_persist_spec_bench
-
-    persisted: list[dict] = []
-    run_data = {"run_id": "spec-run", "status": "completed"}
-
-    _report_then_persist_spec_bench(
-        run_data=run_data,
-        write_report=lambda: "runs/2026/08/spec-run.md",
-        persist_plugin_run=persisted.append,
-    )
-
-    assert persisted == [{**run_data, "report_path": "runs/2026/08/spec-run.md"}]

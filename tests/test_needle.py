@@ -394,10 +394,11 @@ class TestNeedleRunner:
 
         monkeypatch.setattr(NeedlePlugin, "run", fake_run)
         monkeypatch.setattr(NeedlePlugin, "render_report_section", lambda self, r: ["report"])
-        monkeypatch.setattr(plugin_runners, "_with_config_fingerprint", lambda value: value)
-        monkeypatch.setattr(plugin_runners, "_metadata_for_storage", lambda value: {})
+        monkeypatch.setattr(
+            "tool_eval_bench.application.mode_runs.with_config_fingerprint", lambda value: value
+        )
         persisted: list[dict] = []
-        monkeypatch.setattr(plugin_runners, "_persist_plugin_run", persisted.append)
+        monkeypatch.setattr("tool_eval_bench.application.run_queries.persist_run", persisted.append)
 
         console = Console(record=True, width=180)
         plugin_runners._run_needle_benchmark(

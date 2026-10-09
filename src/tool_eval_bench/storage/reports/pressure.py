@@ -5,18 +5,12 @@ One section per pressure level, with the full trace for every scenario run at it
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from tool_eval_bench.domain.models import RunContext
-from tool_eval_bench.storage.reports._common import (
-    _render_engine_context,
-    _trace_block,
-    markdown_label,
-    report_filename,
-    tool_version_line,
-)
+from tool_eval_bench.storage.reports._common import _trace_block
+from tool_eval_bench.storage.reports.mode import ModeReport, ReportContext, write_mode_report
 
 
 def write_pressure_sweep_report(
@@ -34,20 +28,32 @@ def write_pressure_sweep_report(
     run_context: RunContext | None = None,
 ) -> Path:
     """Write a trace-complete artifact for a context-pressure sweep."""
-    now = datetime.now(timezone.utc)
-    folder = root / f"{now.year:04d}" / f"{now.month:02d}"
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / report_filename(run_id, label)
-    label_line = [f"- **Label**: {markdown_label(label)}"] if label else []
-    version_line = [tool_version_line(run_context)] if run_context is not None else []
-    markdown = [
-        f"# Context Pressure Sweep — {model}",
-        "",
-        f"- **Run ID**: `{run_id}`",
-        f"- **Date**: `{now.isoformat()}`",
-        "- **Mode**: context-pressure-sweep",
-        *version_line,
-        *label_line,
+    report = pressure_sweep_report(
+        model=model,
+        backend=backend,
+        display_url=display_url,
+        context_size=context_size,
+        level_results=level_results,
+        breaking_point=breaking_point,
+        first_degradation=first_degradation,
+        label=label,
+    )
+    return write_mode_report(root, run_id, report, run_context)
+
+
+def pressure_sweep_report(
+    *,
+    model: str,
+    backend: str,
+    display_url: str,
+    context_size: int,
+    level_results: list[dict[str, Any]],
+    breaking_point: float | None,
+    first_degradation: float | None,
+    label: str | None,
+) -> ModeReport:
+    """Build the context-pressure sweep report content."""
+    header = [
         f"- **Backend**: {backend}",
         f"- **Server**: {display_url}",
         f"- **Context Window**: {context_size:,} tokens",
@@ -62,10 +68,8 @@ def write_pressure_sweep_report(
             if first_degradation is not None
             else "- **First Degradation**: none"
         ),
-        "",
     ]
-    if run_context is not None:
-        markdown.extend(_render_engine_context(run_context))
+    markdown: list[str] = []
     for index, level in enumerate(level_results, start=1):
         markdown.extend(
             [
@@ -96,5 +100,13 @@ def write_pressure_sweep_report(
                     "",
                 ]
             )
-    path.write_text("\n".join(markdown), encoding="utf-8")
-    return path
+    return ModeReport(
+        title="Context Pressure Sweep",
+        display_name=model,
+        mode="context-pressure-sweep",
+        label=label,
+        version_line=True,
+        context=ReportContext.ENGINE,
+        header=tuple(header),
+        body=tuple(markdown),
+    )

@@ -45,8 +45,9 @@ works unchanged.
 
 5. **Wire the runner** in `cli/plugin_runners.py`: add a runner and list the name in
    `run_selected_plugins`, which owns the shared selection, invocation, and early-stop lifecycle
-   for combined and `--<name>-only` runs. Report writing goes through
-   `cli/plugin_lifecycle.py::finalize_plugin_run`.
+   for combined and `--<name>-only` runs. Report writing and persistence go through
+   `cli/plugin_lifecycle.py::finalize_plugin_run`, which hands the run to
+   `application/mode_runs.py::finalize_mode_run`.
 
 6. **Regenerate the compatibility snapshots**, which pin the public flag surface:
 

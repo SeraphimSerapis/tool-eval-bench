@@ -1,0 +1,38 @@
+{
+  "run_data": {
+    "run_id": "<RUN_ID>",
+    "run_type": "mmlu",
+    "status": "completed",
+    "config": {
+      "model": "m",
+      "base_url": "http://***:8000/v1",
+      "mode": "mmlu",
+      "n_shots": 5,
+      "limit": 3,
+      "temperature": 0.0,
+      "seed": 7,
+      "subjects": null,
+      "config_fingerprint": "7d3899166cae"
+    },
+    "scores": {
+      "final_score": 67,
+      "accuracy": 66.7,
+      "rating": "★★★ Adequate",
+      "total": 3,
+      "correct": 2,
+      "errors": 0,
+      "answered": 3,
+      "completion_rate": 100.0,
+      "categories": {
+        "STEM": {
+          "correct": 2,
+          "total": 3,
+          "accuracy": 66.7
+        }
+      }
+    },
+    "metadata": {},
+    "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
+  },
+  "report": "# MMLU Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: mmlu\n- **Accuracy**: **66.7%**\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## MMLU — Massive Multitask Language Understanding\n\n**Accuracy:** 66.7% (2/3)\n**Rating:** ★★★ Adequate\n**Duration:** 12.0s\n**Tokens:** 900\n**Prompting:** 5-shot\n\n### Per-Category Accuracy\n\n| Category | Correct | Total | Accuracy |\n|---|---|---|---|\n| STEM | 2 | 3 | 66.7% |\n"
+}

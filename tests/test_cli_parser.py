@@ -311,13 +311,11 @@ def test_shared_plugin_finalization_writes_and_persists(
     title: str,
     metrics: list[str],
 ) -> None:
-    from tool_eval_bench.cli import plugin_runners
 
     persisted: list[dict] = []
-    monkeypatch.setattr(plugin_runners, "_persist_plugin_run", persisted.append)
+    monkeypatch.setattr("tool_eval_bench.application.run_queries.persist_run", persisted.append)
     monkeypatch.setattr(
-        plugin_runners,
-        "_with_config_fingerprint",
+        "tool_eval_bench.application.mode_runs.with_config_fingerprint",
         lambda config: {**config, "config_fingerprint": "fingerprint"},
     )
     result = SimpleNamespace(
@@ -373,17 +371,15 @@ def test_plugin_subcommand_preserves_label() -> None:
 def test_finalize_plugin_run_renders_label_and_slugifies_filename(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
-    from tool_eval_bench.cli import plugin_runners
     from tool_eval_bench.domain.models import RunContext
 
     LABEL = "aiden-sparkrun aiden-3.75-sparkrun toolargs no proxy 229a985"
     SLUG = "aiden-sparkrun-aiden-3.75-sparkrun-toolargs-no-proxy-229a985"
 
     persisted: list[dict] = []
-    monkeypatch.setattr(plugin_runners, "_persist_plugin_run", persisted.append)
+    monkeypatch.setattr("tool_eval_bench.application.run_queries.persist_run", persisted.append)
     monkeypatch.setattr(
-        plugin_runners,
-        "_with_config_fingerprint",
+        "tool_eval_bench.application.mode_runs.with_config_fingerprint",
         lambda config: {**config, "config_fingerprint": "fingerprint"},
     )
     result = SimpleNamespace(

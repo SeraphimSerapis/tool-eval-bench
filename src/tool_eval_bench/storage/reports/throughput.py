@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from tool_eval_bench.domain.models import RunContext
-from tool_eval_bench.storage.reports._common import (
-    _render_run_context,
-    append_benchy_throughput_rows,
-    markdown_label,
-    report_filename,
-)
+from tool_eval_bench.storage.reports._common import append_benchy_throughput_rows
+from tool_eval_bench.storage.reports.mode import ModeReport, ReportContext, write_mode_report
 
 
 def write_throughput_report(
@@ -24,36 +19,19 @@ def write_throughput_report(
     run_context: RunContext | None = None,
 ) -> Path:
     """Write a standalone Markdown report for throughput-only runs."""
-    now = datetime.now(timezone.utc)
-    folder = root / f"{now.year:04d}" / f"{now.month:02d}"
-    folder.mkdir(parents=True, exist_ok=True)
     label = run_context.label if run_context is not None else None
-    path = folder / report_filename(run_id, label)
+    report = throughput_report(model, throughput_samples, label=label)
+    return write_mode_report(root, run_id, report, run_context)
 
-    # Version stamp
-    version_str = ""
-    if run_context:
-        version_str = f"v{run_context.tool_version}"
-        if run_context.git_sha:
-            version_str += f" {run_context.git_sha}"
 
-    md = [
-        f"# Throughput Benchmark — {model}",
-        "",
-        f"- **Run ID**: `{run_id}`",
-        f"- **Date**: `{now.isoformat()}`",
-        "- **Mode**: throughput-only",
-    ]
-    if version_str:
-        md.append(f"- **tool-eval-bench**: `{version_str}`")
-    if label:
-        md.append(f"- **Label**: {markdown_label(label)}")
-    md.append("")
-
-    # Run Context section
-    if run_context:
-        md.extend(_render_run_context(run_context))
-
+def throughput_report(
+    model: str,
+    throughput_samples: list[Any],
+    *,
+    label: str | None,
+) -> ModeReport:
+    """Build the throughput-only report content."""
+    md: list[str] = []
     ok_samples = [s for s in throughput_samples if not getattr(s, "error", None)]
     if ok_samples:
         md.extend(["## Results", ""])
@@ -70,5 +48,13 @@ def write_throughput_report(
             md.append(f"- `{s.error}`")
         md.append("")
 
-    path.write_text("\n".join(md), encoding="utf-8")
-    return path
+    return ModeReport(
+        title="Throughput Benchmark",
+        display_name=model,
+        mode="throughput-only",
+        label=label,
+        version_line=True,
+        context=ReportContext.FULL,
+        header=(),
+        body=tuple(md),
+    )

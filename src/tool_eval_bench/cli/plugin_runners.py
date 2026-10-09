@@ -11,14 +11,12 @@ from typing import Any
 from rich.console import Console
 
 from tool_eval_bench.cli.command_registry import PLUGIN_FLAG_STEMS
-from tool_eval_bench.cli.helpers import metadata_for_storage as _metadata_for_storage
-from tool_eval_bench.cli.helpers import persist_plugin_run as _persist_plugin_run
 from tool_eval_bench.cli.plugin_datasets import load_dataset_with_progress
 from tool_eval_bench.cli.plugin_lifecycle import (
     execute_plugin as _execute_plugin_impl,
 )
 from tool_eval_bench.cli.plugin_lifecycle import (
-    finalize_plugin_run as _finalize_plugin_run_impl,
+    finalize_plugin_run as _finalize_plugin_run,
 )
 from tool_eval_bench.cli.plugin_progress import (
     PluginProgressDisplay,
@@ -27,41 +25,13 @@ from tool_eval_bench.cli.plugin_progress import (
     tally_line,
     truncate,
 )
-from tool_eval_bench.cli.resolve import with_config_fingerprint as _with_config_fingerprint
+from tool_eval_bench.domain.models import RunContext
 
 
 def _execute_plugin(
     console: Console, benchmark_name: str, run: Callable[[], Any], result_holder: list[Any]
 ) -> Any | None:
     return _execute_plugin_impl(console, benchmark_name, run, result_holder)
-
-
-def _finalize_plugin_run(
-    *,
-    mode: str,
-    title: str,
-    display_name: str,
-    result: Any,
-    config: dict[str, Any],
-    report_metrics: list[str],
-    report_lines: list[str],
-    output_dir: str | None,
-    run_context: Any | None,
-) -> str:
-    return _finalize_plugin_run_impl(
-        mode=mode,
-        title=title,
-        display_name=display_name,
-        result=result,
-        config=config,
-        report_metrics=report_metrics,
-        report_lines=report_lines,
-        output_dir=output_dir,
-        run_context=run_context,
-        with_config_fingerprint=_with_config_fingerprint,
-        persist_plugin_run=_persist_plugin_run,
-        metadata_for_storage=_metadata_for_storage,
-    )
 
 
 def _run_gsm8k_benchmark(
@@ -74,7 +44,7 @@ def _run_gsm8k_benchmark(
     *,
     extra_params: dict[str, Any] | None = None,
     output_dir: str | None = None,
-    run_context: Any | None = None,
+    run_context: RunContext | None = None,
 ) -> None:
     """Run the GSM8K grade-school math benchmark and display results."""
     from rich.panel import Panel
@@ -245,7 +215,7 @@ def _run_mmlu_benchmark(
     *,
     extra_params: dict[str, Any] | None = None,
     output_dir: str | None = None,
-    run_context: Any | None = None,
+    run_context: RunContext | None = None,
 ) -> None:
     """Run the MMLU benchmark and display results."""
     from rich.panel import Panel
@@ -452,7 +422,7 @@ def _run_ifeval_benchmark(
     *,
     extra_params: dict[str, Any] | None = None,
     output_dir: str | None = None,
-    run_context: Any | None = None,
+    run_context: RunContext | None = None,
 ) -> None:
     """Run the IFEval instruction-following benchmark and display results."""
     from rich.panel import Panel
@@ -676,7 +646,7 @@ def _resolve_needle_context_size(
     model: str,
     api_key: str | None,
     args: argparse.Namespace,
-    run_context: Any | None = None,
+    run_context: RunContext | None = None,
 ) -> int | None:
     """Return the effective context window, or ``None`` when it cannot be found."""
     import asyncio
@@ -737,7 +707,7 @@ def _run_needle_benchmark(
     *,
     extra_params: dict[str, Any] | None = None,
     output_dir: str | None = None,
-    run_context: Any | None = None,
+    run_context: RunContext | None = None,
 ) -> None:
     """Run needle-in-a-haystack retrieval and display the grid."""
     from rich.panel import Panel
@@ -935,7 +905,7 @@ def _run_decision_benchmark(
     *,
     extra_params: dict[str, Any] | None = None,
     output_dir: str | None = None,
-    run_context: Any | None = None,
+    run_context: RunContext | None = None,
 ) -> None:
     """Score a decision model on the typed-decisions test split and display results."""
     from rich.markup import escape
@@ -1155,7 +1125,7 @@ def run_selected_plugins(
     runners: Mapping[str, PluginRunner],
     extra_params: dict[str, Any] | None,
     output_dir: str | None,
-    run_context: Any | None,
+    run_context: RunContext | None,
 ) -> bool:
     """Run requested plugins in stable order and report an ``only`` stop.
 

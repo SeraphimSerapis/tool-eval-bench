@@ -430,11 +430,6 @@ def test_sweep_sizes_levels_from_the_llamacpp_window(
     from unittest.mock import AsyncMock, patch
 
     from tool_eval_bench.adapters import factory, measurement
-    from tool_eval_bench.cli.helpers import (
-        metadata_for_storage,
-        parse_sweep_range,
-        with_config_fingerprint,
-    )
     from tool_eval_bench.cli.pressure import run_pressure_sweep
     from tool_eval_bench.domain.scenarios import (
         Category,
@@ -496,6 +491,10 @@ def test_sweep_sizes_levels_from_the_llamacpp_window(
     out = io.StringIO()
 
     with patch("asyncio.new_event_loop", return_value=_ImmediateEventLoop()):
+        monkeypatch.setattr(
+            "tool_eval_bench.cli.pressure.resolve_scenarios", lambda _args: [scenario]
+        )
+        monkeypatch.setattr("tool_eval_bench.application.run_queries.persist_run", persisted.append)
         run_pressure_sweep(
             Console(file=out, force_terminal=False, width=200),
             "gemma4",
@@ -504,11 +503,6 @@ def test_sweep_sizes_levels_from_the_llamacpp_window(
             "http://test/v1",
             None,
             args,
-            parse_sweep_range=parse_sweep_range,
-            resolve_scenarios=lambda _args: [scenario],
-            with_config_fingerprint=with_config_fingerprint,
-            persist_plugin_run=persisted.append,
-            metadata_for_storage=metadata_for_storage,
             run_context=_run_context("llama.cpp", 81920),
         )
 
