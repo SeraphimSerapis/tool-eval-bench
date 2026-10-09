@@ -39,9 +39,10 @@ the distinction a three-tier benchmark exists to make.
 The loader validates the whole file up front, because a mistake that only
 surfaces at run time is scored as the model's failure.  Expected tools must be
 among the universal tools every YAML scenario is offered.  ``difficulty`` is an
-integer from 1 to 5.  A plain scalar that YAML 1.1 reads differently from JSON
-or YAML 1.2, such as ``2026-03-21``, ``14:30``, ``NO``, ``01234``, or ``1e5``,
-is rejected with its line and column; quote it to keep it a string.
+integer from 1 to 5.  A key the format does not define is rejected, so a typo
+cannot quietly drop a check.  A plain scalar that YAML 1.1 reads differently
+from JSON or YAML 1.2, such as ``2026-03-21``, ``14:30``, ``NO``, ``01234``, or
+``1e5``, is rejected with its line and column; quote it to keep it a string.
 """
 
 from __future__ import annotations
@@ -277,6 +278,38 @@ def _mapping_field(value: Any, where: str, path: Path) -> dict[str, Any]:
     return value
 
 
+# Every key the format defines.  Anything else is most likely a typo, and a
+# misspelled ``arguments`` would silently drop the check it was meant to make.
+_SCENARIO_KEYS = frozenset(
+    {
+        "id",
+        "title",
+        "category",
+        "difficulty",
+        "description",
+        "user_message",
+        "expected_tool_calls",
+        "tool_responses",
+        "answer_contains",
+        "capabilities",
+        "held_out",
+    }
+)
+_EXPECTED_CALL_KEYS = frozenset({"tool", "arguments"})
+_RESPONSE_RULE_KEYS = frozenset({"match", "response"})
+
+
+def _reject_unknown_keys(
+    mapping: dict[Any, Any], allowed: frozenset[str], where: str, path: Path
+) -> None:
+    unknown = [key for key in mapping if key not in allowed]
+    if unknown:
+        names = ", ".join(repr(key) for key in unknown)
+        raise ValueError(
+            f"Unknown key {names} in {where} in {path}; allowed: {', '.join(sorted(allowed))}"
+        )
+
+
 def _difficulty(data: dict[str, Any], path: Path) -> int | None:
     """Read ``difficulty``: absent, or an integer 1-5 as the domain model defines."""
     value = data.get("difficulty")
@@ -303,6 +336,7 @@ def _expected_tool_calls(data: dict[str, Any], path: Path) -> list[dict[str, Any
         where = f"expected_tool_calls[{index}]"
         if not isinstance(entry, dict):
             raise ValueError(f"Field {where!r} must be a mapping in {path}")
+        _reject_unknown_keys(entry, _EXPECTED_CALL_KEYS, where, path)
         tool = entry.get("tool")
         if not isinstance(tool, str) or not tool.strip():
             raise ValueError(f"Field {where + '.tool'!r} must be a non-empty string in {path}")
@@ -332,6 +366,7 @@ def _tool_responses(data: dict[str, Any], path: Path) -> dict[str, list[dict[str
             where = f"tool_responses.{tool}[{index}]"
             if not isinstance(rule, dict):
                 raise ValueError(f"Field {where!r} must be a mapping in {path}")
+            _reject_unknown_keys(rule, _RESPONSE_RULE_KEYS, where, path)
             # An empty ``match:`` matches every call, as an absent one does.
             if rule.get("match") is not None:
                 _mapping_field(rule["match"], f"{where}.match", path)
@@ -358,6 +393,7 @@ def _load_yaml_file(path: Path, raw_bytes: bytes | None = None) -> ScenarioDefin
         raise ValueError(f"YAML parse error in {path}:\n{exc}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"Scenario YAML must be a mapping: {path}")
+    _reject_unknown_keys(data, _SCENARIO_KEYS, "the scenario", path)
 
     scenario_id = _required_string(data, "id", path)
     title = _required_string(data, "title", path)

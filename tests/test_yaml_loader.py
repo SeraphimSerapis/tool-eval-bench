@@ -567,7 +567,14 @@ class TestStructure:
     @pytest.mark.parametrize(
         ("body", "field"),
         [
-            ("expected_tool_calls:\n  - name: get_weather\n", r"expected_tool_calls\[0\]\.tool"),
+            (
+                "expected_tool_calls:\n  - name: get_weather\n",
+                r"'name' in expected_tool_calls\[0\]",
+            ),
+            (
+                "expected_tool_calls:\n  - arguments: {location: Berlin}\n",
+                r"expected_tool_calls\[0\]\.tool",
+            ),
             (
                 "expected_tool_calls:\n  - tool: get_weather\n    arguments:\n",
                 r"expected_tool_calls\[0\]\.arguments",
@@ -630,3 +637,61 @@ class TestStructure:
         )
 
         assert _load_yaml_file(path).id == "PACK-01"
+
+
+class TestUnknownKeys:
+    """A typo must not silently drop a check, least of all in a held-out pack."""
+
+    @pytest.mark.parametrize(
+        ("body", "key", "where", "allowed"),
+        [
+            pytest.param(
+                "expected_tool_calls:\n  - tool: get_weather\n    argument: {location: Berlin}\n",
+                "argument",
+                r"expected_tool_calls\[0\]",
+                "arguments, tool",
+                id="expected-call",
+            ),
+            pytest.param(
+                "tool_responses:\n  get_weather:\n    - matches: {location: Berlin}\n"
+                "      response: {temp: 18}\n",
+                "matches",
+                r"tool_responses\.get_weather\[0\]",
+                "match, response",
+                id="response-rule",
+            ),
+            pytest.param(
+                "answer_contain: ['18']\n",
+                "answer_contain",
+                "the scenario",
+                "answer_contains, capabilities",
+                id="top-level",
+            ),
+        ],
+    )
+    def test_an_unknown_key_is_named_with_its_location_and_the_allowed_set(
+        self, tmp_path: Path, body: str, key: str, where: str, allowed: str
+    ) -> None:
+        path = _pack_file(tmp_path, body)
+
+        with pytest.raises(ValueError) as exc_info:
+            _load_yaml_file(path)
+
+        message = str(exc_info.value)
+        assert re.search(rf"Unknown key '{key}' in {where} in {re.escape(str(path))}", message)
+        assert allowed in message
+
+    def test_every_defined_key_is_accepted(self, tmp_path: Path) -> None:
+        path = _pack_file(
+            tmp_path,
+            "difficulty: 2\ndescription: d\nheld_out: true\ncapabilities: [tool-selection]\n"
+            "expected_tool_calls:\n  - tool: get_weather\n    arguments: {location: Berlin}\n"
+            "tool_responses:\n  get_weather:\n    - match: {location: Berlin}\n"
+            "      response: {temp: 18}\n"
+            "answer_contains: ['18']\n",
+        )
+
+        assert _load_yaml_file(path).held_out is True
+
+    def test_the_bundled_examples_use_only_defined_keys(self) -> None:
+        assert len(load_yaml_scenarios(_scenarios_dir())) == 3

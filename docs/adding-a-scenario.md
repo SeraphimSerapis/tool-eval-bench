@@ -289,7 +289,8 @@ An optional `capabilities:` list takes the same tags as the Python field. The lo
 that is not in `CAPABILITY_LABELS`.
 
 The loader checks the whole file before a run starts, because a mistake found at run time would be
-scored as the model's failure. It rejects a malformed structure, a `difficulty` outside 1 to 5, and
+scored as the model's failure. It rejects a malformed structure, a key the format does not define
+(so a typo such as `argument:` cannot silently drop a check), a `difficulty` outside 1 to 5, and
 any unquoted value that YAML 1.1 reads differently from the JSON a model sends: dates such as
 `2026-03-21`, times such as `14:30` (read as the number 870), `yes`/`no`/`on`/`off`, and numbers
 with a leading zero, underscores, or a bare exponent. Quote such values, for example
