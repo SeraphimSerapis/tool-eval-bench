@@ -22,7 +22,7 @@ from tool_eval_bench.application.run_config import (
 from tool_eval_bench.cli.dispatch import _resume_config_mismatches
 from tool_eval_bench.cli.legacy_parser import _make_parser
 from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
-from tool_eval_bench.utils.fingerprint import with_config_fingerprint
+from tool_eval_bench.utils.fingerprint import comparison_fingerprint, with_config_fingerprint
 from tool_eval_bench.utils.urls import (
     endpoint_identity,
     legacy_endpoint_identities,
@@ -133,6 +133,14 @@ class TestScoredRunConfig:
         }
         assert len(fingerprints) == 1
 
+    def test_a_doubled_v1_mode_run_is_not_a_legacy_single_v1_cohort(self) -> None:
+        # Before #269 a mode run's fingerprint hashed base_url with the legacy identity.
+        doubled = with_config_fingerprint({"model": "m", "base_url": "http://h/v1/v1"})
+        legacy_single = comparison_fingerprint(
+            {"model": "m", "base_url": legacy_endpoint_identity("http://h/v1")}, {}
+        )
+        assert doubled["config_fingerprint"] != legacy_single
+
 
 class TestResume:
     @pytest.mark.parametrize("stored_url", SPELLINGS)
@@ -182,13 +190,40 @@ class TestResume:
         assert legacy_endpoint_identity("http://h/v1") not in legacy_endpoint_identities(
             "http://h/v1/v1"
         )
-        # The old hash of /v1 is the new hash of /v1/v1's root, so the ids alone
-        # cannot tell them apart. The stored path can, and still refuses.
-        assert legacy_endpoint_identity("http://h/v1") == endpoint_identity("http://h/v1/v1")
+        # /v1/v1 canonicalises to the root /v1, which the legacy hash spelled
+        # exactly like the /v1 endpoint. The new identity must not.
+        assert legacy_endpoint_identity("http://h/v1") != endpoint_identity("http://h/v1/v1")
         stored = {**_config("http://h/v1"), "endpoint_id": legacy_endpoint_identity("http://h/v1")}
         current_url = "http://h/v1/v1"
 
-        assert resume_mismatches(stored, _config(current_url), base_url=current_url) == ["base_url"]
+        assert resume_mismatches(stored, _config(current_url), base_url=current_url) == [
+            "base_url",
+            "endpoint_id",
+        ]
+
+    def test_a_single_v1_does_not_accept_a_doubled_v1_identity(self) -> None:
+        stored = _config("http://h/v1/v1")
+        current_url = "http://h/v1"
+
+        assert resume_mismatches(stored, _config(current_url), base_url=current_url) == [
+            "base_url",
+            "endpoint_id",
+        ]
+
+    @pytest.mark.parametrize("current_url", ["http://h/v1/v1", "http://h/v1/v1/"])
+    def test_a_legacy_doubled_v1_run_still_resumes_from_its_url(self, current_url: str) -> None:
+        stored = {
+            **_config("http://h/v1/v1"),
+            "endpoint_id": legacy_endpoint_identity("http://h/v1/v1"),
+        }
+
+        assert resume_mismatches(stored, _config(current_url), base_url=current_url) == []
+
+    def test_a_doubled_v1_identity_ignores_a_trailing_slash(self) -> None:
+        assert endpoint_identity("http://h/v1/v1") == endpoint_identity("http://h/v1/v1/")
+        assert endpoint_identity(
+            "http://h/v1/v1/messages", wire_format="anthropic"
+        ) == endpoint_identity("http://h/v1/v1")
 
     @pytest.mark.parametrize(
         ("stored_url", "current_url"),
