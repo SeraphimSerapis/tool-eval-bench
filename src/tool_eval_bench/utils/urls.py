@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from tool_eval_bench.domain.redaction import redact_url as redact_url
 from tool_eval_bench.domain.redaction import redact_urls as redact_urls
@@ -167,10 +167,35 @@ def legacy_endpoint_identity(url: str) -> str:
     """Return the identity runs stored before endpoint paths were canonical.
 
     It kept ``/v1`` in the path, so it differs from :func:`endpoint_identity`
-    only for a URL that names it. Resume accepts either, because an identity is
-    an opaque hash that cannot be recomputed from the stored, redacted URL.
+    only for a URL that names it.
     """
     return _endpoint_hash(url, lambda path: path.rstrip("/"))
+
+
+def legacy_endpoint_identities(url: str, *, wire_format: str = "openai") -> frozenset[str]:
+    """Every legacy identity a spelling of *url*'s endpoint could have been stored under.
+
+    Resume accepts any of them, because a stored identity is an opaque hash that
+    cannot be recomputed from the stored, redacted URL, and a run started as
+    ``…/v1`` may be resumed as the bare host. A candidate counts only when it is
+    itself a spelling of the same root: ``http://h/v1`` is not one of
+    ``http://h/v1/v1``. A URL ending in ``/messages`` is detected as the
+    Anthropic format whatever the host, so those candidates are checked under
+    that format.
+    """
+    parts = urlsplit(url)
+    root = canonical_endpoint_path(parts.path, wire_format=wire_format)
+    candidates = [
+        (root, wire_format),
+        (f"{root}/v1", wire_format),
+        (f"{root}/messages", "anthropic"),
+        (f"{root}/v1/messages", "anthropic"),
+    ]
+    return frozenset(
+        legacy_endpoint_identity(urlunsplit(parts._replace(path=path)))
+        for path, candidate_format in candidates
+        if canonical_endpoint_path(path, wire_format=candidate_format) == root
+    )
 
 
 def _endpoint_hash(url: str, canonical_path: Callable[[str], str]) -> str:

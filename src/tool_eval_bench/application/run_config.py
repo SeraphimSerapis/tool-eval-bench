@@ -30,7 +30,7 @@ from tool_eval_bench.utils.fingerprint import comparison_fingerprint
 from tool_eval_bench.utils.urls import (
     canonical_endpoint_path,
     endpoint_identity,
-    legacy_endpoint_identity,
+    legacy_endpoint_identities,
 )
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 
@@ -497,7 +497,8 @@ def resume_mismatches(
     Both arguments are configs from :func:`build_run_config` (``previous`` may
     come from an older version).  Messages follow stored key order.
     ``base_url`` is the current run's unredacted URL. With it, a run stored
-    before endpoint identities were canonical still resumes from the same URL.
+    before endpoint identities were canonical still resumes under any spelling
+    of the same endpoint.
     """
     previous = _with_current_endpoint_ids(previous, current, base_url)
     mismatches: list[str] = []
@@ -521,23 +522,26 @@ def resume_mismatches(
 def _with_current_endpoint_ids(
     previous: dict[str, Any], current: dict[str, Any], base_url: str | None
 ) -> dict[str, Any]:
-    """Treat an identity the old algorithm computed from the same URL as the current one.
+    """Treat an identity the old algorithm computed for this endpoint as the current one.
 
     Identities used to keep ``/v1`` in the path. A run started before that
-    changed must still resume from the URL it was started with, and the stored
-    hash cannot be recomputed, so the legacy identity of the current URL is
-    accepted instead. The judge's stored config carries its own URL.
+    changed must still resume under any spelling of the same server, and the
+    stored hash cannot be recomputed, so every legacy identity a spelling of
+    the current URL could have produced is accepted instead. The judge, which
+    speaks the OpenAI format, carries its own URL in its stored config.
     """
     updated = dict(previous)
     stored = previous.get("endpoint_id")
-    if base_url is not None and stored == legacy_endpoint_identity(base_url):
+    if base_url is not None and stored in legacy_endpoint_identities(
+        base_url, wire_format=detect_wire_format(base_url)
+    ):
         updated["endpoint_id"] = current.get("endpoint_id")
     old_judge, new_judge = previous.get("decision_judge"), current.get("decision_judge")
     if (
         isinstance(old_judge, dict)
         and isinstance(new_judge, dict)
         and isinstance(new_judge.get("base_url"), str)
-        and old_judge.get("endpoint_id") == legacy_endpoint_identity(new_judge["base_url"])
+        and old_judge.get("endpoint_id") in legacy_endpoint_identities(new_judge["base_url"])
     ):
         updated["decision_judge"] = {**old_judge, "endpoint_id": new_judge.get("endpoint_id")}
     return updated

@@ -9,6 +9,7 @@ bare host there means ``v1beta``, so ``/v1`` really is a different API.
 from __future__ import annotations
 
 import dataclasses
+import itertools
 
 import pytest
 
@@ -21,7 +22,11 @@ from tool_eval_bench.cli.dispatch import _resume_config_mismatches
 from tool_eval_bench.cli.legacy_parser import _make_parser
 from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
 from tool_eval_bench.utils.fingerprint import with_config_fingerprint
-from tool_eval_bench.utils.urls import endpoint_identity, legacy_endpoint_identity
+from tool_eval_bench.utils.urls import (
+    endpoint_identity,
+    legacy_endpoint_identities,
+    legacy_endpoint_identity,
+)
 
 SPELLINGS = [
     "http://gpu-box:8000",
@@ -140,6 +145,69 @@ class TestResume:
         assert stored["endpoint_id"] != endpoint_identity(url)
 
         assert resume_mismatches(stored, _config(url), base_url=url) == []
+
+    @pytest.mark.parametrize("stored_url", SPELLINGS)
+    @pytest.mark.parametrize("current_url", SPELLINGS)
+    def test_a_legacy_identity_resumes_under_any_spelling(
+        self, stored_url: str, current_url: str
+    ) -> None:
+        stored = {**_config(stored_url), "endpoint_id": legacy_endpoint_identity(stored_url)}
+
+        assert resume_mismatches(stored, _config(current_url), base_url=current_url) == []
+
+    @pytest.mark.parametrize(
+        "group",
+        [
+            [
+                "https://api.anthropic.com",
+                "https://api.anthropic.com/v1",
+                "https://api.anthropic.com/v1/messages",
+            ],
+            # A gateway: the /messages form is Anthropic, the /v1 form OpenAI.
+            ["https://opencode.ai/zen/v1/messages", "https://opencode.ai/zen/v1"],
+        ],
+    )
+    def test_a_legacy_messages_identity_resumes_under_any_spelling(self, group: list[str]) -> None:
+        for stored_url, current_url in itertools.product(group, group):
+            stored = {**_config(stored_url), "endpoint_id": legacy_endpoint_identity(stored_url)}
+            current = _config(current_url)
+
+            assert resume_mismatches(stored, current, base_url=current_url) == [], (
+                stored_url,
+                current_url,
+            )
+
+    def test_a_doubled_v1_does_not_accept_the_single_v1_legacy_identity(self) -> None:
+        assert legacy_endpoint_identity("http://h/v1") not in legacy_endpoint_identities(
+            "http://h/v1/v1"
+        )
+        # The old hash of /v1 is the new hash of /v1/v1's root, so the ids alone
+        # cannot tell them apart. The stored path can, and still refuses.
+        assert legacy_endpoint_identity("http://h/v1") == endpoint_identity("http://h/v1/v1")
+        stored = {**_config("http://h/v1"), "endpoint_id": legacy_endpoint_identity("http://h/v1")}
+        current_url = "http://h/v1/v1"
+
+        assert resume_mismatches(stored, _config(current_url), base_url=current_url) == ["base_url"]
+
+    @pytest.mark.parametrize(
+        ("stored_url", "current_url"),
+        [
+            ("http://proxy/model-a/v1", "http://proxy/model-b/v1"),
+            ("http://proxy/model-a/v1", "http://proxy/model-b"),
+            ("http://proxy/model-a", "http://proxy/model-b/v1"),
+            ("http://gpu-box:8000/v1", "http://gpu-box:8001/v1"),
+            ("http://gpu-box:8000/v1", "https://gpu-box:8000/v1"),
+            (GEMINI, f"{GEMINI}/v1"),
+        ],
+    )
+    def test_a_legacy_identity_of_another_endpoint_is_refused(
+        self, stored_url: str, current_url: str
+    ) -> None:
+        stored = {**_config(stored_url), "endpoint_id": legacy_endpoint_identity(stored_url)}
+
+        assert "endpoint_id" in resume_mismatches(
+            stored, _config(current_url), base_url=current_url
+        )
 
     def test_the_cli_resume_check_passes_the_raw_url(self) -> None:
         url = "http://gpu-box:8000/v1"
