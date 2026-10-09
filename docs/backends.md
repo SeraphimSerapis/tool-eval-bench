@@ -145,11 +145,14 @@ adapter, including streaming tool calls. Automatic detection recognizes
 `service: "strata"` in `/health` or `build_info: "Strata <version>"` in `/props`.
 Strata adds `build_info` only when it knows its version, so `/health` identifies
 builds that report none. Its llama.cpp-compatible generation settings alone do not
-establish Strata identity. The default JSON `/metrics` response is not treated as
-Prometheus data. Strata serves its Prometheus text format only when asked, through
-`Accept: text/plain` or `?format=prometheus`, which the probes do not send. That
-format repeats Strata's metrics under vLLM's `vllm:` names, so detection checks its
-`strata:` namespace first and never labels it vLLM.
+establish Strata identity. Strata serves Prometheus text from `/metrics` only when
+asked, through `Accept: text/plain` or `?format=prometheus`, and JSON otherwise.
+Every `/metrics` request the benchmark makes asks for text; a build that predates
+the text format still answers with JSON, which is not treated as Prometheus data.
+The text format repeats Strata's metrics under vLLM's `vllm:` names, so detection
+checks its `strata:` namespace first and never labels it vLLM. Strata exports its
+spec-decode counters even when it has drafted nothing, so spec decoding counts as
+active only once Strata has offered draft tokens.
 
 The metadata probe sends bearer authentication to `/props`, records the declared
 engine version, effective context window and slot count, and leaves absent GPU

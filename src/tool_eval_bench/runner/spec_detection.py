@@ -165,7 +165,9 @@ async def detect_spec_decoding(
 
                 # Only trust an explicit method token. Generic counters prove
                 # activity, but do not identify the configured proposer.
-                if "tensorfold:" in text:
+                # Namespaces are matched at line start so a label value such
+                # as model_name="acme/strata:7b" does not name the engine.
+                if re.search(r"^tensorfold:", text, re.MULTILINE):
                     # Counters exist even with drafting off, and mtp_*
                     # aliases count all proposers, not just MTP.
                     info.active = parse_prometheus_spec_metrics(text).draft_tokens > 0
@@ -173,6 +175,12 @@ async def detect_spec_decoding(
                     info.detail = (
                         "TensorFold draft counters available; proposer configuration unknown"
                     )
+                elif re.search(r"^strata:", text, re.MULTILINE):
+                    # Strata renders these counters on every scrape, drafting or
+                    # not. Its drafts come from the model's MTP head.
+                    info.active = parse_prometheus_spec_metrics(text).draft_tokens > 0
+                    info.method = "mtp"
+                    info.detail = "Strata MTP draft counters available"
                 elif "eagle" in text.lower():
                     info.method = "eagle"
                 elif "ngram" in text.lower():

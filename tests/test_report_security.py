@@ -234,17 +234,21 @@ class TestPersistedMetadataRedaction:
         assert first["config_fingerprint"] != other_endpoint["config_fingerprint"]
 
 
+# The text format every /metrics parser expects; see PROMETHEUS_TEXT_ACCEPT.
+PROMETHEUS_ACCEPT = {"Accept": "text/plain; version=0.0.4, */*;q=0.1"}
+
+
 class TestMetricsUrlCredentialScope:
     def test_default_target_carries_the_token(self) -> None:
         url, headers = metrics_request_target("http://host:8000/v1", None, "sk-secret")
         assert url == "http://host:8000/metrics"
-        assert headers == {"Authorization": "Bearer sk-secret"}
+        assert headers == {**PROMETHEUS_ACCEPT, "Authorization": "Bearer sk-secret"}
 
     def test_same_origin_override_carries_the_token(self) -> None:
         _, headers = metrics_request_target(
             "http://host:8000/v1", "http://host:8000/proxy/metrics", "sk-secret"
         )
-        assert headers == {"Authorization": "Bearer sk-secret"}
+        assert headers == {**PROMETHEUS_ACCEPT, "Authorization": "Bearer sk-secret"}
 
     def test_cross_host_override_does_not_leak_the_token(self) -> None:
         """A --metrics-url on another host must not receive the endpoint's key."""
@@ -252,21 +256,21 @@ class TestMetricsUrlCredentialScope:
             "http://host:8000/v1", "http://someone-else.example/metrics", "sk-secret"
         )
         assert url == "http://someone-else.example/metrics"
-        assert headers == {}
+        assert headers == PROMETHEUS_ACCEPT
 
     def test_cross_port_override_does_not_leak_the_token(self) -> None:
         _, headers = metrics_request_target(
             "http://host:8000/v1", "http://host:9090/metrics", "sk-secret"
         )
-        assert headers == {}
+        assert headers == PROMETHEUS_ACCEPT
 
     def test_scheme_downgrade_does_not_leak_the_token(self) -> None:
         _, headers = metrics_request_target("https://host/v1", "http://host/metrics", "sk-secret")
-        assert headers == {}
+        assert headers == PROMETHEUS_ACCEPT
 
-    def test_no_token_means_no_header_either_way(self) -> None:
+    def test_no_token_means_no_authorization_either_way(self) -> None:
         _, headers = metrics_request_target("http://host:8000/v1", "http://other/metrics", None)
-        assert headers == {}
+        assert headers == PROMETHEUS_ACCEPT
 
     @pytest.mark.parametrize(
         "bad", ["file:///etc/passwd", "gopher://host/", "/relative/metrics", "notaurl"]

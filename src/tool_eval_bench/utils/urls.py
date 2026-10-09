@@ -93,27 +93,38 @@ def metrics_url(base_url: str) -> str:
     return f"{root_url(base_url)}/metrics"
 
 
+# Strata answers /metrics with JSON unless Accept names text/plain or
+# OpenMetrics. prometheus_client (vLLM, SGLang, LiteLLM), llama.cpp, TensorFold
+# and NInfer return 0.0.4 text whatever the request asks for. OpenMetrics and
+# text/plain version=1.0.0 are left out because prometheus_client switches
+# encoders for them. The */* fallback mirrors Prometheus's own scrape header,
+# so a strict negotiator has no reason to answer 406.
+PROMETHEUS_TEXT_ACCEPT = "text/plain; version=0.0.4, */*;q=0.1"
+
+
 def metrics_request_target(
     base_url: str,
     explicit_metrics_url: str | None,
     api_key: str | None,
 ) -> tuple[str, dict[str, str]]:
-    """Resolve the /metrics URL plus the headers that are safe to send with it.
+    """Resolve the /metrics URL plus the headers to send with it.
 
-    ``--metrics-url`` exists because the metrics endpoint may live on a proxy or
-    sidecar rather than behind the inference API.  That means it can point at a
-    different host, and forwarding the inference endpoint's bearer token there
-    would hand the credential to a third party.  The token is therefore attached
-    only when the target is same-origin with ``base_url``.
+    The headers always ask for Prometheus text, which is what every caller
+    parses. ``--metrics-url`` exists because the metrics endpoint may live on a
+    proxy or sidecar rather than behind the inference API.  That means it can
+    point at a different host, and forwarding the inference endpoint's bearer
+    token there would hand the credential to a third party.  The token is
+    therefore attached only when the target is same-origin with ``base_url``.
 
     Raises ValueError for a non-http(s) or hostless ``--metrics-url``.
     """
+    accept = {"Accept": PROMETHEUS_TEXT_ACCEPT}
     if explicit_metrics_url is None:
-        return metrics_url(base_url), _bearer(api_key)
+        return metrics_url(base_url), accept | _bearer(api_key)
     validate_http_url(explicit_metrics_url, what="--metrics-url")
     if api_key and not is_same_origin(explicit_metrics_url, base_url):
-        return explicit_metrics_url, {}
-    return explicit_metrics_url, _bearer(api_key)
+        return explicit_metrics_url, accept
+    return explicit_metrics_url, accept | _bearer(api_key)
 
 
 def _bearer(api_key: str | None) -> dict[str, str]:

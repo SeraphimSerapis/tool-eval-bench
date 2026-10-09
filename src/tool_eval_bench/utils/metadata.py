@@ -27,7 +27,7 @@ from tool_eval_bench.domain.models import (
     RunContext,
     default_max_tokens,
 )
-from tool_eval_bench.utils.urls import metrics_url as _metrics_url
+from tool_eval_bench.utils.urls import metrics_request_target
 from tool_eval_bench.utils.urls import models_url as _models_url
 from tool_eval_bench.utils.urls import root_url as _root_url
 
@@ -373,8 +373,9 @@ async def _probe_litellm(
 # Prefer an engine's native namespace over compatibility aliases. Halogen
 # deliberately exports llama.cpp metrics too; scrape order must not decide identity.
 # Strata's Prometheus format (serve/prometheus.py, chosen by Accept: text/plain
-# or ?format=prometheus) uses vLLM's names plus a strata: namespace; its
-# default JSON /metrics matches nothing here.
+# or ?format=prometheus) uses vLLM's names plus a strata: namespace that every
+# scrape carries. The probe asks for that format; builds that predate it serve
+# JSON, which matches nothing here and leaves identity to /health.
 _METRICS_BACKEND_PREFIXES: tuple[tuple[str, str, str], ...] = (
     ("halogen:", "halogen", "Halogen Flash"),
     ("tensorfold:", "tensorfold", "TensorFold"),
@@ -518,8 +519,8 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
     itself.
     """
     async with _probe_session(None, "backend detection") as active:
-        headers = _auth_headers(api_key)
-        resp = await _probe_get(active, _metrics_url(base_url), headers=headers, what="/metrics")
+        url, headers = metrics_request_target(base_url, None, api_key)
+        resp = await _probe_get(active, url, headers=headers, what="/metrics")
         if resp is not None and resp.status_code == 200:
             hit = detect_backend_from_metrics(resp.text)
             if hit:
