@@ -32,6 +32,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, ALL_SCENARIOS_WITH_HARDMODE
 from tool_eval_bench.evals.variants import apply_variants, identity_variant
 from tool_eval_bench.storage.reports.scenario import write_scenario_report
+from tool_eval_bench.utils.urls import legacy_endpoint_identity
 
 JUDGE_URL = "http://judge.test/v1"
 BY_ID = {s.id: s for s in ALL_SCENARIOS_WITH_HARDMODE}
@@ -339,6 +340,13 @@ def test_resume_accepts_a_judge_url_stored_before_redaction():
     previous = _judged("all", ["tc12-deletion-stance-v3", "tc89-payment-claim-v1"])
     assert previous["base_url"] != JUDGE_URL
     previous["base_url"] = JUDGE_URL
+    assert _mismatches(previous, "--decision-judge", "all") == []
+
+
+def test_resume_accepts_a_judge_stored_with_a_legacy_identity():
+    previous = _judged("all", ["tc12-deletion-stance-v3", "tc89-payment-claim-v1"])
+    previous.update(base_url=JUDGE_URL, endpoint_id=legacy_endpoint_identity(JUDGE_URL))
+    assert previous["endpoint_id"] != _judged("all", [])["endpoint_id"]
     assert _mismatches(previous, "--decision-judge", "all") == []
 
 

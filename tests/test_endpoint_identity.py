@@ -13,6 +13,7 @@ import itertools
 
 import pytest
 
+from tool_eval_bench.application.decision_audit import decision_judge_config
 from tool_eval_bench.application.run_config import (
     RunSettings,
     build_run_config,
@@ -246,13 +247,7 @@ class TestResume:
 
     def test_a_judge_stored_with_the_legacy_identity_resumes(self) -> None:
         judge_url = "http://judge.test/v1"
-        judge = {
-            "mode": "audit",
-            "base_url": judge_url,
-            "endpoint_id": endpoint_identity(judge_url),
-            "model": "j",
-            "set": "recommended",
-        }
+        judge = decision_judge_config(judge_url, "j")
         current = _config("http://gpu-box:8000", decision_judge=judge)
         stored = dataclasses.replace(
             _settings("http://gpu-box:8000"),
@@ -260,4 +255,47 @@ class TestResume:
         )
         previous = build_run_config(stored, scenarios=SCENARIOS, metadata={})
 
-        assert resume_mismatches(previous, current) == []
+        assert resume_mismatches(previous, current, judge_base_url=judge_url) == []
+
+
+LEGACY_JUDGE_URL = "http://judge.test:8084/v1"
+
+
+def _judge_config(url: str) -> dict:
+    return {**decision_judge_config(url, "j", judge_set="all"), "checks": ["c1"]}
+
+
+def _legacy_judge() -> dict:
+    """A judge config as stored before judge URLs were redacted and identities canonical."""
+    return {
+        **_judge_config(LEGACY_JUDGE_URL),
+        "base_url": LEGACY_JUDGE_URL,
+        "endpoint_id": legacy_endpoint_identity(LEGACY_JUDGE_URL),
+    }
+
+
+@pytest.mark.parametrize(
+    "current_url",
+    ["http://judge.test:8084/v1", "http://judge.test:8084", "http://judge.test:8084/v1/"],
+)
+def test_a_legacy_raw_url_judge_resumes_under_any_spelling(current_url: str) -> None:
+    previous = {"decision_judge": _legacy_judge()}
+    current = {"decision_judge": _judge_config(current_url)}
+
+    assert resume_mismatches(previous, current, judge_base_url=current_url) == []
+
+
+def test_a_legacy_raw_url_judge_still_refuses_another_host() -> None:
+    other = "http://other.test:8084/v1"
+    previous = {"decision_judge": _legacy_judge()}
+    current = {"decision_judge": _judge_config(other)}
+
+    assert resume_mismatches(previous, current, judge_base_url=other) == ["decision_judge"]
+
+
+def test_a_redacted_judge_config_resumes_with_the_bare_host() -> None:
+    bare = "http://judge.test:8084"
+    previous = {"decision_judge": _judge_config(LEGACY_JUDGE_URL)}
+    current = {"decision_judge": _judge_config(bare)}
+
+    assert resume_mismatches(previous, current, judge_base_url=bare) == []
