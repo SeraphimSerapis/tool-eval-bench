@@ -37,10 +37,12 @@ right but never stating the result scores PARTIAL rather than PASS, which is
 the distinction a three-tier benchmark exists to make.
 
 The loader validates the whole file up front, because a mistake that only
-surfaces at run time is scored as the model's failure.  Expected tools must be
-among the universal tools every YAML scenario is offered.  ``difficulty`` is an
-integer from 1 to 5.  A key the format does not define is rejected, so a typo
-cannot quietly drop a check.  A plain scalar that YAML 1.1 reads differently
+surfaces at run time is scored as the model's failure.  Expected tools and
+``tool_responses`` keys must be among the universal tools every YAML scenario
+is offered, and a ``match`` key must be one of that tool's parameters.
+``difficulty`` is an integer from 1 to 5.  A key the format does not define, or
+one repeated in the same mapping, is rejected, so a typo cannot quietly drop a
+check.  A plain scalar that YAML 1.1 reads differently
 from JSON or YAML 1.2, such as ``2026-03-21``, ``14:30``, ``NO``, ``01234``, or
 ``1e5``, is rejected with its line and column; quote it to keep it a string.
 """
@@ -68,6 +70,10 @@ from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
 
 # YAML scenarios cannot declare tools; the orchestrator offers these to every one.
 _OFFERED_TOOLS = frozenset(tool["function"]["name"] for tool in UNIVERSAL_TOOLS)
+_TOOL_PARAMETERS: dict[str, frozenset[str]] = {
+    tool["function"]["name"]: frozenset(tool["function"]["parameters"]["properties"])
+    for tool in UNIVERSAL_TOOLS
+}
 
 
 def _make_handler(
@@ -198,6 +204,7 @@ _YAML_INT = "tag:yaml.org,2002:int"
 _YAML_FLOAT = "tag:yaml.org,2002:float"
 _YAML_STR = "tag:yaml.org,2002:str"
 _YAML_TIMESTAMP = "tag:yaml.org,2002:timestamp"
+_YAML_MERGE = "tag:yaml.org,2002:merge"
 _PLAIN_BOOLS = frozenset({"true", "True", "TRUE", "false", "False", "FALSE"})
 _PLAIN_INT = re.compile(r"[-+]?(?:0|[1-9][0-9]*)|0x[0-9a-fA-F]+")
 _PLAIN_FLOAT = re.compile(r"[-+]?(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?")
@@ -218,7 +225,7 @@ def _ambiguous_plain_scalar(tag: str, value: str) -> str | None:
     if tag == _YAML_FLOAT and _PLAIN_FLOAT.fullmatch(value) is None:
         return f"{_QUOTE_IT}, or write the number in plain decimal"
     if tag == _YAML_STR and _YAML12_NUMBER.fullmatch(value) is not None:
-        return f"{_QUOTE_IT}, or write a number as plain decimal such as 100000 or 0.5"
+        return f"{_QUOTE_IT}, or write a number as 100000, 0.5, or 1.0e+5"
     return None
 
 
@@ -245,6 +252,23 @@ class _StrictLoader(yaml.SafeLoader):
                 problem_mark=node.start_mark,
             )
         return node
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        # PyYAML keeps the last of two equal keys, so a duplicated
+        # ``arguments`` or ``expected_tool_calls`` would silently replace the
+        # first.  Checked on the raw node, before ``<<`` merges are flattened
+        # in, so a key that deliberately overrides a merged one is still fine.
+        seen: set[str] = set()
+        for key_node, _ in node.value:
+            if not isinstance(key_node, yaml.ScalarNode) or key_node.tag == _YAML_MERGE:
+                continue
+            if key_node.value in seen:
+                raise yaml.MarkedYAMLError(
+                    problem=f"duplicate key {key_node.value!r}",
+                    problem_mark=key_node.start_mark,
+                )
+            seen.add(key_node.value)
+        return super().construct_mapping(node, deep=deep)
 
 
 def _check_json_value(value: Any, where: str, path: Path) -> None:
@@ -351,7 +375,7 @@ def _expected_tool_calls(data: dict[str, Any], path: Path) -> list[dict[str, Any
 
 
 def _tool_responses(data: dict[str, Any], path: Path) -> dict[str, list[dict[str, Any]]]:
-    """Validate ``tool_responses`` as a mapping of tool name to a list of rules."""
+    """Validate ``tool_responses`` as a mapping of offered tool name to a list of rules."""
     value = data.get("tool_responses")
     if value is None:
         return {}
@@ -360,6 +384,11 @@ def _tool_responses(data: dict[str, Any], path: Path) -> dict[str, list[dict[str
     for tool, rules in value.items():
         if not isinstance(tool, str):
             raise ValueError(f"Field 'tool_responses' has a non-string key {tool!r} in {path}")
+        if tool not in _OFFERED_TOOLS:
+            raise ValueError(
+                f"Field 'tool_responses' names {tool!r}, which YAML scenarios never offer, "
+                f"in {path}; choose from {', '.join(sorted(_OFFERED_TOOLS))}"
+            )
         if not isinstance(rules, list):
             raise ValueError(f"Field {'tool_responses.' + tool!r} must be a list in {path}")
         for index, rule in enumerate(rules):
@@ -369,7 +398,17 @@ def _tool_responses(data: dict[str, Any], path: Path) -> dict[str, list[dict[str
             _reject_unknown_keys(rule, _RESPONSE_RULE_KEYS, where, path)
             # An empty ``match:`` matches every call, as an absent one does.
             if rule.get("match") is not None:
-                _mapping_field(rule["match"], f"{where}.match", path)
+                match = _mapping_field(rule["match"], f"{where}.match", path)
+                # A key the tool has no parameter for can never be in a call,
+                # so the rule would silently never fire.
+                parameters = _TOOL_PARAMETERS[tool]
+                unknown = [key for key in match if key not in parameters]
+                if unknown:
+                    raise ValueError(
+                        f"Field {where + '.match'!r} names {', '.join(map(repr, unknown))}, "
+                        f"which {tool} does not take, in {path}; "
+                        f"its parameters: {', '.join(sorted(parameters))}"
+                    )
             if "response" in rule:
                 response = rule["response"]
                 if not isinstance(response, (dict, str)):

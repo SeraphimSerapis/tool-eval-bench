@@ -283,18 +283,22 @@ deliberately narrow. It matches tool calls positionally, cannot inspect tool res
 conditionals, so a scenario that needs to react to what a tool returned belongs in Python.
 
 A YAML scenario is always offered the 12 universal tools in `domain/tools.py` and cannot declare
-others, so the loader rejects an `expected_tool_calls` entry naming any other tool.
+others, so the loader rejects an `expected_tool_calls` entry or a `tool_responses` key naming any
+other tool. A `match` key must be one of that tool's parameters, such as `ticker` for
+`get_stock_price`, because a rule matching on anything else could never fire. A `response` must be
+a mapping or a string; an empty value or a list is rejected.
 
 An optional `capabilities:` list takes the same tags as the Python field. The loader rejects a tag
 that is not in `CAPABILITY_LABELS`.
 
 The loader checks the whole file before a run starts, because a mistake found at run time would be
 scored as the model's failure. It rejects a malformed structure, a key the format does not define
-(so a typo such as `argument:` cannot silently drop a check), a `difficulty` outside 1 to 5, and
+(so a typo such as `argument:` cannot silently drop a check), a key repeated in the same mapping
+(YAML would otherwise keep only the last one), a `difficulty` outside 1 to 5, and
 any unquoted value that YAML 1.1 reads differently from the JSON a model sends: dates such as
 `2026-03-21`, times such as `14:30` (read as the number 870), `yes`/`no`/`on`/`off`, and numbers
-with a leading zero, underscores, or a bare exponent. Quote such values, for example
-`date: "2026-03-21"`. The error names the file, line, and column.
+with a leading zero, underscores, or a bare exponent such as `1e5` (write `1.0e+5`). Quote such
+values, for example `date: "2026-03-21"`. The error names the file, line, and column.
 
 Its real job is [held-out packs](scenario-packs.md), where a third party needs to author private
 scenarios without shipping executable Python.

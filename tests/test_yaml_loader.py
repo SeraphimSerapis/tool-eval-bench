@@ -183,9 +183,10 @@ tool_responses: {}
     @pytest.mark.parametrize("field", ["id", "title", "category", "user_message"])
     def test_required_fields_must_be_non_empty_strings(self, tmp_path: Path, field: str) -> None:
         path = tmp_path / "invalid.yaml"
+        fields = {"id": "X", "title": "Required fields", "category": "A", "user_message": "hi"}
+        fields[field] = "[]"
         path.write_text(
-            "id: X\ntitle: Required fields\ncategory: A\nuser_message: hi\n" + f"{field}: []\n",
-            encoding="utf-8",
+            "".join(f"{key}: {value}\n" for key, value in fields.items()), encoding="utf-8"
         )
 
         with pytest.raises(
@@ -423,6 +424,18 @@ class TestAmbiguousScalars:
         assert "line 8" in message
         assert "quote it" in message
 
+    def test_an_exponent_without_a_dot_suggests_a_spelling_that_stays_a_number(
+        self, tmp_path: Path
+    ) -> None:
+        path = _pack_file(
+            tmp_path,
+            "expected_tool_calls:\n  - tool: create_calendar_event\n    arguments:\n"
+            "      time: 1e5\n",
+        )
+
+        with pytest.raises(ValueError, match=re.escape("1.0e+5")):
+            _load_yaml_file(path)
+
     def test_an_ambiguous_mapping_key_is_rejected(self, tmp_path: Path) -> None:
         path = _pack_file(
             tmp_path,
@@ -629,14 +642,95 @@ class TestStructure:
         with pytest.raises(ValueError, match=r"'find_contact'.*get_contacts"):
             _load_yaml_file(path)
 
-    def test_a_response_rule_for_an_unoffered_tool_is_harmless_and_allowed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_a_response_rule_for_an_unoffered_tool_is_rejected(self, tmp_path: Path) -> None:
         path = _pack_file(
             tmp_path, "tool_responses:\n  find_contact:\n    - response: {name: Priya}\n"
         )
 
-        assert _load_yaml_file(path).id == "PACK-01"
+        with pytest.raises(
+            ValueError,
+            match=rf"'tool_responses'.*'find_contact'.*{re.escape(str(path))}.*get_contacts",
+        ):
+            _load_yaml_file(path)
+
+    def test_a_match_key_the_tool_does_not_take_is_rejected(self, tmp_path: Path) -> None:
+        path = _pack_file(
+            tmp_path,
+            "tool_responses:\n  get_weather:\n    - match: {city: Berlin}\n"
+            "      response: {temp: 18}\n",
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            _load_yaml_file(path)
+
+        message = str(exc_info.value)
+        assert re.search(r"tool_responses\.get_weather\[0\]\.match' names 'city'", message)
+        assert str(path) in message
+        assert "its parameters: location" in message
+
+    def test_a_match_on_a_real_parameter_fires(self, tmp_path: Path) -> None:
+        path = _pack_file(
+            tmp_path,
+            "tool_responses:\n  get_contacts:\n    - match: {query: Priya}\n"
+            "      response: {name: Priya}\n",
+        )
+        sc = _load_yaml_file(path)
+
+        response = sc.handle_tool_call(ScenarioState(), _record("get_contacts", {"query": "Priya"}))
+
+        assert response == {"name": "Priya"}
+
+
+class TestDuplicateKeys:
+    """PyYAML keeps the last of two equal keys, which would silently drop a check."""
+
+    @pytest.mark.parametrize(
+        ("body", "key"),
+        [
+            pytest.param("title: again\n", "title", id="top-level"),
+            pytest.param(
+                "expected_tool_calls:\n  - tool: get_weather\n    arguments:\n"
+                "      location: Berlin\n      location: Paris\n",
+                "location",
+                id="arguments",
+            ),
+            pytest.param(
+                "expected_tool_calls:\n  - tool: get_weather\n"
+                "expected_tool_calls:\n  - tool: get_contacts\n",
+                "expected_tool_calls",
+                id="expected-tool-calls",
+            ),
+        ],
+    )
+    def test_a_duplicate_key_is_rejected_with_its_location(
+        self, tmp_path: Path, body: str, key: str
+    ) -> None:
+        path = _pack_file(tmp_path, body)
+
+        with pytest.raises(ValueError) as exc_info:
+            _load_yaml_file(path)
+
+        message = str(exc_info.value)
+        assert str(path) in message
+        assert f"duplicate key {key!r}" in message
+        assert "line " in message
+
+    def test_a_key_overriding_a_merged_anchor_still_loads(self, tmp_path: Path) -> None:
+        path = _pack_file(
+            tmp_path,
+            "tool_responses:\n  get_weather:\n"
+            "    - match: {location: Berlin}\n"
+            "      response: &berlin {temp: 18, sky: clear}\n"
+            "    - match: {location: Paris}\n"
+            "      response:\n        <<: *berlin\n        temp: 21\n",
+        )
+        sc = _load_yaml_file(path)
+
+        response = sc.handle_tool_call(
+            ScenarioState(), _record("get_weather", {"location": "Paris"})
+        )
+
+        assert response == {"temp": 21, "sky": "clear"}
 
 
 class TestUnknownKeys:

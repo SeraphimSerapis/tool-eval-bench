@@ -301,11 +301,14 @@ def test_ports_and_unrelated_headers_do_not_identify_an_engine(port, server):
 
 async def test_public_api_defaults_to_unknown_without_changing_adapter(monkeypatch):
     from tool_eval_bench.api import run_benchmark
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 
     run = AsyncMock(return_value={"scores": {}})
     monkeypatch.setattr(BenchmarkService, "run_benchmark", run)
     _install(monkeypatch, lambda request: httpx.Response(404))
-    await run_benchmark(model="m", base_url="http://test", persist=False, scenarios=[])
+    await run_benchmark(
+        model="m", base_url="http://test", persist=False, scenarios=ALL_SCENARIOS[:1]
+    )
     assert run.call_args.kwargs["backend"] == "unknown"
     assert run.call_args.kwargs["wire_format"] is None
 
