@@ -34,6 +34,7 @@ from rich.console import Console
 from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
 from tool_eval_bench.adapters.wire_format import resolve_wire_format as _resolve_wire_format
 from tool_eval_bench.application.decision_audit import decision_judge_config, with_selected_checks
+from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
 from tool_eval_bench.application.run_config import RunSettings, build_run_config, resume_mismatches
 from tool_eval_bench.application.run_context import build_run_context, identify_backend
 from tool_eval_bench.application.service import BenchmarkService
@@ -50,10 +51,10 @@ from tool_eval_bench.cli.helpers import (
     load_dotenv_file as _load_dotenv,
 )
 from tool_eval_bench.cli.helpers import (
-    metadata_for_storage as _metadata_for_storage,
+    metadata_for_storage as _metadata_for_storage,  # noqa: F401  (cli.bench name)
 )
 from tool_eval_bench.cli.helpers import (
-    persist_plugin_run as _persist_plugin_run,
+    persist_plugin_run as _persist_plugin_run,  # noqa: F401  (cli.bench name)
 )
 from tool_eval_bench.cli.helpers import prior_results_for_resume
 from tool_eval_bench.cli.helpers import safety_gate_failed as _safety_gate_failed
@@ -86,7 +87,7 @@ from tool_eval_bench.cli.resolve import (
     parse_int_list as _parse_int_list,
 )
 from tool_eval_bench.cli.resolve import (
-    parse_sweep_range as _parse_sweep_range,
+    parse_sweep_range as _parse_sweep_range,  # noqa: F401  (cli.bench name)
 )
 from tool_eval_bench.cli.resolve import (
     redact_url as _redact_url,
@@ -101,7 +102,7 @@ from tool_eval_bench.cli.resolve import (
     resolve_scenarios as _resolve_scenarios,
 )
 from tool_eval_bench.cli.resolve import (
-    with_config_fingerprint as _with_config_fingerprint,
+    with_config_fingerprint as _with_config_fingerprint,  # noqa: F401  (cli.bench name)
 )
 from tool_eval_bench.cli.run_io import aggregate_trials as _aggregate_trials
 from tool_eval_bench.cli.run_io import bootstrap_ci as _bootstrap_ci  # noqa: F401
@@ -134,6 +135,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioStatus,
 )
 from tool_eval_bench.storage.reports import MarkdownReporter
+from tool_eval_bench.storage.reports.throughput import throughput_report
 from tool_eval_bench.utils.headers import attach_session_id as _attach_session_id
 from tool_eval_bench.utils.headers import parse_header_env as _parse_header_env
 from tool_eval_bench.utils.headers import parse_header_pairs as _parse_header_pairs
@@ -362,7 +364,7 @@ class _Target:
     api_key: str | None
     wire_format: str
     extra_params: dict[str, Any]
-    run_context: Any | None
+    run_context: RunContext | None
 
 
 def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
@@ -406,40 +408,34 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
     if not args.perf_only:
         return [sample for sample in throughput_samples if not sample.error], False
 
-    from tool_eval_bench.utils.ids import build_run_id
-
-    run_config = _with_config_fingerprint(
-        {
-            "model": target.model,
-            "backend": target.backend,
-            "base_url": target.base_url,
-            "mode": "perf-only",
-        }
-    )
-    run_id = build_run_id(run_config)
-    reporter = MarkdownReporter(root=args.output_dir)
-    report_path = reporter.write_throughput_report(
-        run_id,
-        target.display_name,
-        throughput_samples,
-        run_context=target.run_context,
-    )
     failed_count = sum(bool(sample.error) for sample in throughput_samples)
     successful_count = len(throughput_samples) - failed_count
     scores = {"samples": len(throughput_samples)}
     if failed_count:
         scores.update({"successful": successful_count, "failed": failed_count})
-    _persist_plugin_run(
-        {
-            "run_id": run_id,
-            "run_type": "perf",
-            "status": "failed" if failed_count else "completed",
-            "config": run_config,
-            "scores": scores,
-            "metadata": _metadata_for_storage(target.run_context),
-            "report_path": str(report_path),
-        }
+    run_context = target.run_context
+    finalized = finalize_mode_run(
+        ModeRun(
+            run_type="perf",
+            config={
+                "model": target.model,
+                "backend": target.backend,
+                "base_url": target.base_url,
+                "mode": "perf-only",
+            },
+            scores=scores,
+            status="failed" if failed_count else "completed",
+            metadata_label=None,
+        ),
+        throughput_report(
+            target.display_name,
+            throughput_samples,
+            label=run_context.label if run_context is not None else None,
+        ),
+        run_context=run_context,
+        output_dir=args.output_dir,
     )
+    report_path = finalized.report_path
     console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
     if failed_count:
         console.print(f"[bold red]Throughput benchmark failed in {failed_count} cell(s).[/]")
@@ -704,9 +700,6 @@ def _run_spec_bench_mode(target: _Target) -> bool:
             temperature=args.temperature,
             custom_prompts=custom_prompts,
             output_dir=args.output_dir,
-            metadata_for_storage=_metadata_for_storage,
-            with_config_fingerprint=_with_config_fingerprint,
-            persist_plugin_run=_persist_plugin_run,
             label=args.label,
             run_context=target.run_context,
         )
@@ -746,11 +739,6 @@ def _run_pressure_sweep_mode(target: _Target) -> bool:
             args,
             display_url=display_url,
             extra_params=extra_params or None,
-            parse_sweep_range=_parse_sweep_range,
-            resolve_scenarios=_resolve_scenarios,
-            with_config_fingerprint=_with_config_fingerprint,
-            persist_plugin_run=_persist_plugin_run,
-            metadata_for_storage=_metadata_for_storage,
             label=args.label,
             run_context=target.run_context,
         )

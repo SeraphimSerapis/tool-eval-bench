@@ -686,7 +686,7 @@ def _response_sample(prompt_type: str) -> SpecDecodeSample:
 
 
 def _cli_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, samples: list) -> str:
-    from tool_eval_bench.storage import reports
+    from tool_eval_bench.application import run_queries
 
     async def fake_run(*args: object, on_sample=None, **kwargs: object):
         for idx, sample in enumerate(samples):
@@ -694,11 +694,7 @@ def _cli_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, samples: list) 
         return samples
 
     monkeypatch.setattr(speculative, "run_spec_bench", fake_run)
-    monkeypatch.setattr(
-        reports.MarkdownReporter,
-        "write_spec_decode_report",
-        lambda *args, **kwargs: tmp_path / "spec.md",
-    )
+    monkeypatch.setattr(run_queries, "persist_run", lambda _: None)
     console = Console(record=True, width=200)
     run_spec_bench_cli(
         console,
@@ -710,9 +706,6 @@ def _cli_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, samples: list) 
         tg=80,
         depths=[0],
         output_dir=str(tmp_path),
-        metadata_for_storage=lambda _: {},
-        with_config_fingerprint=lambda config: {**config, "config_fingerprint": "fp"},
-        persist_plugin_run=lambda _: None,
     )
     return console.export_text()
 

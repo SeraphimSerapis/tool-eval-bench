@@ -224,8 +224,8 @@ def test_dispatch_main_skip_and_perf_only_routes(
 ) -> None:
     import sys
 
+    from tool_eval_bench.application import run_queries
     from tool_eval_bench.cli import dispatch, plugin_runners
-    from tool_eval_bench.storage import reports
     from tool_eval_bench.utils import metadata
 
     context_calls: list[dict] = []
@@ -264,10 +264,7 @@ def test_dispatch_main_skip_and_perf_only_routes(
 
     successful_runs: list[dict] = []
     monkeypatch.setattr(dispatch, "_run_llama_benchy", lambda *a, **k: [_sample()])
-    monkeypatch.setattr(
-        reports.MarkdownReporter, "write_throughput_report", lambda *a, **k: tmp_path / "p.md"
-    )
-    monkeypatch.setattr(dispatch, "_persist_plugin_run", successful_runs.append)
+    monkeypatch.setattr(run_queries, "persist_run", successful_runs.append)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -291,14 +288,15 @@ def test_dispatch_main_skip_and_perf_only_routes(
     written_samples: list = []
     persisted_runs: list[dict] = []
     monkeypatch.setattr(dispatch, "_run_llama_benchy", lambda *a, **k: perf_samples)
+    real_throughput_report = dispatch.throughput_report
     monkeypatch.setattr(
-        reports.MarkdownReporter,
-        "write_throughput_report",
-        lambda self, run_id, model, samples, **kwargs: (
-            written_samples.extend(samples) or tmp_path / "p.md"
+        dispatch,
+        "throughput_report",
+        lambda model, samples, **kwargs: (
+            written_samples.extend(samples) or real_throughput_report(model, samples, **kwargs)
         ),
     )
-    monkeypatch.setattr(dispatch, "_persist_plugin_run", persisted_runs.append)
+    monkeypatch.setattr(run_queries, "persist_run", persisted_runs.append)
     with pytest.raises(SystemExit) as exc:
         dispatch.main()
 

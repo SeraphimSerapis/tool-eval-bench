@@ -1,0 +1,50 @@
+{
+  "run_data": {
+    "run_id": "<RUN_ID>",
+    "run_type": "perf",
+    "status": "failed",
+    "config": {
+      "model": "m",
+      "backend": "vllm",
+      "base_url": "http://***:8000/v1",
+      "mode": "perf-only",
+      "config_fingerprint": "97552a792df5"
+    },
+    "scores": {
+      "samples": 2,
+      "successful": 1,
+      "failed": 1
+    },
+    "metadata": {
+      "tool_version": "0.0.0+golden",
+      "git_sha": "abc1234",
+      "hostname": "golden-host",
+      "platform_info": "Linux-golden",
+      "python_version": "3.13.0",
+      "model": "m",
+      "backend": "vllm",
+      "base_url": "http://***:8000/v1",
+      "temperature": 0.0,
+      "max_turns": 8,
+      "timeout_seconds": 120.0,
+      "seed": 7,
+      "scenario_selector": "TC-01,TC-02",
+      "trials": 1,
+      "parallel": 1,
+      "error_rate": 0.0,
+      "thinking_enabled": true,
+      "label": "golden | label",
+      "server_model_id": "org/model",
+      "server_model_root": "/models/org/model",
+      "engine_name": "vLLM",
+      "engine_version": "0.11.0",
+      "max_model_len": 32768,
+      "quantization": "fp8",
+      "gpu_count": 2,
+      "spec_decoding": "eagle3",
+      "slot_count": 4
+    },
+    "report_path": "<YYYY>/<MM>/<RUN_ID>--golden-label.md"
+  },
+  "report": "# Throughput Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: throughput-only\n- **tool-eval-bench**: `v0.0.0+golden abc1234`\n- **Label**: <code>golden | label</code>\n\n## Run Context\n\n| Parameter | Value |\n|---|---|\n| **Label** | <code>golden &#124; label</code> |\n| Backend | vllm |\n| Server | `http://***:8000/v1` |\n| Model (API) | `m` |\n| Model (Root) | `/models/org/model` |\n| Temperature | 0.0 |\n| Seed | 7 |\n| Max Turns | 8 |\n| Timeout | 120.0s |\n| Scenarios | TC-01,TC-02 |\n| Parallel | 1 (sequential) |\n| Error Rate | 0.0 |\n| Thinking | enabled |\n\n## Inference Engine\n\n| Property | Value |\n|---|---|\n| Engine | vLLM 0.11.0 |\n| Max Model Length | 32,768 |\n| Quantization | fp8 |\n| GPU Count | 2 |\n| Server Slots | 4 |\n| Spec Decoding | eagle3 |\n| Host | `golden-host` |\n| Platform | `Linux-golden` |\n| Python | 3.13.0 |\n\n## Results\n\n| Test | pp t/s | tg t/s | TTFT (ms) | Total (ms) | Tokens |\n|---|---:|---:|---:|---:|---:|\n| pp512 tg128 @ d0 | 5,000 | 95.0 | 100 | 1,400 | 512+128 |\n\n## Errors\n\n- `HTTP 503`\n"
+}

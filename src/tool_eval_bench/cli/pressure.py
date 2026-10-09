@@ -11,13 +11,14 @@ import argparse
 import asyncio
 import logging
 import sys
-from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
-from tool_eval_bench.application.finalization import finalize_completed_run
+from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
+from tool_eval_bench.cli.resolve import parse_sweep_range, resolve_scenarios
 from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.storage.reports.pressure import pressure_sweep_report
 
 logger = logging.getLogger(__name__)
 
@@ -36,53 +37,6 @@ async def _run_pressure_level(
             await aclose()
 
 
-def _write_pressure_sweep_report(
-    *,
-    run_id: str,
-    model: str,
-    backend: str,
-    display_url: str,
-    context_size: int,
-    level_results: list[dict[str, Any]],
-    breaking_point: float | None,
-    first_degradation: float | None,
-    output_dir: str | None,
-    label: str | None = None,
-    run_context: RunContext | None = None,
-) -> Path:
-    """Compatibility wrapper around the shared Markdown reporter."""
-    from tool_eval_bench.storage.reports import MarkdownReporter
-
-    reporter = MarkdownReporter(root=output_dir)
-    return reporter.write_pressure_sweep_report(
-        run_id=run_id,
-        model=model,
-        backend=backend,
-        display_url=display_url,
-        context_size=context_size,
-        level_results=level_results,
-        breaking_point=breaking_point,
-        first_degradation=first_degradation,
-        label=label,
-        run_context=run_context,
-    )
-
-
-def _report_then_persist_pressure_sweep(
-    *,
-    report_kwargs: dict[str, Any],
-    run_data: dict[str, Any],
-    persist_plugin_run: Any,
-) -> Path:
-    """Enforce artifact-first completed-run finalization for pressure sweeps."""
-    finalized = finalize_completed_run(
-        run_data,
-        write_report=lambda: _write_pressure_sweep_report(**report_kwargs),
-        persist=persist_plugin_run,
-    )
-    return Path(finalized["report_path"])
-
-
 def run_pressure_sweep(
     console: Console,
     model: str,
@@ -94,11 +48,6 @@ def run_pressure_sweep(
     *,
     display_url: str | None = None,
     extra_params: dict[str, Any] | None = None,
-    parse_sweep_range: Any = None,
-    resolve_scenarios: Any = None,
-    with_config_fingerprint: Any = None,
-    persist_plugin_run: Any = None,
-    metadata_for_storage: Any = None,
     label: str | None = None,
     run_context: RunContext | None = None,
 ) -> None:
@@ -406,8 +355,6 @@ def run_pressure_sweep(
     )
     console.print()
 
-    from tool_eval_bench.utils.ids import build_run_id
-
     sweep_fields: dict[str, Any] = {
         "model": model,
         "base_url": base_url,
@@ -422,39 +369,31 @@ def run_pressure_sweep(
     system_prompt = getattr(args, "system_prompt", None)
     if system_prompt is not None:
         sweep_fields["system_prompt"] = system_prompt
-    sweep_config = with_config_fingerprint(sweep_fields)
-    sweep_run_id = build_run_id(sweep_config)
-    metadata = metadata_for_storage(run_context)
-    if label:
-        metadata["label"] = label
-    run_data = {
-        "run_id": sweep_run_id,
-        "run_type": "context-pressure",
-        "status": "completed",
-        "config": sweep_config,
-        "scores": {
-            "levels": len(level_results),
-            "breaking_point": breaking_point,
-            "first_degradation": first_degradation,
-            "level_results": level_results,
-        },
-        "metadata": metadata,
-    }
-    report_path = _report_then_persist_pressure_sweep(
-        report_kwargs={
-            "run_id": sweep_run_id,
-            "model": display_name,
-            "backend": backend,
-            "display_url": display_url or base_url,
-            "context_size": context_size,
-            "level_results": level_results,
-            "breaking_point": breaking_point,
-            "first_degradation": first_degradation,
-            "output_dir": getattr(args, "output_dir", None),
-            "label": label,
-            "run_context": run_context,
-        },
-        run_data=run_data,
-        persist_plugin_run=persist_plugin_run,
+    finalized = finalize_mode_run(
+        ModeRun(
+            run_type="context-pressure",
+            config=sweep_fields,
+            scores={
+                "levels": len(level_results),
+                "breaking_point": breaking_point,
+                "first_degradation": first_degradation,
+                "level_results": level_results,
+            },
+            status="completed",
+            metadata_label=label,
+        ),
+        pressure_sweep_report(
+            model=display_name,
+            backend=backend,
+            display_url=display_url or base_url,
+            context_size=context_size,
+            level_results=level_results,
+            breaking_point=breaking_point,
+            first_degradation=first_degradation,
+            label=label,
+        ),
+        run_context=run_context,
+        output_dir=getattr(args, "output_dir", None),
     )
+    report_path = finalized.report_path
     console.print(f"  [dim]Report saved to {report_path}[/]\n")

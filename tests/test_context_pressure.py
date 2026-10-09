@@ -1344,11 +1344,6 @@ class TestPressureSweepIntegration:
         from rich.console import Console
 
         from tool_eval_bench.adapters import factory
-        from tool_eval_bench.cli.helpers import (
-            metadata_for_storage,
-            parse_sweep_range,
-            with_config_fingerprint,
-        )
         from tool_eval_bench.cli.pressure import run_pressure_sweep
         from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
         from tool_eval_bench.runner import orchestrator
@@ -1373,6 +1368,12 @@ class TestPressureSweepIntegration:
         persisted: list[dict[str, Any]] = []
 
         with patch("asyncio.new_event_loop", return_value=_ImmediateEventLoop()):
+            monkeypatch.setattr(
+                "tool_eval_bench.cli.pressure.resolve_scenarios", lambda _args: [scenario]
+            )
+            monkeypatch.setattr(
+                "tool_eval_bench.application.run_queries.persist_run", persisted.append
+            )
             run_pressure_sweep(
                 Console(file=io.StringIO(), force_terminal=False),
                 "test-model",
@@ -1381,11 +1382,6 @@ class TestPressureSweepIntegration:
                 "http://localhost:8080",
                 None,
                 args,
-                parse_sweep_range=parse_sweep_range,
-                resolve_scenarios=lambda _args: [scenario],
-                with_config_fingerprint=with_config_fingerprint,
-                persist_plugin_run=persisted.append,
-                metadata_for_storage=metadata_for_storage,
             )
 
         assert runner.await_count == 2
@@ -1402,11 +1398,6 @@ class TestPressureSweepIntegration:
         from rich.console import Console
 
         from tool_eval_bench.adapters import factory
-        from tool_eval_bench.cli.helpers import (
-            metadata_for_storage,
-            parse_sweep_range,
-            with_config_fingerprint,
-        )
         from tool_eval_bench.cli.pressure import run_pressure_sweep
         from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
         from tool_eval_bench.runner import orchestrator
@@ -1432,6 +1423,12 @@ class TestPressureSweepIntegration:
         persisted: list[dict[str, Any]] = []
 
         with patch("asyncio.new_event_loop", return_value=_ImmediateEventLoop()):
+            monkeypatch.setattr(
+                "tool_eval_bench.cli.pressure.resolve_scenarios", lambda _args: [scenario]
+            )
+            monkeypatch.setattr(
+                "tool_eval_bench.application.run_queries.persist_run", persisted.append
+            )
             run_pressure_sweep(
                 Console(file=io.StringIO(), force_terminal=False),
                 "test-model",
@@ -1440,11 +1437,6 @@ class TestPressureSweepIntegration:
                 "http://localhost:8080",
                 None,
                 args,
-                parse_sweep_range=parse_sweep_range,
-                resolve_scenarios=lambda _args: [scenario],
-                with_config_fingerprint=with_config_fingerprint,
-                persist_plugin_run=persisted.append,
-                metadata_for_storage=metadata_for_storage,
             )
 
         assert "system_prompt" not in persisted[0]["config"]
@@ -1461,11 +1453,6 @@ class TestPressureSweepIntegration:
         from rich.console import Console
 
         from tool_eval_bench.adapters import factory
-        from tool_eval_bench.cli.helpers import (
-            metadata_for_storage,
-            parse_sweep_range,
-            with_config_fingerprint,
-        )
         from tool_eval_bench.cli.pressure import run_pressure_sweep
         from tool_eval_bench.domain.models import RunContext
         from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
@@ -1508,6 +1495,12 @@ class TestPressureSweepIntegration:
             args.timeout = 60.0
             persisted: list[dict[str, Any]] = []
             with patch("asyncio.new_event_loop", return_value=_ImmediateEventLoop()):
+                monkeypatch.setattr(
+                    "tool_eval_bench.cli.pressure.resolve_scenarios", lambda _args: [scenario]
+                )
+                monkeypatch.setattr(
+                    "tool_eval_bench.application.run_queries.persist_run", persisted.append
+                )
                 run_pressure_sweep(
                     Console(file=io.StringIO(), force_terminal=False),
                     "test-model",
@@ -1516,11 +1509,6 @@ class TestPressureSweepIntegration:
                     "http://localhost:8080",
                     None,
                     args,
-                    parse_sweep_range=parse_sweep_range,
-                    resolve_scenarios=lambda _args: [scenario],
-                    with_config_fingerprint=with_config_fingerprint,
-                    persist_plugin_run=persisted.append,
-                    metadata_for_storage=metadata_for_storage,
                     label="nightly",
                     run_context=run_context,
                 )
@@ -1612,7 +1600,7 @@ class TestPressureSweepIntegration:
 
         assert await _run_pressure_level(adapter, run_scenarios) == "summary"
 
-    @patch("tool_eval_bench.cli.commands.resolve_scenarios")
+    @patch("tool_eval_bench.cli.pressure.resolve_scenarios")
     @patch("tool_eval_bench.cli.pressure.asyncio")
     def test_sweep_runs_all_levels(self, mock_asyncio, mock_resolve) -> None:
         """Sweep should call run_all_scenarios for each pressure level."""
@@ -1643,13 +1631,6 @@ class TestPressureSweepIntegration:
         args = self._make_args(sweep="0.5-1.0", steps=3, context_size=32768)
 
         from tool_eval_bench.cli.bench import _run_pressure_sweep
-        from tool_eval_bench.cli.commands import resolve_scenarios
-        from tool_eval_bench.cli.helpers import (
-            metadata_for_storage,
-            parse_sweep_range,
-            persist_plugin_run,
-            with_config_fingerprint,
-        )
 
         with patch("asyncio.new_event_loop", return_value=_ImmediateEventLoop()):
             _run_pressure_sweep(
@@ -1660,17 +1641,12 @@ class TestPressureSweepIntegration:
                 "http://localhost:8080",
                 None,
                 args,
-                parse_sweep_range=parse_sweep_range,
-                resolve_scenarios=resolve_scenarios,
-                with_config_fingerprint=with_config_fingerprint,
-                persist_plugin_run=persist_plugin_run,
-                metadata_for_storage=metadata_for_storage,
             )
 
         # 3 levels (steps=3 → 0.5, 0.75, 1.0) — one asyncio.run per level
         assert mock_asyncio.run.call_count == 3
 
-    @patch("tool_eval_bench.cli.commands.resolve_scenarios")
+    @patch("tool_eval_bench.cli.pressure.resolve_scenarios")
     @patch("tool_eval_bench.cli.pressure.asyncio")
     def test_sweep_early_stops_on_consecutive_failures(
         self,
@@ -1709,13 +1685,6 @@ class TestPressureSweepIntegration:
         args = self._make_args(sweep="0.5-1.0", steps=4, context_size=32768)
 
         from tool_eval_bench.cli.bench import _run_pressure_sweep
-        from tool_eval_bench.cli.commands import resolve_scenarios
-        from tool_eval_bench.cli.helpers import (
-            metadata_for_storage,
-            parse_sweep_range,
-            persist_plugin_run,
-            with_config_fingerprint,
-        )
 
         with patch("asyncio.new_event_loop", return_value=_ImmediateEventLoop()):
             _run_pressure_sweep(
@@ -1726,11 +1695,6 @@ class TestPressureSweepIntegration:
                 "http://localhost:8080",
                 None,
                 args,
-                parse_sweep_range=parse_sweep_range,
-                resolve_scenarios=resolve_scenarios,
-                with_config_fingerprint=with_config_fingerprint,
-                persist_plugin_run=persist_plugin_run,
-                metadata_for_storage=metadata_for_storage,
             )
 
         # Should stop at 3 calls (pass, fail, fail), not run all 4 levels

@@ -1,0 +1,153 @@
+{
+  "run_data": {
+    "run_id": "<RUN_ID>",
+    "run_type": "context-pressure",
+    "status": "completed",
+    "config": {
+      "model": "m",
+      "base_url": "http://***:8000/v1",
+      "mode": "context-pressure-sweep",
+      "start": 0.5,
+      "end": 0.9,
+      "steps": 3,
+      "scenarios": [
+        "TC-01",
+        "TC-02"
+      ],
+      "system_prompt": "Be terse.",
+      "config_fingerprint": "f9edcf580078"
+    },
+    "scores": {
+      "levels": 3,
+      "breaking_point": 0.5,
+      "first_degradation": 0.7,
+      "level_results": [
+        {
+          "ratio": 0.5,
+          "results": {
+            "TC-01": "pass",
+            "TC-02": "pass"
+          },
+          "scenario_results": [
+            {
+              "scenario_id": "TC-01",
+              "status": "pass",
+              "points": 2,
+              "summary": "TC-01 pass",
+              "note": null,
+              "tool_calls_made": [
+                "get_weather(Berlin)"
+              ],
+              "expected_behavior": "call get_weather",
+              "duration_seconds": 1.5,
+              "turn_count": 2,
+              "raw_log": "trace for TC-01"
+            },
+            {
+              "scenario_id": "TC-02",
+              "status": "pass",
+              "points": 2,
+              "summary": "TC-02 pass",
+              "note": null,
+              "tool_calls_made": [
+                "get_weather(Berlin)"
+              ],
+              "expected_behavior": "call get_weather",
+              "duration_seconds": 1.5,
+              "turn_count": 2,
+              "raw_log": "trace for TC-02"
+            }
+          ],
+          "score_pct": 100.0,
+          "pass_count": 2,
+          "fill_tokens": 8272
+        },
+        {
+          "ratio": 0.7,
+          "results": {
+            "TC-01": "pass",
+            "TC-02": "partial"
+          },
+          "scenario_results": [
+            {
+              "scenario_id": "TC-01",
+              "status": "pass",
+              "points": 2,
+              "summary": "TC-01 pass",
+              "note": null,
+              "tool_calls_made": [
+                "get_weather(Berlin)"
+              ],
+              "expected_behavior": "call get_weather",
+              "duration_seconds": 1.5,
+              "turn_count": 2,
+              "raw_log": "trace for TC-01"
+            },
+            {
+              "scenario_id": "TC-02",
+              "status": "partial",
+              "points": 1,
+              "summary": "TC-02 partial",
+              "note": null,
+              "tool_calls_made": [
+                "get_weather(Berlin)"
+              ],
+              "expected_behavior": "call get_weather",
+              "duration_seconds": 1.5,
+              "turn_count": 2,
+              "raw_log": "trace for TC-02"
+            }
+          ],
+          "score_pct": 50.0,
+          "pass_count": 1,
+          "fill_tokens": 10340
+        },
+        {
+          "ratio": 0.9,
+          "results": {
+            "TC-01": "pass",
+            "TC-02": "partial"
+          },
+          "scenario_results": [
+            {
+              "scenario_id": "TC-01",
+              "status": "pass",
+              "points": 2,
+              "summary": "TC-01 pass",
+              "note": null,
+              "tool_calls_made": [
+                "get_weather(Berlin)"
+              ],
+              "expected_behavior": "call get_weather",
+              "duration_seconds": 1.5,
+              "turn_count": 2,
+              "raw_log": "trace for TC-01"
+            },
+            {
+              "scenario_id": "TC-02",
+              "status": "partial",
+              "points": 1,
+              "summary": "TC-02 partial",
+              "note": null,
+              "tool_calls_made": [
+                "get_weather(Berlin)"
+              ],
+              "expected_behavior": "call get_weather",
+              "duration_seconds": 1.5,
+              "turn_count": 2,
+              "raw_log": "trace for TC-02"
+            }
+          ],
+          "score_pct": 50.0,
+          "pass_count": 1,
+          "fill_tokens": 14476
+        }
+      ]
+    },
+    "metadata": {
+      "label": "golden | label"
+    },
+    "report_path": "<YYYY>/<MM>/<RUN_ID>--golden-label.md"
+  },
+  "report": "# Context Pressure Sweep — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: context-pressure-sweep\n- **Label**: <code>golden | label</code>\n- **Backend**: vllm\n- **Server**: http://***:8000/v1\n- **Context Window**: 32,768 tokens\n- **Executed Levels**: 3\n- **Breaking Point**: 50%\n- **First Degradation**: 70%\n\n## Level 1 — 50%\n\n- **Fill Tokens**: 8,272\n- **Pass Rate**: 100.0%\n\n### TC-01\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-01 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-01\n```\n\n### TC-02\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-02 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-02\n```\n\n## Level 2 — 70%\n\n- **Fill Tokens**: 10,340\n- **Pass Rate**: 50.0%\n\n### TC-01\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-01 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-01\n```\n\n### TC-02\n\n- **Status**: partial\n- **Points**: 1 / 2\n- **Summary**: TC-02 partial\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-02\n```\n\n## Level 3 — 90%\n\n- **Fill Tokens**: 14,476\n- **Pass Rate**: 50.0%\n\n### TC-01\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-01 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-01\n```\n\n### TC-02\n\n- **Status**: partial\n- **Points**: 1 / 2\n- **Summary**: TC-02 partial\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-02\n```\n"
+}

@@ -251,7 +251,7 @@ def test_spec_bench_cli_renders_metrics_and_persists(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     import tool_eval_bench.runner.speculative as speculative
-    from tool_eval_bench.storage import reports
+    from tool_eval_bench.application import mode_runs, run_queries
 
     rich_sample = SpecDecodeSample(
         pp_tokens=100,
@@ -288,15 +288,23 @@ def test_spec_bench_cli_renders_metrics_and_persists(
     report_path = tmp_path / "spec.md"
     report_kwargs: list[dict] = []
 
-    def fake_report(*args: object, **kwargs: object) -> object:
-        report_kwargs.append(kwargs)
+    def fake_report(root: object, run_id: object, report: object, run_context: object) -> object:
+        report_kwargs.append({"run_context": run_context})
         return report_path
 
+    class _RunContext:
+        def to_dict(self) -> dict:
+            return {"context": self}
+
     monkeypatch.setattr(speculative, "run_spec_bench", fake_run)
-    monkeypatch.setattr(reports.MarkdownReporter, "write_spec_decode_report", fake_report)
+    monkeypatch.setattr(mode_runs, "write_mode_report", fake_report)
+    monkeypatch.setattr(
+        mode_runs, "with_config_fingerprint", lambda config: {**config, "config_fingerprint": "fp"}
+    )
     persisted: list[dict] = []
+    monkeypatch.setattr(run_queries, "persist_run", persisted.append)
     console = Console(record=True, width=160)
-    run_context = object()
+    run_context = _RunContext()
 
     result = run_spec_bench_cli(
         console,
@@ -309,9 +317,6 @@ def test_spec_bench_cli_renders_metrics_and_persists(
         depths=[1024],
         baseline_tg_tps=100,
         output_dir=str(tmp_path),
-        metadata_for_storage=lambda context: {"context": context},
-        with_config_fingerprint=lambda config: {**config, "config_fingerprint": "fp"},
-        persist_plugin_run=persisted.append,
         run_context=run_context,
     )
 

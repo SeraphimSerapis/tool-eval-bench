@@ -11,11 +11,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from rich.console import Console
 
-from tool_eval_bench.cli.pressure import (
-    _report_then_persist_pressure_sweep,
-    _write_pressure_sweep_report,
-)
 from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.storage.reports import MarkdownReporter
 
 
 def _scenario(scenario_id: str, raw_log: str, *, status: str = "pass") -> dict:
@@ -48,7 +45,7 @@ def test_pressure_sweep_report_contains_every_level_and_full_trace(tmp_path: Pat
         },
     ]
 
-    path = _write_pressure_sweep_report(
+    path = MarkdownReporter(root=str(tmp_path)).write_pressure_sweep_report(
         run_id="pressure-run",
         model="Display Model",
         backend="vllm",
@@ -57,7 +54,6 @@ def test_pressure_sweep_report_contains_every_level_and_full_trace(tmp_path: Pat
         level_results=levels,
         breaking_point=0.5,
         first_degradation=0.75,
-        output_dir=str(tmp_path),
     )
 
     assert path == next(tmp_path.rglob("pressure-run.md"))
@@ -68,27 +64,6 @@ def test_pressure_sweep_report_contains_every_level_and_full_trace(tmp_path: Pat
     assert first_trace in markdown
     assert second_trace in markdown
     assert "get_weather(Berlin)" in markdown
-
-
-def test_pressure_report_failure_prevents_completed_persistence(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from tool_eval_bench.cli import pressure
-
-    persisted: list[dict] = []
-
-    def fail_report(**_kwargs) -> Path:
-        raise OSError("disk full")
-
-    monkeypatch.setattr(pressure, "_write_pressure_sweep_report", fail_report)
-    with pytest.raises(OSError, match="disk full"):
-        _report_then_persist_pressure_sweep(
-            report_kwargs={},
-            run_data={"run_id": "pressure-run", "status": "completed"},
-            persist_plugin_run=persisted.append,
-        )
-
-    assert persisted == []
 
 
 def _engine_context() -> RunContext:
@@ -112,11 +87,8 @@ def test_sweep_report_renders_the_probed_engine(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from tool_eval_bench.adapters import factory
-    from tool_eval_bench.cli.helpers import (
-        metadata_for_storage,
-        parse_sweep_range,
-        with_config_fingerprint,
-    )
+    from tool_eval_bench.application import run_queries
+    from tool_eval_bench.cli import pressure
     from tool_eval_bench.cli.pressure import run_pressure_sweep
     from tool_eval_bench.domain.scenarios import (
         Category,
@@ -168,6 +140,8 @@ def test_sweep_report_renders_the_probed_engine(
         timeout=60.0,
     )
     persisted: list[dict[str, Any]] = []
+    monkeypatch.setattr(pressure, "resolve_scenarios", lambda _args: [scenario])
+    monkeypatch.setattr(run_queries, "persist_run", persisted.append)
 
     with patch("asyncio.new_event_loop", return_value=_CalibrationFreeLoop()):
         run_pressure_sweep(
@@ -178,11 +152,6 @@ def test_sweep_report_renders_the_probed_engine(
             "http://test/v1",
             None,
             args,
-            parse_sweep_range=parse_sweep_range,
-            resolve_scenarios=lambda _args: [scenario],
-            with_config_fingerprint=with_config_fingerprint,
-            persist_plugin_run=persisted.append,
-            metadata_for_storage=metadata_for_storage,
             run_context=_engine_context(),
         )
 
@@ -197,7 +166,7 @@ def test_sweep_report_renders_the_probed_engine(
 
 
 def test_sweep_report_without_run_context_keeps_its_header(tmp_path: Path) -> None:
-    path = _write_pressure_sweep_report(
+    path = MarkdownReporter(root=str(tmp_path)).write_pressure_sweep_report(
         run_id="pressure-run",
         model="Display Model",
         backend="vllm",
@@ -206,7 +175,6 @@ def test_sweep_report_without_run_context_keeps_its_header(tmp_path: Path) -> No
         level_results=[],
         breaking_point=None,
         first_degradation=None,
-        output_dir=str(tmp_path),
     )
 
     markdown = path.read_text(encoding="utf-8")

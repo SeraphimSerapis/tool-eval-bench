@@ -11,26 +11,12 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 from rich.console import Console
 
-from tool_eval_bench.application.finalization import finalize_completed_run
+from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
 from tool_eval_bench.domain.models import RunContext
-
-
-def _report_then_persist_spec_bench(
-    *,
-    run_data: dict[str, Any],
-    write_report: Any,
-    persist_plugin_run: Any,
-) -> None:
-    """Write the spec report before persisting a completed run."""
-    finalize_completed_run(
-        run_data,
-        write_report=write_report,
-        persist=persist_plugin_run,
-    )
+from tool_eval_bench.storage.reports.spec_decode import spec_decode_report
 
 
 def load_spec_prompt_file(path: str | None) -> dict[str, str]:
@@ -85,9 +71,6 @@ def run_spec_bench(
     temperature: float = 0.0,
     custom_prompts: dict[str, str] | None = None,
     output_dir: str | None = None,
-    metadata_for_storage: Any = None,
-    with_config_fingerprint: Any = None,
-    persist_plugin_run: Any = None,
     label: str | None = None,
     run_context: RunContext | None = None,
 ) -> list:
@@ -369,46 +352,26 @@ def run_spec_bench(
 
     # Write report
     if ok_samples:
-        from tool_eval_bench.utils.ids import build_run_id
-
-        run_config = with_config_fingerprint(
-            {
-                "model": model,
-                "base_url": base_url,
-                "mode": "spec-bench",
-                "method": spec_method,
-                "runs": runs,
-                "temperature": temperature,
-            }
-        )
-        run_id = build_run_id(run_config)
-        from tool_eval_bench.storage.reports import MarkdownReporter
-
-        reporter = MarkdownReporter(root=output_dir)
-        metadata = metadata_for_storage(run_context)
-        if label:
-            metadata["label"] = label
-        run_data = {
-            "run_id": run_id,
-            "run_type": "spec-bench",
-            "status": "completed",
-            "config": run_config,
-            "scores": {"samples": len(ok_samples)},
-            "metadata": metadata,
-        }
-        _report_then_persist_spec_bench(
-            run_data=run_data,
-            write_report=lambda: reporter.write_spec_decode_report(
-                run_id,
-                display_name,
-                ok_samples,
-                label=label,
-                temperature=temperature,
-                run_context=run_context,
+        finalized = finalize_mode_run(
+            ModeRun(
+                run_type="spec-bench",
+                config={
+                    "model": model,
+                    "base_url": base_url,
+                    "mode": "spec-bench",
+                    "method": spec_method,
+                    "runs": runs,
+                    "temperature": temperature,
+                },
+                scores={"samples": len(ok_samples)},
+                status="completed",
+                metadata_label=label,
             ),
-            persist_plugin_run=persist_plugin_run,
+            spec_decode_report(display_name, ok_samples, label=label, temperature=temperature),
+            run_context=run_context,
+            output_dir=output_dir,
         )
-        report_path = run_data["report_path"]
+        report_path = finalized.report_path
         console.print(f"\n  [dim]📄 Report saved to {report_path}[/]")
 
     try:

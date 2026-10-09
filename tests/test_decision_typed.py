@@ -708,9 +708,8 @@ class TestDecisionRunner:
         monkeypatch.setattr(
             factory, "build_decision_adapter", lambda **_kw: FakeTypedBackend(cases)
         )
-        monkeypatch.setattr(plugin_runners, "_metadata_for_storage", lambda value: {})
         persisted: list[dict[str, Any]] = []
-        monkeypatch.setattr(plugin_runners, "_persist_plugin_run", persisted.append)
+        monkeypatch.setattr("tool_eval_bench.application.run_queries.persist_run", persisted.append)
 
         args = argparse.Namespace(parallel=4, timeout=5.0, format=None)
         console = Console(record=True, width=200)

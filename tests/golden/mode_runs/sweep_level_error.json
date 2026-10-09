@@ -1,0 +1,175 @@
+{
+  "run_data": {
+    "run_id": "<RUN_ID>",
+    "run_type": "context-pressure",
+    "status": "completed",
+    "config": {
+      "model": "m",
+      "base_url": "http://***:8000/v1",
+      "mode": "context-pressure-sweep",
+      "start": 0.5,
+      "end": 0.9,
+      "steps": 3,
+      "scenarios": [
+        "TC-01",
+        "TC-02"
+      ],
+      "config_fingerprint": "3c7fab97d908"
+    },
+    "scores": {
+      "levels": 3,
+      "breaking_point": 0.5,
+      "first_degradation": 0.7,
+      "level_results": [
+        {
+          "ratio": 0.5,
+          "results": {
+            "TC-01": "pass",
+            "TC-02": "pass"
+          },
+          "scenario_results": [
+            {
+              "scenario_id": "TC-01",
+              "status": "pass",
+              "points": 2,
+              "summary": "TC-01 pass",
+              "note": null,
+              "tool_calls_made": [
+                "get_weather(Berlin)"
+              ],
+              "expected_behavior": "call get_weather",
+              "duration_seconds": 1.5,
+              "turn_count": 2,
+              "raw_log": "trace for TC-01"
+            },
+            {
+              "scenario_id": "TC-02",
+              "status": "pass",
+              "points": 2,
+              "summary": "TC-02 pass",
+              "note": null,
+              "tool_calls_made": [
+                "get_weather(Berlin)"
+              ],
+              "expected_behavior": "call get_weather",
+              "duration_seconds": 1.5,
+              "turn_count": 2,
+              "raw_log": "trace for TC-02"
+            }
+          ],
+          "score_pct": 100.0,
+          "pass_count": 2,
+          "fill_tokens": 8272
+        },
+        {
+          "ratio": 0.7,
+          "results": {
+            "TC-01": "fail",
+            "TC-02": "fail"
+          },
+          "scenario_results": [
+            {
+              "scenario_id": "TC-01",
+              "status": "fail",
+              "points": 0,
+              "summary": "Sweep level failed: level exploded",
+              "note": null,
+              "tool_calls_made": [],
+              "expected_behavior": "",
+              "duration_seconds": 0.0,
+              "turn_count": 0,
+              "raw_log": "level exploded"
+            },
+            {
+              "scenario_id": "TC-02",
+              "status": "fail",
+              "points": 0,
+              "summary": "Sweep level failed: level exploded",
+              "note": null,
+              "tool_calls_made": [],
+              "expected_behavior": "",
+              "duration_seconds": 0.0,
+              "turn_count": 0,
+              "raw_log": "level exploded"
+            }
+          ],
+          "score_pct": 0,
+          "pass_count": 0,
+          "fill_tokens": 10340,
+          "error": "level exploded"
+        },
+        {
+          "ratio": 0.9,
+          "results": {
+            "TC-01": "pass",
+            "TC-02": "partial"
+          },
+          "scenario_results": [
+            {
+              "scenario_id": "TC-01",
+              "status": "pass",
+              "points": 2,
+              "summary": "TC-01 pass",
+              "note": null,
+              "tool_calls_made": [
+                "get_weather(Berlin)"
+              ],
+              "expected_behavior": "call get_weather",
+              "duration_seconds": 1.5,
+              "turn_count": 2,
+              "raw_log": "trace for TC-01"
+            },
+            {
+              "scenario_id": "TC-02",
+              "status": "partial",
+              "points": 1,
+              "summary": "TC-02 partial",
+              "note": null,
+              "tool_calls_made": [
+                "get_weather(Berlin)"
+              ],
+              "expected_behavior": "call get_weather",
+              "duration_seconds": 1.5,
+              "turn_count": 2,
+              "raw_log": "trace for TC-02"
+            }
+          ],
+          "score_pct": 50.0,
+          "pass_count": 1,
+          "fill_tokens": 14476
+        }
+      ]
+    },
+    "metadata": {
+      "tool_version": "0.0.0+golden",
+      "git_sha": "abc1234",
+      "hostname": "golden-host",
+      "platform_info": "Linux-golden",
+      "python_version": "3.13.0",
+      "model": "m",
+      "backend": "vllm",
+      "base_url": "http://***:8000/v1",
+      "temperature": 0.0,
+      "max_turns": 8,
+      "timeout_seconds": 120.0,
+      "seed": 7,
+      "scenario_selector": "TC-01,TC-02",
+      "trials": 1,
+      "parallel": 1,
+      "error_rate": 0.0,
+      "thinking_enabled": true,
+      "label": "golden | label",
+      "server_model_id": "org/model",
+      "server_model_root": "/models/org/model",
+      "engine_name": "vLLM",
+      "engine_version": "0.11.0",
+      "max_model_len": 32768,
+      "quantization": "fp8",
+      "gpu_count": 2,
+      "spec_decoding": "eagle3",
+      "slot_count": 4
+    },
+    "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
+  },
+  "report": "# Context Pressure Sweep — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: context-pressure-sweep\n- **tool-eval-bench**: `v0.0.0+golden abc1234`\n- **Backend**: vllm\n- **Server**: http://***:8000/v1\n- **Context Window**: 32,768 tokens\n- **Executed Levels**: 3\n- **Breaking Point**: 50%\n- **First Degradation**: 70%\n\n## Inference Engine\n\n| Property | Value |\n|---|---|\n| Engine | vLLM 0.11.0 |\n| Max Model Length | 32,768 |\n| Quantization | fp8 |\n| GPU Count | 2 |\n| Server Slots | 4 |\n| Spec Decoding | eagle3 |\n| Host | `golden-host` |\n| Platform | `Linux-golden` |\n| Python | 3.13.0 |\n\n## Level 1 — 50%\n\n- **Fill Tokens**: 8,272\n- **Pass Rate**: 100.0%\n\n### TC-01\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-01 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-01\n```\n\n### TC-02\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-02 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-02\n```\n\n## Level 2 — 70%\n\n- **Fill Tokens**: 10,340\n- **Pass Rate**: 0.0%\n- **Level Error**: level exploded\n\n### TC-01\n\n- **Status**: fail\n- **Points**: 0 / 2\n- **Summary**: Sweep level failed: level exploded\n- **Expected**: \n- **Tool Calls**: none\n\n#### Full trace\n\n```text\nlevel exploded\n```\n\n### TC-02\n\n- **Status**: fail\n- **Points**: 0 / 2\n- **Summary**: Sweep level failed: level exploded\n- **Expected**: \n- **Tool Calls**: none\n\n#### Full trace\n\n```text\nlevel exploded\n```\n\n## Level 3 — 90%\n\n- **Fill Tokens**: 14,476\n- **Pass Rate**: 50.0%\n\n### TC-01\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-01 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-01\n```\n\n### TC-02\n\n- **Status**: partial\n- **Points**: 1 / 2\n- **Summary**: TC-02 partial\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-02\n```\n"
+}

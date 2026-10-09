@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.spec_decode import per_position_acceptance
-from tool_eval_bench.storage.reports._common import (
-    _render_engine_context,
-    markdown_label,
-    report_filename,
-    tool_version_line,
-)
+from tool_eval_bench.storage.reports.mode import ModeReport, ReportContext, write_mode_report
 
 
 def write_spec_decode_report(
@@ -26,34 +20,31 @@ def write_spec_decode_report(
     run_context: RunContext | None = None,
 ) -> Path:
     """Write a Markdown report for speculative decoding benchmark results."""
-    now = datetime.now(timezone.utc)
-    folder = root / f"{now.year:04d}" / f"{now.month:02d}"
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / report_filename(run_id, label)
+    report = spec_decode_report(model, spec_samples, label=label, temperature=temperature)
+    return write_mode_report(root, run_id, report, run_context)
 
-    label_line = [f"- **Label**: {markdown_label(label)}"] if label else []
-    version_line = [tool_version_line(run_context)] if run_context is not None else []
-    md = [
-        f"# Speculative Decoding Benchmark — {model}",
-        "",
-        f"- **Run ID**: `{run_id}`",
-        f"- **Date**: `{now.isoformat()}`",
-        "- **Mode**: spec-bench",
-        *version_line,
-        *label_line,
-    ]
+
+def spec_decode_report(
+    model: str,
+    spec_samples: list[Any],
+    *,
+    label: str | None,
+    temperature: float | None,
+) -> ModeReport:
+    """Build the speculative decoding report content."""
+    header: list[str] = []
 
     # Detect method
     methods = {s.spec_method for s in spec_samples if hasattr(s, "spec_method")}
     method_str = ", ".join(sorted(methods)) if methods else "unknown"
-    md.append(f"- **Spec Method**: {method_str}")
+    header.append(f"- **Spec Method**: {method_str}")
     runs = {getattr(s, "runs", 1) for s in spec_samples}
     if runs and runs != {1}:
         runs_str = ", ".join(str(r) for r in sorted(runs))
-        md.append(f"- **Runs per cell**: {runs_str} (counters pooled, α range shown per row)")
+        header.append(f"- **Runs per cell**: {runs_str} (counters pooled, α range shown per row)")
     if temperature is not None:
         note = " (greedy: a ceiling for sampled workloads)" if temperature == 0 else ""
-        md.append(f"- **Temperature**: {temperature:g}{note}")
+        header.append(f"- **Temperature**: {temperature:g}{note}")
 
     # Check if acceptance rate is available
     has_ar = any(getattr(s, "acceptance_rate", None) is not None for s in spec_samples)
@@ -65,13 +56,13 @@ def write_spec_decode_report(
         else set()
     )
     if sources == {"response"}:
-        md.append("- **Acceptance Source**: per-request response metrics (exact)")
+        header.append("- **Acceptance Source**: per-request response metrics (exact)")
     elif sources == {"timings"}:
-        md.append("- **Acceptance Source**: per-request response timings (exact)")
+        header.append("- **Acceptance Source**: per-request response timings (exact)")
     elif sources:
-        md.append(f"- **Acceptance Source**: {', '.join(sorted(sources))}")
+        header.append(f"- **Acceptance Source**: {', '.join(sorted(sources))}")
         if "prometheus" in sources:
-            md.extend(
+            header.extend(
                 [
                     "",
                     "> [!NOTE]",
@@ -81,7 +72,7 @@ def write_spec_decode_report(
                 ]
             )
     if not has_ar:
-        md.extend(
+        header.extend(
             [
                 "",
                 "> [!NOTE]",
@@ -91,13 +82,8 @@ def write_spec_decode_report(
             ]
         )
 
-    md.append("")
-
-    if run_context is not None:
-        md.extend(_render_engine_context(run_context))
-
     # Results table
-    md.extend(["## Results", ""])
+    md = ["## Results", ""]
 
     has_draft = any(getattr(s, "draft_tps", None) is not None for s in spec_samples)
 
@@ -323,5 +309,13 @@ def write_spec_decode_report(
         ]
     )
 
-    path.write_text("\n".join(md), encoding="utf-8")
-    return path
+    return ModeReport(
+        title="Speculative Decoding Benchmark",
+        display_name=model,
+        mode="spec-bench",
+        label=label,
+        version_line=True,
+        context=ReportContext.ENGINE,
+        header=tuple(header),
+        body=tuple(md),
+    )

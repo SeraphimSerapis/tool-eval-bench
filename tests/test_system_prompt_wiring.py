@@ -172,8 +172,8 @@ def test_main_drops_an_override_no_scenario_would_receive(
     """main() must apply the mode gate, not merely define it."""
     import sys
 
+    from tool_eval_bench.application import run_queries
     from tool_eval_bench.cli import dispatch
-    from tool_eval_bench.storage import reports
     from tool_eval_bench.utils import metadata
 
     captured: list[dict[str, Any]] = []
@@ -187,10 +187,7 @@ def test_main_drops_an_override_no_scenario_would_receive(
     monkeypatch.setattr(dispatch, "_do_warmup", lambda *a, **k: None)
     monkeypatch.setattr(metadata, "collect_run_context", collect)
     monkeypatch.setattr(dispatch, "_run_llama_benchy", lambda *a, **k: [_sample()])
-    monkeypatch.setattr(
-        reports.MarkdownReporter, "write_throughput_report", lambda *a, **k: tmp_path / "p.md"
-    )
-    monkeypatch.setattr(dispatch, "_persist_plugin_run", lambda *a, **k: None)
+    monkeypatch.setattr(run_queries, "persist_run", lambda *a, **k: None)
     monkeypatch.setattr(
         sys,
         "argv",
