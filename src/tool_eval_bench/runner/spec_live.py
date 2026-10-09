@@ -642,12 +642,7 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
         )
 
     # Detect speculative decoding method from raw text
-    snap.spec_method = _detect_spec_method(text)
-    profile = engine_profile(snap.spec_backend)
-    if snap.spec_method == "unknown" and profile is not None and profile.fixed_spec_method:
-        # An engine with one proposer (Strata's MTP head) names its method
-        # when no label does.
-        snap.spec_method = profile.fixed_spec_method
+    snap.spec_method = _detect_spec_method(text, engine_profile(snap.spec_backend))
 
     # Extract model names from metric labels
     snap.model_names = _extract_model_names(text)

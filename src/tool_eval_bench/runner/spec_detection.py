@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from tool_eval_bench.domain.engines import (
     LLAMACPP,
     SPEC_COUNTER_ORDER,
+    EngineProfile,
     metrics_namespace_present,
 )
 from tool_eval_bench.domain.measurement import MeasurementClient
@@ -170,7 +171,7 @@ def _canonical_spec_method(value: str) -> str | None:
     return None
 
 
-def _detect_spec_method(text: str) -> str:
+def _detect_spec_method(text: str, profile: EngineProfile | None = None) -> str:
     """Detect a method only when a sample carries an explicit method label.
 
     No vLLM, SGLang, or llama.cpp exporter puts a method label on its
@@ -178,7 +179,17 @@ def _detect_spec_method(text: str) -> str:
     whose name says it holds the method counts. A model name, a path, or HELP
     text that happens to contain ``eagle`` or ``mtp`` says nothing about how
     the server drafts.
+
+    When no label names a method, *profile*'s ``fixed_spec_method`` does.
+    Detection and spec-live both resolve through here so they cannot disagree.
     """
+    method = _labelled_spec_method(text)
+    if method == "unknown" and profile is not None and profile.fixed_spec_method:
+        return profile.fixed_spec_method
+    return method
+
+
+def _labelled_spec_method(text: str) -> str:
     for match in _LABELLED_SAMPLE.finditer(text):
         name = match.group("name").lower()
         is_spec_series = "spec_decode" in name or name.startswith("sglang:spec_")
@@ -284,7 +295,7 @@ async def detect_spec_decoding(
                     if metrics_namespace_present(text, profile):
                         info.active = parse_prometheus_spec_metrics(text).draft_tokens > 0
                         info.has_per_request_timings = profile.absent_draft_n_is_zero
-                        info.method = profile.fixed_spec_method or "unknown"
+                        info.method = _detect_spec_method(text, profile)
                         info.detail = profile.spec_counter_detail or info.detail
                         break
                 else:
