@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from tool_eval_bench.domain.measurement import MeasurementClient, MeasurementClientFactory
 from tool_eval_bench.domain.spec_decode import per_position_acceptance
@@ -291,6 +292,47 @@ class SpecDecodeSample:
             return None
         rates = per_position_acceptance([(self.per_step_accepted, self.per_step_drafted)])
         return rates or None
+
+    def to_result(self) -> dict[str, Any]:
+        """The measurements a spec-bench run stores for this sample.
+
+        Derived metrics are included so history and export readers need not
+        reimplement them. Floats are raw, not the rounded figures the report
+        prints. The per-step arrays are left out: vLLM ``detailed`` mode reports
+        one entry per speculative step, thousands per request, and
+        ``per_position_acceptance`` keeps what they are used for.
+        """
+        range_ = self.acceptance_rate_range
+        return {
+            "prompt_type": self.prompt_type,
+            "depth": self.depth,
+            "runs": self.runs,
+            "spec_method": self.spec_method,
+            "pp_tokens": self.pp_tokens,
+            "tg_tokens": self.tg_tokens,
+            "concurrency": self.concurrency,
+            "ttft_ms": self.ttft_ms,
+            "total_ms": self.total_ms,
+            "pp_tps": self.pp_tps,
+            "tg_tps": self.tg_tps,
+            "effective_tg_tps": self.effective_tg_tps,
+            "goodput": self.goodput,
+            "baseline_tg_tps": self.baseline_tg_tps,
+            "speedup_ratio": self.speedup_ratio,
+            "acceptance_source": self.acceptance_source,
+            "acceptance_rate": self.acceptance_rate,
+            "acceptance_rate_range": list(range_) if range_ is not None else None,
+            "acceptance_length": self.acceptance_length,
+            "draft_tokens_delta": self.draft_tokens_delta,
+            "accepted_tokens_delta": self.accepted_tokens_delta,
+            "num_drafts_delta": self.num_drafts_delta,
+            "num_spec_tokens": self.num_spec_tokens,
+            "draft_window": self.draft_window,
+            "draft_tps": self.draft_tps,
+            "waste_ratio": self.waste_ratio,
+            "verify_steps_per_s": self.verify_steps_per_s,
+            "per_position_acceptance": self.per_position_acceptance,
+        }
 
     def apply_per_request_metrics(self, metrics: PerRequestSpecMetrics) -> None:
         """Fill acceptance fields from verified request-local counters."""
