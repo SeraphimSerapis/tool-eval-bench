@@ -163,7 +163,10 @@ def _take_positional(
     value = getattr(namespace, dest)
     for index, token in enumerate(tokens):
         if token is value:
-            return argv[index], argv[:index] + argv[index + 1 :]
+            # A "--" that only marked the positional (``resume -- RID``) has
+            # done its job; forwarding it would end option parsing early.
+            start = index - 1 if index > 0 and argv[index - 1] == "--" else index
+            return argv[index], argv[:start] + argv[index + 1 :]
     return None, argv
 
 

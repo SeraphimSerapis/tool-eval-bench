@@ -234,7 +234,6 @@ Combinations where a requested mode would never run exit 2 with
 | `--spec-live` or `--decision-live` with any other benchmark or monitor | A live monitor runs until Ctrl+C | Run the monitor on its own |
 | `--perf-only` with `--spec-bench`, `--context-pressure-sweep`, or a plugin | `--perf-only` stops after throughput | `--perf` |
 | `--context-pressure-sweep` with `--spec-bench` or a plugin | One of the two would not run | Separate invocations |
-| `--context-pressure-sweep` with `--skip-tool-eval` | The sweep is a tool-call scenario run | Drop `--skip-tool-eval` |
 | A `--<plugin>-only` flag with a different plugin's flag | `-only` runs that plugin alone | Plain plugin flags plus `--skip-tool-eval` |
 | `--resume` with `--context-pressure-sweep` or a mode that runs no tool-call scenarios | Nothing would be resumed | Resume with a scenario run |
 
@@ -307,7 +306,7 @@ tool-eval-bench decision-live --base-url http://host:8084
 tool-eval-bench --hardmode --seed 42 --perf --needle
 
 # Run all accuracy benchmarks (skip tool-call scenarios)
-tool-eval-bench --gsm8k-only --mmlu-only --ifeval-only
+tool-eval-bench --gsm8k --mmlu --ifeval --skip-tool-eval
 ```
 
 GSM8K, MMLU, and IFEval datasets are downloaded from HuggingFace on first use

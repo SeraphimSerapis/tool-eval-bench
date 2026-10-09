@@ -447,6 +447,7 @@ def test_scored_run_preflight_warmup_and_context_inputs(cli: Cli) -> None:
             "temperature": 0.3,
             "extra_params": extra,
             "headers": headers,
+            "display_url": BASE_URL,
         }
     ]
     assert cli.contexts == [

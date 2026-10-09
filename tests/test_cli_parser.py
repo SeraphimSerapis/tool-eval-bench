@@ -435,6 +435,9 @@ def test_finalize_plugin_run_renders_label_and_slugifies_filename(
         (["resume", "--label", "r-1", "r-1"], {"resume": "r-1", "label": "r-1"}),
         (["resume", "--label", "lab", "r-2"], {"resume": "r-2", "label": "lab"}),
         (["resume", "--header", "A=1", "run-9"], {"resume": "run-9", "header": ["A=1"]}),
+        # "--" marks the positional and is not forwarded to the flat parser.
+        (["resume", "--", "run-9"], {"resume": "run-9", "json": False}),
+        (["resume", "--json", "--", "run-9"], {"resume": "run-9", "json": True}),
         (
             ["plugin", "--base-url", "http://x", "gsm8k", "--limit", "5"],
             {"gsm8k_only": True, "base_url": "http://x", "gsm8k_limit": 5},
@@ -451,6 +454,10 @@ def test_subcommand_options_may_precede_the_positional(
     _, args = parse_cli_args(_make_parser, argv)
     for dest, value in expected.items():
         assert getattr(args, dest) == value
+
+
+def test_separator_before_the_run_id_is_dropped() -> None:
+    assert translate_argv(["resume", "--json", "--", "run-9"]) == ["--resume", "run-9", "--json"]
 
 
 @pytest.mark.parametrize(

@@ -707,6 +707,7 @@ def _check_endpoint_ready(
             temperature=args.temperature,
             extra_params=extra_params or None,
             headers=headers,
+            display_url=display_url,
         )
 
 
@@ -2091,8 +2092,12 @@ def _run_json(
         # Shareable output like a report, so a quoted request URL is redacted.
         message = _redact_urls(str(exc))
         # The error envelope predates run_failed and stays for consumers that
-        # read it; the event is what the documented error contract promises.
-        _emit_json_output({"error": message}, json_file=json_file, failed=True)
+        # read it; the event is what the documented error contract promises,
+        # so it is emitted even when the envelope cannot be written.
+        try:
+            _emit_json_output({"error": message}, json_file=json_file, failed=True)
+        except Exception as write_exc:
+            message = f"{message} (and the --json-file could not be written: {write_exc})"
         emit_run_failed(message)
         sys.exit(1)
 

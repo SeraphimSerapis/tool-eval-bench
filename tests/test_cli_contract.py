@@ -162,16 +162,20 @@ def test_resume_needs_a_scenario_run(cli: Cli, extra: list[str]) -> None:
             "--context-pressure-sweep cannot be combined with --needle",
         ),
         (
-            ["--context-pressure-sweep", "0.1-0.2", "--skip-tool-eval"],
-            "cannot be combined with --skip-tool-eval",
-        ),
-        (
             ["--gsm8k-only", "--mmlu"],
             "--gsm8k-only runs one plugin alone and cannot be combined with --mmlu",
         ),
         (
             ["--gsm8k-only", "--mmlu-only"],
             "--gsm8k-only runs one plugin alone and cannot be combined with --mmlu-only",
+        ),
+        (
+            ["--gsm8k", "--mmlu-only"],
+            "--mmlu-only runs one plugin alone and cannot be combined with --gsm8k",
+        ),
+        (
+            ["--perf", "--spec-bench", "--context-pressure-sweep", "0.1-0.2"],
+            "--context-pressure-sweep cannot be combined with --spec-bench",
         ),
     ],
 )
@@ -202,9 +206,11 @@ def test_a_mode_that_would_be_dropped_is_rejected(
         ["--perf", "--context-pressure-sweep", "0.1-0.2"],
         ["--gsm8k", "--mmlu", "--skip-tool-eval"],
         ["--spec-bench", "--gsm8k", "--skip-tool-eval"],
+        # The sweep is its own run, so --skip-tool-eval has nothing to drop.
+        ["--context-pressure-sweep", "0.1-0.2", "--skip-tool-eval"],
     ],
 )
-def test_combinations_where_every_mode_runs_are_accepted(cli: Cli, flags: list[str]) -> None:
+def test_combinations_where_every_mode_runs_are_not_rejected(cli: Cli, flags: list[str]) -> None:
     _fake_benchy(cli)
     cli.record("tool_eval_bench.cli.spec_bench", "run_spec_bench")
     cli.record("tool_eval_bench.cli.pressure", "run_pressure_sweep")
@@ -282,6 +288,31 @@ def test_preflight_failure_respects_the_display_url(
     assert "gpu.test" not in text and "hunter2" not in text
 
 
+@pytest.mark.parametrize("redact", [True, False])
+def test_warmup_failure_respects_the_display_url(
+    monkeypatch: pytest.MonkeyPatch, redact: bool
+) -> None:
+    from tool_eval_bench.cli.probe import warmup_server
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"refused by {request.url}", request=request)
+
+    _mock_http(monkeypatch, refuse)
+    console = Console(record=True, width=300)
+
+    warmup_server(
+        console,
+        SECRET_URL,
+        "m",
+        None,
+        display_url="http://***:8000/v1" if redact else SECRET_URL,
+    )
+
+    text = console.export_text()
+    assert "Warm-up failed" in text
+    assert ("gpu.test" in text) is not redact
+
+
 @pytest.mark.parametrize("url", ["http://user:hunter2@/v1", "https://user:hunter2@:8000"])
 def test_hostless_url_error_does_not_echo_userinfo(url: str) -> None:
     with pytest.raises(ValueError, match="missing a host") as exc_info:
@@ -304,6 +335,18 @@ def test_failed_run_with_json_file_writes_the_envelope_and_emits_run_failed(cli:
     assert "benchmark_complete" not in [event["event"] for event in events]
     assert events[-1]["error"] == "run_failed"
     assert events[-1]["message"] == envelope["error"]
+
+
+def test_unwritable_json_file_still_emits_run_failed(cli: Cli) -> None:
+    cli.service_error = RuntimeError("boom")
+    (cli.tmp_path / "taken").mkdir()
+
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--json-file", "taken")
+
+    assert outcome.code == 1
+    event = _events(outcome.err)[-1]
+    assert event["error"] == "run_failed"
+    assert event["message"].startswith("boom (and the --json-file could not be written")
 
 
 def test_successful_json_file_run_still_reports_completion(cli: Cli) -> None:
@@ -419,3 +462,41 @@ def test_dry_run_still_rejects_an_empty_selection_for_a_scenario_run(cli: Cli) -
 
     assert outcome.code == 2
     assert _events(outcome.err)[0]["error"] == "invalid_arguments"
+
+
+# --spec-bench routing ----------------------------------------------------------
+
+
+def test_failed_spec_bench_before_a_plugin_lets_the_plugin_decide(cli: Cli) -> None:
+    """--spec-bench --gsm8k --skip-tool-eval runs the plugin even after a failed cell."""
+    from tool_eval_bench.runner import speculative
+    from tool_eval_bench.runner.speculative import SpecDecodeSample
+
+    samples = [SpecDecodeSample(prompt_type="filler", error="HTTP 503")]
+
+    async def fake_run(*args: Any, on_sample: Any, **kwargs: Any) -> list[Any]:
+        for index, sample in enumerate(samples):
+            await on_sample(sample, index, len(samples))
+        return samples
+
+    cli.monkeypatch.setattr(speculative, "run_spec_bench", fake_run)
+
+    outcome = cli.run(
+        *CONNECTION,
+        "--spec-bench",
+        "--gsm8k",
+        "--skip-tool-eval",
+        "--depth",
+        "0",
+        "--json",
+        "--output-dir",
+        str(cli.tmp_path),
+    )
+
+    assert outcome.code == 0
+    assert len(cli.leaves["run_selected_plugins"]) == 1
+    failures = [event for event in _events(outcome.err) if event.get("error") == "run_failed"]
+    assert [event["message"] for event in failures] == [
+        "Speculative decoding benchmark failed in 1 cell(s)."
+    ]
+    assert cli.runs == []

@@ -124,8 +124,13 @@ def warmup_server(
     temperature: float = 0.0,
     extra_params: dict[str, Any] | None = None,
     headers: Mapping[str, str] | None = None,
+    display_url: str | None = None,
 ) -> None:
-    """Prime the model server before measuring benchmark behavior."""
+    """Prime the model server before measuring benchmark behavior.
+
+    A failure message is redacted when *display_url* (the ``--redact-url``
+    form) differs from *base_url*, as in :func:`preflight_model_check`.
+    """
     from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
     from tool_eval_bench.runner.throughput import (
         WARMUP_EXTRA_PARAMS,
@@ -176,4 +181,6 @@ def warmup_server(
             body = getattr(response, "text", "").strip()
             if body and body not in message:
                 message = f"{message}: {body[:300]}"
+            if display_url is not None and display_url != base_url:
+                message = redact_urls(message)
             console.print(f"  [bold yellow]⚠[/] Warm-up failed [dim]({message})[/]")

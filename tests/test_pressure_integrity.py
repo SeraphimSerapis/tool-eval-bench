@@ -90,6 +90,7 @@ def _sweep(
     run_all: Any,
     *,
     estimated: bool = False,
+    console: Console | None = None,
     **overrides: Any,
 ) -> tuple[list[dict[str, Any]], str]:
     """Run ``run_pressure_sweep`` with only the network faked.
@@ -127,7 +128,7 @@ def _sweep(
     settings.update(overrides)
     out = io.StringIO()
     pressure.run_pressure_sweep(
-        Console(file=out, force_terminal=False, width=200),
+        console or Console(file=out, force_terminal=False, width=200),
         "m",
         "m",
         "vllm",
@@ -529,6 +530,48 @@ def test_interrupted_sweep_withholds_the_breaking_point(
     assert scores["first_degradation"] == 0.625
     assert "withheld (interrupted after 2 of 5 levels)" in out
     assert "- **Breaking Point**: withheld (interrupted after 2 of 5 levels)" in _report(run)
+
+
+def test_a_sweep_interrupted_before_any_level_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        _sweep(
+            monkeypatch,
+            tmp_path,
+            ["TC-01"],
+            _levels(KeyboardInterrupt()),
+            console=Console(width=200),
+        )
+
+    # Nothing completed, so nothing is saved and the exit says so.
+    assert exc_info.value.code == 1
+    assert "Interrupted. No results collected." in capsys.readouterr().out
+
+
+def test_an_interrupted_sweep_with_no_level_is_run_failed_under_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+
+    from tool_eval_bench.cli.headless import HeadlessConsole
+
+    with pytest.raises(SystemExit) as exc_info:
+        _sweep(
+            monkeypatch,
+            tmp_path,
+            ["TC-01"],
+            _levels(KeyboardInterrupt()),
+            console=HeadlessConsole(),
+        )
+
+    assert exc_info.value.code == 1
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert events[-1] == {
+        "event": "error",
+        "error": "run_failed",
+        "message": "Interrupted. No results collected.",
+    }
 
 
 def test_a_finished_sweep_is_not_marked_interrupted(

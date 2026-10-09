@@ -101,11 +101,6 @@ def mode_conflict(args: argparse.Namespace) -> str | None:
             return "--context-pressure-sweep cannot be combined with --spec-bench"
         if plugins:
             return f"--context-pressure-sweep cannot be combined with {plugins[0]}"
-        if args.skip_tool_eval:
-            return (
-                "--context-pressure-sweep runs tool-call scenarios and cannot be combined "
-                "with --skip-tool-eval"
-            )
 
     only = [flag for flag in plugins if flag.endswith("-only")]
     if only:
