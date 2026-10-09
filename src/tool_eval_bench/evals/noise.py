@@ -6,7 +6,10 @@ models can extract the relevant fields from noisy payloads.
 
 All enrichment is deterministic (no randomness) so benchmarks stay reproducible.
 Enrichment wraps *around* existing data — core fields stay identical so
-evaluators continue to work unchanged.
+evaluators continue to work unchanged.  A noise field is added only when the
+scenario's payload does not already declare that key, so a fixture value is
+never replaced or dropped.  Payload keys keep their original order, with the
+noise fields appended after them.
 """
 
 from __future__ import annotations
@@ -31,6 +34,26 @@ def _seeded_id(prefix: str, seed: int) -> str:
     return f"{prefix}{seed:08x}"
 
 
+def _with_noise(payload: dict[str, Any], noise: dict[str, Any]) -> dict[str, Any]:
+    """Append each noise field the payload does not already declare.
+
+    Payload keys come first and in their original order, so the serialized
+    result differs from the payload only by the appended fields.
+    """
+    return {**payload, **{key: value for key, value in noise.items() if key not in payload}}
+
+
+def _with_results(
+    payload: dict[str, Any], results: list[Any], noise: dict[str, Any]
+) -> dict[str, Any]:
+    """Rebuild a list-shaped response: ``results`` first, then the rest.
+
+    Keeps every other top-level key the payload declared, ahead of the noise.
+    """
+    rest = {key: value for key, value in payload.items() if key != "results"}
+    return _with_noise({"results": results, **rest}, noise)
+
+
 # ---------------------------------------------------------------------------
 # Per-tool enrichment functions
 # ---------------------------------------------------------------------------
@@ -39,21 +62,23 @@ def _seeded_id(prefix: str, seed: int) -> str:
 def enrich_weather(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to weather responses."""
     seed = _seed_from_payload(payload, "weather")
-    return {
-        **payload,
-        "wind_speed_kmh": 14.2 + (seed % 20) / 10.0,
-        "wind_direction": ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][seed % 8],
-        "uv_index": max(1, seed % 6),
-        "visibility_km": 9.8,
-        "pressure_hpa": 1008 + seed % 20,
-        "feels_like": payload.get("temperature", 0) - 2,
-        "dew_point": payload.get("temperature", 0) - 5,
-        "forecast_summary": "Conditions expected to remain similar for the next 6 hours.",
-        "last_updated": "2026-03-20T12:00:00Z",
-        "data_source": "National Weather Service",
-        "station_id": _seeded_id("WXSTN-", seed),
-        "request_id": _seeded_id("req_wx_", seed),
-    }
+    return _with_noise(
+        payload,
+        {
+            "wind_speed_kmh": 14.2 + (seed % 20) / 10.0,
+            "wind_direction": ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][seed % 8],
+            "uv_index": max(1, seed % 6),
+            "visibility_km": 9.8,
+            "pressure_hpa": 1008 + seed % 20,
+            "feels_like": payload.get("temperature", 0) - 2,
+            "dew_point": payload.get("temperature", 0) - 5,
+            "forecast_summary": "Conditions expected to remain similar for the next 6 hours.",
+            "last_updated": "2026-03-20T12:00:00Z",
+            "data_source": "National Weather Service",
+            "station_id": _seeded_id("WXSTN-", seed),
+            "request_id": _seeded_id("req_wx_", seed),
+        },
+    )
 
 
 def enrich_search(payload: dict[str, Any]) -> dict[str, Any]:
@@ -63,28 +88,33 @@ def enrich_search(payload: dict[str, Any]) -> dict[str, Any]:
     enriched_results = []
     for i, r in enumerate(results):
         enriched_results.append(
-            {
-                **r,
-                "url": f"https://example.com/result/{i + 1}",
-                "rank": i + 1,
-                "relevance_score": round(0.95 - i * 0.05, 2),
-                "published_date": "2026-03-18",
-                "source_domain": "example.com",
-                "language": "en",
-            }
+            _with_noise(
+                r,
+                {
+                    "url": f"https://example.com/result/{i + 1}",
+                    "rank": i + 1,
+                    "relevance_score": round(0.95 - i * 0.05, 2),
+                    "published_date": "2026-03-18",
+                    "source_domain": "example.com",
+                    "language": "en",
+                },
+            )
         )
-    return {
-        "results": enriched_results,
-        "total_results": 1200 + seed % 200,
-        "page": 1,
-        "per_page": 5,
-        "query_time_ms": 30 + seed % 40,
-        "source_engine": "web-index-v3",
-        "cached": False,
-        "safe_search": True,
-        "related_queries": ["similar topic", "related question"],
-        "request_id": _seeded_id("req_ws_", seed),
-    }
+    return _with_results(
+        payload,
+        enriched_results,
+        {
+            "total_results": 1200 + seed % 200,
+            "page": 1,
+            "per_page": 5,
+            "query_time_ms": 30 + seed % 40,
+            "source_engine": "web-index-v3",
+            "cached": False,
+            "safe_search": True,
+            "related_queries": ["similar topic", "related question"],
+            "request_id": _seeded_id("req_ws_", seed),
+        },
+    )
 
 
 def enrich_file_search(payload: dict[str, Any]) -> dict[str, Any]:
@@ -93,75 +123,86 @@ def enrich_file_search(payload: dict[str, Any]) -> dict[str, Any]:
     enriched_results = []
     for r in results:
         enriched_results.append(
-            {
-                **r,
-                "size_bytes": 28_416,
-                "modified_at": "2026-03-15T09:22:11Z",
-                "created_at": "2026-02-10T14:00:00Z",
-                "owner": "system",
-                "path": f"/documents/{r.get('name', 'unknown')}",
-                "permissions": "read",
-                "content_type": "application/octet-stream",
-            }
+            _with_noise(
+                r,
+                {
+                    "size_bytes": 28_416,
+                    "modified_at": "2026-03-15T09:22:11Z",
+                    "created_at": "2026-02-10T14:00:00Z",
+                    "owner": "system",
+                    "path": f"/documents/{r.get('name', 'unknown')}",
+                    "permissions": "read",
+                    "content_type": "application/octet-stream",
+                },
+            )
         )
-    return {
-        "results": enriched_results,
-        "total_matches": len(results),
-        "search_time_ms": 18,
-        "index_version": "idx-2026.03",
-        "request_id": "req_fs_3d4a8e2b",
-    }
+    return _with_results(
+        payload,
+        enriched_results,
+        {
+            "total_matches": len(results),
+            "search_time_ms": 18,
+            "index_version": "idx-2026.03",
+            "request_id": "req_fs_3d4a8e2b",
+        },
+    )
 
 
 def enrich_file_read(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to file read responses."""
     content = payload.get("content", "")
-    return {
-        **payload,
-        "encoding": "utf-8",
-        "mime_type": "text/plain",
-        "size_bytes": len(content.encode("utf-8")) if isinstance(content, str) else 0,
-        "last_modified": "2026-03-15T09:22:11Z",
-        "version": 3,
-        "permissions": {"read": True, "write": False},
-        "line_count": content.count("\n") + 1 if isinstance(content, str) else 0,
-        "request_id": "req_rf_1b5c7d3e",
-    }
+    return _with_noise(
+        payload,
+        {
+            "encoding": "utf-8",
+            "mime_type": "text/plain",
+            "size_bytes": len(content.encode("utf-8")) if isinstance(content, str) else 0,
+            "last_modified": "2026-03-15T09:22:11Z",
+            "version": 3,
+            "permissions": {"read": True, "write": False},
+            "line_count": content.count("\n") + 1 if isinstance(content, str) else 0,
+            "request_id": "req_rf_1b5c7d3e",
+        },
+    )
 
 
 def enrich_email(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to email send responses."""
-    return {
-        **payload,
-        "timestamp": "2026-03-20T12:05:33Z",
-        "thread_id": "thread_e9a1f4c2",
-        "headers": {
-            "X-Mailer": "tool-eval-bench/1.0",
-            "Content-Type": "text/plain; charset=utf-8",
-            "X-Priority": "3",
+    return _with_noise(
+        payload,
+        {
+            "timestamp": "2026-03-20T12:05:33Z",
+            "thread_id": "thread_e9a1f4c2",
+            "headers": {
+                "X-Mailer": "tool-eval-bench/1.0",
+                "Content-Type": "text/plain; charset=utf-8",
+                "X-Priority": "3",
+            },
+            "delivery_status": "accepted",
+            "queue_position": 0,
+            "estimated_delivery": "2026-03-20T12:05:35Z",
+            "request_id": "req_em_5f2a9c1d",
         },
-        "delivery_status": "accepted",
-        "queue_position": 0,
-        "estimated_delivery": "2026-03-20T12:05:35Z",
-        "request_id": "req_em_5f2a9c1d",
-    }
+    )
 
 
 def enrich_calendar(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to calendar event responses."""
-    return {
-        **payload,
-        "calendar_id": "cal_primary",
-        "created_at": "2026-03-20T12:00:00Z",
-        "updated_at": "2026-03-20T12:00:00Z",
-        "organizer": {"email": "user@company.com", "display_name": "Current User"},
-        "reminders": {"use_default": True, "overrides": []},
-        "conference_link": None,
-        "visibility": "default",
-        "color_id": "7",
-        "recurrence": None,
-        "request_id": "req_ce_4a1d8b3f",
-    }
+    return _with_noise(
+        payload,
+        {
+            "calendar_id": "cal_primary",
+            "created_at": "2026-03-20T12:00:00Z",
+            "updated_at": "2026-03-20T12:00:00Z",
+            "organizer": {"email": "user@company.com", "display_name": "Current User"},
+            "reminders": {"use_default": True, "overrides": []},
+            "conference_link": None,
+            "visibility": "default",
+            "color_id": "7",
+            "recurrence": None,
+            "request_id": "req_ce_4a1d8b3f",
+        },
+    )
 
 
 def enrich_contacts(payload: dict[str, Any]) -> dict[str, Any]:
@@ -187,12 +228,15 @@ def enrich_contacts(payload: dict[str, Any]) -> dict[str, Any]:
         if "role" not in r and "title" not in r:
             enriched["title"] = "Team Member"
         enriched_results.append(enriched)
-    return {
-        "results": enriched_results,
-        "total_contacts": len(results),
-        "directory_version": "2026.03",
-        "request_id": "req_ct_6e3b2a1c",
-    }
+    return _with_results(
+        payload,
+        enriched_results,
+        {
+            "total_contacts": len(results),
+            "directory_version": "2026.03",
+            "request_id": "req_ct_6e3b2a1c",
+        },
+    )
 
 
 def enrich_stock(payload: dict[str, Any]) -> dict[str, Any]:
@@ -206,63 +250,71 @@ def enrich_stock(payload: dict[str, Any]) -> dict[str, Any]:
     previous_close = (
         round(price - float(change), 2) if change is not None else round(price - 1.23, 2)
     )
-    return {
-        **payload,
-        "timestamp": "2026-03-20T16:00:00Z",
-        "exchange": "NASDAQ",
-        "volume": 52_314_800,
-        "market_cap": "2.89T",
-        "pe_ratio": 28.4,
-        "day_high": round(price * 1.012, 2),
-        "day_low": round(price * 0.988, 2),
-        "week_52_high": round(price * 1.25, 2),
-        "week_52_low": round(price * 0.72, 2),
-        "previous_close": previous_close,
-        "after_hours": None,
-        "request_id": "req_sp_8c1d4e2a",
-    }
+    return _with_noise(
+        payload,
+        {
+            "timestamp": "2026-03-20T16:00:00Z",
+            "exchange": "NASDAQ",
+            "volume": 52_314_800,
+            "market_cap": "2.89T",
+            "pe_ratio": 28.4,
+            "day_high": round(price * 1.012, 2),
+            "day_low": round(price * 0.988, 2),
+            "week_52_high": round(price * 1.25, 2),
+            "week_52_low": round(price * 0.72, 2),
+            "previous_close": previous_close,
+            "after_hours": None,
+            "request_id": "req_sp_8c1d4e2a",
+        },
+    )
 
 
 def enrich_translation(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to translation responses."""
     text = payload.get("translated", "")
-    return {
-        **payload,
-        "source_detected": "en",
-        "confidence": 0.98,
-        "alternatives": [],
-        "word_count": len(text.split()) if isinstance(text, str) else 0,
-        "character_count": len(text) if isinstance(text, str) else 0,
-        "api_version": "v3.1",
-        "model": "nmt-2026",
-        "request_id": "req_tr_2b7a5d1e",
-    }
+    return _with_noise(
+        payload,
+        {
+            "source_detected": "en",
+            "confidence": 0.98,
+            "alternatives": [],
+            "word_count": len(text.split()) if isinstance(text, str) else 0,
+            "character_count": len(text) if isinstance(text, str) else 0,
+            "api_version": "v3.1",
+            "model": "nmt-2026",
+            "request_id": "req_tr_2b7a5d1e",
+        },
+    )
 
 
 def enrich_code_execution(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to code execution responses."""
-    return {
-        **payload,
-        "execution_time_ms": 12,
-        "memory_used_kb": 2048,
-        "sandbox_id": "sandbox_f3a1c9d2",
-        "runtime_version": "3.11.8",
-        "cpu_time_ms": 8,
-        "wall_time_ms": 14,
-        "request_id": "req_rc_9d3f1a2c",
-    }
+    return _with_noise(
+        payload,
+        {
+            "execution_time_ms": 12,
+            "memory_used_kb": 2048,
+            "sandbox_id": "sandbox_f3a1c9d2",
+            "runtime_version": "3.11.8",
+            "cpu_time_ms": 8,
+            "wall_time_ms": 14,
+            "request_id": "req_rc_9d3f1a2c",
+        },
+    )
 
 
 def enrich_reminder(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to reminder responses."""
-    return {
-        **payload,
-        "created_at": "2026-03-20T12:00:00Z",
-        "notification_channels": ["push", "email"],
-        "repeat": None,
-        "priority": "normal",
-        "request_id": "req_rm_4c2a1d3b",
-    }
+    return _with_noise(
+        payload,
+        {
+            "created_at": "2026-03-20T12:00:00Z",
+            "notification_channels": ["push", "email"],
+            "repeat": None,
+            "priority": "normal",
+            "request_id": "req_rm_4c2a1d3b",
+        },
+    )
 
 
 def enrich_generic_error(payload: dict[str, Any]) -> dict[str, Any]:
@@ -274,14 +326,19 @@ def enrich_generic_error(payload: dict[str, Any]) -> dict[str, Any]:
     """
     seed = _seed_from_payload(payload, "error")
     code = str(payload.get("error_code") or "ERR_TOOL_UNAVAILABLE")
-    return {
-        **payload,
-        "error_code": code,
-        "timestamp": "2026-03-20T12:00:00Z",
-        "trace_id": _seeded_id("trace_", seed),
-        "documentation_url": f"https://docs.example.com/errors/{code}",
-        "request_id": _seeded_id("req_err_", seed),
-    }
+    enriched = _with_noise(
+        payload,
+        {
+            "error_code": code,
+            "timestamp": "2026-03-20T12:00:00Z",
+            "trace_id": _seeded_id("trace_", seed),
+            "documentation_url": f"https://docs.example.com/errors/{code}",
+            "request_id": _seeded_id("req_err_", seed),
+        },
+    )
+    # A missing or empty code still gets the generic one, in the same position.
+    enriched["error_code"] = code
+    return enriched
 
 
 # ---------------------------------------------------------------------------

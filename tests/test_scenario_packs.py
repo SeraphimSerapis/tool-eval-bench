@@ -95,6 +95,36 @@ class TestPackLoading:
         with pytest.raises(ValueError, match="collide with the public suite"):
             resolve_scenarios(_args(scenario_pack=[str(tmp_path / "clash")]))
 
+    @pytest.mark.parametrize(
+        ("scenario_id", "flags"),
+        [
+            pytest.param("TC-70", {}, id="hardmode-id-without-hardmode"),
+            pytest.param("TC-20", {"short": True}, id="extended-id-with-short"),
+            pytest.param("TC-01", {"hardmode_only": True}, id="core-id-with-hardmode-only"),
+            pytest.param("TC-05", {"pack_only": True}, id="core-id-with-pack-only"),
+        ],
+    )
+    def test_a_collision_outside_the_selection_is_still_rejected(
+        self, tmp_path: Path, scenario_id: str, flags: dict[str, object]
+    ) -> None:
+        _write_pack(tmp_path / "clash", scenario_id)
+
+        with pytest.raises(ValueError, match=f"collide with the public suite: {scenario_id}"):
+            resolve_scenarios(_args(scenario_pack=[str(tmp_path / "clash")], **flags))
+
+    def test_the_python_api_loader_applies_the_same_rule(self, tmp_path: Path) -> None:
+        _write_pack(tmp_path / "clash", "HO-1", "TC-92")
+
+        with pytest.raises(ValueError, match="collide with the public suite: TC-92$"):
+            load_scenario_packs([str(tmp_path / "clash")])
+
+    def test_a_non_colliding_pack_loads_alongside_hard_mode(self, tmp_path: Path) -> None:
+        resolved = resolve_scenarios(
+            _args(scenario_pack=[str(_write_pack(tmp_path / "p", "HO-1"))], hardmode=True)
+        )
+
+        assert "HO-1" in {s.id for s in resolved}
+
 
 class TestPackContentHash:
     def test_hash_is_stable_for_identical_content(self, tmp_path: Path) -> None:

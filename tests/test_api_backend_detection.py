@@ -143,16 +143,17 @@ async def test_unset_spellings_are_detected_and_unidentified_ones_record_unknown
 
 
 @pytest.mark.parametrize(
-    "kwargs",
+    ("kwargs", "message"),
     [
-        {"wire_format": "bogus"},
-        {"system_prompt": "   "},
+        ({"wire_format": "bogus"}, "bogus"),
+        ({"system_prompt": "   "}, "system"),
+        ({"scenarios": []}, "No scenarios to run"),
     ],
 )
-async def test_invalid_arguments_fail_before_any_request(monkeypatch, kwargs):
+async def test_invalid_arguments_fail_before_any_request(monkeypatch, kwargs, message):
     requests = serve(monkeypatch, SERVERS["vllm"])
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=message):
         await _run(**kwargs)
 
     assert requests == []

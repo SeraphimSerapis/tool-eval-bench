@@ -138,7 +138,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--no-think` | Disable thinking/reasoning (critical for Qwen3/DeepSeek) |
 | `--no-warmup` | Skip server warm-up request |
 | `--hardmode` | Include 23 Hard Mode scenarios (Category P) |
-| `--categories A B K` | Run only specific categories (A–P) |
+| `--categories A B K` | Run only specific categories (A–P). P needs `--hardmode`; a filter that matches no scenario is a usage error (exit 2) |
 | `--scenarios TC-01 TC-07` | Run specific scenario IDs |
 | `--perf` | Also run throughput benchmark |
 | `--trials N` | Run N trials for statistical analysis |

@@ -8,17 +8,17 @@ description: >
   the work.
 user_message: Email the Q3 summary to Priya.
 expected_tool_calls:
-  - tool: find_contact
+  - tool: get_contacts
     arguments:
-      name: Priya
+      query: Priya
   - tool: send_email
     arguments:
       to: priya@example.com
       subject: Q3 summary
 tool_responses:
-  find_contact:
+  get_contacts:
     - match:
-        name: Priya
+        query: Priya
       response:
         name: Priya Raman
         email: priya@example.com

@@ -203,6 +203,10 @@ async def run_benchmark(
     # Validated before any probe request, so a bad prompt fails without I/O.
     if system_prompt is not None:
         system_prompt = normalize_system_prompt(system_prompt)
+    # Likewise an empty selection; the service refuses it too, but only after
+    # the probe requests above have been sent.
+    if not resolved:
+        raise ValueError("No scenarios to run")
 
     backend = await detect_backend(
         backend, base_url=base_url, api_key=api_key, wire_format=wire_format, probe=probe_engine

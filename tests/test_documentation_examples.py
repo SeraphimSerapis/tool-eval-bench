@@ -47,7 +47,11 @@ def test_the_yaml_example_loads(yaml_example: ScenarioDefinition) -> None:
     assert yaml_example.category is not None
 
 
-def test_the_yaml_example_shows_the_partial_tier(yaml_example: ScenarioDefinition) -> None:
+# The model receives the JSON number 214.3, so a faithful echo must pass too.
+@pytest.mark.parametrize("answer", ["AAPL is at 214.30.", "AAPL is at 214.3.", "AAPL: $214.30"])
+def test_the_yaml_example_shows_the_partial_tier(
+    yaml_example: ScenarioDefinition, answer: str
+) -> None:
     """The guide claims answer_contains reaches PARTIAL. Prove it does."""
     priced = ToolCallRecord(
         id="c1", name="get_stock_price", arguments={"ticker": "AAPL"}, raw_arguments="{}", turn=1
@@ -55,7 +59,7 @@ def test_the_yaml_example_shows_the_partial_tier(yaml_example: ScenarioDefinitio
 
     complete = ScenarioState()
     complete.tool_calls.append(priced)
-    complete.final_answer = "AAPL is at 214.30."
+    complete.final_answer = answer
 
     silent = ScenarioState()
     silent.tool_calls.append(priced)

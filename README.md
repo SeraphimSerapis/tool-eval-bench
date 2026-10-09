@@ -273,7 +273,8 @@ code is in [docs/cli-reference.md](docs/cli-reference.md). Flat invocations
 Scenario IDs passed to `--scenarios` resolve against all 92, so `--scenarios
 TC-85` works without `--hardmode` and takes precedence over `--short` and
 `--categories`. Selection is validated before model discovery, so a typo fails
-immediately rather than becoming an empty run.
+immediately rather than becoming an empty run. So does a filter that matches
+nothing, such as `--categories P` without `--hardmode`.
 
 Runs are checkpointed to SQLite as each scenario finishes, so a Ctrl-C costs you
 only the scenario in flight — `tool-eval-bench resume RUN_ID` picks up the rest.

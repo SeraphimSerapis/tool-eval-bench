@@ -503,6 +503,15 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
     return throughput_samples, True
 
 
+def _reject_unknown_categories(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    invalid = {c.upper() for c in args.categories or []} - _VALID_CATEGORIES
+    if invalid:
+        parser.error(
+            f"Unknown categories: {', '.join(sorted(invalid))}. "
+            f"Valid: {', '.join(sorted(_VALID_CATEGORIES))}"
+        )
+
+
 def _validate_scenario_selection(
     args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console
 ) -> None:
@@ -523,12 +532,7 @@ def _validate_scenario_selection(
         console.print(f"  [dim]🔒 Held-out packs: {names} — {total} scenario(s)[/]")
 
     if args.categories:
-        invalid = {c.upper() for c in args.categories} - _VALID_CATEGORIES
-        if invalid:
-            parser.error(
-                f"Unknown categories: {', '.join(sorted(invalid))}. "
-                f"Valid: {', '.join(sorted(_VALID_CATEGORIES))}"
-            )
+        _reject_unknown_categories(args, parser)
         cats = [c.upper() for c in args.categories]
         from tool_eval_bench.domain.scenarios import CATEGORY_LABELS
 
@@ -633,6 +637,9 @@ def _any_plugin_selected(args: argparse.Namespace) -> bool:
 
 def _sends_system_prompt(args: argparse.Namespace) -> bool:
     """Whether this invocation runs tool-call scenarios, the override's only consumer.
+
+    Also gates the checks that only matter when scenarios run, such as rejecting
+    an empty scenario selection.
 
     Mirrors the routing in ``main()``: ``--perf-only``, ``--spec-live``, a lone
     ``--spec-bench``, any ``--<plugin>-only`` run, and ``--skip-tool-eval`` all
@@ -914,18 +921,30 @@ def _validate_explicit_scenarios(args: argparse.Namespace, parser: argparse.Argu
     # Validate explicit scenario IDs before server discovery or benchmark
     # requests. This keeps a typo from turning into an empty run or a server
     # failure. Probe/history/dry-run keep their own command semantics.
-    if not args.probe:
-        if args.scenario_pack and args.context_pressure_sweep is not None:
-            # The sweep report renders every trace and its config records no
-            # pack attestation, so running a held-out pack there would publish it.
-            parser.error(
-                "--scenario-pack cannot be combined with --context-pressure-sweep: "
-                "the sweep report publishes full traces"
-            )
-        try:
-            _resolve_scenarios(args)
-        except ValueError as exc:
-            parser.error(str(exc))
+    if args.probe:
+        return
+    if args.scenario_pack and args.context_pressure_sweep is not None:
+        # The sweep report renders every trace and its config records no
+        # pack attestation, so running a held-out pack there would publish it.
+        parser.error(
+            "--scenario-pack cannot be combined with --context-pressure-sweep: "
+            "the sweep report publishes full traces"
+        )
+    try:
+        resolved = _resolve_scenarios(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    # A filter that matches nothing would otherwise persist a completed
+    # 0-scenario run scored 0.  Modes that never send scenarios (--perf-only,
+    # plugin-only, --skip-tool-eval) ignore the selection, and a resume runs
+    # whatever its checkpoint left, which may legitimately be nothing.
+    if not resolved and not getattr(args, "resume", None) and _sends_system_prompt(args):
+        _reject_unknown_categories(args, parser)
+        message = "No scenarios matched the selected filters"
+        requested = {c.upper() for c in args.categories or []}
+        if "P" in requested and not (args.hardmode or args.hardmode_only):
+            message += "; Category P is Hard Mode, so add --hardmode"
+        parser.error(message)
 
 
 def _resolve_endpoint(

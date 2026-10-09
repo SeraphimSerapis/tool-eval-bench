@@ -249,6 +249,29 @@ async def test_fully_checkpointed_interruption_finalizes_without_rerunning_outco
 
 
 @pytest.mark.asyncio
+async def test_an_empty_selection_outside_resume_is_refused_before_anything_is_stored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed 0-scenario run would be stored and ranked as a real score of 0."""
+    from tool_eval_bench.application import service as service_module
+    from tool_eval_bench.application.service import BenchmarkService
+
+    run_all = AsyncMock()
+    monkeypatch.setattr(service_module, "run_all_scenarios", run_all)
+    repo = MagicMock()
+    service = BenchmarkService(repo=repo, reporter=MagicMock())
+    monkeypatch.setattr(service, "_adapter_for", lambda *_args, **_kwargs: object())
+
+    with pytest.raises(ValueError, match="No scenarios to run"):
+        await service.run_benchmark(
+            model="test-model", backend="vllm", base_url="http://localhost:8000", scenarios=[]
+        )
+
+    run_all.assert_not_awaited()
+    repo.upsert_scenario_run.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_report_failure_does_not_store_completed_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
