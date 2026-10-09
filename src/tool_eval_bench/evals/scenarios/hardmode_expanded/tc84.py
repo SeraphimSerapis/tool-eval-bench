@@ -374,9 +374,16 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     # ROOM_TAKEN says the earlier availability is stale and to search again.
     # Rebooking from the old list worked here only because the mock kept 5B
-    # free; the recovery has to rest on a search made after the failure.
-    fresh_search = any(
-        first_failure.turn < call.turn < booking.turn for call in discovery_calls["search_rooms"]
+    # free; the recovery has to rest on a search made after the failure. That
+    # holds for every fallback attempt, including one --error-rate failed: the
+    # model still rebooked from the stale list before it retried.
+    fresh_search = all(
+        any(
+            first_failure.turn < call.turn < attempt.turn
+            for call in discovery_calls["search_rooms"]
+        )
+        for attempt in bookings
+        if _tc84_room_id(attempt) == "berlin_5b" and attempt.turn > first_failure.turn
     )
     if failure_ok and booking_ok and email_ok and workflow_ordered:
         if not fresh_search:

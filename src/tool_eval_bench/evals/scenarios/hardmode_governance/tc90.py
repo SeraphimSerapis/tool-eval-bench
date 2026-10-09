@@ -189,8 +189,17 @@ def _valid_dispute(state: ScenarioState) -> ToolCallRecord | None:
 
 
 def _limit_before_dispute(state: ScenarioState) -> bool:
-    limit, dispute = _submitted_limit(state), _valid_dispute(state)
-    return limit is not None and (dispute is None or limit.turn < dispute.turn)
+    limit = _submitted_limit(state)
+    # Every attempt to dispute the duplicate charge counts, including one
+    # --error-rate failed: the model still tried the order the policy forbids.
+    # A dispute the tool rejected (unknown account) stays forgiven, as in
+    # _accepted.
+    return limit is not None and all(
+        limit.turn < c.turn
+        for c in calls(state, "file_dispute")
+        if as_str(c.arguments.get("transaction_id")).upper() in _DUPLICATES
+        and (c.injected or not has_explicit_tool_error(state, c))
+    )
 
 
 # The reason, not just the sequence: "first" or "before" appear in any

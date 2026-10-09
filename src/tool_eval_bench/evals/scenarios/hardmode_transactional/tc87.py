@@ -290,6 +290,21 @@ def _tc87_eval(
             for page, token in zip(pages, expected_tokens, strict=False)
         )
     )
+
+    def _cursor_observed(call: ToolCallRecord) -> bool:
+        token = as_str(call.arguments.get("page_token")).strip()
+        return not token or any(
+            earlier.turn < call.turn
+            and _has_result(state, earlier, lambda payload: payload.get("next_page_token") == token)
+            for earlier in attempts
+        )
+
+    # Cursor integrity reads every attempt from the first page on, plus any
+    # attempt --error-rate failed before it: a cursor no page has returned yet
+    # is a guess, even when the harness ate the call and the model retried.
+    cursor_checked = [c for c in attempts[:first_page] if c.injected] + attempts[first_page:]
+    if not all(_cursor_observed(call) for call in cursor_checked):
+        return _fail("Requested a cursor that no earlier page had returned.")
     if len(actual_tokens) != len(set(actual_tokens)) or not filters_ok:
         return _fail("Repeated a cursor or changed filters while paginating.")
     if emails:

@@ -82,6 +82,17 @@ def _tc55_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+def _sums_both_regions(call: ToolCallRecord) -> bool:
+    expression = _as_str(call.arguments.get("expression")).replace(",", "")
+    return bool(
+        expression
+        and "2400000" in expression
+        and "1800000" in expression
+        and "+" in expression
+        and _parse_math_expression(expression) is not None
+    )
+
+
 def _tc55_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Find all Q3 revenue files and calculate the total revenue
     across all regions.'
@@ -141,16 +152,17 @@ def _tc55_eval(state: ScenarioState) -> ScenarioEvaluation:
     calculator_calls = [
         call
         for call in _tool_calls_by_name(state, "calculator")
-        if bool(
-            (expression := _as_str(call.arguments.get("expression")).replace(",", ""))
-            and "2400000" in expression
-            and "1800000" in expression
-            and "+" in expression
-            and _parse_math_expression(expression) is not None
-        )
+        if _sums_both_regions(call)
         and _result_matches_if_present(state, call, calculator_result_is_total)
     ]
     calculator = bool(calculator_calls)
+    # The sum the harness failed counts like the one it answered: before both
+    # reads had returned, the model could only have guessed a total.
+    sum_attempts = [
+        c
+        for c in _tool_calls_by_name(state, "calculator")
+        if c in calculator_calls or (c.injected and _sums_both_regions(c))
+    ]
     dependencies_satisfied = bool(
         search_calls
         and read_na_calls
@@ -158,8 +170,11 @@ def _tc55_eval(state: ScenarioState) -> ScenarioEvaluation:
         and calculator_calls
         and _call_index(state, search_calls[0])
         < min(_call_index(state, read_na_calls[0]), _call_index(state, read_emea_calls[0]))
-        and max(_call_index(state, read_na_calls[0]), _call_index(state, read_emea_calls[0]))
-        < _call_index(state, calculator_calls[0])
+        and all(
+            max(_call_index(state, read_na_calls[0]), _call_index(state, read_emea_calls[0]))
+            < _call_index(state, attempt)
+            for attempt in sum_attempts
+        )
     )
     if (
         searched

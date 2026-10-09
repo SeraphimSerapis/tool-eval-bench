@@ -272,20 +272,29 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
         for call in _tool_calls_by_name(state, "search_files")
         if _result_matches_if_present(state, call, corrected_search_result)
     ]
-    corrected_file_calls = [
-        call
-        for call in _tool_calls_by_name(state, "read_file")
-        if any(
+
+    def _names_corrected_file(call: ToolCallRecord) -> bool:
+        return any(
             token in _as_str(call.arguments.get("file_id")).lower()
             for token in ("latest", "correct", "v2")
         )
+
+    corrected_file_calls = [
+        call
+        for call in _tool_calls_by_name(state, "read_file")
+        if _names_corrected_file(call)
         and _result_matches_if_present(state, call, corrected_file_result)
     ]
+    # A read of the corrected file that --error-rate failed counts like one
+    # that returned: reading it before the search supplied its id was a guess.
     corrected_lookup = bool(
         corrected_search_calls
         and corrected_file_calls
-        and _call_index(state, corrected_search_calls[0])
-        < _call_index(state, corrected_file_calls[0])
+        and all(
+            _call_index(state, corrected_search_calls[0]) < _call_index(state, call)
+            for call in _tool_calls_by_name(state, "read_file")
+            if call in corrected_file_calls or (call.injected and _names_corrected_file(call))
+        )
     )
     searched_acme_calls = [
         call

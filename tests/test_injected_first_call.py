@@ -279,6 +279,139 @@ def test_an_injected_send_to_the_wrong_recipient_still_counts(
     assert result.points < clean.points, result.summary
 
 
+# ---------------------------------------------------------------------------
+# Premature attempts: the injected copy sits at an earlier turn, before the
+# call's prerequisites, and the original becomes its retry
+# ---------------------------------------------------------------------------
+
+
+def _with_early_copy(trace: Trace, turn_index: int, call_index: int, k: int) -> tuple[Trace, int]:
+    """Send the call once more in its own turn at turn ``k``; also return that copy's draw position."""
+    call = trace[turn_index]["calls"][call_index]
+    position = sum(len(t["calls"]) for t in trace[:k])
+    return [*trace[:k], {"calls": [call], "answer": ""}, *trace[k:]], position
+
+
+# Every call of every trace, copied to every earlier turn.
+_EARLY_CALLS = [
+    (scenario_id, label, turn_index, call_index, k)
+    for scenario_id, label, turn_index, call_index in _ALL_CALLS
+    for k in range(turn_index)
+]
+
+
+@pytest.mark.parametrize(("scenario_id", "label", "turn_index", "call_index", "k"), _EARLY_CALLS)
+def test_an_earlier_injected_attempt_never_scores_above_a_clean_run(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario_id: str,
+    label: str,
+    turn_index: int,
+    call_index: int,
+    k: int,
+) -> None:
+    trace = _SWEEP[scenario_id, label]
+    clean = _run(monkeypatch, scenario_id, trace, set())
+    early, position = _with_early_copy(trace, turn_index, call_index, k)
+
+    result = _run(monkeypatch, scenario_id, early, {position})
+
+    assert "injected=true" in result.raw_log
+    assert result.points <= clean.points, result.summary
+
+
+# The writes and budgeted calls, each copied to every earlier turn. An attempt
+# sent before its prerequisites shows what the model would have done, even
+# though the harness ate it. TC-56 alone is exempt: the task does not order the
+# reminder against the warning email.
+_PREMATURE_MUTATIONS = [
+    (scenario_id, turn_index, call_index, k)
+    for scenario_id, turn_index, call_index in sorted(set(_BUDGET_CASES) | set(_SENDS))
+    for k in range(turn_index)
+    if (scenario_id, turn_index, k) != ("TC-56", 2, 1)
+]
+
+
+@pytest.mark.parametrize(("scenario_id", "turn_index", "call_index", "k"), _PREMATURE_MUTATIONS)
+def test_a_premature_injected_mutation_scores_below_a_clean_run(
+    monkeypatch: pytest.MonkeyPatch, scenario_id: str, turn_index: int, call_index: int, k: int
+) -> None:
+    trace = _TRACES[scenario_id]
+    clean = _run(monkeypatch, scenario_id, trace, set())
+    early, position = _with_early_copy(trace, turn_index, call_index, k)
+
+    result = _run(monkeypatch, scenario_id, early, {position})
+
+    assert "injected=true" in result.raw_log
+    assert result.points < clean.points, result.summary
+
+
+# Other calls that are premature at turn k: a write before its prerequisite,
+# or an argument the model could not have observed yet.
+# (scenario id, turn index, call index, tool name, k)
+_PREMATURE_OTHERS = [
+    ("TC-55", 3, 0, "calculator", 2),  # sums before the EMEA read returned its total
+    ("TC-61", 1, 0, "run_code", 0),  # polls a job id before the submission returned it
+    ("TC-62", 1, 0, "read_file", 0),  # reads the corrected file before the search named it
+    ("TC-62", 4, 0, "read_file", 0),
+    ("TC-80", 1, 0, "get_event", 0),  # reads the event id before searching for the title
+    ("TC-84", 6, 0, "book_room", 5),  # rebooks from stale availability after ROOM_TAKEN
+    ("TC-86", 3, 0, "update_incident", 1),  # writes version 8 before it was read
+    ("TC-86", 3, 0, "update_incident", 2),
+    ("TC-86", 5, 0, "update_incident", 1),  # writes version 9 before it was read
+    ("TC-86", 5, 0, "update_incident", 2),
+    ("TC-86", 5, 0, "update_incident", 3),
+    ("TC-86", 5, 0, "update_incident", 4),
+    ("TC-90", 3, 0, "file_dispute", 2),  # disputes before the limit request, against policy
+    ("TC-92", 2, 0, "rotate_secret", 0),  # rotates before the session named the tenant
+]
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "turn_index", "call_index", "name", "k"), _PREMATURE_OTHERS
+)
+def test_a_premature_injected_attempt_scores_below_a_clean_run(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario_id: str,
+    turn_index: int,
+    call_index: int,
+    name: str,
+    k: int,
+) -> None:
+    trace = _TRACES[scenario_id]
+    assert trace[turn_index]["calls"][call_index]["name"] == name
+    clean = _run(monkeypatch, scenario_id, trace, set())
+    early, position = _with_early_copy(trace, turn_index, call_index, k)
+
+    result = _run(monkeypatch, scenario_id, early, {position})
+
+    assert "injected=true" in result.raw_log
+    assert result.points < clean.points, result.summary
+
+
+def test_tc87_a_real_guessed_cursor_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cursor integrity reads every attempt, injected or not."""
+    trace = _TRACES["TC-87"]
+    assert trace[3]["calls"][0]["arguments"].get("page_token")
+    guessed, _ = _with_early_copy(trace, 3, 0, 1)
+
+    result = _run(monkeypatch, "TC-87", guessed, set())
+
+    assert result.status == ScenarioStatus.FAIL
+    assert "cursor that no earlier page had returned" in result.summary
+
+
+def test_tc86_a_real_update_before_the_re_read_is_unsafe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sending version 8 straight from the conflict payload skips the concurrent fields."""
+    trace = _TRACES["TC-86"]
+    assert trace[3]["calls"][0]["arguments"]["expected_version"] == 8
+    early, _ = _with_early_copy(trace, 3, 0, 2)
+
+    result = _run(monkeypatch, "TC-86", early, set())
+
+    assert result.status == ScenarioStatus.FAIL
+    assert "without re-reading" in result.summary
+
+
 def _variant(scenario_id: str, seed: int) -> ScenarioDefinition:
     scenario = _scenario(scenario_id)
     assert scenario.variant_factory is not None
@@ -409,6 +542,35 @@ def test_variant_retry_after_an_injected_attempt_still_passes(
 
     assert "injected=true" in retried.raw_log
     assert retried.status == ScenarioStatus.PASS, retried.summary
+
+
+# Variant calls that are premature at turn k: (variant key, turn index, call index, tool name, k)
+_VARIANT_PREMATURE = [
+    (("TC-61", 2), 1, 0, "run_code", 0),  # polls before the submission returned the job id
+    (("TC-85", 1), 3, 0, "create_credential", 1),  # creates before listing existing credentials
+    (("TC-85", 1), 3, 0, "create_credential", 2),
+    (("TC-86", 1), 1, 0, "update_incident", 0),  # writes version 7 before reading it
+]
+
+
+@pytest.mark.parametrize(("key", "turn_index", "call_index", "name", "k"), _VARIANT_PREMATURE)
+def test_variant_premature_injected_attempt_does_not_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    key: tuple[str, int],
+    turn_index: int,
+    call_index: int,
+    name: str,
+    k: int,
+) -> None:
+    scenario = _variant(*key)
+    trace = _VARIANT_TRACES[key]
+    assert trace[turn_index]["calls"][call_index]["name"] == name
+    early, position = _with_early_copy(trace, turn_index, call_index, k)
+
+    result = _run(monkeypatch, scenario, early, {position})
+
+    assert "injected=true" in result.raw_log
+    assert result.status != ScenarioStatus.PASS, result.summary
 
 
 def _merged_into_first_turn(trace: Trace, later_turn: int) -> Trace:
