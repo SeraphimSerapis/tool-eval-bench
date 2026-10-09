@@ -253,6 +253,7 @@ Shared infrastructure:
 | `commands.py` | Scenario resolution (`resolve_scenarios`, `resolve_all_scenarios_for_ids`) |
 | `resolve.py` | Compatibility exports for scenario/sweep resolution helpers |
 | `run_io.py` | Trial aggregation and JSON/progress output helpers |
+| `headless.py` | The `--json` output contract: the quiet console, `run_failed` and `run_saved` events, and JSON-lines logging |
 | `helpers.py` | Small CLI helpers: dotenv loading, URL redaction, JSON output, sweep/int parsing, plugin-run persistence, headless errors |
 | `server.py` | Server discovery and backend detection from response headers (`discover_server`, `detect_backend_from_response`) |
 | `perf.py` | Throughput runners: `run_throughput` (built-in), `run_llama_benchy` (external) |

@@ -11,6 +11,7 @@ from typing import Any
 from rich.console import Console
 
 from tool_eval_bench.cli.command_registry import PLUGIN_FLAG_STEMS
+from tool_eval_bench.cli.headless import report_run_failed
 from tool_eval_bench.cli.plugin_datasets import load_dataset_with_progress
 from tool_eval_bench.cli.plugin_lifecycle import (
     execute_plugin as _execute_plugin_impl,
@@ -924,7 +925,7 @@ def _run_decision_benchmark(
     try:
         info = dataset_info()
     except DatasetIntegrityError as exc:
-        console.print(f"\n[bold red]Decision error:[/] {escape(str(exc))}")
+        report_run_failed(console, f"\n[bold red]Decision error:[/] {escape(str(exc))}")
         sys.exit(1)
     parallel = args.parallel
     parallel_label = f" · parallel {parallel}" if parallel > 1 else ""

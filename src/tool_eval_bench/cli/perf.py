@@ -12,6 +12,7 @@ from typing import Any
 
 from rich.console import Console
 
+from tool_eval_bench.cli.headless import report_run_failed
 from tool_eval_bench.storage.reports._common import PP_ESTIMATED_NOTE, sample_pp_estimated
 
 
@@ -169,10 +170,11 @@ def run_llama_benchy(
     )
 
     if not is_available():
-        console.print(
+        report_run_failed(
+            console,
             "[bold red]Error:[/] llama-benchy is not available.\n"
             "Install it with: [bold cyan]pip install llama-benchy[/]\n"
-            "Or ensure [bold cyan]uvx[/] is on PATH for zero-install usage."
+            "Or ensure [bold cyan]uvx[/] is on PATH for zero-install usage.",
         )
         sys.exit(1)
 
@@ -255,13 +257,13 @@ def run_llama_benchy(
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        console.print("\n[bold red]Interrupted.[/]")
+        report_run_failed(console, "\n[bold red]Interrupted.[/]")
         sys.exit(1)
     except RuntimeError as exc:
-        console.print(f"\n[bold red]llama-benchy error:[/] {exc}")
+        report_run_failed(console, f"\n[bold red]llama-benchy error:[/] {exc}")
         sys.exit(1)
     except Exception as exc:
-        console.print(f"\n[bold red]Error: {exc}[/]")
+        report_run_failed(console, f"\n[bold red]Error: {exc}[/]")
         sys.exit(1)
 
     if benchy_result is None:

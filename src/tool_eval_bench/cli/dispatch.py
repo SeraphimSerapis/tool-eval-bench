@@ -51,6 +51,13 @@ from tool_eval_bench.cli.compare_report import (
     run_compare_report_command as _run_compare_report_command,
 )
 from tool_eval_bench.cli.display import BenchmarkDisplay, decision_audit_line
+from tool_eval_bench.cli.headless import (
+    HeadlessConsole,
+    emit_run_failed,
+    json_logging,
+    report_run_failed,
+    report_run_saved,
+)
 from tool_eval_bench.cli.helpers import (
     emit_headless_error as _headless_error,
 )
@@ -457,18 +464,19 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
     # Failed cells stay a count: their error text can quote the server URL.
     scores["results"] = [sample.to_result() for sample in throughput_samples if not sample.error]
     run_context = target.run_context
+    run = ModeRun(
+        run_type="perf",
+        config={
+            "model": target.model,
+            "backend": target.backend,
+            "base_url": target.base_url,
+            "mode": "perf-only",
+        },
+        scores=scores,
+        status="failed" if failed_count else "completed",
+    )
     finalized = finalize_mode_run(
-        ModeRun(
-            run_type="perf",
-            config={
-                "model": target.model,
-                "backend": target.backend,
-                "base_url": target.base_url,
-                "mode": "perf-only",
-            },
-            scores=scores,
-            status="failed" if failed_count else "completed",
-        ),
+        run,
         throughput_report(
             target.display_name,
             throughput_samples,
@@ -483,9 +491,12 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
         output_dir=args.output_dir,
     )
     report_path = finalized.report_path
+    report_run_saved(console, run, finalized)
     console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
     if failed_count:
-        console.print(f"[bold red]Throughput benchmark failed in {failed_count} cell(s).[/]")
+        report_run_failed(
+            console, f"[bold red]Throughput benchmark failed in {failed_count} cell(s).[/]"
+        )
         sys.exit(1)
     return throughput_samples, True
 
@@ -815,6 +826,12 @@ def main() -> None:
         _run_compare_report_command(args, console)
         return
 
+    # --json-file implies --json; _prepare_args records that on the namespace.
+    with json_logging(bool(args.json or args.json_file)):
+        _run_cli(args, parser, console)
+
+
+def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console) -> None:
     _prepare_args(args, parser, console)
 
     if _handle_local_command(
@@ -828,6 +845,9 @@ def main() -> None:
     ):
         return
 
+    if args.json:
+        # stdout carries only the result envelope; see cli.headless.
+        console = HeadlessConsole()
     _validate_explicit_scenarios(args, parser)
     endpoint = _resolve_endpoint(args, parser, console)
     if args.probe:
@@ -860,6 +880,9 @@ def _prepare_args(
     # --json-file implies --json
     if args.json_file:
         args.json = True
+    if args.json and (args.spec_live or args.decision_live):
+        flag = "--spec-live" if args.spec_live else "--decision-live"
+        parser.error(f"{flag} is an interactive monitor and cannot be combined with --json")
 
     # Resolve the system-prompt override from its file, if given, so every
     # downstream consumer (run, resume-compat check, RunContext) sees plain
@@ -1318,7 +1341,7 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
                 args.timeout = scaled_timeout
 
     except ValueError as exc:
-        console.print(f"\n[bold red]Error:[/] {exc}")
+        report_run_failed(console, f"\n[bold red]Error:[/] {exc}")
         sys.exit(1)
     return _PressureFill(messages=pressure_messages, config=pressure_config_dict)
 
@@ -1361,11 +1384,15 @@ def _skip_tool_eval_mode(target: _Target) -> bool:
         or _any_plugin_selected(args)
     )
     if not any_benchmark:
-        target.console.print(
-            "\n  [yellow]⚠ --skip-tool-eval has no effect without "
+        message = (
+            "--skip-tool-eval has no effect without "
             "--perf, --perf-only, --spec-bench, --gsm8k, --mmlu, --ifeval, "
-            "--needle, or --decision-bench.[/]\n"
+            "--needle, or --decision-bench."
         )
+        if args.json:
+            logger.warning(message)
+        else:
+            target.console.print(f"\n  [yellow]⚠ {message}[/]\n")
     return True
 
 
@@ -1386,16 +1413,18 @@ def _plan_resume(target: _Target, pressure: _PressureFill | None) -> None:
         prev_run = resumable[0] if resumable else None
         prev_checkpoints = resumable[1] if resumable else []
         if prev_run is None:
-            console.print(
+            report_run_failed(
+                console,
                 f"\n  [bold red]✗[/] Run '{args.resume}' not found in history.\n"
-                "  [dim]Use --history to list available runs.[/]\n"
+                "  [dim]Use --history to list available runs.[/]\n",
             )
             sys.exit(1)
 
         if prev_run.get("status") == "completed":
-            console.print(
+            report_run_failed(
+                console,
                 "\n  [bold red]✗ Resume aborted: run is already completed[/]\n"
-                "  [dim]Completed scenario outcomes are immutable. Start a fresh run to retry.[/]\n"
+                "  [dim]Completed scenario outcomes are immutable. Start a fresh run to retry.[/]\n",
             )
             sys.exit(1)
 
@@ -1417,10 +1446,11 @@ def _plan_resume(target: _Target, pressure: _PressureFill | None) -> None:
             context_pressure=pressure.config if pressure is not None else None,
         )
         if mismatches:
-            console.print(
+            report_run_failed(
+                console,
                 f"\n  [bold red]✗ Resume aborted: configuration mismatch[/]\n"
                 f"  [dim]Prior run differs in: {', '.join(mismatches)}[/]\n"
-                f"  [dim]Start a fresh run instead of resuming.[/]\n"
+                f"  [dim]Start a fresh run instead of resuming.[/]\n",
             )
             sys.exit(1)
 
@@ -1833,6 +1863,7 @@ def _run_json(
         for _t in range(trials):
             results.append(asyncio.run(run(request)))
     except KeyboardInterrupt:
+        emit_run_failed("interrupted")
         sys.exit(1)
     except Exception as exc:
         # Shareable output like a report, so a quoted request URL is redacted.

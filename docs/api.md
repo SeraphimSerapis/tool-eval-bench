@@ -349,8 +349,15 @@ r = subprocess.run(
     ["tool-eval-bench", "--mmlu-only", "--mmlu-limit", "50", "--json"],
     capture_output=True, text=True,
 )
-# Note: accuracy benchmark results are currently rendered to the
-# terminal and Markdown reports, not to the JSON output envelope.
+# Accuracy benchmarks have no JSON result envelope, so stdout stays empty.
+# The results are in the Markdown report and SQLite; the run_saved event on
+# stderr names them.
+saved = next(
+    event
+    for event in map(json.loads, r.stderr.splitlines())
+    if event["event"] == "run_saved"
+)
+print(saved["run_id"], saved["report_path"])
 ```
 
 Each plugin implements the `BenchmarkPlugin` ABC from

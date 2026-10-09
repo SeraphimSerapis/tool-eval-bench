@@ -733,7 +733,6 @@ async def run_spec_bench(
                 "extracted from per-request timings (draft_n/draft_n_accepted). "
                 "Per-request stats are exact for each measurement.",
             )
-            print()  # visual separator before results
 
         # Build sweep: depth × prompt_type
         combos = [(d, pt) for d in depths for pt in prompt_types]
