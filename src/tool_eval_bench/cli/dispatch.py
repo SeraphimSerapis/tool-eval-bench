@@ -176,6 +176,7 @@ def _resume_config_mismatches(
     args: argparse.Namespace,
     extra_params: dict[str, Any] | None,
     scenario_packs: list[dict[str, Any]] | None,
+    context_pressure: dict[str, Any] | None,
 ) -> list[str]:
     """Compare every user-controlled scoring condition persisted in a run."""
     from tool_eval_bench.evals.variants import apply_variants
@@ -226,7 +227,42 @@ def _resume_config_mismatches(
         mismatches.append(
             _judge_mismatch(previous.get("decision_judge"), current["decision_judge"])
         )
+    pressure = _pressure_mismatch(previous.get("context_pressure"), context_pressure)
+    if pressure is not None:
+        mismatches.append(pressure)
     return mismatches
+
+
+def _pressure_mismatch(previous: Any, current: dict[str, Any] | None) -> str | None:
+    """Name a context-pressure difference that would merge two fill levels into one run.
+
+    A run without pressure persists no ``context_pressure`` key; the key has been
+    written since the option existed, so absence always means "no pressure".
+
+    The ratio and the fill target decide what the model sees. The detected
+    ``context_size`` is not compared: a restarted server can report a slightly
+    different KV capacity, and the fill target is quantised to whole filler
+    chunks, so drift that leaves the fill unchanged must not block a resume.
+    The calibrated ``fill_tokens`` is not compared either, because an unseeded
+    run draws fresh filler and lands within the calibration tolerance, never
+    on the same count twice.
+    """
+    if not previous and not current:
+        return None
+    if not previous or not current:
+        was = previous["ratio"] if previous else "off"
+        now = current["ratio"] if current else "off"
+        return f"context_pressure (was {was}, now {now})"
+    if previous.get("ratio") != current["ratio"]:
+        return f"context_pressure ratio (was {previous.get('ratio')}, now {current['ratio']})"
+    # Runs from before tokenizer calibration recorded no target.
+    old_target = previous.get("fill_tokens_target")
+    if old_target is not None and old_target != current["fill_tokens_target"]:
+        return (
+            f"context_pressure fill (was {old_target:,} tokens, "
+            f"now {current['fill_tokens_target']:,}; the context size changed)"
+        )
+    return None
 
 
 def _judge_mismatch(previous: Any, current: Any) -> str:
@@ -1332,6 +1368,7 @@ def main() -> None:
             args=args,
             extra_params=extra_params or None,
             scenario_packs=_pack_attestations(args),
+            context_pressure=pressure_config_dict,
         )
         if mismatches:
             console.print(
