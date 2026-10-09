@@ -11,18 +11,36 @@ from typing import Any
 from tool_eval_bench.domain.scenarios import AuditPhase, ScenarioDefinition, ScenarioResult
 
 
-async def stderr_progress_start(scenario: ScenarioDefinition, idx: int, total: int) -> None:
-    """Emit a JSONL progress event when a scenario starts."""
+def _scenario_start_event(
+    scenario: ScenarioDefinition, idx: int, total: int, *, title: str
+) -> None:
     message = {
         "event": "scenario_start",
         "scenario_id": scenario.id,
-        "title": scenario.title,
+        "title": title,
         "category": scenario.category.value,
         "index": idx,
         "total": total,
     }
     sys.stderr.write(json.dumps(message) + "\n")
     sys.stderr.flush()
+
+
+async def stderr_progress_start(scenario: ScenarioDefinition, idx: int, total: int) -> None:
+    """Emit a JSONL progress event when a scenario starts.
+
+    A held-out pack scenario's title is withheld: it names the prompt, and
+    stderr is what CI logs capture.
+    """
+    title = "held out" if scenario.held_out else scenario.title
+    _scenario_start_event(scenario, idx, total, title=title)
+
+
+async def stderr_progress_start_unredacted(
+    scenario: ScenarioDefinition, idx: int, total: int
+) -> None:
+    """The ``scenario_start`` event with every title, for ``--include-held-out``."""
+    _scenario_start_event(scenario, idx, total, title=scenario.title)
 
 
 async def stderr_progress_result(

@@ -213,6 +213,12 @@
       "type": "bool"
     },
     {
+      "default": false,
+      "description": "Keep pack scenario content in --json, --json-file, and stderr events",
+      "name": "include_held_out",
+      "type": "bool"
+    },
+    {
       "default": 120.0,
       "description": "Request timeout in seconds",
       "name": "timeout",

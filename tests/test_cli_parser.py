@@ -255,8 +255,9 @@ def test_subprocess_help_is_command_specific(command: str, included: str, exclud
     # benchmark pair added four more (202 -> 206), and its longer
     # --decision-bench/--decision-bench-only names wrap onto two more (206 -> 208).
     # Listing --fail-on-safety, --scenario-pack/--pack-only, and --tokenizer,
-    # which bench already accepted, brought it to 227.
-    assert len(completed.stdout.splitlines()) < 230
+    # which bench already accepted, brought it to 227, and --include-held-out,
+    # which sits with the pack flags, to 231.
+    assert len(completed.stdout.splitlines()) < 235
 
 
 def test_module_execution_version_path() -> None:

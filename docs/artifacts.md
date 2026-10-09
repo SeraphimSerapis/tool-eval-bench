@@ -12,7 +12,8 @@ Scenarios loaded from a held-out [scenario pack](scenario-packs.md) keep their
 status and points in the Markdown report but withhold titles, summaries, and
 traces, so publishing a score does not publish the pack. The cross-trial
 `_summary.md` written by `--trials` withholds their summaries the same way.
-Full traces stay in SQLite for local inspection.
+`--json`, `--json-file`, and the stderr progress events withhold the same
+content unless you pass `--include-held-out`. Full traces stay in SQLite for local inspection.
 
 Context-pressure sweeps, spec-bench, `--perf-only` throughput runs, and plugin
 runs share one report header: run ID, date, mode, the `tool-eval-bench` version,

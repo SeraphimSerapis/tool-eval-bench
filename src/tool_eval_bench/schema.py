@@ -231,6 +231,12 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "default": False,
         "description": "Run ONLY scenarios from --scenario-pack",
     },
+    {
+        "name": "include_held_out",
+        "type": "bool",
+        "default": False,
+        "description": "Keep pack scenario content in --json, --json-file, and stderr events",
+    },
     # -- Run control --
     {
         "name": "timeout",

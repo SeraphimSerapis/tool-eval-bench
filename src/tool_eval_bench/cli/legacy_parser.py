@@ -211,6 +211,12 @@ def _make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run ONLY the scenarios from --scenario-pack (skip the public suite)",
     )
+    select.add_argument(
+        "--include-held-out",
+        action="store_true",
+        help="Keep pack scenario titles, summaries, and traces in --json, --json-file, "
+        "and stderr events (withheld by default; reports always withhold them)",
+    )
 
     # -- Run control -------------------------------------------------------
     run_ctrl = parser.add_argument_group("run control")

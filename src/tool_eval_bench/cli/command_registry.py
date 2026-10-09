@@ -59,6 +59,7 @@ SCENARIOS = (
     "variant_seed",
     "scenario_pack",
     "pack_only",
+    "include_held_out",
 )
 PERF = (
     "perf",
