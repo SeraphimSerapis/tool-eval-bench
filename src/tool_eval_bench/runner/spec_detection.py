@@ -7,7 +7,11 @@ import re
 import time
 from dataclasses import dataclass
 
-from tool_eval_bench.domain.engines import SPEC_COUNTER_ORDER, metrics_namespace_present
+from tool_eval_bench.domain.engines import (
+    LLAMACPP,
+    SPEC_COUNTER_ORDER,
+    metrics_namespace_present,
+)
 from tool_eval_bench.domain.measurement import MeasurementClient
 
 logger = logging.getLogger(__name__)
@@ -288,9 +292,9 @@ async def detect_spec_decoding(
 
             # llama.cpp: no spec_decode counters, but we can detect the backend
             # and know that draft stats will come from per-request timings.
-            # Unlike the check above this is a substring test, so a label value
-            # containing "llamacpp:" also matches.
-            elif "llamacpp:" in text:
+            # Anchored like the check above, so "llamacpp:" inside a label
+            # value or HELP text does not make another server llama.cpp.
+            elif metrics_namespace_present(text, LLAMACPP):
                 info.has_per_request_timings = True
                 info.detail = (
                     "llama.cpp detected — spec decode metrics available "

@@ -477,6 +477,38 @@ async def test_strata_timings_without_draft_n_fall_back_to_prometheus(
 
 
 @pytest.mark.asyncio
+async def test_llamacpp_in_a_label_value_does_not_zero_missing_draft_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only llama.cpp's own namespace makes a missing draft_n an exact zero.
+
+    A server with no speculative counters whose /metrics merely mentions
+    ``llamacpp:`` inside a label value used to be detected as llama.cpp, so a
+    response ``timings`` object without ``draft_n`` was reported as an exact
+    zero-draft measurement from response timings.
+    """
+    metrics = 'vllm:num_requests_running{model_name="acme/llamacpp:7b"} 1\n'
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=metrics))
+    async with MeasurementTestClient(transport=transport) as client:
+        spec_info = await speculative.detect_spec_decoding(
+            client, "http://test", backend_hint="mtp"
+        )
+    _patch_stream(monkeypatch, ThroughputSample(tg_tokens=64, timings_present=True))
+
+    sample = await speculative.measure_spec_single(
+        None,  # type: ignore[arg-type]
+        "url",
+        "m",
+        prompt_type="code",
+        spec_info=spec_info,
+    )
+
+    assert spec_info.has_per_request_timings is False
+    assert sample.acceptance_source is None
+    assert sample.draft_tokens_delta is None
+
+
+@pytest.mark.asyncio
 async def test_llamacpp_response_without_timings_falls_back_to_prometheus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
