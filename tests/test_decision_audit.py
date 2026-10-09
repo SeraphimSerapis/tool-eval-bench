@@ -826,6 +826,7 @@ def test_cli_resolves_only_the_explicit_judge_key_and_checks_resume_identity(mon
         args=args,
         extra_params=None,
         scenario_packs=None,
+        context_pressure=None,
     )
     assert "decision_judge" not in _resume_config_mismatches(previous, **kwargs)
     args.decision_judge_model = "different-judge"

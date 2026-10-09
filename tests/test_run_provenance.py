@@ -305,6 +305,7 @@ class TestSystemPromptResumeCompatibility:
             args=args,
             extra_params=None,
             scenario_packs=None,
+            context_pressure=None,
         )
 
     def test_same_prompt_resume_is_clean(self) -> None:

@@ -1239,5 +1239,6 @@ def test_resume_config_mismatches_cover_system_prompt() -> None:
         args=args,
         extra_params=None,
         scenario_packs=None,
+        context_pressure=None,
     )
     assert "system_prompt" in mismatches

@@ -159,6 +159,7 @@ def test_variant_seed_controls_fingerprint_and_resume_compatibility():
                 args=args,
                 extra_params=None,
                 scenario_packs=None,
+                context_pressure=None,
             )
             assert ("scenario_variants" in mismatches) == (old_index != new_index)
 

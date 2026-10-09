@@ -28,6 +28,13 @@ tool-eval-bench compare <baseline_id> <pressure_id>
 | `--context-pressure-sweep` | off | Sweep range (e.g. `0.5-1.0`) — find the breaking point |
 | `--sweep-steps` | 5 | Number of intervals for sweep (N+1 test levels) |
 
+`tool-eval-bench resume RUN_ID` does not read the pressure settings back from
+the stored run, so pass the same `--context-pressure`, and the same
+`--context-size` if the original run had one. Resume refuses a different ratio,
+an added or dropped `--context-pressure`, and a context size that changes the
+fill target. Context drift that leaves the fill target alone, such as a
+restarted server reporting a slightly different KV capacity, is accepted.
+
 ## Finding the breaking point
 
 Use `--context-pressure-sweep` to gradually increase pressure and discover exactly where a model starts failing:
