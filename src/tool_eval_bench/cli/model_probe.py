@@ -6,9 +6,10 @@ import asyncio
 import json
 import sys
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, NoReturn
 
 from rich.console import Console
+from rich.markup import escape
 
 from tool_eval_bench.adapters.anthropic import ANTHROPIC_VERSION
 from tool_eval_bench.adapters.wire_format import anthropic_models_url, gemini_models_url
@@ -263,7 +264,9 @@ def _probe_server(
     step runs right after server startup — this lets the orchestrator
     wait until the server is ready.
 
-    Exits 0 if the server responds to /v1/models, exit 1 otherwise.
+    Exits 0 if the server answers the model listing with a JSON object, 1 if
+    it is unreachable or answers with an error, and 2 (``invalid_response``)
+    if it answers 2xx with anything else, such as a proxy's HTML page.
     Console lines show *display_url* (the ``--redact-url`` form) when given.
     """
     import httpx
@@ -279,8 +282,6 @@ def _probe_server(
 
     try:
         resp = asyncio.run(_check())
-        data = resp.json()
-        model_ids: list[str] = [str(m.get("id", "")) for m in data.get("data", []) if m.get("id")]
     except Exception as exc:
         if headless:
             msg: dict[str, Any] = {
@@ -297,6 +298,19 @@ def _probe_server(
             console.print(f"[bold red]✗[/] Server at {show_url} is not ready: {detail}")
         sys.exit(1)
 
+    try:
+        data = resp.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        _report_invalid_probe_response(console, resp, base_url, show_url, headless=headless)
+    listed = data.get("data")
+    model_ids: list[str] = (
+        [str(m["id"]) for m in listed if isinstance(m, dict) and m.get("id")]
+        if isinstance(listed, list)
+        else []
+    )
+
     if headless:
         msg = {
             "event": "probe_result",
@@ -311,3 +325,40 @@ def _probe_server(
         if model_ids:
             console.print(f"  Models: {', '.join(model_ids)}")
     sys.exit(0)
+
+
+def _report_invalid_probe_response(
+    console: Console,
+    resp: Any,
+    base_url: str,
+    show_url: str,
+    *,
+    headless: bool,
+) -> NoReturn:
+    """Exit 2 for a 2xx model listing that is not a JSON object.
+
+    Waiting will not fix it: something answers at the URL, but not an
+    inference server's model listing.
+    """
+    content_type = resp.headers.get("Content-Type", "unknown")
+    message = (
+        f"Server at {base_url} answered the model listing with a body that is not a JSON "
+        f"object (HTTP {resp.status_code}, Content-Type: {content_type}). "
+        f"Body snippet: {resp.text[:200]!r}"
+    )
+    if headless:
+        event = {
+            "event": "probe_result",
+            "status": "failed",
+            "base_url": _redact_url(base_url),
+            "error_code": INVALID_RESPONSE,
+            "error": _redact_urls(message),
+        }
+        sys.stderr.write(json.dumps(event) + "\n")
+        sys.stderr.flush()
+    else:
+        if show_url != base_url:
+            message = _redact_urls(message)
+        console.print("[bold red]✗ Invalid response[/]")
+        console.print(f"[red]{escape(message)}[/]")
+    sys.exit(2)

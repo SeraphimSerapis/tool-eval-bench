@@ -25,7 +25,9 @@ tool-eval-bench --json
 
 Auto-discovery probes these ports in order:
 8000 (vLLM), 8080, 8081, 8082, 30000 (SGLang), 4000 (LiteLLM),
-3000, 11434 (Ollama), 5000 (TGI).
+3000, 11434 (Ollama), 5000 (TGI). The first port whose `/v1/models` (or `/models`
+when that is a 404) answers HTTP 200 with a JSON model list wins. A port that
+answers with an HTML page or any other body is skipped.
 
 ## Headless / JSON mode
 
@@ -93,12 +95,18 @@ Use `--probe` to wait for the server to be ready before benchmarking:
 
 ```bash
 tool-eval-bench --probe --base-url http://localhost:8000
-# Exit 0 = ready, exit 1 = not reachable
+# Exit 0 = ready, 1 = not reachable, 2 = answers, but not with a JSON model listing
 ```
+
+Exit 2 (`invalid_response`, also the `error_code` of the `--json` `probe_result`
+event) means something such as a proxy or a web app answers at that URL with an
+HTML page or another body that is not a JSON object. Waiting will not fix it, so
+stop polling.
 
 In a script:
 ```bash
 until tool-eval-bench --probe --json 2>/dev/null; do
+  test $? -eq 2 && exit 2  # not an inference server; check the URL
   sleep 5
 done
 tool-eval-bench --json --short

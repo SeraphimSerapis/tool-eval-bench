@@ -261,6 +261,75 @@ def test_probe_without_redact_url_still_shows_the_host(
     assert "gpu.test" in outcome.out
 
 
+_NOT_A_MODEL_LISTING = [
+    pytest.param(
+        lambda: httpx.Response(
+            200, text="<html>Sign in</html>", headers={"Content-Type": "text/html"}
+        ),
+        id="html",
+    ),
+    pytest.param(lambda: httpx.Response(200, json=["m"]), id="json-array"),
+    pytest.param(lambda: httpx.Response(200, text=""), id="empty"),
+]
+
+
+@pytest.mark.parametrize("make_response", _NOT_A_MODEL_LISTING)
+def test_probe_rejects_a_2xx_listing_that_is_not_a_json_object(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, make_response: Any
+) -> None:
+    _mock_http(monkeypatch, lambda request: make_response())
+
+    console = cli.run("probe", "--base-url", BASE_URL)
+    headless = cli.run("probe", "--base-url", SECRET_URL, "--json")
+
+    assert console.code == headless.code == 2
+    assert "Invalid response" in console.flat_out
+    assert "not a JSON object" in console.flat_out
+    (event,) = _events(headless.err)
+    assert event["event"] == "probe_result"
+    assert event["status"] == "failed"
+    assert event["error_code"] == "invalid_response"
+    assert "not a JSON object" in event["error"]
+    assert "gpu.test" not in headless.err and "hunter2" not in headless.err
+
+
+def test_probe_invalid_response_honours_redact_url(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mock_http(
+        monkeypatch,
+        lambda request: httpx.Response(200, text=f"<a href='{SECRET_URL}'>login</a>"),
+    )
+
+    outcome = cli.run("probe", "--base-url", SECRET_URL, "--redact-url")
+
+    assert outcome.code == 2
+    assert "Invalid response" in outcome.flat_out
+    assert "gpu.test" not in outcome.out and "hunter2" not in outcome.out
+
+
+@pytest.mark.parametrize(
+    ("body", "models"),
+    [
+        ({"data": [{"id": "m"}, "junk", {"name": "x"}]}, ["m"]),
+        ({"data": "not a list"}, []),
+        ({}, []),
+    ],
+    ids=["mixed-items", "data-not-a-list", "empty-object"],
+)
+def test_probe_ready_on_any_json_object(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, body: dict[str, Any], models: list[str]
+) -> None:
+    _mock_http(monkeypatch, lambda request: httpx.Response(200, json=body))
+
+    outcome = cli.run("probe", "--base-url", BASE_URL, "--json")
+
+    assert outcome.code == 0
+    (event,) = _events(outcome.err)
+    assert event["status"] == "ready"
+    assert event["models"] == models
+
+
 def _discover_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
     from tool_eval_bench.cli import server
 

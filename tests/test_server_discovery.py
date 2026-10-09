@@ -83,3 +83,67 @@ def test_server_headless_error_delegates_structured_exit_code(
     server._headless_error("no_server", "nothing listening", exit_code=3)
 
     assert calls == [("no_server", "nothing listening", 3)]
+
+
+def _ports(monkeypatch: pytest.MonkeyPatch, responses: list) -> None:
+    monkeypatch.setattr(
+        server, "DISCOVERY_PORTS", [(3000, "unknown", "web app"), (8000, "unknown", "server")]
+    )
+    monkeypatch.setattr(server.httpx, "AsyncClient", lambda **kwargs: _FakeAsyncClient(responses))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "imposter",
+    [
+        {"text": "<html>dev server</html>", "headers": {"Content-Type": "text/html"}},
+        {"text": ""},
+        {"json": ["not", "an", "object"]},
+        {"json": {"status": "ok"}},
+        {"json": {"data": "not a list"}},
+    ],
+    ids=["html", "empty", "json-array", "object-without-list", "data-not-a-list"],
+)
+async def test_a_200_that_is_not_a_model_listing_is_skipped(
+    monkeypatch: pytest.MonkeyPatch, imposter: dict
+) -> None:
+    _ports(
+        monkeypatch,
+        [
+            _response(200, "http://localhost:3000/v1/models", **imposter),
+            _response(200, "http://localhost:8000/v1/models", json={"data": [{"id": "m"}]}),
+        ],
+    )
+
+    result = await server._discover_async()
+
+    assert result is not None and result[0] == "http://localhost:8000"
+
+
+@pytest.mark.asyncio
+async def test_no_server_when_every_port_answers_with_html(monkeypatch: pytest.MonkeyPatch) -> None:
+    _ports(
+        monkeypatch,
+        [
+            _response(200, "http://localhost:3000/v1/models", text="<html></html>"),
+            _response(200, "http://localhost:8000/v1/models", text="<html></html>"),
+        ],
+    )
+
+    assert await server._discover_async() is None
+
+
+@pytest.mark.asyncio
+async def test_a_port_that_does_not_speak_http_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = httpx.Request("GET", "http://localhost:3000/v1/models")
+    _ports(
+        monkeypatch,
+        [
+            httpx.RemoteProtocolError("illegal status line", request=request),
+            _response(200, "http://localhost:8000/v1/models", json={"models": []}),
+        ],
+    )
+
+    result = await server._discover_async()
+
+    assert result is not None and result[0] == "http://localhost:8000"
