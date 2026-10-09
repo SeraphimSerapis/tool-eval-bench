@@ -1692,6 +1692,31 @@ class TestDashboardSpecBadge:
         assert "num_speculative_tokens" in text
         assert "current: 8" in text
 
+    def test_sglang_hint_suggests_a_value_for_its_own_knob(self):
+        """SGLang's num_draft_tokens counts the root, so the suggestion is window + 1."""
+        from tool_eval_bench.cli.spec_live_rendering import _efficiency_insight
+
+        # num_draft_tokens=8 is 7 drafted positions; τ=2 accepts 1, so 2 would do.
+        sglang = self._make_delta(
+            cumulative_acceptance_rate=0.14,
+            cumulative_acceptance_length=2.0,
+            cumulative_draft_window=7.0,
+            num_spec_tokens=8,
+            counter_metrics_available=False,
+        )
+        text = str(_efficiency_insight(sglang))
+        assert "reducing --speculative-num-draft-tokens to ~3 (current: 8)" in text
+
+        counters = self._make_delta(
+            cumulative_acceptance_rate=0.14,
+            cumulative_acceptance_length=2.0,
+            cumulative_draft_window=7.0,
+            num_spec_tokens=7,
+        )
+        assert "reducing num_speculative_tokens to ~2 (current: 7)" in str(
+            _efficiency_insight(counters)
+        )
+
     def test_mtp_efficiency_insight_guidance(self):
         """MTP with good utilization shows MTP-specific guidance."""
         from tool_eval_bench.cli.spec_live_rendering import _efficiency_insight

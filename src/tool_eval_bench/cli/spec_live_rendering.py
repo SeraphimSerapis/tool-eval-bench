@@ -302,8 +302,13 @@ def _efficiency_insight(delta: SpecLiveDelta) -> Text:
         if utilization < 0.3 and optimal is not None:
             nst = delta.num_spec_tokens
             current_label = f"(current: {nst})" if nst else f"(current window ≈{win:.0f})"
+            # Only SGLang lacks token counters. Its knob counts the root token
+            # as well as the drafted positions, so it is one more than the window.
+            knob = "num_speculative_tokens"
+            if not delta.counter_metrics_available:
+                knob, optimal = "--speculative-num-draft-tokens", optimal + 1
             text.append(
-                f"\n  💡 Consider reducing num_speculative_tokens to ~{optimal} {current_label}",
+                f"\n  💡 Consider reducing {knob} to ~{optimal} {current_label}",
                 style="dim yellow",
             )
         # Method-specific guidance
