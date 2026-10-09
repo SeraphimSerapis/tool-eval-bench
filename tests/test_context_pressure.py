@@ -1444,9 +1444,8 @@ class TestPressureSweepIntegration:
     def test_sweep_persists_the_run_context(self, tmp_path, monkeypatch) -> None:
         """A sweep stores the engine facts every other run type stores.
 
-        The fingerprint must not move: a sweep's cohort is its config, as for
-        perf and plugin runs, so sweeps saved before the metadata was recorded
-        still compare with new ones.
+        Those facts join the fingerprint, as for scored runs: a sweep against a
+        known deployment is not in the same cohort as one with no run context.
         """
         import io
 
@@ -1527,7 +1526,7 @@ class TestPressureSweepIntegration:
         assert metadata["label"] == "nightly"
         assert (
             with_context["config"]["config_fingerprint"]
-            == without_context["config"]["config_fingerprint"]
+            != without_context["config"]["config_fingerprint"]
         )
 
     def _make_summary(self, statuses: list[str]) -> Any:

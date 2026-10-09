@@ -368,8 +368,7 @@ def run_pressure_sweep(
         "steps": steps,
         "scenarios": scenario_ids,
     }
-    # Present only for an override, so a default sweep keeps the fingerprint it
-    # had before this option existed.
+    # Present only for an override, as in a scored run's config.
     system_prompt = getattr(args, "system_prompt", None)
     if system_prompt is not None:
         sweep_fields["system_prompt"] = system_prompt

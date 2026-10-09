@@ -130,3 +130,50 @@ def test_label_survives_a_missing_run_context(
     assert persisted[0]["metadata"] == {"label": "nightly"}
     assert finalized.report_path.name == f"{finalized.run_id}--nightly.md"
     assert "- **Label**: " in finalized.report_path.read_text(encoding="utf-8")
+
+
+def _fingerprint(tmp_path: Path, persisted: list[dict[str, Any]], context: RunContext) -> str:
+    finalize_mode_run(_run(), _report(), run_context=context, output_dir=str(tmp_path))
+    return str(persisted[-1]["config"]["config_fingerprint"])
+
+
+def test_fingerprint_splits_on_code_and_deployment_identity(
+    tmp_path: Path, persisted: list[dict[str, Any]]
+) -> None:
+    """Mode runs from another commit or engine are not comparable, as for scored runs."""
+    base = _fingerprint(tmp_path, persisted, _context())
+
+    other_commit = _context()
+    other_commit.git_sha = "abc1234"
+    other_engine = _context()
+    other_engine.engine_version = "0.9.0"
+
+    assert _fingerprint(tmp_path, persisted, other_commit) != base
+    assert _fingerprint(tmp_path, persisted, other_engine) != base
+
+
+def test_fingerprint_splits_on_tool_version(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, persisted: list[dict[str, Any]]
+) -> None:
+    import tool_eval_bench
+
+    base = _fingerprint(tmp_path, persisted, _context())
+    monkeypatch.setattr(tool_eval_bench, "__version__", "99.0.0")
+
+    assert _fingerprint(tmp_path, persisted, _context()) != base
+
+
+def test_fingerprint_ignores_host_facts_outside_the_comparison_keys(
+    tmp_path: Path, persisted: list[dict[str, Any]]
+) -> None:
+    """The machine that ran the client and the label do not split a cohort."""
+    base = _fingerprint(tmp_path, persisted, _context())
+
+    other_host = _context()
+    other_host.hostname = "elsewhere"
+    other_host.python_version = "3.11"
+    finalize_mode_run(
+        _run(), _report(label="nightly"), run_context=other_host, output_dir=str(tmp_path)
+    )
+
+    assert persisted[-1]["config"]["config_fingerprint"] == base

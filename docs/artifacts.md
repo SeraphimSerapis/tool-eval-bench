@@ -42,11 +42,14 @@ recording the host or any credentials.
 
 ## Config fingerprint
 
-Stored tool-evaluation configs also carry a deterministic `config_fingerprint`,
-so leaderboard entries only group runs that are actually comparable. The
-fingerprint covers the code identity (version and git SHA) as well as the CLI
-flags, because the scenarios and evaluators *are* code — two runs from different
-commits are not comparable even when every flag matches.
+Stored configs also carry a deterministic `config_fingerprint`, so leaderboard
+entries and comparisons only group runs that are actually comparable. The
+fingerprint covers the code identity (version and git SHA) and the discovered
+deployment facts (engine, context window, quantization, GPU count, slot count,
+speculative decoding) as well as the CLI flags, because the scenarios,
+evaluators and measurement loops *are* code: two runs from different commits are
+not comparable even when every flag matches. Scored runs, context-pressure
+sweeps, spec-bench, throughput-only runs and plugins all use this one rule.
 
 The leaderboard ranks only completed runs at 100% completion. Runs from
 different cohorts stay visible but receive no misleading global rank.

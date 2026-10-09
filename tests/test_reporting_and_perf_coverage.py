@@ -299,7 +299,9 @@ def test_spec_bench_cli_renders_metrics_and_persists(
     monkeypatch.setattr(speculative, "run_spec_bench", fake_run)
     monkeypatch.setattr(mode_runs, "write_mode_report", fake_report)
     monkeypatch.setattr(
-        mode_runs, "with_config_fingerprint", lambda config: {**config, "config_fingerprint": "fp"}
+        mode_runs,
+        "with_config_fingerprint",
+        lambda config, *_: {**config, "config_fingerprint": "fp"},
     )
     persisted: list[dict] = []
     monkeypatch.setattr(run_queries, "persist_run", persisted.append)

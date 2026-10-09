@@ -25,23 +25,9 @@ from enum import Enum
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import ScenarioDefinition
-from tool_eval_bench.utils.ids import build_config_fingerprint
+from tool_eval_bench.utils.fingerprint import comparison_fingerprint
 from tool_eval_bench.utils.urls import endpoint_identity
 from tool_eval_bench.utils.urls import redact_url as _redact_url
-
-#: Deployment facts that make two runs comparable.  A change in any of them puts
-#: a run in a different cohort, so they are folded into the fingerprint.
-COMPARISON_METADATA_KEYS = (
-    "server_model_id",
-    "server_model_root",
-    "engine_name",
-    "engine_version",
-    "max_model_len",
-    "quantization",
-    "gpu_count",
-    "slot_count",
-    "spec_decoding",
-)
 
 #: The key :func:`build_run_config` stores the fingerprint under.
 CONFIG_FINGERPRINT_KEY = "config_fingerprint"
@@ -431,22 +417,7 @@ def build_run_config(
             fingerprint_config[field.key] = value
         elif field.fingerprint is Fingerprint.SORTED:
             fingerprint_config[field.key] = sorted(value)
-    comparison_context = {
-        key: metadata.get(key) for key in COMPARISON_METADATA_KEYS if metadata.get(key) is not None
-    }
-    from tool_eval_bench import __version__
-
-    # The fingerprint answers "are these two runs comparable?".  The scenarios and
-    # evaluators are code, so two runs from different commits are not comparable
-    # even when every CLI flag matches — include the code identity.
-    config[CONFIG_FINGERPRINT_KEY] = build_config_fingerprint(
-        {
-            "config": fingerprint_config,
-            "deployment": comparison_context,
-            "tool_version": __version__,
-            "git_sha": metadata.get("git_sha"),
-        }
-    )
+    config[CONFIG_FINGERPRINT_KEY] = comparison_fingerprint(fingerprint_config, metadata)
     return config
 
 
