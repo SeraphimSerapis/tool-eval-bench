@@ -18,6 +18,7 @@ from tool_eval_bench.utils.openai_compat import (
     output_token_limit_reached,
     sampling_retry_payload,
 )
+from tool_eval_bench.utils.urls import redact_urls
 
 
 def preflight_model_check(
@@ -32,15 +33,18 @@ def preflight_model_check(
     extra_params: dict[str, Any] | None = None,
     wire_format: str = "openai",
     headers: Mapping[str, str] | None = None,
+    display_url: str | None = None,
 ) -> None:
     """Verify that a listed model can serve a minimal completion.
 
     ``extra_params`` and ``timeout_seconds`` mirror the options used by the
     benchmark requests so backend-specific configuration cannot make this
-    gate reject an otherwise usable endpoint.
+    gate reject an otherwise usable endpoint.  Console lines show
+    *display_url* (the ``--redact-url`` form) when given.
     """
     import httpx
 
+    show_url = display_url or base_url
     url, payload, headers = minimal_request(
         base_url,
         model,
@@ -93,7 +97,7 @@ def preflight_model_check(
                 f"Could not connect to {base_url} for pre-flight check.",
                 exit_code=2,
             )
-        console.print(f"[bold red]✗ Cannot connect to {base_url}[/]")
+        console.print(f"[bold red]✗ Cannot connect to {show_url}[/]")
         sys.exit(2)
     except Exception as exc:
         detail = str(exc).strip() or type(exc).__name__
@@ -103,6 +107,9 @@ def preflight_model_check(
                 f"Pre-flight check failed with unexpected error: {detail}",
                 exit_code=3,
             )
+        if show_url != base_url:
+            # httpx quotes the request URL in its messages.
+            detail = redact_urls(detail)
         console.print(f"[bold red]✗ Pre-flight check failed:[/] {detail}")
         sys.exit(3)
 
@@ -117,8 +124,13 @@ def warmup_server(
     temperature: float = 0.0,
     extra_params: dict[str, Any] | None = None,
     headers: Mapping[str, str] | None = None,
+    display_url: str | None = None,
 ) -> None:
-    """Prime the model server before measuring benchmark behavior."""
+    """Prime the model server before measuring benchmark behavior.
+
+    A failure message is redacted when *display_url* (the ``--redact-url``
+    form) differs from *base_url*, as in :func:`preflight_model_check`.
+    """
     from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
     from tool_eval_bench.runner.throughput import (
         WARMUP_EXTRA_PARAMS,
@@ -169,4 +181,6 @@ def warmup_server(
             body = getattr(response, "text", "").strip()
             if body and body not in message:
                 message = f"{message}: {body[:300]}"
+            if display_url is not None and display_url != base_url:
+                message = redact_urls(message)
             console.print(f"  [bold yellow]⚠[/] Warm-up failed [dim]({message})[/]")

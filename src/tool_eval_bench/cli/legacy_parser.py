@@ -173,7 +173,7 @@ def _make_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="CAT",
         help="Run only specific categories (e.g. --categories K A J). "
-        "Letters A–O map to the 15 benchmark categories.",
+        "Letters A–P map to the 16 benchmark categories.",
     )
     select.add_argument(
         "--short",

@@ -228,9 +228,10 @@ class TestPackSelection:
     def test_dry_run_reports_a_bad_pack_without_a_traceback(self, capsys) -> None:
         from rich.console import Console
 
+        from tool_eval_bench.cli.legacy_parser import _make_parser
         from tool_eval_bench.cli.local_commands import _render_dry_run
 
-        args = _args(pack_only=True, json=False)
+        args = _make_parser().parse_args(["--pack-only", "--dry-run"])
         with pytest.raises(SystemExit) as exit_info:
             _render_dry_run(args, Console(), resolve_scenarios)
 

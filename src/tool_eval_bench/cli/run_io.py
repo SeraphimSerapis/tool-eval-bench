@@ -72,8 +72,14 @@ async def stderr_progress_audit(
     sys.stderr.flush()
 
 
-def emit_json_output(data: dict[str, Any], *, json_file: str | None = None) -> None:
-    """Write a versioned result envelope to stdout or a file."""
+def emit_json_output(
+    data: dict[str, Any], *, json_file: str | None = None, failed: bool = False
+) -> None:
+    """Write a versioned result envelope to stdout or a file.
+
+    A *failed* run writes its error envelope the same way but emits no
+    ``benchmark_complete`` event; the caller reports the failure itself.
+    """
     from tool_eval_bench.api import format_result
 
     envelope = format_result(data)
@@ -84,6 +90,8 @@ def emit_json_output(data: dict[str, Any], *, json_file: str | None = None) -> N
         output = Path(json_file)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(text, encoding="utf-8")
+        if failed:
+            return
         message = {
             "event": "benchmark_complete",
             "json_file": str(output),

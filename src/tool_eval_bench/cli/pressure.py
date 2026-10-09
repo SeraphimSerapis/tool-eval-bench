@@ -353,11 +353,15 @@ def run_pressure_sweep(
 
     except KeyboardInterrupt:
         interrupted = True
-        console.print("\n[bold red]Interrupted.[/]")
+        if level_results:
+            console.print("\n[bold red]Interrupted.[/]")
 
     if not level_results:
-        console.print("\n[bold red]No results collected.[/]")
-        return
+        # Nothing to save or report, so the run failed; under --json this is
+        # the run_failed event a script waits for, not a log line and exit 0.
+        reason = "Interrupted. No results collected." if interrupted else "No results collected."
+        report_run_failed(console, f"\n[bold red]{reason}[/]")
+        sys.exit(1)
 
     console.print()
 

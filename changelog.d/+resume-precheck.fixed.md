@@ -1,0 +1,1 @@
+**`--resume` checks its target first.** A run ID that does not exist, or a run that already completed, was only detected after the pre-flight request, the warm-up, and any `--perf` sweep. The check now runs before any server work, with the same messages and exit code 1.

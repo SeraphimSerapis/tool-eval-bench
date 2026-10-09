@@ -1,0 +1,1 @@
+**Console exit codes match the documented table.** Model discovery used to exit 1 for every failure unless `--json` was set. Console runs now use the same codes as `--json`: 2 when the server cannot be reached, answers with an HTTP error, or returns an unreadable model list, and 3 when it lists no models. Scripts that check for exit 1 after a discovery failure need updating.

@@ -48,7 +48,18 @@ RUN_CONTROL = (
     "system_prompt_file",
 )
 DECISION_JUDGE = ("decision_judge", "decision_judge_base_url", "decision_judge_model")
-SCENARIOS = ("scenarios", "categories", "short", "hardmode", "hardmode_only", "variant_seed")
+# Only scored tool-call runs produce safety warnings, so plugin help omits it.
+SAFETY_GATE = ("fail_on_safety",)
+SCENARIOS = (
+    "scenarios",
+    "categories",
+    "short",
+    "hardmode",
+    "hardmode_only",
+    "variant_seed",
+    "scenario_pack",
+    "pack_only",
+)
 PERF = (
     "perf",
     "perf_only",
@@ -59,6 +70,7 @@ PERF = (
     "benchy_runs",
     "benchy_latency_mode",
     "benchy_args",
+    "tokenizer",
     "skip_coherence",
 )
 SPEC = (
@@ -143,6 +155,7 @@ COMMAND_SPECS = (
         + OUTPUT
         + PRESSURE
         + DECISION_JUDGE
+        + SAFETY_GATE
         + ("dry_run", "resume", "diff", "weight_by_difficulty"),
     ),
     CommandSpec(
@@ -165,6 +178,7 @@ COMMAND_SPECS = (
         + PRESSURE
         + PLUGIN_LEGACY
         + SCENARIOS
+        + SAFETY_GATE
         + ("skip_tool_eval",),
         legacy_flags=("perf", "perf_only", "spec_bench", "context_pressure_sweep"),
     ),
@@ -225,7 +239,13 @@ COMMAND_SPECS = (
         "resume",
         "Resume an incomplete run",
         translation="resume",
-        help_dests=CONNECTION + SAMPLING + SCENARIOS + RUN_CONTROL + OUTPUT + DECISION_JUDGE,
+        help_dests=CONNECTION
+        + SAMPLING
+        + SCENARIOS
+        + RUN_CONTROL
+        + OUTPUT
+        + DECISION_JUDGE
+        + SAFETY_GATE,
         legacy_flags=("resume",),
     ),
 )

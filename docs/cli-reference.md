@@ -51,6 +51,34 @@ error event. The one exception to the stderr rule is an error argparse raises
 while parsing, such as an unknown flag or a missing or malformed value: it
 keeps argparse's usage text, because `--json` is not known yet.
 
+`--history`, `--leaderboard`, and `--compare` print tables and exit 2 with
+`invalid_arguments` under `--json`. Use `--export json` for machine-readable
+run data.
+
+When a scored run fails after it starts, stdout (or the `--json-file` path)
+still gets an envelope. The score fields are null and `error` carries the
+redacted message:
+
+```jsonc
+{
+  "schema_version": "1",
+  "tool_eval_bench_version": "...",
+  "final_score": null,
+  "rating": null,
+  "safety_warnings": [],
+  "deployability": null,
+  "responsiveness": null,
+  "total_scenarios": null,
+  "error": "..."
+}
+```
+
+stderr gets a `run_failed` error event with the same message, and no
+`benchmark_complete` event follows. The exit code is 1. Check `error` before
+anything else: its `safety_warnings: []` means no scores exist, not that the
+model is safe. A Ctrl+C before the scenarios start emits `run_failed` with the
+message `interrupted` and exits 1.
+
 ```bash
 # JSON to stdout
 tool-eval-bench --json --short
@@ -84,6 +112,9 @@ tool-eval-bench --json --short
 | 1    | Runtime error or server not ready (--probe) |
 | 2    | Connection/HTTP error (server unreachable, bad response) |
 | 3    | No models found on server |
+
+Console and `--json` runs use the same codes. Invalid arguments and a tripped
+`--fail-on-safety` gate also exit 2.
 
 ## Specifying the server
 
@@ -128,9 +159,9 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--json-file PATH` | Write JSON to file instead of stdout |
 | `--short` | Run core 15 scenarios (~2 min) instead of full 69 |
 | `--probe` | Check server readiness and exit |
-| `--dry-run` | List scenarios that would run (no server needed) |
+| `--dry-run` | List scenarios that would run (no server needed). Reports 0 when the invocation runs no tool-call scenarios, such as `--perf-only` |
 | `--base-url URL` | Server endpoint |
-| `--redact-url` | Mask the server URL in console output, for screenshots and recordings. Reports, stored runs, and `--json` error output are always redacted |
+| `--redact-url` | Mask the server URL in console output, including `--probe` and pre-flight errors, for screenshots and recordings. Reports, stored runs, and `--json` error output are always redacted |
 | `--model NAME` | Model name (auto-detected if omitted) |
 | `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp`, `sglang`, `gemini`, `openai`, `anthropic`, `ninfer`, `tensorfold`, `halogen`, `strata`, `tabbyapi`, `unknown`. Auto-detected when omitted; otherwise `unknown`. |
 | `--provider NAME` | Read the endpoint from `TOOL_EVAL_<NAME>_*` env vars |
@@ -138,7 +169,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--session-header NAME` | Header that carries a per-conversation id, e.g. `x-opencode-session` (env: `TOOL_EVAL_SESSION_HEADER`) |
 | `--seed N` | Random seed for reproducibility |
 | `--temperature F` | Sampling temperature (default: 0.0 = greedy) |
-| `--timeout F` | Per-request timeout in seconds (default: 60) |
+| `--timeout F` | Per-request timeout in seconds (default: 120) |
 | `--no-think` | Disable thinking/reasoning (critical for Qwen3/DeepSeek) |
 | `--no-warmup` | Skip the tool-eval-bench warm-up request. llama-benchy (`--perf`, `--perf-only`) always runs its own warm-up |
 | `--hardmode` | Include 23 Hard Mode scenarios (Category P) |
@@ -150,7 +181,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--error-rate RATE` | Inject random tool errors at this rate, 0 to 1, for robustness testing |
 | `--fail-on-safety` | Exit 2 when a safety-critical scenario fails. With `--trials`, every trial still runs and an unsafe trial fails the gate |
 | `--diff RUN_ID` | Print a per-scenario comparison with a previous run after the run. `latest` means the newest completed tool-call run before this one. Ignored with `--json` |
-| `--resume RUN_ID` | Resume a previous run (skip already-passed scenarios) |
+| `--resume RUN_ID` | Resume a previous run (skip already-passed scenarios). The run must exist and be unfinished; that is checked before any server work |
 | `--hardmode-only` | Run ONLY Hard Mode scenarios (equivalent to --hardmode --categories P) |
 | `--weight-by-difficulty` | Weight scores by difficulty tier (harder scenarios count more) |
 | `--system-prompt TEXT` | Replace the built-in system prompt with TEXT for every scenario |
@@ -190,6 +221,26 @@ These run alongside the tool-call scenarios, or on their own with `--skip-tool-e
 
 `--temperature` applies to spec-bench requests as well; greedy is the default and the report
 records the value, since acceptance falls as sampling temperature rises.
+
+### Combining modes
+
+An invocation runs its modes in a fixed order: throughput, spec-bench, the
+context-pressure sweep, the accuracy plugins, then the tool-call scenarios.
+Combinations where a requested mode would never run exit 2 with
+`invalid_arguments` instead of quietly skipping it:
+
+| Rejected combination | Why | Instead |
+|----------------------|-----|---------|
+| `--spec-live` or `--decision-live` with any other benchmark or monitor | A live monitor runs until Ctrl+C | Run the monitor on its own |
+| `--perf-only` with `--spec-bench`, `--context-pressure-sweep`, or a plugin | `--perf-only` stops after throughput | `--perf` |
+| `--context-pressure-sweep` with `--spec-bench` or a plugin | One of the two would not run | Separate invocations |
+| A `--<plugin>-only` flag with a different plugin's flag | `-only` runs that plugin alone | Plain plugin flags plus `--skip-tool-eval` |
+| `--resume` with `--context-pressure-sweep` or a mode that runs no tool-call scenarios | Nothing would be resumed | Resume with a scenario run |
+
+`--perf` with `--perf-only`, and `--gsm8k` with `--gsm8k-only`, are accepted:
+they ask for the same thing twice. `--spec-bench` with a plugin and
+`--skip-tool-eval` runs spec-bench, then the plugin. `--probe` and the storage
+commands ignore benchmark mode flags, but conflicting pairs are still rejected.
 
 ### Auditing answers
 
@@ -255,7 +306,7 @@ tool-eval-bench decision-live --base-url http://host:8084
 tool-eval-bench --hardmode --seed 42 --perf --needle
 
 # Run all accuracy benchmarks (skip tool-call scenarios)
-tool-eval-bench --gsm8k-only --mmlu-only --ifeval-only
+tool-eval-bench --gsm8k --mmlu --ifeval --skip-tool-eval
 ```
 
 GSM8K, MMLU, and IFEval datasets are downloaded from HuggingFace on first use
@@ -403,7 +454,7 @@ else:
 1. **Don't parse stderr as JSON** — it's JSONL (one object per line), not a single JSON document.
 2. **Don't assume model is auto-detected** — if the server has 0 models loaded, exit code is 3.
 3. **Use `--short` for fast checks** — the full suite takes 10–20 minutes; core 15 takes ~2 minutes.
-4. **Timeout with thinking models** — models like Qwen3 with thinking enabled may need `--timeout 120`.
+4. **Timeout with thinking models** — models like Qwen3 with thinking enabled may need `--timeout` raised above the 120 s default for long reasoning traces.
 5. **Warmup is automatic** — the first request primes the server. Use `--no-warmup` only if already warmed.
 6. **Use `--dry-run` to preview** — before committing to a long run, check which scenarios would execute.
 

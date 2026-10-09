@@ -437,6 +437,7 @@ def test_scored_run_preflight_warmup_and_context_inputs(cli: Cli) -> None:
             "temperature": 0.3,
             "extra_params": extra,
             "headers": headers,
+            "display_url": BASE_URL,
         }
     ]
     assert cli.calls("warmup_server") == [
@@ -446,6 +447,7 @@ def test_scored_run_preflight_warmup_and_context_inputs(cli: Cli) -> None:
             "temperature": 0.3,
             "extra_params": extra,
             "headers": headers,
+            "display_url": BASE_URL,
         }
     ]
     assert cli.contexts == [
@@ -938,6 +940,10 @@ def test_service_failure_exits_one(
 
     assert outcome.code == 1
     assert message in getattr(outcome, f"flat_{stream}")
+    if "--json" in mode_flags:
+        events = [json.loads(line) for line in outcome.err.splitlines()]
+        assert {"event": "error", "error": "run_failed", "message": "boom"} in events
+        assert "benchmark_complete" not in [event["event"] for event in events]
 
 
 def test_json_stream_is_one_envelope_on_stdout_and_jsonl_on_stderr(cli: Cli) -> None:
@@ -991,6 +997,7 @@ def test_probe_mode_stops_after_the_probe(cli: Cli) -> None:
     assert cli.calls("_probe_server") == [
         {
             "args": ("<console>", BASE_URL, None),
+            "display_url": BASE_URL,
             "headless": False,
             "wire_format": "openai",
             "headers": {},
@@ -1364,15 +1371,17 @@ SPEC_BENCH_CALL = {
 
 
 @pytest.mark.parametrize(
-    ("extra", "scored"),
+    ("extra", "scored", "plugins"),
     [
-        pytest.param([], False, id="alone"),
-        pytest.param(["--gsm8k"], True, id="with-plugin"),
-        pytest.param(["--gsm8k", "--skip-tool-eval"], False, id="skip-tool-eval"),
+        pytest.param([], False, 0, id="alone"),
+        pytest.param(["--gsm8k"], True, 1, id="with-plugin"),
+        # The plugin used to be dropped here: spec-bench returned before the
+        # plugins whenever --skip-tool-eval was set.
+        pytest.param(["--gsm8k", "--skip-tool-eval"], False, 1, id="skip-tool-eval"),
     ],
 )
 def test_spec_bench_stops_unless_another_benchmark_follows(
-    cli: Cli, extra: list[str], scored: bool
+    cli: Cli, extra: list[str], scored: bool, plugins: int
 ) -> None:
     cli.record("tool_eval_bench.cli.spec_bench", "run_spec_bench", returns=list)
 
@@ -1381,6 +1390,7 @@ def test_spec_bench_stops_unless_another_benchmark_follows(
     assert outcome.code == 0
     assert cli.calls("run_spec_bench") == [SPEC_BENCH_CALL]
     assert bool(cli.runs) is scored
+    assert len(cli.leaves["run_selected_plugins"]) == plugins
 
 
 def test_pressure_sweep_stops_after_the_sweep(cli: Cli) -> None:

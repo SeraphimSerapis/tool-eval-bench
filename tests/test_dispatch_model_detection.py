@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 from rich.console import Console
@@ -77,7 +79,7 @@ def test_detect_model_falls_back_and_reprompts_for_valid_selection(
 
 
 @pytest.mark.parametrize(
-    ("responses", "message"),
+    ("responses", "message", "code"),
     [
         (
             [
@@ -87,10 +89,12 @@ def test_detect_model_falls_back_and_reprompts_for_valid_selection(
                 )
             ],
             "Could not connect",
+            2,
         ),
         (
             [_response(401, "http://localhost:8000/v1/models")],
             "Server returned 401",
+            2,
         ),
         (
             [
@@ -102,10 +106,12 @@ def test_detect_model_falls_back_and_reprompts_for_valid_selection(
                 )
             ],
             "invalid JSON",
+            2,
         ),
         (
             [_response(200, "http://localhost:8000/v1/models", json={"data": []})],
             "empty model list",
+            3,
         ),
     ],
 )
@@ -113,12 +119,58 @@ def test_detect_model_exits_with_actionable_errors(
     monkeypatch: pytest.MonkeyPatch,
     responses,
     message: str,
+    code: int,
 ) -> None:
+    # Console mode uses the same exit codes as --json, so scripts that skip
+    # --json can still tell an unreachable server from an empty one.
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _Client(responses))
     console = Console(record=True, width=120)
 
     with pytest.raises(SystemExit) as exc_info:
         dispatch._detect_model("http://localhost:8000", None, console)
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == code
     assert message in console.export_text()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"data": ["llama-3"]},
+        {"data": {"id": "m"}},
+        {"data": [{"id": "ok"}, "stray"]},
+        ["llama-3"],
+    ],
+)
+@pytest.mark.parametrize("headless", [False, True])
+def test_detect_model_rejects_a_model_list_that_is_not_objects(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    body: object,
+    headless: bool,
+) -> None:
+    responses = [_response(200, "http://localhost:8000/v1/models", json=body)]
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _Client(responses))
+    console = Console(record=True, width=120)
+
+    with pytest.raises(SystemExit) as exc_info:
+        dispatch._detect_model("http://localhost:8000", None, console, headless=headless)
+
+    assert exc_info.value.code == 2
+    if headless:
+        event = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+        assert event["error"] == "invalid_response"
+        assert "not a list of objects" in event["message"]
+    else:
+        assert "not a list of objects" in console.export_text()
+
+
+def test_detect_model_accepts_the_native_gemini_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = [
+        _response(200, "http://localhost:8000/v1/models", json={"models": [{"id": "gemini-x"}]})
+    ]
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _Client(responses))
+
+    selected = dispatch._detect_model("http://localhost:8000", None, Console(record=True))
+
+    assert selected[0] == "gemini-x"
