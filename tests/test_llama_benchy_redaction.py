@@ -22,6 +22,7 @@ from tool_eval_bench.runner.llama_benchy import (
     _redact_argument,
     _redact_command,
     _strip_url_credentials,
+    redact_arguments,
 )
 
 SECRET = "hunter2"
@@ -160,3 +161,34 @@ class TestRedactCommand:
     )
     def test_uncredentialed_urls_stay_readable(self, base_url: str) -> None:
         assert base_url in _redact_command(self._command(base_url))
+
+
+class TestAbbreviatedOptions:
+    """llama-benchy uses argparse's allow_abbrev, so a prefix is a working flag."""
+
+    @pytest.mark.parametrize("flag", ["--ap", "--api", "--api-", "--api-k", "--api-ke"])
+    def test_api_key_abbreviations_are_redacted_in_both_forms(self, flag: str) -> None:
+        assert redact_arguments([flag, "sk-AAA"]) == [flag, "<redacted>"]
+        assert redact_arguments([f"{flag}=sk-AAA"]) == [f"{flag}=<redacted>"]
+
+    @pytest.mark.parametrize("flag", ["--po", "--post", "--post-run", "--post-run-cmd"])
+    def test_post_run_cmd_is_withheld_in_both_forms(self, flag: str) -> None:
+        command = f"curl -H 'Authorization: Bearer {SECRET}' https://hook.internal"
+        assert redact_arguments([flag, command]) == [flag, "<redacted>"]
+        assert redact_arguments([f"{flag}={command}"]) == [f"{flag}=<redacted>"]
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            # Ambiguous or unrelated prefixes keep their values: ``--a`` also
+            # matches --adapt-prompt and ``--p`` also matches --pp.
+            ["--a", "x"],
+            ["--p", "512"],
+            ["--pp", "512"],
+            ["--adapt-prompt"],
+            ["--api-keys", "x"],
+            ["-ap", "x"],
+        ],
+    )
+    def test_other_options_keep_their_values(self, args: list[str]) -> None:
+        assert redact_arguments(args) == args

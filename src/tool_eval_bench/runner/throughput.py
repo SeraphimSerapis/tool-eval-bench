@@ -297,7 +297,9 @@ class ThroughputSample:
     # Mean output tokens per successful llama-benchy request in this cell.
     # ``tg_tokens`` stays the configured value because it is the cell key and
     # the row label; a model that stops early generates fewer. None when the
-    # run emitted no per-request progress events.
+    # run emitted no per-request progress events. Under prefix caching the
+    # context-load and inference rows share a cell key, so both carry the mean
+    # over the requests of both phases.
     observed_tg_tokens: float | None = None
     # True for the context-load row llama-benchy adds under
     # ``--enable-prefix-caching``. It shares every other coordinate with the

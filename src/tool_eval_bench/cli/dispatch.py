@@ -444,6 +444,8 @@ def _throughput_config(target: _Target) -> dict[str, Any]:
         "concurrency": _parse_int_list(args.concurrency),
         "runs": args.benchy_runs,
         "latency_mode": args.benchy_latency_mode,
+        # The tokenizer builds the prompts and counts their tokens.
+        "tokenizer": getattr(args, "tokenizer", None),
         "benchy_args": redact_arguments(_benchy_extra_args(args) or []),
     }
 

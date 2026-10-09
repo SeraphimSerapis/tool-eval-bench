@@ -1566,10 +1566,10 @@ class TestRoleChunkGuard:
         assert sample.pp_estimated is True
         assert sample.label_pp == 2048
         assert sample.pp_tps == pytest.approx(2048 / 2.717, rel=1e-6)
-        # total_ms is est_ppt plus generation. Replacing est_ppt with e2e_ttft
-        # keeps total at or above the honest TTFT.
+        # total_ms is TTFT plus generation, which keeps it at or above the
+        # honest TTFT. Generation spans the 31 tokens after the first.
         assert sample.ttft_ms == pytest.approx(2_717.0)
-        assert sample.total_ms == pytest.approx(2_717.0 + 32 / 50.0 * 1000)
+        assert sample.total_ms == pytest.approx(2_717.0 + 31 / 50.0 * 1000)
 
     def test_short_prompt_role_chunk_is_rewritten(self):
         # 64 tokens over a 2.4 ms est_ppt is about 27k t/s, under any 50k
@@ -1959,7 +1959,8 @@ class TestObservedOutputTokens:
         (sample,) = result.samples
         assert sample.tg_tokens == 32, "the configured tg stays the cell key and label"
         assert sample.observed_tg_tokens == pytest.approx(5.0)
-        assert sample.total_ms == pytest.approx(100.0 + 5 / 20.0 * 1000)
+        # llama-benchy's rate covers the tokens after the first: 4 of a mean 5.
+        assert sample.total_ms == pytest.approx(100.0 + 4 / 20.0 * 1000)
         assert sample.to_result()["observed_tg_tokens"] == pytest.approx(5.0)
         md: list[str] = []
         append_benchy_throughput_rows(md, [sample])
@@ -1984,7 +1985,7 @@ class TestObservedOutputTokens:
 
         (sample,) = result.samples
         assert sample.observed_tg_tokens is None
-        assert sample.total_ms == pytest.approx(100.0 + 32 / 20.0 * 1000)
+        assert sample.total_ms == pytest.approx(100.0 + 31 / 20.0 * 1000)
         assert "observed_tg_tokens" not in sample.to_result()
         md: list[str] = []
         append_benchy_throughput_rows(md, [sample])
@@ -2005,18 +2006,26 @@ class TestTotalMs:
 
         sample = _parse_benchmark_entry(entry)
 
-        assert sample.total_ms == pytest.approx(506.4 + 16 / 96.0 * 1000)
+        assert sample.total_ms == pytest.approx(506.4 + 15 / 96.0 * 1000)
 
     def test_zero_est_ppt_still_gives_a_total(self) -> None:
         # est_ppt is clamped to 0 when the latency probe is slower than ttfr.
         entry = {**_cell_entry(tg=16, tg_req=95.0, e2e_ttft=400.0), "est_ppt": {"mean": 0.0}}
 
-        assert _parse_benchmark_entry(entry).total_ms == pytest.approx(400.0 + 16 / 95.0 * 1000)
+        assert _parse_benchmark_entry(entry).total_ms == pytest.approx(400.0 + 15 / 95.0 * 1000)
 
     def test_no_first_token_means_no_total(self) -> None:
         entry = {**_cell_entry(), "e2e_ttft": None, "tg_req_throughput": None}
 
         assert _parse_benchmark_entry(entry).total_ms == 0
+
+    @pytest.mark.parametrize("observed", [1.0, 0.0])
+    def test_a_single_token_adds_no_generation_time(self, observed: float) -> None:
+        entry = _cell_entry(tg_req=20.0, e2e_ttft=100.0)
+
+        sample = _parse_benchmark_entry(entry, observed_tg_tokens=observed)
+
+        assert sample.total_ms == pytest.approx(100.0)
 
 
 class TestContextPrefillRows:

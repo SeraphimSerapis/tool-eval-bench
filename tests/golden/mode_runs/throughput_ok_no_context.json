@@ -22,8 +22,9 @@
       ],
       "runs": 3,
       "latency_mode": "generation",
+      "tokenizer": null,
       "benchy_args": [],
-      "config_fingerprint": "5a32c62a21f5"
+      "config_fingerprint": "4b29eeb79193"
     },
     "scores": {
       "samples": 1,

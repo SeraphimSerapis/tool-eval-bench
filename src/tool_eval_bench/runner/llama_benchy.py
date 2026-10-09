@@ -121,11 +121,29 @@ def _redact_argument(arg: str) -> str:
     return arg
 
 
+# Options whose value is withheld from logs and stored configs: the endpoint key,
+# and a shell command that can carry anything and does not affect measurement.
+_WITHHELD_OPTIONS = ("--api-key", "--post-run-cmd")
+# llama-benchy parses with argparse's default allow_abbrev, so any unambiguous
+# prefix works: ``--ap`` is ``--api-key`` (``--a`` also matches
+# ``--adapt-prompt``) and ``--po`` is ``--post-run-cmd`` (``--p`` also matches
+# ``--pp``). Four characters is the shortest unambiguous prefix of either.
+_MIN_ABBREVIATION = 4
+
+
+def _withheld_option(flag: str) -> bool:
+    """Whether *flag* is, or abbreviates, an option whose value is withheld."""
+    return len(flag) >= _MIN_ABBREVIATION and any(
+        option.startswith(flag) for option in _WITHHELD_OPTIONS
+    )
+
+
 def redact_arguments(cmd: list[str]) -> list[str]:
     """Return *cmd* with endpoint credentials replaced or stripped.
 
-    Covers both channels an endpoint credential can travel by: an explicit
-    ``--api-key`` value, and anything embedded in a URL argument.
+    Covers the channels an endpoint credential can travel by: an ``--api-key``
+    value, under any abbreviation llama-benchy accepts, and anything embedded
+    in a URL argument. The ``--post-run-cmd`` value is withheld the same way.
     """
     redacted: list[str] = []
     redact_next = False
@@ -134,11 +152,14 @@ def redact_arguments(cmd: list[str]) -> list[str]:
         if redact_next:
             redacted.append("<redacted>")
             redact_next = False
-        elif arg == "--api-key":
-            redacted.append(arg)
-            redact_next = True
-        elif arg.startswith("--api-key="):
-            redacted.append("--api-key=<redacted>")
+            continue
+        flag, separator, _ = arg.partition("=")
+        if arg.startswith("--") and _withheld_option(flag):
+            if separator:
+                redacted.append(f"{flag}=<redacted>")
+            else:
+                redacted.append(arg)
+                redact_next = True
         else:
             redacted.append(_redact_argument(arg))
 
@@ -451,9 +472,11 @@ def _parse_benchmark_entry(
     # Total request time on the same base as the TTFT column: time to the
     # first content token plus the per-request generation time. est_ppt is
     # latency-subtracted and can count a pre-content chunk, so a Total built
-    # on it could fall below TTFT or to zero.
+    # on it could fall below TTFT or to zero. llama-benchy's per-request rate
+    # counts the tokens after the first over the time after the first, so the
+    # decode window holds one token fewer than were generated.
     generated = observed_tg_tokens if observed_tg_tokens is not None else tg_tokens
-    gen_time_ms = (generated / tg_req_tps * 1000) if tg_req_tps > 0 else 0
+    gen_time_ms = (max(generated - 1, 0) / tg_req_tps * 1000) if tg_req_tps > 0 else 0
     total_ms = e2e_ttft_ms + gen_time_ms if e2e_ttft_ms > 0 else 0
 
     # If this is a context prefill phase, override pp label

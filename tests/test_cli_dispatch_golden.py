@@ -971,6 +971,16 @@ def _perf_rows(cli: Cli) -> list[dict[str, Any]]:
             ("tool_eval_bench.cli.plugin_runners", "run_selected_plugins", True),
             id="plugin-only",
         ),
+        pytest.param(
+            ["--gsm8k", "--skip-tool-eval"],
+            ("tool_eval_bench.cli.plugin_runners", "run_selected_plugins", False),
+            id="plugin-then-skip-tool-eval",
+        ),
+        pytest.param(
+            ["--context-pressure", "0.5", "--context-size", "32768", "--skip-tool-eval"],
+            None,
+            id="context-pressure-then-skip-tool-eval",
+        ),
     ],
 )
 def test_perf_is_saved_on_its_own_when_no_scored_run_follows(
@@ -1117,6 +1127,7 @@ def test_perf_only_fingerprint_follows_the_workload(cli: Cli) -> None:
         ["--benchy-runs", "5"],
         ["--benchy-latency-mode", "api"],
         ["--benchy-args=--enable-prefix-caching"],
+        ["--tokenizer", "/models/tok/tokenizer.json"],
     ]
 
     for flags in workloads:
@@ -1137,6 +1148,26 @@ def test_perf_only_config_strips_credentials_from_benchy_args(cli: Cli) -> None:
     assert outcome.code == 0
     (persisted,) = _perf_rows(cli)
     assert persisted["config"]["benchy_args"] == ["--api-key", "<redacted>", "--exact-tg"]
+
+
+def test_perf_only_config_strips_abbreviated_key_flags_and_post_run_cmd(cli: Cli) -> None:
+    # llama-benchy accepts any unambiguous prefix, so these are working keys.
+    cli.record("tool_eval_bench.cli.perf", "run_llama_benchy", lambda: [ThroughputSample()])
+    benchy_args = "--api sk-AAA --api-k=sk-BBB --po 'curl -H token:sk-CCC hook' --exact-tg"
+
+    outcome = cli.run(*CONNECTION, "--perf-only", "--no-live", f"--benchy-args={benchy_args}")
+
+    assert outcome.code == 0
+    (persisted,) = _perf_rows(cli)
+    assert persisted["config"]["benchy_args"] == [
+        "--api",
+        "<redacted>",
+        "--api-k=<redacted>",
+        "--po",
+        "<redacted>",
+        "--exact-tg",
+    ]
+    assert "sk-" not in json.dumps(persisted)
 
 
 SPEC_BENCH_CALL = {
