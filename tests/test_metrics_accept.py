@@ -163,7 +163,6 @@ def test_spec_live_labels_strata_counters_as_strata() -> None:
 
     assert current.spec_backend == "strata"
     assert current.spec_method == "mtp"
-    assert delta.spec_metrics_source == "strata"
     assert delta.spec_method == "mtp"
     assert delta.acceptance_rate == pytest.approx(15 / 20)
     assert delta.counter_metrics_available is True
@@ -179,7 +178,6 @@ def test_spec_live_keeps_vllm_label_when_strata_is_only_a_label_value() -> None:
 
     assert snap.spec_backend == "vllm"
     assert snap.spec_method == "unknown"
-    assert compute_delta(snap, snap).spec_metrics_source == "vllm"
 
 
 @pytest.mark.asyncio

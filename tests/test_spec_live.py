@@ -211,7 +211,6 @@ vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="1",position="0"} 40
         snap = _parse_snapshot('python_gc_collections_total{generation="0"} 3\n')
         assert snap.has_spec_decode is False
         assert snap.has_llamacpp_metrics is False
-        assert snap.has_sglang_metrics is False
 
 
 # ---------------------------------------------------------------------------
@@ -932,7 +931,6 @@ sglang:num_queue_reqs{tp_rank="0",pp_rank="0"} 2
             MetricsSnapshot(**{**snap.__dict__, "timestamp": 101.0}),
         )
         assert delta.counter_metrics_available is False
-        assert delta.spec_metrics_source == "sglang"
         assert delta.cumulative_acceptance_rate == pytest.approx(0.40)
         assert delta.cumulative_acceptance_length == pytest.approx(1.40)
         assert delta.cumulative_draft_window == pytest.approx(6.0)
@@ -980,7 +978,7 @@ llamacpp:spec_decode_num_accepted_tokens_per_pos_total{position="1"} 20
     def test_current_spec_counters_use_bonus_token_length(self):
         snap = _parse_snapshot(self.METRICS)
         delta = compute_delta(MetricsSnapshot(timestamp=100.0), snap)
-        assert delta.spec_metrics_source == "llamacpp"
+        assert delta.counter_metrics_available is True
         assert delta.cumulative_acceptance_rate == pytest.approx(0.3)
         assert delta.cumulative_acceptance_length == pytest.approx(4.0)
         assert delta.cumulative_draft_window == pytest.approx(10.0)

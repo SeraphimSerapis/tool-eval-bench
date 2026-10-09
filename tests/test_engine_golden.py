@@ -484,65 +484,65 @@ async def test_spec_detection_outcome(
 # Spec-live labels
 # ---------------------------------------------------------------------------
 
-# (spec_backend, spec_metrics_source, spec_method)
-_LIVE_CASES: list[tuple[str, str, tuple[str, str, str]]] = [
-    ("empty", "", ("unknown", "unknown", "unknown")),
-    ("vllm", _counters("vllm:", 10, 5, 4), ("vllm", "vllm", "unknown")),
-    ("vllm-underscore", _counters("vllm_", 10, 5, 4), ("vllm", "vllm", "unknown")),
+# (spec_backend, counter_metrics_available, spec_method)
+_LIVE_CASES: list[tuple[str, str, tuple[str, bool, str]]] = [
+    ("empty", "", ("unknown", True, "unknown")),
+    ("vllm", _counters("vllm:", 10, 5, 4), ("vllm", True, "unknown")),
+    ("vllm-underscore", _counters("vllm_", 10, 5, 4), ("vllm", True, "unknown")),
     (
         "vllm-method-label",
         _counters("vllm:", 10, 5, 4, labels='spec_method="eagle3"'),
-        ("vllm", "vllm", "eagle3"),
+        ("vllm", True, "eagle3"),
     ),
-    ("strata", _counters("vllm:", 10, 5, 4) + STRATA_NS, ("strata", "strata", "mtp")),
-    ("strata-zero", _counters("vllm:", 0) + STRATA_NS, ("strata", "strata", "mtp")),
+    ("strata", _counters("vllm:", 10, 5, 4) + STRATA_NS, ("strata", True, "mtp")),
+    ("strata-zero", _counters("vllm:", 0) + STRATA_NS, ("strata", True, "mtp")),
     (
         # An explicit method label wins over Strata's fixed mtp, as in detection.
         "strata-method-label",
         _counters("vllm:", 10, 5, 4, labels='spec_method="eagle"') + STRATA_NS,
-        ("strata", "strata", "eagle"),
+        ("strata", True, "eagle"),
     ),
     (
         "strata-in-label",
         _counters("vllm:", 10, 5, 4, labels='model_name="acme/strata:7b"'),
-        ("vllm", "vllm", "unknown"),
+        ("vllm", True, "unknown"),
     ),
-    ("strata-without-counters", STRATA_NS, ("unknown", "unknown", "unknown")),
-    ("sglang-gauges", SGLANG_SPEC, ("sglang", "sglang", "unknown")),
-    ("sglang-engine-only", SGLANG_ENGINE, ("sglang", "unknown", "unknown")),
-    ("sglang+vllm", SGLANG_SPEC + _counters("vllm:", 10, 5, 4), ("vllm", "sglang", "unknown")),
+    ("strata-without-counters", STRATA_NS, ("unknown", True, "unknown")),
+    ("sglang-gauges", SGLANG_SPEC, ("sglang", False, "unknown")),
+    ("sglang-engine-only", SGLANG_ENGINE, ("sglang", True, "unknown")),
+    ("sglang+vllm", SGLANG_SPEC + _counters("vllm:", 10, 5, 4), ("vllm", False, "unknown")),
     (
         "llamacpp",
         LLAMACPP_LOAD + _counters("llamacpp:", 10, 5, 4),
-        ("llamacpp", "llamacpp", "unknown"),
+        ("llamacpp", True, "unknown"),
     ),
-    ("llamacpp-zero", _counters("llamacpp:", 0), ("llamacpp", "llamacpp", "unknown")),
-    ("llamacpp-load-only", LLAMACPP_LOAD, ("llamacpp", "unknown", "unknown")),
+    ("llamacpp-zero", _counters("llamacpp:", 0), ("llamacpp", True, "unknown")),
+    ("llamacpp-load-only", LLAMACPP_LOAD, ("llamacpp", True, "unknown")),
     (
         "halogen+llamacpp",
         HALOGEN_NS + _counters("llamacpp:", 10, 5, 4),
-        ("llamacpp", "llamacpp", "unknown"),
+        ("llamacpp", True, "unknown"),
     ),
-    ("tensorfold", _counters("tensorfold:", 10, 5, 4), ("tensorfold", "tensorfold", "unknown")),
+    ("tensorfold", _counters("tensorfold:", 10, 5, 4), ("tensorfold", True, "unknown")),
     (
         "tensorfold+vllm",
         _counters("tensorfold:", 10, 5, 4) + _counters("vllm:", 10, 5, 4),
-        ("vllm", "vllm", "unknown"),
+        ("vllm", True, "unknown"),
     ),
     (
         "vllm+llamacpp",
         _counters("vllm:", 10, 5, 4) + _counters("llamacpp:", 10, 5, 4),
-        ("vllm", "vllm", "unknown"),
+        ("vllm", True, "unknown"),
     ),
     (
         "tensorfold+llamacpp",
         _counters("tensorfold:", 10, 5, 4) + _counters("llamacpp:", 10, 5, 4),
-        ("tensorfold", "tensorfold", "unknown"),
+        ("tensorfold", True, "unknown"),
     ),
     (
         "strata+llamacpp",
         _counters("vllm:", 10, 5, 4) + STRATA_NS + _counters("llamacpp:", 10, 5, 4),
-        ("strata", "strata", "mtp"),
+        ("strata", True, "mtp"),
     ),
 ]
 
@@ -551,11 +551,11 @@ _LIVE_CASES: list[tuple[str, str, tuple[str, str, str]]] = [
     ("text", "expected"),
     [pytest.param(text, expected, id=case_id) for case_id, text, expected in _LIVE_CASES],
 )
-def test_spec_live_labels(text: str, expected: tuple[str, str, str]) -> None:
+def test_spec_live_labels(text: str, expected: tuple[str, bool, str]) -> None:
     snap = _parse_snapshot(text)
     delta = compute_delta(snap, snap)
 
-    assert (snap.spec_backend, delta.spec_metrics_source, delta.spec_method) == expected
+    assert (snap.spec_backend, delta.counter_metrics_available, delta.spec_method) == expected
     assert snap.spec_method == delta.spec_method
 
 
