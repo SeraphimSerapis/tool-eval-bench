@@ -150,7 +150,9 @@ def _tc29_eval(state: ScenarioState) -> ScenarioEvaluation:
     used_web = any(c.name == "web_search" for c in state.tool_calls)
     answer = state.final_answer
 
-    correct_output = bool(_TC29_OUTPUT.search(answer))
+    # "It does not return 0, 1, 4, 9, 16" states no result, and must not unlock
+    # the worked-example exemption either.
+    correct_output = _answer_affirms_pattern(answer, _TC29_OUTPUT)
     low_answer = answer.lower()
     # Naming the construct is not an explanation of what it computes. The
     # answer has to say the values are squared, and not deny it ("it doesn't

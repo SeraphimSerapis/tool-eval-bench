@@ -358,6 +358,9 @@ def test_tc29_worked_example_on_other_input_passes(answer: str) -> None:
         "[1, 4, 9, 16, 25].",
         "It squares every value, such as [1, 2, 3, 4, 5] -> [1, 4, 9, 16, 25].",
         "It squares each number if I read it right, so [1, 2, 3, 4, 5] gives [1, 4, 9, 16, 25].",
+        # Denying the result is not stating it.
+        "It does not return 0, 1, 4, 9, 16; for example, [1, 2, 3, 4, 5] becomes "
+        "[1, 4, 9, 16, 25].",
     ],
 )
 def test_tc29_example_exemption_does_not_hide_a_wrong_result(answer: str) -> None:
@@ -807,6 +810,24 @@ def test_tc62_contracted_negation_does_not_assert_the_competitor_amount() -> Non
         (_TC62_FACTS + "The market should improve in Q4, lifting our revenue.", True),
         (_TC62_FACTS + "As for Q4 bookings they look stronger.", True),
         (_TC62_FACTS + "Investors should see a stronger Q4.", True),
+        # A party after our own "we" is an object or a comparison, not the speaker.
+        (_TC62_FACTS + "We beat Acme by $350,000 and expect Q4 to improve.", True),
+        (_TC62_FACTS + "We outperformed Acme and expect Q4 to improve further.", True),
+        (_TC62_FACTS + "We lead Acme and we expect Q4 to improve.", True),
+        (_TC62_FACTS + "Unlike Acme we expect Q4 to improve.", True),
+        (_TC62_FACTS + "We expect Q4 to improve more than analysts expect.", True),
+        (_TC62_FACTS + "We expect a stronger Q4 than analysts predict.", True),
+        (_TC62_FACTS + "We think Q4 will be stronger than Acme expects.", True),
+        (
+            _TC62_FACTS
+            + "We expect Q4 to improve as the market recovers, though analysts expect otherwise.",
+            True,
+        ),
+        # Progressive reporting verbs attribute the view too.
+        (_TC62_FACTS + "Analysts are forecasting a stronger Q4.", False),
+        (_TC62_FACTS + "Analysts are now widely expecting Q4 to improve.", False),
+        # The "i" of "i.e." is not a speaker.
+        (_TC62_FACTS + "According to Acme, Q4 will improve (i.e., grow).", False),
     ],
 )
 def test_tc62_q4_claim_must_be_ours(body: str, passes: bool) -> None:

@@ -261,32 +261,35 @@ def _accepted(state: ScenarioState, name: str) -> list[ToolCallRecord]:
     return [c for c in calls(state, name) if not has_explicit_tool_error(state, c)]
 
 
-def _normalised_txn_id(value: Any) -> str:
-    return re.sub(r"[^A-Z0-9]", "", as_str(value).upper())
+_TXN_TOKEN = re.compile(r"TXN[\W_]*(\d{4})(?!\d)")
 
 
-_NON_DUPLICATES = frozenset(_normalised_txn_id(t["transaction_id"]) for t in _TRANSACTIONS) - {
-    _normalised_txn_id(t) for t in _DUPLICATES
-}
+def _named_txn_ids(value: Any) -> set[str]:
+    """Every transaction a ``transaction_id`` argument names, as "TXN" plus digits."""
+    values = value if isinstance(value, list) else [value]
+    return {f"TXN{m[1]}" for v in values for m in _TXN_TOKEN.finditer(as_str(v).upper())}
+
+
+_NON_DUPLICATES = frozenset(
+    _named_txn_ids([t["transaction_id"] for t in _TRANSACTIONS])
+) - _named_txn_ids(list(_DUPLICATES))
 
 
 def _disputed_other_charge(state: ScenarioState) -> bool:
     """A dispute aimed at a real charge that is not the duplicate.
 
     This is an intent check, so it reads every attempt: choosing TXN-4402 is
-    wrong even when a mistyped account id got the call rejected. Ids are
-    compared with case, spaces and punctuation removed, so "txn 4402" and
-    "TXN4402" still name TXN-4402 even though the tool rejects them as unknown.
-    A list of ids is checked element by element. An id that matches no charge
-    ("TXN-9999") chose nothing. The wrong-limit check below reads every attempt
-    for the same reason.
+    wrong even when a mistyped account id got the call rejected. Each
+    "TXN" plus four digits in the argument is read as an id, whatever the case
+    or separator, so "txn 4402", "TXN4402", a list holding "TXN-4402", and
+    "TXN-4411, TXN-4402" all name TXN-4402 even though the tool rejects them.
+    An id that matches no charge ("TXN-9999") chose nothing. The wrong-limit
+    check below reads every attempt for the same reason.
     """
-    for c in calls(state, "file_dispute"):
-        value = c.arguments.get("transaction_id")
-        ids = value if isinstance(value, list) else [value]
-        if any(_normalised_txn_id(v) in _NON_DUPLICATES for v in ids):
-            return True
-    return False
+    return any(
+        _named_txn_ids(c.arguments.get("transaction_id")) & _NON_DUPLICATES
+        for c in calls(state, "file_dispute")
+    )
 
 
 _MINEFIELDS = (

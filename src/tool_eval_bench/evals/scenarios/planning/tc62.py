@@ -207,26 +207,31 @@ _TC62_Q4_CLAIM_WINDOW = 60
 # Turn 5 asks the email to say *we* expect Q4 to improve. A ;-clause that
 # attributes a view to someone else ("Acme expects", "according to analysts",
 # "in Acme's view", "..., analysts say") reports their view. There the claim
-# counts only when its own clause has "we" or "I" as speaker and names no
-# third party: "Unlike Acme, we expect Q4 to improve" passes, while "Our
-# rivals expect" and "Analysts we spoke to expect" do not. Without an
-# attribution the claim stands, so "The market should improve in Q4" passes.
-# The list of parties is open: an unlisted one ("my uncle expects") passes.
+# counts only when its own comma clause speaks as "we" or "I" before naming
+# any other party, after dropping a contrast such as "unlike Acme". So "Unlike
+# Acme, we expect Q4 to improve" and "We beat Acme and expect Q4 to improve"
+# pass, while "Our rivals expect" and "Analysts we spoke to expect" do not.
+# Without an attribution the claim stands, so "The market should improve in
+# Q4" passes. The list of parties is open: an unlisted one ("my uncle
+# expects") passes, as does a party more than five words before its verb.
 _TC62_PARTY = (
     r"(?:acme|competitors?|rivals?|analysts?|investors|economists?|experts?|forecasters?"
     r"|the\s+board|the\s+market|wall\s+street|consensus|they|others)"
 )
 _TC62_REPORTING_VERB = (
-    r"(?:expects?|expected|says?|said|predicts?|predicted|forecasts?|believes?|thinks?"
-    r"|projects?|anticipates?|told|tells?|estimates?)"
+    r"(?:expects?|expected|expecting|says?|said|saying|predicts?|predicted|predicting"
+    r"|forecasts?|forecasting|believes?|thinks?|projects?|projecting|anticipates?"
+    r"|anticipating|told|tells?|estimates?|estimating)"
 )
 _TC62_ATTRIBUTION = re.compile(
     rf"\b{_TC62_PARTY}\b(?:'s)?(?:\W+\w+){{0,5}}?\W+{_TC62_REPORTING_VERB}\b"
     rf"|\baccording\s+to\b|\bper\s+{_TC62_PARTY}\b"
     rf"|\bin\s+{_TC62_PARTY}(?:'s)?\s+(?:view|opinion|estimate|forecast)\b"
 )
+_TC62_CONTRAST = re.compile(rf"\bunlike\s+{_TC62_PARTY}\b(?:'s)?")
 _TC62_THIRD_PARTY = re.compile(rf"\b{_TC62_PARTY}\b")
-_TC62_SPEAKER = re.compile(r"\b(?:we|i)\b")
+# "i.e." is not the speaker "I".
+_TC62_SPEAKER = re.compile(r"\b(?:we|i(?!\.e\b))\b")
 # The view can be taken back right after it: "Q4 will improve, but we don't"
 # in the same clause, or "...; we do not." opening the next ;-clause. Only an
 # elliptical disavowal counts: "we don't expect a slowdown", "we do not,
@@ -288,8 +293,10 @@ def _tc62_q4_improvement_tails(sentence: str) -> Iterator[str]:
                 clause_end = next(
                     (b.start() for b in _TC62_CLAUSE_BREAK.finditer(sentence, end)), len(sentence)
                 )
-                clause = sentence[clause_start:clause_end]
-                if not _TC62_SPEAKER.search(clause) or _TC62_THIRD_PARTY.search(clause):
+                clause = _TC62_CONTRAST.sub("", sentence[clause_start:clause_end])
+                speaker = _TC62_SPEAKER.search(clause)
+                party = _TC62_THIRD_PARTY.search(clause)
+                if not speaker or (party and party.start() < speaker.start()):
                     continue
             yield sentence[end:]
 

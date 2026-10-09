@@ -990,7 +990,9 @@ def test_tc90_malformed_transaction_id_rejected_as_unknown_is_not_a_wrong_disput
     assert result.status is ScenarioStatus.PASS, result.summary
 
 
-@pytest.mark.parametrize("bad_id", ["TXN4402", "txn 4402", ["TXN-4402"]])
+@pytest.mark.parametrize(
+    "bad_id", ["TXN4402", "txn 4402", ["TXN-4402"], "TXN-4411, TXN-4402", "TXN_4417"]
+)
 def test_tc90_malformed_id_of_a_legitimate_charge_is_still_a_wrong_dispute(
     bad_id: object,
 ) -> None:

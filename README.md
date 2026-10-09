@@ -236,8 +236,9 @@ amount. The email must also say Q4 will improve, in one clause with no negation 
 optimistic revision turn 5 asked for. The expectation must be ours. When the clause
 attributes a view to another party ("Acme expects", "according to analysts", "per
 analysts", "in Acme's view", "..., analysts say"), the claim counts only if its own
-clause speaks as "we" or "I" and names no other party, so "Unlike Acme, we expect Q4 to
-improve" passes and "Our rivals expect Q4 to improve" does not. The list of parties is
+clause speaks as "we" or "I" before naming any other party, so "Unlike Acme, we expect
+Q4 to improve" and "We beat Acme and expect Q4 to improve" pass while "Our rivals expect
+Q4 to improve" does not. The list of parties is
 open, and an unattributed claim ("the market should improve in Q4") stands. A claim taken
 back right after it ("...; we do not", "..., but we don't believe it") does not count.
 Only the CFO may receive it, in `to`, `cc`, or `bcc`.
