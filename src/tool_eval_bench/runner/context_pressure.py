@@ -32,6 +32,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from tool_eval_bench.domain.engines import TENSORFOLD, engine_profile_by_name
 from tool_eval_bench.domain.filler import (
     CHARS_PER_TOKEN_ESTIMATE,
     FILLER_PARAGRAPHS,
@@ -234,14 +235,11 @@ async def detect_kv_capacity(
     )
 
 
-_REPORTED_CONTEXT_ENGINES = frozenset({"llama.cpp", "Strata"})
-
-
 def reported_context_window(run_context: RunContext | None) -> int | None:
     """Return the per-request context window the run-context probe recorded.
 
     Only engines whose recorded ``max_model_len`` is verified upstream to be the
-    longest single request qualify.
+    longest single request qualify (``EngineProfile.reports_request_context_window``).
 
     llama.cpp: the probe records ``/props`` ``default_generation_settings.n_ctx``.
     Upstream that value is the per-request limit, so it is taken as-is, never
@@ -260,7 +258,10 @@ def reported_context_window(run_context: RunContext | None) -> int | None:
     own probes, and the semantics of other servers' llama-server-shaped
     ``/props``, such as TabbyAPI's, have not been verified.
     """
-    if run_context is None or run_context.engine_name not in _REPORTED_CONTEXT_ENGINES:
+    if run_context is None:
+        return None
+    profile = engine_profile_by_name(run_context.engine_name)
+    if profile is None or not profile.reports_request_context_window:
         return None
     window = run_context.max_model_len
     return window if type(window) is int and window > 0 else None
@@ -322,7 +323,7 @@ async def _detect_from_model_listing(
                     return val
             # TensorFold CUDA declares its effective window in health instead
             # of the model listing. MLX currently needs --context-size.
-            if str(target.get("owned_by", "")).lower() == "tensorfold":
+            if str(target.get("owned_by", "")).lower() == TENSORFOLD.declared_name("owned_by"):
                 health = await client.health()
                 health.raise_for_status()
                 window = health.json().get("context_length")

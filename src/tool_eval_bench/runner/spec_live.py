@@ -32,6 +32,12 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from tool_eval_bench.domain.engines import (
+    STRATA,
+    TENSORFOLD,
+    engine_profile,
+    metrics_namespace_present,
+)
 from tool_eval_bench.runner.spec_detection import (
     _canonical_spec_method,
     _detect_spec_method,
@@ -511,7 +517,7 @@ class SpecLiveDelta:
 def _parse_snapshot(text: str) -> MetricsSnapshot:
     """Parse Prometheus text into a MetricsSnapshot."""
     snap = MetricsSnapshot(timestamp=time.time())
-    snap.strata_metrics_present = re.search(r"^strata:", text, re.MULTILINE) is not None
+    snap.strata_metrics_present = metrics_namespace_present(text, STRATA)
 
     for name, pattern in _COUNTER_PATTERNS.items():
         value, count = _sum_pattern_values(pattern, text)
@@ -527,7 +533,7 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
                 setattr(snap, name, float(first.group(1)))
         if name in {"accepted_tokens", "draft_tokens", "num_drafts"}:
             for match in pattern.finditer(text):
-                if match.group(0).startswith("tensorfold:"):
+                if match.group(0).startswith(TENSORFOLD.metrics_prefixes):
                     snap.tensorfold_spec_metrics_present = True
                 else:
                     snap.vllm_spec_metrics_present = True
@@ -637,9 +643,11 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
 
     # Detect speculative decoding method from raw text
     snap.spec_method = _detect_spec_method(text)
-    if snap.spec_method == "unknown" and snap.spec_backend == "strata":
-        # Strata drafts only with the model's MTP head.
-        snap.spec_method = "mtp"
+    profile = engine_profile(snap.spec_backend)
+    if snap.spec_method == "unknown" and profile is not None and profile.fixed_spec_method:
+        # An engine with one proposer (Strata's MTP head) names its method
+        # when no label does.
+        snap.spec_method = profile.fixed_spec_method
 
     # Extract model names from metric labels
     snap.model_names = _extract_model_names(text)

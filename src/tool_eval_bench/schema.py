@@ -33,6 +33,7 @@ from tool_eval_bench.application.decision_audit import (
     DEFAULT_DECISION_JUDGE_SET,
 )
 from tool_eval_bench.cli.command_registry import commands_schema
+from tool_eval_bench.domain.engines import BACKEND_LABELS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 # Argument schema version — bump when adding/removing/renaming args.
@@ -58,21 +59,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "backend",
         "type": "string",
         "default": "unknown",
-        "choices": [
-            "vllm",
-            "litellm",
-            "llamacpp",
-            "sglang",
-            "gemini",
-            "openai",
-            "anthropic",
-            "ninfer",
-            "tensorfold",
-            "halogen",
-            "strata",
-            "tabbyapi",
-            "unknown",
-        ],
+        "choices": list(BACKEND_LABELS),
         "description": "Backend label for reports (CLI auto-detects; otherwise unknown)",
     },
     {
