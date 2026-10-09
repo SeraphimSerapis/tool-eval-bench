@@ -282,7 +282,7 @@ def test_dispatch_main_skip_and_perf_only_routes(
     )
     dispatch.main()
     assert successful_runs[-1]["status"] == "completed"
-    assert successful_runs[-1]["scores"] == {"samples": 1}
+    assert successful_runs[-1]["scores"] == {"samples": 1, "results": [_sample().to_result()]}
 
     perf_samples = [_sample(), _sample(error="backend unavailable")]
     written_samples: list = []
@@ -303,7 +303,12 @@ def test_dispatch_main_skip_and_perf_only_routes(
     assert exc.value.code == 1
     assert written_samples == perf_samples
     assert persisted_runs[-1]["status"] == "failed"
-    assert persisted_runs[-1]["scores"] == {"samples": 2, "successful": 1, "failed": 1}
+    assert persisted_runs[-1]["scores"] == {
+        "samples": 2,
+        "successful": 1,
+        "failed": 1,
+        "results": [perf_samples[0].to_result()],
+    }
 
 
 def test_regular_perf_keeps_only_successful_samples(monkeypatch: pytest.MonkeyPatch) -> None:

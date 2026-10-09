@@ -348,6 +348,30 @@ class ThroughputSample:
         """Depth value for display labels: requested value if set, else actual."""
         return self.requested_depth if self.requested_depth else self.depth
 
+    def to_result(self) -> dict[str, Any]:
+        """The measurements a ``--perf-only`` run stores for this cell.
+
+        The fields the throughput report prints, with floats raw rather than
+        rounded. Error text is not part of it: a failed cell is only counted,
+        because the message can quote the server URL. Per-token timestamps and
+        the raw spec-decode payloads are left out; llama-benchy, which produces
+        these samples, never fills them.
+        """
+        return {
+            "requested_pp": self.requested_pp,
+            "requested_depth": self.requested_depth,
+            "pp_tokens": self.pp_tokens,
+            "tg_tokens": self.tg_tokens,
+            "depth": self.depth,
+            "concurrency": self.concurrency,
+            "ttft_ms": self.ttft_ms,
+            "total_ms": self.total_ms,
+            "pp_tps": self.pp_tps,
+            "tg_tps": self.tg_tps,
+            "pp_estimated": self.pp_estimated,
+            "calibration_confidence": self.calibration_confidence,
+        }
+
 
 @dataclass
 class ThroughputMatrixResult:

@@ -915,7 +915,7 @@ def test_perf_only_persists_and_exits_by_cell_status(cli: Cli) -> None:
     assert (persisted["run_type"], persisted["status"], persisted["scores"]) == (
         "perf",
         "completed",
-        {"samples": 1},
+        {"samples": 1, "results": [samples[0].to_result()]},
     )
     assert {key: persisted["config"][key] for key in ("model", "backend", "mode")} == {
         "model": "m",
@@ -934,6 +934,7 @@ def test_perf_only_persists_and_exits_by_cell_status(cli: Cli) -> None:
         "samples": 2,
         "successful": 1,
         "failed": 1,
+        "results": [samples[0].to_result()],
     }
     assert "Throughput benchmark failed in 1 cell(s)." in outcome.flat_out
 

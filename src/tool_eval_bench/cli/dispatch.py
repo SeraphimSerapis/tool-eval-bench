@@ -411,9 +411,11 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
 
     failed_count = sum(bool(sample.error) for sample in throughput_samples)
     successful_count = len(throughput_samples) - failed_count
-    scores = {"samples": len(throughput_samples)}
+    scores: dict[str, Any] = {"samples": len(throughput_samples)}
     if failed_count:
         scores.update({"successful": successful_count, "failed": failed_count})
+    # Failed cells stay a count: their error text can quote the server URL.
+    scores["results"] = [sample.to_result() for sample in throughput_samples if not sample.error]
     run_context = target.run_context
     finalized = finalize_mode_run(
         ModeRun(
