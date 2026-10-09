@@ -42,13 +42,17 @@ tool-eval-bench bench --mmlu --ifeval --gsm8k        # all three after tool-eval
 | `--gsm8k` / `--gsm8k-only` | off | Run GSM8K benchmark |
 | `--gsm8k-shots` | 8 | Few-shot examples (0–8) |
 | `--gsm8k-limit` | 200 | Max questions (0 = all 1,319) |
-| `--gsm8k-shuffle` | off | Shuffle question order |
+| `--gsm8k-shuffle` | off | Shuffle question order (uses `--seed`; without one, draws a seed and records it as `shuffle_seed`) |
 | `--mmlu` / `--mmlu-only` | off | Run MMLU benchmark |
 | `--mmlu-shots` | 5 | Few-shot examples per subject (0–5) |
-| `--mmlu-limit` | 500 | Max questions (0 = all 14,042) |
-| `--mmlu-subjects` | all | Comma-separated subjects or categories (e.g. `STEM,philosophy`) |
+| `--mmlu-limit` | 500 | Max questions, sampled proportionally across subjects (0 = all 14,042) |
+| `--mmlu-subjects` | all | Comma-separated subjects or categories (e.g. `STEM,philosophy`); names match in any case, unknown names fail the run |
 | `--ifeval` / `--ifeval-only` | off | Run IFEval benchmark |
 | `--ifeval-limit` | 0 (all) | Max prompts (0 = all 541) |
+
+How each benchmark extracts and grades answers, how truncated answers and
+rejected requests count, and how dataset revisions are pinned is covered in
+[methodology.md](methodology.md#accuracy-benchmarks-pluggable).
 
 ## Throughput benchmark
 

@@ -364,6 +364,10 @@ def test_throughput(
 # -- dataset plugins ----------------------------------------------------------------
 
 
+# What a plugin records about the data it graded; the CLI copies it into config.
+_DATASET_IDENTITY = {"dataset_revision": "0123abcd", "items_sha256": "f00d" * 16}
+
+
 def _result(name: str, details: dict[str, Any], **extra: Any) -> BenchmarkResult:
     return BenchmarkResult(
         name,
@@ -393,7 +397,16 @@ def _gsm8k(monkeypatch: pytest.MonkeyPatch) -> tuple[Callable[..., Any], tuple[s
         GSM8KPlugin,
         _result(
             "gsm8k",
-            {"total": 3, "correct": 2, "errors": 0, "answered": 3, "completion_rate": 100.0},
+            {
+                "total": 3,
+                "correct": 2,
+                "errors": 0,
+                "answered": 3,
+                "completion_rate": 100.0,
+                "truncated": 1,
+                "shuffle_seed": None,
+                **_DATASET_IDENTITY,
+            },
             item_results=[
                 {"index": 0, "question": "q0", "correct": True, "extracted_answer": 1.0},
                 {"index": 1, "question": "q1", "correct": True, "extracted_answer": 2.0},
@@ -428,6 +441,8 @@ def _mmlu(monkeypatch: pytest.MonkeyPatch) -> tuple[Callable[..., Any], tuple[st
                 "answered": 3,
                 "completion_rate": 100.0,
                 "categories": {"STEM": {"correct": 2, "total": 3, "accuracy": 66.7}},
+                "sampling": "stratified",
+                **_DATASET_IDENTITY,
             },
         ),
     )
@@ -453,6 +468,7 @@ def _ifeval(monkeypatch: pytest.MonkeyPatch) -> tuple[Callable[..., Any], tuple[
                 "instructions_passed": 5,
                 "instructions_total": 6,
                 "instruction_accuracy": 83.3,
+                **_DATASET_IDENTITY,
             },
         ),
     )

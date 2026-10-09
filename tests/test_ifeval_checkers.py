@@ -53,27 +53,42 @@ class TestLengthConstraints:
         )
 
     def test_number_paragraphs(self):
-        response = "Paragraph one.\n\nParagraph two.\n\nParagraph three."
+        response = "Paragraph one.\n***\nParagraph two.\n***\nParagraph three."
         assert check_instruction(
-            "length_constraints:number_paragraphs",
-            response,
-            {"num_paragraphs": 3, "relation": "at least"},
+            "length_constraints:number_paragraphs", response, {"num_paragraphs": 3}
         )
 
-    def test_number_paragraphs_defaults_to_exact(self):
+    def test_number_paragraphs_is_an_exact_count(self):
+        response = "Paragraph one.\n***\nParagraph two.\n***\nParagraph three."
+        assert not check_instruction(
+            "length_constraints:number_paragraphs", response, {"num_paragraphs": 2}
+        )
+        assert not check_instruction(
+            "length_constraints:number_paragraphs", response, {"num_paragraphs": 4}
+        )
+
+    def test_number_paragraphs_ignores_blank_lines_without_divider(self):
         response = "Paragraph one.\n\nParagraph two.\n\nParagraph three."
         assert not check_instruction(
-            "length_constraints:number_paragraphs",
-            response,
-            {"num_paragraphs": 2},
+            "length_constraints:number_paragraphs", response, {"num_paragraphs": 3}
+        )
+
+    def test_number_paragraphs_empty_middle_chunk_fails(self):
+        response = "One.\n***\n***\nTwo."
+        assert not check_instruction(
+            "length_constraints:number_paragraphs", response, {"num_paragraphs": 2}
+        )
+
+    def test_number_paragraphs_ignores_leading_and_trailing_divider(self):
+        response = "***\nOne.\n***\nTwo.\n***"
+        assert check_instruction(
+            "length_constraints:number_paragraphs", response, {"num_paragraphs": 2}
         )
 
     def test_number_paragraphs_fail(self):
         response = "Just one paragraph."
         assert not check_instruction(
-            "length_constraints:number_paragraphs",
-            response,
-            {"num_paragraphs": 3, "relation": "at least"},
+            "length_constraints:number_paragraphs", response, {"num_paragraphs": 3}
         )
 
     def test_nth_paragraph_first_word(self):
@@ -84,10 +99,58 @@ class TestLengthConstraints:
             {"nth_paragraph": 2, "first_word": "welcome"},
         )
 
+    def test_nth_paragraph_first_word_strips_quotes_and_punctuation(self):
+        response = '"Weekend, then.\n\nTwo.\n\nThree.\n\nFour."'
+        kwargs = {"num_paragraphs": 4, "nth_paragraph": 1, "first_word": "weekend"}
+        assert check_instruction("length_constraints:nth_paragraph_first_word", response, kwargs)
+
+    def test_nth_paragraph_first_word_enforces_paragraph_count(self):
+        kwargs = {"num_paragraphs": 4, "nth_paragraph": 1, "first_word": "weekend"}
+        assert not check_instruction(
+            "length_constraints:nth_paragraph_first_word", "Weekend is here.\n\nTwo.", kwargs
+        )
+
 
 # ---------------------------------------------------------------------------
 # Keyword constraints
 # ---------------------------------------------------------------------------
+
+
+class TestOfficialCounting:
+    """Word and bullet counts match the reference implementation's tokenization."""
+
+    @pytest.mark.parametrize(
+        ("response", "kwargs", "expected"),
+        [
+            # "don't" is two \w+ tokens, so 48 + 3 = 51 words.
+            ("word " * 48 + "don't stop", {"num_words": 51, "relation": "at least"}, True),
+            ("well-known " * 25, {"num_words": 50, "relation": "at least"}, True),
+            # Markdown punctuation is not a word.
+            ("- * - * " * 10 + "a b c", {"num_words": 20, "relation": "less than"}, True),
+            ("word " * 300 + "\u2014 " * 5, {"num_words": 303, "relation": "less than"}, True),
+        ],
+    )
+    def test_number_words(self, response: str, kwargs: dict, expected: bool) -> None:
+        assert check_instruction("length_constraints:number_words", response, kwargs) is expected
+
+    @pytest.mark.parametrize(
+        ("response", "expected"),
+        [
+            ("\u2022 one\n\u2022 two", False),
+            ("+ one\n+ two", False),
+            # A line opening with "*text*" counts as a bullet, so this has three.
+            ("*Note*: first\n* one\n* two", False),
+            # A "---" rule counts as a dash bullet.
+            ("* one\n* two\n---\n", False),
+            ("-one\n-two", True),
+            ("* one\n- two", True),
+        ],
+    )
+    def test_bullet_lists(self, response: str, expected: bool) -> None:
+        kwargs = {"num_bullets": 2}
+        assert (
+            check_instruction("detectable_format:number_bullet_lists", response, kwargs) is expected
+        )
 
 
 class TestKeywordConstraints:
@@ -128,6 +191,11 @@ class TestKeywordConstraints:
         assert not check_instruction(
             "keywords:forbidden_words", response, {"forbidden_words": ["dog", "bird"]}
         )
+
+    def test_forbidden_words_match_whole_words_only(self):
+        kwargs = {"forbidden_words": ["no", "can"]}
+        assert check_instruction("keywords:forbidden_words", "I know nothing about Canada.", kwargs)
+        assert not check_instruction("keywords:forbidden_words", "No, I CAN'T.", kwargs)
 
     def test_letter_frequency(self):
         response = "aaaaabbb"
@@ -197,17 +265,32 @@ class TestFormatConstraints:
         assert not check_instruction("detectable_format:json_format", response, {})
 
     def test_title(self):
-        response = "# My Title\n\nContent here."
+        response = "<<My Title>>\n\nContent here."
         assert check_instruction("detectable_format:title", response, {})
 
-    def test_title_without_hash(self):
-        response = "My Title\n\nContent here."
+    def test_title_after_a_long_first_line(self):
+        response = " ".join(["word"] * 20) + "\n<<Press>>\nBody"
         assert check_instruction("detectable_format:title", response, {})
+
+    def test_title_requires_double_angular_brackets(self):
+        assert not check_instruction("detectable_format:title", "My Title\n\nContent.", {})
+        assert not check_instruction("detectable_format:title", "# My Title\n\nContent.", {})
+        assert not check_instruction("detectable_format:title", "<<  >>\nContent.", {})
 
     def test_multiple_sections(self):
-        response = "# Section 1\nContent.\n# Section 2\nMore content.\n# Section 3\nEnd."
-        assert check_instruction(
-            "detectable_format:multiple_sections", response, {"num_sections": 3}
+        response = "SECTION 1\nContent.\nSECTION 2\nMore content.\nSECTION 3\nEnd."
+        kwargs = {"num_sections": 3, "section_spliter": "SECTION"}
+        assert check_instruction("detectable_format:multiple_sections", response, kwargs)
+
+    def test_multiple_sections_does_not_count_the_preamble(self):
+        response = "Intro\nSECTION 1 a\nSECTION 2 b"
+        kwargs = {"num_sections": 3, "section_spliter": "SECTION"}
+        assert not check_instruction("detectable_format:multiple_sections", response, kwargs)
+
+    def test_multiple_sections_without_splitter_fails_closed(self):
+        response = "# Section 1\nContent.\n# Section 2\nMore content."
+        assert not check_instruction(
+            "detectable_format:multiple_sections", response, {"num_sections": 2}
         )
 
 
@@ -248,13 +331,19 @@ class TestStartEndConstraints:
         response = "Some text here."
         assert not check_instruction("startend:end_checker", response, {"end_phrase": "The end."})
 
+    def test_end_phrase_ignores_case_and_wrapping_quotes(self):
+        kwargs = {"end_phrase": "What would happen to human next?"}
+        response = '"ALL CAPS. WHAT WOULD HAPPEN TO HUMAN NEXT?"'
+        assert check_instruction("startend:end_checker", response, kwargs)
+
     def test_quotation_double(self):
         response = '"This is a quoted response"'
         assert check_instruction("startend:quotation", response, {})
 
-    def test_quotation_single(self):
-        response = "'This is a quoted response'"
-        assert check_instruction("startend:quotation", response, {})
+    def test_quotation_requires_straight_double_quotes(self):
+        assert not check_instruction("startend:quotation", "'single quoted'", {})
+        assert not check_instruction("startend:quotation", "\u201ccurly quoted\u201d", {})
+        assert not check_instruction("startend:quotation", '"', {})
 
     def test_quotation_fail(self):
         response = "This is not quoted"
@@ -269,14 +358,6 @@ class TestStartEndConstraints:
 class TestCaseConstraints:
     """Test case transformation checks."""
 
-    def test_uppercase_pass(self):
-        response = "THIS IS ALL UPPERCASE 123"
-        assert check_instruction("change_case:english_uppercase", response, {})
-
-    def test_uppercase_fail(self):
-        response = "This has lowercase"
-        assert not check_instruction("change_case:english_uppercase", response, {})
-
     def test_lowercase_pass(self):
         response = "this is all lowercase 123"
         assert check_instruction("change_case:english_lowercase", response, {})
@@ -285,13 +366,19 @@ class TestCaseConstraints:
         response = "This Has Uppercase"
         assert not check_instruction("change_case:english_lowercase", response, {})
 
-    def test_capitalize_pass(self):
-        response = "Every Word Is Capitalized"
-        assert check_instruction("change_case:english_capital", response, {})
+    def test_case_checkers_fail_on_empty_and_letterless_responses(self):
+        for iid in ("change_case:english_lowercase", "change_case:english_capital"):
+            assert not check_instruction(iid, "", {})
+            assert not check_instruction(iid, "123 ...", {})
 
-    def test_capitalize_fail(self):
-        response = "not every word is capitalized"
-        assert not check_instruction("change_case:english_capital", response, {})
+    def test_capital_requires_all_capital_letters(self):
+        assert check_instruction("change_case:english_capital", "THIS IS ALL CAPS 123", {})
+
+    def test_capital_rejects_title_case(self):
+        assert not check_instruction("change_case:english_capital", "Every Word Is Capitalized", {})
+
+    def test_english_uppercase_is_not_an_ifeval_instruction(self):
+        assert "change_case:english_uppercase" not in available_checkers()
 
 
 # ---------------------------------------------------------------------------
@@ -304,8 +391,15 @@ class TestCombinationConstraints:
 
     def test_repeat_prompt_pass(self):
         prompt = "Tell me a story about a cat."
-        response = f"You asked: {prompt} Here is my story..."
+        response = f"{prompt.upper()} Here is my story..."
         assert check_instruction(
+            "combination:repeat_prompt", response, {"prompt_to_repeat": prompt}
+        )
+
+    def test_repeat_prompt_must_come_first(self):
+        prompt = "Tell me a story about a cat."
+        response = f"You asked: {prompt} Here is my story..."
+        assert not check_instruction(
             "combination:repeat_prompt", response, {"prompt_to_repeat": prompt}
         )
 
@@ -325,6 +419,18 @@ class TestCombinationConstraints:
         response = "Just one response."
         assert not check_instruction("combination:two_responses", response, {})
 
+    @pytest.mark.parametrize(
+        "response",
+        [
+            "One.\n---\nTwo.",  # wrong separator
+            "Same\n******\nSame",  # identical responses
+            "A\n******\nB\n******\nC",  # three responses
+            "A\n******\n******\nB",  # empty middle response
+        ],
+    )
+    def test_two_responses_rejects_non_official_shapes(self, response):
+        assert not check_instruction("combination:two_responses", response, {})
+
     def test_postscript_pass(self):
         response = "Main content here.\n\nP.S. Don't forget to check."
         assert check_instruction("detectable_content:postscript", response, {})
@@ -333,7 +439,7 @@ class TestCombinationConstraints:
         response = "Main content only."
         assert not check_instruction("detectable_content:postscript", response, {})
 
-    def test_postscript_must_start_final_paragraph_with_requested_marker(self):
+    def test_postscript_requires_the_requested_marker(self):
         assert check_instruction(
             "detectable_content:postscript",
             "Main content.\n\nP.P.S. Extra note.",
@@ -341,13 +447,24 @@ class TestCombinationConstraints:
         )
         assert not check_instruction(
             "detectable_content:postscript",
-            "P.P.S. Extra note.\n\nMain content.",
-            {"postscript_marker": "P.P.S."},
-        )
-        assert not check_instruction(
-            "detectable_content:postscript",
             "Main content.\n\nP.S. Extra note.",
-            {"postscript_marker": "P.P.S."},
+            {"postscript_marker": "P.P.S"},
+        )
+
+    def test_postscript_may_appear_on_any_line(self):
+        # The earlier "final line only" rule rejected a sign-off after the postscript.
+        assert check_instruction(
+            "detectable_content:postscript",
+            "body\nP.S. Call me.\nBest, Tim",
+            {"postscript_marker": "P.S."},
+        )
+
+    def test_postscript_is_case_insensitive(self):
+        # Paired with english_lowercase in the dataset, so "p.s." must count.
+        assert check_instruction(
+            "detectable_content:postscript",
+            "some lowercase text.\n\np.p.s remember this.",
+            {"postscript_marker": "P.P.S"},
         )
 
     def test_postscript_can_be_final_line_of_a_constrained_paragraph(self):
@@ -441,7 +558,7 @@ class TestEvaluatePrompt:
         response = "THIS IS ALL UPPERCASE."
         result = evaluate_prompt(
             response,
-            ["change_case:english_uppercase"],
+            ["change_case:english_capital"],
             [{}],
         )
         assert result.prompt_pass is True
@@ -452,7 +569,7 @@ class TestEvaluatePrompt:
         response = "this has no commas but is lowercase."
         result = evaluate_prompt(
             response,
-            ["punctuation:no_comma", "change_case:english_uppercase"],
+            ["punctuation:no_comma", "change_case:english_capital"],
             [{}, {}],
         )
         assert result.prompt_pass is False  # Not all passed
@@ -463,7 +580,7 @@ class TestEvaluatePrompt:
         response = "this has commas, and is lowercase."
         result = evaluate_prompt(
             response,
-            ["punctuation:no_comma", "change_case:english_uppercase"],
+            ["punctuation:no_comma", "change_case:english_capital"],
             [{}, {}],
         )
         assert result.prompt_pass is False

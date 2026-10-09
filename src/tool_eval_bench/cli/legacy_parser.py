@@ -433,7 +433,7 @@ def _make_parser() -> argparse.ArgumentParser:
         type=int,
         default=500,
         metavar="N",
-        help="Max questions to evaluate (default: 500, 0 = all 14042)",
+        help="Max questions, stratified by subject (default: 500, 0 = all 14042)",
     )
     mmlu_grp.add_argument(
         "--mmlu-subjects",

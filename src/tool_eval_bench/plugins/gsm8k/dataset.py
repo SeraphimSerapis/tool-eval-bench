@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tool_eval_bench.plugins.hf_utils import read_cache_revision, write_cache_manifest
+
 logger = logging.getLogger(__name__)
 
 # HuggingFace Datasets Server API (public, no auth required for gsm8k)
@@ -23,6 +25,9 @@ _DATASET = "openai/gsm8k"
 _CONFIG = "main"
 _SPLIT = "test"
 _PAGE_SIZE = 100
+# Commit of the HuggingFace dataset repository that ``datasets`` downloads are
+# pinned to.  The REST fallback cannot be pinned (see ``hf_utils``).
+_REVISION = "740312add88f781978c0658806c59bc2815b9866"
 
 # Cache location relative to project root
 _CACHE_DIR = Path("data") / "gsm8k"
@@ -107,9 +112,22 @@ def load_dataset(
     # Cache for next time
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     _save_to_cache(cache_path, items)
+    write_cache_manifest(
+        cache_path,
+        dataset=_DATASET,
+        config=_CONFIG,
+        split=_SPLIT,
+        method=method,
+        revision=_REVISION,
+    )
     logger.info("Cached %d items to %s", len(items), cache_path)
 
     return items
+
+
+def dataset_revision() -> str:
+    """Revision behind the cached test split, or ``"unknown"`` when it was not pinned."""
+    return read_cache_revision(_find_cache_file())
 
 
 def _rows_to_items(rows: list[dict]) -> list[GSM8KItem]:
@@ -146,6 +164,7 @@ def _download_dataset(
         _DATASET,
         _CONFIG,
         _SPLIT,
+        revision=_REVISION,
         on_progress=on_progress,
     )
     if rows is not None:

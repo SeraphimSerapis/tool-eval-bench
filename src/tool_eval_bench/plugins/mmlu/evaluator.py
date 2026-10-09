@@ -7,23 +7,27 @@ from dataclasses import dataclass
 
 _VALID_LETTERS = {"A", "B", "C", "D"}
 
+# The cue words are matched case-insensitively, but the letter is not: a bare
+# letter must be an upper-case A-D standing alone.  A lower-case letter counts
+# only in parentheses or when it ends the response ("the answer is b.").
+# Otherwise "the answer is clearly B" reads the C of "clearly", and "the answer
+# is a prime" reads the article as A.
+_LETTER = r"(?:\(([A-Da-d])\)|([A-D])\b|([a-d])(?=\s*[.)]?\s*$))"
+
 # Patterns ordered by priority
-_ANSWER_IS_RE = re.compile(
-    r"(?:the\s+)?answer\s+is\s*:?\s*\(?([A-D])\)?",
-    re.IGNORECASE,
-)
-_ANSWER_COLON_RE = re.compile(r"answer\s*:\s*\(?([A-D])\)?", re.IGNORECASE)
+_ANSWER_IS_RE = re.compile(rf"(?i:(?:the\s+)?answer\s+is)\s*:?\s*{_LETTER}")
+_ANSWER_COLON_RE = re.compile(rf"(?i:answer)\s*:\s*{_LETTER}")
 _STANDALONE_LETTER_RE = re.compile(r"\b([A-D])\b")
 _FINAL_ANSWER_RE = re.compile(
-    r"(?:final\s+answer|i\s+(?:choose|select|pick))"
-    r"\s*(?:is|:)?\s*\(?([A-D])\)?",
-    re.IGNORECASE,
+    rf"(?i:final\s+answer|i\s+(?:choose|select|pick))\s*(?i:is|:)?\s*{_LETTER}"
 )
 _SELECTION_RE = re.compile(
-    r"(?:(?:choose|select|pick)\s+|(?:option|choice|letter)\s*(?:is|:)\s*)"
-    r"\(?([A-D])\)?",
-    re.IGNORECASE,
+    rf"(?i:(?:choose|select|pick)\s+|(?:option|choice|letter)\s*(?:is|:)\s*){_LETTER}"
 )
+
+
+def _cue_letter(match: re.Match[str]) -> str:
+    return (match.group(1) or match.group(2) or match.group(3)).upper()
 
 
 @dataclass(slots=True)
@@ -57,21 +61,21 @@ def extract_answer(response: str) -> tuple[str | None, str]:
     # to its final choice.
     matches = list(_FINAL_ANSWER_RE.finditer(text))
     if matches:
-        return matches[-1].group(1).upper(), "answer_pattern"
+        return _cue_letter(matches[-1]), "answer_pattern"
 
     # 3. "The answer is B" / "Answer: C".  Again, the final explicit answer
     # wins when the response contains a quoted earlier answer.
     matches = list(_ANSWER_IS_RE.finditer(text))
     if matches:
-        return matches[-1].group(1).upper(), "answer_pattern"
+        return _cue_letter(matches[-1]), "answer_pattern"
 
     matches = list(_ANSWER_COLON_RE.finditer(text))
     if matches:
-        return matches[-1].group(1).upper(), "answer_pattern"
+        return _cue_letter(matches[-1]), "answer_pattern"
 
     matches = list(_SELECTION_RE.finditer(text))
     if matches:
-        return matches[-1].group(1).upper(), "answer_pattern"
+        return _cue_letter(matches[-1]), "answer_pattern"
 
     # 4. Without an explicit cue, use the last standalone answer letter.  A
     # first-letter fallback incorrectly returns A for option lists such as

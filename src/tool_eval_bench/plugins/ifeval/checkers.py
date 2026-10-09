@@ -2,6 +2,22 @@
 
 Each checker takes a response string and kwargs dict, returns bool.
 The instruction IDs follow the format ``category:check_name``.
+
+Checkers follow the published reference implementation
+(``google-research/instruction_following_eval``) so scores stay comparable with
+published IFEval numbers.  The reference depends on ``nltk`` and ``langdetect``;
+this project depends on neither, which leaves these known departures:
+
+- Sentence counts split on ``.``, ``!`` and ``?`` instead of nltk's punkt
+  tokenizer, so abbreviations and decimals can count differently.
+- ``capital_word_frequency`` finds all-caps words with a regex instead of
+  nltk's ``word_tokenize``.
+- The case checkers skip the "is this English" step, and
+  ``response_language`` uses a script heuristic.
+- ``letter_frequency`` counts the letter the row names.  The reference swaps a
+  non-letter (such as ``#``) for a random letter when it builds the instruction.
+- ``constrained_response`` rejects a response that names every option, where
+  the reference accepts it.
 """
 
 from __future__ import annotations
@@ -54,18 +70,15 @@ def available_checkers() -> list[str]:
 
 
 def _count_words(text: str) -> int:
-    return len(text.split())
+    # The reference counts nltk RegexpTokenizer(r"\w+") tokens: "don't" is two
+    # words, "well-known" is two, and a lone "-" or "*" is none.
+    return len(re.findall(r"\w+", text))
 
 
 def _count_sentences(text: str) -> int:
     # Split on sentence-ending punctuation
     sentences = re.split(r"[.!?]+", text)
     return len([s for s in sentences if s.strip()])
-
-
-def _count_paragraphs(text: str) -> int:
-    paragraphs = text.split("\n\n")
-    return len([p for p in paragraphs if p.strip()])
 
 
 def _relation_check(actual: int, expected: int, relation: str) -> bool:
@@ -110,27 +123,56 @@ def check_number_sentences(response: str, kwargs: dict) -> bool:
 
 @register("length_constraints:number_paragraphs")
 def check_number_paragraphs(response: str, kwargs: dict) -> bool:
+    """Count paragraphs separated by the ``***`` markdown divider, as the prompts ask.
+
+    Mirrors the official ``ParagraphChecker``: an empty leading or trailing
+    chunk is ignored, an empty chunk between two dividers fails, and the count
+    must match exactly.
+    """
     num_paragraphs = kwargs.get("num_paragraphs")
-    # IFEval's paragraph prompts use an exact count unless a relation is
-    # explicitly supplied.  Treating the default as "at least" lets an
-    # answer with extra sections pass prompts that say "exactly N".
-    relation = kwargs.get("relation") or "exactly"
     if num_paragraphs is None:
         return True
-    return _relation_check(_count_paragraphs(response), num_paragraphs, relation)
+    paragraphs = re.split(r"\s?\*\*\*\s?", response)
+    count = len(paragraphs)
+    for index, paragraph in enumerate(paragraphs):
+        if not paragraph.strip():
+            if index == 0 or index == len(paragraphs) - 1:
+                count -= 1
+            else:
+                return False
+    return count == num_paragraphs
 
 
 @register("length_constraints:nth_paragraph_first_word")
 def check_nth_paragraph_first_word(response: str, kwargs: dict) -> bool:
+    """Mirror the official ``ParagraphFirstWordCheck``.
+
+    Paragraphs are split on blank lines, the paragraph count must equal
+    ``num_paragraphs``, and the first word is compared after stripping leading
+    quotes and truncating at the first punctuation mark.
+    """
     nth = kwargs.get("nth_paragraph")
     first_word = kwargs.get("first_word")
     if nth is None or first_word is None:
         return True
-    paragraphs = [p for p in response.split("\n\n") if p.strip()]
-    if nth > len(paragraphs) or nth < 1:
+    paragraphs = re.split(r"\n\n", response)
+    count = sum(1 for p in paragraphs if p.strip())
+    # The official checker indexes the raw split, empty chunks included.
+    if nth < 1 or nth > count:
         return False
-    words = paragraphs[nth - 1].strip().split()
-    return bool(words) and words[0].lower() == first_word.lower()
+    paragraph = paragraphs[nth - 1].strip()
+    if not paragraph:
+        return False
+    word = paragraph.split()[0].strip().lstrip("'").lstrip('"')
+    found = ""
+    for letter in word:
+        if letter in {".", ",", "?", "!", "'", '"'}:
+            break
+        found += letter.lower()
+    num_paragraphs = kwargs.get("num_paragraphs")
+    if num_paragraphs is not None and count != num_paragraphs:
+        return False
+    return found == first_word.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -160,11 +202,13 @@ def check_keywords_frequency(response: str, kwargs: dict) -> bool:
 
 @register("keywords:forbidden_words")
 def check_forbidden_words(response: str, kwargs: dict) -> bool:
+    """Reject whole-word uses only, so forbidding "no" does not forbid "nothing"."""
     forbidden = kwargs.get("forbidden_words")
     if not forbidden:
         return True
-    lower = response.lower()
-    return not any(w.lower() in lower for w in forbidden)
+    return not any(
+        re.search(rf"\b{re.escape(w)}\b", response, flags=re.IGNORECASE) for w in forbidden
+    )
 
 
 @register("keywords:letter_frequency")
@@ -198,12 +242,12 @@ def check_bullet_lists(response: str, kwargs: dict) -> bool:
     num = kwargs.get("num_bullets")
     if num is None:
         return True
-    bullets = re.findall(r"^\s*[-*+•]\s+", response, re.MULTILINE)
-    # The dataset does not carry a relation for this instruction.  Its
-    # prompts consistently ask for exactly N Markdown bullets, so extra
-    # bullets are a violation rather than harmless surplus.
-    relation = kwargs.get("relation") or "exactly"
-    return _relation_check(len(bullets), num, relation)
+    # The reference's two patterns, compared with ``==``: a line starting with
+    # "*" (but not "**") and any line starting with "-", which includes a "---"
+    # rule.  "+" and "•" bullets do not count.
+    star_bullets = re.findall(r"^\s*\*[^\*].*$", response, flags=re.MULTILINE)
+    dash_bullets = re.findall(r"^\s*-.*$", response, flags=re.MULTILINE)
+    return len(star_bullets) + len(dash_bullets) == num
 
 
 @register("detectable_format:number_placeholders")
@@ -242,30 +286,27 @@ def check_json_format(response: str, kwargs: dict) -> bool:
 
 @register("detectable_format:title")
 def check_title(response: str, kwargs: dict) -> bool:
-    """Response should have a title — a line at the start that looks like a heading."""
-    lines = response.strip().split("\n")
-    if not lines:
-        return False
-    first = lines[0].strip()
-    # Markdown heading or a short line without ending period
-    if first.startswith("#"):
-        return True
-    return bool(first) and not first.endswith(".") and len(first.split()) <= 15
+    """Require a non-empty title wrapped in double angular brackets, e.g. ``<<poem of joy>>``."""
+    return any(
+        title.lstrip("<").rstrip(">").strip() for title in re.findall(r"<<[^\n]+>>", response)
+    )
 
 
 @register("detectable_format:multiple_sections")
 def check_multiple_sections(response: str, kwargs: dict) -> bool:
+    """Count sections marked ``<splitter> N``, ignoring any preamble, as officially.
+
+    The dataset always supplies the splitter.  Without one there is no
+    contract to check, so the constraint fails closed.
+    """
     num_sections = kwargs.get("num_sections")
     section_splitter = kwargs.get("section_spliter")  # Note: typo is in the dataset
     if num_sections is None:
         return True
-    if section_splitter:
-        sections = response.split(section_splitter)
-    else:
-        # Default: split on markdown headings
-        sections = re.split(r"\n#{1,6}\s+", response)
-    non_empty = [s for s in sections if s.strip()]
-    return len(non_empty) >= num_sections
+    if not isinstance(section_splitter, str) or not section_splitter.strip():
+        return False
+    pattern = r"\s?" + re.escape(section_splitter.strip()) + r"\s?\d+\s?"
+    return len(re.split(pattern, response)) - 1 >= num_sections
 
 
 @register("detectable_format:constrained_response")
@@ -375,45 +416,39 @@ def check_no_comma(response: str, kwargs: dict) -> bool:
 
 @register("startend:end_checker")
 def check_end_phrase(response: str, kwargs: dict) -> bool:
+    """Case-insensitive suffix match after stripping whitespace and wrapping double quotes."""
     end_phrase = kwargs.get("end_phrase")
     if not end_phrase:
         return True
-    return response.strip().endswith(end_phrase)
+    return response.strip().strip('"').lower().endswith(end_phrase.strip().lower())
 
 
 @register("startend:quotation")
 def check_quotation(response: str, kwargs: dict) -> bool:
+    """The prompts ask for double quotation marks, so single and curly quotes do not count."""
     text = response.strip()
-    return (
-        (text.startswith('"') and text.endswith('"'))
-        or (text.startswith("'") and text.endswith("'"))
-        or (text.startswith("\u201c") and text.endswith("\u201d"))
-    )
+    return len(text) > 1 and text[0] == '"' and text[-1] == '"'
 
 
 # ---------------------------------------------------------------------------
 # Case constraints
 # ---------------------------------------------------------------------------
 
-
-@register("change_case:english_uppercase")
-def check_uppercase(response: str, kwargs: dict) -> bool:
-    # Only check alphabetic characters
-    alpha = "".join(c for c in response if c.isalpha())
-    return alpha == alpha.upper() if alpha else True
+# The official IFEval case checkers also require ``langdetect`` to classify the
+# response as English.  This project does not depend on langdetect, so these
+# reduce to ``str.islower()`` / ``str.isupper()``.  That is identical for
+# English text and slightly more lenient for a response in another language.
 
 
 @register("change_case:english_lowercase")
 def check_lowercase(response: str, kwargs: dict) -> bool:
-    alpha = "".join(c for c in response if c.isalpha())
-    return alpha == alpha.lower() if alpha else True
+    return response.islower()
 
 
 @register("change_case:english_capital")
 def check_capitalize(response: str, kwargs: dict) -> bool:
-    """Every word should be capitalized (title case)."""
-    words = response.split()
-    return all(w[0].isupper() for w in words if w and w[0].isalpha())
+    """The whole response in capital letters (officially ``CapitalLettersEnglishChecker``)."""
+    return response.isupper()
 
 
 @register("change_case:capital_word_frequency")
@@ -435,22 +470,24 @@ def check_capital_word_frequency(response: str, kwargs: dict) -> bool:
 
 @register("combination:repeat_prompt")
 def check_repeat_prompt(response: str, kwargs: dict) -> bool:
+    """The response must open with the request, compared case-insensitively."""
     prompt = kwargs.get("prompt_to_repeat")
     if not prompt:
         return True
-    return prompt in response
+    return response.strip().lower().startswith(prompt.strip().lower())
 
 
 @register("combination:two_responses")
 def check_two_responses(response: str, kwargs: dict) -> bool:
-    """Response should contain two distinct parts separated by specific markers."""
-    # Common separators: "******", "---", or section markers
-    separators = ["******", "---", "***"]
-    for sep in separators:
-        parts = response.split(sep)
-        if len(parts) >= 2 and all(p.strip() for p in parts[:2]):
-            return True
-    return False
+    """Exactly two different, non-empty responses separated by ``******``."""
+    parts = response.split("******")
+    valid: list[str] = []
+    for index, part in enumerate(parts):
+        if part.strip():
+            valid.append(part)
+        elif index not in (0, len(parts) - 1):
+            return False
+    return len(valid) == 2 and valid[0].strip() != valid[1].strip()
 
 
 @register("language:response_language")
@@ -588,12 +625,20 @@ def check_response_language(response: str, kwargs: dict) -> bool:
 
 @register("detectable_content:postscript")
 def check_postscript(response: str, kwargs: dict) -> bool:
-    """Require the requested, exact marker to start the final non-empty line."""
+    """Find the requested postscript marker on any line, case-insensitively.
 
+    Mirrors the official ``PostscriptChecker``.  Case-insensitivity matters:
+    several prompts pair the postscript with ``english_lowercase``, and a
+    case-sensitive ``P.S.`` would make them impossible to pass.
+    """
     marker = kwargs.get("postscript_marker") or "P.S."
     if not isinstance(marker, str) or not marker.strip():
         return False
-    lines = [line.strip() for line in response.splitlines() if line.strip()]
-    if not lines:
-        return False
-    return lines[-1].startswith(marker)
+    marker = marker.strip()
+    if marker == "P.P.S":
+        pattern = r"\s*p\.\s?p\.\s?s.*$"
+    elif marker == "P.S.":
+        pattern = r"\s*p\.\s?s\..*$"
+    else:
+        pattern = r"\s*" + re.escape(marker.lower()) + r".*$"
+    return bool(re.findall(pattern, response.lower(), flags=re.MULTILINE))

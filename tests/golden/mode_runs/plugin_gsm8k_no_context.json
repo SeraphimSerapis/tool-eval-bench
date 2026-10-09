@@ -12,7 +12,11 @@
       "temperature": 0.0,
       "seed": 7,
       "shuffle": false,
-      "config_fingerprint": "8d3246451cd1"
+      "shuffle_seed": null,
+      "extra_params": null,
+      "dataset_revision": "0123abcd",
+      "items_sha256": "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d",
+      "config_fingerprint": "9617d3ba6071"
     },
     "scores": {
       "final_score": 67,
@@ -22,7 +26,11 @@
       "correct": 2,
       "errors": 0,
       "answered": 3,
-      "completion_rate": 100.0
+      "completion_rate": 100.0,
+      "truncated": 1,
+      "shuffle_seed": null,
+      "dataset_revision": "0123abcd",
+      "items_sha256": "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d"
     },
     "metadata": {
       "label": "golden | label"

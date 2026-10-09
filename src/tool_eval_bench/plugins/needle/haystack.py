@@ -169,21 +169,33 @@ def build_needle_messages(case: NeedleCase, *, seed: int | None = None) -> list[
 # Grading
 # ---------------------------------------------------------------------------
 
-_PUNCTUATION = re.compile(r"[^a-z0-9]+")
-
-
-def _normalize(text: str) -> str:
-    """Fold case and strip punctuation so formatting differences do not fail."""
-    return _PUNCTUATION.sub("", text.lower())
+# A thousands separator inside a number, so "4,821 pallets" grades like "4821".
+_THOUSANDS_COMMA = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+_SEPARATORS = re.compile(r"[^a-z0-9]+")
 
 
 def grade_response(case: NeedleCase, response: str) -> bool:
     """Return whether *response* retrieved the needle.
 
-    Substring rather than equality: a model that answers "The passphrase is
-    K7QM-2XPD-9WLR." retrieved the fact, and penalising the sentence around it
-    would measure instruction following instead of retrieval.
+    The answer must appear as a whole value, case-insensitively, anywhere in
+    the response: a model that answers "The passphrase is K7QM-2XPD-9WLR."
+    retrieved the fact, and penalising the sentence around it would measure
+    instruction following instead of retrieval.  Separators inside the answer
+    are optional ("K7QM2XPD9WLR" and "k7qm 2xpd 9wlr" pass), and a thousands
+    comma is ignored.  The match is bounded, so the answer cannot be found
+    inside a longer number or code ("#48210" does not contain 4821) or
+    assembled from separate numbers ("48 and 21").  Numeric answers need only
+    digit boundaries, so "245th day" still passes.
     """
     if not response:
         return False
-    return _normalize(case.answer) in _normalize(response)
+    text = _THOUSANDS_COMMA.sub("", response.lower())
+    parts = [re.escape(part) for part in _SEPARATORS.split(case.answer.lower()) if part]
+    if not parts:
+        return False
+    body = r"[^a-z0-9]*".join(parts)
+    if case.answer.isdigit():
+        pattern = rf"(?<!\d){body}(?!\d)"
+    else:
+        pattern = rf"(?<![a-z0-9]){body}(?![a-z0-9])"
+    return re.search(pattern, text) is not None

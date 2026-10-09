@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # -- Partial cache helpers --
 
 
@@ -104,6 +106,20 @@ def test_load_via_datasets_lib_with_mock() -> None:
     assert result[0]["question"] == "What is 2+2?"
     # Final progress should be (3, 3)
     assert progress_calls[-1] == (3, 3)
+
+
+def test_load_via_datasets_lib_pins_the_revision() -> None:
+    from tool_eval_bench.plugins.hf_utils import load_via_datasets_lib
+
+    mock_ds = MagicMock()
+    mock_ds.__len__ = MagicMock(return_value=0)
+    mock_ds.__iter__ = MagicMock(return_value=iter([]))
+    mock_load = MagicMock(return_value=mock_ds)
+
+    with patch.dict("sys.modules", {"datasets": MagicMock(load_dataset=mock_load)}):
+        load_via_datasets_lib("cais/mmlu", "all", "test", revision="abc123")
+
+    assert mock_load.call_args.kwargs["revision"] == "abc123"
 
 
 def test_load_via_datasets_lib_exception_returns_none() -> None:
@@ -316,3 +332,51 @@ def test_ifeval_rows_to_items() -> None:
     assert len(items) == 1
     assert items[0].key == 42
     assert items[0].prompt == "Write a story"
+
+
+# -- cache provenance --
+
+
+def test_manifest_round_trips_a_pinned_revision(tmp_path: Path) -> None:
+    from tool_eval_bench.plugins.hf_utils import read_cache_revision, write_cache_manifest
+
+    cache = tmp_path / "test.jsonl"
+    write_cache_manifest(
+        cache, dataset="cais/mmlu", config="all", split="test", method="datasets", revision="abc"
+    )
+    assert (tmp_path / "test.manifest.json").exists()
+    assert read_cache_revision(cache) == "abc"
+
+
+def test_rest_download_records_an_unknown_revision(tmp_path: Path) -> None:
+    # The Datasets Server REST API cannot select a revision.
+    from tool_eval_bench.plugins.hf_utils import read_cache_revision, write_cache_manifest
+
+    cache = tmp_path / "test.jsonl"
+    write_cache_manifest(
+        cache, dataset="cais/mmlu", config="all", split="test", method="rest_api", revision="abc"
+    )
+    assert json.loads((tmp_path / "test.manifest.json").read_text())["revision"] is None
+    assert read_cache_revision(cache) == "unknown"
+
+
+@pytest.mark.parametrize("manifest", [None, "not json", "[]", '{"revision": ""}'])
+def test_missing_or_bad_manifest_reads_as_unknown(tmp_path: Path, manifest: str | None) -> None:
+    from tool_eval_bench.plugins.hf_utils import read_cache_revision
+
+    cache = tmp_path / "test.jsonl"
+    if manifest is not None:
+        (tmp_path / "test.manifest.json").write_text(manifest)
+    assert read_cache_revision(cache) == "unknown"
+
+
+def test_items_sha256_depends_on_content_and_order() -> None:
+    from tool_eval_bench.plugins.gsm8k.dataset import GSM8KItem
+    from tool_eval_bench.plugins.hf_utils import items_sha256
+
+    a = GSM8KItem(0, "q0", "#### 1", 1.0)
+    b = GSM8KItem(1, "q1", "#### 2", 2.0)
+    changed = GSM8KItem(1, "q1", "#### 3", 3.0)
+    assert items_sha256([a, b]) == items_sha256([a, b])
+    assert items_sha256([a, b]) != items_sha256([b, a])
+    assert items_sha256([a, b]) != items_sha256([a, changed])

@@ -263,7 +263,7 @@ and cached locally. Install the `[hf]` extra for rate-limit-free downloads
 | `--needle-only` | Needle-in-a-haystack retrieval |
 | `--decision-bench-only` | Decision-model scoring on `/v1/systemone` |
 | `--gsm8k-limit N` | Limit questions (default: 200) |
-| `--mmlu-limit N` | Limit questions (default: 500) |
+| `--mmlu-limit N` | Limit questions, sampled proportionally across subjects (default: 500) |
 | `--ifeval-limit N` | Limit prompts (default: all 541) |
 | `--needle-lengths N` | Haystack sizes to probe (default: 4) |
 | `--needle-depths N` | Needle depths to probe (default: 5) |

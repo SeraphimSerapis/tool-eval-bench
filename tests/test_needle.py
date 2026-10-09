@@ -174,6 +174,34 @@ class TestGrading:
         # "4821" must not be credited to a response that only says "482".
         assert not grade_response(_case(answer="4821"), "The count was 482.")
 
+    @pytest.mark.parametrize(
+        ("answer", "response"),
+        [
+            ("245", "The 245th day."),
+            ("4821", "4,821 pallets"),
+            ("K7QM-2XPD-9WLR", "K7QM2XPD9WLR"),
+            ("AB-123456", "The code is AB-123456."),
+            ("AB-123456", "ab 123456"),
+        ],
+    )
+    def test_natural_correct_forms_pass(self, answer: str, response: str) -> None:
+        assert grade_response(_case(answer=answer), response)
+
+    @pytest.mark.parametrize(
+        ("answer", "response"),
+        [
+            # Inside a longer code or number.
+            ("245", "Ticket SRE-2451 was closed."),
+            ("4821", "Order #48210 shipped."),
+            # Assembled from separate numbers.
+            ("4821", "48 and 21"),
+            ("AB-123456", "XAB-123456"),
+            ("AB-123456", "AB-1234567"),
+        ],
+    )
+    def test_answer_must_be_a_whole_value(self, answer: str, response: str) -> None:
+        assert not grade_response(_case(answer=answer), response)
+
 
 # ---------------------------------------------------------------------------
 # Grid geometry
@@ -231,6 +259,8 @@ class _StubResponse:
         self.reasoning = None
         self.prompt_tokens = 100
         self.completion_tokens = 10
+        self.finish_reason = "stop"
+        self.transport_error_status = None
 
 
 class _StubAdapter:

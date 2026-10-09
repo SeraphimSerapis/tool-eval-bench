@@ -10,7 +10,10 @@
       "limit": 3,
       "temperature": 0.0,
       "seed": 7,
-      "config_fingerprint": "dd3fe47d7761"
+      "extra_params": null,
+      "dataset_revision": "0123abcd",
+      "items_sha256": "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d",
+      "config_fingerprint": "0d72b9c50c9e"
     },
     "scores": {
       "final_score": 67,
@@ -24,7 +27,9 @@
       "prompt_accuracy": 66.7,
       "instructions_passed": 5,
       "instructions_total": 6,
-      "instruction_accuracy": 83.3
+      "instruction_accuracy": 83.3,
+      "dataset_revision": "0123abcd",
+      "items_sha256": "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d"
     },
     "metadata": {
       "label": "golden | label"

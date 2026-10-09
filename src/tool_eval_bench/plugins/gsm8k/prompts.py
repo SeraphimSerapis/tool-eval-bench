@@ -1,8 +1,9 @@
 """GSM8K prompt templates — system prompt and few-shot chain-of-thought examples.
 
-The 8-shot examples are drawn from the GSM8K training set, following the
-original paper's methodology (Cobbe et al., 2021).  Each example includes
-a step-by-step solution ending with ``#### N``.
+The 8-shot examples are the fixed chain-of-thought exemplars from Wei et al.
+(2022), "Chain-of-Thought Prompting Elicits Reasoning in Large Language
+Models", the set most published GSM8K numbers use.  They are hand-written,
+not drawn from any GSM8K split.  Each example ends with ``#### N``.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ SYSTEM_PROMPT = (
     "own line in the format: #### <number>"
 )
 
-# 8 canonical few-shot chain-of-thought examples from the GSM8K training set
+# The 8 chain-of-thought exemplars from Wei et al. (2022)
 FEW_SHOT_EXAMPLES: list[dict[str, str]] = [
     {
         "question": (

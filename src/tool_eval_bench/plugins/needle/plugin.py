@@ -18,6 +18,7 @@ from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
     OnPluginProgress,
+    raise_for_transport_error,
 )
 from tool_eval_bench.plugins.needle.haystack import (
     NeedleCase,
@@ -126,6 +127,7 @@ class NeedlePlugin(BenchmarkPlugin):
                         base_url=base_url,
                         extra_params=extra or None,
                     )
+                raise_for_transport_error(response)
                 content = response.content or response.reasoning or ""
                 total_tokens += (response.prompt_tokens or 0) + (response.completion_tokens or 0)
                 is_error = False
@@ -231,10 +233,12 @@ class NeedlePlugin(BenchmarkPlugin):
             f"**Rating:** {result.rating}",
             f"**Context Window:** {d.get('context_size', 0):,} tokens",
             (
-                f"**Effective Context:** {effective:,} tokens (largest fully retrieved length)"
+                f"**Effective Context:** ~{effective:,} tokens (estimated; largest fully "
+                "retrieved length)"
                 if effective
                 else "**Effective Context:** none (no length retrieved every depth)"
             ),
+            f"*{ESTIMATE_NOTE}*",
             f"**Duration:** {result.duration_seconds:.1f}s",
             f"**Tokens:** {result.total_tokens:,}",
             "",
@@ -250,7 +254,7 @@ class NeedlePlugin(BenchmarkPlugin):
                     "",
                     "Rows are needle depth, columns are haystack size.",
                     "",
-                    "| Depth | " + " | ".join(f"{length // 1024}K" for length in lengths) + " |",
+                    "| Depth | " + " | ".join(estimated_size_label(n) for n in lengths) + " |",
                     "|---" * (len(lengths) + 1) + "|",
                 ]
             )
@@ -267,12 +271,12 @@ class NeedlePlugin(BenchmarkPlugin):
                 [
                     "### Accuracy by Haystack Size",
                     "",
-                    "| Context | Accuracy |",
+                    "| Context (estimated tokens) | Accuracy |",
                     "|---|---:|",
                 ]
             )
             for length in lengths:
-                lines.append(f"| {length:,} | {by_length.get(str(length), 0):.1f}% |")
+                lines.append(f"| ~{length:,} | {by_length.get(str(length), 0):.1f}% |")
             lines.append("")
 
         failures = [r for r in result.item_results if not r.get("found")]
@@ -297,6 +301,19 @@ class NeedlePlugin(BenchmarkPlugin):
             lines.append("")
 
         return lines
+
+
+ESTIMATE_NOTE = (
+    "Haystack sizes are estimated at 4 characters per token. Common tokenizers "
+    "pack more characters into each token, so the real prompts run 10-17% "
+    "smaller than labelled."
+)
+"""Caveat shown next to every needle size, in the console and the report."""
+
+
+def estimated_size_label(tokens: int) -> str:
+    """Short grid label for a haystack size, marked as an estimate (``~126K``)."""
+    return f"~{tokens // 1024}K"
 
 
 def _accuracy_of(rows: Any) -> float:

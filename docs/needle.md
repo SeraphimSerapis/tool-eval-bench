@@ -27,6 +27,13 @@ The default grid is 4 haystack sizes by 5 depths, so 20 requests. Sizes run from
 1K tokens up to the context window less a small allowance for the prompt and the
 answer; depths run from the very start of the document to the very end.
 
+Haystack sizes are estimates. The haystack is built at 4 characters per token,
+and common tokenizers pack more characters than that into each token, so the
+real prompt is usually 10-17% smaller than its label. The console and the report
+mark every size as estimated: grid columns read `~126K`, and the headline reads
+`Effective context: ~129,024 tokens (estimated)`. The error runs in the safe
+direction, so the largest cell should not overflow the window.
+
 ## Flags
 
 | Flag | Default | Purpose |
@@ -66,7 +73,8 @@ The terminal prints the grid, then two numbers:
 - **Effective context** — the largest haystack size that retrieved the needle at
   *every* depth. This is the number worth quoting. A model advertising 128K that
   misses a needle at 32K does not have 128K of usable context, whatever the
-  config says. `none` means even the smallest size tested had a miss.
+  config says. `none` means even the smallest size tested had a miss. Like the
+  grid sizes, it is an estimate that runs about 10-17% high.
 
 The Markdown report adds accuracy per haystack size and a table of every missed
 needle with what the model said instead, which is usually enough to tell a
@@ -109,10 +117,14 @@ or count that appears in exactly one sentence, so a model cannot infer it from
 the surrounding text. Four templates rotate through the grid, because a single
 phrasing measures one retrieval pattern rather than retrieval ability.
 
-**Grading is a normalized substring match.** A model that answers "The
-passphrase is K7QM-2XPD-9WLR." retrieved the fact; requiring a bare answer would
-measure instruction following instead. Case and punctuation are folded, so
-`k7qm 2xpd 9wlr` counts.
+**Grading looks for the answer as a whole value anywhere in the response.** A
+model that answers "The passphrase is K7QM-2XPD-9WLR." retrieved the fact;
+requiring a bare answer would measure instruction following instead. Case is
+folded and separators inside the answer are optional, so `k7qm 2xpd 9wlr` and
+`K7QM2XPD9WLR` count, and a thousands comma is ignored, so `4,821 pallets`
+counts. The value must stand on its own, though: `#48210` does not contain the
+count 4821, and `48 and 21` does not assemble it. Numeric answers need only digit
+boundaries, so `the 245th day` counts.
 
 **Request failures count as misses.** Unlike the tool-call scenarios, which drop
 infrastructure failures from the denominator, a timeout here is usually the

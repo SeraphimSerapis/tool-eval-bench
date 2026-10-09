@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from tool_eval_bench.domain.adapters import BackendAdapter
+from tool_eval_bench.domain.adapters import BackendAdapter, ChatCompletionResult
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 # ---------------------------------------------------------------------------
@@ -78,6 +78,50 @@ class BenchmarkResult:
 
 OnPluginProgress = Callable[[int, int, dict[str, Any]], Awaitable[None]]
 """``(current, total, item_info)`` — called after each item completes."""
+
+
+# ---------------------------------------------------------------------------
+# Adapter result guard
+# ---------------------------------------------------------------------------
+
+
+class TransportRejectedError(RuntimeError):
+    """The server rejected the request, so the result holds no model answer."""
+
+
+def raise_for_transport_error(result: ChatCompletionResult) -> ChatCompletionResult:
+    """Return *result*, or raise when the adapter degraded a rejection to a soft result.
+
+    Adapters report a non-retryable HTTP rejection (401, 404, a 400 context
+    overflow) as ``content="[server error N] ..."`` with
+    ``transport_error_status`` set rather than raising.  Grading that text
+    would score the error body as an answer, so plugins call this inside the
+    ``try`` that already turns request exceptions into error rows.
+    """
+    if result.transport_error_status is not None:
+        raise TransportRejectedError(
+            f"server rejected the request with HTTP {result.transport_error_status}: "
+            f"{result.content[:200]}"
+        )
+    return result
+
+
+def final_answer_text(result: ChatCompletionResult) -> str | None:
+    """Return the text to grade, or ``None`` when the token budget truncated the turn.
+
+    ``content`` is graded when it holds any non-whitespace text.  When it is
+    empty or whitespace only, the reasoning text stands in for models that put
+    their final answer there, but only if generation finished normally.  An
+    empty ``content`` with ``finish_reason == "length"`` means the budget ran
+    out mid-thought; grading that unfinished reasoning can pick up a stray
+    number or letter, so the caller records the item as truncated (wrong, and
+    counted separately).
+    """
+    if result.content and result.content.strip():
+        return result.content
+    if result.finish_reason == "length":
+        return None
+    return result.reasoning or ""
 
 
 # ---------------------------------------------------------------------------
