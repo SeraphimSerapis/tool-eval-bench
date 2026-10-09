@@ -963,7 +963,7 @@ def _perf_rows(cli: Cli) -> list[dict[str, Any]]:
         ),
         pytest.param(
             ["--spec-bench", "--skip-tool-eval"],
-            ("tool_eval_bench.cli.spec_bench", "run_spec_bench", None),
+            ("tool_eval_bench.cli.spec_bench", "run_spec_bench", []),
             id="spec-bench",
         ),
         pytest.param(
@@ -1014,7 +1014,7 @@ def test_perf_is_saved_on_its_own_when_no_scored_run_follows(
         pytest.param([], None, id="scenarios"),
         pytest.param(
             ["--spec-bench"],
-            ("tool_eval_bench.cli.spec_bench", "run_spec_bench", None),
+            ("tool_eval_bench.cli.spec_bench", "run_spec_bench", []),
             id="spec-bench-then-scenarios",
         ),
         pytest.param(
@@ -1089,7 +1089,7 @@ def test_failed_perf_cell_exits_only_after_the_downstream_mode(cli: Cli) -> None
         "run_llama_benchy",
         lambda: [ThroughputSample(), ThroughputSample(error="boom")],
     )
-    spec_calls = cli.record("tool_eval_bench.cli.spec_bench", "run_spec_bench")
+    spec_calls = cli.record("tool_eval_bench.cli.spec_bench", "run_spec_bench", [])
 
     outcome = cli.run(*CONNECTION, "--perf", "--spec-bench", "--skip-tool-eval", "--no-live")
 
