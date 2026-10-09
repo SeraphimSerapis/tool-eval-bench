@@ -690,12 +690,11 @@ def test_resume_reads_missing_pressure_as_off() -> None:
     assert _resume({"context_pressure": {}}, context_pressure={}) == []
 
 
-def test_resume_refuses_dropping_a_pack_but_skips_a_pack_free_legacy_run() -> None:
+def test_resume_reads_missing_packs_as_none() -> None:
     assert _resume({"scenario_packs": [PACK]}) == ["scenario_packs"]
     assert _resume({"scenario_packs": [PACK]}, scenario_packs=[PACK]) == []
-    # A run without packs persists no key, which the check reads as "legacy,
-    # unrecorded": adding a pack is caught by scenario_ids, not here.
-    assert _resume({}, scenario_packs=[PACK]) == []
+    assert _resume({}, scenario_packs=[PACK]) == ["scenario_packs"]
+    assert _resume({}) == []
 
 
 def test_resume_reports_every_mismatch() -> None:

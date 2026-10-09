@@ -378,15 +378,16 @@ RUN_CONFIG_FIELDS: tuple[ConfigField, ...] = (
         identifies_model=False,
         resume=ResumeCheck(Absent.UNSET, describe=_pressure_mismatch),
     ),
-    # Written only when set, yet resume reads absence as a legacy run, so adding
-    # a pack is caught by scenario_ids rather than here.
+    # Written only when set, so a missing key means the run had no packs.
+    # Resuming such a run with a pack would score held-out scenarios under the
+    # public run's identity.
     ConfigField(
         "scenario_packs",
         lambda i: i.scenario_packs,
         Presence.WHEN_NONEMPTY,
         Fingerprint.INCLUDE,
         identifies_model=False,
-        resume=_LEGACY,
+        resume=ResumeCheck(Absent.UNSET),
     ),
 )
 
