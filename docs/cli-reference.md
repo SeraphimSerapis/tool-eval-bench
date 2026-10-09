@@ -181,7 +181,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--timeout F` | Per-request timeout in seconds (default: 120) |
 | `--no-think` | Disable thinking/reasoning (critical for Qwen3/DeepSeek) |
 | `--no-warmup` | Skip the tool-eval-bench warm-up request. llama-benchy (`--perf`, `--perf-only`) always runs its own warm-up |
-| `--hardmode` | Include 23 Hard Mode scenarios (Category P) |
+| `--hardmode` | Include 28 Hard Mode scenarios (Category P) |
 | `--categories A B K` | Run only specific categories (A–P). P needs `--hardmode`; a filter that matches no scenario is a usage error (exit 2) |
 | `--scenarios TC-01 TC-07` | Run specific scenario IDs |
 | `--perf` | Also run throughput benchmark |

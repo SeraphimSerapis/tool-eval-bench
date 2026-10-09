@@ -6,7 +6,7 @@ holding its tools, its ``handle_tool_call``, its evaluator, its
 discovers its own files, so creating the file is the whole registration.
 
 ``ALL_SCENARIOS`` is the 69 standard scenarios (categories A–O).
-``ALL_SCENARIOS_WITH_HARDMODE`` adds the 23 Hard Mode scenarios (category P),
+``ALL_SCENARIOS_WITH_HARDMODE`` adds the 28 Hard Mode scenarios (category P),
 which the CLI opts into with ``--hardmode``.
 """
 
@@ -19,6 +19,7 @@ from tool_eval_bench.evals.scenarios import (
     core,
     extended,
     hardmode,
+    hardmode_documents,
     hardmode_expanded,
     hardmode_governance,
     hardmode_transactional,
@@ -40,12 +41,13 @@ PLANNING_SCENARIOS = planning.SCENARIOS
 ADVERSARIAL_SCENARIOS = adversarial.SCENARIOS
 STRUCTURED_SCENARIOS = structured.SCENARIOS
 
-#: Hard Mode is authored as four packs but ships as one category.
+#: Hard Mode is authored as five packs but ships as one category.
 HARDMODE_SCENARIOS: list[ScenarioDefinition] = sorted(
     hardmode.SCENARIOS
     + hardmode_expanded.SCENARIOS
     + hardmode_transactional.SCENARIOS
-    + hardmode_governance.SCENARIOS,
+    + hardmode_governance.SCENARIOS
+    + hardmode_documents.SCENARIOS,
     key=lambda s: scenario_number(s.id),
 )
 HARDMODE_DISPLAY_DETAILS: dict[str, ScenarioDisplayDetail] = {
@@ -53,6 +55,7 @@ HARDMODE_DISPLAY_DETAILS: dict[str, ScenarioDisplayDetail] = {
     **hardmode_expanded.DISPLAY_DETAILS,
     **hardmode_transactional.DISPLAY_DETAILS,
     **hardmode_governance.DISPLAY_DETAILS,
+    **hardmode_documents.DISPLAY_DETAILS,
 }
 
 ALL_SCENARIOS: list[ScenarioDefinition] = sorted(

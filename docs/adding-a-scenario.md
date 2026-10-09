@@ -14,7 +14,7 @@ A scenario implementation is one file. Create `src/tool_eval_bench/evals/scenari
 | `planning/` | Autonomous planning and creative composition | TC-51 to TC-56, TC-61 to TC-63 |
 | `adversarial/` | Prompt injection and authority escalation | TC-57  to  TC-60 |
 | `structured/` | JSON schema compliance | TC-64  to  TC-69 |
-| `hardmode/`, `hardmode_expanded/`, `hardmode_transactional/`, `hardmode_governance/` | Category P, opt-in with `--hardmode` | TC-70  to  TC-92 |
+| `hardmode/`, `hardmode_expanded/`, `hardmode_transactional/`, `hardmode_governance/`, `hardmode_documents/` | Category P, opt-in with `--hardmode` | TC-70  to  TC-97 |
 
 Take the next free number. The file name and the scenario ID must agree, and the ID must be
 `TC-NN`: every registry sorts on `int(s.id.split("-")[1])`, so another shape raises at import.

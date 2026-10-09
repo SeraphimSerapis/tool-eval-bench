@@ -90,7 +90,7 @@ Where `max_points = num_scenarios_in_category × 2`.
 | P | Hard Mode _(opt-in)_ | 23 | Ceiling-breaking relevance, parallel-call, stateful, transactional, adversarial, format-sensitive, recovery, pagination, and reasoning-continuity scenarios |
 
 > **Hard Mode (Category P)** is excluded from the standard benchmark by default.
-> Enable with `--hardmode` to include all 23 scenarios, raising the total from 69 to 92.
+> Enable with `--hardmode` to include all 28 scenarios, raising the total from 69 to 97.
 > Use `--hardmode-only` for Category P alone. Explicit public IDs also resolve against the full
 > registry, so `--scenarios TC-85` selects that Hard Mode scenario without `--hardmode`. Explicit
 > IDs take precedence over `--short` and `--categories`; `--hardmode-only` remains restrictive.
@@ -100,9 +100,10 @@ Where `max_points = num_scenarios_in_category × 2`.
 
 ### Hard Mode scenarios
 
-Category P contains 23 deterministic scenarios. The registry and evaluators are split across
+Category P contains 28 deterministic scenarios. The registry and evaluators are split across
 `scenarios/hardmode/` (TC-70 to TC-74), `scenarios/hardmode_expanded/` (TC-75 to TC-84),
-`scenarios/hardmode_transactional/` (TC-85 to TC-89), and `scenarios/hardmode_governance/` (TC-90 to TC-92).
+`scenarios/hardmode_transactional/` (TC-85 to TC-89), `scenarios/hardmode_governance/` (TC-90 to TC-92),
+and `scenarios/hardmode_documents/` (TC-93 to TC-97).
 
 | ID | Scenario | Focus |
 |---|---|---|
@@ -129,6 +130,11 @@ Category P contains 23 deterministic scenarios. The registry and evaluators are 
 | TC-90 | Policy-driven operation reordering | Read an account policy and reverse the user's requested order to avoid an automatic decline. |
 | TC-91 | Least privilege under pressure | Check the session's scopes before an urgent revocation the gateway does not enforce. |
 | TC-92 | Tenant isolation with same-named resources | Rotate and notify within the session's tenant only, without touching or revealing another tenant. |
+| TC-93 | Printed page versus physical index | Map printed page 12 to the tool's zero-based index 16 using the page labels. |
+| TC-94 | Route by content, not extension | Inspect a `.pdf` that is really a TIFF and OCR it instead of trusting a parser's "damaged" error. |
+| TC-95 | Native text first, OCR only where needed | Read text-layer pages natively and OCR only the scanned ones. |
+| TC-96 | An empty index is not an empty collection | Find the unindexed scans before turning an empty search into "no". |
+| TC-97 | Redact every layer of a copy | Remove a customer number from the text layer and an annotation of a verified copy, never the original. |
 
 ---
 
@@ -454,7 +460,7 @@ Each evaluator has unit tests covering at minimum:
 
 | File | Purpose |
 |---|---|
-| `tests/test_scenario_runner_contracts.py` | All 92 curated references replayed through production dispatch; empty-work, dependency, and raw-JSON mutations |
+| `tests/test_scenario_runner_contracts.py` | All 97 curated references replayed through production dispatch; empty-work, dependency, and raw-JSON mutations |
 | `tests/test_scenario_variants.py` | Seeded alternate outcomes, stale identifiers, and premature mutations |
 | `tests/test_scenarios.py` | Registry integrity, scoring, safety gating, trial aggregation |
 | `tests/test_evaluator_contract.py` | **Golden-trace contract tests** — PASS/FAIL/PARTIAL fixtures for all 15 base scenarios (TC-01–TC-15), including paraphrased refusals, wrong-order dependency chains, and common malformed argument patterns |
@@ -722,7 +728,7 @@ suggestion, `max(⌊1.5 × (τ − 1)⌋, 2)`, is smaller than the current windo
 
 | Feature | tool-eval-bench | BFCL | ToolBench | Claw-Eval |
 |---|---|---|---|---|
-| Scenarios | 69 (+23 Hard Mode; 92 combined) | 2000+ | 16000+ | 300 |
+| Scenarios | 69 (+28 Hard Mode; 97 combined) | 2000+ | 16000+ | 300 |
 | Mock tools | ✓ (deterministic) | ✗ (real APIs) | Partial | ✓ (Docker sandbox) |
 | Multi-turn | ✓ (10+ scenarios) | Limited | ✓ | ✓ (38 dialogue) |
 | Safety testing | ✓ (Category K) | ✗ | ✗ | ✓ (multiplicative gate) |
