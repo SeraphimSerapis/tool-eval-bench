@@ -7,6 +7,7 @@ import re
 import time
 from dataclasses import dataclass
 
+from tool_eval_bench.domain.engines import SPEC_COUNTER_ORDER, metrics_namespace_present
 from tool_eval_bench.domain.measurement import MeasurementClient
 
 logger = logging.getLogger(__name__)
@@ -273,36 +274,22 @@ async def detect_spec_decoding(
                 # activity, but do not identify the configured proposer.
                 # Namespaces are matched at line start so a label value such
                 # as model_name="acme/strata:7b" does not name the engine.
-                if re.search(r"^tensorfold:", text, re.MULTILINE):
-                    # Counters exist even with drafting off, and mtp_*
-                    # aliases count all proposers, not just MTP.
-                    info.active = parse_prometheus_spec_metrics(text).draft_tokens > 0
-                    info.method = "unknown"
-                    info.detail = (
-                        "TensorFold draft counters available; proposer configuration unknown"
-                    )
-                elif re.search(r"^llamacpp:", text, re.MULTILINE):
-                    # llama-server renders these counters on every scrape, with
-                    # or without a draft model, and its responses carry this
-                    # request's draft counts in timings.
-                    info.active = parse_prometheus_spec_metrics(text).draft_tokens > 0
-                    info.has_per_request_timings = True
-                    info.method = "unknown"
-                    info.detail = (
-                        "llama.cpp draft counters available; per-request counts "
-                        "come from response timings (draft_n/draft_n_accepted)"
-                    )
-                elif re.search(r"^strata:", text, re.MULTILINE):
-                    # Strata renders these counters on every scrape, drafting or
-                    # not. Its drafts come from the model's MTP head.
-                    info.active = parse_prometheus_spec_metrics(text).draft_tokens > 0
-                    info.method = "mtp"
-                    info.detail = "Strata MTP draft counters available"
+                # Every engine in SPEC_COUNTER_ORDER renders its counters on
+                # every scrape, so only drafted tokens prove activity.
+                for profile in SPEC_COUNTER_ORDER:
+                    if metrics_namespace_present(text, profile):
+                        info.active = parse_prometheus_spec_metrics(text).draft_tokens > 0
+                        info.has_per_request_timings = profile.absent_draft_n_is_zero
+                        info.method = profile.fixed_spec_method or "unknown"
+                        info.detail = profile.spec_counter_detail or info.detail
+                        break
                 else:
                     info.method = _detect_spec_method(text)
 
             # llama.cpp: no spec_decode counters, but we can detect the backend
-            # and know that draft stats will come from per-request timings
+            # and know that draft stats will come from per-request timings.
+            # Unlike the check above this is a substring test, so a label value
+            # containing "llamacpp:" also matches.
             elif "llamacpp:" in text:
                 info.has_per_request_timings = True
                 info.detail = (

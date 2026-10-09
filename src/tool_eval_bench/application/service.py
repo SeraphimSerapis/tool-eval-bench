@@ -29,6 +29,7 @@ from tool_eval_bench.application.decision_audit import (
 from tool_eval_bench.application.finalization import finalize_completed_run
 from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.domain.adapters import BackendAdapter
+from tool_eval_bench.domain.engines import ACCEPTED_BACKEND_LABELS, BACKEND_LABELS
 from tool_eval_bench.domain.models import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     RUN_STATUS_INTERRUPTED,
@@ -56,23 +57,7 @@ from tool_eval_bench.utils.system_prompt import normalize_system_prompt
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_BACKENDS = {
-    "vllm",
-    "litellm",
-    "llamacpp",
-    "llama.cpp",
-    "llama_cpp",
-    "sglang",
-    "gemini",
-    "openai",
-    "anthropic",
-    "ninfer",
-    "tensorfold",
-    "halogen",
-    "strata",
-    "tabbyapi",
-    "unknown",
-}
+_SUPPORTED_BACKENDS = ACCEPTED_BACKEND_LABELS
 
 
 class BenchmarkService:
@@ -115,9 +100,7 @@ class BenchmarkService:
         backend_l = backend.lower()
         if backend_l not in _SUPPORTED_BACKENDS:
             raise ValueError(
-                f"Unsupported backend: {backend}. "
-                "Supported: vllm, litellm, llamacpp, sglang, gemini, openai, anthropic, "
-                "ninfer, tensorfold, halogen, strata, tabbyapi, unknown"
+                f"Unsupported backend: {backend}. Supported: {', '.join(BACKEND_LABELS)}"
             )
         return build_adapter(
             base_url,

@@ -578,7 +578,8 @@ async def measure_spec_single(
     # llama.cpp's server_slot_stats::to_json (tools/server/server-common.cpp)
     # writes draft_n only when n_draft_tokens > 0, so on llama.cpp a timings
     # object without it is an exact zero. Strata and unknown servers can omit
-    # the field for "not reported", so they keep the delta fallback.
+    # the field for "not reported", so they keep the delta fallback. Detection
+    # sets has_per_request_timings from EngineProfile.absent_draft_n_is_zero.
     if draft_n is None and sample.timings_present and spec_info.has_per_request_timings:
         draft_n = 0
     if draft_n is not None:

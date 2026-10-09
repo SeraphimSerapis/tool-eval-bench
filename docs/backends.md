@@ -24,7 +24,9 @@ needs no chat endpoint; see [decision-models.md](decision-models.md).
 
 ## Backend identification
 
-Detection runs in a fixed order and stops at the first answer:
+Detection runs in a fixed order and stops at the first answer. The engine facts
+it relies on, such as namespaces, their precedence and the names servers declare,
+live in one profile per engine in `src/tool_eval_bench/domain/engines.py`:
 
 1. A native Prometheus namespace on `/metrics` (`halogen:`, `tensorfold:`, `strata:`, `vllm:`,
    `sglang:` or `sglang_`, then `llamacpp:`).

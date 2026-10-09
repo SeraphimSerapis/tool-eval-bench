@@ -17,10 +17,25 @@ import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, get_args
 
 import httpx
 
+from tool_eval_bench.domain.engines import (
+    ENGINE_PROFILES,
+    HALOGEN,
+    LITELLM,
+    LLAMACPP,
+    METRICS_IDENTITY_ORDER,
+    NINFER,
+    SGLANG,
+    STRATA,
+    TABBYAPI,
+    TENSORFOLD,
+    VLLM,
+    IdentitySource,
+    engine_profile,
+)
 from tool_eval_bench.domain.models import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     BenchmarkConfig,
@@ -283,7 +298,7 @@ async def _probe_vllm_version(
     except ValueError:
         return {}
     if isinstance(body, dict) and "version" in body:
-        return {"engine_name": "vLLM", "engine_version": body["version"]}
+        return {"engine_name": VLLM.display_name, "engine_version": body["version"]}
     return {}
 
 
@@ -316,7 +331,7 @@ async def _probe_props(
             identity = _endpoint_identity(path, resp) or _declared(
                 "build_info", body.get("build_info")
             )
-            if identity and identity != ("llamacpp", "llama.cpp"):
+            if identity and identity != LLAMACPP.identity:
                 continue
             has_build = isinstance(body.get("build_info"), str) and bool(body["build_info"])
             has_build_number = type(body.get("build_number")) is int
@@ -325,11 +340,9 @@ async def _probe_props(
                 and type(body.get("total_slots")) is int
                 and body["total_slots"] > 0
             )
-            if identity != ("llamacpp", "llama.cpp") and not (
-                has_build or has_build_number or has_props
-            ):
+            if identity != LLAMACPP.identity and not (has_build or has_build_number or has_props):
                 continue
-            result: dict[str, Any] = {"engine_name": "llama.cpp"}
+            result: dict[str, Any] = {"engine_name": LLAMACPP.display_name}
             if "build_info" in body:
                 result["engine_version"] = str(body["build_info"])
             elif "build_number" in body:
@@ -358,7 +371,7 @@ async def _probe_litellm(
     # LiteLLM sets x-litellm-version header
     version = resp.headers.get("x-litellm-version")
     if version:
-        return {"engine_name": "LiteLLM", "engine_version": version}
+        return {"engine_name": LITELLM.display_name, "engine_version": version}
     if resp.status_code != 200:
         return {}
     try:
@@ -366,83 +379,55 @@ async def _probe_litellm(
     except ValueError:
         return {}
     if isinstance(body, dict) and "litellm_version" in body:
-        return {"engine_name": "LiteLLM", "engine_version": body["litellm_version"]}
+        return {"engine_name": LITELLM.display_name, "engine_version": body["litellm_version"]}
     return {}
-
-
-# Prefer an engine's native namespace over compatibility aliases. Halogen
-# deliberately exports llama.cpp metrics too; scrape order must not decide identity.
-# Strata's Prometheus format (serve/prometheus.py, chosen by Accept: text/plain
-# or ?format=prometheus) uses vLLM's names plus a strata: namespace that every
-# scrape carries. The probe asks for that format; builds that predate it serve
-# JSON, which matches nothing here and leaves identity to /health.
-_METRICS_BACKEND_PREFIXES: tuple[tuple[str, str, str], ...] = (
-    ("halogen:", "halogen", "Halogen Flash"),
-    ("tensorfold:", "tensorfold", "TensorFold"),
-    ("strata:", "strata", "Strata"),
-    ("vllm:", "vllm", "vLLM"),
-    ("sglang:", "sglang", "SGLang"),
-    ("sglang_", "sglang", "SGLang"),  # SGLang >=0.5.4 renamed the metric prefix
-    ("llamacpp:", "llamacpp", "llama.cpp"),
-)
 
 
 def detect_backend_from_metrics(text: str) -> tuple[str, str] | None:
     """Identify the backend from its Prometheus ``/metrics`` namespace.
 
-    Returns ``(backend, label)`` for the most specific recognized namespace,
-    or ``None`` if the text doesn't match a known engine.
+    Returns ``(backend, label)`` for the first namespace in
+    ``METRICS_IDENTITY_ORDER`` that starts a sample line, or ``None`` if the
+    text doesn't match a known engine.
+
+    Strata's Prometheus format (serve/prometheus.py, chosen by Accept: text/plain
+    or ?format=prometheus) is what carries its ``strata:`` namespace. The probe
+    asks for that format; builds that predate it serve JSON, which matches
+    nothing here and leaves identity to /health.
     """
     lines = [line for line in text.splitlines() if line and not line.startswith("#")]
-    for prefix, backend, label in _METRICS_BACKEND_PREFIXES:
-        if any(line.startswith(prefix) for line in lines):
-            return backend, label
+    for profile in METRICS_IDENTITY_ORDER:
+        for prefix in profile.metrics_prefixes:
+            if any(line.startswith(prefix) for line in lines):
+                return profile.identity
     return None
 
 
-_IdentitySource = Literal["owned_by", "server", "service", "software", "build_info"]
-
-_STRATA = ("strata", "Strata")
-_TABBYAPI = ("tabbyapi", "TabbyAPI")
-
-# Names servers give themselves, keyed by where they give them. A lookup is an
-# exact, case-insensitive match on the value's leading name token, so
-# "Strata 0.1.40" names Strata and "tabby" names nothing. Declared identity is
-# checked before llama.cpp's /props shape, which Strata and TabbyAPI imitate.
-_DECLARED_IDENTITIES: dict[_IdentitySource, dict[str, tuple[str, str]]] = {
-    # /v1/models data[0].owned_by
-    "owned_by": {
-        "llamacpp": ("llamacpp", "llama.cpp"),
-        "ninfer": ("ninfer", "NInfer"),
-        "sglang": ("sglang", "SGLang"),
-        "tabbyapi": _TABBYAPI,
-        "tensorfold": ("tensorfold", "TensorFold"),
-    },
-    # HTTP Server header, product token before any "/version"
-    "server": {
-        "llama.cpp": ("llamacpp", "llama.cpp"),
-        "vllm": ("vllm", "vLLM"),
-        "sglang": ("sglang", "SGLang"),
-        "litellm": ("litellm", "LiteLLM"),
-    },
-    # /health service
-    "service": {"strata": _STRATA},
-    # /.well-known/serviceinfo software.name
-    "software": {"tabbyapi": _TABBYAPI},
-    # /props build_info; llama.cpp's "b6123-abc1234" names no server
-    "build_info": {"strata": _STRATA},
+# Names servers give themselves, keyed by where they give them, from each
+# profile's declared_names. A lookup is an exact, case-insensitive match on the
+# value's leading name token, so "Strata 0.1.40" names Strata and "tabby" names
+# nothing. Declared identity is checked before llama.cpp's /props shape, which
+# Strata and TabbyAPI imitate.
+_DECLARED_IDENTITIES: dict[IdentitySource, dict[str, tuple[str, str]]] = {
+    source: {
+        token: profile.identity
+        for profile in ENGINE_PROFILES
+        for declared_source, token in profile.declared_names
+        if declared_source == source
+    }
+    for source in get_args(IdentitySource)
 }
 
 # Endpoint-specific identity fields, as a key path into the JSON body. Every
 # probed response is also checked for model ownership and its Server header.
-_DECLARED_FIELDS: dict[str, tuple[_IdentitySource, tuple[str, ...]]] = {
+_DECLARED_FIELDS: dict[str, tuple[IdentitySource, tuple[str, ...]]] = {
     "/health": ("service", ("service",)),
     "/.well-known/serviceinfo": ("software", ("software", "name")),
     "/props": ("build_info", ("build_info",)),
 }
 
 
-def _declared(source: _IdentitySource, value: Any) -> tuple[str, str] | None:
+def _declared(source: IdentitySource, value: Any) -> tuple[str, str] | None:
     """Look up the server *value* names; anything but a non-empty string names none."""
     if not isinstance(value, str):
         return None
@@ -527,14 +512,14 @@ async def probe_backend_hint(base_url: str, api_key: str | None = None) -> tuple
                 return hit
 
         if await _probe_vllm_version(base_url, api_key, session=active):
-            return "vllm", "vLLM"
+            return VLLM.identity
 
         identity = await _probe_declared_identity(base_url, api_key, session=active)
         if identity:
             return identity
 
         if await _probe_props(base_url, api_key, session=active):
-            return "llamacpp", "llama.cpp"
+            return LLAMACPP.identity
 
     return None
 
@@ -673,19 +658,11 @@ def _llamacpp_quantization(ftype: Any) -> str | None:
     return _LLAMACPP_FTYPES.get(ftype) if isinstance(ftype, str) else None
 
 
-# Backend labels that name a vendor API rather than a self-hosted engine.
-_HOSTED_ENGINE_NAMES: dict[str, str] = {
-    "gemini": "Google Gemini API",
-    "openai": "OpenAI API",
-    "anthropic": "Anthropic Messages API",
-}
-
-
 async def _probe_tensorfold(
     base_url: str, api_key: str | None, *, session: _ProbeSession
 ) -> dict[str, Any]:
     """Collect declared capacity, not CUDA counters or MLX batch widths."""
-    result: dict[str, Any] = {"engine_name": "TensorFold"}
+    result: dict[str, Any] = {"engine_name": TENSORFOLD.display_name}
     resp = await _probe_get(
         session,
         f"{_root_url(base_url)}/health",
@@ -727,7 +704,7 @@ async def _probe_strata(
     base_url: str, api_key: str | None, *, session: _ProbeSession
 ) -> dict[str, Any]:
     """Read Strata's version and capacity; ``/props`` carries the version only when known."""
-    result: dict[str, Any] = {"engine_name": "Strata"}
+    result: dict[str, Any] = {"engine_name": STRATA.display_name}
     root = _root_url(base_url)
     headers = _auth_headers(api_key)
     props = await _probe_json(session, f"{root}/props", headers=headers, what="Strata /props")
@@ -760,7 +737,7 @@ async def _probe_tabbyapi(
     TabbyAPI reports neither its own version nor its model backend's, so
     ``engine_version`` stays unknown rather than borrowed from elsewhere.
     """
-    result: dict[str, Any] = {"engine_name": "TabbyAPI"}
+    result: dict[str, Any] = {"engine_name": TABBYAPI.display_name}
     root = _root_url(base_url)
     headers = _auth_headers(api_key)
     loaded = await _probe_json(
@@ -777,14 +754,6 @@ async def _probe_tabbyapi(
     return result
 
 
-_LLAMACPP_LABELS = ("llamacpp", "llama.cpp", "llama_cpp")
-# Labels with a dedicated branch in _probe_engine; anything else is unlabelled.
-_PROBED_LABELS = frozenset(
-    {"tensorfold", "vllm", "strata", "tabbyapi", "halogen", "litellm", "sglang", "ninfer"}
-    | set(_LLAMACPP_LABELS)
-)
-
-
 async def _identify_unlabelled(
     base_url: str, api_key: str | None, *, session: _ProbeSession
 ) -> tuple[str, str | None]:
@@ -794,12 +763,12 @@ async def _identify_unlabelled(
     fallback, which nothing declared and only ``/props`` can confirm.
     """
     if await _probe_vllm_version(base_url, api_key, session=session):
-        return "vllm", "vLLM"
+        return VLLM.identity
     if await _probe_litellm(base_url, api_key, session=session):
-        return "litellm", "LiteLLM"
+        return LITELLM.identity
     identity = await _probe_declared_identity(base_url, api_key, session=session)
     # With no declared identity, only llama.cpp's characteristic /props shape is left.
-    return identity if identity else ("llamacpp", None)
+    return identity if identity else (LLAMACPP.key, None)
 
 
 async def _probe_engine(
@@ -813,37 +782,37 @@ async def _probe_engine(
     answering ends the sequence rather than costing a timeout per probe.
     """
     result: dict[str, Any] = {}
-    backend_l = backend.lower()
+    profile = engine_profile(backend)
 
-    if backend_l in _HOSTED_ENGINE_NAMES:
+    if profile is not None and profile.hosted:
         # A hosted API serves no engine metadata, and Gemini's native endpoint
         # does not answer /v1/models at all, so every probe below would be a
         # wasted round trip against the vendor's servers.
-        return {"engine_name": _HOSTED_ENGINE_NAMES[backend_l]}
+        return {"engine_name": profile.display_name}
 
     async with _probe_session(None, "engine metadata") as active:
         # Always probe /v1/models (works for all self-hosted backends)
         result.update(await _probe_models(base_url, api_key, session=active))
 
         identified_name: str | None = None
-        if str(result.get("owned_by", "")).lower() == "tensorfold":
-            backend_l = "tensorfold"
-        elif backend_l not in _PROBED_LABELS:
-            backend_l, identified_name = await _identify_unlabelled(
-                base_url, api_key, session=active
-            )
+        if str(result.get("owned_by", "")).lower() == TENSORFOLD.declared_name("owned_by"):
+            key = TENSORFOLD.key
+        elif profile is None:
+            key, identified_name = await _identify_unlabelled(base_url, api_key, session=active)
+        else:
+            key = profile.key
 
         # Backend-specific probes. Responses are memoized, so a probe that
         # _identify_unlabelled already ran costs no second request.
-        if backend_l == "tensorfold":
+        if key == TENSORFOLD.key:
             result.update(await _probe_tensorfold(base_url, api_key, session=active))
-        elif backend_l == "vllm":
+        elif key == VLLM.key:
             result.update(await _probe_vllm_version(base_url, api_key, session=active))
-        elif backend_l == "strata":
+        elif key == STRATA.key:
             result.update(await _probe_strata(base_url, api_key, session=active))
-        elif backend_l == "tabbyapi":
+        elif key == TABBYAPI.key:
             result.update(await _probe_tabbyapi(base_url, api_key, session=active))
-        elif backend_l in _LLAMACPP_LABELS:
+        elif key == LLAMACPP.key:
             props = await _probe_props(base_url, api_key, session=active)
             # A GGUF file type cannot tell UD-Q4_K_XL or Q4_K_L from Q4_K_M, so
             # it only fills in for a name that identifies no specific type.
@@ -851,18 +820,18 @@ async def _probe_engine(
             if _guess_quantization(name) not in (None, "GGUF"):
                 props.pop("quantization", None)
             result.update(props)
-        elif backend_l == "halogen":
-            result["engine_name"] = "Halogen Flash"
-        elif backend_l == "litellm":
+        elif key == HALOGEN.key:
+            result["engine_name"] = HALOGEN.display_name
+        elif key == LITELLM.key:
             result.update(await _probe_litellm(base_url, api_key, session=active))
-        elif backend_l == "sglang":
+        elif key == SGLANG.key:
             # No well-documented, stable metadata endpoint for version info yet;
             # the metrics-based detector that produced this label already confirms
             # the engine, so just record the name.
-            result.setdefault("engine_name", "SGLang")
-        elif backend_l == "ninfer":
+            result.setdefault("engine_name", SGLANG.display_name)
+        elif key == NINFER.key:
             if result.get("owned_by") == "ninfer":
-                result["engine_name"] = "NInfer"
+                result["engine_name"] = NINFER.display_name
 
         # A server identified only by a declaration, such as a Server header,
         # has nothing for its metadata probe to read. It still has a name.
