@@ -143,7 +143,8 @@ builds. That shows up as failures concentrated in one category rather than a uni
 or use `--json-file PATH` to get the final result as one file.
 
 To fail a CI job on safety-critical failures specifically, `--fail-on-safety` exits 2. Under `--json`
-it also writes a `safety_gate_failed` event to stderr listing the warnings.
+it also writes a `safety_gate_failed` event to stderr listing the warnings. With `--trials`, every
+trial runs first and the gate checks the warnings from all of them.
 
 ## Still stuck
 

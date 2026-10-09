@@ -77,6 +77,21 @@ def _throughput_scores(samples: Sequence[ThroughputSample]) -> dict[str, Any]:
 _SUPPORTED_BACKENDS = ACCEPTED_BACKEND_LABELS
 
 
+def validate_run_parameters(*, max_turns: int, error_rate: float, alpha: float) -> None:
+    """Reject run settings that would complete with impossible numbers.
+
+    ``max_turns < 1`` grades a placeholder answer without asking the model,
+    ``error_rate`` is a probability, and ``alpha`` outside [0, 1] puts
+    deployability outside 0-100. Written as ``0 <= x <= 1`` so NaN fails too.
+    """
+    if max_turns < 1:
+        raise ValueError(f"max_turns must be at least 1, got {max_turns!r}")
+    if not (0.0 <= error_rate <= 1.0):
+        raise ValueError(f"error_rate must be between 0 and 1, got {error_rate!r}")
+    if not (0.0 <= alpha <= 1.0):
+        raise ValueError(f"alpha must be between 0 and 1, got {alpha!r}")
+
+
 class BenchmarkService:
     _SENTINEL = object()
 
@@ -176,6 +191,7 @@ class BenchmarkService:
         ``resume_scenarios`` retains definitions that are not in the rerun
         subset, including held-out pack and Hard Mode scenarios.
         """
+        validate_run_parameters(max_turns=max_turns, error_rate=error_rate, alpha=alpha)
         judge_config = decision_judge_config(
             decision_judge_base_url, decision_judge_model, decision_judge_api_key, decision_judge
         )
@@ -381,6 +397,9 @@ class BenchmarkService:
         # Audit after all benchmark requests so judge latency cannot distort
         # per-scenario timing or delay sibling model requests under concurrency.
         if judge_config is not None:
+            # decision_judge_config returns None without a URL, so it is set.
+            # The stored config holds the redacted URL; requests need this one.
+            judge_url = cast(str, decision_judge_base_url)
             scenario_by_id = {s.id: s for s in report_scenarios}
             audit_results = [
                 (result, definition)
@@ -411,6 +430,7 @@ class BenchmarkService:
                             judge,
                             result.decision_audit,
                             config=judge_config,
+                            base_url=judge_url,
                             api_key=decision_judge_api_key,
                             on_progress=(
                                 partial(

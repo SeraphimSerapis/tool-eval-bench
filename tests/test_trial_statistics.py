@@ -34,8 +34,10 @@ class _Service:
     def __init__(self, executed: list[ScenarioResult], stored: list[ScenarioResult]) -> None:
         self.executed = {result.scenario_id: result for result in executed}
         self.stored = stored
+        self.calls: list[dict[str, Any]] = []
 
     async def run_benchmark(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
         scenarios = kwargs["scenarios"]
         for idx, scenario in enumerate(scenarios):
             if on_result := kwargs.get("on_scenario_result"):
@@ -148,9 +150,16 @@ def test_a_resumed_trial_is_scored_against_the_whole_protocol(
     args._resume_prior_results = [PASS_01.to_dict()]
     args._resume_run_id = "run-1"
     merged = [PASS_01, PASS_04]
+    service = _Service(merged, merged)
 
-    summaries = _run(mode, args, _Service([PASS_04], merged), monkeypatch)
+    summaries = _run(mode, args, service, monkeypatch)
 
     expected = _as_service_scores(merged, weighted=True)
     assert expected.max_points == 4 and expected.weighted_score is not None
     assert [_key(s) for s in summaries] == [_key(expected)] * 2
+    first, second = service.calls
+    assert first["resume_run_id"] == "run-1"
+    assert [s.id for s in first["scenarios"]] == ["TC-04"]
+    # Trial 2 is a fresh run of the whole protocol, not a second resume of run-1.
+    assert second["resume_run_id"] is None and second["resume_prior_results"] is None
+    assert [s.id for s in second["scenarios"]] == ["TC-01", "TC-04"]

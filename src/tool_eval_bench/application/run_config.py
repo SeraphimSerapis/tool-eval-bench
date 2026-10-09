@@ -185,8 +185,20 @@ def _pressure_fingerprint(value: dict[str, Any]) -> dict[str, Any]:
     return {key: item for key, item in value.items() if key != "fill_tokens"}
 
 
+def _canonical_judge(config: Any) -> Any:
+    """A judge config with its URL redacted and reduced to its request root."""
+    if isinstance(config, dict) and isinstance(config.get("base_url"), str):
+        return {**config, "base_url": canonical_endpoint_path(_redact_url(config["base_url"]))}
+    return config
+
+
 def _judge_mismatch(previous: Any, current: Any) -> str | None:
     """Name the judge difference a user must undo to resume, when it is a set or check."""
+    # Runs audited before judge URLs were redacted stored the raw URL, and any
+    # spelling of the same judge (with or without /v1 or a trailing slash)
+    # sends requests to the same place. Compare the redacted canonical form on
+    # both sides; endpoint_id still tells two hosts apart.
+    previous, current = _canonical_judge(previous), _canonical_judge(current)
     if previous == current:
         return None
     if isinstance(previous, dict) and "set" not in previous:
@@ -490,7 +502,11 @@ def build_run_config(
 
 
 def resume_mismatches(
-    previous: dict[str, Any], current: dict[str, Any], *, base_url: str | None = None
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    base_url: str | None = None,
+    judge_base_url: str | None = None,
 ) -> list[str]:
     """Name every scoring condition in which a stored run differs from the current one.
 
@@ -498,9 +514,10 @@ def resume_mismatches(
     come from an older version).  Messages follow stored key order.
     ``base_url`` is the current run's unredacted URL. With it, a run stored
     before endpoint identities were canonical still resumes under any spelling
-    of the same endpoint.
+    of the same endpoint. ``judge_base_url`` is the current decision judge's
+    unredacted URL and does the same for the judge.
     """
-    previous = _with_current_endpoint_ids(previous, current, base_url)
+    previous = _with_current_endpoint_ids(previous, current, base_url, judge_base_url)
     mismatches: list[str] = []
     for field in RUN_CONFIG_FIELDS:
         check = field.resume
@@ -520,15 +537,19 @@ def resume_mismatches(
 
 
 def _with_current_endpoint_ids(
-    previous: dict[str, Any], current: dict[str, Any], base_url: str | None
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    base_url: str | None,
+    judge_base_url: str | None,
 ) -> dict[str, Any]:
     """Treat an identity the old algorithm computed for this endpoint as the current one.
 
     Identities used to keep ``/v1`` in the path. A run started before that
     changed must still resume under any spelling of the same server, and the
     stored hash cannot be recomputed, so every legacy identity a spelling of
-    the current URL could have produced is accepted instead. The judge, which
-    speaks the OpenAI format, carries its own URL in its stored config.
+    the current URL could have produced is accepted instead. The judge speaks
+    the OpenAI format, and its stored config holds only a redacted URL, so the
+    caller passes the judge's raw URL as ``judge_base_url``.
     """
     updated = dict(previous)
     stored = previous.get("endpoint_id")
@@ -540,8 +561,8 @@ def _with_current_endpoint_ids(
     if (
         isinstance(old_judge, dict)
         and isinstance(new_judge, dict)
-        and isinstance(new_judge.get("base_url"), str)
-        and old_judge.get("endpoint_id") in legacy_endpoint_identities(new_judge["base_url"])
+        and judge_base_url is not None
+        and old_judge.get("endpoint_id") in legacy_endpoint_identities(judge_base_url)
     ):
         updated["decision_judge"] = {**old_judge, "endpoint_id": new_judge.get("endpoint_id")}
     return updated

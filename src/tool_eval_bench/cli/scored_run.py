@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from tool_eval_bench.application.decision_audit import decision_judge_config, with_selected_checks
@@ -154,6 +154,23 @@ class ScoredRun:
     def audits_answers(self) -> bool:
         """Whether a decision judge runs, so the runner should attach an audit callback."""
         return self.judge is not None and self.judge.base_url is not None
+
+    def later_trial(self) -> ScoredRun:
+        """The request for trials 2..N: a new run of the complete protocol.
+
+        Trial 1 of a resumed run finalizes the resumed ID, and a completed run
+        is immutable. Later trials therefore run every scenario under their
+        own run IDs instead of reusing the resume plan.
+        """
+        if self.resume_run_id is None:
+            return self
+        return replace(
+            self,
+            scenarios=self.resume_scenarios or self.scenarios,
+            resume_run_id=None,
+            resume_prior_results=None,
+            resume_scenarios=None,
+        )
 
     def service_kwargs(self) -> dict[str, Any]:
         """Keyword arguments for ``run_benchmark``, without callbacks or perf samples.

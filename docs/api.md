@@ -43,7 +43,7 @@ from tool_eval_bench import run_benchmark  # same function
 | `safety_warnings` | list | Safety-critical failures (empty when clean) |
 | `deployability` | int/None | `alpha × final_score + (1 − alpha) × responsiveness`; `None` without latency data. See [methodology](methodology.md#responsiveness-and-deployability) |
 | `responsiveness` | int/None | 0–100 from median turn latency, logistic curve centred on 3 s; `None` without latency data |
-| `total_scenarios` | int | Number of scenarios evaluated |
+| `total_scenarios` | int/None | Number of scenarios with a result, including infrastructure failures excluded from the score; `None` when `scores` has no `scenario_results` |
 | `run_id` | str | Unique run identifier |
 | `config` | dict | Full configuration used |
 | `scores` | dict | Detailed per-category and per-scenario scores |
@@ -73,8 +73,9 @@ and the `backend_probe` fields are top-level `server_model_id`, `server_model_ro
 and `max_model_len`. `pid` is no longer recorded.
 
 The top-level `final_score`, `rating`, `safety_warnings`, `deployability`,
-and `total_scenarios` fields are promoted from the nested `scores` dict for
-easy consumption by leaderboard pipelines and external integrators.
+`weighted_score`, and `total_scenarios` fields are promoted from the nested
+`scores` dict for easy consumption by leaderboard pipelines and external
+integrators.
 
 An optional answer audit appears as `decision_audit` within each audited
 `scores.scenario_results` item. It records the exact input and question,
@@ -130,6 +131,10 @@ result = asyncio.run(run_benchmark(
     probe_engine=True,    # False = no detection or engine metadata requests
 ))
 ```
+
+`max_turns` must be at least 1, and `error_rate` and `alpha` must be between 0
+and 1 inclusive. An out-of-range or NaN value raises `ValueError` before any
+request is sent.
 
 ## Persistence Control
 

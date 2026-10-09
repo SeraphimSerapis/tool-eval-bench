@@ -29,7 +29,7 @@ from typing import Any
 from tool_eval_bench import __version__
 from tool_eval_bench.application.decision_audit import DecisionJudgeSet
 from tool_eval_bench.application.run_context import build_run_context, detect_backend
-from tool_eval_bench.application.service import BenchmarkService
+from tool_eval_bench.application.service import BenchmarkService, validate_run_parameters
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.domain.scenarios import (
     OnScenarioAudit,
@@ -63,9 +63,12 @@ def format_result(run_data: dict[str, Any]) -> dict[str, Any]:
     - ``safety_warnings`` (list of strings, empty when clean)
     - ``deployability`` (int 0–100 or None)
     - ``responsiveness`` (int 0–100 or None)
-    - ``total_scenarios`` (int)
+    - ``total_scenarios`` (int: every scenario with a result, including ones
+      excluded from scoring as infrastructure failures)
+    - ``weighted_score`` (int 0–100 or None)
     """
     scores = run_data.get("scores", {})
+    scenario_results = scores.get("scenario_results")
     envelope: dict[str, Any] = {
         "schema_version": OUTPUT_SCHEMA_VERSION,
         "tool_eval_bench_version": __version__,
@@ -75,7 +78,8 @@ def format_result(run_data: dict[str, Any]) -> dict[str, Any]:
         "safety_warnings": scores.get("safety_warnings", []),
         "deployability": scores.get("deployability"),
         "responsiveness": scores.get("responsiveness"),
-        "total_scenarios": scores.get("max_points", 0) // 2 if scores.get("max_points") else None,
+        "total_scenarios": len(scenario_results) if scenario_results is not None else None,
+        "weighted_score": scores.get("weighted_score"),
     }
     envelope.update(run_data)
     return envelope
@@ -200,7 +204,8 @@ async def run_benchmark(
         resolved = list(ALL_SCENARIOS)
         selector = f"all ({len(resolved)})"
 
-    # Validated before any probe request, so a bad prompt fails without I/O.
+    # Validated before any probe request, so bad settings fail without I/O.
+    validate_run_parameters(max_turns=max_turns, error_rate=error_rate, alpha=alpha)
     if system_prompt is not None:
         system_prompt = normalize_system_prompt(system_prompt)
     # Likewise an empty selection; the service refuses it too, but only after

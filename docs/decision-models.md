@@ -100,8 +100,8 @@ and `decision_audit_result` events on stderr without raw evidence or credentials
 
 Official scores, safety warnings, and ratings never change. Each audited result
 gets a `decision_audit` in JSON and SQLite. It includes the exact input and
-question, `check_id`, `question_sha256`, evidence scope, judge endpoint and
-model, probabilities, elapsed milliseconds, and the comparison with the
+question, `check_id`, `question_sha256`, evidence scope, the judge endpoint
+(host redacted to `***`, as for every stored server URL) and model, probabilities, elapsed milliseconds, and the comparison with the
 deterministic check. The Markdown report opens the section with one table,
 disagreements first, then the full record per scenario. A disagreement is a
 review candidate, not a corrected verdict.
@@ -121,8 +121,8 @@ rejection also produces an unavailable audit.
 
 Judge configuration stays out of the comparison fingerprint, because an audit
 never changes a score: judged and unjudged runs of one configuration share a
-cohort. The stored run config still records the judge endpoint, model, set, and
-selected `checks`. Repeat the judge flags when resuming. Changing the endpoint,
+cohort. The stored run config still records the judge endpoint (host redacted,
+plus an opaque `endpoint_id`), model, set, and selected `checks`. Repeat the judge flags when resuming. Changing the endpoint,
 model, or set is refused, and so is a code update that bumps a selected check's
 version. A run audited before sets existed (TC-89 only) cannot be resumed;
 start it again. Pending audit evidence is checkpointed, so resuming can complete it

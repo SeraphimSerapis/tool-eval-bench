@@ -145,7 +145,11 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--categories A B K` | Run only specific categories (A–P). P needs `--hardmode`; a filter that matches no scenario is a usage error (exit 2) |
 | `--scenarios TC-01 TC-07` | Run specific scenario IDs |
 | `--perf` | Also run throughput benchmark |
-| `--trials N` | Run N trials for statistical analysis |
+| `--trials N` | Run N trials for statistical analysis. With `--resume`, trial 1 finishes the resumed run and trials 2..N run the full protocol as new runs |
+| `--max-turns N` | Max turns per scenario (default: 8, minimum 1) |
+| `--error-rate RATE` | Inject random tool errors at this rate, 0 to 1, for robustness testing |
+| `--fail-on-safety` | Exit 2 when a safety-critical scenario fails. With `--trials`, every trial still runs and an unsafe trial fails the gate |
+| `--diff RUN_ID` | Print a per-scenario comparison with a previous run after the run. `latest` means the newest completed tool-call run before this one. Ignored with `--json` |
 | `--resume RUN_ID` | Resume a previous run (skip already-passed scenarios) |
 | `--hardmode-only` | Run ONLY Hard Mode scenarios (equivalent to --hardmode --categories P) |
 | `--weight-by-difficulty` | Weight scores by difficulty tier (harder scenarios count more) |
@@ -154,7 +158,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--decision-judge [SET]` | Answer-audit set: `recommended` (11 scenarios; the bare flag, and the default when only the connection flags are given) or `all` (17). Needs both connection flags |
 | `--decision-judge-base-url URL` | Independent `/v1/systemone` endpoint for answer auditing; official scores stay unchanged |
 | `--decision-judge-model NAME` | Required judge model; authentication uses `TOOL_EVAL_DECISION_JUDGE_API_KEY`, never the benchmark's key |
-| `--alpha F` | Quality weight in the deployability composite (default: 0.7; speed gets 1 − alpha) |
+| `--alpha F` | Quality weight in the deployability composite, 0 to 1 (default: 0.7; speed gets 1 − alpha) |
 
 ## Benchmark modes
 
@@ -283,7 +287,7 @@ See [needle.md](needle.md) for the retrieval grid and how to read it, and
   "tool_eval_bench_version": "1.8.0",
   "final_score": 85,           // 0–100, the headline number
   "rating": "★★★★ Good",       // star rating with label
-  "safety_warnings": [],       // empty = safe; non-empty = failures in safety-critical scenarios
+  "safety_warnings": [],       // empty = safe; non-empty = failures in safety-critical scenarios (every trial with --trials)
   "deployability": 78,         // alpha × final_score + (1 − alpha) × responsiveness; null without latency data
   "responsiveness": 65,        // 0–100 from median turn latency; see methodology.md
   "total_scenarios": 69,
@@ -336,7 +340,7 @@ When `--json` mode emits an error event, the `error` field is one of:
 | `no_models` | 3 | Server responded but model list is empty |
 | `model_not_available` | 3 | Model is listed but fails a real request |
 | `no_server` | 2 | Auto-discovery found no server on localhost |
-| `invalid_arguments` | 2 | The arguments parsed but are invalid, such as an unknown scenario or category, malformed `--backend-kwargs`, or `--json` with an interactive monitor |
+| `invalid_arguments` | 2 | The arguments parsed but are invalid, such as an unknown scenario or category, an out-of-range `--max-turns`, `--error-rate`, `--alpha`, or `--context-pressure`, malformed `--backend-kwargs`, or `--json` with an interactive monitor |
 | `run_failed` | 1 | The run started but could not finish: a resume was rejected, setup failed, or a benchmark mode failed. The message names the cause. One exception: when `--spec-bench` fails and a tool-call run or plugin follows it, the event arrives mid-stream, the remaining modes still run, and the exit status and envelope reflect them |
 
 These constants are defined in `tool_eval_bench.domain.errors` for

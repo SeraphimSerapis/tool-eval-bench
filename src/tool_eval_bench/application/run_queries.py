@@ -34,16 +34,19 @@ def get_run(run_id: str, *, include_traces: bool = True) -> dict[str, Any] | Non
         return repo.get(run_id, include_traces=include_traces)
 
 
-def resolve_run(run_id: str) -> tuple[str, dict[str, Any]] | None:
+def resolve_run(
+    run_id: str, *, run_type: str | None = None, status: str | None = None
+) -> tuple[str, dict[str, Any]] | None:
     """Resolve a run id, accepting ``latest`` for the most recent run.
 
     Returns the resolved id alongside the run, or ``None`` when nothing
     matches, so a caller can tell "no runs at all" from "no such run" by
-    checking which id it asked for.
+    checking which id it asked for. ``run_type`` and ``status`` narrow what
+    ``latest`` may resolve to; an explicit id is returned as stored.
     """
     with closing(_repository()) as repo:
         if run_id.lower() == "latest":
-            run = repo.get_latest()
+            run = repo.get_latest(run_type=run_type, status=status)
             return (run["run_id"], run) if run else None
         run = repo.get(run_id)
         return (run_id, run) if run else None
