@@ -676,7 +676,10 @@ method or speculative configuration. Generic metric names prove that
 speculation is active, but they do not prove whether the server uses a draft
 model, MTP, EAGLE, n-gram, Medusa, DFlash, DSpark, suffix decoding, or a
 custom proposer. Multiple `/v1/models` entries are not treated as proof of a
-draft model. If `/metrics` is unavailable or contains none of these metric
+draft model. Spec-bench and the `--perf` probe apply the same rule, so a model
+name such as `acme/eagle-7b` in a metric label does not name the method. Strata
+is the one exception: its `strata:` namespace identifies the engine, and Strata
+drafts only with the model's MTP head. If `/metrics` is unavailable or contains none of these metric
 families, the monitor stays in its waiting state and does not fail the run.
 
 ### Prompt-Type Variation

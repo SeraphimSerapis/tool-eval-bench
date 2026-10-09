@@ -32,6 +32,11 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from tool_eval_bench.runner.spec_detection import (
+    _canonical_spec_method,
+    _detect_spec_method,
+    _parse_labels,
+)
 from tool_eval_bench.utils.urls import metrics_url as _metrics_url_from_base
 
 logger = logging.getLogger(__name__)
@@ -183,55 +188,10 @@ _PER_POSITION_DRAFTED_METRIC_NAMES = (
     "vllm_spec_decode_num_draft_tokens_per_pos_total",
 )
 
-# These are the method values accepted by current vLLM's SpeculativeConfig.
-# Method detection only trusts an explicit method/config label.  Generic
-# ``spec_decode_*`` counters prove that speculation is active, not whether it
-# uses a draft model, MTP, EAGLE, or another proposer.
-_SUPPORTED_SPEC_METHODS = frozenset(
-    {
-        "draft_model",
-        "eagle",
-        "eagle3",
-        "extract_hidden_states",
-        "mtp",
-        "ngram",
-        "ngram_gpu",
-        "medusa",
-        "mlp_speculator",
-        "suffix",
-        "dflash",
-        "dspark",
-        "custom_class",
-    }
-)
-_METHOD_LABEL_PATTERN = re.compile(
-    r"(?:spec_method|speculative_method|method)\s*[:=]\s*[\"']?"
-    r"([A-Za-z0-9_.+-]+)",
-    re.IGNORECASE,
-)
-
 # Extract model_name labels from spec_decode metrics — used to detect draft model identity
 _MODEL_NAME_LABEL = re.compile(
     r'model_name="([^"]+)"',
 )
-
-
-# `[^"]` also matches a backslash, so `(?:\\.|[^"])*` gave the engine two ways
-# to consume every escape and exponential backtracking to work through on a
-# label that never closes its quote. Excluding the backslash from the negated
-# class leaves exactly one parse. Metrics text comes off the wire from whatever
-# server the run points at, so this is reachable input.
-_LABEL_PATTERN = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:[^"\\]|\\.)*)"')
-
-
-def _parse_labels(raw_labels: str | None) -> dict[str, str]:
-    """Parse the simple quoted labels emitted by Prometheus text format."""
-    if not raw_labels:
-        return {}
-    return {
-        name: value.replace(r"\"", '"').replace(r"\\", "\\")
-        for name, value in _LABEL_PATTERN.findall(raw_labels)
-    }
 
 
 def _metric_series(text: str, metric_name: str) -> list[tuple[dict[str, str], float]]:
@@ -308,57 +268,6 @@ def per_position_rates_from_counters(
         if denominator > 0:
             rates[position_index] = accepted_count / denominator
     return rates
-
-
-def _canonical_spec_method(value: str) -> str | None:
-    """Return a supported method name, preserving explicit variants."""
-    method = value.strip().lower().replace("-", "_").replace(" ", "_")
-    aliases = {
-        "draft": "draft_model",
-        "draftmodel": "draft_model",
-        "standalone": "draft_model",
-        "draft_flash": "dflash",
-        "multi_token_prediction": "mtp",
-        "nextn": "mtp",
-        "prompt_lookup": "ngram",
-        "ngram_gpu": "ngram_gpu",
-        "custom": "custom_class",
-    }
-    method = aliases.get(method, method)
-    if method in _SUPPORTED_SPEC_METHODS:
-        return method
-
-    # Parallel drafting and batch-size schedules are config variants, not
-    # separate upstream methods.  Keep an explicit suffix visible when a
-    # provider chooses to expose it in a label.
-    for suffix in ("_parallel", "_dynamic"):
-        base = method.removesuffix(suffix)
-        if base in _SUPPORTED_SPEC_METHODS:
-            return method
-    return None
-
-
-def _detect_spec_method(text: str) -> str:
-    """Detect a method only when the metrics contain an explicit method hint.
-
-    Current vLLM, SGLang, and llama.cpp metric names do not identify the
-    proposer.  Returning ``unknown`` for generic counters is deliberate: a
-    dashboard must not turn proof of speculative decoding into a false claim
-    about the configured method.
-    """
-    for line in text.splitlines():
-        if not (
-            "spec_decode" in line.lower()
-            or "spec_method" in line.lower()
-            or "speculative_method" in line.lower()
-            or "sglang:spec_" in line.lower()
-        ):
-            continue
-        for match in _METHOD_LABEL_PATTERN.finditer(line):
-            method = _canonical_spec_method(match.group(1))
-            if method is not None:
-                return method
-    return "unknown"
 
 
 def _extract_model_names(text: str) -> set[str]:

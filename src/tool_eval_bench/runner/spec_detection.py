@@ -83,6 +83,112 @@ def parse_prometheus_spec_metrics(text: str) -> SpecDecodeCounters:
     return counters
 
 
+# ---------------------------------------------------------------------------
+# Speculative method labels
+# ---------------------------------------------------------------------------
+
+# These are the method values accepted by current vLLM's SpeculativeConfig.
+# Method detection only trusts an explicit method/config label.  Generic
+# ``spec_decode_*`` counters prove that speculation is active, not whether it
+# uses a draft model, MTP, EAGLE, or another proposer.
+_SUPPORTED_SPEC_METHODS = frozenset(
+    {
+        "draft_model",
+        "eagle",
+        "eagle3",
+        "extract_hidden_states",
+        "mtp",
+        "ngram",
+        "ngram_gpu",
+        "medusa",
+        "mlp_speculator",
+        "suffix",
+        "dflash",
+        "dspark",
+        "custom_class",
+    }
+)
+
+# `[^"]` also matches a backslash, so `(?:\\.|[^"])*` gave the engine two ways
+# to consume every escape and exponential backtracking to work through on a
+# label that never closes its quote. Excluding the backslash from the negated
+# class leaves exactly one parse. Metrics text comes off the wire from whatever
+# server the run points at, so this is reachable input.
+_LABEL_PATTERN = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)="((?:[^"\\]|\\.)*)"')
+
+_LABELLED_SAMPLE = re.compile(
+    r"^(?P<name>[A-Za-z_:][A-Za-z0-9_:]*)\{(?P<labels>[^}]*)\}",
+    re.MULTILINE,
+)
+
+# ``method`` is generic enough to mean something else on an unrelated metric,
+# so it only counts on a speculative series. The longer names are unambiguous.
+_SPEC_SERIES_METHOD_LABELS = ("spec_method", "speculative_method", "method")
+_ANY_SERIES_METHOD_LABELS = ("spec_method", "speculative_method")
+
+
+def _parse_labels(raw_labels: str | None) -> dict[str, str]:
+    """Parse the simple quoted labels emitted by Prometheus text format."""
+    if not raw_labels:
+        return {}
+    return {
+        name: value.replace(r"\"", '"').replace(r"\\", "\\")
+        for name, value in _LABEL_PATTERN.findall(raw_labels)
+    }
+
+
+def _canonical_spec_method(value: str) -> str | None:
+    """Return a supported method name, preserving explicit variants."""
+    method = value.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "draft": "draft_model",
+        "draftmodel": "draft_model",
+        "standalone": "draft_model",
+        "draft_flash": "dflash",
+        "multi_token_prediction": "mtp",
+        "nextn": "mtp",
+        "prompt_lookup": "ngram",
+        "ngram_gpu": "ngram_gpu",
+        "custom": "custom_class",
+    }
+    method = aliases.get(method, method)
+    if method in _SUPPORTED_SPEC_METHODS:
+        return method
+
+    # Parallel drafting and batch-size schedules are config variants, not
+    # separate upstream methods.  Keep an explicit suffix visible when a
+    # provider chooses to expose it in a label.
+    for suffix in ("_parallel", "_dynamic"):
+        base = method.removesuffix(suffix)
+        if base in _SUPPORTED_SPEC_METHODS:
+            return method
+    return None
+
+
+def _detect_spec_method(text: str) -> str:
+    """Detect a method only when a sample carries an explicit method label.
+
+    No vLLM, SGLang, or llama.cpp exporter puts a method label on its
+    speculative series, so for them this returns ``unknown``. Only a label
+    whose name says it holds the method counts. A model name, a path, or HELP
+    text that happens to contain ``eagle`` or ``mtp`` says nothing about how
+    the server drafts.
+    """
+    for match in _LABELLED_SAMPLE.finditer(text):
+        name = match.group("name").lower()
+        is_spec_series = "spec_decode" in name or name.startswith("sglang:spec_")
+        label_names = _SPEC_SERIES_METHOD_LABELS if is_spec_series else _ANY_SERIES_METHOD_LABELS
+        labels = _parse_labels(match.group("labels"))
+        for label_name in label_names:
+            value = labels.get(label_name)
+            if value is None:
+                continue
+            method = _canonical_spec_method(value)
+            if method is not None:
+                return method
+    return "unknown"
+
+
 async def scrape_spec_metrics(
     client: MeasurementClient,
     base_url: str,
@@ -181,14 +287,8 @@ async def detect_spec_decoding(
                     info.active = parse_prometheus_spec_metrics(text).draft_tokens > 0
                     info.method = "mtp"
                     info.detail = "Strata MTP draft counters available"
-                elif "eagle" in text.lower():
-                    info.method = "eagle"
-                elif "ngram" in text.lower():
-                    info.method = "ngram"
-                elif "mtp" in text.lower() or "multi_token" in text.lower():
-                    info.method = "mtp"
                 else:
-                    info.method = "unknown"
+                    info.method = _detect_spec_method(text)
 
             # llama.cpp: no spec_decode counters, but we can detect the backend
             # and know that draft stats will come from per-request timings
