@@ -141,6 +141,34 @@ class TestScoredRunConfig:
         )
         assert doubled["config_fingerprint"] != legacy_single
 
+    def test_an_explicit_gemini_format_keeps_a_proxy_v1_apart(self) -> None:
+        # A bare Gemini base means v1beta, whichever host serves it.
+        bare = _config("http://proxy:8080", wire_format="gemini")
+        v1 = _config("http://proxy:8080/v1", wire_format="gemini")
+        assert bare["endpoint_id"] != v1["endpoint_id"]
+        assert bare["config_fingerprint"] != v1["config_fingerprint"]
+        assert (
+            v1["endpoint_id"]
+            == _config("http://proxy:8080/v1/", wire_format="gemini")["endpoint_id"]
+        )
+
+    @pytest.mark.parametrize("wire_format", [None, "auto", "openai"])
+    def test_an_openai_proxy_still_collapses_its_v1(self, wire_format: str | None) -> None:
+        bare = _config("http://proxy:8080", wire_format=wire_format)
+        v1 = _config("http://proxy:8080/v1", wire_format=wire_format)
+        assert bare["endpoint_id"] == v1["endpoint_id"]
+        assert bare["config_fingerprint"] == v1["config_fingerprint"]
+
+    def test_an_explicit_openai_format_keeps_a_messages_path(self) -> None:
+        # Detection calls a /messages URL Anthropic; --format openai sends
+        # requests to .../messages/chat/completions, another endpoint.
+        url = "https://gw.example/v1/messages"
+        assert (
+            _config(url, wire_format="openai")["endpoint_id"]
+            != _config("https://gw.example", wire_format="openai")["endpoint_id"]
+        )
+        assert _config(url)["endpoint_id"] == _config("https://gw.example")["endpoint_id"]
+
 
 class TestResume:
     @pytest.mark.parametrize("stored_url", SPELLINGS)
@@ -262,6 +290,52 @@ class TestResume:
         )
 
         assert mismatches == []
+
+    @pytest.mark.parametrize(
+        ("current_url", "expected"),
+        [
+            ("http://proxy:8080/v1/", []),
+            ("http://proxy:8080", ["endpoint_id"]),
+        ],
+    )
+    def test_the_cli_resume_check_honours_an_explicit_gemini_format(
+        self, current_url: str, expected: list[str]
+    ) -> None:
+        stored = _config("http://proxy:8080/v1", wire_format="gemini")
+
+        mismatches = _resume_config_mismatches(
+            stored,
+            model="m",
+            backend="vllm",
+            base_url=current_url,
+            scenarios=SCENARIOS,
+            args=_make_parser().parse_args([]),
+            extra_params=None,
+            scenario_packs=None,
+            context_pressure=None,
+            wire_format="gemini",
+        )
+
+        assert mismatches == expected
+
+    @pytest.mark.parametrize(
+        ("current_url", "expected"),
+        [
+            ("http://proxy:8080/v1", []),
+            ("http://proxy:8080", ["endpoint_id"]),
+        ],
+    )
+    def test_a_legacy_identity_under_an_explicit_gemini_format(
+        self, current_url: str, expected: list[str]
+    ) -> None:
+        stored_url = "http://proxy:8080/v1"
+        stored = {**_config(stored_url), "endpoint_id": legacy_endpoint_identity(stored_url)}
+        current = _config(current_url, wire_format="gemini")
+
+        assert (
+            resume_mismatches(stored, current, base_url=current_url, wire_format="gemini")
+            == expected
+        )
 
     def test_a_legacy_identity_of_another_host_is_still_refused(self) -> None:
         stored = {

@@ -247,4 +247,5 @@ class ScoredRun:
                 if judge_config is not None
                 else None
             ),
+            wire_format=self.wire_format,
         )

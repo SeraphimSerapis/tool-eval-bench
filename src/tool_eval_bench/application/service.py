@@ -277,6 +277,7 @@ class BenchmarkService:
             weight_by_difficulty=weight_by_difficulty,
             system_prompt=system_prompt,
             decision_judge=judge_config,
+            wire_format=wire_format,
         )
         run_config = build_run_config(
             settings,
