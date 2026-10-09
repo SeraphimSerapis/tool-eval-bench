@@ -409,7 +409,9 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
     )
 
     if not args.perf_only:
-        return [sample for sample in throughput_samples if not sample.error], False
+        # Failed cells too: the stored row counts them, and every report and
+        # display of the samples drops them itself.
+        return throughput_samples, False
 
     failed_count = sum(bool(sample.error) for sample in throughput_samples)
     successful_count = len(throughput_samples) - failed_count
@@ -1494,6 +1496,7 @@ def _run_scored_mode(
             target.base_url,
             target.api_key,
             args,
+            throughput_samples=throughput_samples,
             extra_params=target.extra_params or None,
             context_pressure_messages=pressure_messages,
             context_pressure_config=pressure_config,
@@ -1788,6 +1791,7 @@ def _run_json(
     api_key: str | None,
     args: argparse.Namespace,
     *,
+    throughput_samples: list | None = None,
     extra_params: dict[str, Any] | None = None,
     context_pressure_messages: list[ChatMessage] | None = None,
     context_pressure_config: dict | None = None,
@@ -1802,6 +1806,7 @@ def _run_json(
     async def run(request: ScoredRun) -> dict:
         return await service.run_benchmark(
             **request.service_kwargs(),
+            throughput_samples=throughput_samples or [],
             on_scenario_start=_stderr_progress_start,
             on_scenario_result=_stderr_progress_result,
             on_scenario_audit=_stderr_progress_audit,
