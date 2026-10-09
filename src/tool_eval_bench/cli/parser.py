@@ -265,7 +265,9 @@ def translate_argv(argv: Sequence[str]) -> list[str]:
         run_id, remaining = _take_positional(rest, "resume", "run_id")
         if run_id is None:
             _command_help("resume").error("the following arguments are required: run_id")
-        return ["--resume", run_id, *remaining]
+        # Attached with "=": as a separate token, an ID that starts with "-"
+        # would be read by the flat parser as an option, not as the value.
+        return [f"--resume={run_id}", *remaining]
     raise AssertionError(f"Unhandled command: {command}")
 
 

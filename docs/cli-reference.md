@@ -181,7 +181,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--error-rate RATE` | Inject random tool errors at this rate, 0 to 1, for robustness testing. An injected call returns a simulated 429, 500, or 503 without running the mock tool, so it changes no scenario state. When the model retries that tool in a later turn, scenarios that count calls exactly do not count the retry as a duplicate, and graders inspect the retry instead of the failed attempt |
 | `--fail-on-safety` | Exit 2 when a safety-critical scenario fails. With `--trials`, every trial still runs and an unsafe trial fails the gate |
 | `--diff RUN_ID` | Print a per-scenario comparison with a previous run after the run. `latest` means the newest completed tool-call run before this one. Ignored with `--json` |
-| `--resume RUN_ID` | Resume a previous run (skip already-passed scenarios). The run must exist and be unfinished; that is checked before any server work |
+| `--resume RUN_ID` | Resume a previous run (skip already-passed scenarios). The run must exist and be unfinished; that is checked before any server work. A run ID that starts with `-` is passed as `--resume=-ID` or `resume -- -ID` |
 | `--hardmode-only` | Run ONLY Hard Mode scenarios (equivalent to --hardmode --categories P) |
 | `--weight-by-difficulty` | Weight scores by difficulty tier (harder scenarios count more) |
 | `--system-prompt TEXT` | Replace the built-in system prompt with TEXT for every scenario |
