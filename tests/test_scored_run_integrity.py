@@ -288,15 +288,8 @@ async def test_a_later_trial_of_a_resumed_run_is_a_new_run(
         return {}
 
     monkeypatch.setattr(service_mod, "_collect_metadata_safe", no_metadata)
-    repo = RunRepository(db_path=str(tmp_path / "bench.sqlite"))
-    service = BenchmarkService(repo=repo, reporter=MarkdownReporter(root=str(tmp_path / "runs")))
-    monkeypatch.setattr(service, "_adapter_for", lambda *a, **k: Replies())
     protocol = [_scenario("S-1"), _scenario("S-2")]
     run_id = "20260101T000000Z-resume"
-    repo.upsert_scenario_run(
-        {"run_id": run_id, "status": "running", "config": {}, "scores": {}, "metadata": {}}
-    )
-    repo.mark_run_status(run_id, RUN_STATUS_INTERRUPTED)
     args = make_parser().parse_args(["--scenarios", "TC-01"])
     args._resume_run_id = run_id
     args._resume_prior_results = [_pass("S-1").to_dict()]
@@ -312,12 +305,17 @@ async def test_a_later_trial_of_a_resumed_run_is_a_new_run(
         extra_params=None,
         scenario_packs=None,
     )
-    try:
+    with RunRepository(db_path=str(tmp_path / "bench.sqlite")) as repo:
+        repo.upsert_scenario_run(
+            {"run_id": run_id, "status": "running", "config": {}, "scores": {}, "metadata": {}}
+        )
+        repo.mark_run_status(run_id, RUN_STATUS_INTERRUPTED)
+        reporter = MarkdownReporter(root=str(tmp_path / "runs"))
+        service = BenchmarkService(repo=repo, reporter=reporter)
+        monkeypatch.setattr(service, "_adapter_for", lambda *a, **k: Replies())
         first = await service.run_benchmark(**request.service_kwargs())
         later = request.later_trial()
         second = await service.run_benchmark(**later.service_kwargs())
-    finally:
-        repo.close()
 
     assert first["run_id"] == run_id and first["status"] == "completed"
     assert second["run_id"] != run_id and second["status"] == "completed"
