@@ -336,6 +336,13 @@ def test_a_held_out_pack_cannot_join_a_pressure_sweep(cli: Cli, command: list[st
     pack = _write_pack(cli.tmp_path / "pack", "HO-1")
     _patch_sweep(cli.monkeypatch)
 
+    from tool_eval_bench.cli import dispatch
+
+    def no_endpoint(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the refusal must come before any endpoint is contacted")
+
+    cli.monkeypatch.setattr(dispatch, "_resolve_endpoint", no_endpoint)
+
     outcome = cli.run(
         *command,
         *CONNECTION,

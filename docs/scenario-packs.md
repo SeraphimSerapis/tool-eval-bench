@@ -27,4 +27,4 @@ Pack scenarios are scored identically to public ones — they contribute to `fin
 
 Scenario IDs must not collide with the public suite or with another pack; a collision is an error rather than a silent override.
 
-`--scenario-pack` cannot be combined with `--context-pressure-sweep`. The sweep report publishes the full trace of every scenario and has no held-out handling, so the combination is refused before the sweep starts. A single `--context-pressure` run is a scored run and withholds pack traces as described above.
+`--scenario-pack` cannot be combined with `--context-pressure-sweep`. The sweep report publishes the full trace of every scenario and has no held-out handling, so the combination is refused before any request is made. A single `--context-pressure` run is a scored run and withholds pack traces as described above.

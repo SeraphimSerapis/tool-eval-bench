@@ -57,9 +57,12 @@ timeouts, connection errors, 5xx responses, and TC-45 on an endpoint that does
 not enforce `tool_choice='required'`. They do not count against a level's pass
 rate, the breaking point, the first degradation, or the all-fail early stop. A
 level that fails as a whole, before any scenario is scored, counts the same way.
-Each level reports how many scenarios it excluded. A level where every scenario
-was excluded shows no pass rate, and two such levels in a row stop the sweep,
-because the endpoint rather than the model has stopped answering.
+Each level stores `excluded_count` and the `excluded_scenarios` IDs, and the
+report marks each excluded scenario. A level where every scenario was excluded
+shows no pass rate, and two such levels in a row stop the sweep, because the
+endpoint rather than the model has stopped answering. When no level was scored
+at all, the breaking point reads `n/a` rather than `none`. A sweep that stops
+early stores the reason as `stop_reason`, and the panel and report show it.
 
 An interrupted sweep (Ctrl-C) is still saved, but the stored run has
 `interrupted: true`, records `planned_levels`, and withholds the breaking point,
@@ -70,7 +73,7 @@ The sweep refuses to start when the context window cannot hold real pressure:
 16,096 tokens are reserved for output and the scenario, and the fill at the top
 of the range must be at least one 2,048-token filler chunk. On a smaller window
 every level would run nearly unpressured and still report a breaking point. A
-single `--context-pressure` run refuses a window that leaves no room for filler
+single `--context-pressure` run refuses a ratio and window that give no filler
 at all.
 
 `--scenario-pack` cannot be combined with `--context-pressure-sweep`. The sweep

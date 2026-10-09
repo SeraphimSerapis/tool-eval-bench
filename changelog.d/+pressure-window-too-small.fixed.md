@@ -4,5 +4,5 @@ are reserved for output and the scenario. On a smaller window, such as llama-ser
 every level with no filler and saved a 100% breaking point, and `--context-pressure` stored the
 requested ratio for an unpressured run. A sweep now fails before its first level when the top of
 its range cannot hold one 2,048-token filler chunk, and a single `--context-pressure` run fails
-when the window leaves no room for filler at all. Both name the window and point at
+when its ratio and window give no filler at all. Both name the window and point at
 `--context-size`.

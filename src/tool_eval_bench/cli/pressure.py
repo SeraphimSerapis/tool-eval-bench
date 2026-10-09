@@ -168,11 +168,10 @@ def run_pressure_sweep(
     _EXCLUDED_EMOJI = "➖"
 
     level_results: list[dict[str, Any]] = []
-    # Scenario IDs left out of each level's score, parallel to level_results.
-    level_excluded: list[set[str]] = []
     consecutive_all_fail = 0
     consecutive_unscored = 0
     interrupted = False
+    stop_reason: str | None = None
 
     try:
         for level_idx, ratio in enumerate(levels):
@@ -282,6 +281,7 @@ def run_pressure_sweep(
                     "pass_count": pass_count,
                     "fill_tokens": fill_tokens,
                     "excluded_count": len(excluded),
+                    "excluded_scenarios": [sid for sid in scenario_ids if sid in excluded],
                 }
             except Exception as exc:
                 # The whole level failed before any scenario could be scored:
@@ -313,6 +313,7 @@ def run_pressure_sweep(
                     "pass_count": pass_count,
                     "fill_tokens": fill_tokens,
                     "excluded_count": len(excluded),
+                    "excluded_scenarios": list(scenario_ids),
                     "error": error,
                 }
                 console.print(f"[red]error: {exc}[/]")
@@ -332,7 +333,6 @@ def run_pressure_sweep(
                 # estimate, so its real fill is unmeasured.
                 level["fill_tokens_estimated"] = True
             level_results.append(level)
-            level_excluded.append(excluded)
 
             # A level with nothing scored is neither a pass nor a fail, so it
             # leaves the all-fail run alone; two in a row mean the endpoint,
@@ -344,10 +344,11 @@ def run_pressure_sweep(
                 consecutive_all_fail = consecutive_all_fail + 1 if pass_count == 0 else 0
 
             if consecutive_all_fail >= 2:
-                console.print("  [dim]··· stopped (2 consecutive all-fail levels)[/]")
-                break
-            if consecutive_unscored >= 2:
-                console.print("  [dim]··· stopped (2 consecutive levels with nothing scored)[/]")
+                stop_reason = "2 consecutive all-fail levels"
+            elif consecutive_unscored >= 2:
+                stop_reason = "2 consecutive levels with nothing scored"
+            if stop_reason is not None:
+                console.print(f"  [dim]··· stopped ({stop_reason})[/]")
                 break
 
     except KeyboardInterrupt:
@@ -364,9 +365,10 @@ def run_pressure_sweep(
     breaking_point: float | None = None
     first_degradation: float | None = None
 
-    for lr, excluded in zip(level_results, level_excluded, strict=True):
+    for lr in level_results:
         ratio = lr["ratio"]
         score = lr["score_pct"]
+        excluded = set(lr["excluded_scenarios"])
         emoji_str = "  ".join(
             _EXCLUDED_EMOJI
             if sid in excluded
@@ -407,13 +409,17 @@ def run_pressure_sweep(
         )
     elif breaking_point is not None:
         lines.append(f"  [bold green]Breaking point:[/] {breaking_point:.0%} (all scenarios pass)")
+    elif all(lr["score_pct"] is None for lr in level_results):
+        lines.append("  [bold red]Breaking point:[/] n/a (no level was scored)")
     else:
         lines.append("  [bold red]Breaking point:[/] none (no level had all scenarios pass)")
     if first_degradation is not None:
         lines.append(
             f"  [bold yellow]Degradation:[/]    {first_degradation:.0%} (first partial/fail)"
         )
-    if any(level_excluded):
+    if stop_reason is not None:
+        lines.append(f"  [dim]Stopped early: {stop_reason}[/]")
+    if any(lr["excluded_scenarios"] for lr in level_results):
         lines.append(
             f"  [dim]{_EXCLUDED_EMOJI} excluded from scoring (timeout, server or connection "
             "error, or not hostable on this endpoint)[/]"
@@ -459,6 +465,7 @@ def run_pressure_sweep(
             "levels": len(level_results),
             "planned_levels": len(levels),
             "interrupted": interrupted,
+            "stop_reason": stop_reason,
             "breaking_point": breaking_point,
             "first_degradation": first_degradation,
             "level_results": level_results,
@@ -479,6 +486,7 @@ def run_pressure_sweep(
             label=label,
             planned_levels=len(levels),
             interrupted=interrupted,
+            stop_reason=stop_reason,
         ),
         run_context=run_context,
         output_dir=getattr(args, "output_dir", None),

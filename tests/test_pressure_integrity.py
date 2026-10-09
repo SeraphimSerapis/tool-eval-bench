@@ -345,7 +345,9 @@ def test_single_pressure_run_refuses_a_zero_fill(
         _scored_pressure_run(monkeypatch, "0.75", 0)
 
     assert exc.value.code == 1
-    assert "too small for --context-pressure" in capsys.readouterr().out
+    out = " ".join(capsys.readouterr().out.split())
+    assert "--context-pressure 0.75 gives no filler" in out
+    assert "either the window is too small or the ratio too low" in out
 
 
 def test_single_pressure_run_accepts_a_small_positive_fill(
@@ -548,7 +550,7 @@ def test_a_finished_sweep_is_not_marked_interrupted(
 # -- R08-M1: calibration noise does not split scored pressure cohorts ---------------
 
 
-def _pressure_config(**pressure: Any) -> dict[str, Any]:
+def _pressure_config(model: str = "m", **pressure: Any) -> dict[str, Any]:
     from tool_eval_bench.application.run_config import RunSettings, build_run_config
 
     block = {
@@ -559,7 +561,7 @@ def _pressure_config(**pressure: Any) -> dict[str, Any]:
         **pressure,
     }
     settings = RunSettings(
-        model="m",
+        model=model,
         backend="vllm",
         base_url="http://localhost:8000",
         temperature=0.0,
@@ -627,7 +629,7 @@ def test_only_the_sweep_refuses_a_held_out_pack(
     tmp_path: Path, flags: list[str], rejected: bool
 ) -> None:
     from tests.test_scenario_packs import _write_pack
-    from tool_eval_bench.cli.dispatch import _validate_scenario_selection
+    from tool_eval_bench.cli.dispatch import _validate_explicit_scenarios
     from tool_eval_bench.cli.legacy_parser import make_parser
 
     pack = _write_pack(tmp_path / "pack", "HO-1")
@@ -636,7 +638,126 @@ def test_only_the_sweep_refuses_a_held_out_pack(
 
     if rejected:
         with pytest.raises(SystemExit) as exc:
-            _validate_scenario_selection(args, parser, Console(file=io.StringIO()))
+            _validate_explicit_scenarios(args, parser)
         assert exc.value.code == 2
     else:
-        _validate_scenario_selection(args, parser, Console(file=io.StringIO()))
+        _validate_explicit_scenarios(args, parser)
+
+
+# -- Review follow-ups: honest labels for unscored and excluded results ------------
+
+
+def test_a_sweep_with_nothing_scored_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    unscored = _summary(_result("TC-01", "fail", FailureKind.TIMEOUT))
+    persisted, out = _sweep(
+        monkeypatch, tmp_path, ["TC-01"], _levels(unscored, unscored), sweep_steps=3
+    )
+
+    report = _report(persisted[0])
+    assert "Breaking point: n/a (no level was scored)" in out
+    assert "no level had all scenarios pass" not in out
+    assert "- **Breaking Point**: n/a (no level was scored)" in report
+    assert "Stopped early: 2 consecutive levels with nothing scored" in out
+    assert "- **Stopped Early**: 2 consecutive levels with nothing scored" in report
+    assert persisted[0]["scores"]["stop_reason"] == "2 consecutive levels with nothing scored"
+
+
+def test_an_all_fail_sweep_still_reports_no_breaking_point(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    failing = _summary(_result("TC-01", "fail", FailureKind.WRONG_TOOL))
+    persisted, out = _sweep(monkeypatch, tmp_path, ["TC-01"], _levels(failing, failing))
+
+    report = _report(persisted[0])
+    assert "Breaking point: none (no level had all scenarios pass)" in out
+    assert "- **Breaking Point**: none" in report
+    assert "- **Stopped Early**: 2 consecutive all-fail levels" in report
+
+
+def test_a_finished_sweep_has_no_stop_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    passing = _summary(_result("TC-01", "pass"))
+    persisted, out = _sweep(
+        monkeypatch, tmp_path, ["TC-01"], _levels(passing, passing), sweep_steps=2
+    )
+
+    assert persisted[0]["scores"]["stop_reason"] is None
+    assert "Stopped early" not in out
+    assert "**Stopped Early**" not in _report(persisted[0])
+
+
+def test_excluded_scenarios_are_recorded_and_marked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    level = _summary(
+        _result("TC-01", "pass"),
+        _result("TC-45", "fail", FailureKind.SERVER_ERROR),
+        _result("TC-02", "fail", FailureKind.WRONG_TOOL),
+    )
+    persisted, _ = _sweep(
+        monkeypatch,
+        tmp_path,
+        ["TC-01", "TC-02", "TC-45"],
+        _levels(level, RuntimeError("reset")),
+        sweep_steps=2,
+    )
+
+    levels = persisted[0]["scores"]["level_results"]
+    assert levels[0]["excluded_scenarios"] == ["TC-45"]
+    assert levels[0]["excluded_count"] == 1
+    # A whole-level failure excludes every scenario, in scenario order.
+    assert levels[1]["excluded_scenarios"] == ["TC-01", "TC-02", "TC-45"]
+    report = _report(persisted[0])
+    level_one = report.split("## Level 2")[0]
+    assert level_one.count("(excluded from scoring)") == 1
+    assert "### TC-45\n\n- **Status**: fail (excluded from scoring)" in level_one
+    assert "### TC-02\n\n- **Status**: fail\n" in level_one
+
+
+def test_reporter_facade_forwards_interruption_and_stop_reason(tmp_path: Path) -> None:
+    from tool_eval_bench.storage.reports import MarkdownReporter
+
+    level = {
+        "ratio": 0.5,
+        "fill_tokens": 4096,
+        "score_pct": 100.0,
+        "scenario_results": [],
+        "excluded_scenarios": [],
+    }
+    common: dict[str, Any] = {
+        "model": "m",
+        "backend": "vllm",
+        "display_url": "http://test/v1",
+        "context_size": 65536,
+        "level_results": [level],
+        "breaking_point": None,
+        "first_degradation": None,
+    }
+    reporter = MarkdownReporter(str(tmp_path))
+    interrupted = reporter.write_pressure_sweep_report(
+        run_id="r1", planned_levels=4, interrupted=True, **common
+    ).read_text(encoding="utf-8")
+    stopped = reporter.write_pressure_sweep_report(
+        run_id="r2", stop_reason="2 consecutive all-fail levels", **common
+    ).read_text(encoding="utf-8")
+
+    assert "- **Breaking Point**: withheld (interrupted after 1 of 4 levels)" in interrupted
+    assert "- **Stopped Early**: 2 consecutive all-fail levels" in stopped
+
+
+# -- Review follow-up: leaderboard cohorts ignore calibration noise -----------------
+
+
+def test_leaderboard_cohort_ignores_the_calibrated_fill() -> None:
+    from tool_eval_bench.cli.leaderboard import _cohort_fingerprint
+
+    # Different tokenizers calibrate the same target to different counts.
+    base = _pressure_config()
+    jittered = _pressure_config(model="other", fill_tokens=81_337)
+    other_target = _pressure_config(model="other", fill_tokens_target=82_652)
+
+    assert _cohort_fingerprint(base) == _cohort_fingerprint(jittered)
+    assert _cohort_fingerprint(base) != _cohort_fingerprint(other_target)

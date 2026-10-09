@@ -22,6 +22,7 @@
       "levels": 3,
       "planned_levels": 3,
       "interrupted": false,
+      "stop_reason": null,
       "breaking_point": 0.5,
       "first_degradation": 0.7,
       "level_results": [
@@ -64,7 +65,8 @@
           "score_pct": 100.0,
           "pass_count": 2,
           "fill_tokens": 8272,
-          "excluded_count": 0
+          "excluded_count": 0,
+          "excluded_scenarios": []
         },
         {
           "ratio": 0.7,
@@ -105,7 +107,8 @@
           "score_pct": 50.0,
           "pass_count": 1,
           "fill_tokens": 10340,
-          "excluded_count": 0
+          "excluded_count": 0,
+          "excluded_scenarios": []
         },
         {
           "ratio": 0.9,
@@ -146,7 +149,8 @@
           "score_pct": 50.0,
           "pass_count": 1,
           "fill_tokens": 14476,
-          "excluded_count": 0
+          "excluded_count": 0,
+          "excluded_scenarios": []
         }
       ]
     },

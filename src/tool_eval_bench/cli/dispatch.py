@@ -517,13 +517,6 @@ def _validate_scenario_selection(
         _resolve_scenarios(args)
     except ValueError as exc:
         parser.error(str(exc))
-    if packs and args.context_pressure_sweep is not None:
-        # The sweep report renders every trace and its config records no pack
-        # attestation, so running a held-out pack there would publish it.
-        parser.error(
-            "--scenario-pack cannot be combined with --context-pressure-sweep: "
-            "the sweep report publishes full traces"
-        )
     if packs and not args.json:
         total = sum(len(p.scenarios) for p in packs)
         names = ", ".join(f"{p.name} ({p.content_hash})" for p in packs)
@@ -922,6 +915,13 @@ def _validate_explicit_scenarios(args: argparse.Namespace, parser: argparse.Argu
     # requests. This keeps a typo from turning into an empty run or a server
     # failure. Probe/history/dry-run keep their own command semantics.
     if not args.probe:
+        if args.scenario_pack and args.context_pressure_sweep is not None:
+            # The sweep report renders every trace and its config records no
+            # pack attestation, so running a held-out pack there would publish it.
+            parser.error(
+                "--scenario-pack cannot be combined with --context-pressure-sweep: "
+                "the sweep report publishes full traces"
+            )
         try:
             _resolve_scenarios(args)
         except ValueError as exc:
@@ -1261,14 +1261,16 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
         )
         if ratio > 0 and pressure_cfg.fill_tokens == 0:
             # A light ratio may legitimately give a small fill; none at all
-            # means the window cannot hold the reserve, and the run would be
-            # stored as pressured while the model saw no filler.
+            # means the window cannot hold the reserve or the ratio rounds to
+            # nothing, and the run would be stored as pressured while the
+            # model saw no filler.
             raise ValueError(
-                f"Context window {pressure_cfg.detected_context:,} tokens is too small for "
-                f"--context-pressure: {_RESERVED_FOR_OUTPUT + _RESERVED_FOR_SCENARIO:,} "
-                "tokens are reserved for output and the scenario, leaving no room for filler. "
-                "Check --context-size; on llama.cpp the window is per slot (-c divided by "
-                "--parallel)."
+                f"--context-pressure {ratio:g} gives no filler in a "
+                f"{pressure_cfg.detected_context:,}-token context window: "
+                f"{_RESERVED_FOR_OUTPUT + _RESERVED_FOR_SCENARIO:,} tokens are reserved for "
+                "output and the scenario, so either the window is too small or the ratio "
+                "too low. Check --context-size; on llama.cpp the window is per slot (-c "
+                "divided by --parallel)."
             )
 
         if not args.json and pressure_cfg.fill_tokens > 0:

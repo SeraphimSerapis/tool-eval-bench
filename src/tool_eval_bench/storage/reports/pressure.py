@@ -27,6 +27,9 @@ def write_pressure_sweep_report(
     first_degradation: float | None,
     label: str | None = None,
     run_context: RunContext | None = None,
+    planned_levels: int | None = None,
+    interrupted: bool = False,
+    stop_reason: str | None = None,
 ) -> Path:
     """Write a trace-complete artifact for a context-pressure sweep.
 
@@ -41,6 +44,9 @@ def write_pressure_sweep_report(
         breaking_point=breaking_point,
         first_degradation=first_degradation,
         label=label,
+        planned_levels=planned_levels,
+        interrupted=interrupted,
+        stop_reason=stop_reason,
     )
     return write_mode_report(root, run_id, report, run_context)
 
@@ -57,6 +63,7 @@ def pressure_sweep_report(
     label: str | None,
     planned_levels: int | None = None,
     interrupted: bool = False,
+    stop_reason: str | None = None,
 ) -> ModeReport:
     """Build the context-pressure sweep report content.
 
@@ -70,6 +77,8 @@ def pressure_sweep_report(
         )
     elif breaking_point is not None:
         breaking_line = f"- **Breaking Point**: {breaking_point:.0%}"
+    elif level_results and all(level["score_pct"] is None for level in level_results):
+        breaking_line = "- **Breaking Point**: n/a (no level was scored)"
     else:
         breaking_line = "- **Breaking Point**: none"
     header = [
@@ -84,12 +93,15 @@ def pressure_sweep_report(
             else "- **First Degradation**: none"
         ),
     ]
+    if stop_reason is not None:
+        header.append(f"- **Stopped Early**: {stop_reason}")
     markdown: list[str] = []
     for index, level in enumerate(level_results, start=1):
         fill_line = f"- **Fill Tokens**: {level['fill_tokens']:,}"
         if level.get("fill_tokens_estimated"):
             fill_line += " (target; not measured, the server has no compatible /tokenize)"
         score = level["score_pct"]
+        excluded = set(level.get("excluded_scenarios") or ())
         markdown.extend(
             [
                 f"## Level {index} — {level['ratio']:.0%}",
@@ -111,11 +123,14 @@ def pressure_sweep_report(
             markdown.append(f"- **Level Error**: {level['error']}")
         markdown.append("")
         for scenario in level["scenario_results"]:
+            status = str(scenario["status"])
+            if scenario["scenario_id"] in excluded:
+                status += " (excluded from scoring)"
             markdown.extend(
                 [
                     f"### {scenario['scenario_id']}",
                     "",
-                    f"- **Status**: {scenario['status']}",
+                    f"- **Status**: {status}",
                     f"- **Points**: {scenario['points']} / 2",
                     f"- **Summary**: {scenario.get('summary') or ''}",
                     f"- **Expected**: {scenario.get('expected_behavior') or ''}",

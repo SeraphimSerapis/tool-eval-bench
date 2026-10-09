@@ -406,6 +406,28 @@ COHORT_EXCLUDED_KEYS = frozenset(
     }
 )
 
+_FINGERPRINT_VIEWS = {
+    field.key: field.fingerprint_view
+    for field in RUN_CONFIG_FIELDS
+    if field.fingerprint_view is not None
+}
+
+
+def cohort_config(config: dict[str, Any]) -> dict[str, Any]:
+    """The part of a stored config that groups different models into one cohort.
+
+    Drops :data:`COHORT_EXCLUDED_KEYS` and projects each field that declares a
+    ``fingerprint_view``, so the cohort ignores what the fingerprint ignores.
+    Keys only an older version stored are kept, so they still split cohorts.
+    """
+    comparable: dict[str, Any] = {}
+    for key, value in config.items():
+        if key in COHORT_EXCLUDED_KEYS:
+            continue
+        view = _FINGERPRINT_VIEWS.get(key)
+        comparable[key] = view(value) if view is not None and isinstance(value, dict) else value
+    return comparable
+
 
 def build_run_config(
     settings: RunSettings,
