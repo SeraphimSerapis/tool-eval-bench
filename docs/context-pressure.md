@@ -12,7 +12,7 @@ tool-eval-bench run --seed 42 --context-pressure 0.75
 # Fill 50% — moderate pressure
 tool-eval-bench run --seed 42 --context-pressure 0.50
 
-# Override auto-detected context size (if /v1/models doesn't expose it)
+# Override the auto-detected context size
 tool-eval-bench run --seed 42 --context-pressure 0.75 --context-size 32768
 
 # Compare baseline vs pressure
@@ -45,9 +45,25 @@ tool-eval-bench bench --context-pressure-sweep 0.5-1.0 --categories O
 
 The sweep runs each selected scenario at every pressure level, displays a compact summary panel with pass/fail status per level, and reports the **breaking point** (highest pressure where all scenarios still pass). It early-stops after 2 consecutive all-fail levels.
 
-The context window size is auto-detected from model metadata when the backend
-exposes a recognized context-length field, including vLLM's `max_model_len`.
-If auto-detection fails, use `--context-size` to specify it manually.
+The context window size is auto-detected. `--context-size` wins when given.
+Otherwise the first of these that answers is used:
+
+1. `/v1/models`: `max_model_len` (vLLM), `context_window`, or `max_tokens`.
+2. TensorFold's `/health` `context_length`.
+3. llama.cpp's `/props` `default_generation_settings.n_ctx`, as recorded by the
+   engine probe in the run metadata. `--no-probe-engine` skips the probe, and
+   with it this source.
+
+That llama.cpp `n_ctx` is the per-request limit. Without `--kv-unified` it is
+already the server's `n_ctx` divided by its `--parallel` slots. With
+`--kv-unified`, which llama-server turns on when `--parallel` is left on auto,
+every slot reports the whole shared pool, and one request can fill it only while
+it runs alone. For high pressure on such a server, keep tool-eval-bench's
+`--parallel` at 1 or pass a smaller `--context-size`.
+
+vLLM's KV cache capacity on `/metrics` then caps the result, except for hybrid
+attention models. If auto-detection fails, use `--context-size` to specify it
+manually.
 
 The filler is designed to defeat server-side prefix caching (vLLM, llama.cpp):
 - **Diverse content**: 12 distinct paragraph styles (tech docs, meeting notes, code reviews, incident reports, API docs, etc.)
