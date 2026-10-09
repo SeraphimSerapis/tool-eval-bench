@@ -599,7 +599,10 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "mmlu_limit",
         "type": "int",
         "default": 500,
-        "description": "Max MMLU questions to evaluate (0 = all 14042)",
+        "description": (
+            "Max MMLU questions to evaluate, as a proportional stratified sample "
+            "across subjects (0 = all 14042)"
+        ),
     },
     {
         "name": "mmlu_subjects",

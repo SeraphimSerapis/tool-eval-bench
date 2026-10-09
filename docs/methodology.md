@@ -763,11 +763,19 @@ reporting, and result rendering.
 |---|---|
 | Dataset | `openai/gsm8k` (1,319 test questions) |
 | Method | 8-shot chain-of-thought (configurable: 0–8 shots) |
-| Extraction | `#### N` marker → "the answer is N" → last number fallback |
+| Extraction | first parseable `#### N` marker → last "the answer is N" → last standalone number |
 | Scoring | Exact numeric match after comma/currency/whitespace normalization |
 
-Few-shot exemplars are sampled from the test split's first 8 items.
-The model is asked to show its work and end with `#### <answer>`.
+The few-shot exemplars are the 8 fixed chain-of-thought examples from Wei et al.
+(2022), the set most published GSM8K numbers use. They are hand-written, not
+taken from any GSM8K split. The model is asked to show its work and end with
+`#### <answer>`. Extraction takes the first `####` marker that holds a number,
+as lm-eval's strict match does, so a model that runs on and invents the next
+exemplar is graded on its own answer and a `#### Step 1` heading is skipped.
+Without a marker, the last "the answer is" phrase wins, so a model that corrects
+itself in prose is graded on its final answer. A number followed by a unit or
+`%` is read whole, negative answers keep their sign, and a markdown bullet is
+not read as a minus.
 
 ### MMLU — Massive Multitask Language Understanding
 
@@ -778,9 +786,27 @@ The model is asked to show its work and end with `#### <answer>`.
 | Extraction | Single letter → explicit final answer → final standalone A/B/C/D |
 | Scoring | Exact letter match (A/B/C/D) |
 | Categories | STEM, Humanities, Social Sciences, Other |
+| Sampling | `--mmlu-limit` draws a proportional stratified sample across subjects |
 
 The 5-shot exemplars come from the separate `dev` split, filtered to the
 same subject.  This avoids test-set contamination in few-shot examples.
+Answer cues such as "the answer is" match in any case, but a bare letter must be
+an uppercase `A`-`D`, a parenthesised `(a)`, or a lowercase letter that ends the
+response ("the answer is b."), so the article "a" mid-sentence is never read as
+option A.
+
+The test split is sorted by subject, so the first 500 rows cover only a handful
+of subjects. A limited run therefore takes a proportional stratified sample
+instead: the subject filter (`--mmlu-subjects`) applies first, each subject
+gets a quota proportional to its share of the remaining pool (largest-remainder
+rounding, ties broken by subject name), and each subject contributes its first
+questions in dataset order. The selection uses no randomness and ignores
+`--seed`, so the same flags always select the same questions. Runs record
+`"sampling": "stratified"` in their config and details. An unknown subject or
+category name, or a list with no names at all, fails the run before any
+download. Subject and category names match in any case, and the stored
+`--mmlu-subjects` value is normalised (lowercased, deduplicated, sorted), so
+`STEM` and `stem` produce the same fingerprint.
 
 ### IFEval — Instruction Following Evaluation
 
@@ -794,8 +820,30 @@ same subject.  This avoids test-set contamination in few-shot examples.
 IFEval uses 25 deterministic constraint checkers (word count, keyword
 existence, JSON format, bullet lists, language detection, etc.).  Each prompt
 has 1–4 constraints; a prompt passes only if ALL its constraints are satisfied.
-Unknown instruction IDs fail closed. Exact-count, constrained-response,
-language, and postscript checks use the contract carried by each dataset row.
+Unknown instruction IDs fail closed.
+
+The checkers follow the published reference implementation
+(`google-research/instruction_following_eval`) so scores are comparable with
+published IFEval numbers. Paragraphs split on `***`, words are `\w+` tokens (so
+"don't" is two), bullets are lines starting with `*` or `-`, forbidden words
+match whole words in any case, postscripts may appear anywhere in the response,
+and a `"`-wrapped response satisfies the quotation check.
+
+The reference depends on `nltk` and `langdetect`; this project depends on
+neither. These departures remain, all deliberate:
+
+- Sentence counts split on `.`, `!`, and `?` instead of nltk's punkt
+  tokenizer, so abbreviations and decimals can count differently.
+- `capital_word_frequency` finds all-caps words with a regex instead of nltk's
+  `word_tokenize`.
+- The lowercase and capital-letter checks skip the reference's "is this
+  English" step, and `response_language` uses a script heuristic instead of
+  `langdetect`.
+- `letter_frequency` counts the letter the dataset row names. When that is not
+  a letter (such as `#`), the reference swaps in a random letter while building
+  the instruction; this project does not.
+- `constrained_response` rejects a response that names every allowed option,
+  where the reference accepts it.
 
 ### Needle in a Haystack — Long-Context Retrieval
 
@@ -814,7 +862,20 @@ the largest haystack size retrieved at every depth. See
 All the accuracy plugins score against the total selected item count. Request
 errors therefore reduce the displayed score and mark the run `incomplete`; they
 are not removed from the denominator. The result also records answered items and
-completion rate so callers can distinguish wrong answers from missing work.
+completion rate so callers can distinguish wrong answers from missing work. A
+request the server rejects (for example a 401 or a 404 that the adapter reports
+as a `[server error N]` result rather than raising) counts as an error, never as
+a graded answer. A selection that leaves no items to evaluate (a limit of zero
+after filtering, or an empty dataset) fails the run instead of saving a 0/0
+result.
+
+When a response has no `content`, GSM8K, MMLU, and IFEval grade the reasoning
+text instead, for models that put their final answer there. That fallback
+applies only when generation finished normally. An empty `content` with
+`finish_reason == "length"` means the token budget ran out mid-thought, so the
+item is recorded as **truncated**: it counts as wrong, carries a `truncated`
+flag, and the run reports a truncated count in its details, console summary, and
+report.
 
 ### Dataset Loading
 
@@ -828,3 +889,11 @@ GSM8K, MMLU, and IFEval download their datasets from HuggingFace on first use
 
 Downloaded data is cached as JSONL under `data/<benchmark>/`.  Subsequent runs
 load from cache with no network access.
+
+Downloads through the `datasets` library are pinned to a fixed commit of each
+HuggingFace dataset repository, and a `<split>.manifest.json` beside the cache
+records that revision. The REST API cannot select a revision, so its downloads,
+and caches written before manifests existed, record `"unknown"`. Each run stores
+`dataset_revision` and `items_sha256`, a hash of the exact items it graded (for
+MMLU, including the few-shot exemplars it showed), in its details and config, so runs graded on different data never share a
+fingerprint.

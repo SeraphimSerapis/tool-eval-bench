@@ -175,3 +175,30 @@ class TestEvaluateAnswer:
         """Ground truth should always be in the result, even on failure."""
         result = evaluate_answer("no number here", 99.0)
         assert result.ground_truth == 99.0
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        # A unit or percent sign must not split the number.
+        ("She saves 25%.", 25.0),
+        ("It took 15km", 15.0),
+        # A markdown bullet is not a minus sign.
+        ("Total per hour:\n- 18", 18.0),
+        # The last "the answer is" wins, as a correction should.
+        ("Let me check if the answer is 12. No, recount: the answer is 15.", 15.0),
+        # Negative ground truths exist in GSM8K.
+        ("The answer is -10 degrees, a drop of 10 from 0.", -10.0),
+        # A markdown heading does not hide the real marker.
+        ("#### Step 1\n5*3=15\n#### 15\nHope this helps with 2 things", 15.0),
+    ],
+)
+def test_extraction_takes_the_final_whole_answer(response: str, expected: float) -> None:
+    value, _method = extract_answer(response)
+    assert value == expected
+
+
+def test_first_parseable_marker_wins_over_a_hallucinated_exemplar() -> None:
+    # The model answered, then kept going and invented the next exemplar.
+    response = "3 * 6 = 18\n#### 18\n\nQ: Tom has 40 apples...\nA: 40 + 2 = 42\n#### 42"
+    assert extract_answer(response) == (18.0, "marker")

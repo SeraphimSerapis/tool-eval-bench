@@ -13,12 +13,14 @@ Features:
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 import logging
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -225,6 +227,7 @@ def load_via_datasets_lib(
     config: str,
     split: str,
     *,
+    revision: str | None = None,
     on_progress: OnDownloadProgress | None = None,
 ) -> list[dict[str, Any]] | None:
     """Try loading a dataset via the ``datasets`` library (fast path).
@@ -232,6 +235,8 @@ def load_via_datasets_lib(
     Downloads directly from the HuggingFace git repo — no datasets-server
     API, no 429 rate limits.  Returns ``None`` if the ``datasets`` library
     is not installed, letting the caller fall back to the REST API.
+
+    *revision* pins the download to a commit of the dataset repository.
 
     Install with: ``pip install tool-eval-bench[hf]``
     """
@@ -248,7 +253,7 @@ def load_via_datasets_lib(
     )
 
     try:
-        ds = load_dataset(dataset, config, split=split, trust_remote_code=False)
+        ds = load_dataset(dataset, config, split=split, revision=revision, trust_remote_code=False)
     except Exception as exc:
         logger.warning(
             "datasets library failed for %s/%s %s: %s — falling back to REST API",
@@ -271,3 +276,58 @@ def load_via_datasets_lib(
         on_progress(total, total)
 
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Provenance
+# ---------------------------------------------------------------------------
+
+#: Recorded when the revision behind a cached dataset is not known: a cache
+#: written before manifests existed, or a REST download.  The Datasets Server
+#: REST API serves only the repository's default branch and takes no revision.
+UNKNOWN_REVISION = "unknown"
+
+
+def _manifest_path(cache_path: Path) -> Path:
+    return cache_path.with_name(f"{cache_path.stem}.manifest.json")
+
+
+def write_cache_manifest(
+    cache_path: Path,
+    *,
+    dataset: str,
+    config: str,
+    split: str,
+    method: str,
+    revision: str | None,
+) -> None:
+    """Record where a freshly written cache file came from, beside the cache."""
+    manifest = {
+        "dataset": dataset,
+        "config": config,
+        "split": split,
+        "method": method,
+        "revision": revision if method == "datasets" else None,
+    }
+    _manifest_path(cache_path).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def read_cache_revision(cache_path: Path) -> str:
+    """Return the pinned revision behind *cache_path*, or ``UNKNOWN_REVISION``."""
+    try:
+        manifest = json.loads(_manifest_path(cache_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return UNKNOWN_REVISION
+    revision = manifest.get("revision") if isinstance(manifest, dict) else None
+    return revision if isinstance(revision, str) and revision else UNKNOWN_REVISION
+
+
+def items_sha256(items: Iterable[Any]) -> str:
+    """Content hash of the evaluated items, in evaluation order.
+
+    Two runs share this hash only when they graded the same questions with
+    the same ground truth, whatever revision or sampling produced them.
+    """
+    payload = [dataclasses.asdict(item) for item in items]
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()

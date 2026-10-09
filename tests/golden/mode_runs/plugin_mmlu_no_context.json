@@ -9,10 +9,14 @@
       "mode": "mmlu",
       "n_shots": 5,
       "limit": 3,
+      "sampling": "stratified",
       "temperature": 0.0,
       "seed": 7,
       "subjects": null,
-      "config_fingerprint": "85de7ff30cb6"
+      "extra_params": null,
+      "dataset_revision": "0123abcd",
+      "items_sha256": "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d",
+      "config_fingerprint": "2426ae5618b4"
     },
     "scores": {
       "final_score": 67,
@@ -29,7 +33,10 @@
           "total": 3,
           "accuracy": 66.7
         }
-      }
+      },
+      "sampling": "stratified",
+      "dataset_revision": "0123abcd",
+      "items_sha256": "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d"
     },
     "metadata": {
       "label": "golden | label"

@@ -18,7 +18,8 @@
       ],
       "temperature": 0.0,
       "seed": 7,
-      "config_fingerprint": "f8d26f4f2cc4"
+      "extra_params": null,
+      "config_fingerprint": "bd9162e7de83"
     },
     "scores": {
       "final_score": 67,
@@ -71,5 +72,5 @@
     },
     "report_path": "<YYYY>/<MM>/<RUN_ID>--golden-label.md"
   },
-  "report": "# Needle in a Haystack Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: needle\n- **tool-eval-bench**: `v0.0.0+golden abc1234`\n- **Label**: <code>golden | label</code>\n- **Retrieval Accuracy**: **50.0%**\n- **Effective Context**: 1,024 tokens\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## Inference Engine\n\n| Property | Value |\n|---|---|\n| Engine | vLLM 0.11.0 |\n| Max Model Length | 32,768 |\n| Quantization | fp8 |\n| GPU Count | 2 |\n| Server Slots | 4 |\n| Spec Decoding | eagle3 |\n| Host | `golden-host` |\n| Platform | `Linux-golden` |\n| Python | 3.13.0 |\n\n## Needle in a Haystack — Retrieval\n\n**Retrieval Accuracy:** 50.0% (1/2)\n**Rating:** ★★★ Adequate\n**Context Window:** 8,192 tokens\n**Effective Context:** 1,024 tokens (largest fully retrieved length)\n**Duration:** 12.0s\n**Tokens:** 900\n\n### Retrieval Grid\n\nRows are needle depth, columns are haystack size.\n\n| Depth | 1K | 5K |\n|---|---|---|\n| 0% | ✅ | ❌ |\n| 100% | ❌ | ❌ |\n\n### Missed Needles (1 total)\n\n| Cell | Expected | Model response |\n|---|---|---|\n| `5120@100%` | `MAGIC-42` | I could not find it \\| sorry |\n"
+  "report": "# Needle in a Haystack Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: needle\n- **tool-eval-bench**: `v0.0.0+golden abc1234`\n- **Label**: <code>golden | label</code>\n- **Retrieval Accuracy**: **50.0%**\n- **Effective Context**: ~1,024 tokens (estimated)\n- **Completion**: 100.0%\n- **Rating**: ★★★ Adequate\n\n## Inference Engine\n\n| Property | Value |\n|---|---|\n| Engine | vLLM 0.11.0 |\n| Max Model Length | 32,768 |\n| Quantization | fp8 |\n| GPU Count | 2 |\n| Server Slots | 4 |\n| Spec Decoding | eagle3 |\n| Host | `golden-host` |\n| Platform | `Linux-golden` |\n| Python | 3.13.0 |\n\n## Needle in a Haystack — Retrieval\n\n**Retrieval Accuracy:** 50.0% (1/2)\n**Rating:** ★★★ Adequate\n**Context Window:** 8,192 tokens\n**Effective Context:** ~1,024 tokens (estimated; largest fully retrieved length)\n*Haystack sizes are estimated at 4 characters per token. Common tokenizers pack more characters into each token, so the real prompts run 10-17% smaller than labelled.*\n**Duration:** 12.0s\n**Tokens:** 900\n\n### Retrieval Grid\n\nRows are needle depth, columns are haystack size.\n\n| Depth | ~1K | ~5K |\n|---|---|---|\n| 0% | ✅ | ❌ |\n| 100% | ❌ | ❌ |\n\n### Missed Needles (1 total)\n\n| Cell | Expected | Model response |\n|---|---|---|\n| `5120@100%` | `MAGIC-42` | I could not find it \\| sorry |\n"
 }

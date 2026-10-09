@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tool_eval_bench.plugins.hf_utils import read_cache_revision, write_cache_manifest
+
 logger = logging.getLogger(__name__)
 
 _HF_API_BASE = "https://datasets-server.huggingface.co/rows"
@@ -20,6 +22,9 @@ _DATASET = "google/IFEval"
 _CONFIG = "default"
 _SPLIT = "train"
 _PAGE_SIZE = 100
+# Commit of the HuggingFace dataset repository that ``datasets`` downloads are
+# pinned to.  The REST fallback cannot be pinned (see ``hf_utils``).
+_REVISION = "966cd89545d6b6acfd7638bc708b98261ca58e84"
 
 _CACHE_DIR = Path("data") / "ifeval"
 _CACHE_FILE = _CACHE_DIR / "prompts.jsonl"
@@ -113,6 +118,7 @@ def _download_dataset(
         _DATASET,
         _CONFIG,
         _SPLIT,
+        revision=_REVISION,
         on_progress=on_progress,
     )
     if rows is not None:
@@ -149,7 +155,20 @@ def load_dataset(
 
     # Save to final cache and clean up any partial file
     _save_to_cache(cache_path, items)
+    write_cache_manifest(
+        cache_path,
+        dataset=_DATASET,
+        config=_CONFIG,
+        split=_SPLIT,
+        method=method,
+        revision=_REVISION,
+    )
     partial_path = _CACHE_DIR / "prompts.partial.jsonl"
     partial_path.unlink(missing_ok=True)
 
     return items
+
+
+def dataset_revision() -> str:
+    """Revision behind the cached prompts, or ``"unknown"`` when it was not pinned."""
+    return read_cache_revision(_find_cache_file())

@@ -17,12 +17,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tool_eval_bench.plugins.hf_utils import read_cache_revision, write_cache_manifest
+
 logger = logging.getLogger(__name__)
 
 _HF_API_BASE = "https://datasets-server.huggingface.co/rows"
 _DATASET = "cais/mmlu"
 _CONFIG = "all"
 _PAGE_SIZE = 100
+# Commit of the HuggingFace dataset repository that ``datasets`` downloads are
+# pinned to.  The REST fallback cannot be pinned (see ``hf_utils``).
+_REVISION = "c30699e8356da336a370243923dbaf21066bb9fe"
 
 _CACHE_DIR = Path("data") / "mmlu"
 _CACHE_TEST = _CACHE_DIR / "test.jsonl"
@@ -200,6 +205,7 @@ def _download_dataset(
         _DATASET,
         _CONFIG,
         split,
+        revision=_REVISION,
         on_progress=on_progress,
     )
     if rows is not None:
@@ -237,7 +243,20 @@ def load_dataset(
 
     # Save to final cache and clean up any partial file
     _save_to_cache(cache_path, items)
+    write_cache_manifest(
+        cache_path,
+        dataset=_DATASET,
+        config=_CONFIG,
+        split=split,
+        method=method,
+        revision=_REVISION,
+    )
     partial_path = _CACHE_DIR / f"{split}.partial.jsonl"
     partial_path.unlink(missing_ok=True)
 
     return items
+
+
+def dataset_revision() -> str:
+    """Revision behind the cached test split, or ``"unknown"`` when it was not pinned."""
+    return read_cache_revision(_find_cache_file("test"))

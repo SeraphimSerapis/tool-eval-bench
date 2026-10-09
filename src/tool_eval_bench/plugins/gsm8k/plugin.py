@@ -17,10 +17,17 @@ from typing import Any
 
 from tool_eval_bench.domain.adapters import BackendAdapter
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS, ChatMessage
-from tool_eval_bench.domain.plugin import BenchmarkPlugin, BenchmarkResult, OnPluginProgress
-from tool_eval_bench.plugins.gsm8k.dataset import GSM8KItem, load_dataset
+from tool_eval_bench.domain.plugin import (
+    BenchmarkPlugin,
+    BenchmarkResult,
+    OnPluginProgress,
+    final_answer_text,
+    raise_for_transport_error,
+)
+from tool_eval_bench.plugins.gsm8k.dataset import GSM8KItem, dataset_revision, load_dataset
 from tool_eval_bench.plugins.gsm8k.evaluator import evaluate_answer
 from tool_eval_bench.plugins.gsm8k.prompts import build_messages
+from tool_eval_bench.plugins.hf_utils import items_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +52,9 @@ class GSM8KPlugin(BenchmarkPlugin):
 
     - ``n_shots`` (int): Number of few-shot CoT examples (default: 8, max 8).
     - ``limit`` (int): Max questions to evaluate (default: 200, 0 = all).
-    - ``shuffle`` (bool): Shuffle question order (default: False).
+    - ``shuffle`` (bool): Shuffle question order (default: False).  The
+      shuffle uses ``seed``; without one it draws a fresh seed and records it
+      as ``details["shuffle_seed"]`` so the item set can be reproduced.
     - ``force_download`` (bool): Re-download dataset even if cached.
     """
 
@@ -97,15 +106,20 @@ class GSM8KPlugin(BenchmarkPlugin):
             )
         logger.info("Loaded %d GSM8K test questions", len(all_items))
 
-        # Shuffle if requested (with seed for reproducibility)
+        # Shuffle if requested.  An unseeded shuffle still draws a different
+        # sample each run, but records the seed it drew: two such runs must not
+        # look like the same configuration, and the sample stays reproducible.
+        shuffle_seed: int | None = None
         if shuffle:
-            rng = random.Random(seed)
+            shuffle_seed = seed if seed is not None else random.randrange(2**32)
             all_items = list(all_items)
-            rng.shuffle(all_items)
+            random.Random(shuffle_seed).shuffle(all_items)
 
         # Apply limit
         items = all_items[:limit] if limit > 0 else all_items
         total = len(items)
+        if total == 0:
+            raise ValueError("GSM8K selected no questions to evaluate")
         logger.info("Evaluating %d questions (n_shots=%d)", total, n_shots)
 
         # Build extra params
@@ -120,6 +134,7 @@ class GSM8KPlugin(BenchmarkPlugin):
         item_results: list[dict[str, Any]] = []
         correct_count = 0
         error_count = 0
+        truncated_count = 0
 
         if concurrency <= 1:
             # Sequential path
@@ -140,6 +155,8 @@ class GSM8KPlugin(BenchmarkPlugin):
                     error_count += 1
                 elif result["correct"]:
                     correct_count += 1
+                if result.get("truncated"):
+                    truncated_count += 1
                 total_tokens += result.get("tokens", 0)
 
                 if on_progress:
@@ -184,11 +201,13 @@ class GSM8KPlugin(BenchmarkPlugin):
                         error_count += 1
                     elif r["correct"]:
                         correct_count += 1
+                    if r.get("truncated"):
+                        truncated_count += 1
                     total_tokens += r.get("tokens", 0)
 
         elapsed = time.monotonic() - t0
         answered = total - error_count
-        accuracy = (correct_count / total * 100) if total > 0 else 0.0
+        accuracy = correct_count / total * 100
 
         return BenchmarkResult(
             plugin_name=self.name,
@@ -200,14 +219,18 @@ class GSM8KPlugin(BenchmarkPlugin):
                 "total": total,
                 "answered": answered,
                 "errors": error_count,
-                "completion_rate": round(answered / total * 100, 2) if total else 0.0,
+                "completion_rate": round(answered / total * 100, 2),
                 "status": "incomplete" if error_count else "completed",
                 "incomplete": error_count > 0,
+                "truncated": truncated_count,
                 "accuracy": round(accuracy, 2),
                 "n_shots": n_shots,
                 "dataset_size": len(all_items),
+                "dataset_revision": dataset_revision(),
+                "items_sha256": items_sha256(items),
                 "limit": limit,
                 "shuffle": shuffle,
+                "shuffle_seed": shuffle_seed,
             },
             item_results=item_results,
             metadata={
@@ -247,7 +270,8 @@ class GSM8KPlugin(BenchmarkPlugin):
                 base_url=base_url,
                 extra_params=extra_params,
             )
-            response_text = result.content or result.reasoning or ""
+            raise_for_transport_error(result)
+            response_text = final_answer_text(result)
             tokens = (result.prompt_tokens or 0) + (result.completion_tokens or 0)
         except Exception as exc:
             logger.debug("Error on question %d: %s", item.index, exc)
@@ -261,6 +285,19 @@ class GSM8KPlugin(BenchmarkPlugin):
                 "extraction_method": "error",
                 "error": str(exc),
                 "tokens": 0,
+            }
+
+        if response_text is None:
+            return {
+                "index": item.index,
+                "question": item.question[:200],
+                "correct": False,
+                "truncated": True,
+                "ground_truth": item.ground_truth,
+                "extracted_answer": None,
+                "extraction_method": "truncated",
+                "model_response": (result.reasoning or "")[:1000],
+                "tokens": tokens,
             }
 
         eval_result = evaluate_answer(response_text, item.ground_truth)
@@ -343,6 +380,12 @@ class GSM8KPlugin(BenchmarkPlugin):
                 md.append(
                     f"- **Wrong answer**: {len(wrong_answer)} — model produced a "
                     "numeric answer that didn't match the ground truth"
+                )
+            truncated = [r for r in failures if r.get("truncated")]
+            if truncated:
+                md.append(
+                    f"- **Truncated**: {len(truncated)}. The token budget ran out while "
+                    "the model was still reasoning, before any answer."
                 )
             if errors:
                 md.append(f"- **Server errors**: {len(errors)} — timeouts or API failures")

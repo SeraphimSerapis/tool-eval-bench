@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tool_eval_bench.plugins.mmlu.dataset import (
     CATEGORIES,
     SUBJECT_CATEGORIES,
@@ -361,3 +363,41 @@ class TestReportRendering:
         text = "\n".join(lines)
         assert "Failed Questions" not in text
         assert "Error Analysis" not in text
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ("The answer is clearly B.", "B"),
+        ("The answer is definitely A", "A"),
+        ("Answer: Definitely (C).", "C"),
+        # The article "a" is not option A.
+        ("The answer is a prime number, so B.", "B"),
+    ],
+)
+def test_letters_inside_words_are_not_answers(response: str, expected: str) -> None:
+    letter, _method = extract_answer(response)
+    assert letter == expected
+
+
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [
+        ("The answer is b.", "B"),
+        ("answer: c", "C"),
+        ("I choose b", "B"),
+        ("The answer is (d)", "D"),
+    ],
+)
+def test_lowercase_letter_ending_the_response_is_an_answer(response: str, expected: str) -> None:
+    letter, _method = extract_answer(response)
+    assert letter == expected
+
+
+@pytest.mark.parametrize(
+    "response",
+    ["The answer is a prime number.", "I choose a different approach here."],
+)
+def test_lowercase_letter_mid_text_is_not_an_answer(response: str) -> None:
+    letter, _method = extract_answer(response)
+    assert letter is None

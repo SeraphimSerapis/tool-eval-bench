@@ -2,7 +2,7 @@
 
 Handles multiple answer-extraction strategies:
 1. Standard ``#### N`` marker (used by models that follow GSM8K format)
-2. Last number in the response (fallback)
+2. "The answer is N" phrase, then the last standalone number (fallbacks)
 3. Normalises commas, dollar signs, percent signs, and whitespace
 """
 
@@ -12,6 +12,17 @@ import math
 import re
 from dataclasses import dataclass
 
+# One whole number.  The trailing lookahead stops a backtrack from shortening
+# "25" to "2" when a later rule rejects what follows, and the minus sign must
+# touch the digits so a markdown bullet ("- 18") is not read as a sign.  A
+# trailing "%" or unit is left in place and simply not part of the number.
+_NUMBER = r"-?\$?\d[\d,]*(?:\.\d+)?(?![\d.,]*\d)"
+
+_MARKER_RE = re.compile(r"####\s*([^\n]+)")
+_ANSWER_RE = re.compile(rf"(?:the\s+answer\s+is|answer\s*[:=])\s*({_NUMBER})", re.IGNORECASE)
+# Standalone numbers: not glued to a word, a decimal point, or a fraction slash.
+_STANDALONE_RE = re.compile(rf"(?<![\w./])({_NUMBER})(?!/)")
+
 
 @dataclass(slots=True)
 class EvalResult:
@@ -20,7 +31,7 @@ class EvalResult:
     correct: bool
     extracted_answer: float | None
     ground_truth: float
-    extraction_method: str  # "marker", "last_number", "none"
+    extraction_method: str  # "marker", "answer_pattern", "last_number", "none"
 
 
 def extract_answer(text: str) -> tuple[float | None, str]:
@@ -29,34 +40,29 @@ def extract_answer(text: str) -> tuple[float | None, str]:
     Returns ``(number, method)`` where *method* indicates how the
     answer was found.  Returns ``(None, "none")`` if no number could
     be extracted.
+
+    The ``####`` marker takes its first parseable match, as lm-eval's
+    strict-match does: a model that keeps generating after its answer often
+    invents the next few-shot exemplar, complete with its own ``####`` line.
+    The fallbacks take their last match, because a model that corrects itself
+    in prose ends with the answer it settled on.
     """
-    # Strategy 1: Look for the standard GSM8K ``#### N`` marker
-    match = re.search(r"####\s*([^\n]+)", text)
-    if match:
+    # Strategy 1: the first ``#### N`` marker that parses.  A markdown heading
+    # such as "#### Step 1" is also a marker, but not a number, so it is skipped.
+    for match in _MARKER_RE.finditer(text):
         num = _parse_number(match.group(1).strip())
         if num is not None:
             return num, "marker"
 
-    # Strategy 2: Look for "the answer is N" pattern
-    match = re.search(
-        r"(?:the\s+answer\s+is|answer\s*[:=])\s*\$?\s*([0-9][0-9,]*\.?[0-9]*)",
-        text,
-        re.IGNORECASE,
-    )
-    if match:
+    # Strategy 2: the last "the answer is N" phrase
+    for match in reversed(list(_ANSWER_RE.finditer(text))):
         num = _parse_number(match.group(1))
         if num is not None:
             return num, "answer_pattern"
 
-    # Strategy 3: Last number in the text (excluding superscripts, dates, etc.)
-    # Find all standalone numbers (possibly with commas, decimal points)
-    numbers = re.findall(
-        r"(?<![a-zA-Z/])(-?\$?\s*[0-9][0-9,]*\.?[0-9]*)(?![a-zA-Z/%])",
-        text,
-    )
-    if numbers:
-        # Take the last one
-        num = _parse_number(numbers[-1])
+    # Strategy 3: the last standalone number in the text
+    for match in reversed(list(_STANDALONE_RE.finditer(text))):
+        num = _parse_number(match.group(1))
         if num is not None:
             return num, "last_number"
 

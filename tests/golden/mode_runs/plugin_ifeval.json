@@ -10,7 +10,10 @@
       "limit": 3,
       "temperature": 0.0,
       "seed": 7,
-      "config_fingerprint": "4894359583e6"
+      "extra_params": null,
+      "dataset_revision": "0123abcd",
+      "items_sha256": "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d",
+      "config_fingerprint": "3c355ba5605e"
     },
     "scores": {
       "final_score": 67,
@@ -24,7 +27,9 @@
       "prompt_accuracy": 66.7,
       "instructions_passed": 5,
       "instructions_total": 6,
-      "instruction_accuracy": 83.3
+      "instruction_accuracy": 83.3,
+      "dataset_revision": "0123abcd",
+      "items_sha256": "f00df00df00df00df00df00df00df00df00df00df00df00df00df00df00df00d"
     },
     "metadata": {
       "tool_version": "0.0.0+golden",

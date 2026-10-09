@@ -35,6 +35,24 @@ def _execute_plugin(
     return _execute_plugin_impl(console, benchmark_name, run, result_holder)
 
 
+def _dataset_identity(details: Mapping[str, Any]) -> dict[str, Any]:
+    """Config keys that pin which dataset revision and items a run graded."""
+    return {
+        "dataset_revision": details.get("dataset_revision"),
+        "items_sha256": details.get("items_sha256"),
+    }
+
+
+def _print_truncated(console: Console, details: Mapping[str, Any]) -> None:
+    """Say how many answers the token budget cut off, when any were."""
+    truncated = details.get("truncated", 0)
+    if truncated:
+        console.print(
+            f"  [bold yellow]⚠ {truncated} truncated[/] (token budget ran out before an "
+            "answer; counted as wrong)"
+        )
+
+
 def _run_gsm8k_benchmark(
     console: Console,
     model: str,
@@ -93,7 +111,7 @@ def _run_gsm8k_benchmark(
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
-        eval_total = limit if limit > 0 else len(dataset_items)
+        eval_total = min(limit, len(dataset_items)) if limit > 0 else len(dataset_items)
 
         with PluginProgressDisplay(console, total=eval_total) as display:
 
@@ -168,6 +186,7 @@ def _run_gsm8k_benchmark(
         console.print(
             f"  [bold yellow]⚠ {errs} errors[/] (counted in accuracy; {answered}/{total} answered)"
         )
+    _print_truncated(console, details)
     console.print(f"  [bold]Rating:[/] {result.rating}")
     console.print(
         f"  [dim]Duration: {result.duration_seconds:.1f}s · Tokens: {result.total_tokens:,}[/]"
@@ -189,6 +208,12 @@ def _run_gsm8k_benchmark(
             "temperature": args.temperature,
             "seed": seed,
             "shuffle": shuffle,
+            # An unseeded shuffle draws its own seed; recording it keeps two
+            # such runs from sharing a fingerprint and makes the sample
+            # reproducible.
+            "shuffle_seed": details.get("shuffle_seed"),
+            "extra_params": extra_params or None,
+            **_dataset_identity(details),
         },
         report_metrics=[
             f"- **Accuracy**: **{result.score:.1f}%**",
@@ -219,18 +244,36 @@ def _run_mmlu_benchmark(
     run_context: RunContext | None = None,
 ) -> None:
     """Run the MMLU benchmark and display results."""
+    from rich.markup import escape
     from rich.panel import Panel
 
     from tool_eval_bench.adapters.factory import build_adapter
     from tool_eval_bench.cli.helpers import adapter_options
-    from tool_eval_bench.plugins.mmlu.plugin import MMLUPlugin
+    from tool_eval_bench.plugins.mmlu.plugin import (
+        SAMPLING,
+        MMLUPlugin,
+        resolve_subjects,
+        select_items,
+    )
 
     n_shots = args.mmlu_shots
     limit = args.mmlu_limit
     subjects_str = args.mmlu_subjects
     seed = getattr(args, "seed", None)
-    limit_label = "all 14042" if limit == 0 else f"{limit}"
-    subjects_list = [s.strip() for s in subjects_str.split(",")] if subjects_str else None
+    limit_label = "all 14042" if limit == 0 else f"{limit} stratified"
+    subjects_list: list[str] | None = None
+    if subjects_str is not None:
+        # Normalised so "STEM" and "stem,STEM" store, and fingerprint, alike.
+        subjects_list = sorted({s.strip().lower() for s in subjects_str.split(",") if s.strip()})
+        subjects_str = ",".join(subjects_list)
+        # A typo or an empty list would otherwise download 14K questions first.
+        try:
+            if not subjects_list:
+                raise ValueError("--mmlu-subjects needs at least one subject or category")
+            resolve_subjects(subjects_list)
+        except ValueError as exc:
+            report_run_failed(console, f"\n[bold red]MMLU error:[/] {escape(str(exc))}")
+            sys.exit(1)
     subjects_label = f" · subjects: {subjects_str}" if subjects_str else ""
 
     parallel = args.parallel
@@ -265,35 +308,28 @@ def _run_mmlu_benchmark(
     if test_items is None:
         return
 
-    # Load dev split for few-shot
-    dev_items = []
+    # Load dev split for few-shot.  Same loader as the test split, so a failed
+    # download is reported and resumable instead of escaping as a traceback.
+    dev_items: Any = []
     if n_shots > 0:
-        dev_cache = _find_cache_file("dev")
-        if dev_cache.exists():
-            dev_items = load_dataset("dev")
-        else:
-            with console.status("[dim]Downloading MMLU dev split…[/]", spinner="dots"):
-                dev_items = load_dataset("dev")
-            console.print(f"  [dim]Loaded {len(dev_items)} dev examples for few-shot[/]")
+        dev_items = load_dataset_with_progress(
+            console,
+            name="MMLU dev split",
+            noun="few-shot examples",
+            cache_path=_find_cache_file("dev"),
+            load=lambda **kw: load_dataset("dev", **kw),
+            cache_note="data/mmlu/dev.jsonl",
+            partial_path=Path("data") / "mmlu" / "dev.partial.jsonl",
+        )
+        if dev_items is None:
+            return
 
     preloaded = {"test": test_items, "dev": dev_items}
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
-
-        eval_total = limit if limit > 0 else len(test_items)
-        if subjects_list:
-            # Adjust for filtering
-            from tool_eval_bench.plugins.mmlu.dataset import CATEGORIES, SUBJECT_CATEGORIES
-
-            expanded: set[str] = set()
-            for s in subjects_list:
-                if s in CATEGORIES:
-                    expanded.update(subj for subj, cat in SUBJECT_CATEGORIES.items() if cat == s)
-                else:
-                    expanded.add(s)
-            filtered = [it for it in test_items if it.subject in expanded]
-            eval_total = min(eval_total, len(filtered)) if limit > 0 else len(filtered)
+        # The plugin makes the same selection; this only sizes the progress bar.
+        eval_total = len(select_items(test_items, subjects_list, limit))
 
         with PluginProgressDisplay(console, total=eval_total) as display:
 
@@ -370,6 +406,7 @@ def _run_mmlu_benchmark(
         console.print(
             f"  [bold yellow]⚠ {errs} errors[/] (counted in accuracy; {answered}/{total} answered)"
         )
+    _print_truncated(console, details)
     console.print(f"  [bold]Rating:[/] {result.rating}")
     # Show category breakdown
     cats = details.get("categories", {})
@@ -393,9 +430,12 @@ def _run_mmlu_benchmark(
             "mode": "mmlu",
             "n_shots": n_shots,
             "limit": limit,
+            "sampling": SAMPLING,
             "temperature": args.temperature,
             "seed": seed,
             "subjects": subjects_str,
+            "extra_params": extra_params or None,
+            **_dataset_identity(details),
         },
         report_metrics=[
             f"- **Accuracy**: **{result.score:.1f}%**",
@@ -470,7 +510,7 @@ def _run_ifeval_benchmark(
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
 
-        eval_total = limit if limit > 0 else len(dataset_items)
+        eval_total = min(limit, len(dataset_items)) if limit > 0 else len(dataset_items)
 
         instructions_passed = 0
         instructions_total = 0
@@ -571,6 +611,7 @@ def _run_ifeval_benchmark(
         console.print(
             f"  [bold yellow]⚠ {errs} errors[/] (counted in accuracy; {answered}/{total} answered)"
         )
+    _print_truncated(console, details)
     console.print(
         f"  [bold]IFEval Instruction Accuracy:[/] [bold cyan]"
         f"{details.get('instruction_accuracy', 0):.1f}%[/] "
@@ -595,6 +636,8 @@ def _run_ifeval_benchmark(
             "limit": limit,
             "temperature": args.temperature,
             "seed": seed,
+            "extra_params": extra_params or None,
+            **_dataset_identity(details),
         },
         report_metrics=[
             f"- **Prompt Accuracy**: **{details.get('prompt_accuracy', 0):.1f}%**",
@@ -716,7 +759,7 @@ def _run_needle_benchmark(
     from tool_eval_bench.adapters.factory import build_adapter
     from tool_eval_bench.cli.helpers import adapter_options
     from tool_eval_bench.plugins.needle.haystack import build_cases
-    from tool_eval_bench.plugins.needle.plugin import NeedlePlugin
+    from tool_eval_bench.plugins.needle.plugin import ESTIMATE_NOTE, NeedlePlugin
 
     seed = getattr(args, "seed", None)
 
@@ -738,7 +781,7 @@ def _run_needle_benchmark(
         Panel(
             f"[bold]{display_name}[/]\n"
             f"[dim]{len(lengths)} haystack sizes × {len(depths)} depths = "
-            f"{len(cases)} needles · up to {lengths[-1]:,} tokens"
+            f"{len(cases)} needles · up to ~{lengths[-1]:,} tokens (estimated)"
             f"{parallel_label}[/]",
             title="[bold]🪡 Needle in a Haystack — Retrieval[/]",
             border_style="bright_yellow",
@@ -826,13 +869,14 @@ def _run_needle_benchmark(
     effective = details.get("effective_context")
     if effective:
         console.print(
-            f"  [bold]Effective context:[/] [bold cyan]{effective:,}[/] tokens "
-            f"[dim](largest haystack retrieved at every depth)[/]"
+            f"  [bold]Effective context:[/] [bold cyan]~{effective:,}[/] tokens "
+            f"[dim](estimated; largest haystack retrieved at every depth)[/]"
         )
     else:
         console.print(
             "  [bold yellow]Effective context:[/] none — every haystack size missed a needle"
         )
+    console.print(f"  [dim]{ESTIMATE_NOTE}[/]")
     errs = details.get("errors", 0)
     if errs > 0:
         console.print(f"  [bold yellow]⚠ {errs} errors[/] (counted as misses)")
@@ -856,10 +900,12 @@ def _run_needle_benchmark(
             "depths": depths,
             "temperature": args.temperature,
             "seed": seed,
+            "extra_params": extra_params or None,
         },
         report_metrics=[
             f"- **Retrieval Accuracy**: **{details['accuracy']:.1f}%**",
-            f"- **Effective Context**: {f'{effective:,} tokens' if effective else 'none'}",
+            "- **Effective Context**: "
+            + (f"~{effective:,} tokens (estimated)" if effective else "none"),
             f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
         ],
         report_lines=plugin.render_report_section(result),
@@ -873,6 +919,8 @@ def _print_needle_grid(console: Console, result: Any) -> None:
     """Print the retrieval grid as depth rows against haystack-size columns."""
     from rich.table import Table
 
+    from tool_eval_bench.plugins.needle.plugin import estimated_size_label
+
     details = result.details
     lengths: list[int] = details.get("context_lengths", [])
     depths: list[float] = details.get("depths", [])
@@ -884,7 +932,7 @@ def _print_needle_grid(console: Console, result: Any) -> None:
     table = Table(title="Retrieval grid", title_style="bold", border_style="bright_yellow")
     table.add_column("Depth", justify="right", style="dim")
     for length in lengths:
-        table.add_column(f"{length // 1024}K", justify="center")
+        table.add_column(estimated_size_label(length), justify="center")
     for depth in depths:
         cells = ["[green]●[/]" if found.get((length, depth)) else "[red]○[/]" for length in lengths]
         table.add_row(f"{depth:.0%}", *cells)

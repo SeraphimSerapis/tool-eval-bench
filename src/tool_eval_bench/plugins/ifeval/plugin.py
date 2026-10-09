@@ -18,8 +18,11 @@ from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
     OnPluginProgress,
+    final_answer_text,
+    raise_for_transport_error,
 )
-from tool_eval_bench.plugins.ifeval.dataset import IFEvalItem, load_dataset
+from tool_eval_bench.plugins.hf_utils import items_sha256
+from tool_eval_bench.plugins.ifeval.dataset import IFEvalItem, dataset_revision, load_dataset
 from tool_eval_bench.plugins.ifeval.evaluator import evaluate_prompt
 
 logger = logging.getLogger(__name__)
@@ -85,19 +88,14 @@ class IFEvalPlugin(BenchmarkPlugin):
 
         total = len(all_items)
         if total == 0:
-            return BenchmarkResult(
-                plugin_name="ifeval",
-                score=0.0,
-                score_label="0/0",
-                rating=_rating_for_accuracy(0),
-                details={"prompts_passed": 0, "total": 0},
-            )
+            raise ValueError("IFEval selected no prompts to evaluate")
 
         # Evaluate
         sem = asyncio.Semaphore(concurrency)
         results: list[dict[str, Any]] = [{}] * total
         prompts_passed = 0
         error_count = 0
+        truncated_count = 0
         instructions_passed = 0
         instructions_total = 0
         total_tokens = 0
@@ -113,7 +111,7 @@ class IFEvalPlugin(BenchmarkPlugin):
 
         async def eval_one(idx: int, item: IFEvalItem) -> None:
             nonlocal prompts_passed, instructions_passed, instructions_total
-            nonlocal total_tokens, error_count, progress_counter
+            nonlocal total_tokens, error_count, progress_counter, truncated_count
 
             messages: list[ChatMessage] = [
                 {"role": "user", "content": item.prompt},
@@ -133,7 +131,8 @@ class IFEvalPlugin(BenchmarkPlugin):
                         extra_params=extra or None,
                     )
 
-                content = response.content or response.reasoning or ""
+                raise_for_transport_error(response)
+                content = final_answer_text(response)
                 total_tokens += (response.prompt_tokens or 0) + (response.completion_tokens or 0)
                 is_error = False
             except Exception as exc:
@@ -151,6 +150,24 @@ class IFEvalPlugin(BenchmarkPlugin):
                     "instructions_total": len(item.instruction_id_list),
                     "instruction_details": [],
                     "model_response": "",
+                }
+                instructions_total += len(item.instruction_id_list)
+            elif content is None:
+                # The budget ran out mid-reasoning: no response to check, so
+                # every instruction counts as failed.
+                truncated_count += 1
+                results[idx] = {
+                    "key": item.key,
+                    "prompt": item.prompt[:200],
+                    "prompt_pass": False,
+                    "truncated": True,
+                    "instructions_passed": 0,
+                    "instructions_total": len(item.instruction_id_list),
+                    "instruction_details": [
+                        {"id": iid, "passed": False, "error": "truncated"}
+                        for iid in item.instruction_id_list
+                    ],
+                    "model_response": (response.reasoning or "")[:1000],
                 }
                 instructions_total += len(item.instruction_id_list)
             else:
@@ -210,7 +227,7 @@ class IFEvalPlugin(BenchmarkPlugin):
 
         duration = time.monotonic() - t_start
         answered = total - error_count
-        prompt_accuracy = (prompts_passed / total * 100) if total > 0 else 0.0
+        prompt_accuracy = prompts_passed / total * 100
         instruction_accuracy = (
             instructions_passed / instructions_total * 100 if instructions_total > 0 else 0
         )
@@ -238,14 +255,17 @@ class IFEvalPlugin(BenchmarkPlugin):
                 "total": total,
                 "answered": answered,
                 "errors": error_count,
-                "completion_rate": round(answered / total * 100, 2) if total else 0.0,
+                "completion_rate": round(answered / total * 100, 2),
                 "status": "incomplete" if error_count else "completed",
                 "incomplete": error_count > 0,
+                "truncated": truncated_count,
                 "prompt_accuracy": round(prompt_accuracy, 2),
                 "instruction_accuracy": round(instruction_accuracy, 2),
                 "instructions_passed": instructions_passed,
                 "instructions_total": instructions_total,
                 "dataset_size": 541,
+                "dataset_revision": dataset_revision(),
+                "items_sha256": items_sha256(all_items),
                 "constraint_types": {
                     cid: {
                         "passed": s["passed"],
@@ -302,7 +322,8 @@ class IFEvalPlugin(BenchmarkPlugin):
         # Error analysis
         failures = [r for r in result.item_results if not r.get("prompt_pass")]
         errors = [r for r in failures if r.get("is_error")]
-        non_errors = [r for r in failures if not r.get("is_error")]
+        non_errors = [r for r in failures if not r.get("is_error") and not r.get("truncated")]
+        truncated = [r for r in failures if r.get("truncated")]
 
         if failures:
             lines.extend(
@@ -316,6 +337,11 @@ class IFEvalPlugin(BenchmarkPlugin):
                 lines.append(
                     f"- **Constraint violations**: {len(non_errors)} — model "
                     "responded but did not satisfy all instruction constraints"
+                )
+            if truncated:
+                lines.append(
+                    f"- **Truncated**: {len(truncated)}. The token budget ran out while "
+                    "the model was still reasoning, before any response."
                 )
             if errors:
                 lines.append(f"- **Server errors**: {len(errors)} — timeouts or API failures")

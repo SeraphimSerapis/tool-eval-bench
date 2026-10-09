@@ -2,6 +2,11 @@
 
 Implements ``BenchmarkPlugin`` for the Massive Multitask Language
 Understanding benchmark (14,042 test questions, 57 subjects).
+
+A ``limit`` below the selected pool size draws a proportional stratified
+sample (see ``select_items``) rather than the first N rows.  The dataset is
+sorted by subject, so a plain prefix covered only the first few subjects
+alphabetically.
 """
 
 from __future__ import annotations
@@ -10,6 +15,7 @@ import asyncio
 import logging
 import time
 from collections import Counter, defaultdict
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from tool_eval_bench.domain.adapters import BackendAdapter
@@ -18,17 +24,99 @@ from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
     OnPluginProgress,
+    final_answer_text,
+    raise_for_transport_error,
 )
+from tool_eval_bench.plugins.hf_utils import items_sha256
 from tool_eval_bench.plugins.mmlu.dataset import (
     CATEGORIES,
     SUBJECT_CATEGORIES,
     MMLUItem,
+    dataset_revision,
     load_dataset,
 )
 from tool_eval_bench.plugins.mmlu.evaluator import evaluate_answer
 from tool_eval_bench.plugins.mmlu.prompts import build_messages
 
 logger = logging.getLogger(__name__)
+
+SAMPLING = "stratified"
+"""Recorded in run details and config so limited runs are comparable."""
+
+
+def resolve_subjects(names: Iterable[str]) -> set[str]:
+    """Expand subject and category names into a set of MMLU subjects.
+
+    Category names (``STEM``, ``Humanities``, ...) expand to their subjects.
+    Anything else must be a subject name.  Both match case-insensitively; an
+    unknown name raises ``ValueError`` listing the valid choices, so a typo
+    cannot silently select nothing.
+    """
+    categories = {cat.casefold(): cat for cat in CATEGORIES}
+    expanded: set[str] = set()
+    unknown: list[str] = []
+    for raw in names:
+        name = raw.strip()
+        if not name:
+            continue
+        category = categories.get(name.casefold())
+        if category is not None:
+            expanded.update(subj for subj, cat in SUBJECT_CATEGORIES.items() if cat == category)
+        elif name.casefold() in SUBJECT_CATEGORIES:
+            expanded.add(name.casefold())
+        else:
+            unknown.append(name)
+    if unknown:
+        raise ValueError(
+            f"Unknown MMLU subject or category: {', '.join(unknown)}. "
+            f"Categories: {', '.join(CATEGORIES)}. "
+            f"Subjects: {', '.join(sorted(SUBJECT_CATEGORIES))}."
+        )
+    return expanded
+
+
+def select_items(
+    items: Sequence[MMLUItem],
+    subjects: Iterable[str] | None = None,
+    limit: int = 0,
+) -> list[MMLUItem]:
+    """Apply the subject filter, then a deterministic stratified ``limit``.
+
+    The quota for each subject is proportional to its share of the filtered
+    pool, rounded by the largest-remainder method: every subject first gets
+    the floor of its exact share, and the leftover slots go to the largest
+    fractional parts, ties broken by subject name.  Each subject contributes
+    its first ``quota`` items in dataset order, and the result keeps dataset
+    order.  No RNG is involved, so the same dataset and arguments always
+    select the same items regardless of ``--seed``.
+    """
+    pool = list(items)
+    if subjects:
+        wanted = resolve_subjects(subjects)
+        pool = [it for it in pool if it.subject in wanted]
+    if limit <= 0 or limit >= len(pool):
+        return pool
+
+    by_subject: Counter[str] = Counter(it.subject for it in pool)
+    total = len(pool)
+    quotas: dict[str, int] = {}
+    remainders: list[tuple[int, str]] = []
+    for subject, count in by_subject.items():
+        # Integer arithmetic keeps the remainder comparison exact.
+        quotas[subject], remainder = divmod(count * limit, total)
+        remainders.append((remainder, subject))
+    leftover = limit - sum(quotas.values())
+    remainders.sort(key=lambda r: (-r[0], r[1]))
+    for _, subject in remainders[:leftover]:
+        quotas[subject] += 1
+
+    taken: Counter[str] = Counter()
+    selected: list[MMLUItem] = []
+    for it in pool:
+        if taken[it.subject] < quotas[it.subject]:
+            taken[it.subject] += 1
+            selected.append(it)
+    return selected
 
 
 def _rating_for_accuracy(accuracy: float) -> str:
@@ -77,6 +165,9 @@ class MMLUPlugin(BenchmarkPlugin):
 
         if concurrency < 1:
             raise ValueError("concurrency must be at least 1")
+        if subjects_filter:
+            # Fail on a typo before downloading anything.
+            resolve_subjects(subjects_filter)
 
         # Load dataset
         if preloaded is not None:
@@ -90,36 +181,23 @@ class MMLUPlugin(BenchmarkPlugin):
 
         logger.info("Loaded %d MMLU test questions", len(all_items))
 
-        # Filter by subject/category if requested
-        if subjects_filter:
-            expanded: set[str] = set()
-            for s in subjects_filter:
-                # Allow category names like "STEM" to expand to all subjects
-                if s in CATEGORIES:
-                    expanded.update(subj for subj, cat in SUBJECT_CATEGORIES.items() if cat == s)
-                else:
-                    expanded.add(s)
-            all_items = [it for it in all_items if it.subject in expanded]
-            logger.info("Filtered to %d items for subjects: %s", len(all_items), expanded)
-
-        # Apply limit
-        if limit > 0:
-            all_items = all_items[:limit]
-
+        all_items = select_items(all_items, subjects_filter, limit)
         total = len(all_items)
         if total == 0:
-            return BenchmarkResult(
-                plugin_name="mmlu",
-                score=0.0,
-                score_label="0/0",
-                rating=_rating_for_accuracy(0),
-                details={"correct": 0, "total": 0},
-            )
+            raise ValueError("MMLU selected no questions to evaluate")
+        logger.info("Evaluating %d questions (sampling=%s)", total, SAMPLING)
 
         # Group dev items by subject for few-shot
         dev_by_subject: dict[str, list[MMLUItem]] = defaultdict(list)
         for item in dev_items:
             dev_by_subject[item.subject].append(item)
+        # The exemplars shown are part of what the run graded against, so they
+        # join the item hash: a changed dev split must change the fingerprint.
+        exemplars = [
+            shot
+            for subject in sorted({it.subject for it in all_items})
+            for shot in dev_by_subject.get(subject, [])[:n_shots]
+        ]
 
         # Evaluate
         sem = asyncio.Semaphore(concurrency)
@@ -137,8 +215,10 @@ class MMLUPlugin(BenchmarkPlugin):
         if extra_params:
             extra.update(extra_params)
 
+        truncated_count = 0
+
         async def eval_one(idx: int, item: MMLUItem) -> None:
-            nonlocal correct_count, total_tokens, error_count, progress_counter
+            nonlocal correct_count, total_tokens, error_count, progress_counter, truncated_count
             few_shots = dev_by_subject.get(item.subject, [])
             messages: list[ChatMessage] = build_messages(item, few_shots, n_shots=n_shots)
 
@@ -156,7 +236,8 @@ class MMLUPlugin(BenchmarkPlugin):
                         extra_params=extra or None,
                     )
 
-                content = response.content or response.reasoning or ""
+                raise_for_transport_error(response)
+                content = final_answer_text(response)
                 total_tokens += (response.prompt_tokens or 0) + (response.completion_tokens or 0)
                 is_error = False
             except Exception as exc:
@@ -173,9 +254,23 @@ class MMLUPlugin(BenchmarkPlugin):
                     "correct": False,
                     "is_error": True,
                     "extracted_answer": None,
-                    "ground_truth": item.answer,
+                    "ground_truth": item.answer_letter,
                     "extraction_method": "error",
                     "model_response": "",
+                }
+            elif content is None:
+                truncated_count += 1
+                result_dict = {
+                    "index": item.index,
+                    "subject": item.subject,
+                    "category": item.category,
+                    "question": item.question[:200],
+                    "correct": False,
+                    "truncated": True,
+                    "extracted_answer": None,
+                    "ground_truth": item.answer_letter,
+                    "extraction_method": "truncated",
+                    "model_response": (response.reasoning or "")[:1000],
                 }
             else:
                 result = evaluate_answer(content, item.answer)
@@ -215,7 +310,7 @@ class MMLUPlugin(BenchmarkPlugin):
                         "correct": False,
                         "is_error": True,
                         "extracted_answer": None,
-                        "ground_truth": item.answer,
+                        "ground_truth": item.answer_letter,
                         "extraction_method": "error",
                         "model_response": "",
                     }
@@ -223,7 +318,7 @@ class MMLUPlugin(BenchmarkPlugin):
 
         duration = time.monotonic() - t_start
         answered = total - error_count
-        accuracy = (correct_count / total * 100) if total > 0 else 0.0
+        accuracy = correct_count / total * 100
 
         # Per-category breakdown
         cat_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"correct": 0, "total": 0})
@@ -250,12 +345,16 @@ class MMLUPlugin(BenchmarkPlugin):
                 "total": total,
                 "answered": answered,
                 "errors": error_count,
-                "completion_rate": round(answered / total * 100, 2) if total else 0.0,
+                "completion_rate": round(answered / total * 100, 2),
                 "status": "incomplete" if error_count else "completed",
                 "incomplete": error_count > 0,
+                "truncated": truncated_count,
                 "accuracy": round(accuracy, 2),
                 "n_shots": n_shots,
                 "dataset_size": 14042,
+                "sampling": SAMPLING,
+                "dataset_revision": dataset_revision(),
+                "items_sha256": items_sha256([*all_items, *exemplars]),
                 "categories": {
                     cat: {
                         "correct": s["correct"],
@@ -343,6 +442,12 @@ class MMLUPlugin(BenchmarkPlugin):
             if wrong_answer:
                 lines.append(
                     f"- **Wrong answer**: {len(wrong_answer)} — model chose the wrong option"
+                )
+            truncated = [r for r in failures if r.get("truncated")]
+            if truncated:
+                lines.append(
+                    f"- **Truncated**: {len(truncated)}. The token budget ran out while "
+                    "the model was still reasoning, before any answer."
                 )
             if errors:
                 lines.append(f"- **Server errors**: {len(errors)} — timeouts or API failures")

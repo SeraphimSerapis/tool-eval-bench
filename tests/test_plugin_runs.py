@@ -236,14 +236,14 @@ async def test_mmlu_empty_preloaded_data_does_not_download(
         raise AssertionError("empty preloaded MMLU should not download")
 
     monkeypatch.setattr(mmlu_plugin, "load_dataset", fail_download)
-    result = await MMLUPlugin().run(
-        MockAdapter("A"),
-        model="m",
-        base_url="http://localhost:8000",
-        _preloaded_items={"test": [], "dev": []},
-    )
-    assert result.details["total"] == 0
-    assert result.item_results == []
+    # An empty selection fails rather than saving a 0/0 result.
+    with pytest.raises(ValueError, match="no questions"):
+        await MMLUPlugin().run(
+            MockAdapter("A"),
+            model="m",
+            base_url="http://localhost:8000",
+            _preloaded_items={"test": [], "dev": []},
+        )
 
 
 @pytest.mark.asyncio
