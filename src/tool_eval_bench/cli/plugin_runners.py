@@ -685,7 +685,7 @@ def _resolve_needle_context_size(
     from tool_eval_bench.runner.context_pressure import (
         detect_context_size,
         detect_kv_capacity,
-        llamacpp_reported_context,
+        reported_context_window,
     )
 
     if args.context_size:
@@ -697,7 +697,7 @@ def _resolve_needle_context_size(
             model,
             api_key,
             client_factory=HTTPMeasurementClient,
-            reported_context=llamacpp_reported_context(run_context),
+            reported_context=reported_context_window(run_context),
         )
     )
     if context_size is None:

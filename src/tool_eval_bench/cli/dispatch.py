@@ -1160,8 +1160,8 @@ def main() -> None:
         from tool_eval_bench.runner.context_pressure import (
             build_pressure_messages,
             calibrate_pressure_messages,
-            llamacpp_reported_context,
             prepare_context_pressure,
+            reported_context_window,
         )
 
         ratio = max(0.0, min(1.0, args.context_pressure))
@@ -1175,7 +1175,7 @@ def main() -> None:
                     context_size_override=args.context_size,
                     metrics_url=args.metrics_url,
                     client_factory=HTTPMeasurementClient,
-                    reported_context=llamacpp_reported_context(run_context),
+                    reported_context=reported_context_window(run_context),
                 )
             )
 

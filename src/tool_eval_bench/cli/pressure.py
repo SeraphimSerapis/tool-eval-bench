@@ -115,7 +115,7 @@ def run_pressure_sweep(
         compute_fill_budget,
         detect_context_size,
         detect_kv_capacity,
-        llamacpp_reported_context,
+        reported_context_window,
     )
     from tool_eval_bench.runner.orchestrator import run_all_scenarios
 
@@ -155,7 +155,7 @@ def run_pressure_sweep(
                     model,
                     api_key,
                     client_factory=HTTPMeasurementClient,
-                    reported_context=llamacpp_reported_context(run_context),
+                    reported_context=reported_context_window(run_context),
                 )
             )
         if context_size is None:

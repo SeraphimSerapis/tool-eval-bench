@@ -19,8 +19,9 @@ Auto-detection strategy for context size:
   2. ``/v1/models`` → ``max_model_len`` (vLLM)
   3. ``/v1/models`` → ``context_window`` or ``max_tokens`` (LiteLLM / others)
   4. TensorFold ``/health`` → ``context_length``
-  5. llama.cpp ``/props`` → ``default_generation_settings.n_ctx``, as already
-     recorded in the run context (see :func:`llamacpp_reported_context`)
+  5. llama.cpp or Strata ``/props`` → ``default_generation_settings.n_ctx``
+     (Strata: or ``/health`` → ``max_context``), as already recorded in the run
+     context (see :func:`reported_context_window`)
 """
 
 from __future__ import annotations
@@ -233,22 +234,33 @@ async def detect_kv_capacity(
     )
 
 
-def llamacpp_reported_context(run_context: RunContext | None) -> int | None:
-    """Return the context window llama-server reported, if the run context holds one.
+_REPORTED_CONTEXT_ENGINES = frozenset({"llama.cpp", "Strata"})
 
-    The run-context probe records ``/props`` ``default_generation_settings.n_ctx``
-    as ``max_model_len`` for llama.cpp. Upstream that value is the per-request
-    limit, so it is taken as-is, never multiplied or divided by ``total_slots``.
-    Older builds set it to ``n_ctx / n_parallel``; current builds report
-    ``n_ctx_slot()``, the sequence context capped by ``--kv-unified-per-slot``
-    and the model's training context. Under ``--kv-unified`` every slot reports
-    the whole shared pool, which one request can fill only while it runs alone.
 
-    Only llama.cpp qualifies. vLLM and TensorFold windows already come from
-    :func:`detect_context_size`'s own probes, and the semantics of other servers'
-    llama-server-shaped ``/props`` have not been verified.
+def reported_context_window(run_context: RunContext | None) -> int | None:
+    """Return the per-request context window the run-context probe recorded.
+
+    Only engines whose recorded ``max_model_len`` is verified upstream to be the
+    longest single request qualify.
+
+    llama.cpp: the probe records ``/props`` ``default_generation_settings.n_ctx``.
+    Upstream that value is the per-request limit, so it is taken as-is, never
+    multiplied or divided by ``total_slots``. Older builds set it to
+    ``n_ctx / n_parallel``; current builds report ``n_ctx_slot()``, the sequence
+    context capped by ``--kv-unified-per-slot`` and the model's training
+    context. Under ``--kv-unified`` every slot reports the whole shared pool,
+    which one request can fill only while it runs alone.
+
+    Strata: the probe records the same ``/props`` field, or ``/health``
+    ``max_context`` when ``/props`` has none. Both report the context the
+    engine announced at startup, and Strata never lets one request's prompt
+    plus completion plus an 8-token margin exceed it (``serve/server.py``).
+
+    vLLM and TensorFold windows already come from :func:`detect_context_size`'s
+    own probes, and the semantics of other servers' llama-server-shaped
+    ``/props``, such as TabbyAPI's, have not been verified.
     """
-    if run_context is None or run_context.engine_name != "llama.cpp":
+    if run_context is None or run_context.engine_name not in _REPORTED_CONTEXT_ENGINES:
         return None
     window = run_context.max_model_len
     return window if type(window) is int and window > 0 else None
@@ -270,7 +282,7 @@ async def detect_context_size(
       - max_tokens (generic)
 
     ``reported_context`` is a window the caller already read from the server,
-    such as :func:`llamacpp_reported_context`. It applies only when the model
+    such as :func:`reported_context_window`. It applies only when the model
     listing declares none, so the listing keeps precedence.
 
     Returns the context size in tokens, or None if detection fails.

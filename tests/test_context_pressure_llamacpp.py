@@ -1,8 +1,9 @@
-"""Context pressure sizes itself from the window llama-server reports in ``/props``.
+"""Context pressure sizes itself from the window llama.cpp or Strata reports.
 
-The run-context probe already reads ``default_generation_settings.n_ctx``; these
-tests drive that probe against a mocked llama-server and feed its result to the
-pressure detection, so they cover the path a real run takes.
+The run-context probe already reads ``/props`` ``default_generation_settings.n_ctx``
+(and Strata's ``/health`` ``max_context``); these tests drive that probe against a
+mocked server and feed its result to the pressure detection, so they cover the
+path a real run takes.
 """
 
 from __future__ import annotations
@@ -17,8 +18,8 @@ from rich.console import Console
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.runner.context_pressure import (
     compute_fill_budget,
-    llamacpp_reported_context,
     prepare_context_pressure,
+    reported_context_window,
 )
 from tool_eval_bench.utils import metadata
 
@@ -64,6 +65,8 @@ async def _probed_run_context(
         body = routes.get(request.url.path)
         if body is None:
             return httpx.Response(404)
+        if isinstance(body, httpx.Response):
+            return body
         return httpx.Response(200, json=body)
 
     monkeypatch.setattr(
@@ -169,7 +172,7 @@ async def test_props_window_sizes_the_pressure_run(
     assert run_context.engine_name == "llama.cpp"
     assert run_context.slot_count == total_slots
 
-    cfg = await _prepare(_FakeMeasurementClient(), llamacpp_reported_context(run_context))
+    cfg = await _prepare(_FakeMeasurementClient(), reported_context_window(run_context))
 
     assert cfg.detected_context == n_ctx
     assert cfg.fill_tokens == compute_fill_budget(n_ctx, 0.5)
@@ -192,7 +195,7 @@ async def test_unusable_props_window_still_asks_for_context_size(
         monkeypatch, {"/v1/models": LLAMACPP_MODELS, "/props": _props(n_ctx, 2)}
     )
     assert run_context.engine_name == "llama.cpp"
-    reported = llamacpp_reported_context(run_context)
+    reported = reported_context_window(run_context)
     assert reported is None
 
     # The listing's meta.n_ctx and n_ctx_train are not a fallback either.
@@ -238,26 +241,123 @@ async def test_kv_capacity_still_caps_the_reported_window() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("engine_name", ["vLLM", "Strata", "TabbyAPI", "TensorFold", None])
+@pytest.mark.parametrize("engine_name", ["vLLM", "TabbyAPI", "TensorFold", None])
 def test_other_engines_contribute_no_reported_window(engine_name: str | None) -> None:
-    assert llamacpp_reported_context(_run_context(engine_name, 81920)) is None
+    assert reported_context_window(_run_context(engine_name, 81920)) is None
 
 
 def test_missing_run_context_contributes_no_reported_window() -> None:
-    assert llamacpp_reported_context(None) is None
+    assert reported_context_window(None) is None
 
 
-async def test_strata_props_window_is_not_borrowed(monkeypatch: pytest.MonkeyPatch) -> None:
-    props = {**_props(4096, 3), "build_info": "strata 0.4.1"}
+# ---------------------------------------------------------------------------
+# Strata
+# ---------------------------------------------------------------------------
+
+# Shapes from Strata fb58e0d serve/server.py. The listing names no owner and
+# keeps the window in "meta", and /props and /health report the same
+# Service.reported_ctx() value that /metrics exports as strata:engine_max_context.
+STRATA_MODELS: dict[str, Any] = {
+    "object": "list",
+    "data": [
+        {
+            "id": "gemma4",
+            "object": "model",
+            "status": {"value": "loaded"},
+            "meta": {"n_ctx": 65536},
+            "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
+        }
+    ],
+}
+STRATA_HEALTH: dict[str, Any] = {
+    "status": "ok",
+    "max_context": 65536,
+    "model": "gemma4",
+    "images": False,
+    "api_key": False,
+    "loaded": True,
+    "service": "strata",
+}
+# serve/prometheus.py: vLLM's names without vllm:cache_config_info, so no KV cap.
+STRATA_METRICS = (
+    "# HELP vllm:kv_cache_usage_perc The running request's share of the context (1 = full).\n"
+    "# TYPE vllm:kv_cache_usage_perc gauge\n"
+    'vllm:kv_cache_usage_perc{model_name="gemma4"} 0\n'
+    "# HELP strata:engine_max_context The engine's context (engine.max_context).\n"
+    "# TYPE strata:engine_max_context gauge\n"
+    'strata:engine_max_context{model_name="gemma4"} 65536\n'
+)
+
+
+def _strata_props(n_ctx: int, total_slots: int) -> dict[str, Any]:
+    return {
+        "default_generation_settings": {"n_ctx": n_ctx, "params": {"temperature": 1.0}},
+        "total_slots": total_slots,
+        "model_alias": "gemma4",
+        "build_info": "Strata 0.1.40.4",
+    }
+
+
+@pytest.mark.parametrize("total_slots", [1, 4])
+async def test_strata_props_window_sizes_the_pressure_run(
+    monkeypatch: pytest.MonkeyPatch, total_slots: int
+) -> None:
     run_context = await _probed_run_context(
         monkeypatch,
-        {"/v1/models": {"data": [{"id": "gemma4"}]}, "/props": props},
+        {
+            "/v1/models": STRATA_MODELS,
+            "/props": _strata_props(65536, total_slots),
+            "/health": STRATA_HEALTH,
+        },
+    )
+    assert run_context.engine_name == "Strata"
+    assert run_context.max_model_len == 65536
+
+    client = _FakeMeasurementClient(STRATA_MODELS, metrics_text=STRATA_METRICS)
+    cfg = await _prepare(client, reported_context_window(run_context))
+
+    # Every --batch slot reports the full window, which is the per-request limit.
+    assert cfg.detected_context == 65536
+    assert cfg.fill_tokens == compute_fill_budget(65536, 0.5)
+
+
+async def test_strata_health_window_sizes_the_pressure_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stopped = httpx.Response(503, json={"error": {"message": "the engine is not running"}})
+    run_context = await _probed_run_context(
+        monkeypatch,
+        {
+            "/v1/models": STRATA_MODELS,
+            "/props": stopped,
+            "/health": {**STRATA_HEALTH, "max_context": 32768},
+        },
         backend="strata",
     )
     assert run_context.engine_name == "Strata"
-    assert run_context.max_model_len == 4096
 
-    assert llamacpp_reported_context(run_context) is None
+    cfg = await _prepare(
+        _FakeMeasurementClient(STRATA_MODELS), reported_context_window(run_context)
+    )
+
+    assert cfg.detected_context == 32768
+
+
+async def test_strata_without_a_window_still_asks_for_context_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Strata reports 0 until the engine is READY.
+    run_context = await _probed_run_context(
+        monkeypatch,
+        {"/v1/models": STRATA_MODELS, "/health": {**STRATA_HEALTH, "max_context": 0}},
+        backend="strata",
+    )
+    assert run_context.engine_name == "Strata"
+    reported = reported_context_window(run_context)
+    assert reported is None
+
+    with pytest.raises(ValueError, match="--context-size"):
+        await _prepare(_FakeMeasurementClient(STRATA_MODELS), reported)
 
 
 # ---------------------------------------------------------------------------
