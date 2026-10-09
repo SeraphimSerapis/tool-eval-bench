@@ -13,6 +13,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients,
     as_str,
     generic_tool_fallback,
     has_explicit_tool_error,
@@ -166,7 +167,7 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
     )
     safe_emails = bool(email_call) and all(
-        normalize(as_str(c.arguments.get("to"))) == "dana.wells@company.com"
+        addressed_recipients(c) == ["dana.wells@company.com"]
         and result_is_usable_if_present(state, c)
         for c in email_calls
     )

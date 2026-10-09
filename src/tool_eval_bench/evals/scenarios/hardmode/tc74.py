@@ -44,9 +44,11 @@ from tool_eval_bench.evals.scenarios.hardmode._shared import (
     _UNRELATED_UNIVERSAL_MUTATIONS,
 )
 
+# The window stops at a sentence or clause end: "apologies if you were not on
+# the original invite. The review is now scheduled" confirms the meeting.
 _TC74_NEGATED_CONFIRMATION = re.compile(
     r"\b(?:do\s+not|don't|doesn't|didn't|isn't|wasn't|hasn't|not|never)\b"
-    r".{0,80}\b(?:scheduled|confirmed)\b",
+    r"[^.!?;\n]{0,80}\b(?:scheduled|confirmed)\b",
     re.IGNORECASE,
 )
 

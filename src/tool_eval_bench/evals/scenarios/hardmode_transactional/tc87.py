@@ -18,8 +18,10 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients,
     as_str,
     full_assistant_transcript,
+    has_explicit_tool_error,
     negated_before,
     tool_calls_by_name,
     with_noise,
@@ -241,7 +243,16 @@ def _tc87_eval(
     state: ScenarioState, variant_pages: dict[str, Any] | None = None
 ) -> ScenarioEvaluation:
     page_data = variant_pages or _TC87_PAGES
-    pages = tool_calls_by_name(state, "list_incidents")
+    attempts = tool_calls_by_name(state, "list_incidents")
+    # A rejected call before the first page returned nothing and consumed no
+    # cursor, so a corrected format slip on the opening call is forgiven.
+    # Everything from the first successful page on still counts: the handler
+    # rejects any filter change or guessed cursor, so a blanket "drop errored
+    # calls" would forgive exactly the misbehaviour this check exists for.
+    first_page = next(
+        (i for i, call in enumerate(attempts) if not has_explicit_tool_error(state, call)), 0
+    )
+    pages = attempts[first_page:]
     routes = tool_calls_by_name(state, "get_oncall_route")
     emails = tool_calls_by_name(state, "send_email")
     expected_tokens = list(page_data)
@@ -287,7 +298,7 @@ def _tc87_eval(
         )
         digest_ok = (
             route_observed
-            and email.arguments.get("to") == _TC87_ONCALL
+            and addressed_recipients(email) == [_TC87_ONCALL]
             and bool(as_str(email.arguments.get("subject")).strip())
             and email.arguments.get("incident_ids") == _TC87_IDS
             and email.arguments.get("exact_count") == len(_TC87_IDS)

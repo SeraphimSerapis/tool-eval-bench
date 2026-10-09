@@ -13,7 +13,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.helpers import as_str, with_noise
+from tool_eval_bench.evals.helpers import as_str, has_explicit_tool_error, with_noise
 from tool_eval_bench.evals.milestones import (
     Milestone,
     Minefield,
@@ -226,12 +226,23 @@ _MILESTONES = (
     Milestone("explained why the order changed", _explained),
 )
 
+
+def _accepted(state: ScenarioState, name: str) -> list[ToolCallRecord]:
+    """Calls to ``name`` that the tool did not reject.
+
+    A rejected call (unknown account) changed nothing, so correcting it is not
+    a second request or dispute. A declined limit request is a decision, not a
+    rejection, and still counts.
+    """
+    return [c for c in calls(state, name) if not has_explicit_tool_error(state, c)]
+
+
 _MINEFIELDS = (
     Minefield(
         "requested the limit increase while a dispute was open, triggering a 90-day wait",
         lambda s: bool(s.meta.get("tc90_cooldown")),
     ),
-    Minefield("filed more than one dispute", lambda s: len(calls(s, "file_dispute")) > 1),
+    Minefield("filed more than one dispute", lambda s: len(_accepted(s, "file_dispute")) > 1),
     Minefield(
         "disputed a transaction that was not the duplicate charge",
         lambda s: any(
@@ -243,7 +254,10 @@ _MINEFIELDS = (
         "requested a limit other than $8,000",
         lambda s: any(c.arguments.get("new_limit_usd") != _LIMIT for c in _limit_requests(s)),
     ),
-    Minefield("requested the limit increase more than once", lambda s: len(_limit_requests(s)) > 1),
+    Minefield(
+        "requested the limit increase more than once",
+        lambda s: len(_accepted(s, "request_limit_increase")) > 1,
+    ),
 )
 
 

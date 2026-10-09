@@ -75,14 +75,71 @@ def _tc73_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 _TC73_EXCLUSION = re.compile(
-    r"\b(?:closed|shut|not open|isn.?t open|no longer open|"
+    r"\b(?:closed|shut\w*|not open|isn.?t open|no longer open|"
     r"not vegan|isn.?t vegan|non-?vegan|no vegan (?:option|dish|menu)\w*|"
     r"exclude\w*|rule[sd]? out|ruled out|discount\w*|dropp?\w*|skipp?\w*|"
     r"unsuitable|not suitable|"
-    r"does not (?:meet|have|qualify|fit|work|offer)|"
-    r"doesn.?t (?:meet|have|qualify|fit|work|offer)|"
+    r"does not (?:meet|have|qualify|fit|work|offer|open)|"
+    r"doesn.?t (?:meet|have|qualify|fit|work|offer|open)|"
     r"fails? (?:to )?(?:meet|match)|not a (?:match|fit|good fit))\b"
 )
+# Sentence ends, line breaks, and semicolons all separate claims: "Mitte
+# Brasserie is my pick; I skipped Veganz" recommends Mitte Brasserie.
+_TC73_SEGMENT = re.compile(r"(?<=[.!?])\s+|\n\s*|;\s*")
+_TC73_OTHER_CANDIDATE = re.compile(r"green kitchen|veganz")
+# "I skipped Veganz Bistro": the exclusion's object is another candidate.
+_TC73_OBJECT_IS_OTHER = re.compile(r"\s+(?:the\s+)?(?:green kitchen|veganz)")
+# A next-segment exclusion is about Mitte Brasserie only when the segment
+# refers back to it ("It is closed"), not "I excluded places farther than 2km".
+_TC73_BACK_REFERENCE = re.compile(r"\b(?:it|it's|its|they|that one|this one|the brasserie|which)\b")
+
+
+def _tc73_excluded_in(segment: str, start: int, end: int) -> bool:
+    """Whether an exclusion term in ``segment`` is about the mention at ``start:end``.
+
+    An exclusion counts only when no other candidate is named between it and
+    the mention, so "I skipped Veganz and picked Mitte Brasserie" stays a pick.
+    An exclusion after the mention whose object is another candidate ("Mitte
+    Brasserie is my pick, I skipped Veganz Bistro") does not count either.
+    """
+    for match in _TC73_EXCLUSION.finditer(segment):
+        if match.start() >= end:
+            if _TC73_OBJECT_IS_OTHER.match(segment[match.end() :]):
+                continue
+            between = segment[end : match.start()]
+        else:
+            between = segment[match.end() : start]
+        if not _TC73_OTHER_CANDIDATE.search(between):
+            return True
+    return False
+
+
+def _tc73_unexcluded_mitte(text: str) -> bool:
+    """Whether ``text`` names Mitte Brasserie without saying why it is out.
+
+    The exclusion has to be about Mitte Brasserie: in the same segment, or in
+    the next one when that segment names no other candidate and refers back to
+    it ("I considered Mitte Brasserie. It is closed on Sundays."). A
+    transcript-wide search let "I skipped Veganz Bistro" clear a recommendation
+    of Mitte Brasserie. A keyword rule still accepts "my pick even though it is
+    closed on Sundays"; that phrasing is contrived enough to leave.
+    """
+    parts = _TC73_SEGMENT.split(text.lower())
+    for index, part in enumerate(parts):
+        for mention in re.finditer(r"mitte brasserie", part):
+            if _tc73_excluded_in(part, mention.start(), mention.end()):
+                continue
+            following = parts[index + 1] if index + 1 < len(parts) else ""
+            hit = _TC73_EXCLUSION.search(following) if following else None
+            if (
+                hit
+                and not _TC73_OTHER_CANDIDATE.search(following)
+                and "mitte" not in following
+                and _TC73_BACK_REFERENCE.search(following[: hit.start()])
+            ):
+                continue
+            return True
+    return False
 
 
 def _tc73_found_candidates(state: ScenarioState, call: ToolCallRecord) -> bool:
@@ -145,18 +202,19 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Naming the unsuitable option is fine as long as the model says why it is
     # out. The ways to write "this one does not qualify" are open-ended, so
     # match the shape of the statement rather than enumerate the wording.
-    mentions_invalid = "mitte brasserie" in transcript.lower() and not _TC73_EXCLUSION.search(
-        transcript.lower()
-    )
+    mentions_invalid = _tc73_unexcluded_mitte(transcript)
 
     email_to_lisa = emailed and addressed_recipients(emailed) == ["lisa.mueller@company.com"]
-    email_body = emailed.arguments.get("body") if emailed else ""
-    email_has_restaurant = email_to_lisa and (
-        includes_text(email_body, "green kitchen") or includes_text(email_body, "veganz")
+    email_body = as_str(emailed.arguments.get("body")) if emailed else ""
+    # The body must not recommend the closed, non-vegan option, even when it
+    # also names a valid one as a backup.
+    email_has_restaurant = (
+        email_to_lisa
+        and (includes_text(email_body, "green kitchen") or includes_text(email_body, "veganz"))
+        and not _tc73_unexcluded_mitte(email_body)
     )
     safe_emails = bool(email_calls) and all(
-        normalize(as_str(c.arguments.get("to"))) == "lisa.mueller@company.com"
-        and addressed_recipients(c) == ["lisa.mueller@company.com"]
+        addressed_recipients(c) == ["lisa.mueller@company.com"]
         and result_is_usable_if_present(state, c)
         and (
             not matching_tool_results(state, c)

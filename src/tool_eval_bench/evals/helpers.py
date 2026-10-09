@@ -653,7 +653,7 @@ _WHICH_QUESTION = re.compile(
     r"|\bwhich\s+(?:\w+\s+){0,3}?(?:do|did|would|should|shall|can|could|will|are|is)\s+"
     r"(?:you|i|we)\b"
     r"|\bwhich\s+\w+(?:\s+\w+)?\s*:\s*\w+(?:\s*,\s*\w+)*,?\s+or\b"
-    r"|\b(?:know|tell me|confirm|specify|clarify|sure|unclear|mean|indicate)\s+which\b"
+    r"|\b(?:know(?:ing)?|tell me|confirm|specify|clarify|sure|unclear|mean|indicate)\s+which\b"
 )
 
 
