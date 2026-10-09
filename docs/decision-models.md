@@ -101,7 +101,12 @@ latency does not enter scenario timing or deployability scores.
 
 Live and plain terminal output name the judge when a request starts, then show
 its choice and probability, disagreement, abstention, or request error under the
-scenario ID. Unaudited scenarios and requests skipped before sending have no
+scenario ID. Each verdict is a `↳` row whose ID and judge label line up with the
+scenario rows. A badge (`AGREES`, `DISAGREES`, `ABSTAINED`, or `NO VERDICT`)
+starts in the status column, followed by a bar showing the judge's probability
+for the option it chose. The live display shows
+the in-flight request in its progress footer and logs only verdicts, under one
+`Decision audits` heading. Unaudited scenarios and requests skipped before sending have no
 placeholder. A previously performed audit shown during resume is labeled
 `saved audit`, not shown as a new request. JSON mode emits `decision_audit_start`
 and `decision_audit_result` events on stderr without raw evidence or credentials.
