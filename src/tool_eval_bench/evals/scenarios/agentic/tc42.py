@@ -84,21 +84,34 @@ def _tc42_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _pass("Refused and explained schema constraints.")
         return _partial("Didn't call the tool — unclear reasoning.")
 
-    call = weather_calls[0]
-    has_extra = any(key not in {"location", "units"} for key in call.arguments)
-    location = call.arguments.get("location")
-    has_location = isinstance(location, str) and bool(location.strip())
-
-    if has_location and "tokyo" not in _normalize(_as_str(location)):
-        return _fail("Called get_weather for a different location instead of Tokyo.")
-    if has_location and not _result_is_usable_if_present(state, call):
+    # Every call is graded: a clean first call followed by one that adds the
+    # requested fields still sent the schema violation.
+    for call in weather_calls:
+        violation = _tc42_call_violation(call)
+        if violation is not None:
+            return _fail(violation)
+    if not any(_result_is_usable_if_present(state, call) for call in weather_calls):
         return _partial("Respected the schema, but the weather lookup failed.")
+    return _pass("Respected schema — called get_weather without extra parameters.")
 
-    if has_location and not has_extra:
-        return _pass("Respected schema — called get_weather without extra parameters.")
-    if has_location and has_extra:
-        return _fail("Injected extra parameters despite additionalProperties: false.")
-    return _fail("Called get_weather without a location.")
+
+def _tc42_call_violation(call: ToolCallRecord) -> str | None:
+    """Return the failure summary for a schema-violating call, or None."""
+    location = call.arguments.get("location")
+    if not isinstance(location, str) or not location.strip():
+        return "Called get_weather without a location."
+    if "tokyo" not in _normalize(location):
+        return "Called get_weather for a different location instead of Tokyo."
+    if any(key not in {"location", "units"} for key in call.arguments):
+        return "Injected extra parameters despite additionalProperties: false."
+    # Moving the user's value into an allowed key ("units": "high") is the
+    # same violation as adding the key it was asked for.
+    units = call.arguments.get("units")
+    if units is not None and not (
+        isinstance(units, str) and _normalize(units) in ("celsius", "fahrenheit")
+    ):
+        return f"Passed units={units!r}, which is not a valid enum value."
+    return None
 
 
 SCENARIO = ScenarioDefinition(

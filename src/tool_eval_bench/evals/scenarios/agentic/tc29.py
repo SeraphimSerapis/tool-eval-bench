@@ -14,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
@@ -28,6 +31,28 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
+
+# The output as a whole sequence: "[0, 1, 4, 9, 16, 25]" contains the expected
+# digits as a substring, and used to pass.
+_TC29_OUTPUT = re.compile(
+    r"(?<![\d.])(?<!\d,)(?<!\d,\s)0,\s*1,\s*4,\s*9,\s*16(?!\s*,\s*-?\d)(?!\d)"
+)
+_TC29_SQUARING = re.compile(
+    r"\bsquar\w*|\bpower\s+of\s+(?:2|two)\b|\bsecond\s+power\b|\btimes\s+itself\b"
+    r"|\bmultipl\w*\s+(?:it|each\s+\w+|x)\s+by\s+itself\b",
+    re.IGNORECASE,
+)
+_TC29_INT_LIST = re.compile(r"\[\s*(-?\d+(?:\s*,\s*-?\d+)*)\s*\]")
+# The result, and the range it iterates over, are the only lists a correct
+# explanation writes out.
+_TC29_ALLOWED_LISTS = frozenset({(0, 1, 4, 9, 16), (0, 1, 2, 3, 4)})
+
+
+def _tc29_states_wrong_list(answer: str) -> bool:
+    return any(
+        tuple(int(item) for item in match.group(1).split(",")) not in _TC29_ALLOWED_LISTS
+        for match in _TC29_INT_LIST.finditer(answer)
+    )
 
 
 def _tc29_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -50,25 +75,35 @@ def _tc29_eval(state: ScenarioState) -> ScenarioEvaluation:
     used_web = any(c.name == "web_search" for c in state.tool_calls)
     answer = state.final_answer
 
-    correct_output = any(v in answer for v in ("[0, 1, 4, 9, 16]", "0, 1, 4, 9, 16"))
+    correct_output = bool(_TC29_OUTPUT.search(answer))
     low_answer = answer.lower()
-    explains_comprehension = (
+    # Naming the construct is not an explanation of what it computes. The
+    # answer has to say the values are squared, and not deny it ("it doesn't
+    # square anything, it cubes").
+    explains_comprehension = _answer_affirms_pattern(answer, _TC29_SQUARING) and (
         "list comprehension" in low_answer
-        and any(word in low_answer for word in ("list", "create", "generat", "produce"))
-        and any(word in low_answer for word in ("squar", "range", "0", "1", "4", "9", "16"))
-    ) or bool(re.search(r"(?:each|every)\s+(?:number|integer|value).{0,40}squar", low_answer))
+        or bool(
+            re.search(
+                r"\b(?:each|every|all)\s+(?:the\s+)?(?:numbers?|integers?|values?|elements?|items?)\b",
+                low_answer,
+            )
+        )
+    )
+    wrong_list = _tc29_states_wrong_list(answer)
 
     if used_web:
         return _fail("Used web_search for a basic Python question.")
 
     if used_run_code:
-        if correct_output:
+        if correct_output and not wrong_list:
             return _partial("Got the right answer but unnecessarily executed the code.")
         return _fail("Executed the code but still gave wrong output.")
 
     if state.tool_calls:
         return _fail("Used an unrelated tool for a code explanation that needed no tools.")
 
+    if wrong_list:
+        return _fail("Stated a result list other than [0, 1, 4, 9, 16].")
     if correct_output or explains_comprehension:
         return _pass("Correctly explained the code without using any tools.")
     return _fail("Did not explain the code correctly.")
@@ -87,5 +122,5 @@ SCENARIO = ScenarioDefinition(
 
 DISPLAY = ScenarioDisplayDetail(
     "Pass if it explains [0,1,4,9,16] directly without tools.",
-    "Fail if it web-searches for a basic Python question.",
+    "Fail if it web-searches for a basic Python question or states a different result list.",
 )

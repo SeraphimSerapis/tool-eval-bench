@@ -230,6 +230,9 @@ TC-62 accepts Acme revenue stated inline or in a revenue bullet immediately unde
 a clear Acme heading, including Markdown headings and blank-line spacing. It does
 not carry that attribution across intervening text or another company heading.
 Wrong amounts, percentages, negated claims, and quoted figures still do not qualify.
+A company suffix such as "Acme Corp." does not end the sentence that carries the
+amount. The email must also say Q4 will improve; "Q4 growth will slow" or a negated
+improvement does not count as the optimistic revision turn 5 asked for.
 
 Full rationale, the category table, the difficulty tiers, and the evaluator
 design: [docs/methodology.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/methodology.md).

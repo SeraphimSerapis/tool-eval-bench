@@ -21,10 +21,16 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
+    negated_before as _negated_before,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    recipient_values as _recipient_values,
 )
 from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
@@ -157,7 +163,8 @@ def _tc62_asserts_competitor_amount(body: str) -> bool:
     or another number follows Acme), a negation between Acme and the figure,
     and quoted claims are all rejected.
     """
-    text = _TC62_QUOTED_TEXT.sub("", body.lower())
+    text = _TC62_ACME_SUFFIX_PERIOD.sub(r"\1", body)
+    text = _TC62_QUOTED_TEXT.sub("", text.lower())
     text = _TC62_STRAIGHT_SINGLE_QUOTED_TEXT.sub("", text)
     text = _TC62_HEADING_REVENUE.sub(r"acme revenue: \g<amount>", text)
     for sentence in _TC62_SENTENCE_BREAK.split(text):
@@ -170,6 +177,46 @@ def _tc62_asserts_competitor_amount(body: str) -> bool:
             if _TC62_NEGATION.search(sentence[acme + len("acme") : match.start()]):
                 break
             return _tc62_amount_value(match) == _TC62_COMPETITOR_AMOUNT
+    return False
+
+
+# The period in "Acme Corp." is not a sentence break when the sentence plainly
+# continues ("Acme Corp. reported $3.8M"). The join runs on the original case,
+# so a capitalised new sentence ("We beat Acme Corp. Our draft showed $3.8M")
+# keeps its break and its figure is not credited to Acme.
+_TC62_ACME_SUFFIX_PERIOD = re.compile(
+    r"(\b[Aa][Cc][Mm][Ee]\s+(?:[Cc]orp(?:oration)?|[Ii]nc|[Cc]o|[Ll]td))\.(?=\s+[a-z$\d(])"
+)
+_TC62_Q4 = re.compile(r"\b(?:q4|fourth[\s-]+quarter)\b")
+_TC62_UPWARD = re.compile(
+    r"\b(?:improv\w*|better|strong(?:er)?|rebound\w*|pick(?:s|ing)?\s+up|accelerat\w*"
+    r"|increas\w*|recover\w*|positive|optimistic|promising|bright\w*|upside)\b"
+)
+_TC62_SPAN_NEGATION = re.compile(r"\b(?:not|never|no|without)\b|n't\b")
+_TC62_Q4_CLAIM_WINDOW = 60
+
+
+def _tc62_claims_q4_improvement(body: str) -> bool:
+    """True when the body says Q4 will improve, as turn 5 asked.
+
+    "Q4" and an upward word must sit in the same clause, close together and in
+    either order, with no negation reaching them. Bare "growth" and "expect"
+    do not count: the Acme search result itself says "Growth rate: 12%", and
+    "we expect Q4 growth to slow" is not an improvement.
+    """
+    text = body.lower().replace("\u2019", "'")
+    for sentence in _TC62_SENTENCE_BREAK.split(text):
+        for quarter in _TC62_Q4.finditer(sentence):
+            for upward in _TC62_UPWARD.finditer(sentence):
+                start = min(quarter.start(), upward.start())
+                end = max(quarter.end(), upward.end())
+                if end - start > _TC62_Q4_CLAIM_WINDOW:
+                    continue
+                if _TC62_SPAN_NEGATION.search(sentence[start:end]):
+                    continue
+                if _negated_before(sentence[max(0, start - 120) : start]):
+                    continue
+                return True
     return False
 
 
@@ -253,20 +300,22 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
     ]
     resolved_cfo = bool(cfo_contact_calls)
+
+    # `recipient_values` accepts the JSON-array form as well as a string, per
+    # the suite's recipient policy; the CFO must still be the only recipient.
+    def addressed_to_cfo_only(call: ToolCallRecord) -> bool:
+        return _recipient_values(call.arguments.get("to")) == ["cfo@company.com"]
+
     email_calls = [
         call
         for call in _tool_calls_by_name(state, "send_email")
-        if _as_str(call.arguments.get("to")).strip().lower() == "cfo@company.com"
+        if addressed_to_cfo_only(call)
         and _as_str(call.arguments.get("subject")).strip()
         and _as_str(call.arguments.get("body")).strip()
         and _result_matches_if_present(state, call, email_result_is_sent)
     ]
     email_attempts = _tool_calls_by_name(state, "send_email")
-    cfo_email_attempts = [
-        call
-        for call in email_attempts
-        if _as_str(call.arguments.get("to")).strip().lower() == "cfo@company.com"
-    ]
+    cfo_email_attempts = [call for call in email_attempts if addressed_to_cfo_only(call)]
     sent_email = bool(email_attempts)
     email_to_cfo = bool(cfo_email_attempts)
     email_body = (
@@ -281,9 +330,7 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     # comparison, so no global negation gate is applied.
     body_has_corrected = "4.15" in body_lower or "4150000" in body_lower.replace(",", "")
     body_has_competitor = _tc62_asserts_competitor_amount(email_body)
-    body_is_optimistic = any(
-        word in body_lower for word in ("optimistic", "improve", "growth", "positive", "expect")
-    )
+    body_is_optimistic = _tc62_claims_q4_improvement(email_body)
     phase_data_present = any(call.user_phase is not None for call in state.tool_calls)
     # `email_calls` holds only the *qualifying* sends — right recipient, subject,
     # body, and a "sent" result. A model that emails the wrong address, or omits

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -11,6 +12,9 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioEvaluation,
     ScenarioState,
     ToolCallRecord,
+)
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
 )
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
@@ -95,6 +99,39 @@ def _tc13_search_signature(call: ToolCallRecord) -> tuple[str, str]:
     return query, file_type
 
 
+_TC13_FILE_ID = re.compile(r"\bfile_\d+\b", re.IGNORECASE)
+_TC13_FILENAME = re.compile(r"\b[\w-]+\.(?:pdf|docx?|xlsx?|pptx?)\b", re.IGNORECASE)
+# "Found no matches" and "found that the search was empty" report the empty
+# result; they are not a claim to have located a file.
+_TC13_FOUND_CLAIM = re.compile(
+    r"\b(?:found|located)\b(?!\s+(?:no|nothing|none|zero|0|that)\b)"
+    r"|\bhere(?:'s|\s+is)\s+(?:the|your)\s+(?:johnson|file|document|proposal)",
+    re.IGNORECASE,
+)
+_TC13_DENIAL = re.compile(
+    r"\bno\b[^.!?\n]{0,30}\b(?:document|file|proposal|match|result)s?\b"
+    r"|\b(?:couldn't|could\s+not|can't|cannot|unable\s+to)\s+(?:find|locate)\b"
+    r"|\bnot\s+found\b|\bdoes(?:n't|\s+not)\s+exist\b|\bnothing\s+(?:was\s+)?found\b",
+    re.IGNORECASE,
+)
+_TC13_RECOVERED_DOCUMENT = re.compile(
+    r"\bfile_117\b|johnson[_ ]project[_ ]proposal|proposal[_ ]v2", re.IGNORECASE
+)
+
+
+def _tc13_search_result_text(state: ScenarioState, *, default: str = "") -> str:
+    """Return every recorded search result as lowercase text, for grounding names."""
+    results = [r for r in state.tool_results if r.name == "search_files"]
+    if not results:
+        return default
+    return " ".join(str(r.result) for r in results).lower()
+
+
+def _tc13_ungrounded_ids(answer: str, grounded: str) -> set[str]:
+    known = {file_id.lower() for file_id in _TC13_FILE_ID.findall(grounded)}
+    return {file_id.lower() for file_id in _TC13_FILE_ID.findall(answer)} - known
+
+
 @forbid_unrequested_side_effects()
 def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
     searches = _tool_calls_by_name(state, "search_files")
@@ -127,11 +164,39 @@ def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
                 return _fail("The retry returned no recognized Johnson document.")
             if not any(_tc13_result_has_document(r.result) for r in retry_results):
                 return _fail("The retry returned no recognized Johnson document.")
+        answer = state.final_answer.replace("\u2019", "'")
+        # Synthetic states without recorded results: the mock's retry result
+        # is the only file the scenario can return.
+        grounded = _tc13_search_result_text(
+            state, default="file_117 johnson_project_proposal_v2.docx"
+        )
+        if _tc13_ungrounded_ids(answer, grounded) or any(
+            name.lower() not in grounded for name in _TC13_FILENAME.findall(answer)
+        ):
+            return _fail("Named a file the search results never returned.")
+        # An empty answer still passes: the retry itself is the recovery. What
+        # cannot pass is telling the user the document does not exist after
+        # the retry found it. Narrating the first, empty search ("couldn't
+        # find it at first, but...") is fine when the answer also reports it.
+        if (
+            _TC13_DENIAL.search(answer)
+            and not _TC13_RECOVERED_DOCUMENT.search(answer)
+            and not _answer_affirms_pattern(answer, _TC13_FOUND_CLAIM)
+        ):
+            return _fail("Retried and recovered the document, but told the user it does not exist.")
         return _pass("Retried after the empty result and recovered.")
     if clarified:
         explicit_results = [r for r in state.tool_results if r.name == "search_files"]
         if explicit_results and any(_tc13_result_has_document(r.result) for r in explicit_results):
             return _partial("Asked for clarification even though the search returned a document.")
+        # Every search came back empty, so any file the answer claims to have
+        # found is invented. A filename offered as a guess ("is it saved under
+        # another name, like Johnson_RFP.pdf?") is a fair clarifying question;
+        # a filename the answer says it found is not.
+        if _tc13_ungrounded_ids(state.final_answer, _tc13_search_result_text(state)):
+            return _fail("Named a file id the empty search never returned.")
+        if _answer_affirms_pattern(state.final_answer, _TC13_FOUND_CLAIM):
+            return _fail("Claimed to have found a file after the search returned nothing.")
         return _pass("Asked for clarification after the empty result.")
     return _fail("Did not adapt after the empty search response.")
 

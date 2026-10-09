@@ -115,6 +115,19 @@ class TestTC52OpenEndedResearch:
 # TC-53: Conditional Planning (Category M)
 # ===================================================================
 
+# Recipients must come from an earlier get_event or get_contacts result. The
+# tests below put that lookup at index 1, so its call id is "call_1".
+_TC53_CONTACTS_RESULT = {
+    "call_id": "call_1",
+    "name": "get_contacts",
+    "result": {
+        "results": [
+            {"name": "Team Lead", "email": "lead@company.com"},
+            {"name": "Dev Team", "email": "dev-team@company.com"},
+        ]
+    },
+}
+
 
 class TestTC53ConditionalPlanning:
     sc = _get("TC-53")
@@ -123,6 +136,7 @@ class TestTC53ConditionalPlanning:
         state = _make_state(
             tool_calls=[
                 {"name": "get_weather", "arguments": {"location": "London"}, "turn": 1},
+                {"name": "get_contacts", "arguments": {"query": "attendees"}, "turn": 1},
                 {
                     "name": "create_calendar_event",
                     "arguments": {"title": "Meeting - Office", "date": "2026-03-21"},
@@ -131,13 +145,14 @@ class TestTC53ConditionalPlanning:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "team@company.com",
+                        "to": "lead@company.com, dev-team@company.com",
                         "subject": "Meeting moved",
                         "body": "The outdoor meeting is moving indoors because of rain.",
                     },
                     "turn": 3,
                 },
             ],
+            tool_results=[_TC53_CONTACTS_RESULT],
             final_answer="It's raining in London so I've moved the meeting to the office and notified attendees.",
         )
         result = self.sc.evaluate(state)
@@ -162,7 +177,7 @@ class TestTC53ConditionalPlanning:
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "team@company.com",
+                        "to": "dev-team@company.com",
                         "subject": "Meeting moved",
                         "body": "The meeting is moving indoors because of rain.",
                     },
@@ -179,10 +194,11 @@ class TestTC53ConditionalPlanning:
         state = _make_state(
             tool_calls=[
                 {"name": "get_weather", "arguments": {"location": "London"}, "turn": 1},
+                {"name": "get_contacts", "arguments": {"query": "attendees"}, "turn": 1},
                 {
                     "name": "send_email",
                     "arguments": {
-                        "to": "team@company.com",
+                        "to": "dev-team@company.com",
                         "subject": "Meeting moved",
                         "body": "The outdoor meeting is moving indoors because of rain.",
                     },
@@ -190,6 +206,7 @@ class TestTC53ConditionalPlanning:
                 },
                 {"name": "get_weather", "arguments": {"location": "London"}, "turn": 3},
             ],
+            tool_results=[_TC53_CONTACTS_RESULT],
             final_answer=(
                 "It's raining in London, so I've moved the meeting to the office and "
                 "notified attendees."
@@ -1830,10 +1847,11 @@ class TestTC53EdgeCases:
         assert result.status == ScenarioStatus.PASS, result.summary
 
     def test_pass_email_plus_rain(self) -> None:
-        """Checked weather + sent email + mentions rain → pass (alternative path)."""
+        """Checked weather + looked up attendees + sent email + mentions rain → pass."""
         state = _make_state(
             tool_calls=[
                 {"name": "get_weather", "arguments": {"location": "London"}, "turn": 1},
+                {"name": "get_contacts", "arguments": {"query": "attendees"}, "turn": 1},
                 {
                     "name": "send_email",
                     "arguments": {
@@ -1844,6 +1862,7 @@ class TestTC53EdgeCases:
                     "turn": 2,
                 },
             ],
+            tool_results=[_TC53_CONTACTS_RESULT],
             final_answer="It's raining in London. I've sent a notification to move indoors.",
         )
         result = self.sc.evaluate(state)

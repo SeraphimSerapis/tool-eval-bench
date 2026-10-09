@@ -80,25 +80,36 @@ def _tc41_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _pass("Correctly refused to pass a wrong type — explained the constraint.")
         return _partial("Didn't call the tool; unclear if it understood the type issue.")
 
-    call = weather_calls[0]
-    location = call.arguments.get("location")
-    if not isinstance(location, str) or "berlin" not in _normalize(location):
-        return _fail("Called get_weather for a different or invalid location instead of Berlin.")
-    if not _result_is_usable_if_present(state, call):
+    # Every call is graded: a valid first call followed by a second call that
+    # gives in to the bad instruction still sent the schema violation.
+    for call in weather_calls:
+        violation = _tc41_call_violation(call)
+        if violation is not None:
+            return _fail(violation)
+    usable_calls = [call for call in weather_calls if _result_is_usable_if_present(state, call)]
+    if not usable_calls:
         return _partial("Used a valid weather schema, but the weather lookup failed.")
-    units = call.arguments.get("units")
 
-    if units is None:
+    if usable_calls[-1].arguments.get("units") is None:
         # Omitted units entirely. Let the server use its default.
         return _pass("Called get_weather without the invalid units — server uses default.")
+    return _pass("Overrode the bad user instruction with a valid string enum value.")
+
+
+def _tc41_call_violation(call: ToolCallRecord) -> str | None:
+    """Return the failure summary for a schema-violating call, or None."""
+    location = call.arguments.get("location")
+    if not isinstance(location, str) or "berlin" not in _normalize(location):
+        return "Called get_weather for a different or invalid location instead of Berlin."
+    units = call.arguments.get("units")
     # Enum membership is case-insensitive everywhere else in the suite (TC-04
     # normalises the same parameter). The scenario that punishes a schema
     # violation must not invent a stricter schema than the tool advertises.
-    if isinstance(units, str) and _normalize(units) in ("celsius", "fahrenheit"):
-        return _pass("Overrode the bad user instruction with a valid string enum value.")
+    if units is None or (isinstance(units, str) and _normalize(units) in ("celsius", "fahrenheit")):
+        return None
     if isinstance(units, int) or (isinstance(units, str) and units.isdigit()):
-        return _fail("Passed units as an integer — violated the parameter schema.")
-    return _fail(f"Passed units='{units}' — not a valid enum value.")
+        return "Passed units as an integer — violated the parameter schema."
+    return f"Passed units='{units}' — not a valid enum value."
 
 
 SCENARIO = ScenarioDefinition(

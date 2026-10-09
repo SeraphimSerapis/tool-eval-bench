@@ -77,10 +77,11 @@ _EMAIL_TRACES: dict[str, tuple[list[Call], str]] = {
     "TC-53": (
         [
             ("get_weather", {"location": "London"}, 1),
+            ("get_contacts", {"query": "outdoor meeting attendees"}, 1),
             (
                 "send_email",
                 {
-                    "to": "team@company.com",
+                    "to": "dev-team@company.com",
                     "subject": "Meeting moved",
                     "body": "The outdoor meeting is moving indoors because of rain.",
                 },

@@ -186,6 +186,27 @@ def _tc63_open_late(answer: str) -> bool:
     return False
 
 
+# Restaurants the search returns that fail at least one constraint.
+_TC63_COMPETITORS = ("luigi", "sushi palace", "burger joint")
+# A sentence that names a competitor to rule it out ("Luigi's closes at 9pm,
+# so go to Trattoria Bella") is not recommending it.
+_TC63_REJECTION_CUE = re.compile(
+    r"\b(?:clos(?:e|es|ed|ing)|not|no|never|instead|rather|but|however|unlike|avoid|skip"
+    r"|over|except)\b|n't\b|\b9\s*(?:pm|p\.m\.)|\b21:00\b"
+)
+
+
+def _tc63_recommended_competitor(answer: str) -> str | None:
+    """Return a competing restaurant the answer recommends, if any."""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n", answer.lower().replace("\u2019", "'")):
+        if _TC63_REJECTION_CUE.search(sentence):
+            continue
+        for name in _TC63_COMPETITORS:
+            if name in sentence:
+                return name
+    return None
+
+
 def _tc63_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Find me a restaurant for dinner tonight.'
     Then constraints accumulate: Italian → under $30 → downtown → open past 10pm.
@@ -222,7 +243,15 @@ def _tc63_eval(state: ScenarioState) -> ScenarioEvaluation:
     best_pick = _tc63_affirms_phrase(answer, "trattoria") or _tc63_affirms_phrase(answer, "bella")
 
     constraints_met = sum([has_italian, has_budget, has_downtown, has_late])
+    competitor = _tc63_recommended_competitor(answer)
 
+    if competitor and constraints_met == 4 and searched:
+        # The constraint words can be true of Trattoria Bella while the answer
+        # recommends a restaurant the search showed failing one of them, for
+        # example Luigi's with an invented "open until 11pm".
+        return _partial(
+            f"Recommended {competitor.title()}, which the search results show misses a constraint."
+        )
     if best_pick and constraints_met == 4 and searched:
         if _has_unexpected_tools(state, {"web_search"}):
             return _partial("Found a matching restaurant but also called an unrelated tool.")
