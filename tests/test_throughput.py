@@ -408,6 +408,12 @@ async def test_stream_one_retries_without_return_token_ids_on_strict_endpoint() 
     assert "return_token_ids" not in bodies[1]
 
 
+# Windows timers can wake asyncio.sleep several milliseconds early, so the TTFT
+# assertions check half the delay: enough to tell a delayed first event from
+# header arrival (about 0 ms) without depending on timer precision.
+_FIRST_EVENT_DELAY_S = 0.05
+
+
 class _DelayedSSEStream(httpx.AsyncByteStream):
     def __init__(self, chunks: list[bytes], delay_seconds: float) -> None:
         self._chunks = chunks
@@ -430,7 +436,7 @@ async def test_stream_one_ttft_waits_for_first_content_not_headers() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            stream=_DelayedSSEStream([first, done], 0.025),
+            stream=_DelayedSSEStream([first, done], _FIRST_EVENT_DELAY_S),
             headers={"content-type": "text/event-stream"},
         )
 
@@ -445,7 +451,7 @@ async def test_stream_one_ttft_waits_for_first_content_not_headers() -> None:
         )
 
     assert sample.error is None
-    assert sample.ttft_ms >= 20.0
+    assert sample.ttft_ms >= _FIRST_EVENT_DELAY_S * 1000 / 2
 
 
 @pytest.mark.parametrize("reasoning_field", ["reasoning", "reasoning_content"])
@@ -469,7 +475,7 @@ async def test_stream_one_counts_reasoning_as_generated_output(reasoning_field: 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            stream=_DelayedSSEStream([first, done], 0.025),
+            stream=_DelayedSSEStream([first, done], _FIRST_EVENT_DELAY_S),
             headers={"content-type": "text/event-stream"},
         )
 
@@ -484,7 +490,7 @@ async def test_stream_one_counts_reasoning_as_generated_output(reasoning_field: 
         )
 
     assert sample.error is None
-    assert sample.ttft_ms >= 20.0
+    assert sample.ttft_ms >= _FIRST_EVENT_DELAY_S * 1000 / 2
     assert sample.ttft_ms < sample.total_ms
     assert sample.tg_tokens == 1
     assert len(sample.token_timestamps) == 1
