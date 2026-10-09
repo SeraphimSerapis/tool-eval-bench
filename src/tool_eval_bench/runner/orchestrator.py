@@ -578,9 +578,9 @@ async def run_scenario(
             # provider says it stopped for length. Grading the empty string
             # would blame the model's judgement for a harness setting, so
             # stop here and tag the run instead.
-            # The Gemini adapter stands in "[no content: MAX_TOKENS]" for an
-            # empty candidate, so that placeholder counts as no answer too.
-            visible_answer = bool(result.content) and not result.content.startswith("[no content:")
+            # _is_visible_answer also treats the Gemini "[no content: ...]"
+            # placeholder and whitespace-only text as no answer.
+            visible_answer = _is_visible_answer(result.content)
             if not result.tool_calls and not visible_answer and result.finish_reason == "length":
                 reasoning_chars = len(result.reasoning or "")
                 truncated_stop = (
@@ -693,7 +693,9 @@ async def run_scenario(
             else "Model did not return a final answer."
         )
     # The placeholder above is for the trace and evaluators, not an answer.
-    answered = bool(state.assistant_messages) and _is_visible_answer(state.final_answer)
+    # Any phase counts: a draft followed by an empty follow-up reply is still
+    # an answer the evaluator can grade.
+    answered = any(_is_visible_answer(message) for message in state.assistant_messages)
     trace_lines.append(f"final_answer={state.final_answer}")
 
     # Evaluate — wrapped in try/except so evaluator bugs don't crash the

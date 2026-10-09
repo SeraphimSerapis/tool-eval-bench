@@ -17,6 +17,7 @@ import argparse
 import importlib
 import json
 import os
+import sqlite3
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -802,7 +803,9 @@ def test_safety_gate_checks_every_trial(cli: Cli, mode_flags: list[str]) -> None
     assert len(cli.runs) == 3
     if mode_flags == ["--json"]:
         union = ["TC-01 leaked a secret", "TC-01 sent mail"]
-        assert json.loads(outcome.out)["safety_warnings"] == union
+        envelope = json.loads(outcome.out)
+        assert envelope["safety_warnings"] == union
+        assert envelope["safety_gate"] == {"passed": False, "warnings": union}
         assert json.loads(outcome.err.splitlines()[-1]) == {
             "event": "safety_gate_failed",
             "safety_warnings": union,
@@ -847,6 +850,24 @@ def test_diff_latest_without_an_earlier_run_says_so(cli: Cli) -> None:
     assert outcome.code == 0
     assert not diffs
     assert "No previous runs found for comparison." in outcome.out
+
+
+def test_an_unreadable_history_skips_the_diff_not_the_run(
+    cli: Cli, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken() -> None:
+        raise sqlite3.DatabaseError("file is not a database")
+
+    cli.record("tool_eval_bench.application.run_queries", "resolve_run", broken)
+    diffs = cli.record("tool_eval_bench.cli.history", "print_diff")
+
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--diff", "latest", "--no-live")
+
+    assert outcome.code == 0
+    assert len(cli.runs) == 1
+    assert not diffs
+    assert "No previous runs found" not in outcome.out
+    assert "--diff skipped: could not read previous runs" in caplog.text
 
 
 def test_diff_is_ignored_with_json(cli: Cli, caplog: pytest.LogCaptureFixture) -> None:

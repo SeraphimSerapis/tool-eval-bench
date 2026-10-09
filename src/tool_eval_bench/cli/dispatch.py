@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import sqlite3
 import sys
 import time
 from collections.abc import Mapping
@@ -299,7 +300,14 @@ def _resolve_diff_target(args: argparse.Namespace) -> None:
         return
     from tool_eval_bench.application.run_queries import resolve_run
 
-    resolved = resolve_run(diff, run_type="tool_eval", status="completed")
+    try:
+        resolved = resolve_run(diff, run_type="tool_eval", status="completed")
+    except (sqlite3.Error, OSError) as exc:
+        # The diff is a convenience printed after the run; an unreadable
+        # history database must not stop the benchmark from starting.
+        logger.warning("--diff skipped: could not read previous runs (%s)", exc)
+        args.diff = None
+        return
     args._diff_target = resolved[0] if resolved is not None else None
 
 
@@ -1993,9 +2001,12 @@ def _run_json(
         output = results[-1]  # last run as the primary result
         if agg:
             output["trial_statistics"] = agg
-        # The envelope's top-level safety_warnings is what consumers check, so
-        # it covers every trial; scores.safety_warnings stays the last trial's.
-        output["safety_warnings"] = _trial_safety_warnings(results)
+        # The envelope's top-level safety_warnings and safety_gate are what
+        # consumers check, so they cover every trial; scores.safety_warnings
+        # stays the last trial's.
+        union = _trial_safety_warnings(results)
+        output["safety_warnings"] = union
+        output["safety_gate"] = {"passed": not union, "warnings": union}
         _emit_json_output(output, json_file=json_file)
     if _trials_safety_gate_failed(args, results):
         raise SystemExit(2)

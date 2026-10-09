@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from scenario_replay import replay, turn
 
 from tool_eval_bench import api
 from tool_eval_bench.application import service as service_mod
@@ -147,6 +148,19 @@ async def test_a_scenario_the_evaluator_already_failed_is_unchanged() -> None:
     result = await _run(Replies(""), _scenario("S-1", points=0))
 
     assert result.summary == "S-1 graded"
+
+
+def test_an_earlier_draft_counts_as_an_answer_when_the_follow_up_is_empty() -> None:
+    draft = (
+        "Here's a draft for your review:\n\nSubject: Deadline extension\n"
+        "Hi Sarah, the deadline has been extended to Friday. Best, Alex\n\n"
+        "I won't send it until you approve."
+    )
+
+    result = replay("TC-49", turn(answer=draft), turn())
+
+    assert (result.status, result.points) == (ScenarioStatus.PARTIAL, 1)
+    assert result.summary != "Returned no answer and made no tool calls."
 
 
 # -- trial statistics -------------------------------------------------------------

@@ -19,6 +19,10 @@ Those modes go through ``application.mode_runs.finalize_mode_run``; patch
 longer changes the scored runners or the resume compatibility check. Both build
 from ``cli.scored_run.ScoredRun``; patch ``ScoredRun.service_kwargs`` or
 ``ScoredRun.run_settings`` instead.
+
+``_safety_gate_failed`` is importable from here as well, but patching it no
+longer changes the ``--fail-on-safety`` exit. The scored runners gate every
+trial at once through ``cli.helpers.trials_safety_gate_failed``.
 """
 
 from __future__ import annotations

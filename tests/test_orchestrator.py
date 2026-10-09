@@ -991,6 +991,24 @@ async def test_length_stop_with_a_visible_answer_is_graded_normally() -> None:
 
 
 @pytest.mark.asyncio
+async def test_length_stop_with_only_whitespace_is_tagged_as_truncated() -> None:
+    scenario = _tool_failing_evaluator("TRUNC-03")
+    adapter = MockAdapter(
+        [ChatCompletionResult(content="\n  ", reasoning="x" * 100, finish_reason="length")]
+    )
+    result = await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+    )
+    assert result.failure_kind == FailureKind.REASONING_TRUNCATED
+    assert "truncated=Turn 1 hit the max_tokens ceiling" in result.raw_log
+
+
+@pytest.mark.asyncio
 async def test_every_turn_is_streamed_with_the_thinking_ceiling() -> None:
     scenario = _tool_failing_evaluator("STREAM-01")
     adapter = _tool_then_final_adapter()
