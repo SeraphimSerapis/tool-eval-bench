@@ -9,10 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.storage.reports._common import (
+    _render_engine_context,
     _trace_block,
     markdown_label,
     report_filename,
+    tool_version_line,
 )
 
 
@@ -28,6 +31,7 @@ def write_pressure_sweep_report(
     breaking_point: float | None,
     first_degradation: float | None,
     label: str | None = None,
+    run_context: RunContext | None = None,
 ) -> Path:
     """Write a trace-complete artifact for a context-pressure sweep."""
     now = datetime.now(timezone.utc)
@@ -35,12 +39,14 @@ def write_pressure_sweep_report(
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / report_filename(run_id, label)
     label_line = [f"- **Label**: {markdown_label(label)}"] if label else []
+    version_line = [tool_version_line(run_context)] if run_context is not None else []
     markdown = [
         f"# Context Pressure Sweep — {model}",
         "",
         f"- **Run ID**: `{run_id}`",
         f"- **Date**: `{now.isoformat()}`",
         "- **Mode**: context-pressure-sweep",
+        *version_line,
         *label_line,
         f"- **Backend**: {backend}",
         f"- **Server**: {display_url}",
@@ -58,6 +64,8 @@ def write_pressure_sweep_report(
         ),
         "",
     ]
+    if run_context is not None:
+        markdown.extend(_render_engine_context(run_context))
     for index, level in enumerate(level_results, start=1):
         markdown.extend(
             [

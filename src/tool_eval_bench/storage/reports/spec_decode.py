@@ -6,10 +6,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.spec_decode import per_position_acceptance
 from tool_eval_bench.storage.reports._common import (
+    _render_engine_context,
     markdown_label,
     report_filename,
+    tool_version_line,
 )
 
 
@@ -20,6 +23,7 @@ def write_spec_decode_report(
     spec_samples: list[Any],
     label: str | None = None,
     temperature: float | None = None,
+    run_context: RunContext | None = None,
 ) -> Path:
     """Write a Markdown report for speculative decoding benchmark results."""
     now = datetime.now(timezone.utc)
@@ -28,12 +32,14 @@ def write_spec_decode_report(
     path = folder / report_filename(run_id, label)
 
     label_line = [f"- **Label**: {markdown_label(label)}"] if label else []
+    version_line = [tool_version_line(run_context)] if run_context is not None else []
     md = [
         f"# Speculative Decoding Benchmark — {model}",
         "",
         f"- **Run ID**: `{run_id}`",
         f"- **Date**: `{now.isoformat()}`",
         "- **Mode**: spec-bench",
+        *version_line,
         *label_line,
     ]
 
@@ -80,6 +86,9 @@ def write_spec_decode_report(
         )
 
     md.append("")
+
+    if run_context is not None:
+        md.extend(_render_engine_context(run_context))
 
     # Results table
     md.extend(["## Results", ""])

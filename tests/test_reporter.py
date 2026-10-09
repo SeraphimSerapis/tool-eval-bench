@@ -760,3 +760,46 @@ class TestLabelInReports:
         assert "\n# Forged Result\n" not in content
         assert "<code>baseline`\\n\\n# Forged Result" in content
         assert "&#124; fake</code>" in content
+
+
+def test_spec_decode_report_renders_the_probed_engine(tmp_path):
+    from dataclasses import dataclass
+
+    from tool_eval_bench.domain.models import RunContext
+
+    @dataclass
+    class FakeSpec:
+        prompt_type: str = "filler"
+        depth: int = 0
+        effective_tg_tps: float = 100.0
+        tg_tps: float = 120.0
+        ttft_ms: float = 90.0
+        total_ms: float = 2000.0
+        tg_tokens: int = 128
+
+    ctx = RunContext(
+        tool_version="2.5.0",
+        git_sha="abc123",
+        hostname="spec-host",
+        platform_info="p",
+        python_version="3.12",
+        model="m",
+        backend="vllm",
+        base_url="http://***:8000",
+        temperature=0.7,
+        engine_name="vLLM",
+        engine_version="0.11.0",
+        spec_decoding="mtp (k=3)",
+    )
+    reporter = MarkdownReporter(root=str(tmp_path))
+    text = reporter.write_spec_decode_report(
+        "spec_ctx", "model", [FakeSpec()], temperature=0.0, run_context=ctx
+    ).read_text(encoding="utf-8")
+
+    assert "- **tool-eval-bench**: `v2.5.0 abc123`" in text
+    assert "| Engine | vLLM 0.11.0 |" in text
+    assert "| Spec Decoding | mtp (k=3) |" in text
+    # spec-bench sends its own temperature, so the CLI parameter table, which
+    # would claim 0.7 here, stays out of the report.
+    assert "| Temperature |" not in text
+    assert "- **Temperature**: 0 (greedy" in text

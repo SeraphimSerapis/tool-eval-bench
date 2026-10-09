@@ -126,8 +126,21 @@ def _render_held_out_note(
     return md
 
 
+def tool_version_line(ctx: RunContext) -> str:
+    """Return the ``tool-eval-bench`` version bullet for a report header."""
+    version = f"v{ctx.tool_version}"
+    if ctx.git_sha:
+        version += f" {ctx.git_sha}"
+    return f"- **tool-eval-bench**: `{version}`"
+
+
 def _render_run_context(ctx: RunContext) -> list[str]:
     """Render RunContext as Markdown tables for embedding in reports."""
+    return [*_render_run_parameters(ctx), *_render_engine_context(ctx)]
+
+
+def _render_run_parameters(ctx: RunContext) -> list[str]:
+    """Render the CLI parameters a scenario run was invoked with."""
     md: list[str] = []
 
     # -- Run Context table (Tier 2: CLI parameters) --
@@ -175,6 +188,17 @@ def _render_run_context(ctx: RunContext) -> list[str]:
 
         md.append(f"| Extra Params | `{_json.dumps(ctx.extra_params)}` |")
     md.append("")
+    return md
+
+
+def _render_engine_context(ctx: RunContext) -> list[str]:
+    """Render the probed engine and host, which every report mode can share.
+
+    Kept apart from the parameter table because the sweep and spec-bench modes
+    run with their own temperature, timeout, and concurrency rather than the
+    CLI values recorded in the context.
+    """
+    md: list[str] = []
 
     # -- Inference Engine table (Tier 3: best-effort) --
     has_engine_info = any(

@@ -48,6 +48,7 @@ def _write_pressure_sweep_report(
     first_degradation: float | None,
     output_dir: str | None,
     label: str | None = None,
+    run_context: RunContext | None = None,
 ) -> Path:
     """Compatibility wrapper around the shared Markdown reporter."""
     from tool_eval_bench.storage.reports import MarkdownReporter
@@ -63,6 +64,7 @@ def _write_pressure_sweep_report(
         breaking_point=breaking_point,
         first_degradation=first_degradation,
         label=label,
+        run_context=run_context,
     )
 
 
@@ -450,6 +452,7 @@ def run_pressure_sweep(
             "first_degradation": first_degradation,
             "output_dir": getattr(args, "output_dir", None),
             "label": label,
+            "run_context": run_context,
         },
         run_data=run_data,
         persist_plugin_run=persist_plugin_run,
