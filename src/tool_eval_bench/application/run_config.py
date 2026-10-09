@@ -6,13 +6,22 @@ results, differing only in the scenario list.  `RunSettings` captures the
 parameters that do not change between those two calls so the second is a
 one-liner.
 
+Every persisted key is declared once, in :data:`RUN_CONFIG_FIELDS`, with the
+rules that used to live in three places that had to agree: how the stored
+config is built and fingerprinted, how ``--resume`` compares it with the
+current flags, and which keys the leaderboard ignores when it groups different
+models into one cohort.  Adding a key means adding a row, and the row has no
+defaults, so it cannot be added without deciding each rule.
+
 This is an internal composition helper.  The service's own keyword signature is
 the published API and is unchanged; nothing here appears in it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import ScenarioDefinition
@@ -33,6 +42,9 @@ COMPARISON_METADATA_KEYS = (
     "slot_count",
     "spec_decoding",
 )
+
+#: The key :func:`build_run_config` stores the fingerprint under.
+CONFIG_FINGERPRINT_KEY = "config_fingerprint"
 
 
 @dataclass(frozen=True)
@@ -62,6 +74,337 @@ class RunSettings:
     decision_judge: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class _Inputs:
+    settings: RunSettings
+    scenarios: list[ScenarioDefinition]
+    scenario_packs: list[dict[str, Any]] | None
+
+
+class Presence(Enum):
+    """When a key is written to the stored config."""
+
+    ALWAYS = "always"
+    #: Optional keys added after runs were already stored.  Writing them only
+    #: when set keeps a default run's config, and so its cohort, unchanged.
+    WHEN_NOT_NONE = "when_not_none"
+    WHEN_NONEMPTY = "when_nonempty"
+
+    def keeps(self, value: Any) -> bool:
+        if self is Presence.WHEN_NOT_NONE:
+            return value is not None
+        if self is Presence.WHEN_NONEMPTY:
+            return bool(value)
+        return True
+
+
+class Fingerprint(Enum):
+    """How a key contributes to ``config_fingerprint``."""
+
+    INCLUDE = "include"
+    #: Order-insensitive: the same scenarios in another order are one cohort.
+    SORTED = "sorted"
+    #: Stored for resume, but never splits a cohort.
+    EXCLUDE = "exclude"
+
+
+class Absent(Enum):
+    """What a key missing from a stored run means to the resume check."""
+
+    #: The run predates the key.  Validate only what it recorded.
+    SKIP = "skip"
+    #: The key is written only when set, so absence means the unset value.
+    UNSET = "unset"
+
+
+@dataclass(frozen=True)
+class ResumeCheck:
+    """How ``--resume`` compares a stored key with the current run's.
+
+    ``describe(stored, current)`` returns a mismatch message, or None when the
+    two are compatible.  Without it, any inequality reports the bare key.
+    """
+
+    absent: Absent
+    unset: Any = None
+    describe: Callable[[Any, Any], str | None] | None = None
+
+
+@dataclass(frozen=True)
+class ConfigField:
+    """One persisted config key and every rule that applies to it.
+
+    The classification attributes deliberately have no defaults.
+    """
+
+    key: str
+    value: Callable[[_Inputs], Any]
+    presence: Presence
+    fingerprint: Fingerprint
+    #: Names the model or endpoint under test.  The leaderboard cohort compares
+    #: different models under the same conditions, so it drops these keys.
+    identifies_model: bool
+    #: None when resume does not compare the key.
+    resume: ResumeCheck | None
+
+
+def _pressure_mismatch(previous: Any, current: dict[str, Any] | None) -> str | None:
+    """Name a context-pressure difference that would merge two fill levels into one run.
+
+    A run without pressure persists no ``context_pressure`` key; the key has been
+    written since the option existed, so absence always means "no pressure".
+
+    The ratio and the fill target decide what the model sees. The detected
+    ``context_size`` is not compared: a restarted server can report a slightly
+    different KV capacity, and the fill target is quantised to whole filler
+    chunks, so drift that leaves the fill unchanged must not block a resume.
+    The calibrated ``fill_tokens`` is not compared either, because an unseeded
+    run draws fresh filler and lands within the calibration tolerance, never
+    on the same count twice.
+    """
+    if not previous and not current:
+        return None
+    if not previous or not current:
+        was = previous["ratio"] if previous else "off"
+        now = current["ratio"] if current else "off"
+        return f"context_pressure (was {was}, now {now})"
+    if previous.get("ratio") != current["ratio"]:
+        return f"context_pressure ratio (was {previous.get('ratio')}, now {current['ratio']})"
+    # Runs from before tokenizer calibration recorded no target.
+    old_target = previous.get("fill_tokens_target")
+    if old_target is not None and old_target != current["fill_tokens_target"]:
+        return (
+            f"context_pressure fill (was {old_target:,} tokens, "
+            f"now {current['fill_tokens_target']:,}; the context size changed)"
+        )
+    return None
+
+
+def _judge_mismatch(previous: Any, current: Any) -> str | None:
+    """Name the judge difference a user must undo to resume, when it is a set or check."""
+    if previous == current:
+        return None
+    if isinstance(previous, dict) and "set" not in previous:
+        # Audited before judge sets existed, which meant TC-89 only. No set
+        # reproduces that selection, so say why rather than name a bare key.
+        return "decision_judge (a TC-89-only audit from an earlier version)"
+    if not isinstance(previous, dict) or not isinstance(current, dict):
+        return "decision_judge"
+    if previous["set"] != current["set"]:
+        return f"decision_judge set (was {previous['set']}, now {current['set']})"
+    old_checks = set(previous.get("checks") or [])
+    new_checks = set(current.get("checks") or [])
+    if old_checks == new_checks:
+        # A URL or model change; the generic key already says enough.
+        return "decision_judge"
+    changes = []
+    if removed := sorted(old_checks - new_checks):
+        changes.append(f"was {', '.join(removed)}")
+    if added := sorted(new_checks - old_checks):
+        changes.append(f"now {', '.join(added)}")
+    return f"decision_judge checks ({'; '.join(changes)})"
+
+
+# Older stored runs predate some always-written keys, so resume validates only
+# the ones a run recorded.
+_LEGACY = ResumeCheck(Absent.SKIP)
+
+#: The persisted config schema, in stored key order.
+RUN_CONFIG_FIELDS: tuple[ConfigField, ...] = (
+    ConfigField(
+        "model",
+        lambda i: i.settings.model,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=True,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "backend",
+        lambda i: i.settings.backend,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "base_url",
+        lambda i: _redact_url(i.settings.base_url),
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=True,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "endpoint_id",
+        lambda i: endpoint_identity(i.settings.base_url),
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=True,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "temperature",
+        lambda i: i.settings.temperature,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "timeout_seconds",
+        lambda i: i.settings.timeout_seconds,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "max_turns",
+        lambda i: i.settings.max_turns,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "seed",
+        lambda i: i.settings.seed,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "reference_date",
+        lambda i: i.settings.reference_date,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    # Derived from scenario_ids, which resume already compares.
+    ConfigField(
+        "scenario_count",
+        lambda i: len(i.scenarios),
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=None,
+    ),
+    # Resume compares the run order; the fingerprint does not.
+    ConfigField(
+        "scenario_ids",
+        lambda i: [s.id for s in i.scenarios],
+        Presence.ALWAYS,
+        Fingerprint.SORTED,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "concurrency",
+        lambda i: i.settings.concurrency,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "error_rate",
+        lambda i: i.settings.error_rate,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "alpha",
+        lambda i: i.settings.alpha,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "extra_params",
+        lambda i: i.settings.extra_params,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    ConfigField(
+        "weight_by_difficulty",
+        lambda i: i.settings.weight_by_difficulty,
+        Presence.ALWAYS,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+    # Absent means the built-in prompt: resuming it with an override would
+    # otherwise merge two personas into one result.
+    ConfigField(
+        "system_prompt",
+        lambda i: i.settings.system_prompt,
+        Presence.WHEN_NOT_NONE,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=ResumeCheck(Absent.UNSET),
+    ),
+    # Audits never change official scores, so the judge stays out of the
+    # fingerprint: judged and unjudged runs of one configuration are one cohort.
+    # The stored config keeps it for the resume compatibility check.
+    ConfigField(
+        "decision_judge",
+        lambda i: i.settings.decision_judge,
+        Presence.WHEN_NOT_NONE,
+        Fingerprint.EXCLUDE,
+        identifies_model=False,
+        resume=ResumeCheck(Absent.UNSET, describe=_judge_mismatch),
+    ),
+    ConfigField(
+        "scenario_variants",
+        lambda i: {s.id: s.variant_metadata for s in i.scenarios if s.variant_metadata},
+        Presence.WHEN_NONEMPTY,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=ResumeCheck(Absent.UNSET, unset={}),
+    ),
+    ConfigField(
+        "context_pressure",
+        lambda i: i.settings.context_pressure_config,
+        Presence.WHEN_NONEMPTY,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=ResumeCheck(Absent.UNSET, describe=_pressure_mismatch),
+    ),
+    # Written only when set, yet resume reads absence as a legacy run, so adding
+    # a pack is caught by scenario_ids rather than here.
+    ConfigField(
+        "scenario_packs",
+        lambda i: i.scenario_packs,
+        Presence.WHEN_NONEMPTY,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=_LEGACY,
+    ),
+)
+
+#: Keys the leaderboard drops to rank different models under the same
+#: conditions: the ones naming the model or endpoint, the ones that never split
+#: a cohort, and the per-model fingerprint itself.
+COHORT_EXCLUDED_KEYS = frozenset(
+    {
+        CONFIG_FINGERPRINT_KEY,
+        *(
+            field.key
+            for field in RUN_CONFIG_FIELDS
+            if field.identifies_model or field.fingerprint is Fingerprint.EXCLUDE
+        ),
+    }
+)
+
+
 def build_run_config(
     settings: RunSettings,
     *,
@@ -75,54 +418,27 @@ def build_run_config(
     key set and value shapes here are a stored contract: changing them
     re-cohorts every historical run.
     """
-    config: dict[str, Any] = {
-        "model": settings.model,
-        "backend": settings.backend,
-        "base_url": _redact_url(settings.base_url),
-        "endpoint_id": endpoint_identity(settings.base_url),
-        "temperature": settings.temperature,
-        "timeout_seconds": settings.timeout_seconds,
-        "max_turns": settings.max_turns,
-        "seed": settings.seed,
-        "reference_date": settings.reference_date,
-        "scenario_count": len(scenarios),
-        "scenario_ids": [s.id for s in scenarios],
-        "concurrency": settings.concurrency,
-        "error_rate": settings.error_rate,
-        "alpha": settings.alpha,
-        "extra_params": settings.extra_params,
-        "weight_by_difficulty": settings.weight_by_difficulty,
-    }
-    # Present only for an override. A default run persists exactly the config it
-    # did before this option existed, so its fingerprint (and the cohort it falls
-    # in) does not move; the resume check reads a missing key as "built-in".
-    if settings.system_prompt is not None:
-        config["system_prompt"] = settings.system_prompt
-    if settings.decision_judge is not None:
-        config["decision_judge"] = settings.decision_judge
-    variants = {s.id: s.variant_metadata for s in scenarios if s.variant_metadata}
-    if variants:
-        config["scenario_variants"] = variants
-    if settings.context_pressure_config:
-        config["context_pressure"] = settings.context_pressure_config
-    if scenario_packs:
-        config["scenario_packs"] = scenario_packs
+    inputs = _Inputs(settings, scenarios, scenario_packs)
+    config: dict[str, Any] = {}
+    fingerprint_config: dict[str, Any] = {}
+    for field in RUN_CONFIG_FIELDS:
+        value = field.value(inputs)
+        if not field.presence.keeps(value):
+            continue
+        config[field.key] = value
+        if field.fingerprint is Fingerprint.INCLUDE:
+            fingerprint_config[field.key] = value
+        elif field.fingerprint is Fingerprint.SORTED:
+            fingerprint_config[field.key] = sorted(value)
     comparison_context = {
         key: metadata.get(key) for key in COMPARISON_METADATA_KEYS if metadata.get(key) is not None
-    }
-    # Audits never change official scores, so the judge stays out of the
-    # fingerprint: judged and unjudged runs of one configuration are one cohort.
-    # The stored config keeps it for the resume compatibility check.
-    fingerprint_config = {
-        **{key: value for key, value in config.items() if key != "decision_judge"},
-        "scenario_ids": sorted(config["scenario_ids"]),
     }
     from tool_eval_bench import __version__
 
     # The fingerprint answers "are these two runs comparable?".  The scenarios and
     # evaluators are code, so two runs from different commits are not comparable
     # even when every CLI flag matches — include the code identity.
-    config["config_fingerprint"] = build_config_fingerprint(
+    config[CONFIG_FINGERPRINT_KEY] = build_config_fingerprint(
         {
             "config": fingerprint_config,
             "deployment": comparison_context,
@@ -131,3 +447,27 @@ def build_run_config(
         }
     )
     return config
+
+
+def resume_mismatches(previous: dict[str, Any], current: dict[str, Any]) -> list[str]:
+    """Name every scoring condition in which a stored run differs from the current one.
+
+    Both arguments are configs from :func:`build_run_config` (``previous`` may
+    come from an older version).  Messages follow stored key order.
+    """
+    mismatches: list[str] = []
+    for field in RUN_CONFIG_FIELDS:
+        check = field.resume
+        if check is None:
+            continue
+        if check.absent is Absent.SKIP and field.key not in previous:
+            continue
+        old = previous.get(field.key, check.unset)
+        new = current.get(field.key, check.unset)
+        if check.describe is not None:
+            message = check.describe(old, new)
+        else:
+            message = field.key if old != new else None
+        if message is not None:
+            mismatches.append(message)
+    return mismatches

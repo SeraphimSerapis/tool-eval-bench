@@ -218,7 +218,7 @@ Shared infrastructure:
 |---|---|
 | `service.py` | `BenchmarkService` — composes concrete adapters, scenario orchestration, SQLite persistence, and Markdown reporting |
 | `finalization.py` | Completes interrupted or checkpointed runs and builds the final persisted summary |
-| `run_config.py` | `RunSettings` and the persisted config, including the `config_fingerprint` that decides which runs are comparable |
+| `run_config.py` | `RunSettings` and `RUN_CONFIG_FIELDS`, the one declaration of every persisted config key. Each row says whether the key is written, fingerprinted, compared on `--resume`, and kept in the leaderboard's cross-model cohort. The builder, the resume check, and the cohort exclusions all derive from it. A new run setting needs a row, and `tests/test_run_config_schema.py` fails until it has one |
 | `run_context.py` | Backend detection (`identify_backend`) and `RunContext` collection, shared by the CLI and the Python API |
 | `run_queries.py` | Read queries against stored runs, each owning the repository's lifetime |
 
