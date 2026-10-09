@@ -1258,16 +1258,18 @@ def main() -> None:
             # significant prefill time.  Without this, a 182K fill at the
             # default 60s timeout will fail while the same level passes in
             # a --context-pressure-sweep (which has its own auto-scaling).
-            fill_tokens_for_timeout = actual_fill_tokens or pressure_cfg.fill_tokens
-            if fill_tokens_for_timeout > 0:
-                fill_scaling = max(0, fill_tokens_for_timeout / 50_000) * 60.0
+            # Scaled from the target, not the calibrated count: the timeout is
+            # persisted, fingerprinted, and checked on resume, and unseeded
+            # filler calibrates to a slightly different count every run.
+            if pressure_cfg.fill_tokens > 0:
+                fill_scaling = pressure_cfg.fill_tokens / 50_000 * 60.0
                 scaled_timeout = max(args.timeout, 120.0 + fill_scaling)
                 if scaled_timeout > args.timeout:
                     logger.info(
                         "Auto-scaling timeout from %.0fs to %.0fs for %d fill tokens",
                         args.timeout,
                         scaled_timeout,
-                        fill_tokens_for_timeout,
+                        pressure_cfg.fill_tokens,
                     )
                     args.timeout = scaled_timeout
 
