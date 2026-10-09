@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     as_str,
+    counted_calls,
     generic_tool_fallback,
     normalize,
 )
@@ -59,9 +60,10 @@ def _tc68_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 def _tc68_near_miss_searches(state: ScenarioState) -> bool:
     """Return whether the trace is the single recognized errored PROJ-127 lookup."""
-    if len(state.tool_calls) != 1:
+    calls = counted_calls(state.tool_calls)
+    if len(calls) != 1:
         return False
-    call = state.tool_calls[0]
+    call = calls[0]
     if call.name != "search_files":
         return False
     if as_str(call.arguments.get("query")) != "PROJ-127":

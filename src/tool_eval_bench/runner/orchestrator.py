@@ -146,15 +146,25 @@ def _scenario_seed_offset(scenario_id: str) -> int:
     return int.from_bytes(hashlib.sha256(scenario_id.encode()).digest()[:4], "big")
 
 
-def _maybe_inject_error(
-    result: Any,
+def _parses_as_json(text: str) -> bool:
+    try:
+        json.loads(text)
+    except ValueError:
+        return False
+    return True
+
+
+def _draw_injected_error(
     error_rate: float,
     rng: random.Random | None = None,
-) -> Any:
-    """Randomly replace a mock tool response with a simulated error.
+) -> dict[str, Any] | None:
+    """Decide whether the next tool call fails with a simulated error.
 
-    Returns the original result unchanged if no error is injected.
-    The error distribution follows Claw-Eval: ~33% each of 429, 500, timeout.
+    Returns the simulated error, or ``None`` when the call should run. The
+    caller draws before running the mock handler: a simulated 429/500/503
+    means the request never took effect, so the handler must not commit a
+    side effect the model was told failed. The error distribution follows
+    Claw-Eval: ~33% each of 429, 500, timeout.
 
     Args:
         rng: Optional seeded Random instance for reproducibility.
@@ -162,8 +172,8 @@ def _maybe_inject_error(
     """
     _rng = rng or random
     if error_rate <= 0 or _rng.random() >= error_rate:
-        return result
-    return _rng.choice(_INJECTED_ERRORS)
+        return None
+    return dict(_rng.choice(_INJECTED_ERRORS))
 
 
 # ---------------------------------------------------------------------------
@@ -516,21 +526,28 @@ async def run_scenario(
             # endpoint would not accept a parameter this benchmark sent
             # (tool_choice and response_format are the usual ones) and the
             # scenario measures the serving stack rather than the model.
-            if result.transport_error_status is not None and (
-                not state.tool_calls or result.transport_error_is_infrastructure
+            # A body that is not JSON is the serving stack's fault at any
+            # turn: the server serialises the response, not the model.
+            if result.malformed or (
+                result.transport_error_status is not None
+                and (not state.tool_calls or result.transport_error_is_infrastructure)
             ):
                 elapsed = time.perf_counter() - t0
-                rejection_stage = (
-                    "because the serving stack failed before inference"
-                    if result.transport_error_is_infrastructure
-                    else "before the model produced anything"
-                )
-                summary = (
-                    f"Endpoint rejected the request with HTTP "
-                    f"{result.transport_error_status} {rejection_stage}: "
-                    f"{result.content}"
-                )
-                trace_lines.append(f"transport_error={result.transport_error_status}")
+                if result.malformed:
+                    summary = "Endpoint returned a response body that is not valid JSON."
+                    trace_lines.append("transport_error=malformed_response")
+                else:
+                    rejection_stage = (
+                        "because the serving stack failed before inference"
+                        if result.transport_error_is_infrastructure
+                        else "before the model produced anything"
+                    )
+                    summary = (
+                        f"Endpoint rejected the request with HTTP "
+                        f"{result.transport_error_status} {rejection_stage}: "
+                        f"{result.content}"
+                    )
+                    trace_lines.append(f"transport_error={result.transport_error_status}")
                 return ScenarioResult(
                     scenario_id=scenario.id,
                     status=ScenarioStatus.FAIL,
@@ -612,8 +629,51 @@ async def run_scenario(
             if len(result.tool_calls) > 1:
                 parallel_tool_turns.append(turn)
 
+            # A length stop that leaves a call's arguments unparseable cut the
+            # call off mid-generation. Running it with the empty arguments the
+            # parser falls back to would grade a harness ceiling as wrong
+            # arguments, so stop and tag the run as above. The partial calls
+            # stay in the state and the trace: an attempted tool still counts
+            # for safety checks, it just never runs.
+            cut_off = [
+                tc.name
+                for tc in result.tool_calls
+                if result.finish_reason == "length" and not _parses_as_json(tc.arguments_str)
+            ]
+            if cut_off:
+                for tc in result.tool_calls:
+                    state.tool_calls.append(
+                        ToolCallRecord(
+                            id=tc.id,
+                            name=tc.name,
+                            raw_arguments=tc.arguments_str,
+                            arguments=tc.arguments,
+                            turn=turn,
+                            user_phase=user_phase,
+                        )
+                    )
+                    total_arg_bytes += len(tc.arguments_str.encode("utf-8"))
+                    trace_lines.append(f"tool_call={tc.name} {tc.arguments_str}")
+                reasoning_chars = len(result.reasoning or "")
+                truncated_stop = (
+                    f"Turn {turn} hit the max_tokens ceiling ({max_tokens}) with "
+                    f"{reasoning_chars} characters of reasoning and cut off the arguments "
+                    f"of {', '.join(cut_off)}."
+                )
+                trace_lines.append(f"truncated={truncated_stop}")
+                budget_exhausted = False
+                break
+
             turn_results: list[Any] = []
             for tc in result.tool_calls:
+                # Draw before the handler runs: a simulated failure means the
+                # request never took effect, so the handler must not commit a
+                # side effect. Handlers never touch error_rng, so a seed gives
+                # the same injection pattern it always did.
+                injected_error = (
+                    _draw_injected_error(error_rate, rng=error_rng) if error_rate > 0 else None
+                )
+                injected = injected_error is not None
                 record = ToolCallRecord(
                     id=tc.id,
                     name=tc.name,
@@ -621,27 +681,28 @@ async def run_scenario(
                     arguments=tc.arguments,
                     turn=turn,
                     user_phase=user_phase,
+                    injected=injected,
                 )
                 state.tool_calls.append(record)
                 total_arg_bytes += len(tc.arguments_str.encode("utf-8"))
                 trace_lines.append(f"tool_call={record.name} {record.raw_arguments}")
 
-                # Call the scenario's mock handler
-                mock_result = scenario.handle_tool_call(state, record)
-
-                # Error injection: randomly replace with simulated failure
-                if error_rate > 0:
-                    mock_result = _maybe_inject_error(
-                        mock_result,
-                        error_rate,
-                        rng=error_rng,
-                    )
+                mock_result = (
+                    injected_error
+                    if injected_error is not None
+                    else scenario.handle_tool_call(state, record)
+                )
 
                 state.tool_results.append(
-                    ToolResultRecord(call_id=record.id, name=record.name, result=mock_result)
+                    ToolResultRecord(
+                        call_id=record.id, name=record.name, result=mock_result, injected=injected
+                    )
                 )
                 turn_results.append(mock_result)
-                trace_lines.append(f"tool_result={json.dumps(mock_result)}")
+                trace_lines.append(
+                    f"tool_result={json.dumps(mock_result)}"
+                    + (" injected=true" if injected else "")
+                )
                 messages.append(_tool_result_message(tc.id, tc.name, mock_result))
                 if scenario.checkpoint:
                     diagnostic = scenario.checkpoint(state, record)
@@ -930,6 +991,9 @@ async def probe_tool_choice_required(
             False,
             f"endpoint rejected the parameter with HTTP {result.transport_error_status}",
         )
+    if result.malformed:
+        logger.warning("tool_choice=required probe returned invalid JSON; treating as unsupported")
+        return ToolChoiceProbe(False, False, "probe response was not valid JSON")
     if not result.tool_calls:
         return ToolChoiceProbe(
             False, False, "not enforced; the endpoint answered in prose when told not to call"

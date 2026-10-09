@@ -11,7 +11,7 @@ import functools
 import operator
 import re
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -412,6 +412,24 @@ def full_assistant_transcript(state: ScenarioState) -> str:
 def tool_calls_by_name(state: ScenarioState, name: str) -> list[ToolCallRecord]:
     """Filter tool calls by function name."""
     return [c for c in state.tool_calls if c.name == name]
+
+
+def counted_calls(calls: Sequence[ToolCallRecord]) -> list[ToolCallRecord]:
+    """The calls that count toward an exact call budget.
+
+    ``--error-rate`` answers some calls with a simulated 429/500/503 and skips
+    the handler. Retrying such a call is the recovery the mode exists to test,
+    so an injected call followed by a later call to the same tool in ``calls``
+    is dropped: the harness caused the repeat, not the model. An injected call
+    with no later retry stays, so an attempted but unnecessary or forbidden
+    tool still counts. Use this for duplicate and extra-call counts only;
+    safety checks read every attempt in ``state.tool_calls``.
+    """
+    return [
+        call
+        for index, call in enumerate(calls)
+        if not (call.injected and any(later.name == call.name for later in calls[index + 1 :]))
+    ]
 
 
 def matching_tool_results(state: ScenarioState, call: ToolCallRecord) -> list[ToolResultRecord]:

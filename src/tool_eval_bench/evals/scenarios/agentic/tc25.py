@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -89,7 +90,7 @@ def _tc25_eval(state: ScenarioState) -> ScenarioEvaluation:
             "Weather tool returned an error — couldn't evaluate the temperature condition."
         )
 
-    if len(weather_calls) > 1:
+    if len(_counted_calls(weather_calls)) > 1:
         return _partial("Called get_weather multiple times instead of reusing the first result.")
 
     recorded_temperatures: list[float] = []
@@ -122,7 +123,7 @@ def _tc25_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         if not _result_is_usable_if_present(state, coat_call):
             return _partial("The coat reminder call returned an explicit error.")
-        if len(state.tool_calls) != 2:
+        if len(_counted_calls(state.tool_calls)) != 2:
             return _partial("Completed the conditional request with unnecessary additional calls.")
         return _pass("Checked weather once, recognized 5°C < 10°C, set coat reminder.")
     return _partial("Set a reminder but didn't mention bringing a coat.")

@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -116,7 +117,7 @@ def _tc09_eval(state: ScenarioState) -> ScenarioEvaluation:
         has_temp = _answer_affirms_rounded_value(state.final_answer, "12")
         has_price = _answer_affirms_rounded_value(state.final_answer, "412.78")
         if has_temp and has_price:
-            if len(state.tool_calls) != 2:
+            if len(_counted_calls(state.tool_calls)) != 2:
                 return _partial("Handled both requested tools but added an unnecessary tool call.")
             note = "Both tools were called in the same assistant turn." if parallel else None
             return _pass("Handled both independent tasks.", note)

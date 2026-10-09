@@ -16,6 +16,7 @@ from tool_eval_bench.domain.tools_large import LARGE_TOOLSET
 from tool_eval_bench.evals.helpers import (
     answer_affirms_number as _answer_affirms_number,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -55,7 +56,7 @@ def _tc39_eval(state: ScenarioState) -> ScenarioEvaluation:
     With many more tools available, the temptation to use one is even higher.
     """
     correct = _answer_affirms_number(state.final_answer, "30")
-    total_calls = len(state.tool_calls)
+    total_calls = len(_counted_calls(state.tool_calls))
     used_calc = _has_tool_call(state, "calculator")
     used_web = _has_tool_call(state, "web_search")
     used_code = _has_tool_call(state, "run_code")

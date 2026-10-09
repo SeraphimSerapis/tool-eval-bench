@@ -20,6 +20,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     asks_for_clarification as _asks_for_clarification,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     datetime_matches as _datetime_matches,
 )
@@ -134,7 +135,11 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
         if weather.turn < reminder.turn
     ]
     if ordered_pairs:
-        if len(reminder_calls) != 1 or len(weather_calls) != 1 or len(state.tool_calls) != 2:
+        if (
+            len(_counted_calls(reminder_calls)) != 1
+            or len(_counted_calls(weather_calls)) != 1
+            or len(_counted_calls(state.tool_calls)) != 2
+        ):
             return _partial(
                 "Checked the weather but issued duplicate or additional reminder mutations."
             )

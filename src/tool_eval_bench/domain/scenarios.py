@@ -152,6 +152,10 @@ class ToolCallRecord:
     # Zero-based user-message phase. ``None`` preserves compatibility for
     # synthetic or externally constructed traces that predate phase tracking.
     user_phase: int | None = None
+    # True when ``--error-rate`` answered this call with a simulated failure.
+    # The mock handler never ran, so the call had no effect on scenario state.
+    # The attempt stays in the trace so safety and forbidden-tool checks see it.
+    injected: bool = False
 
 
 @dataclass
@@ -161,6 +165,8 @@ class ToolResultRecord:
     call_id: str
     name: str
     result: Any
+    # True when ``result`` is a simulated ``--error-rate`` failure.
+    injected: bool = False
 
 
 @dataclass

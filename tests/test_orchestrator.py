@@ -1008,6 +1008,147 @@ async def test_length_stop_with_only_whitespace_is_tagged_as_truncated() -> None
     assert "truncated=Turn 1 hit the max_tokens ceiling" in result.raw_log
 
 
+def _recording_scenario(scenario_id: str, handled: list[str]) -> ScenarioDefinition:
+    """Records every handled call; the evaluator fails so the failure kind is visible."""
+
+    def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
+        handled.append(call.raw_arguments)
+        return {"temperature": 8}
+
+    return ScenarioDefinition(
+        id=scenario_id,
+        title=scenario_id,
+        description=scenario_id,
+        category=Category.A,
+        user_message="Weather in San Francisco?",
+        handle_tool_call=handle,
+        evaluate=lambda state: ScenarioEvaluation(ScenarioStatus.FAIL, 0, "wrong arguments"),
+    )
+
+
+def _weather_call(arguments: str, call_id: str = "c1") -> ProviderToolCall:
+    return ProviderToolCall(id=call_id, name="get_weather", arguments_str=arguments)
+
+
+@pytest.mark.asyncio
+async def test_length_stop_inside_tool_arguments_is_tagged_as_truncated() -> None:
+    """H01-04: the ceiling cut the call off, so it is not graded as wrong arguments."""
+    handled: list[str] = []
+    adapter = MockAdapter(
+        [
+            ChatCompletionResult(
+                content="",
+                tool_calls=[_weather_call('{"city": "San Fr')],
+                reasoning="x" * 40,
+                finish_reason="length",
+            ),
+            {"content": "never reached"},
+        ]
+    )
+    result = await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=_recording_scenario("TRUNC-04", handled),
+        max_turns=8,
+    )
+    assert handled == []
+    assert result.turn_count == 1
+    assert result.failure_kind == FailureKind.REASONING_TRUNCATED
+    assert result.turn_budget_exceeded is False
+    # The partial call stays in the trace and the tool list.
+    assert 'tool_call=get_weather {"city": "San Fr' in result.raw_log
+    assert result.tool_calls_made == ["get_weather()"]
+    assert (
+        "truncated=Turn 1 hit the max_tokens ceiling (16384) with 40 characters of reasoning "
+        "and cut off the arguments of get_weather." in result.raw_log
+    )
+
+
+@pytest.mark.asyncio
+async def test_length_stop_with_one_cut_call_runs_none_of_the_batch() -> None:
+    handled: list[str] = []
+    adapter = MockAdapter(
+        [
+            ChatCompletionResult(
+                content="",
+                tool_calls=[
+                    _weather_call('{"city": "Berlin"}', "c1"),
+                    _weather_call('{"city": "Par', "c2"),
+                ],
+                finish_reason="length",
+            ),
+        ]
+    )
+    result = await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=_recording_scenario("TRUNC-05", handled),
+        max_turns=8,
+    )
+    assert handled == []
+    assert result.failure_kind == FailureKind.REASONING_TRUNCATED
+    assert len(result.tool_calls_made) == 2
+
+
+@pytest.mark.asyncio
+async def test_length_stop_with_complete_tool_arguments_runs_the_call() -> None:
+    """A call that finished before the ceiling is a real call."""
+    handled: list[str] = []
+    adapter = MockAdapter(
+        [
+            ChatCompletionResult(
+                content="",
+                tool_calls=[_weather_call('{"city": "San Francisco"}')],
+                finish_reason="length",
+            ),
+            {"content": "8 degrees"},
+        ]
+    )
+    result = await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=_recording_scenario("TRUNC-06", handled),
+        max_turns=8,
+    )
+    assert handled == ['{"city": "San Francisco"}']
+    assert result.turn_count == 2
+    assert result.failure_kind != FailureKind.REASONING_TRUNCATED
+    assert "truncated=" not in result.raw_log
+
+
+@pytest.mark.asyncio
+async def test_unparseable_arguments_without_a_length_stop_still_run() -> None:
+    """Only a length stop is truncation; otherwise the call runs and is graded as today."""
+    handled: list[str] = []
+    adapter = MockAdapter(
+        [
+            ChatCompletionResult(
+                content="",
+                tool_calls=[_weather_call('{"city": "San Fr')],
+                finish_reason="tool_calls",
+            ),
+            {"content": "done"},
+        ]
+    )
+    result = await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=_recording_scenario("TRUNC-07", handled),
+        max_turns=8,
+    )
+    assert handled == ['{"city": "San Fr']
+    assert result.failure_kind != FailureKind.REASONING_TRUNCATED
+    assert "truncated=" not in result.raw_log
+
+
 @pytest.mark.asyncio
 async def test_every_turn_is_streamed_with_the_thinking_ceiling() -> None:
     scenario = _tool_failing_evaluator("STREAM-01")

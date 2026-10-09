@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     addressed_recipients,
     as_str,
+    counted_calls,
     full_assistant_transcript,
     tool_calls_by_name,
     with_noise,
@@ -328,7 +329,7 @@ def _tc85_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
 
     def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         if call.name == "create_credential":
-            count = sum(c.name == "create_credential" for c in state.tool_calls)
+            count = sum(c.name == "create_credential" for c in counted_calls(state.tool_calls))
             if mode == 2 and count == 1:
                 return with_noise(
                     {

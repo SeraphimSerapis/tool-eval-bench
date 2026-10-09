@@ -91,6 +91,9 @@ the value is printed under Run Context. On OpenAI-compatible reasoning endpoints
 tokens count against that ceiling. When a turn ends on `finish_reason=length` with no visible
 answer and no tool call, the scenario stops there, the trace carries a `truncated=` line, the
 evaluation note says how much reasoning was cut, and the failure kind is `reasoning_truncated`.
+The same applies when the ceiling cuts a tool call off mid-arguments, so its arguments are not
+valid JSON: the partial call stays in the trace but never runs. A call whose arguments finished
+before the ceiling runs normally.
 That result still scores, because the model did not answer, but the tag separates "ran out of room
 to think" from a wrong answer. `--backend-kwargs '{"max_tokens": 32768}'` raises the ceiling.
 

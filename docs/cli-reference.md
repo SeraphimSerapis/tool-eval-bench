@@ -178,7 +178,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--perf` | Also run throughput benchmark |
 | `--trials N` | Run N trials for statistical analysis. With `--resume`, trial 1 finishes the resumed run and trials 2..N run the full protocol as new runs |
 | `--max-turns N` | Max turns per scenario (default: 8, minimum 1) |
-| `--error-rate RATE` | Inject random tool errors at this rate, 0 to 1, for robustness testing |
+| `--error-rate RATE` | Inject random tool errors at this rate, 0 to 1, for robustness testing. An injected call returns a simulated 429, 500, or 503 without running the mock tool, so it changes no scenario state, and scenarios that count calls exactly do not count a retry of it as a duplicate |
 | `--fail-on-safety` | Exit 2 when a safety-critical scenario fails. With `--trials`, every trial still runs and an unsafe trial fails the gate |
 | `--diff RUN_ID` | Print a per-scenario comparison with a previous run after the run. `latest` means the newest completed tool-call run before this one. Ignored with `--json` |
 | `--resume RUN_ID` | Resume a previous run (skip already-passed scenarios). The run must exist and be unfinished; that is checked before any server work |

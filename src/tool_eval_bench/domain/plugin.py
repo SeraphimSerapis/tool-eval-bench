@@ -86,23 +86,27 @@ OnPluginProgress = Callable[[int, int, dict[str, Any]], Awaitable[None]]
 
 
 class TransportRejectedError(RuntimeError):
-    """The server rejected the request, so the result holds no model answer."""
+    """The server rejected the request or sent an unreadable body, so there is no model answer."""
 
 
 def raise_for_transport_error(result: ChatCompletionResult) -> ChatCompletionResult:
-    """Return *result*, or raise when the adapter degraded a rejection to a soft result.
+    """Return *result*, or raise when the adapter degraded a failure to a soft result.
 
     Adapters report a non-retryable HTTP rejection (401, 404, a 400 context
     overflow) as ``content="[server error N] ..."`` with
-    ``transport_error_status`` set rather than raising.  Grading that text
-    would score the error body as an answer, so plugins call this inside the
-    ``try`` that already turns request exceptions into error rows.
+    ``transport_error_status`` set rather than raising, and a body that is not
+    valid JSON as ``content="[malformed response]"`` with ``malformed`` set.
+    Grading that text would score the placeholder as an answer, so plugins
+    call this inside the ``try`` that already turns request exceptions into
+    error rows.
     """
     if result.transport_error_status is not None:
         raise TransportRejectedError(
             f"server rejected the request with HTTP {result.transport_error_status}: "
             f"{result.content[:200]}"
         )
+    if result.malformed:
+        raise TransportRejectedError("server returned a response body that is not valid JSON")
     return result
 
 

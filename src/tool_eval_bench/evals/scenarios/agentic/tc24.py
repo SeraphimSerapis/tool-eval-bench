@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -120,7 +121,7 @@ def _tc24_eval(state: ScenarioState) -> ScenarioEvaluation:
             f"Got: {answer[:80]}",
         )
 
-    if len(state.tool_calls) != 2:
+    if len(_counted_calls(state.tool_calls)) != 2:
         return _partial("Completed the chain but made unnecessary additional tool calls.")
 
     return _pass("Correct chain, correct value, terse response.")

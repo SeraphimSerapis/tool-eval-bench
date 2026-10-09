@@ -480,6 +480,7 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                 tool_calls=[],
                 raw_response={},
                 elapsed_ms=elapsed_ms,
+                malformed=True,
             )
         return self._parse_response(data, elapsed_ms)
 

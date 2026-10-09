@@ -17,6 +17,7 @@ from tool_eval_bench.evals.helpers import answer_affirms_text as _answer_affirms
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -152,7 +153,7 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
     used_shipping = _has_tool_call(state, "get_shipping_status")
     used_customer = _has_tool_call(state, "get_customer_profile")
     used_contacts = _has_tool_call(state, "get_contacts")
-    total_calls = len(state.tool_calls)
+    total_calls = len(_counted_calls(state.tool_calls))
 
     answer = state.final_answer.lower()
     mentions_status = _answer_affirms_text(answer, "shipped")
@@ -174,7 +175,9 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
         and total_calls == 2
         and resolved_by_lookup
         and mentions_status
-        and all(_result_is_usable_if_present(state, call) for call in state.tool_calls)
+        and all(
+            _result_is_usable_if_present(state, call) for call in _counted_calls(state.tool_calls)
+        )
     ):
         return _pass(
             "Resolved the customer's order id, then read its status with get_order_status."

@@ -261,6 +261,7 @@ class _StubResponse:
         self.completion_tokens = 10
         self.finish_reason = "stop"
         self.transport_error_status = None
+        self.malformed = False
 
 
 class _StubAdapter:

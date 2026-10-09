@@ -17,6 +17,7 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_number as _answer_affirms_number,
 )
 from tool_eval_bench.evals.helpers import answer_affirms_text as _answer_affirms_text
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -76,7 +77,7 @@ def _tc37_eval(state: ScenarioState) -> ScenarioEvaluation:
         lambda c: _includes_text(c.arguments.get("location"), "berlin"),
     )
     used_web = _has_tool_call(state, "web_search")
-    total_calls = len(state.tool_calls)
+    total_calls = len(_counted_calls(state.tool_calls))
     domain_tools_used = [
         c.name for c in state.tool_calls if c.name not in ("get_weather", "web_search")
     ]
