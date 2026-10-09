@@ -330,6 +330,16 @@ def _dispatch_spec_bench(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> di
     return kwargs
 
 
+def test_dispatch_passes_the_run_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Spec-bench runs store the deployment like every other run type."""
+    from tool_eval_bench.cli import dispatch
+
+    run_context = object()
+    monkeypatch.setattr(dispatch, "_build_run_context", lambda *a, **k: run_context)
+
+    assert _dispatch_spec_bench(monkeypatch, [])["run_context"] is run_context
+
+
 def test_dispatch_passes_runs_temperature_and_file_prompts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

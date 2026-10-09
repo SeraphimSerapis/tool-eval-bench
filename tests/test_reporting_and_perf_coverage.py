@@ -294,6 +294,7 @@ def test_spec_bench_cli_renders_metrics_and_persists(
     )
     persisted: list[dict] = []
     console = Console(record=True, width=160)
+    run_context = object()
 
     result = run_spec_bench_cli(
         console,
@@ -306,9 +307,10 @@ def test_spec_bench_cli_renders_metrics_and_persists(
         depths=[1024],
         baseline_tg_tps=100,
         output_dir=str(tmp_path),
-        metadata_for_storage=lambda _: {"source": "test"},
+        metadata_for_storage=lambda context: {"context": context},
         with_config_fingerprint=lambda config: {**config, "config_fingerprint": "fp"},
         persist_plugin_run=persisted.append,
+        run_context=run_context,
     )
 
     output = console.export_text()
@@ -318,6 +320,7 @@ def test_spec_bench_cli_renders_metrics_and_persists(
     assert "Consider reducing" in output
     assert "failed" in output
     assert persisted[0]["config"]["config_fingerprint"] == "fp"
+    assert persisted[0]["metadata"] == {"context": run_context}
 
 
 def test_benchy_progress_tracker_counts_measurement_runs_not_http_requests() -> None:

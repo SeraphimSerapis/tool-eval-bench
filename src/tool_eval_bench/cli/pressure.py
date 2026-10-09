@@ -422,7 +422,7 @@ def run_pressure_sweep(
         sweep_fields["system_prompt"] = system_prompt
     sweep_config = with_config_fingerprint(sweep_fields)
     sweep_run_id = build_run_id(sweep_config)
-    metadata = metadata_for_storage(None)
+    metadata = metadata_for_storage(run_context)
     if label:
         metadata["label"] = label
     run_data = {
