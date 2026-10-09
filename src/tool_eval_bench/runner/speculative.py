@@ -15,7 +15,12 @@ Data sources:
 - vLLM:     ``metrics.speculative_decoding`` in the response when the server
             runs with ``--per-request-spec-decode-metrics``; otherwise
             Prometheus counter deltas at /metrics
-- llama.cpp: /metrics endpoint (if --metrics flag enabled)
+- llama.cpp: ``timings.draft_n`` / ``draft_n_accepted`` in the response; the
+            /metrics step counter (``--metrics``) adds acceptance length when
+            no other request drafted during the measurement
+- Strata:   ``timings.draft_n`` / ``draft_n_accepted`` in the response;
+            otherwise Prometheus counter deltas at /metrics
+- TensorFold: request-local counts in the response; otherwise Prometheus
 - SGLang:   live gauges are available to spec-live, but are not request-local here
 - Fallback: wall-clock effective t/s only (always available)
 """
@@ -166,7 +171,8 @@ class SpecDecodeSample:
     num_drafts_delta: int | None = None  # spec steps in this measurement
     # Where the acceptance counters came from: "response" (request-local
     # metrics, exact), "prometheus" (server-wide counter deltas, subject to
-    # cross-talk), "timings" (llama.cpp), or None when unavailable.
+    # cross-talk), "timings" (llama.cpp and Strata response timings, exact),
+    # or None when unavailable.
     acceptance_source: str | None = None
     # Configured draft length, when the server reports it directly.
     num_spec_tokens: int | None = None
@@ -374,11 +380,26 @@ def pool_spec_samples(samples: list[SpecDecodeSample]) -> SpecDecodeSample:
     # short run does not weigh as much as a long one.
     drafted = sum(s.draft_tokens_delta or 0 for s in ok)
     accepted = sum(s.accepted_tokens_delta or 0 for s in ok)
-    steps = sum(s.num_drafts_delta or 0 for s in ok)
     if drafted > 0:
         pooled.acceptance_rate = accepted / drafted
+    # τ, draft window, and Steps/s need a step count, and under cross-traffic
+    # only some runs get one (measure_spec_single borrows it only from a clean
+    # delta). Dividing every run's accepted tokens by the steps of a few would
+    # overstate τ, so these come from the runs that have steps.
+    stepped = [s for s in ok if s.num_drafts_delta is not None]
+    steps = sum(s.num_drafts_delta or 0 for s in stepped)
     if steps > 0:
-        pooled.acceptance_length = 1.0 + accepted / steps
+        stepped_accepted = sum(s.accepted_tokens_delta or 0 for s in stepped)
+        stepped_drafted = sum(s.draft_tokens_delta or 0 for s in stepped)
+        pooled.acceptance_length = 1.0 + stepped_accepted / steps
+        if len(stepped) < n:
+            # draft_window divides the all-run draft mean by this, so scale the
+            # step mean to keep the stepped runs' drafted-per-step ratio.
+            pooled.num_drafts_delta = (
+                round(pooled.draft_tokens_delta * steps / stepped_drafted)
+                if stepped_drafted > 0 and pooled.draft_tokens_delta is not None
+                else None
+            )
     rates = [s.acceptance_rate for s in ok if s.acceptance_rate is not None]
     if rates:
         pooled.acceptance_rate_range = (min(rates), max(rates))
@@ -517,8 +538,9 @@ async def measure_spec_single(
     )
     spec_sample.baseline_tg_tps = baseline_tg_tps
 
-    # vLLM --per-request-spec-decode-metrics: exact and request-scoped, so it
-    # wins over the server-wide counter delta whenever it is present.
+    # vLLM --per-request-spec-decode-metrics and TensorFold's counts: exact
+    # and request-scoped, so they win over the server-wide counter delta
+    # whenever they are present.
     if sample.error:
         return spec_sample
     per_request = parse_per_request_spec_metrics(sample.spec_decode_metrics)
@@ -529,43 +551,57 @@ async def measure_spec_single(
         return spec_sample
 
     # Scrape counters AFTER generation and compute deltas
+    prometheus_delta: tuple[int, int, int | None] | None = None
     if spec_info.has_prometheus and counters_before is not None:
         counters_after = await scrape_spec_metrics(
             client, base_url, api_key, metrics_url=metrics_url
         )
         if counters_after is not None:
-            spec_sample.draft_tokens_delta = int(
-                counters_after.draft_tokens - counters_before.draft_tokens
+            steps_delta = (
+                int(counters_after.num_drafts - counters_before.num_drafts)
+                if counters_before.has_num_drafts and counters_after.has_num_drafts
+                else None
             )
-            spec_sample.accepted_tokens_delta = int(
-                counters_after.accepted_tokens - counters_before.accepted_tokens
+            prometheus_delta = (
+                int(counters_after.draft_tokens - counters_before.draft_tokens),
+                int(counters_after.accepted_tokens - counters_before.accepted_tokens),
+                steps_delta,
             )
-            if counters_before.has_num_drafts and counters_after.has_num_drafts:
-                spec_sample.num_drafts_delta = int(
-                    counters_after.num_drafts - counters_before.num_drafts
-                )
-            spec_sample.acceptance_source = "prometheus"
 
-            # Compute rates from deltas
-            dt = spec_sample.draft_tokens_delta
-            at = spec_sample.accepted_tokens_delta
-            nd = spec_sample.num_drafts_delta
-            if dt and dt > 0:
-                spec_sample.acceptance_rate = at / dt if at is not None else None
-            if nd and nd > 0 and at is not None:
-                spec_sample.acceptance_length = 1.0 + at / nd
-
-    # Fallback: llama.cpp per-request timings (draft_n / draft_n_accepted)
-    # These are embedded in the SSE response by llama-server and extracted
-    # by _stream_one() into ThroughputSample.draft_n / draft_n_accepted.
-    if spec_sample.draft_tokens_delta is None and sample.draft_n is not None:
-        spec_sample.draft_tokens_delta = sample.draft_n
-        spec_sample.accepted_tokens_delta = sample.draft_n_accepted or 0
+    # llama.cpp and Strata report this request's draft counts in ``timings``
+    # (draft_n / draft_n_accepted), extracted by _stream_one(). They are
+    # request-scoped, so they win over the server-wide delta. Timings carry no
+    # step count. The delta lends its step count only when its draft and
+    # accepted counts equal the request's: any other request that drafted
+    # during the window would have added draft tokens and broken the match.
+    draft_n = sample.draft_n
+    # llama.cpp's server_slot_stats::to_json (tools/server/server-common.cpp)
+    # writes draft_n only when n_draft_tokens > 0, so on llama.cpp a timings
+    # object without it is an exact zero. Strata and unknown servers can omit
+    # the field for "not reported", so they keep the delta fallback.
+    if draft_n is None and sample.timings_present and spec_info.has_per_request_timings:
+        draft_n = 0
+    if draft_n is not None:
+        accepted = sample.draft_n_accepted or 0
+        steps: int | None = None
+        if prometheus_delta is not None and prometheus_delta[:2] == (draft_n, accepted):
+            steps = prometheus_delta[2]
+        spec_sample.apply_per_request_metrics(
+            PerRequestSpecMetrics(draft_n, accepted, num_spec_steps=steps)
+        )
         spec_sample.acceptance_source = "timings"
-        if sample.draft_n > 0:
-            spec_sample.acceptance_rate = (sample.draft_n_accepted or 0) / sample.draft_n
-        # llama.cpp timings don't expose num_drafts, so acceptance_length
-        # and draft_window remain None
+        return spec_sample
+
+    if prometheus_delta is not None:
+        drafted, accepted_delta, steps_delta = prometheus_delta
+        spec_sample.draft_tokens_delta = drafted
+        spec_sample.accepted_tokens_delta = accepted_delta
+        spec_sample.num_drafts_delta = steps_delta
+        spec_sample.acceptance_source = "prometheus"
+        if drafted > 0:
+            spec_sample.acceptance_rate = accepted_delta / drafted
+        if steps_delta and steps_delta > 0:
+            spec_sample.acceptance_length = 1.0 + accepted_delta / steps_delta
 
     return spec_sample
 

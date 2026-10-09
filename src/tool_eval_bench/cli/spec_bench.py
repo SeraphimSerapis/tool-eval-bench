@@ -267,6 +267,11 @@ def run_spec_bench(
                     "\n  [dim]Acceptance source:[/] per-request response metrics "
                     "[green](exact, unaffected by concurrent traffic)[/]"
                 )
+            elif sources == {"timings"}:
+                console.print(
+                    "\n  [dim]Acceptance source:[/] per-request response timings "
+                    "[green](exact, unaffected by concurrent traffic)[/]"
+                )
             elif "prometheus" in sources:
                 console.print(
                     "\n  [dim]Acceptance source:[/] Prometheus counter deltas "

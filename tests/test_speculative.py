@@ -557,6 +557,60 @@ class TestDetectSpecDecodingVLLMNonRegression:
         assert info.active is False  # can't confirm spec decode without hint
         assert info.has_per_request_timings is True  # but we know the backend
 
+    @staticmethod
+    def _current_llamacpp_metrics(drafted: int, accepted: int, steps: int) -> str:
+        # llama-server's to_metrics() renders these counters on every scrape.
+        return (
+            "# HELP llamacpp:prompt_tokens_total Number of prompt tokens processed\n"
+            "llamacpp:prompt_tokens_total 212548\n"
+            "# HELP llamacpp:spec_decode_num_draft_tokens_total Speculative: Total draft tokens\n"
+            f"llamacpp:spec_decode_num_draft_tokens_total {drafted}\n"
+            f"llamacpp:spec_decode_num_accepted_tokens_total {accepted}\n"
+            f"llamacpp:spec_decode_num_drafts_total {steps}\n"
+        )
+
+    @pytest.mark.asyncio
+    async def test_current_llamacpp_with_drafts_is_active_with_timings(self):
+        import httpx
+
+        body = self._current_llamacpp_metrics(5017, 1787, 1261)
+        transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
+        async with MeasurementTestClient(transport=transport) as client:
+            from tool_eval_bench.runner.speculative import detect_spec_decoding
+
+            info = await detect_spec_decoding(client, "http://host:8080/v1")
+        assert info.active is True
+        assert info.has_prometheus is True
+        assert info.has_per_request_timings is True
+
+    @pytest.mark.asyncio
+    async def test_current_llamacpp_without_drafts_is_not_active(self):
+        """The counters exist at zero on a server with no draft model."""
+        import httpx
+
+        body = self._current_llamacpp_metrics(0, 0, 0)
+        transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
+        async with MeasurementTestClient(transport=transport) as client:
+            from tool_eval_bench.runner.speculative import detect_spec_decoding
+
+            info = await detect_spec_decoding(client, "http://host:8080/v1")
+        assert info.active is False
+        assert info.has_prometheus is True
+        assert info.has_per_request_timings is True
+
+    @pytest.mark.asyncio
+    async def test_llamacpp_in_a_label_value_does_not_claim_timings(self):
+        import httpx
+
+        body = 'vllm:spec_decode_num_draft_tokens_total{model_name="llamacpp:gemma"} 0\n'
+        transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
+        async with MeasurementTestClient(transport=transport) as client:
+            from tool_eval_bench.runner.speculative import detect_spec_decoding
+
+            info = await detect_spec_decoding(client, "http://host:8000/v1")
+        assert info.active is True
+        assert info.has_per_request_timings is False
+
 
 class TestLlamaCppTimings:
     """Tests for llama.cpp speculative decoding via per-request timings."""

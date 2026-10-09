@@ -282,6 +282,9 @@ class ThroughputSample:
     # instead it embeds draft_n/draft_n_accepted in the response timings.
     draft_n: int | None = None  # tokens drafted (llama.cpp timings)
     draft_n_accepted: int | None = None  # tokens accepted (llama.cpp timings)
+    # llama.cpp omits draft_n when nothing was drafted, so a timings object
+    # without draft_n means zero drafts rather than "unreported".
+    timings_present: bool = False
     # vLLM ``--per-request-spec-decode-metrics``: the raw
     # ``metrics.speculative_decoding`` object from the final usage chunk.
     # Kept raw here; ``runner.speculative`` owns the typed parse.
@@ -671,6 +674,7 @@ async def _stream_one(
                 # llama.cpp embeds speculative decoding stats in timings
                 timings = chunk.get("timings")
                 if timings and isinstance(timings, dict):
+                    sample.timings_present = True
                     dn = timings.get("draft_n")
                     dna = timings.get("draft_n_accepted")
                     if dn is not None:

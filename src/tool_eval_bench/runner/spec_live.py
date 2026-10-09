@@ -377,8 +377,12 @@ class MetricsSnapshot:
     sglang_spec_metrics_present: bool = False
     llamacpp_spec_metrics_present: bool = False
     llamacpp_metrics_present: bool = False
+    # Strata exports vLLM's counter names; its own ``strata:`` namespace is
+    # what tells the two apart.
+    strata_metrics_present: bool = False
 
-    # ``vllm`` / ``sglang`` / ``llamacpp`` / ``tensorfold``, or ``unknown``.
+    # ``vllm`` / ``strata`` / ``sglang`` / ``llamacpp`` / ``tensorfold``, or
+    # ``unknown``.
     spec_backend: str = "unknown"
 
     @property
@@ -507,6 +511,7 @@ class SpecLiveDelta:
 def _parse_snapshot(text: str) -> MetricsSnapshot:
     """Parse Prometheus text into a MetricsSnapshot."""
     snap = MetricsSnapshot(timestamp=time.time())
+    snap.strata_metrics_present = re.search(r"^strata:", text, re.MULTILINE) is not None
 
     for name, pattern in _COUNTER_PATTERNS.items():
         value, count = _sum_pattern_values(pattern, text)
@@ -616,7 +621,7 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
         snap.num_drafts = snap.llamacpp_num_drafts
         snap.per_position_counters = dict(snap.llamacpp_per_position_counters)
     elif snap.vllm_spec_metrics_present:
-        snap.spec_backend = "vllm"
+        snap.spec_backend = "strata" if snap.strata_metrics_present else "vllm"
     if snap.tensorfold_spec_metrics_present and snap.spec_backend == "unknown":
         snap.spec_backend = "tensorfold"
 
@@ -632,6 +637,9 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
 
     # Detect speculative decoding method from raw text
     snap.spec_method = _detect_spec_method(text)
+    if snap.spec_method == "unknown" and snap.spec_backend == "strata":
+        # Strata drafts only with the model's MTP head.
+        snap.spec_method = "mtp"
 
     # Extract model names from metric labels
     snap.model_names = _extract_model_names(text)
@@ -785,6 +793,8 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
             else "llamacpp"
             if curr.llamacpp_spec_metrics_present
             and not (curr.vllm_spec_metrics_present or curr.tensorfold_spec_metrics_present)
+            else "strata"
+            if curr.vllm_spec_metrics_present and curr.strata_metrics_present
             else "vllm"
             if curr.vllm_spec_metrics_present
             else "tensorfold"

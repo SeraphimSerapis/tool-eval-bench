@@ -203,6 +203,29 @@ async def test_stream_one_without_the_field_leaves_metrics_none() -> None:
     assert timing_only.spec_decode_metrics is None
 
 
+@pytest.mark.asyncio
+async def test_stream_one_flags_timings_without_draft_counts() -> None:
+    # llama.cpp's shape when the request drafted nothing.
+    sample = await _run_stream(_sse_handler({"timings": {"prompt_n": 5, "predicted_n": 2}}))
+    assert sample.timings_present is True
+    assert sample.draft_n is None
+
+
+@pytest.mark.asyncio
+async def test_stream_one_reads_draft_counts_from_timings() -> None:
+    sample = await _run_stream(
+        _sse_handler({"timings": {"predicted_n": 2, "draft_n": 4, "draft_n_accepted": 3}})
+    )
+    assert sample.timings_present is True
+    assert (sample.draft_n, sample.draft_n_accepted) == (4, 3)
+
+
+@pytest.mark.asyncio
+async def test_stream_one_without_timings_leaves_the_flag_unset() -> None:
+    assert (await _run_stream(_sse_handler({}))).timings_present is False
+    assert (await _run_stream(_sse_handler({"timings": None}))).timings_present is False
+
+
 # ---------------------------------------------------------------------------
 # measure_spec_single source selection
 # ---------------------------------------------------------------------------
@@ -292,6 +315,227 @@ async def test_llamacpp_timings_are_labelled(monkeypatch: pytest.MonkeyPatch) ->
     )
     assert sample.acceptance_source == "timings"
     assert sample.acceptance_rate == 0.6
+
+
+def _patch_scrape_sequence(
+    monkeypatch: pytest.MonkeyPatch, *counters: SpecDecodeCounters
+) -> list[int]:
+    """Return *counters* in order, one per scrape: before, then after."""
+    calls: list[int] = []
+
+    async def scrape(*args: object, **kwargs: object) -> SpecDecodeCounters:
+        calls.append(1)
+        return counters[len(calls) - 1]
+
+    monkeypatch.setattr(speculative, "scrape_spec_metrics", scrape)
+    return calls
+
+
+# Counters from a live llama-server around one 96-token request that drafted
+# 98 tokens, accepted 70, in 25 verification steps.
+_LLAMACPP_BEFORE = SpecDecodeCounters(accepted_tokens=1787, draft_tokens=5017, num_drafts=1261)
+_LLAMACPP_AFTER = SpecDecodeCounters(accepted_tokens=1857, draft_tokens=5115, num_drafts=1286)
+
+
+async def _measure_llamacpp() -> SpecDecodeSample:
+    return await speculative.measure_spec_single(
+        None,  # type: ignore[arg-type]
+        "url",
+        "m",
+        prompt_type="code",
+        spec_info=SpecDecodeInfo(has_prometheus=True, has_per_request_timings=True),
+    )
+
+
+@pytest.mark.asyncio
+async def test_timings_win_over_a_delta_polluted_by_other_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_stream(monkeypatch, ThroughputSample(tg_tokens=96, draft_n=98, draft_n_accepted=70))
+    # Another request drafted 40 tokens (12 accepted, 9 steps) in the same window.
+    polluted = SpecDecodeCounters(accepted_tokens=1869, draft_tokens=5155, num_drafts=1295)
+    calls = _patch_scrape_sequence(monkeypatch, _LLAMACPP_BEFORE, polluted)
+
+    sample = await _measure_llamacpp()
+
+    assert len(calls) == 2
+    assert sample.acceptance_source == "timings"
+    assert (sample.draft_tokens_delta, sample.accepted_tokens_delta) == (98, 70)
+    assert sample.acceptance_rate == pytest.approx(70 / 98)
+    # The step delta includes the other request's steps, so it is not used.
+    assert sample.num_drafts_delta is None
+    assert sample.acceptance_length is None
+
+
+@pytest.mark.asyncio
+async def test_timings_take_the_step_count_when_the_delta_is_this_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_stream(monkeypatch, ThroughputSample(tg_tokens=96, draft_n=98, draft_n_accepted=70))
+    _patch_scrape_sequence(monkeypatch, _LLAMACPP_BEFORE, _LLAMACPP_AFTER)
+
+    sample = await _measure_llamacpp()
+
+    assert sample.acceptance_source == "timings"
+    assert sample.acceptance_rate == pytest.approx(70 / 98)
+    assert sample.num_drafts_delta == 25
+    assert sample.acceptance_length == pytest.approx(1 + 70 / 25)
+    assert sample.draft_window == pytest.approx(98 / 25)
+
+
+@pytest.mark.asyncio
+async def test_timings_reject_a_step_count_when_only_the_draft_total_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_stream(monkeypatch, ThroughputSample(tg_tokens=96, draft_n=98, draft_n_accepted=70))
+    off_by_one = SpecDecodeCounters(accepted_tokens=1858, draft_tokens=5115, num_drafts=1286)
+    _patch_scrape_sequence(monkeypatch, _LLAMACPP_BEFORE, off_by_one)
+
+    sample = await _measure_llamacpp()
+
+    assert sample.acceptance_source == "timings"
+    assert sample.accepted_tokens_delta == 70
+    assert sample.num_drafts_delta is None
+
+
+@pytest.mark.asyncio
+async def test_strata_timings_win_over_its_prometheus_delta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Strata puts draft_n in timings and exports no step counter."""
+    _patch_stream(monkeypatch, ThroughputSample(tg_tokens=64, draft_n=48, draft_n_accepted=30))
+    before = SpecDecodeCounters(accepted_tokens=90, draft_tokens=120, has_num_drafts=False)
+    after = SpecDecodeCounters(accepted_tokens=150, draft_tokens=200, has_num_drafts=False)
+    _patch_scrape_sequence(monkeypatch, before, after)
+
+    sample = await speculative.measure_spec_single(
+        None,  # type: ignore[arg-type]
+        "url",
+        "m",
+        prompt_type="code",
+        spec_info=SpecDecodeInfo(has_prometheus=True, method="mtp"),
+    )
+
+    assert sample.acceptance_source == "timings"
+    assert (sample.draft_tokens_delta, sample.accepted_tokens_delta) == (48, 30)
+    assert sample.acceptance_rate == pytest.approx(30 / 48)
+    assert sample.acceptance_length is None
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_timings_without_draft_n_mean_zero_drafts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """llama.cpp omits draft_n exactly when it drafted nothing."""
+    _patch_stream(monkeypatch, ThroughputSample(tg_tokens=96, timings_present=True))
+    # Another request drafted 40 tokens in the same window.
+    polluted = SpecDecodeCounters(accepted_tokens=1799, draft_tokens=5057, num_drafts=1270)
+    _patch_scrape_sequence(monkeypatch, _LLAMACPP_BEFORE, polluted)
+
+    sample = await _measure_llamacpp()
+
+    assert sample.acceptance_source == "timings"
+    assert (sample.draft_tokens_delta, sample.accepted_tokens_delta) == (0, 0)
+    assert sample.acceptance_rate is None
+    assert sample.num_drafts_delta is None
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_zero_drafts_take_the_step_count_of_an_idle_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_stream(monkeypatch, ThroughputSample(tg_tokens=96, timings_present=True))
+    _patch_scrape_sequence(monkeypatch, _LLAMACPP_BEFORE, _LLAMACPP_BEFORE)
+
+    sample = await _measure_llamacpp()
+
+    assert sample.acceptance_source == "timings"
+    assert (sample.draft_tokens_delta, sample.num_drafts_delta) == (0, 0)
+    assert sample.acceptance_length is None
+
+
+@pytest.mark.asyncio
+async def test_strata_timings_without_draft_n_fall_back_to_prometheus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Strata omits draft_n when its engine reported nothing, not only at zero."""
+    _patch_stream(monkeypatch, ThroughputSample(tg_tokens=64, timings_present=True))
+    before = SpecDecodeCounters(accepted_tokens=90, draft_tokens=120, has_num_drafts=False)
+    after = SpecDecodeCounters(accepted_tokens=150, draft_tokens=200, has_num_drafts=False)
+    _patch_scrape_sequence(monkeypatch, before, after)
+
+    sample = await speculative.measure_spec_single(
+        None,  # type: ignore[arg-type]
+        "url",
+        "m",
+        prompt_type="code",
+        spec_info=SpecDecodeInfo(has_prometheus=True, method="mtp"),
+    )
+
+    assert sample.acceptance_source == "prometheus"
+    assert (sample.draft_tokens_delta, sample.accepted_tokens_delta) == (80, 60)
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_response_without_timings_falls_back_to_prometheus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_stream(monkeypatch, ThroughputSample(tg_tokens=96))
+    _patch_scrape_sequence(monkeypatch, _LLAMACPP_BEFORE, _LLAMACPP_AFTER)
+
+    sample = await _measure_llamacpp()
+
+    assert sample.acceptance_source == "prometheus"
+    assert (sample.draft_tokens_delta, sample.accepted_tokens_delta) == (98, 70)
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_response_without_timings_or_prometheus_has_no_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_stream(monkeypatch, ThroughputSample(tg_tokens=96))
+    sample = await speculative.measure_spec_single(
+        None,  # type: ignore[arg-type]
+        "url",
+        "m",
+        prompt_type="code",
+        spec_info=SpecDecodeInfo(has_per_request_timings=True),
+    )
+    assert sample.acceptance_source is None
+    assert sample.draft_tokens_delta is None
+
+
+@pytest.mark.asyncio
+async def test_sweep_with_timings_does_not_warn_about_cross_talk(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Client:
+        async def __aenter__(self) -> Client:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    async def calibrate(*args: object, **kwargs: object) -> speculative.TokenizerConfig:
+        return speculative.TokenizerConfig()
+
+    async def detect(*args: object, **kwargs: object) -> SpecDecodeInfo:
+        return SpecDecodeInfo(has_prometheus=True, has_per_request_timings=True)
+
+    monkeypatch.setattr(speculative, "calibrate", calibrate)
+    monkeypatch.setattr(speculative, "detect_spec_decoding", detect)
+    _patch_stream(monkeypatch, ThroughputSample(tg_tokens=96, draft_n=98, draft_n_accepted=70))
+    polluted = SpecDecodeCounters(accepted_tokens=1869, draft_tokens=5155, num_drafts=1295)
+    _patch_scrape_sequence(monkeypatch, _LLAMACPP_BEFORE, polluted)
+
+    with caplog.at_level("WARNING", logger=speculative.logger.name):
+        samples = await speculative.run_spec_bench(
+            "url", "m", client_factory=lambda **kwargs: Client(), prompt_types=["code"]
+        )
+
+    assert [s.acceptance_source for s in samples] == ["timings"]
+    assert samples[0].acceptance_rate == pytest.approx(70 / 98)
+    assert not [r for r in caplog.records if "server-wide aggregates" in r.getMessage()]
 
 
 @pytest.mark.asyncio
@@ -505,5 +749,48 @@ def test_report_flags_prometheus_source_without_per_position(tmp_path: Path) -> 
 def test_report_without_any_source_is_unchanged(tmp_path: Path) -> None:
     sample = SpecDecodeSample(tg_tokens=80, total_ms=1100, prompt_type="code")
     text = write_spec_decode_report(tmp_path, "run", "m", [sample]).read_text(encoding="utf-8")
+    assert "Acceptance Source" not in text
+    assert "Acceptance rate metrics were not available" in text
+
+
+def _timings_sample() -> SpecDecodeSample:
+    return SpecDecodeSample(
+        tg_tokens=96,
+        total_ms=1100,
+        acceptance_rate=70 / 98,
+        draft_tokens_delta=98,
+        accepted_tokens_delta=70,
+        acceptance_source="timings",
+        prompt_type="code",
+    )
+
+
+def test_cli_names_response_timings_as_exact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = _cli_output(monkeypatch, tmp_path, [_timings_sample()])
+    assert "per-request response timings" in output
+    assert "Prometheus counter deltas" not in output
+
+
+def test_report_names_response_timings_as_exact(tmp_path: Path) -> None:
+    text = write_spec_decode_report(tmp_path, "run", "m", [_timings_sample()]).read_text(
+        encoding="utf-8"
+    )
+    assert "- **Acceptance Source**: per-request response timings (exact)" in text
+    assert "server-wide Prometheus deltas" not in text
+
+
+def test_report_names_no_source_when_every_request_drafted_nothing(tmp_path: Path) -> None:
+    """llama.cpp without a draft model: timings 0/0 on every request, no α."""
+    zero = SpecDecodeSample(
+        tg_tokens=96,
+        total_ms=1100,
+        draft_tokens_delta=0,
+        accepted_tokens_delta=0,
+        acceptance_source="timings",
+        prompt_type="code",
+    )
+    text = write_spec_decode_report(tmp_path, "run", "m", [zero]).read_text(encoding="utf-8")
     assert "Acceptance Source" not in text
     assert "Acceptance rate metrics were not available" in text
