@@ -62,6 +62,7 @@ class MarkdownReporter:
         breaking_point: float | None,
         first_degradation: float | None,
         label: str | None = None,
+        run_context: RunContext | None = None,
     ) -> Path:
         """Write a trace-complete artifact for a context-pressure sweep."""
         return write_pressure_sweep_report(
@@ -75,6 +76,7 @@ class MarkdownReporter:
             breaking_point=breaking_point,
             first_degradation=first_degradation,
             label=label,
+            run_context=run_context,
         )
 
     def write_scenario_report(
@@ -145,8 +147,15 @@ class MarkdownReporter:
         spec_samples: list[Any],
         label: str | None = None,
         temperature: float | None = None,
+        run_context: RunContext | None = None,
     ) -> Path:
         """Write a Markdown report for speculative decoding benchmark results."""
         return write_spec_decode_report(
-            self.root, run_id, model, spec_samples, label, temperature=temperature
+            self.root,
+            run_id,
+            model,
+            spec_samples,
+            label,
+            temperature=temperature,
+            run_context=run_context,
         )

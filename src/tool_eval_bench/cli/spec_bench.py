@@ -394,7 +394,12 @@ def run_spec_bench(
         _report_then_persist_spec_bench(
             run_data=run_data,
             write_report=lambda: reporter.write_spec_decode_report(
-                run_id, display_name, ok_samples, label=label, temperature=temperature
+                run_id,
+                display_name,
+                ok_samples,
+                label=label,
+                temperature=temperature,
+                run_context=run_context,
             ),
             persist_plugin_run=persist_plugin_run,
         )

@@ -286,12 +286,14 @@ def test_spec_bench_cli_renders_metrics_and_persists(
         return [rich_sample, low_sample, failed]
 
     report_path = tmp_path / "spec.md"
+    report_kwargs: list[dict] = []
+
+    def fake_report(*args: object, **kwargs: object) -> object:
+        report_kwargs.append(kwargs)
+        return report_path
+
     monkeypatch.setattr(speculative, "run_spec_bench", fake_run)
-    monkeypatch.setattr(
-        reports.MarkdownReporter,
-        "write_spec_decode_report",
-        lambda *args, **kwargs: report_path,
-    )
+    monkeypatch.setattr(reports.MarkdownReporter, "write_spec_decode_report", fake_report)
     persisted: list[dict] = []
     console = Console(record=True, width=160)
     run_context = object()
@@ -321,6 +323,7 @@ def test_spec_bench_cli_renders_metrics_and_persists(
     assert "failed" in output
     assert persisted[0]["config"]["config_fingerprint"] == "fp"
     assert persisted[0]["metadata"] == {"context": run_context}
+    assert report_kwargs[0]["run_context"] is run_context
 
 
 def test_benchy_progress_tracker_counts_measurement_runs_not_http_requests() -> None:
