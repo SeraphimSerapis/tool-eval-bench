@@ -151,9 +151,11 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     for match in facts.finditer(answer_lower):
         # A denial reaches only its own clause. "Es regnet nicht und es hat 14
         # Grad" denies rain, not the temperature, so conjunctions and
-        # prepositions that open a new phrase end the scope as well.
+        # prepositions that open a new phrase end the scope as well, unless
+        # the preposition is itself negated ("nicht bei 14 Grad").
         clause = re.split(
-            r"[.!?;,:]|\b(?:und|aber|sondern|bei|mit)\b", answer_lower[: match.start()]
+            r"[.!?;,:]|\b(?:und|aber|sondern)\b|(?<!nicht\s)(?<!kein\s)(?<!keine\s)\b(?:bei|mit)\b",
+            answer_lower[: match.start()],
         )[-1]
         denied = re.search(r"\b(?:nicht|kein\w*|weder|not|never)\b(?:\s+\w+){0,5}\s*$", clause)
         affirmed.append(not bool(denied))

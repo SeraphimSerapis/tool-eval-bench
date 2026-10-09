@@ -21,6 +21,9 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import (
+    first_call_without_error as _first_call_without_error,
+)
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
@@ -118,8 +121,10 @@ def _tc20_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     Expected: search → read → calculator (or mental math), answer = $141,440
     """
-    search = next((c for c in state.tool_calls if c.name == "search_files"), None)
-    read = next((c for c in state.tool_calls if c.name == "read_file"), None)
+    # A retry after an explicit tool error is recovery, so grade the first
+    # search and read that returned something.
+    search = _first_call_without_error(state, "search_files")
+    read = _first_call_without_error(state, "read_file")
     searched = bool(
         search
         and _positive_argument_contains(search.arguments.get("query"), "q3")

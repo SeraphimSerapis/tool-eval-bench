@@ -101,7 +101,7 @@ _TC03_MEETING_OR_TIME = re.compile(r"\bmeetings?\b|\btime\b", re.IGNORECASE)
 
 def _tc03_denies_the_move(body: str) -> bool:
     """Return whether a sentence of ``body`` says the meeting did not move."""
-    for sentence in re.split(r"(?<=[.!?])\s+|\n", body):
+    for sentence in re.split(r"(?<=[.!?;])\s+|\n", body):
         if not _TC03_UNCHANGED.search(sentence):
             continue
         about_other_subject = bool(_TC03_OTHER_SUBJECT.search(sentence))

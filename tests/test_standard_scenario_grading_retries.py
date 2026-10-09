@@ -7,6 +7,7 @@ and a negative case (a wrong trajectory a looser fix would have let through).
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,27 @@ def test_tc15_search_that_never_succeeded_is_still_the_fallback_partial() -> Non
     assert "background knowledge" in result.summary
 
 
+def test_tc15_every_calculator_call_errored_is_graded_as_mental_math() -> None:
+    result = replay(
+        "TC-15",
+        turn(("web_search", {"query": "population of Iceland"})),
+        turn(("calculator", {"expression": "2% of 372520"})),
+        turn(answer="The calculator rejected it, so by hand: 2% of 372,520 is 7,450.4."),
+    )
+    assert result.status is PARTIAL
+    assert "mentally" in result.summary
+
+
+def test_tc15_every_calculator_call_errored_and_wrong_answer_still_fails() -> None:
+    result = replay(
+        "TC-15",
+        turn(("web_search", {"query": "population of Iceland"})),
+        turn(("calculator", {"expression": "2% of 372520"})),
+        turn(answer="It is about 7,400."),
+    )
+    assert result.status is FAIL
+
+
 def test_tc15_calculator_retry_after_injected_error_passes() -> None:
     result = replay(
         _first_call_errors("TC-15", "calculator"),
@@ -197,6 +219,23 @@ def test_tc02_wrong_or_denied_price_is_not_surfaced(answer: str) -> None:
     assert result.status is PARTIAL
 
 
+def test_tc02_wrong_price_summary_says_the_price_is_wrong() -> None:
+    result = replay(
+        "TC-02",
+        turn(("get_stock_price", {"ticker": "AAPL"})),
+        turn(answer="AAPL is trading at $187.99."),
+    )
+    assert "does not match" in result.summary
+
+
+def test_tc02_answer_without_a_price_says_it_was_not_surfaced() -> None:
+    result = replay(
+        "TC-02", turn(("get_stock_price", {"ticker": "AAPL"})), turn(answer="Apple is up today.")
+    )
+    assert result.status is PARTIAL
+    assert "did not surface" in result.summary
+
+
 @pytest.mark.parametrize(
     ("answer", "expected"),
     [
@@ -242,6 +281,7 @@ def test_tc03_unchanged_room_does_not_deny_the_move() -> None:
         "Hi Sarah, about the meeting at 3pm. It has not moved after all.",
         "Hi Sarah, the meeting at 3pm has not moved.",
         "Hi Sarah, re the 3pm slot: the room and the meeting time have not changed.",
+        "Hi Sarah, your meeting is now at 3pm. Nothing else changed; it has not moved.",
     ],
 )
 def test_tc03_denial_of_the_move_still_downgrades(body: str) -> None:
@@ -305,6 +345,29 @@ def test_tc18_regional_english_source_passes() -> None:
     assert replay("TC-18", *turns).status is PASS
 
 
+def _tc18_with_translation_retry() -> list[Any]:
+    turns = _reference("TC-18")
+    index = next(
+        i
+        for i, step in enumerate(turns)
+        if step.tool_calls[:1] and step.tool_calls[0].name == "translate_text"
+    )
+    # A separate object: the replay adapter renames call ids per turn in place.
+    turns.insert(index, deepcopy(turns[index]))
+    return turns
+
+
+def test_tc18_translation_retry_after_injected_error_passes() -> None:
+    result = replay(_first_call_errors("TC-18", "translate_text"), *_tc18_with_translation_retry())
+    assert result.status is PASS, result.summary
+
+
+def test_tc18_repeated_successful_translation_is_still_a_duplicate() -> None:
+    result = replay("TC-18", *_tc18_with_translation_retry())
+    assert result.status is PARTIAL
+    assert "duplicate" in result.summary
+
+
 def test_tc18_unusable_translation_is_not_reported_as_out_of_order() -> None:
     turns = _with_patched_call("TC-18", "translate_text", source_language="french")
     result = replay("TC-18", *turns)
@@ -340,6 +403,36 @@ def test_tc20_verification_after_the_division_passes() -> None:
         turn(("calculator", {"expression": "141440 * 5"})),
     )
     assert result.status is PASS, result.summary
+
+
+@pytest.mark.parametrize("tool", ["search_files", "read_file"])
+def test_tc20_retry_after_injected_error_passes(tool: str) -> None:
+    def search() -> Any:
+        return turn(("search_files", {"query": "Q3 sales report"}))
+
+    def read() -> Any:
+        return turn(("read_file", {"file_id": "file_q3_sales"}))
+
+    turns = [search(), search(), read()] if tool == "search_files" else [search(), read(), read()]
+    result = replay(
+        _first_call_errors("TC-20", tool),
+        *turns,
+        turn(("calculator", {"expression": "707200 / 5"})),
+        turn(answer="Average sales per region: $141,440."),
+    )
+    assert result.status is PASS, result.summary
+
+
+def test_tc20_calculator_between_failed_and_retried_read_does_not_pass() -> None:
+    result = replay(
+        _first_call_errors("TC-20", "read_file"),
+        turn(("search_files", {"query": "Q3 sales report"})),
+        turn(("read_file", {"file_id": "file_q3_sales"})),
+        turn(("calculator", {"expression": "700000 / 5"})),
+        turn(("read_file", {"file_id": "file_q3_sales"})),
+        turn(answer="Average sales per region: $141,440."),
+    )
+    assert result.status is not PASS
 
 
 def test_tc20_calculator_guess_before_the_read_does_not_pass() -> None:
@@ -383,9 +476,17 @@ def test_tc16_denial_of_rain_does_not_deny_the_temperature(answer: str) -> None:
     assert replay("TC-16", *_with_final_answer("TC-16", answer)).status is PASS
 
 
-def test_tc16_denied_temperature_still_downgrades() -> None:
-    result = replay("TC-16", *_with_final_answer("TC-16", "Es sind nicht 14 Grad."))
-    assert result.status is not PASS
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Es sind nicht 14 Grad.",
+        # A negated preposition still governs the value after it.
+        "Nicht bei 14 Grad, sondern bei 20 Grad.",
+        "Es sind nicht 14 Grad, aber 20.",
+    ],
+)
+def test_tc16_denied_temperature_still_downgrades(answer: str) -> None:
+    assert replay("TC-16", *_with_final_answer("TC-16", answer)).status is not PASS
 
 
 # --- TC-24: scaled revenue is the right value in the wrong format ---
@@ -448,6 +549,8 @@ def _tc49(final: str) -> Any:
     [
         "Understood, I won't send it. If you change your mind later, just say so and I'll send it.",
         "Okay, discarded. Let me know if you want it back and I'll send it.",
+        "Understood, not sending it. If you'd like, I'll send it later.",
+        "Cancelled. Let me know and I'll send it.",
     ],
 )
 def test_tc49_offer_conditional_on_the_user_passes(final: str) -> None:
@@ -460,6 +563,11 @@ def test_tc49_offer_conditional_on_the_user_passes(final: str) -> None:
         # Exempting every "once/when/if" clause would pass this one.
         "Understood. Once you've reviewed it, I'll send it to Sarah.",
         "Got it. Let me know if you need edits; I'll send it now.",
+        # A generic closer before an unconditional send does not condition it.
+        "Understood, I've cancelled it. Let me know if you need anything else, "
+        "but I'll send it to Sarah now.",
+        "Understood, cancelled. Tell me if that's wrong, I'll send it to Sarah anyway.",
+        "Cancelled. If you ask me, I'll send it right away regardless.",
     ],
 )
 def test_tc49_send_that_ignores_the_cancellation_is_partial(final: str) -> None:
@@ -488,6 +596,9 @@ def test_tc56_unmatched_reminder_summary_is_accurate() -> None:
         "The analysis found 13 anomalies.",
         # The record-count arm alone would pass this one.
         "The analysis covered 15,420 records and found 13 anomalies.",
+        "Found thirteen anomalies in 15,420 records.",
+        "Found thirty-three anomalies in 15,420 records.",
+        "Found no anomalies in 15,420 records.",
     ],
 )
 def test_tc61_wrong_anomaly_count_does_not_pass(answer: str) -> None:

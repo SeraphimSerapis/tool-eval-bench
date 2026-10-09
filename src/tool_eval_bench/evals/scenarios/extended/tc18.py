@@ -29,6 +29,9 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
+    has_explicit_tool_error as _has_explicit_tool_error,
+)
+from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
 )
 from tool_eval_bench.evals.helpers import (
@@ -145,11 +148,21 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     ordered = any(t.turn < e.turn for t in usable_translations for e in usable_emails)
     if translated_to_german and sent_email and email_has_german and ordered:
-        if len(translations) != 1 or len(emails) != 1 or len(email_calls) != 1:
+        # A call that came back with an explicit error (a rejected request or
+        # an --error-rate failure) did nothing, so a retry after it is not a
+        # duplicate. Count only the calls that went through.
+        def went_through(calls: list[ToolCallRecord]) -> list[ToolCallRecord]:
+            return [call for call in calls if not _has_explicit_tool_error(state, call)]
+
+        if (
+            len(went_through(translations)) != 1
+            or len(went_through(emails)) != 1
+            or len(went_through(email_calls)) != 1
+        ):
             return _partial(
                 "Translated and emailed the message but issued duplicate or incorrect email mutations."
             )
-        if not _address_observed_before(state, emails[0], "hans.mueller@firma.de"):
+        if not _address_observed_before(state, went_through(emails)[0], "hans.mueller@firma.de"):
             return _partial(
                 "Translated and emailed Hans at an address it never looked up with get_contacts."
             )

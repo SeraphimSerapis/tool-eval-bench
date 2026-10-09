@@ -22,6 +22,9 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import (
+    first_call_without_error as _first_call_without_error,
+)
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback as _generic_tool_fallback,
@@ -42,7 +45,6 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
-    _first_call_without_error,
     _numeric_value,
     _positive_argument_contains,
     _result_matches_if_present,
@@ -100,6 +102,10 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
     # recovery, while a successful call with a rounded value still counts.
     search = _first_call_without_error(state, "web_search")
     calc = _first_call_without_error(state, "calculator")
+    if calc is not None and _has_explicit_tool_error(state, calc):
+        # Every calculator call errored, so no calculation reached the model.
+        # Grade it like an answer computed without the calculator.
+        calc = None
 
     # Only when no search succeeded did the model lack the searched value.
     search_got_error = bool(search and _has_explicit_tool_error(state, search))

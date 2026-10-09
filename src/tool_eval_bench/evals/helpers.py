@@ -1106,3 +1106,19 @@ def attachment_matches_observed_file(
                 ):
                     return True
     return False
+
+
+def first_call_without_error(state: ScenarioState, name: str) -> ToolCallRecord | None:
+    """The first ``name`` call whose result is not an explicit error.
+
+    A call that came back with an error, whether the mock rejected it or
+    ``--error-rate`` injected the failure, gave the model nothing to use or
+    misuse, so the retry after it is the call to grade. When every attempt
+    errored, the first call is returned so callers can still see that the
+    tool was tried and that it failed.
+    """
+    calls = tool_calls_by_name(state, name)
+    return next(
+        (call for call in calls if not has_explicit_tool_error(state, call)),
+        calls[0] if calls else None,
+    )

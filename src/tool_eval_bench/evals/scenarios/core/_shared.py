@@ -182,22 +182,6 @@ def _result_matches_error_if_present(state: ScenarioState, call: ToolCallRecord)
     return not results or any(_tc14_result_is_error(result.result) for result in results)
 
 
-def _first_call_without_error(state: ScenarioState, name: str) -> ToolCallRecord | None:
-    """The first ``name`` call whose result is not an explicit error.
-
-    A call that came back with an error, whether the mock rejected it or
-    ``--error-rate`` injected the failure, produced nothing the model could
-    use or misuse, so the retry after it is the call to grade. When every
-    attempt errored, the first call is returned so callers can still see that
-    the tool was tried and that it failed.
-    """
-    calls = [call for call in state.tool_calls if call.name == name]
-    return next(
-        (call for call in calls if not _has_explicit_tool_error(state, call)),
-        calls[0] if calls else None,
-    )
-
-
 def _only_error_retries_before_last(state: ScenarioState, calls: list[ToolCallRecord]) -> bool:
     """Whether every call except the last came back with an explicit error.
 

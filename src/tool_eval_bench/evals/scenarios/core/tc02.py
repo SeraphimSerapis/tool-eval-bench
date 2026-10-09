@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -97,6 +98,11 @@ def _tc02_eval(state: ScenarioState) -> ScenarioEvaluation:
         has_price = _answer_affirms_rounded_value(state.final_answer, "187.42")
         if has_price:
             return _pass("Used only get_stock_price for AAPL.")
+        if re.search(r"\$\s*\d|\b\d+\.\d+\b", state.final_answer):
+            return _partial(
+                "Called get_stock_price correctly but stated a price that does not match "
+                "the tool result ($187.42)."
+            )
         return _partial(
             "Called get_stock_price correctly but did not surface the price in the answer.",
         )
