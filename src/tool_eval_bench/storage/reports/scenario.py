@@ -21,12 +21,14 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.storage.reports._common import (
     _HELD_OUT_LABEL,
+    HELD_OUT_CELL,
     _markdown_heading,
     _markdown_table_cell,
     _render_held_out_note,
     _render_run_context,
     _trace_block,
     append_benchy_throughput_rows,
+    held_out_ids,
     report_filename,
 )
 
@@ -115,15 +117,9 @@ def write_scenario_report(
             f"{len(summary.excluded_scenarios)} scenario(s) excluded from scoring "
             f"due to infrastructure failures (timeout / connection / 5xx): {excluded}"
         )
+    held_out = held_out_ids(scenario_metadata)
     diagnostics = [
-        r
-        for r in summary.scenario_results
-        if r.diagnostics
-        and not (
-            scenario_metadata
-            and r.scenario_id in scenario_metadata
-            and scenario_metadata[r.scenario_id].held_out
-        )
+        r for r in summary.scenario_results if r.diagnostics and r.scenario_id not in held_out
     ]
     if diagnostics:
         md.extend(
@@ -228,7 +224,13 @@ def write_scenario_report(
             ]
         )
         for w in summary.safety_warnings:
-            md.append(f"> - {_markdown_heading(w)}")
+            # Warnings read "{id} ({title}): {violation}"; keep the count and
+            # the ID for held-out scenarios, never the title or violation.
+            held_id = next((sid for sid in held_out if w.startswith(f"{sid} (")), None)
+            if held_id is not None:
+                md.append(f"> - {_markdown_heading(held_id)}: {HELD_OUT_CELL}")
+            else:
+                md.append(f"> - {_markdown_heading(w)}")
         md.append("")
 
     # Run Context section (issue #6)
@@ -274,17 +276,15 @@ def write_scenario_report(
 
     _diff_labels = {1: "★", 2: "★★", 3: "★★★", 4: "★★★★", 5: "★★★★★"}
 
-    held_out_ids = {sid for sid, meta in scenario_metadata.items() if meta.held_out}
-
     for r in summary.scenario_results:
         emoji = status_emoji.get(r.status, "?")
         metadata = scenario_metadata.get(r.scenario_id)
         diff = metadata.difficulty if metadata else None
         diff_str = _diff_labels.get(diff, "?") if diff else "?"
         failure = r.failure_kind or "—"
-        if r.scenario_id in held_out_ids:
-            title = f"_{_HELD_OUT_LABEL}_"
-            detail = f"_{_HELD_OUT_LABEL}_"
+        if r.scenario_id in held_out:
+            title = HELD_OUT_CELL
+            detail = HELD_OUT_CELL
         else:
             title = metadata.title if metadata else r.scenario_id
             note = f" ({r.note})" if r.note else ""
@@ -295,8 +295,8 @@ def write_scenario_report(
             f"{_markdown_table_cell(failure)} | {_markdown_table_cell(detail)} |"
         )
 
-    if held_out_ids:
-        md.extend(_render_held_out_note(sorted(held_out_ids), scenario_packs))
+    if held_out:
+        md.extend(_render_held_out_note(sorted(held_out), scenario_packs))
 
     # Difficulty distribution summary
     from collections import Counter
@@ -330,7 +330,9 @@ def write_scenario_report(
         append_benchy_throughput_rows(md, ok_samples)
 
     diagnostic_results = [
-        r for r in summary.scenario_results if r.parallel_tool_turns or r.state_checkpoints
+        r
+        for r in summary.scenario_results
+        if (r.parallel_tool_turns or r.state_checkpoints) and r.scenario_id not in held_out
     ]
     if diagnostic_results:
         md.extend(["", "## Hard Mode Diagnostics", ""])
@@ -346,7 +348,7 @@ def write_scenario_report(
         (
             r
             for r in summary.scenario_results
-            if r.decision_audit is not None and r.scenario_id not in held_out_ids
+            if r.decision_audit is not None and r.scenario_id not in held_out
         ),
         key=lambda r: _AUDIT_ORDER[_audit_outcome(r.decision_audit or {})],
     )
@@ -410,7 +412,7 @@ def write_scenario_report(
     for r in summary.scenario_results:
         md.append(f"### {_markdown_heading(r.scenario_id)}")
         md.append("")
-        if r.scenario_id in held_out_ids:
+        if r.scenario_id in held_out:
             md.append(
                 f"_{_HELD_OUT_LABEL} — the trace would disclose the scenario's "
                 "prompt and expected tool calls._"

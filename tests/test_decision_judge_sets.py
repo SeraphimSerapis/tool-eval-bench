@@ -365,7 +365,7 @@ def test_judged_and_unjudged_runs_share_a_fingerprint_and_cohort():
     assert judged["decision_judge"] == judge
     assert "decision_judge" not in plain
     assert judged["config_fingerprint"] == plain["config_fingerprint"]
-    assert _cohort_fingerprint(judged) == _cohort_fingerprint(plain)
+    assert _cohort_fingerprint(judged, {}) == _cohort_fingerprint(plain, {})
 
 
 # -- report -------------------------------------------------------------------

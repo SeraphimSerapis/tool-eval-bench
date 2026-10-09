@@ -42,9 +42,9 @@ from tool_eval_bench.domain.scenarios import (
     OnScenarioResult,
     OnScenarioStart,
     ScenarioDefinition,
-    ScenarioReportMetadata,
     ScenarioResult,
     ScenarioState,
+    scenario_report_metadata,
 )
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 from tool_eval_bench.runner.orchestrator import run_all_scenarios, score_results
@@ -456,15 +456,7 @@ class BenchmarkService:
         report_writer = None
         if self.reporter is not None:
             reporter = self.reporter
-            scenario_metadata = {
-                scenario.id: ScenarioReportMetadata(
-                    title=scenario.title,
-                    category=scenario.category,
-                    difficulty=scenario.difficulty,
-                    held_out=scenario.held_out,
-                )
-                for scenario in report_scenarios
-            }
+            scenario_metadata = scenario_report_metadata(report_scenarios)
 
             def write_scenario_report() -> Any:
                 return reporter.write_scenario_report(

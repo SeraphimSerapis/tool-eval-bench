@@ -107,9 +107,16 @@ anything else.
 ## A score moved and you do not know why
 
 Two runs are only comparable when their `config_fingerprint` matches. The fingerprint covers the
-code identity and the configuration, so a changed flag, a different scenario selection, or a new
-version puts the run in a different cohort. The leaderboard groups on it for exactly this reason,
-and `history` will show you both runs' fingerprints.
+code identity, the configuration, and the discovered deployment, so a changed flag, a different
+scenario selection, a new version, or a different engine or quantization changes it. The
+leaderboard collapses repeat runs of one model on it, and `history` will show you both runs'
+fingerprints.
+
+Ranking across models uses a looser cohort: the settings plus the `tool-eval-bench` version and
+commit. A new version or commit therefore starts a new cohort with its own ranks. Deployment facts
+stay out of the cohort on purpose, because different models on one box often run at different
+quantizations or context windows; compare the engine columns in `export` yourself. A dirty
+development checkout carries a dated version suffix, so its runs start a new cohort each day.
 
 Also check `completion_rate` on both. A run graded on 60 of 69 scenarios is not comparable to one
 graded on all 69, however similar the headline scores look.

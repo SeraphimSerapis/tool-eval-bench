@@ -10,8 +10,9 @@ from:
 
 Scenarios loaded from a held-out [scenario pack](scenario-packs.md) keep their
 status and points in the Markdown report but withhold titles, summaries, and
-traces, so publishing a score does not publish the pack. Full traces stay in
-SQLite for local inspection.
+traces, so publishing a score does not publish the pack. The cross-trial
+`_summary.md` written by `--trials` withholds their summaries the same way.
+Full traces stay in SQLite for local inspection.
 
 Context-pressure sweeps, spec-bench, `--perf-only` throughput runs, and plugin
 runs share one report header: run ID, date, mode, the `tool-eval-bench` version,
@@ -54,8 +55,14 @@ evaluators and measurement loops *are* code: two runs from different commits are
 not comparable even when every flag matches. Scored runs, context-pressure
 sweeps, spec-bench, throughput-only runs and plugins all use this one rule.
 
-The leaderboard ranks only completed runs at 100% completion. Runs from
-different cohorts stay visible but receive no misleading global rank.
+The leaderboard ranks only completed runs at 100% completion. It ranks models
+against each other within a cohort: the same settings and the same
+`tool-eval-bench` version and commit, read from each run's stored metadata.
+Deployment facts are deliberately not part of the cohort, since models on one
+server often differ in quantization or context window. Runs from different
+cohorts stay visible but receive no misleading global rank. `export` restarts
+the CSV `rank` column per cohort. CSV adds `cohort` and `cohort_fingerprint`
+columns; JSON carries the same values as `cohort_label` and `cohort_fingerprint`.
 
 The version is derived from git by setuptools-scm, so a build installed straight
 from a commit reports which commit it came from rather than claiming to be the
@@ -95,8 +102,10 @@ The label is an annotation only. It does not affect the run ID or the
 
 Every scenario result is checkpointed to SQLite the moment it finishes, so a
 Ctrl-C or a dropped connection midway through the suite costs you only the
-scenario in flight. Interrupted runs appear in `tool-eval-bench history` marked
-`interrupted — resumable`.
+scenario in flight. Interrupted scored runs appear in `tool-eval-bench history`
+marked `interrupted — resumable`. Throughput, context-pressure, spec-bench, and
+plugin (GSM8K, MMLU, IFEval) runs cannot be resumed, so `history` shows their
+bare status.
 
 `tool-eval-bench resume RUN_ID` replays the finished work from the checkpoints
 and runs only the missing, corrupt, or infrastructure-failed scenarios. Pass,

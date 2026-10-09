@@ -5,6 +5,7 @@ Usage:
     python compare_tool_eval.py <model_a.md> <model_b.md> <output.html>
 """
 
+import html
 import re
 import sys
 from pathlib import Path
@@ -13,6 +14,9 @@ from typing import Any
 from tool_eval_bench.compare_reports._common import (
     _r,
     _tv,
+    card_labels,
+    config_note,
+    deployability_label,
     diff_display,
     dname,
     esc,
@@ -41,6 +45,7 @@ def parse_md(fp: str) -> dict:
     d["rating"] = _r(r"\*\*Rating\*\*:\s*(.+?)$", txt, fl=re.M) or ""
 
     d["deployability"] = int(_r(r"\*\*Deployability\*\*:\s*\*\*(\d+)\*\*", txt) or 0)
+    d["alpha"] = _r(r"\*\*Deployability\*\*:.*?\(\u03b1=([\d.]+)\)", txt)
     d["quality"] = int(_r(r"\*\*Quality\*\*:\s*(\d+)\s*/\s*100", txt) or 0)
     d["responsiveness"] = int(_r(r"\*\*Responsiveness\*\*:\s*(\d+)\s*/\s*100", txt) or 0)
     d["median_turn_time"] = _r(r"median turn:\s*([\d.]+)s", txt, fl=re.I) or ""
@@ -67,14 +72,14 @@ def parse_md(fp: str) -> dict:
         cm = re.search(r"\*\*(\d+) safety-critical", wt)
         if cm:
             d["safety_critical_count"] = int(cm.group(1))
-        for sm in re.finditer(
-            r"> - \*\*(TC-\d+)\*\*\s*\((.+?)\):\s*(.*?)(?=\n> - \*\*TC-|\n## |\Z)", wt, re.S
-        ):
+        # The writer emits "> - {id} ({title}): {violation}" (older reports bolded
+        # the ID).  The title match is greedy because titles can contain ")".
+        for sm in re.finditer(r"^> - (?:\*\*)?(\S+?)(?:\*\*)? \((.*)\): (.*)$", wt, re.M):
             d["safety_critical"].append(
                 {
-                    "id": sm.group(1),
-                    "type": sm.group(2),
-                    "desc": sm.group(3).strip(),
+                    "id": html.unescape(sm.group(1)),
+                    "type": html.unescape(sm.group(2)),
+                    "desc": html.unescape(sm.group(3).strip()),
                 }
             )
     return d
@@ -126,12 +131,14 @@ def _parse_scenarios(txt):
         rows.append(
             {
                 "id": cols[1],
-                "title": cols[2],
+                "title": html.unescape(cols[2]),
                 "diff": cols[3].count("★") if len(cols) > 3 else 0,
                 "status": status,
                 "points_earned": int(pm.group(1)) if pm else 0,
                 "points_max": int(pm.group(2)) if pm else 0,
-                "summary": cols[6] if len(cols) > 6 else "",
+                # Summary is the last cell; newer reports insert a Failure
+                # column before it.
+                "summary": html.unescape(cols[-2]) if len(cols) > 6 else "",
             }
         )
     return rows
@@ -297,8 +304,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     w_parts = [s for s in w["scenarios"] if s["status"] == "partial"]
     r_parts = [s for s in r["scenarios"] if s["status"] == "partial"]
     wc_cnt, rc_cnt = w["safety_critical_count"], r["safety_critical_count"]
-    temp = da.get("temperature") or "?"
-    think = da.get("thinking") or "?"
+    tie = sd == 0
 
     lines: list[str] = []
 
@@ -328,12 +334,13 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     </div>""")
 
     # ─── MODEL CARDS ───
+    runner_label, winner_label = card_labels(tie)
     lines.append(f"""    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-      <!-- Runner-up -->
+      <!-- Second card -->
       <div class="light-card rounded-3xl p-5 border border-slate-300">
         <div class="flex items-start justify-between">
           <div>
-            <div class="model-label text-rose-700 tracking-widest">RUNNER-UP</div>
+            {runner_label}
             <div class="font-semibold text-xl tracking-tight mt-1">{esc(rdn)}</div>
             <div class="text-xs text-slate-600 mt-0.5">{esc(rd)}</div>
           </div>
@@ -347,14 +354,11 @@ def generate_html(da: dict, db: dict, out: str) -> None:
           <div class="px-2.5 py-0.5 bg-rose-200 text-rose-800 rounded-full text-[10px] font-bold">{esc(r["rating"])}</div>
         </div>
       </div>
-      <!-- Winner -->
+      <!-- First card -->
       <div class="light-card rounded-3xl p-5 border border-emerald-300 shadow-sm ring-1 ring-emerald-200">
         <div class="flex items-start justify-between">
           <div>
-            <div class="flex items-center gap-x-2">
-              <span class="model-label text-emerald-700 tracking-widest">WINNER</span>
-              <span class="winner-badge"><i class="fa-solid fa-trophy mr-1"></i> BEST</span>
-            </div>
+            {winner_label}
             <div class="font-semibold text-xl tracking-tight mt-1 text-emerald-900">{esc(wdn)}</div>
             <div class="text-xs text-emerald-800 mt-0.5">{esc(wd)}</div>
           </div>
@@ -382,12 +386,19 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     if rc_cnt > 0 and wc_cnt == 0:
         vp.append("Safer")
     vp_text = " \u2022 ".join(esc(v) for v in vp)
+    if tie:
+        banner_title = (
+            f'Tie: <span class="font-display">{esc(wdn)}</span> and '
+            f'<span class="font-display">{esc(rdn)}</span>'
+        )
+    else:
+        banner_title = f'Winner: <span class="font-display">{esc(wdn)}</span>'
 
     lines.append(f"""    <div class="mb-8 rounded-3xl bg-emerald-700 text-white px-6 py-4 flex items-center gap-4 shadow-sm">
       <div class="flex-1">
         <div class="flex items-center gap-x-2">
           <i class="fa-solid fa-check-circle text-emerald-300"></i>
-          <span class="font-semibold text-lg">Winner: <span class="font-display">{esc(wdn)}</span></span>
+          <span class="font-semibold text-lg">{banner_title}</span>
         </div>
         <div class="text-white/90 text-sm mt-0.5">{vp_text}</div>
       </div>
@@ -414,7 +425,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     lines.append("          <thead>")
     lines.append(f"""            <tr class="bg-slate-200 border-b-2 border-slate-400">
               <th class="text-left py-3 px-6 font-semibold w-1/3">Metric</th>
-              <th class="text-center py-3 px-4 font-semibold text-emerald-700">{wl} (Winner)</th>
+              <th class="text-center py-3 px-4 font-semibold text-emerald-700">{wl}{"" if tie else " (Winner)"}</th>
               <th class="text-center py-3 px-4 font-semibold">{rl}</th>
               <th class="text-center py-3 px-4 font-semibold w-20">\u0394</th>
             </tr>""")
@@ -437,7 +448,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     kms = sign(dd)
     kmc = "diff-positive" if dd >= 0 else "diff-negative"
     km(
-        "Deployability (\u03b1=0.7)",
+        deployability_label(w, r),
         f"{w['deployability']} / 100",
         f"{r['deployability']} / 100",
         kms,
@@ -457,7 +468,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     # Safety row
     ws = str(wc_cnt)
     rs = f"{rc_cnt} critical" if rc_cnt > 0 else str(rc_cnt)
-    sv = "Winner" if wc_cnt <= rc_cnt else rl
+    sv = "Even" if wc_cnt == rc_cnt else (wl if wc_cnt < rc_cnt else rl)
     wsc = "text-emerald-600" if wc_cnt == 0 else "text-rose-600"
     rsc = "text-rose-600" if rc_cnt > 0 else "text-emerald-600"
     lines.append(f"""            <tr>
@@ -684,7 +695,8 @@ def generate_html(da: dict, db: dict, out: str) -> None:
         '      <div class="section-header font-semibold mb-3 px-1 flex items-center gap-x-2 text-slate-800">'
     )
     lines.append('        <i class="fa-solid fa-balance-scale text-slate-600"></i>')
-    lines.append("        <span>Winner vs. Runner-up: Strengths &amp; Weaknesses</span>")
+    sw_title = f"{wl} vs. {rl}" if tie else "Winner vs. Runner-up"
+    lines.append(f"        <span>{sw_title}: Strengths &amp; Weaknesses</span>")
     lines.append("      </div>")
     lines.append('      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">')
 
@@ -731,11 +743,10 @@ def generate_html(da: dict, db: dict, out: str) -> None:
         lines.append(
             """            <li class="flex items-start gap-x-2"><i class="fa-solid fa-minus text-amber-600 mt-1 text-xs"></i> <span>No significant weaknesses identified \u2014 wins or ties in every category.</span></li>"""
         )
-    if r_fails:
-        if len(r_fails) > len(w_fails):
-            lines.append(
-                f"""            <li class="flex items-start gap-x-2"><i class="fa-solid fa-minus text-amber-600 mt-1 text-xs"></i> <span>More outright failures than runner-up ({len(r_fails)} vs {len(w_fails)}).</span></li>"""
-            )
+    if len(w_fails) > len(r_fails):
+        lines.append(
+            f"""            <li class="flex items-start gap-x-2"><i class="fa-solid fa-minus text-amber-600 mt-1 text-xs"></i> <span>More outright failures than {rl} ({len(w_fails)} vs {len(r_fails)}).</span></li>"""
+        )
     lines.append("          </ul>")
     lines.append("        </div>")
     lines.append("      </div>")
@@ -748,19 +759,28 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     else:
         conc = f"The {rl} model showed solid performance across basic categories but lagged in complex multi-step scenarios."
 
+    if tie:
+        verdict = f"""The <span class="font-semibold">{esc(wdn)}</span> and
+        <span class="font-semibold">{esc(rdn)}</span> tie at {w["final_score"]} / 100.
+        Compare the category and scenario sections above for where they differ."""
+        follow_up = ""
+    else:
+        verdict = f"""The <span class="font-semibold text-emerald-700">{esc(wdn)}</span> is the clear winner.
+        It delivers better performance on complex tasks (especially Hard and Very Hard scenarios),
+        shows strong safety posture, and is {esc(faster_word)} faster in interactive use."""
+        follow_up = f"""
+      <div class="mt-4 text-sm text-slate-700">
+        {esc(conc)} The {wl}-optimized model appears better suited for production tool-use workloads.
+      </div>"""
+
     lines.append(f"""    <div class="light-card rounded-3xl p-6">
       <div class="font-semibold text-lg mb-2">Conclusion</div>
       <div class="text-[15px] leading-relaxed text-slate-700">
-        The <span class="font-semibold text-emerald-700">{esc(wdn)}</span> is the clear winner.
-        It delivers better performance on complex tasks (especially Hard and Very Hard scenarios),
-        shows strong safety posture, and is {esc(faster_word)} faster in interactive use.
-      </div>
-      <div class="mt-4 text-sm text-slate-700">
-        {esc(conc)} The {wl}-optimized model appears better suited for production tool-use workloads.
-      </div>
+        {verdict}
+      </div>{follow_up}
       <div class="text-xs mt-4 pt-3 border-t text-emerald-700 font-medium flex items-center gap-x-1.5">
         <i class="fa-solid fa-info-circle"></i>
-        <span>Both models use the same backend configuration, temperature {esc(temp)}, and thinking {esc(think)}.</span>
+        <span>{config_note(da, db)}</span>
       </div>
     </div>""")
 

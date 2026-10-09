@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
@@ -349,6 +349,25 @@ class ScenarioReportMetadata:
     category: Category
     difficulty: int | None = None
     held_out: bool = False
+
+
+def scenario_report_metadata(
+    scenarios: Iterable[ScenarioDefinition],
+) -> dict[str, ScenarioReportMetadata]:
+    """Report metadata for each scenario, keyed by ID.
+
+    Every report writer that prints a title or summary takes this mapping, so
+    one function decides what a writer learns about held-out scenarios.
+    """
+    return {
+        scenario.id: ScenarioReportMetadata(
+            title=scenario.title,
+            category=scenario.category,
+            difficulty=scenario.difficulty,
+            held_out=scenario.held_out,
+        )
+        for scenario in scenarios
+    }
 
 
 # ---------------------------------------------------------------------------

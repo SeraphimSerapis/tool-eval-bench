@@ -1,0 +1,1 @@
+**Concurrent runs on a new database**: several runs opening a new or very old `data/benchmarks.sqlite` at the same moment could abort with `database is locked` or `duplicate column name`. The switch to WAL mode now retries briefly, and the schema migration runs under a write lock.
