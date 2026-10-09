@@ -324,7 +324,9 @@ def test_shared_plugin_finalization_writes_and_persists(
         details={"total": 4, "correct": 3},
     )
 
+    console = Console(record=True, width=400)
     run_id = _finalize_plugin_run(
+        console,
         mode=mode,
         title=title,
         display_name="Display Model",
@@ -333,11 +335,13 @@ def test_shared_plugin_finalization_writes_and_persists(
         report_metrics=metrics,
         report_lines=["plugin-specific report"],
         output_dir=str(tmp_path),
+        label=None,
         run_context=None,
     )
 
     reports = list(tmp_path.rglob(f"{run_id}.md"))
     assert len(reports) == 1
+    assert f"Report saved to {reports[0]}" in console.export_text()
     text = reports[0].read_text(encoding="utf-8")
     assert f"# {title} Benchmark — Display Model" in text
     assert all(metric in text for metric in metrics)
@@ -400,6 +404,7 @@ def test_finalize_plugin_run_renders_label_and_slugifies_filename(
     )
 
     run_id = _finalize_plugin_run(
+        Console(record=True),
         mode="gsm8k",
         title="GSM8K",
         display_name="Display Model",
@@ -408,6 +413,7 @@ def test_finalize_plugin_run_renders_label_and_slugifies_filename(
         report_metrics=["- **Accuracy**: **75.0%**"],
         report_lines=["plugin-specific report"],
         output_dir=str(tmp_path),
+        label=LABEL,
         run_context=ctx,
     )
 

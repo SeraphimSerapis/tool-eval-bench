@@ -365,7 +365,6 @@ def run_spec_bench(
                 },
                 scores={"samples": len(ok_samples)},
                 status="completed",
-                metadata_label=label,
             ),
             spec_decode_report(display_name, ok_samples, label=label, temperature=temperature),
             run_context=run_context,

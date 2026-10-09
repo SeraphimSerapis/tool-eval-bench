@@ -10,7 +10,7 @@ from typing import Any
 
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.storage.reports._common import _trace_block
-from tool_eval_bench.storage.reports.mode import ModeReport, ReportContext, write_mode_report
+from tool_eval_bench.storage.reports.mode import ModeReport, write_mode_report
 
 
 def write_pressure_sweep_report(
@@ -105,8 +105,6 @@ def pressure_sweep_report(
         display_name=model,
         mode="context-pressure-sweep",
         label=label,
-        version_line=True,
-        context=ReportContext.ENGINE,
         header=tuple(header),
         body=tuple(markdown),
     )

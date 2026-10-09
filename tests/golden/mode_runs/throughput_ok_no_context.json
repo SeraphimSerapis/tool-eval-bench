@@ -13,8 +13,10 @@
     "scores": {
       "samples": 1
     },
-    "metadata": {},
-    "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
+    "metadata": {
+      "label": "golden | label"
+    },
+    "report_path": "<YYYY>/<MM>/<RUN_ID>--golden-label.md"
   },
-  "report": "# Throughput Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: throughput-only\n\n## Results\n\n| Test | pp t/s | tg t/s | TTFT (ms) | Total (ms) | Tokens |\n|---|---:|---:|---:|---:|---:|\n| pp512 tg128 @ d0 | 5,000 | 95.0 | 100 | 1,400 | 512+128 |"
+  "report": "# Throughput Benchmark — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: throughput-only\n- **Label**: <code>golden | label</code>\n- **Backend**: vllm\n- **Server**: http://***:8000/v1\n- **Model (API)**: `m`\n\n## Results\n\n| Test | pp t/s | tg t/s | TTFT (ms) | Total (ms) | Tokens |\n|---|---:|---:|---:|---:|---:|\n| pp512 tg128 @ d0 | 5,000 | 95.0 | 100 | 1,400 | 512+128 |"
 }

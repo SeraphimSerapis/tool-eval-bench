@@ -380,7 +380,6 @@ def run_pressure_sweep(
                 "level_results": level_results,
             },
             status="completed",
-            metadata_label=label,
         ),
         pressure_sweep_report(
             model=display_name,
