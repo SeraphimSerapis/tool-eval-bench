@@ -56,6 +56,21 @@ def decision_judge_config(
         judge_set = DEFAULT_DECISION_JUDGE_SET
     elif judge_set not in DECISION_JUDGE_SETS:
         raise ValueError(f"Decision judge set must be one of: {', '.join(DECISION_JUDGE_SETS)}")
+    check_decision_judge_url(base_url)
+    # The config is persisted and printed, so the host is masked like every
+    # other server URL. Requests use the raw URL, which callers pass to
+    # run_decision_audit separately; endpoint_id still tells two judges apart.
+    return {
+        "mode": "audit",
+        "base_url": redact_url(base_url),
+        "endpoint_id": endpoint_identity(base_url),
+        "model": model.strip(),
+        "set": judge_set,
+    }
+
+
+def check_decision_judge_url(base_url: str) -> None:
+    """Raise ``ValueError`` unless ``base_url`` is a judge URL requests may be sent to."""
     try:
         parsed = urlsplit(base_url)
         port = parsed.port
@@ -75,16 +90,6 @@ def decision_judge_config(
         raise ValueError(
             "Decision judge URL must be HTTP(S), without credentials, query, or fragment"
         )
-    # The config is persisted and printed, so the host is masked like every
-    # other server URL. Requests use the raw URL, which callers pass to
-    # run_decision_audit separately; endpoint_id still tells two judges apart.
-    return {
-        "mode": "audit",
-        "base_url": redact_url(base_url),
-        "endpoint_id": endpoint_identity(base_url),
-        "model": model.strip(),
-        "set": judge_set,
-    }
 
 
 def selected_audit(

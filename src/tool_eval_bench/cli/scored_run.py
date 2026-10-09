@@ -23,6 +23,8 @@ from tool_eval_bench.domain.models import ChatMessage, RunContext
 from tool_eval_bench.domain.scenarios import ScenarioDefinition
 
 DECISION_JUDGE_API_KEY_ENV = "TOOL_EVAL_DECISION_JUDGE_API_KEY"
+DECISION_JUDGE_BASE_URL_ENV = "TOOL_EVAL_DECISION_JUDGE_BASE_URL"
+DECISION_JUDGE_MODEL_ENV = "TOOL_EVAL_DECISION_JUDGE_MODEL"
 
 
 @dataclass(frozen=True)

@@ -111,16 +111,18 @@ def test_decision_judge_rejects_an_unknown_set(capsys):
     [
         ["run", "--decision-judge"],
         ["run", "--decision-judge", "all", "--decision-judge-model", "clef-flash"],
-        ["run", "--decision-judge", "all", "--decision-judge-base-url", JUDGE_URL],
     ],
 )
-def test_set_without_a_connection_is_a_parser_error(monkeypatch, capsys, argv):
+def test_set_without_a_judge_url_is_a_parser_error(monkeypatch, capsys, argv):
     monkeypatch.setattr("sys.argv", ["tool-eval-bench", *argv])
     monkeypatch.setattr("tool_eval_bench.cli.dispatch._load_dotenv", lambda: None)
+    monkeypatch.delenv("TOOL_EVAL_DECISION_JUDGE_BASE_URL", raising=False)
     with pytest.raises(SystemExit) as error:
         main()
     assert error.value.code == 2
-    assert "decision judge" in capsys.readouterr().err.lower()
+    err = capsys.readouterr().err
+    assert "decision judge" in err.lower()
+    assert "TOOL_EVAL_DECISION_JUDGE_BASE_URL" in err
 
 
 def test_connection_flags_alone_select_the_recommended_set():

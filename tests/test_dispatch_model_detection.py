@@ -174,3 +174,50 @@ def test_detect_model_accepts_the_native_gemini_list(monkeypatch: pytest.MonkeyP
     selected = dispatch._detect_model("http://localhost:8000", None, Console(record=True))
 
     assert selected[0] == "gemini-x"
+
+
+def _two_models() -> list[httpx.Response]:
+    return [
+        _response(
+            200,
+            "http://judge.test/v1/models",
+            json={"data": [{"id": "clef-flash"}, {"id": "clef-pro"}]},
+        )
+    ]
+
+
+def test_detect_model_hint_stops_a_headless_guess_between_models(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _Client(_two_models()))
+
+    with pytest.raises(SystemExit) as exc_info:
+        dispatch._detect_model(
+            "http://judge.test/v1",
+            None,
+            Console(),
+            headless=True,
+            multiple_models_hint="pass --decision-judge-model",
+        )
+
+    assert exc_info.value.code == 2
+    event = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    assert event["error"] == "invalid_arguments"
+    assert "2 models (clef-flash, clef-pro)" in event["message"]
+    assert event["message"].endswith("pass --decision-judge-model")
+
+
+def test_detect_model_hint_keeps_single_model_and_interactive_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    single = [_response(200, "http://judge.test/v1/models", json={"data": [{"id": "only"}]})]
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _Client(single))
+    assert dispatch._detect_model(
+        "http://judge.test/v1", None, Console(), headless=True, multiple_models_hint="hint"
+    ) == ("only", "only")
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _Client(_two_models()))
+    monkeypatch.setattr("builtins.input", lambda prompt: "2")
+    assert dispatch._detect_model(
+        "http://judge.test/v1", None, Console(record=True), multiple_models_hint="hint"
+    ) == ("clef-pro", "clef-pro")

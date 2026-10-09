@@ -18,6 +18,7 @@ from tool_eval_bench.domain.errors import (
     CONNECTION_FAILED,
     DETECTION_FAILED,
     HTTP_ERROR,
+    INVALID_ARGUMENTS,
     INVALID_RESPONSE,
     NO_MODELS,
 )
@@ -71,6 +72,7 @@ def _detect_model(
     headless: bool = False,
     wire_format: str = "openai",
     headers: Mapping[str, str] | None = None,
+    multiple_models_hint: str | None = None,
 ) -> tuple[str, str]:
     """Query /v1/models and auto-select or let the user pick.
 
@@ -80,8 +82,10 @@ def _detect_model(
 
     When *headless* is True (e.g. ``--json`` mode), the interactive picker is
     skipped: the first available model is auto-selected and a JSONL event is
-    emitted on stderr.  Failures exit with the documented codes in both modes
-    (2 = connection, HTTP, or unreadable response; 3 = no models).
+    emitted on stderr.  With *multiple_models_hint*, headless mode instead
+    exits 2 with ``invalid_arguments`` and the hint, for callers where a guess
+    would be worse than stopping.  Failures exit with the documented codes in
+    both modes (2 = connection, HTTP, or unreadable response; 3 = no models).
     """
     import httpx
 
@@ -209,6 +213,13 @@ def _detect_model(
 
     # Multiple models — in headless mode, auto-select the first one
     if headless:
+        if multiple_models_hint is not None:
+            listed = ", ".join(m[0] for m in models)
+            _headless_error(
+                INVALID_ARGUMENTS,
+                f"{show_url} serves {len(models)} models ({listed}); {multiple_models_hint}",
+                exit_code=2,
+            )
         api_id, display = models[0]
         msg = {
             "event": "model_auto_selected",
