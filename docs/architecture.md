@@ -240,7 +240,8 @@ Shared infrastructure:
 | `command_registry.py` | Discoverable subcommand metadata and translation rules |
 | `parser.py` | Subcommand discovery and translation into the legacy runtime namespace |
 | `legacy_parser.py` | Permanent flat-flag parser used by legacy invocations and translated subcommands |
-| `dispatch.py` | Runtime command routing and tool-call benchmark flow |
+| `dispatch.py` | Runtime command routing: `main()` resolves the endpoint and target, then hands off to one function per mode (probe, spec-live, decision-live, throughput, spec-bench, pressure sweep, plugins, scored run) |
+| `scored_run.py` | `ScoredRun`, the one place that turns the flags into `run_benchmark` kwargs (for the live, plain, and `--json` runners) and the `RunSettings` the resume check compares |
 | `compare_report.py` | HTML comparison command for Markdown reports |
 | `local_commands.py` | Dry-run and local command rendering |
 | `model_probe.py` | Model discovery and availability probing |

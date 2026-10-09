@@ -13,6 +13,12 @@ Those modes go through ``application.mode_runs.finalize_mode_run``; patch
 ``application.mode_runs.write_mode_report`` to intercept the report, and
 ``application.mode_runs.with_config_fingerprint`` (defined in
 ``utils.fingerprint``) to change the stored config.
+
+``_decision_judge_kwargs``, ``RunSettings``, ``with_selected_checks`` and
+``decision_judge_config`` are importable from here too, but patching them no
+longer changes the scored runners or the resume compatibility check. Both build
+from ``cli.scored_run.ScoredRun``; patch ``ScoredRun.service_kwargs`` or
+``ScoredRun.run_settings`` instead.
 """
 
 from __future__ import annotations
