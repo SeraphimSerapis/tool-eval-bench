@@ -7,6 +7,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,11 @@ _SCHEMA_VERSION = 4
 # Wait rather than fail when another process holds the write lock (concurrent
 # runs against different endpoints share one database file).
 _BUSY_TIMEOUT_MS = 10_000
+
+# The journal-mode switch ignores the busy timeout, so it gets its own bounded
+# retry: about one second in total.
+_WAL_RETRY_ATTEMPTS = 50
+_WAL_RETRY_DELAY_S = 0.02
 
 
 def _default_db_path() -> str:
@@ -69,6 +75,19 @@ def _merge_traces(scores: dict[str, Any] | None, traces: dict[str, str]) -> dict
     return {**scores, "scenario_results": merged}
 
 
+def _add_column(conn: sqlite3.Connection, ddl: str) -> None:
+    """Run an ``ADD COLUMN`` migration, tolerating a column that already exists.
+
+    The migration runs under ``BEGIN IMMEDIATE``, so this should not trigger;
+    it keeps a racing opener from aborting a run if the lock is ever bypassed.
+    """
+    try:
+        conn.execute(ddl)
+    except sqlite3.OperationalError as exc:
+        if "duplicate column name" not in str(exc):
+            raise
+
+
 class RunRepository:
     """Handles SQLite persistence for scenario-based benchmark runs.
 
@@ -87,10 +106,27 @@ class RunRepository:
         self._conn: sqlite3.Connection = sqlite3.connect(self.db_path, check_same_thread=False)
         self._write_lock = threading.Lock()
         self._writer: ThreadPoolExecutor | None = None
-        # WAL mode: crash-safe and allows concurrent reads during active runs
-        self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+        # WAL mode: crash-safe and allows concurrent reads during active runs
+        self._enable_wal()
         self._init_db()
+
+    def _enable_wal(self) -> None:
+        """Switch to WAL, retrying while another process holds the lock.
+
+        SQLite does not apply the busy handler to a journal-mode change, so
+        several processes opening a new database at once get an immediate
+        "database is locked" from all but one.  WAL persists once set, so this
+        only matters on the first open.
+        """
+        for attempt in range(_WAL_RETRY_ATTEMPTS):
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) or attempt == _WAL_RETRY_ATTEMPTS - 1:
+                    raise
+                time.sleep(_WAL_RETRY_DELAY_S)
 
     def close(self) -> None:
         """Close the underlying SQLite connection and any writer thread."""
@@ -113,7 +149,13 @@ class RunRepository:
             logging.getLogger(__name__).debug("Error closing DB connection in __del__")
 
     def _init_db(self) -> None:
+        if int(self._conn.execute("PRAGMA user_version").fetchone()[0]) >= _SCHEMA_VERSION:
+            return
         with self._conn as conn:
+            # Take the write lock before reading the schema version, so two
+            # processes opening an old database at once cannot both decide to
+            # run the same ALTER TABLE.  The context manager commits.
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS scenario_runs (
@@ -135,13 +177,14 @@ class RunRepository:
             }
             if version < 1:
                 if "run_type" not in columns:
-                    conn.execute(
-                        "ALTER TABLE scenario_runs ADD COLUMN run_type TEXT NOT NULL DEFAULT 'tool_eval'"
+                    _add_column(
+                        conn,
+                        "ALTER TABLE scenario_runs ADD COLUMN run_type TEXT NOT NULL DEFAULT 'tool_eval'",
                     )
                 version = 1
             if version < 2:
                 if "report_path" not in columns:
-                    conn.execute("ALTER TABLE scenario_runs ADD COLUMN report_path TEXT")
+                    _add_column(conn, "ALTER TABLE scenario_runs ADD COLUMN report_path TEXT")
                 version = 2
             if version < 3:
                 conn.execute(

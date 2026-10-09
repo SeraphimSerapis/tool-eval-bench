@@ -651,6 +651,62 @@ class TestExportRuns:
             assert "cat_A" in csv_text
             assert "cat_K" in csv_text
 
+    @staticmethod
+    def _two_cohorts() -> list[dict]:
+        runs = []
+        for model, score, seed in (("model-a", 40, 1), ("model-b", 95, 2), ("model-c", 70, 2)):
+            run = _make_run(model=model, final_score=score)
+            run["config"]["seed"] = seed
+            runs.append(run)
+        return runs
+
+    def test_export_csv_ranks_restart_per_cohort(self, monkeypatch, capsys) -> None:
+        # The seed=1 cohort label sorts first; a global rank made its only,
+        # lowest-scoring model "rank 1" above the 95 in the other cohort.
+        monkeypatch.setattr(
+            "tool_eval_bench.application.run_queries.recent_runs",
+            lambda limit=500: self._two_cohorts(),
+        )
+        export_runs(MagicMock(), fmt="csv")
+        rows = {r["model"]: r for r in csv.DictReader(io.StringIO(capsys.readouterr().out))}
+        assert {m: r["rank"] for m, r in rows.items()} == {
+            "model-a": "1",
+            "model-b": "1",
+            "model-c": "2",
+        }
+        assert rows["model-a"]["cohort"].startswith("vllm/69, seed=1 [")
+        assert rows["model-b"]["cohort"] == rows["model-c"]["cohort"]
+        assert rows["model-a"]["cohort_fingerprint"] != rows["model-b"]["cohort_fingerprint"]
+        assert len(rows["model-a"]["cohort_fingerprint"]) == 12
+
+    def test_export_json_carries_the_cohort(self, monkeypatch, capsys) -> None:
+        monkeypatch.setattr(
+            "tool_eval_bench.application.run_queries.recent_runs",
+            lambda limit=500: self._two_cohorts(),
+        )
+        export_runs(MagicMock(), fmt="json")
+        data = {entry["model"]: entry for entry in json.loads(capsys.readouterr().out)}
+        assert data["model-b"]["cohort_label"] == data["model-c"]["cohort_label"]
+        assert data["model-a"]["cohort_label"] != data["model-b"]["cohort_label"]
+        assert data["model-b"]["cohort_fingerprint"] == data["model-c"]["cohort_fingerprint"]
+
+
+class TestLeaderboardMarkup:
+    """Stored strings render literally rather than as Rich markup."""
+
+    def test_model_name_with_markup_renders_literally(self, monkeypatch) -> None:
+        runs = [_make_run(model="mistral[/INST]-gguf"), _make_run(model="org/model[q4_k_m]")]
+        monkeypatch.setattr(
+            "tool_eval_bench.application.run_queries.recent_runs", lambda limit=500: runs
+        )
+        console = Console(file=StringIO(), width=240, no_color=True)
+
+        print_leaderboard(console)
+
+        output = console.file.getvalue()
+        assert "mistral[/INST]-gguf" in output
+        assert "org/model[q4_k_m]" in output
+
 
 # ===========================================================================
 # _shorten_model_name

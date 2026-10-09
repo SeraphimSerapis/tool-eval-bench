@@ -724,38 +724,51 @@ def test_resume_reports_every_mismatch() -> None:
 
 
 EXPECTED_COHORTS: dict[str, str] = {
-    "default": "78bb227fb58d",
-    "judged": "78bb227fb58d",
-    "other_model": "78bb227fb58d",
-    "legacy_key": "9bf7a01ff466",
-    "unsorted_ids": "167b1b7e0748",
-    "pressure": "e6443279647b",
-    "everything": "2afd758fb15a",
+    "default": "71ee3042f76c",
+    "judged": "71ee3042f76c",
+    "other_model": "71ee3042f76c",
+    "other_commit": "d9fa5f3c4b8d",
+    "other_version": "685db5753d81",
+    "no_code_identity": "a35d44e6f170",
+    "legacy_key": "6a0f491b1a81",
+    "unsorted_ids": "6c38dcf557b7",
+    "pressure": "8fab51c30a7c",
+    "everything": "c47454d3187d",
 }
 EXPECTED_ROWS: list[tuple[str, str, str, int]] = [
-    ("r2", "0de29cc2c3a0", "78bb227fb58d", 2),
-    ("r3", "12194949d7a5", "e6443279647b", 1),
-    ("r4", "0de29cc2c3a0", "78bb227fb58d", 1),
-    ("r5", "0cac0195d776", "78bb227fb58d", 1),
+    ("r2", "0de29cc2c3a0", "a35d44e6f170", 2),
+    ("r3", "12194949d7a5", "c10e42bd5845", 1),
+    ("r4", "0de29cc2c3a0", "a35d44e6f170", 1),
+    ("r5", "0cac0195d776", "a35d44e6f170", 1),
 ]
 
 
-def _cohort_cases() -> dict[str, dict[str, Any]]:
+CODE_IDENTITY = {"tool_version": GOLDEN_VERSION, "git_sha": "1111111"}
+
+
+def _cohort_cases() -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
     stored = dict(EXPECTED_CONFIGS["default"])
     return {
-        "default": stored,
-        "judged": {**stored, "decision_judge": JUDGE},
-        "other_model": {
-            **stored,
-            "model": "other",
-            "base_url": "http://***:9000",
-            "endpoint_id": "endpoint:other",
-            "config_fingerprint": "000000000000",
-        },
-        "legacy_key": {**stored, "legacy_only_key": True},
-        "unsorted_ids": {**stored, "scenario_ids": ["TC-02", "TC-01"]},
-        "pressure": dict(EXPECTED_CONFIGS["pressure"]),
-        "everything": dict(EXPECTED_CONFIGS["everything"]),
+        "default": (stored, CODE_IDENTITY),
+        "judged": ({**stored, "decision_judge": JUDGE}, CODE_IDENTITY),
+        "other_model": (
+            {
+                **stored,
+                "model": "other",
+                "base_url": "http://***:9000",
+                "endpoint_id": "endpoint:other",
+                "config_fingerprint": "000000000000",
+            },
+            # Deployment facts stay out of the cross-model cohort.
+            {**CODE_IDENTITY, "engine_name": "sglang", "quantization": "fp8"},
+        ),
+        "other_commit": (stored, {**CODE_IDENTITY, "git_sha": "2222222"}),
+        "other_version": (stored, {**CODE_IDENTITY, "tool_version": "9.9.9"}),
+        "no_code_identity": (stored, {}),
+        "legacy_key": ({**stored, "legacy_only_key": True}, CODE_IDENTITY),
+        "unsorted_ids": ({**stored, "scenario_ids": ["TC-02", "TC-01"]}, CODE_IDENTITY),
+        "pressure": (dict(EXPECTED_CONFIGS["pressure"]), CODE_IDENTITY),
+        "everything": (dict(EXPECTED_CONFIGS["everything"]), CODE_IDENTITY),
     }
 
 
@@ -765,7 +778,30 @@ def test_every_cohort_case_has_a_golden() -> None:
 
 @pytest.mark.parametrize("name", list(_cohort_cases()))
 def test_cohort_fingerprint_matches_golden(name: str) -> None:
-    assert _cohort_fingerprint(_cohort_cases()[name]) == EXPECTED_COHORTS[name]
+    config, metadata = _cohort_cases()[name]
+    assert _cohort_fingerprint(config, metadata) == EXPECTED_COHORTS[name]
+
+
+def test_cohort_uses_the_stored_code_identity_not_the_running_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, metadata = _cohort_cases()["default"]
+    before = _cohort_fingerprint(config, metadata)
+    monkeypatch.setattr(tool_eval_bench, "__version__", "9.9.9")
+    assert _cohort_fingerprint(config, metadata) == before
+
+
+def test_models_benchmarked_by_different_commits_rank_in_different_cohorts() -> None:
+    # Identical flags; model-a was benchmarked before an upgrade.
+    runs = []
+    for model, git_sha in (("model-a", "1111111"), ("model-b", "2222222"), ("model-c", "2222222")):
+        metadata = {"tool_version": GOLDEN_VERSION, "git_sha": git_sha}
+        settings = _settings(model=model, base_url=f"http://{model}:8000")
+        config = build_run_config(settings, scenarios=TWO, metadata=metadata)
+        runs.append(_run(model, model, config, "2026-01-01T00:00:00") | {"metadata": metadata})
+    cohorts = {row["model"]: row["cohort_fingerprint"] for row in _extract_leaderboard_rows(runs)}
+    assert cohorts["model-a"] != cohorts["model-b"]
+    assert cohorts["model-b"] == cohorts["model-c"]
 
 
 def _run(run_id: str, model: str, config: dict[str, Any], created_at: str) -> dict[str, Any]:

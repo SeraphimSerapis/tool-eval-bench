@@ -5,6 +5,7 @@ Usage:
     python compare_summary.py <summary_a.md> <summary_b.md> <output.html>
 """
 
+import html
 import re
 import sys
 from pathlib import Path
@@ -13,6 +14,8 @@ from typing import Any
 from tool_eval_bench.compare_reports._common import (
     _r,
     _tv,
+    config_note,
+    deployability_label,
     diff_display,
     dname,
     esc,
@@ -58,13 +61,18 @@ def parse_summary(fp: str) -> dict:
     else:
         d["rating"] = ""
 
-    # Safety warnings (sum across trials or max)
-    sws = re.findall(r"\*\*Safety Warnings\*\*.*?\|\s*(\d+)", txt)
-    d["safety_warnings"] = [int(x) for x in sws] if sws else []
+    # Safety warnings: one integer cell per trial; the aggregate cell is a dash.
+    safety_m = re.search(r"^\|\s*\*\*Safety Warnings\*\*\s*\|(.*)$", txt, re.M)
+    cells = [c.strip() for c in safety_m.group(1).split("|")] if safety_m else []
+    d["safety_warnings"] = [int(c) for c in cells if c.isdigit()]
 
-    # Reliability metrics
-    d["pass_at_8"] = _r(r"\*\*Pass@8\*\*.*?\|\s*([\d.]+)%", txt)
-    d["pass_8"] = _r(r"\*\*Pass\^8\*\*.*?\|\s*([\d.]+)%", txt)
+    # Reliability metrics.  The writer labels them with the trial count, k.
+    pass_at = re.search(r"\*\*Pass@(\d+)\*\*.*?\|\s*([\d.]+)%", txt)
+    pass_hat = re.search(r"\*\*Pass\^(\d+)\*\*.*?\|\s*([\d.]+)%", txt)
+    d["pass_at_k"] = pass_at.group(2) if pass_at else ""
+    d["pass_hat_k"] = pass_hat.group(2) if pass_hat else ""
+    k_match = pass_hat or pass_at
+    d["pass_k"] = int(k_match.group(1)) if k_match else None
     d["reliability_gap"] = _r(r"\*\*Reliability Gap\*\*.*?\|\s*([\d.]+)pp", txt)
     d["ci_95"] = _r(r"\*\*95% CI\*\*.*?\|\s*\[([^\]]+)\]", txt)
 
@@ -83,6 +91,7 @@ def parse_summary(fp: str) -> dict:
     d["quality"] = int(_r(r"\*\*Quality\*\*.*?\|\s*(\d+)\s*/\s*100", txt) or 0)
     d["responsiveness"] = int(_r(r"\*\*Responsiveness\*\*.*?\|\s*(\d+)\s*/\s*100", txt) or 0)
     d["deployability"] = int(_r(r"\*\*Deployability\*\*.*?\|\s*\*\*(\d+)\*\*", txt) or 0)
+    d["alpha"] = _r(r"\|\s*Deployability\s*\|.*?\(\u03b1=([\d.]+)\)", txt)
     d["median_turn"] = _r(r"\*\*Median Turn\*\*.*?\|\s*([\d.]+)s", txt)
 
     return d
@@ -173,7 +182,7 @@ def _parse_never_passes(txt):
         block.group(1),
         re.S,
     ):
-        issue = " ".join(m.group(2).split())
+        issue = html.unescape(" ".join(m.group(2).split()))
         items.append({"id": m.group(1), "issue": issue})
     return items
 
@@ -196,7 +205,7 @@ def _parse_consistent_partials(txt):
         for line in block.group(1).split("\n"):
             m = re.match(r"\|\s*(TC-\d+)\s*\|\s*(.+?)\s*\|", line)
             if m:
-                items.append({"id": m.group(1), "issue": m.group(2).strip()})
+                items.append({"id": m.group(1), "issue": html.unescape(m.group(2).strip())})
     return items
 
 
@@ -346,8 +355,11 @@ def generate_html(da: dict, db: dict, out: str) -> None:
         except (ValueError, TypeError):
             return None
 
-    w_pass8 = _to_float(w.get("pass_8"))
-    r_pass8 = _to_float(r.get("pass_8"))
+    w_pass8 = _to_float(w.get("pass_hat_k"))
+    r_pass8 = _to_float(r.get("pass_hat_k"))
+    # Label reliability with the trial counts the reports used, not a fixed 8.
+    ks = sorted({str(d.get("pass_k")) for d in (w, r) if d.get("pass_k")})
+    k_label = ks[0] if len(ks) == 1 else "k"
     w_gap = _to_float(w.get("reliability_gap"))
     r_gap = _to_float(r.get("reliability_gap"))
 
@@ -376,8 +388,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
             }
         )
 
-    temp = da.get("temperature") or "?"
-    think = da.get("thinking") or "?"
+    tie = diff_score == 0
 
     lines: list[str] = []
 
@@ -467,6 +478,13 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     if r_safe_max > w_safe_max:
         vp.append("Safer")
     vp_text = " \u2022 ".join(esc(v) for v in vp)
+    if tie:
+        banner_title = (
+            f'Tie: <span class="font-display">{esc(wdn)}</span> and '
+            f'<span class="font-display">{esc(rdn)}</span>'
+        )
+    else:
+        banner_title = f'Winner: <span class="font-display">{esc(wdn)}</span>'
 
     if w_infra_fail or r_infra_fail:
         warn_models = []
@@ -493,7 +511,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
       <div class="flex-1">
         <div class="flex items-center gap-x-2">
           <i class="fa-solid fa-check-circle text-emerald-300"></i>
-          <span class="font-semibold text-lg">Winner: <span class="font-display">{esc(wdn)}</span></span>
+          <span class="font-semibold text-lg">{banner_title}</span>
         </div>
         <div class="text-white/90 text-sm mt-0.5">{vp_text}</div>
       </div>
@@ -551,7 +569,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     deploy_sign = sign(dd)
     deploy_cls = "diff-positive" if dd >= 0 else "diff-negative"
     km(
-        "Deployability (\u03b1=0.7)",
+        deployability_label(w, r),
         f"{w_deploy} / 100",
         f"{r_deploy} / 100",
         deploy_sign,
@@ -585,7 +603,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
             reliability_delta_text = "\u2014"
         reliability_cls = pct_cls(w_pass8, r_pass8) if w_pass8 != r_pass8 else "text-slate-500"
         lines.append(f'''            <tr>
-              <td class="py-3 px-6 font-semibold">Reliability (Pass\u2078)</td>
+              <td class="py-3 px-6 font-semibold">Reliability (Pass^{k_label})</td>
               <td class="py-3 px-4 text-center"><span class="font-semibold text-emerald-700">{w_pass8:.1f}%</span></td>
               <td class="py-3 px-4 text-center"><span class="font-semibold">{r_pass8:.1f}%</span></td>
               <td class="py-3 px-4 text-center"><span class="{reliability_cls}">{reliability_delta_text}</span></td>
@@ -610,18 +628,18 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     lines.append('        <div class="light-card rounded-3xl p-5 space-y-4">')
     lines.append(f"""          <div class="flex justify-between items-center">
             <div>
-              <div class="text-sm font-medium">Reliability floor (Pass\u2078)</div>
+              <div class="text-sm font-medium">Reliability floor (Pass^{k_label})</div>
             </div>
             <div class="text-right">
-              <div class="font-semibold tabular-nums">{wl}: {_pct_or_dash(w.get("pass_8"))}%</div>
-              <div class="text-xs text-slate-500">{rl}: {_pct_or_dash(r.get("pass_8"))}%</div>
+              <div class="font-semibold tabular-nums">{wl}: {_pct_or_dash(w.get("pass_hat_k"))}%</div>
+              <div class="text-xs text-slate-500">{rl}: {_pct_or_dash(r.get("pass_hat_k"))}%</div>
             </div>
           </div>""")
 
     if w_gap is not None or r_gap is not None:
         lines.append(f"""          <div class="flex justify-between items-center">
             <div>
-              <div class="text-sm font-medium">Reliability gap (Pass@\u2088 \u2212 Pass\u2078)</div>
+              <div class="text-sm font-medium">Reliability gap (Pass@{k_label} \u2212 Pass^{k_label})</div>
             </div>
             <div class="text-right">
               <div class="font-semibold tabular-nums">{wl}: {_pp_or_dash(w_gap)}</div>
@@ -886,20 +904,29 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     else:
         conc = f"The {rl} model showed competitive scores but lagged in consistency."
 
+    if tie:
+        verdict = f"""The <span class="font-semibold">{esc(wdn)}</span> and
+        <span class="font-semibold">{esc(rdn)}</span> tie on mean score ({w["mean_score"]:.1f}).
+        Compare the reliability, safety, and scenario sections above for where they differ."""
+        follow_up = ""
+    else:
+        verdict = f"""The <span class="font-semibold text-emerald-700">{esc(wdn)}</span> is the clear winner across {w["trials"]} trials.
+        It delivers better mean scores with {("lower" if w["std_score"] < r["std_score"] else "comparable")} variance,
+        {"higher" if w_pass8 is not None and r_pass8 is not None and w_pass8 > r_pass8 else "competitive"} reliability,
+        and {"fewer" if w_safe_max < r_safe_max else "comparable"} safety concerns."""
+        follow_up = f"""
+      <div class="mt-4 text-sm text-slate-700">
+        {esc(conc)}
+      </div>"""
+
     lines.append(f"""    <div class="light-card rounded-3xl p-6">
       <div class="font-semibold text-lg mb-2">Conclusion</div>
       <div class="text-[15px] leading-relaxed text-slate-700">
-        The <span class="font-semibold text-emerald-700">{esc(wdn)}</span> is the clear winner across {w["trials"]} trials.
-        It delivers better mean scores with {("lower" if w["std_score"] < r["std_score"] else "comparable")} variance,
-        {"higher" if w_pass8 is not None and r_pass8 is not None and w_pass8 > r_pass8 else "competitive"} reliability,
-        and {"fewer" if w_safe_max < r_safe_max else "comparable"} safety concerns.
-      </div>
-      <div class="mt-4 text-sm text-slate-700">
-        {esc(conc)}
-      </div>
+        {verdict}
+      </div>{follow_up}
       <div class="text-xs mt-4 pt-3 border-t text-emerald-700 font-medium flex items-center gap-x-1.5">
         <i class="fa-solid fa-info-circle"></i>
-        <span>Both models use the same backend configuration, temperature {esc(temp)}, and thinking {esc(think)}.</span>
+        <span>{config_note(da, db)}</span>
       </div>
     </div>""")
 

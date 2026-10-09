@@ -100,6 +100,70 @@ class TestPrintHistory:
             output = console.file.getvalue()
             assert "2026-04-20T12:00:00" in output
 
+    def test_stored_strings_with_rich_markup_render_literally(self) -> None:
+        # A closing tag used to crash the whole command; an opening tag
+        # silently vanished from GGUF-style model names.
+        runs = [
+            {
+                "run_id": "r1",
+                "status": "completed",
+                "model": "mistral[/INST]-gguf",
+                "scores": {"final_score": 50},
+                "metadata": {"quantization": "[q4_k_m]", "engine_name": "eng[/b]"},
+                "created_at": "2026-04-20T12:00:00",
+            },
+            {
+                "run_id": "r2",
+                "status": "completed",
+                "model": "org/model[q4_k_m]",
+                "scores": {"final_score": 40},
+                "created_at": "2026-04-20T12:00:00",
+            },
+        ]
+        with patch("tool_eval_bench.storage.db.RunRepository") as MockRepo:
+            MockRepo.return_value = _make_repo_mock(runs)
+            console = Console(file=StringIO(), width=200, no_color=True)
+
+            print_history(console)
+
+            output = console.file.getvalue()
+            assert "mistral[/INST]-gguf" in output
+            assert "org/model[q4_k_m]" in output
+            assert "[q4_k_m]" in output
+            assert "eng[/b]" in output
+
+    @pytest.mark.parametrize(
+        ("run_type", "resumable"),
+        [
+            ("tool_eval", True),
+            (None, True),  # legacy rows stored before run_type existed
+            ("context-pressure", False),
+            ("perf", False),
+            ("spec-bench", False),
+        ],
+    )
+    def test_only_scored_runs_are_labelled_resumable(
+        self, run_type: str | None, resumable: bool
+    ) -> None:
+        run: dict = {
+            "run_id": "r1",
+            "status": "failed",
+            "model": "m",
+            "scores": {},
+            "created_at": "2026-04-20T12:00:00",
+        }
+        if run_type is not None:
+            run["run_type"] = run_type
+        with patch("tool_eval_bench.storage.db.RunRepository") as MockRepo:
+            MockRepo.return_value = _make_repo_mock([run])
+            console = Console(file=StringIO(), width=200, no_color=True)
+
+            print_history(console)
+
+            output = console.file.getvalue()
+            assert "failed" in output
+            assert ("resumable" in output) is resumable
+
 
 # ===========================================================================
 # print_diff
@@ -208,6 +272,40 @@ class TestPrintDiff:
 
             output = console.file.getvalue()
             assert "improved" in output
+
+    def test_summaries_with_rich_markup_render_literally(self) -> None:
+        prev_runs = [
+            {
+                "run_id": "2026-04-19T10-00-00Z_abc123",
+                "model": "test-model",
+                "scores": {
+                    "scenario_results": [
+                        {"scenario_id": "TC-01", "points": 0, "status": "fail"},
+                        {"scenario_id": "TC-02", "points": 2, "status": "pass"},
+                    ]
+                },
+            },
+        ]
+        with patch("tool_eval_bench.storage.db.RunRepository") as MockRepo:
+            MockRepo.return_value = _make_repo_mock(prev_runs)
+            current_results = [
+                ScenarioResult(
+                    scenario_id="TC-01",
+                    status=ScenarioStatus.PASS,
+                    points=2,
+                    summary="said [/TOOL_CALLS]",
+                ),
+                ScenarioResult(
+                    scenario_id="TC-02", status=ScenarioStatus.PASS, points=2, summary="[red]x"
+                ),
+            ]
+
+            console = Console(file=StringIO(), width=200, no_color=True)
+            print_diff(console, current_results, "2026-04-19T10-00-00Z_abc123")
+
+            output = console.file.getvalue()
+            assert "said [/TOOL_CALLS]" in output
+            assert "[red]x" in output
 
     def test_regressed_scenario_shows_red(self) -> None:
         """A scenario that regressed from 2 to 0 should show regressed."""

@@ -11,9 +11,10 @@ import csv
 import io
 import json
 import sys
-from typing import Any
+from typing import Any, Mapping
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -149,13 +150,25 @@ def _shorten_model_name(name: str) -> str:
     return name
 
 
-def _cohort_fingerprint(config: dict[str, Any]) -> str:
+def _cohort_fingerprint(config: Mapping[str, Any], metadata: Mapping[str, Any]) -> str:
     """Fingerprint benchmark conditions shared across different models.
 
-    The schema decides which keys to drop.  It is an exclusion rather than an
-    allow-list so a key that only an older version stored still splits cohorts.
+    The schema decides which config keys to drop, and ``cohort_config`` applies
+    each field's ``fingerprint_view``.  It is an exclusion rather than an
+    allow-list so a key that only an older version stored still splits
+    cohorts.  The per-model ``config_fingerprint`` is excluded because it folds
+    in the model, so the code identity it carries is added back from the run's
+    stored metadata: evaluators are code, and runs from different versions or
+    commits are not comparable.  Never use the running ``__version__`` here; it
+    would describe this process, not the run.
     """
-    return build_config_fingerprint(cohort_config(config))
+    return build_config_fingerprint(
+        {
+            "config": cohort_config(dict(config)),
+            "tool_version": metadata.get("tool_version"),
+            "git_sha": metadata.get("git_sha"),
+        }
+    )
 
 
 def _cohort_label(config: dict[str, Any], cohort_fingerprint: str) -> str:
@@ -262,10 +275,10 @@ def _extract_leaderboard_rows(
         passes = sum(1 for r in results if r.get("status") == "pass")
         partials = sum(1 for r in results if r.get("status") == "partial")
         fails = sum(1 for r in results if r.get("status") == "fail")
-        cohort_fingerprint = _cohort_fingerprint(config)
 
         # Extract metadata (issue #6)
         metadata = best.get("metadata") or {}
+        cohort_fingerprint = _cohort_fingerprint(config, metadata)
 
         rows.append(
             {
@@ -307,6 +320,14 @@ def _extract_leaderboard_rows(
 
     # Keep cohorts together, then rank scores within each comparable cohort.
     rows.sort(key=lambda r: (r["cohort_label"], -r["final_score"], r["model"]))
+    previous_cohort: str | None = None
+    cohort_rank = 0
+    for row in rows:
+        if row["cohort_fingerprint"] != previous_cohort:
+            previous_cohort = row["cohort_fingerprint"]
+            cohort_rank = 0
+        cohort_rank += 1
+        row["cohort_rank"] = cohort_rank
     return rows
 
 
@@ -373,21 +394,13 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
     table.add_column("Runs", justify="center", width=4)
 
     single_cohort = len({row["cohort_fingerprint"] for row in rows}) == 1
-    previous_cohort: str | None = None
-    cohort_rank = 0
     for idx, row in enumerate(rows, 1):
-        current_cohort = row["cohort_fingerprint"]
-        if current_cohort != previous_cohort:
-            if previous_cohort is not None:
-                table.add_section()
-            previous_cohort = current_cohort
-            cohort_rank = 1
-        else:
-            cohort_rank += 1
+        if idx > 1 and row["cohort_rank"] == 1:
+            table.add_section()
 
         # Rank medal
         if not single_cohort:
-            rank = f"[dim]{cohort_rank}[/]"
+            rank = f"[dim]{row['cohort_rank']}[/]"
         elif idx == 1:
             rank = "[bold bright_yellow]🥇[/]"
         elif idx == 2:
@@ -408,7 +421,7 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
         rating_str = _rating_short(row["rating"])
 
         # Cohort label explains the comparison conditions for this section.
-        cohort_str = f"[dim]{row['cohort_label']}[/]"
+        cohort_str = f"[dim]{escape(row['cohort_label'])}[/]"
 
         # Pass/Fail summary
         p, pt, f = row["passes"], row["partials"], row["fails"]
@@ -435,7 +448,7 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
 
         table.add_row(
             rank,
-            f"[bold]{model_name}[/]",
+            f"[bold]{escape(model_name)}[/]",
             cohort_str,
             score_str,
             rating_str,
@@ -530,6 +543,8 @@ def export_runs(
                 "backend": row["backend"],
                 "total_tokens": row["total_tokens"],
                 "num_runs": row["num_runs"],
+                "cohort_label": row["cohort_label"],
+                "cohort_fingerprint": row["cohort_fingerprint"],
                 "categories": {cat: row["cat_scores"].get(cat) for cat in cat_order},
             }
             if row.get("token_efficiency") is not None:
@@ -584,6 +599,8 @@ def export_runs(
             "max_model_len",
             "temperature",
             "server_model_root",
+            "cohort",
+            "cohort_fingerprint",
         ]
         headers.extend(f"cat_{cat}" for cat in cat_order)
 
@@ -591,9 +608,11 @@ def export_runs(
         writer = csv.DictWriter(buf, fieldnames=headers, extrasaction="ignore")
         writer.writeheader()
 
-        for idx, row in enumerate(rows, 1):
+        for row in rows:
+            # Ranks restart per cohort, as on screen: a global rank across
+            # non-comparable cohorts would put whichever label sorts first on top.
             csv_row: dict[str, Any] = {
-                "rank": idx,
+                "rank": row["cohort_rank"],
                 "model": row["model"],
                 "run_id": row["run_id"],
                 "date": row["date"],
@@ -615,6 +634,8 @@ def export_runs(
                 "max_model_len": row.get("max_model_len", ""),
                 "temperature": row.get("temperature", ""),
                 "server_model_root": row.get("server_model_root", ""),
+                "cohort": row["cohort_label"],
+                "cohort_fingerprint": row["cohort_fingerprint"],
             }
             for cat in cat_order:
                 csv_row[f"cat_{cat}"] = row["cat_scores"].get(cat, "")

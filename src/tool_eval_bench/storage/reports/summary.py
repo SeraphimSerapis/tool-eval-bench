@@ -6,20 +6,39 @@ per-scenario variance, and failure analysis.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.scenarios import (
     ModelScoreSummary,
+    ScenarioReportMetadata,
     ScenarioStatus,
 )
 from tool_eval_bench.storage.reports._common import (
+    HELD_OUT_CELL,
+    _markdown_table_cell,
+    _render_held_out_note,
     _render_run_context,
     append_benchy_throughput_rows,
+    held_out_ids,
     report_filename,
 )
+
+
+def _relative_report_path(report_path: str, folder: Path) -> str:
+    """Point at a trial report relative to the summary, never by absolute path.
+
+    The default reports root is absolute, and the summary is meant to be
+    shared, so an absolute path would publish the user's home directory.
+    Trials can straddle a month boundary, so a bare file name is not enough.
+    """
+    try:
+        return Path(os.path.relpath(report_path, folder)).as_posix()
+    except ValueError:  # different drives on Windows
+        return Path(report_path).name
 
 
 def write_summary_report(
@@ -32,12 +51,16 @@ def write_summary_report(
     throughput_samples: list[Any] | None = None,
     report_paths: list[str] | None = None,
     run_context: RunContext | None = None,
+    scenario_metadata: Mapping[str, ScenarioReportMetadata] | None = None,
 ) -> Path:
     """Write a consolidated cross-trial summary report.
 
     This synthesizes N individual trial reports into a single document with
     reliability metrics, per-scenario variance, and failure analysis.
+    Scenarios marked held-out in ``scenario_metadata`` keep their statuses but
+    have their summaries withheld, as in the per-trial report.
     """
+    held_out = held_out_ids(scenario_metadata)
     now = datetime.now(timezone.utc)
     folder = root / f"{now.year:04d}" / f"{now.month:02d}"
     folder.mkdir(parents=True, exist_ok=True)
@@ -109,7 +132,9 @@ def write_summary_report(
         + " | ".join(f"{p}/{summaries[0].max_points}" for p in points)
         + f" | **{agg['total_points_mean']:.1f} ± {agg['total_points_stddev']:.1f}** |"
     )
-    md.append("| **Rating** | " + " | ".join(ratings) + f" | {ratings[0]} |")
+    # Ratings do not average; name the shared one or say they differ.
+    rating_agg = ratings[0] if len(set(ratings)) == 1 else "varies"
+    md.append("| **Rating** | " + " | ".join(ratings) + f" | {rating_agg} |")
     num_warnings = [len(s.safety_warnings) for s in summaries]
     md.append("| **Safety Warnings** | " + " | ".join(str(w) for w in num_warnings) + " | — |")
     md.append("")
@@ -185,7 +210,11 @@ def write_summary_report(
         pass_k = "✓" if stats.get("pass_at_k") else "✗"
         pass_hat_k = "✓" if stats.get("pass_hat_k") else "**✗**"
 
-        md.append(f"| {sid} | " + " | ".join(row_cells) + f" | {pass_k} | {pass_hat_k} |")
+        md.append(
+            f"| {_markdown_table_cell(sid)} | "
+            + " | ".join(row_cells)
+            + f" | {pass_k} | {pass_hat_k} |"
+        )
 
         # Classify scenarios
         if all(st == ScenarioStatus.FAIL for st in statuses):
@@ -253,7 +282,9 @@ def write_summary_report(
             ]
         )
         for sid, summary in never_pass:
-            md.append(f"| **{sid}** | {summary} |")
+            md.append(
+                f"| **{_markdown_table_cell(sid)}** | {_issue_cell(sid, summary, held_out)} |"
+            )
         md.append("")
 
     if flaky:
@@ -267,7 +298,7 @@ def write_summary_report(
         )
         for sid, statuses_list in flaky:
             results_str = ", ".join(statuses_list)
-            md.append(f"| **{sid}** | {results_str} |")
+            md.append(f"| **{_markdown_table_cell(sid)}** | {results_str} |")
         md.append("")
 
     if consistent_partial:
@@ -280,7 +311,12 @@ def write_summary_report(
             ]
         )
         for sid, summary in consistent_partial:
-            md.append(f"| {sid} | {summary} |")
+            md.append(f"| {_markdown_table_cell(sid)} | {_issue_cell(sid, summary, held_out)} |")
+        md.append("")
+
+    shown_held_out = sorted(held_out & set(scenario_ids))
+    if shown_held_out:
+        md.extend(_render_held_out_note(shown_held_out, None))
         md.append("")
 
     # ── Deployability (from first summary with data) ──
@@ -313,8 +349,15 @@ def write_summary_report(
     if report_paths:
         md.extend(["## Individual Trial Reports", ""])
         for i, rp in enumerate(report_paths):
-            md.append(f"- Trial {i + 1}: `{rp}`")
+            md.append(f"- Trial {i + 1}: `{_relative_report_path(rp, folder)}`")
         md.append("")
 
     path.write_text("\n".join(md), encoding="utf-8")
     return path
+
+
+def _issue_cell(scenario_id: str, summary: str, held_out: set[str]) -> str:
+    """Render an evaluator summary, which for a pack scenario can name the answer."""
+    if scenario_id in held_out:
+        return HELD_OUT_CELL
+    return _markdown_table_cell(summary)

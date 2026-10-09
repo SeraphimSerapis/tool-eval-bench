@@ -17,11 +17,58 @@ def _r(pat, txt, group=1, fl=0):
 
 
 def _tv(field, txt, strip_bt=False):
-    m = re.search(rf"\*\*{re.escape(field)}\*\*\s*\|\s*(.+)", txt)
+    """Read the value cell of a two-column ``| Field | value |`` table row.
+
+    The report writer bolds only some labels (``**Label**``), so the bold is
+    optional, and the value stops at the next pipe.  Writers HTML-escape cell
+    text, so the value is unescaped here and re-escaped by ``esc`` on output.
+    """
+    m = re.search(
+        rf"(?:^|\|)[ \t]*(?:\*\*)?{re.escape(field)}(?:\*\*)?[ \t]*\|[ \t]*([^|\n]*?)[ \t]*(?:\||$)",
+        txt,
+        re.M,
+    )
     if not m:
         return ""
-    v = m.group(1).strip()
+    v = html.unescape(m.group(1).strip())
     return v.strip("`") if strip_bt else v
+
+
+#: Run settings the comparison pages describe.
+_COMPARED_SETTINGS = ("backend", "temperature", "thinking")
+
+
+def config_note(da: dict, db: dict) -> str:
+    """Describe whether two runs used the same settings, as HTML-safe text.
+
+    Says "same" only after comparing the parsed values, and claims nothing
+    about settings neither report recorded.
+    """
+    differences = []
+    shared = []
+    for key in _COMPARED_SETTINGS:
+        a, b = da.get(key) or "", db.get(key) or ""
+        if a != b:
+            differences.append(
+                f"{key} {esc(a or '?')} ({esc(dname(da))}) vs {esc(b or '?')} ({esc(dname(db))})"
+            )
+        elif a:
+            shared.append(f"{key} {esc(a)}")
+    if differences:
+        return "The runs used different settings: " + "; ".join(differences) + "."
+    if not shared:
+        return "Neither report records the backend, temperature, or thinking setting."
+    return "Both runs used the same " + ", ".join(shared) + "."
+
+
+def deployability_label(da: dict, db: dict) -> str:
+    """Label the deployability row with the alpha the reports actually used."""
+    a, b = da.get("alpha") or "", db.get("alpha") or ""
+    if a and a == b:
+        return f"Deployability (\u03b1={a})"
+    if a and b:
+        return f"Deployability (\u03b1={a} vs {b})"
+    return "Deployability"
 
 
 def dname(d: dict) -> str:

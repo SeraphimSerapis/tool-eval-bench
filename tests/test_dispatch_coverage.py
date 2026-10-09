@@ -481,6 +481,7 @@ def test_dispatch_live_and_plain_multitrial(
         description="x",
         handle_tool_call=lambda s, c: {},
         evaluate=lambda s: ScenarioEvaluation(ScenarioStatus.PASS, 2, "ok"),
+        held_out=True,
     )
     sr = ScenarioResult("TC-X", ScenarioStatus.PASS, 2, "ok")
     payload = {
@@ -518,16 +519,21 @@ def test_dispatch_live_and_plain_multitrial(
     monkeypatch.setattr(dispatch, "BenchmarkDisplay", Display)
     monkeypatch.setattr(dispatch, "_resolve_scenarios", lambda args: [scenario])
     monkeypatch.setattr(dispatch, "_print_diff", lambda *args: None)
-    monkeypatch.setattr(
-        reports.MarkdownReporter,
-        "write_summary_report",
-        lambda *args, **kwargs: tmp_path / "summary.md",
-    )
+    summary_calls: list[dict] = []
+
+    def write_summary_report(*args, **kwargs):
+        summary_calls.append(kwargs)
+        return tmp_path / "summary.md"
+
+    monkeypatch.setattr(reports.MarkdownReporter, "write_summary_report", write_summary_report)
     args = _dispatch_args(trials=2, diff="latest", output_dir=str(tmp_path))
     console = Console(record=True)
     dispatch._run_with_live_display(Service(), console, "m", "Display", "vllm", "url", None, args)
     dispatch._run_plain(Service(), console, "m", "Display", "vllm", "url", None, args)
     assert "Summary report" in console.export_text()
+    # Both runners tell the summary writer which scenarios are held out.
+    assert len(summary_calls) == 2
+    assert all(call["scenario_metadata"]["TC-X"].held_out for call in summary_calls)
 
 
 def test_probe_server_success_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:

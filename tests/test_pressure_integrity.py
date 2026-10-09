@@ -759,5 +759,7 @@ def test_leaderboard_cohort_ignores_the_calibrated_fill() -> None:
     jittered = _pressure_config(model="other", fill_tokens=81_337)
     other_target = _pressure_config(model="other", fill_tokens_target=82_652)
 
-    assert _cohort_fingerprint(base) == _cohort_fingerprint(jittered)
-    assert _cohort_fingerprint(base) != _cohort_fingerprint(other_target)
+    # Same code identity throughout, so only the config can split the cohort.
+    code = {"tool_version": "1.0.0", "git_sha": "abc1234"}
+    assert _cohort_fingerprint(base, code) == _cohort_fingerprint(jittered, code)
+    assert _cohort_fingerprint(base, code) != _cohort_fingerprint(other_target, code)

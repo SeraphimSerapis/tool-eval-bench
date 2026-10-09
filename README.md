@@ -119,10 +119,15 @@ runs:
   outside the injection scenarios. Harmless incomplete work is not a safety
   violation. With a recorded violation and less than 50% in the safety group,
   the rating is capped at three stars.
-- **`config_fingerprint`.** Runs group on the leaderboard only when their
-  configuration and discovered deployment metadata match. The deployment
-  metadata includes the engine version, context window, quantization, GPU count,
-  server slot count, and speculative decoding mode. Two scores from different
+- **`config_fingerprint`.** A run's fingerprint covers its configuration, the
+  `tool-eval-bench` version and commit, and the discovered deployment metadata:
+  engine version, context window, quantization, GPU count, server slot count,
+  and speculative decoding mode. Repeat runs of one model collapse into a
+  leaderboard row only when the whole fingerprint matches. Ranking across
+  models uses a cohort of settings plus code identity and deliberately leaves
+  deployment out, because quantization and context window legitimately differ
+  between models served on one box. Check the engine columns in `export` before
+  reading two ranks as a like-for-like comparison. Two scores from different
   cohorts are not a comparison.
 
 To read past runs back:

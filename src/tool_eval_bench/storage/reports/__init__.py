@@ -133,6 +133,7 @@ class MarkdownReporter:
         throughput_samples: list[Any] | None = None,
         report_paths: list[str] | None = None,
         run_context: RunContext | None = None,
+        scenario_metadata: Mapping[str, ScenarioReportMetadata] | None = None,
     ) -> Path:
         """Write a consolidated cross-trial summary report."""
         return write_summary_report(
@@ -144,6 +145,7 @@ class MarkdownReporter:
             throughput_samples=throughput_samples,
             report_paths=report_paths,
             run_context=run_context,
+            scenario_metadata=scenario_metadata,
         )
 
     def write_spec_decode_report(

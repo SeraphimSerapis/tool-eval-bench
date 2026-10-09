@@ -11,11 +11,23 @@ import html
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.domain.scenarios import ScenarioReportMetadata
 
 _HELD_OUT_LABEL = "held out"
+#: What a report prints in place of a held-out scenario's title or summary.
+HELD_OUT_CELL = f"_{_HELD_OUT_LABEL}_"
+
+
+def held_out_ids(scenario_metadata: Mapping[str, ScenarioReportMetadata] | None) -> set[str]:
+    """IDs whose titles, summaries, and traces a report must withhold.
+
+    Every writer that prints per-scenario text goes through this, so a new
+    writer cannot forget the redaction by reimplementing the lookup.
+    """
+    return {sid for sid, meta in (scenario_metadata or {}).items() if meta.held_out}
 
 
 def _default_reports_root() -> str:

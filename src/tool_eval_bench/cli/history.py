@@ -30,21 +30,21 @@ def _extract_context_summary(run: dict) -> str:
     # Tool version
     version = metadata.get("tool_version")
     if version:
-        parts.append(f"v{version}")
+        parts.append(escape(f"v{version}"))
 
     # Backend
     backend = metadata.get("backend") or config.get("backend")
     if backend:
-        parts.append(backend)
+        parts.append(escape(str(backend)))
 
     # Engine
     engine_name = metadata.get("engine_name")
     engine_version = metadata.get("engine_version")
     if engine_name:
-        s = engine_name
+        s = str(engine_name)
         if engine_version:
             s += f" {engine_version}"
-        parts.append(s)
+        parts.append(escape(s))
 
     # Temperature (only if non-default)
     temp = metadata.get("temperature")
@@ -54,7 +54,7 @@ def _extract_context_summary(run: dict) -> str:
     # Quantization
     quant = metadata.get("quantization")
     if quant:
-        parts.append(quant)
+        parts.append(escape(str(quant)))
 
     return "  ".join(parts) if parts else ""
 
@@ -76,12 +76,12 @@ def _extract_context_panel(run: dict) -> list[str]:
     if version:
         git_sha = metadata.get("git_sha", "")
         sha_str = f" {git_sha}" if git_sha else ""
-        lines.append(f"  [dim]tool-eval-bench:[/] v{version}{sha_str}")
+        lines.append(f"  [dim]tool-eval-bench:[/] {escape(f'v{version}{sha_str}')}")
 
     engine_name = metadata.get("engine_name")
     if engine_name:
         engine_version = metadata.get("engine_version", "")
-        lines.append(f"  [dim]Engine:[/] {engine_name} {engine_version}")
+        lines.append(f"  [dim]Engine:[/] {escape(f'{engine_name} {engine_version}')}")
 
     max_model_len = metadata.get("max_model_len")
     if max_model_len:
@@ -89,7 +89,7 @@ def _extract_context_panel(run: dict) -> list[str]:
 
     quant = metadata.get("quantization")
     if quant:
-        lines.append(f"  [dim]Quantization:[/] {quant}")
+        lines.append(f"  [dim]Quantization:[/] {escape(str(quant))}")
 
     slot_count = metadata.get("slot_count")
     if slot_count:
@@ -98,7 +98,7 @@ def _extract_context_panel(run: dict) -> list[str]:
     model_root = metadata.get("server_model_root")
     model_api = metadata.get("model") or config.get("model")
     if model_root and model_root != model_api:
-        lines.append(f"  [dim]Model root:[/] {model_root}")
+        lines.append(f"  [dim]Model root:[/] {escape(str(model_root))}")
 
     temp = metadata.get("temperature")
     if temp is not None:
@@ -114,7 +114,7 @@ def _extract_context_panel(run: dict) -> list[str]:
 
     hostname = metadata.get("hostname")
     if hostname:
-        lines.append(f"  [dim]Host:[/] {hostname}")
+        lines.append(f"  [dim]Host:[/] {escape(str(hostname))}")
 
     return lines
 
@@ -149,20 +149,25 @@ def print_history(console: Console) -> None:
     for run in runs:
         scores = run.get("scores") or {}
         score = scores.get("final_score", "?")
-        rating = scores.get("rating", "")
+        rating = escape(str(scores.get("rating", "")))
         if run.get("status") != RUN_STATUS_COMPLETED:
             # Interrupted and still-running rows have no final score; surface the
-            # status so users know the run is resumable rather than broken.
-            rating = f"[yellow]{run.get('status', 'unknown')} — resumable[/]"
+            # status. Only scored tool-eval runs can be resumed, so mode runs
+            # (throughput, context-pressure, spec-bench) show the bare status.
+            status = escape(str(run.get("status", "unknown")))
+            if run.get("run_type", "tool_eval") == "tool_eval":
+                rating = f"[yellow]{status} — resumable[/]"
+            else:
+                rating = f"[yellow]{status}[/]"
         created = run.get("created_at", "?")[:19]
         context = _extract_context_summary(run)
         table.add_row(
-            f"[dim]{run['run_id']}[/]",
-            run.get("model", "?"),
-            f"[bold]{score}[/]",
+            f"[dim]{escape(str(run['run_id']))}[/]",
+            escape(str(run.get("model", "?"))),
+            f"[bold]{escape(str(score))}[/]",
             rating,
             f"[dim]{context}[/]" if context else "[dim]—[/]",
-            f"[dim]{created}[/]",
+            f"[dim]{escape(created)}[/]",
         )
 
     console.print()
@@ -190,7 +195,7 @@ def print_diff(
 
     prev_results = scenario_results(diff_run_id)
     if prev_results is None:
-        console.print(f"\n  [yellow]Run '{diff_run_id}' not found in database.[/]\n")
+        console.print(f"\n  [yellow]Run '{escape(diff_run_id)}' not found in database.[/]\n")
         return
 
     # Build lookup: scenario_id → previous result dict
@@ -203,7 +208,7 @@ def print_diff(
     new_scenarios = 0
 
     table = Table(
-        title=f"[bold]Diff vs {diff_run_id[:30]}…[/]",
+        title=f"[bold]Diff vs {escape(diff_run_id[:30])}…[/]",
         show_header=True,
         header_style="bold",
         border_style="bright_cyan",
@@ -231,8 +236,8 @@ def print_diff(
         if prev is None:
             new_scenarios += 1
             table.add_row(
-                sc_id,
-                cr.summary[:30],
+                escape(sc_id),
+                escape(cr.summary[:30]),
                 "[dim]—[/]",
                 "→",
                 f"[bold]{cur_pts}[/]/2",
@@ -268,9 +273,10 @@ def print_diff(
         prev_sym = status_symbols.get(prev_status, "?")
         cur_sym = status_symbols.get(cur_status, "?")
 
+        summary_cell = escape(cr.summary[:30])
         table.add_row(
-            sc_id,
-            cr.summary[:30] if delta != 0 else f"[dim]{cr.summary[:30]}[/]",
+            escape(sc_id),
+            summary_cell if delta != 0 else f"[dim]{summary_cell}[/]",
             f"[dim]{prev_sym} {prev_pts}[/]",
             "→",
             f"{cur_sym} [bold]{cur_pts}[/]",
@@ -324,7 +330,7 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
         if rid.lower() == "latest":
             console.print("\n  [red]No runs found in database.[/]\n")
             sys.exit(1)
-        console.print(f"\n  [red]Run '{rid}' not found in database.[/]\n")
+        console.print(f"\n  [red]Run '{escape(rid)}' not found in database.[/]\n")
         console.print("  [dim]Use --history to list available runs.[/]\n")
         sys.exit(1)
 
@@ -352,7 +358,7 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
         console.print(
             Panel(
                 f"  [bold yellow]⚠ These runs have different configurations[/]\n"
-                f"  [dim]{diff_str}[/]\n"
+                f"  [dim]{escape(diff_str)}[/]\n"
                 f"  [dim]McNemar results may not be meaningful.[/]",
                 border_style="yellow",
             )
@@ -366,11 +372,13 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
     ctx_lines_b = _extract_context_panel(run_b)
 
     header_lines = [
-        f"  [bold]A (baseline):[/] {id_a[:40]}  [dim]model={model_a}[/]",
+        f"  [bold]A (baseline):[/] {escape(id_a[:40])}  [dim]model={escape(str(model_a))}[/]",
     ]
     if ctx_lines_a:
         header_lines.extend(ctx_lines_a)
-    header_lines.append(f"  [bold]B (current):[/]  {id_b[:40]}  [dim]model={model_b}[/]")
+    header_lines.append(
+        f"  [bold]B (current):[/]  {escape(id_b[:40])}  [dim]model={escape(str(model_b))}[/]"
+    )
     if ctx_lines_b:
         header_lines.extend(ctx_lines_b)
 
@@ -413,7 +421,7 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
 
         if ra and not rb:
             table.add_row(
-                sc_id,
+                escape(sc_id),
                 f"[dim]{ra.get('points', 0)}/2[/]",
                 "→",
                 "[dim]—[/]",
@@ -424,7 +432,7 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
             continue
         if rb and not ra:
             table.add_row(
-                sc_id,
+                escape(sc_id),
                 "[dim]—[/]",
                 "→",
                 f"[bold]{rb.get('points', 0)}/2[/]",
@@ -461,7 +469,7 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
         sym_a, sym_b = status_symbols.get(st_a, "?"), status_symbols.get(st_b, "?")
 
         table.add_row(
-            sc_id,
+            escape(sc_id),
             f"[dim]{sym_a} {pts_a}[/]",
             "→",
             f"{sym_b} [bold]{pts_b}[/]",
