@@ -16,6 +16,7 @@ from typing import Any
 from rich.console import Console
 
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
+from tool_eval_bench.cli.headless import report_run_failed, report_run_saved
 from tool_eval_bench.cli.resolve import parse_sweep_range, redact_url, resolve_scenarios
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.storage.reports.pressure import pressure_sweep_report
@@ -73,7 +74,7 @@ def run_pressure_sweep(
     try:
         start, end = parse_sweep_range(args.context_pressure_sweep)
     except ValueError as exc:
-        console.print(f"\n[bold red]Error:[/] {exc}")
+        report_run_failed(console, f"\n[bold red]Error:[/] {exc}")
         sys.exit(1)
 
     steps = max(2, args.sweep_steps)
@@ -82,7 +83,7 @@ def run_pressure_sweep(
 
     scenarios = resolve_scenarios(args)
     if not scenarios:
-        console.print("[bold red]Error:[/] No scenarios matched.")
+        report_run_failed(console, "[bold red]Error:[/] No scenarios matched.")
         sys.exit(1)
 
     scenario_ids = [s.id for s in scenarios]
@@ -109,9 +110,10 @@ def run_pressure_sweep(
                 )
             )
         if context_size is None:
-            console.print(
+            report_run_failed(
+                console,
                 "[bold red]Error:[/] Could not auto-detect context size. "
-                "Use --context-size to specify it."
+                "Use --context-size to specify it.",
             )
             sys.exit(1)
 
@@ -138,7 +140,7 @@ def run_pressure_sweep(
 
         console.print(f"  [dim]Context window: {context_size:,} tokens[/]\n")
     except Exception as exc:
-        console.print(f"\n[bold red]Error:[/] {exc}")
+        report_run_failed(console, f"\n[bold red]Error:[/] {exc}")
         sys.exit(1)
 
     _STATUS_EMOJI = {
@@ -371,18 +373,19 @@ def run_pressure_sweep(
     system_prompt = getattr(args, "system_prompt", None)
     if system_prompt is not None:
         sweep_fields["system_prompt"] = system_prompt
+    run = ModeRun(
+        run_type="context-pressure",
+        config=sweep_fields,
+        scores={
+            "levels": len(level_results),
+            "breaking_point": breaking_point,
+            "first_degradation": first_degradation,
+            "level_results": level_results,
+        },
+        status="completed",
+    )
     finalized = finalize_mode_run(
-        ModeRun(
-            run_type="context-pressure",
-            config=sweep_fields,
-            scores={
-                "levels": len(level_results),
-                "breaking_point": breaking_point,
-                "first_degradation": first_degradation,
-                "level_results": level_results,
-            },
-            status="completed",
-        ),
+        run,
         pressure_sweep_report(
             model=display_name,
             backend=backend,
@@ -397,5 +400,6 @@ def run_pressure_sweep(
         run_context=run_context,
         output_dir=getattr(args, "output_dir", None),
     )
+    report_run_saved(console, run, finalized)
     report_path = finalized.report_path
     console.print(f"  [dim]Report saved to {report_path}[/]\n")

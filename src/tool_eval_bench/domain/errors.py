@@ -1,8 +1,9 @@
 """Headless error codes for machine-readable JSONL error events.
 
-These constants are the canonical error codes emitted in ``--json`` mode
-when the benchmark fails before scenario execution begins.  External
-integrators (e.g. sparkrun) can exhaustively match on these values.
+These constants are the canonical error codes emitted in ``--json`` mode.
+All but ``RUN_FAILED`` mean the benchmark failed before scenario execution
+began.  External integrators (e.g. sparkrun) can exhaustively match on these
+values.
 
 Each constant maps to a specific exit code:
     - Exit 1: runtime error, generic failure
@@ -38,6 +39,11 @@ used for inference.  This catches the case where a model appears loaded but
 fails on real requests — without this check the benchmark silently produces
 misleading pass/partial/fail scores (issue #19)."""
 
-# -- Discovery errors (exit code 1) -----------------------------------------
+# -- Discovery errors (exit code 2) -----------------------------------------
 NO_SERVER = "no_server"
 """Auto-discovery found no responsive inference server on localhost."""
+
+# -- Run errors (exit code 1) -----------------------------------------------
+RUN_FAILED = "run_failed"
+"""The run started but could not finish: a resume was rejected, setup failed,
+or a benchmark mode failed.  The event's message names the cause."""

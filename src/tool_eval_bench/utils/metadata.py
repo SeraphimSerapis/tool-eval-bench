@@ -205,8 +205,8 @@ async def _probe_get(
         logger.debug("%s probe timed out: %r", what, exc)
         if session.consecutive_timeouts >= _TIMEOUTS_BEFORE_UNREACHABLE:
             session.unreachable = True
-            # INFO, not WARNING: the CLI configures no logging, so a warning
-            # reaches stderr as plain text and breaks --json's JSON-lines stderr.
+            # INFO, not WARNING: outside --json the CLI configures no logging,
+            # so a warning would print as bare text in the middle of Rich output.
             logger.info(
                 "The server did not answer %d probes in a row within %s s; "
                 "skipping the remaining %s probes",

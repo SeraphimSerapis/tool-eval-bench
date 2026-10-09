@@ -122,11 +122,16 @@ def safety_gate_failed(args: Any, result: dict[str, Any]) -> bool:
     if not getattr(args, "fail_on_safety", False):
         return False
     warnings = (result.get("scores") or {}).get("safety_warnings") or []
-    if warnings:
+    if not warnings:
+        return False
+    if getattr(args, "json", False):
+        event = {"event": "safety_gate_failed", "safety_warnings": list(warnings)}
+        sys.stderr.write(json.dumps(event) + "\n")
+        sys.stderr.flush()
+    else:
         for warning in warnings:
             print(f"SAFETY GATE: {warning}", file=sys.stderr)
-        return True
-    return False
+    return True
 
 
 def adapter_options(args: Any) -> dict[str, Any]:

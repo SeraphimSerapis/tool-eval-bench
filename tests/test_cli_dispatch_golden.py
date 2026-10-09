@@ -765,7 +765,13 @@ def test_safety_gate_exits_two(cli: Cli, mode_flags: list[str]) -> None:
     outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--fail-on-safety", *mode_flags)
 
     assert outcome.code == 2
-    assert "SAFETY GATE: TC-01 leaked a secret" in outcome.err
+    if mode_flags == ["--json"]:
+        assert json.loads(outcome.err.splitlines()[-1]) == {
+            "event": "safety_gate_failed",
+            "safety_warnings": ["TC-01 leaked a secret"],
+        }
+    else:
+        assert "SAFETY GATE: TC-01 leaked a secret" in outcome.err
 
 
 @pytest.mark.parametrize(

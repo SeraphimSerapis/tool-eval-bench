@@ -32,9 +32,18 @@ Auto-discovery probes these ports in order:
 Always use `--json` for machine-readable output.  In this mode:
 
 - **stdout** contains only the JSON result envelope
-- **stderr** contains JSONL progress events (one per line)
+- **stderr** contains JSONL progress events (one per line); warnings arrive as `log` events
 - Interactive prompts are skipped (first model is auto-selected)
-- Warmup and informational banners are suppressed
+- Warmup, banners, tables, and progress bars are suppressed in every mode
+
+Modes that have no result envelope (`--perf-only`, `--spec-bench`,
+`--context-pressure-sweep`, and the accuracy plugins such as `--gsm8k-only`)
+write nothing to stdout. Their results go to the Markdown report and SQLite as
+usual, and a `run_saved` event on stderr gives the run ID and report path.
+
+`--spec-live` and `--decision-live` are interactive monitors and exit 2 when
+combined with `--json`. Invalid arguments are the one exception to the stderr
+rule: they exit 2 with argparse's usage text.
 
 ```bash
 # JSON to stdout
@@ -287,12 +296,25 @@ Each line on stderr is a JSON object:
 
 ```jsonc
 {"event": "server_discovered", "base_url": "http://localhost:8000", "backend": "vllm", ...}
+{"event": "backend_detected", "backend": "vllm"}
 {"event": "model_auto_selected", "model": "Qwen/Qwen3-8B", ...}
+{"event": "probe_result", ...}                      // --probe only
 {"event": "scenario_start", "scenario_id": "TC-01", "index": 0, "total": 15}
 {"event": "scenario_result", "scenario_id": "TC-01", "status": "pass", "points": 2, ...}
-{"event": "benchmark_complete", "json_file": "results.json", "final_score": 85}
+{"event": "decision_audit_start", ...}              // with a decision judge
+{"event": "decision_audit_result", ...}
+{"event": "benchmark_complete", "json_file": "results.json", "final_score": 85}   // --json-file only
+{"event": "safety_gate_failed", "safety_warnings": ["..."]}   // --fail-on-safety, before exit 2
+{"event": "run_saved", "run_type": "perf", "run_id": "...", "status": "completed", "report_path": "runs/..."}
+{"event": "log", "level": "warning", "logger": "tool_eval_bench...", "message": "..."}
 {"event": "error", "error": "no_server", "message": "..."}
 ```
+
+`run_saved` comes from the modes without a result envelope. Its `run_type` is
+`perf`, `spec-bench`, `context-pressure`, or the plugin name (`gsm8k`, `mmlu`,
+`ifeval`, `needle`, `decision`). `log` carries warnings and errors from logging
+and Python warnings, with URLs redacted. URLs in `error` messages are redacted
+too.
 
 ## Error codes (structured)
 
@@ -305,7 +327,9 @@ When `--json` mode emits an error event, the `error` field is one of:
 | `detection_failed` | 2 | Unexpected exception during server probing |
 | `invalid_response` | 2 | Response body is not valid JSON |
 | `no_models` | 3 | Server responded but model list is empty |
+| `model_not_available` | 3 | Model is listed but fails a real request |
 | `no_server` | 2 | Auto-discovery found no server on localhost |
+| `run_failed` | 1 | The run started but could not finish: a resume was rejected, setup failed, or a benchmark mode failed. The message names the cause |
 
 These constants are defined in `tool_eval_bench.domain.errors` for
 programmatic consumers.

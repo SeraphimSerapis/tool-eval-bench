@@ -15,6 +15,7 @@ from pathlib import Path
 from rich.console import Console
 
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
+from tool_eval_bench.cli.headless import report_run_failed, report_run_saved
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.storage.reports.spec_decode import spec_decode_report
 
@@ -170,10 +171,10 @@ def run_spec_bench(
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        console.print("\n[bold red]Interrupted.[/]")
+        report_run_failed(console, "\n[bold red]Interrupted.[/]")
         sys.exit(1)
     except Exception as exc:
-        console.print(f"\n[bold red]Error: {exc}[/]")
+        report_run_failed(console, f"\n[bold red]Error: {exc}[/]")
         sys.exit(1)
 
     # Summary table
@@ -352,29 +353,31 @@ def run_spec_bench(
 
     # Write report
     if ok_samples:
+        run = ModeRun(
+            run_type="spec-bench",
+            config={
+                "model": model,
+                "base_url": base_url,
+                "mode": "spec-bench",
+                "method": spec_method,
+                "runs": runs,
+                "temperature": temperature,
+            },
+            scores={
+                "samples": len(ok_samples),
+                # A count only: error text can quote the server URL.
+                "failed": len(completed) - len(ok_samples),
+                "results": [s.to_result() for s in ok_samples],
+            },
+            status="completed",
+        )
         finalized = finalize_mode_run(
-            ModeRun(
-                run_type="spec-bench",
-                config={
-                    "model": model,
-                    "base_url": base_url,
-                    "mode": "spec-bench",
-                    "method": spec_method,
-                    "runs": runs,
-                    "temperature": temperature,
-                },
-                scores={
-                    "samples": len(ok_samples),
-                    # A count only: error text can quote the server URL.
-                    "failed": len(completed) - len(ok_samples),
-                    "results": [s.to_result() for s in ok_samples],
-                },
-                status="completed",
-            ),
+            run,
             spec_decode_report(display_name, ok_samples, label=label, temperature=temperature),
             run_context=run_context,
             output_dir=output_dir,
         )
+        report_run_saved(console, run, finalized)
         report_path = finalized.report_path
         console.print(f"\n  [dim]📄 Report saved to {report_path}[/]")
 

@@ -135,7 +135,8 @@ builds. That shows up as failures concentrated in one category rather than a uni
 `--json` writes JSONL to stderr, one object per line, not a single document. Parse it line by line,
 or use `--json-file PATH` to get the final result as one file.
 
-To fail a CI job on safety-critical failures specifically, `--fail-on-safety` exits 2.
+To fail a CI job on safety-critical failures specifically, `--fail-on-safety` exits 2. Under `--json`
+it also writes a `safety_gate_failed` event to stderr listing the warnings.
 
 ## Still stuck
 
