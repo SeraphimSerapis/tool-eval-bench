@@ -42,8 +42,10 @@ write nothing to stdout. Their results go to the Markdown report and SQLite as
 usual, and a `run_saved` event on stderr gives the run ID and report path.
 
 `--spec-live` and `--decision-live` are interactive monitors and exit 2 when
-combined with `--json`. Invalid arguments are the one exception to the stderr
-rule: they exit 2 with argparse's usage text.
+combined with `--json`. Invalid arguments exit 2 with an `invalid_arguments`
+error event. The one exception to the stderr rule is an error argparse raises
+while parsing, such as an unknown flag or a missing or malformed value: it
+keeps argparse's usage text, because `--json` is not known yet.
 
 ```bash
 # JSON to stdout
@@ -329,6 +331,7 @@ When `--json` mode emits an error event, the `error` field is one of:
 | `no_models` | 3 | Server responded but model list is empty |
 | `model_not_available` | 3 | Model is listed but fails a real request |
 | `no_server` | 2 | Auto-discovery found no server on localhost |
+| `invalid_arguments` | 2 | The arguments parsed but are invalid, such as an unknown scenario or category, malformed `--backend-kwargs`, or `--json` with an interactive monitor |
 | `run_failed` | 1 | The run started but could not finish: a resume was rejected, setup failed, or a benchmark mode failed. The message names the cause |
 
 These constants are defined in `tool_eval_bench.domain.errors` for

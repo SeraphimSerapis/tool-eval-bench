@@ -1,7 +1,7 @@
 """Headless error codes for machine-readable JSONL error events.
 
 These constants are the canonical error codes emitted in ``--json`` mode.
-All but ``RUN_FAILED`` mean the benchmark failed before scenario execution
+All but ``RUN_FAILED`` mean the benchmark stopped before scenario execution
 began.  External integrators (e.g. sparkrun) can exhaustively match on these
 values.
 
@@ -42,6 +42,12 @@ misleading pass/partial/fail scores (issue #19)."""
 # -- Discovery errors (exit code 2) -----------------------------------------
 NO_SERVER = "no_server"
 """Auto-discovery found no responsive inference server on localhost."""
+
+# -- Usage errors (exit code 2) ---------------------------------------------
+INVALID_ARGUMENTS = "invalid_arguments"
+"""The arguments parsed but are invalid together or in value, e.g. an unknown
+scenario or category, or malformed --backend-kwargs.  Errors argparse raises
+while parsing keep argparse's usage text."""
 
 # -- Run errors (exit code 1) -----------------------------------------------
 RUN_FAILED = "run_failed"
