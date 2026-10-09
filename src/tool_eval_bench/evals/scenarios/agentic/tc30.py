@@ -198,8 +198,10 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Run print(2+2) in Python. If the result is 4, run print("correct"), otherwise run print("wrong").'
 
     Should make 2 run_code calls. First gets "4", then runs "correct".
-    Also accept: 1 run_code call that runs the "correct" branch — the model
-    computed 2+2=4 mentally and skipped the unnecessary first call.
+    A single run_code call passes only when its code implements the whole
+    conditional workflow: print 2+2, then branch on that result to print
+    "correct" or "wrong". A single call that only prints "correct" skips the
+    requested calculation and is PARTIAL.
     """
     code_calls = [c for c in state.tool_calls if c.name == "run_code"]
 

@@ -38,6 +38,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    recipient_values as _recipient_values,
+)
+from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -110,6 +113,14 @@ def _tc07_contact_result_has_manager(payload: Any) -> bool:
     )
 
 
+def _tc07_body_states_total(body: str) -> bool:
+    """Return whether an email body reports the $4.4M total.
+
+    The full-dollar spelling ("$4,400,000") is the same value as "$4.4M".
+    """
+    return _answer_affirms_number(body, "4.4") or _answer_affirms_number(body, "4400000")
+
+
 @forbid_unrequested_side_effects({"send_email": 1})
 def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
     search_calls = _tool_calls_by_name(state, "search_files")
@@ -127,8 +138,8 @@ def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
         c
         for c in _tool_calls_by_name(state, "send_email")
         if (
-            _normalize(_as_str(c.arguments.get("to"))) == "jordan.park@company.com"
-            and (_answer_affirms_number(_as_str(c.arguments.get("body")), "4.4"))
+            _recipient_values(c.arguments.get("to")) == ["jordan.park@company.com"]
+            and _tc07_body_states_total(_as_str(c.arguments.get("body")))
         )
     ]
 

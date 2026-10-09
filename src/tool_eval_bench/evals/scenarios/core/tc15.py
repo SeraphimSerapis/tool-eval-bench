@@ -23,11 +23,14 @@ from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
-    first_call as _first_call,
+    first_call_without_error as _first_call_without_error,
 )
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback as _generic_tool_fallback,
+)
+from tool_eval_bench.evals.helpers import (
+    has_explicit_tool_error as _has_explicit_tool_error,
 )
 from tool_eval_bench.evals.helpers import (
     parse_math_expression as _parse_math_expression,
@@ -45,7 +48,6 @@ from tool_eval_bench.evals.scenarios.core._shared import (
     _numeric_value,
     _positive_argument_contains,
     _result_matches_if_present,
-    _tc14_result_is_error,
 )
 
 
@@ -95,14 +97,18 @@ def _tc15_calculator_result_is_percentage(payload: Any) -> bool:
 
 @forbid_unrequested_side_effects({"run_code": None})
 def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
-    search = _first_call(state, "web_search")
-    calc = _first_call(state, "calculator")
+    # Grade the first attempt that returned something. An errored call gave
+    # the model no number to carry or misuse, so a retry after it is
+    # recovery, while a successful call with a rounded value still counts.
+    search = _first_call_without_error(state, "web_search")
+    calc = _first_call_without_error(state, "calculator")
+    if calc is not None and _has_explicit_tool_error(state, calc):
+        # Every calculator call errored, so no calculation reached the model.
+        # Grade it like an answer computed without the calculator.
+        calc = None
 
-    # Check if the search tool actually returned data or was error-injected.
-    search_results = [r for r in state.tool_results if r.call_id == search.id] if search else []
-    search_got_error = bool(
-        search and search_results and any(_tc14_result_is_error(r.result) for r in search_results)
-    )
+    # Only when no search succeeded did the model lack the searched value.
+    search_got_error = bool(search and _has_explicit_tool_error(state, search))
 
     if search_got_error:
         # Search tool failed — model can't use a value it never received.

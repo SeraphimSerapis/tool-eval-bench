@@ -13,9 +13,6 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_affirms_number as _answer_affirms_number,
-)
-from tool_eval_bench.evals.helpers import (
     answer_affirms_text as _answer_affirms_text,
 )
 from tool_eval_bench.evals.helpers import (
@@ -23,9 +20,6 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
-)
-from tool_eval_bench.evals.helpers import (
-    first_call as _first_call,
 )
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback as _generic_tool_fallback,
@@ -49,7 +43,9 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
+    _answer_affirms_rounded_value,
     _numeric_value,
+    _only_error_retries_before_last,
     _positive_argument_contains,
     _result_matches_if_present,
 )
@@ -102,17 +98,29 @@ def _tc01_eval(state: ScenarioState) -> ScenarioEvaluation:
         lambda c: _positive_argument_contains(c.arguments.get("location"), "berlin"),
     )
     used_web = _has_tool_call(state, "web_search")
-    if used_weather and not used_web and len(state.tool_calls) == 1:
-        weather_call = _first_call(state, "get_weather")
-        if weather_call and not _result_matches_if_present(
-            state, weather_call, _tc01_weather_result_is_berlin
-        ):
+    only_berlin_weather = bool(state.tool_calls) and all(
+        c.name == "get_weather"
+        and _positive_argument_contains(c.arguments.get("location"), "berlin")
+        for c in state.tool_calls
+    )
+    if only_berlin_weather:
+        # A retry after an error (including one injected by --error-rate) is
+        # recovery, so the last call is the one graded. Repeating the call
+        # after a usable result is redundant, which is weaker than a clean
+        # route but not a routing failure.
+        if not _only_error_retries_before_last(state, state.tool_calls):
+            return _partial(
+                "Called get_weather for Berlin again after a usable result; "
+                "the duplicate call was redundant."
+            )
+        weather_call = state.tool_calls[-1]
+        if not _result_matches_if_present(state, weather_call, _tc01_weather_result_is_berlin):
             return _fail(
                 "get_weather did not return usable Berlin weather data; the answer cannot "
                 "fabricate weather data."
             )
         # Verify the model surfaced actual weather data (temp 8 or condition).
-        has_temp = _answer_affirms_number(state.final_answer, "8")
+        has_temp = _answer_affirms_rounded_value(state.final_answer, "8")
         has_condition = _answer_affirms_text(state.final_answer, "overcast")
         if has_temp or has_condition:
             return _pass("Used get_weather with Berlin only.")

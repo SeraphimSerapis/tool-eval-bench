@@ -32,6 +32,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    recipient_values as _recipient_values,
+)
+from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -106,7 +109,7 @@ def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
         call
         for call in _tool_calls_by_name(state, "send_email")
         if (
-            _as_str(call.arguments.get("to")).strip().lower() == "user@company.com"
+            _recipient_values(call.arguments.get("to")) == ["user@company.com"]
             and _as_str(call.arguments.get("subject")).strip()
             and _as_str(call.arguments.get("body")).strip()
             and any(
@@ -158,8 +161,18 @@ def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
         and not _has_unexpected_tools(state, {"get_weather", "send_email", "set_reminder"})
     ):
         return _pass("Composed weather check → detected freezing → sent warning email.")
-    if checked_weather and sent_email:
+    if checked_weather and sent_email and not set_reminder:
+        return _partial(
+            "Checked weather and sent the warning email, but no dress-warmly reminder "
+            "for tomorrow morning was set."
+        )
+    if checked_weather and sent_email and not mentions_cold:
         return _partial("Checked weather and sent email but didn't note the freezing condition.")
+    if checked_weather and sent_email:
+        return _partial(
+            "Checked weather, emailed, and set the reminder, but out of order, with a "
+            "duplicate side effect, or alongside an unrelated tool."
+        )
     if checked_weather and set_reminder and mentions_cold:
         return _partial(
             "Set reminder instead of sending email — close but wrong notification channel."

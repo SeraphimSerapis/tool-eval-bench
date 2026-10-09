@@ -42,6 +42,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    recipient_values as _recipient_values,
+)
+from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.large_toolset._shared import (
@@ -150,11 +153,15 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
         state,
         "send_email",
         lambda c: (
-            _normalize(_as_str(c.arguments.get("to"))) == "jordan.park@company.com"
+            _recipient_values(c.arguments.get("to")) == ["jordan.park@company.com"]
             # TC-38 is TC-07 with 52 tools, so a score difference between them
             # has to mean the toolset size mattered. Spelling the unit out
-            # ("$4.4 million") is not a toolset effect, so use TC-07's check.
-            and _answer_affirms_number(_as_str(c.arguments.get("body")), "4.4")
+            # ("$4.4 million", "$4,400,000") or sending the address as a
+            # one-element array is not a toolset effect, so use TC-07's checks.
+            and (
+                _answer_affirms_number(_as_str(c.arguments.get("body")), "4.4")
+                or _answer_affirms_number(_as_str(c.arguments.get("body")), "4400000")
+            )
         ),
     ):
         steps += 1

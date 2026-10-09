@@ -21,6 +21,9 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import (
+    first_call_without_error as _first_call_without_error,
+)
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
@@ -118,8 +121,10 @@ def _tc20_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     Expected: search → read → calculator (or mental math), answer = $141,440
     """
-    search = next((c for c in state.tool_calls if c.name == "search_files"), None)
-    read = next((c for c in state.tool_calls if c.name == "read_file"), None)
+    # A retry after an explicit tool error is recovery, so grade the first
+    # search and read that returned something.
+    search = _first_call_without_error(state, "search_files")
+    read = _first_call_without_error(state, "read_file")
     searched = bool(
         search
         and _positive_argument_contains(search.arguments.get("query"), "q3")
@@ -136,20 +141,24 @@ def _tc20_eval(state: ScenarioState) -> ScenarioEvaluation:
     calculator_usable = True
     calculator_after_read = True
     if calculator_calls:
-        calculator = calculator_calls[0]
-        calculator_usable = _result_matches_if_present(
-            state, calculator, _tc20_calculator_result_is_average
+        # Summing first and dividing second is a valid route, and so is a
+        # verification call after the division, so any call that produced the
+        # average counts. No calculator call may precede the read: a guess
+        # made before the data arrived is not grounded in it.
+        calculator_usable = any(
+            _result_matches_if_present(state, call, _tc20_calculator_result_is_average)
+            for call in calculator_calls
         )
-        calculator_after_read = bool(read and read.turn < calculator.turn)
+        calculator_after_read = bool(read) and all(
+            read is not None and read.turn < call.turn for call in calculator_calls
+        )
     # Average = 707200 / 5 = 141440
     answer_has_avg = _answer_contains_number(state.final_answer, "141440")
 
+    search_before_read = bool(searched and search and read and search.turn < read.turn)
     ordered = bool(
-        searched
-        and read_correct
-        and search
-        and read
-        and search.turn < read.turn
+        read_correct
+        and search_before_read
         and search_result_usable
         and read_result_usable
         and calculator_usable
@@ -158,7 +167,19 @@ def _tc20_eval(state: ScenarioState) -> ScenarioEvaluation:
     if ordered and answer_has_avg:
         return _pass("Found, read, and calculated the correct average ($141,440).")
     if read_correct and answer_has_avg:
-        return _partial("Got the right answer but skipped the file search step.")
+        if search is None:
+            return _partial("Got the right answer but skipped the file search step.")
+        if not searched:
+            return _partial("Got the right answer, but the file search did not ask for Q3 sales.")
+        if not search_before_read:
+            return _partial("Got the right answer but read the file before searching for it.")
+        if not search_result_usable or not read_result_usable:
+            return _partial("Got the right answer, but a search or read result was unusable.")
+        if not calculator_after_read:
+            return _partial(
+                "Got the right answer but called the calculator before reading the file."
+            )
+        return _partial("Got the right answer, but no calculator call returned the average.")
     if searched and read_correct and not answer_has_avg:
         return _partial("Found and read the file but calculated incorrectly.")
     return _fail("Did not complete the search→read→calculate chain.")

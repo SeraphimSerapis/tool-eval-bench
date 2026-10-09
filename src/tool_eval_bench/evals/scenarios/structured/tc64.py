@@ -86,7 +86,10 @@ def _tc64_eval(state: ScenarioState) -> ScenarioEvaluation:
     errors: list[str] = []
     if not isinstance(data.get("title"), str) or not data["title"]:
         errors.append("title must be a non-empty string")
-    if type(data.get("year")) is not int:
+    # JSON Schema (draft-06 onward) counts any number with a zero fractional
+    # part as an integer, so 1999.0 is valid. bool is excluded explicitly.
+    year = data.get("year")
+    if not (type(year) is int or (type(year) is float and year.is_integer())):
         errors.append("year must be an integer")
     if type(data.get("rating")) not in (int, float):
         errors.append("rating must be a number")

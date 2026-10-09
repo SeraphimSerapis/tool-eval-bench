@@ -29,6 +29,9 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
+    has_explicit_tool_error as _has_explicit_tool_error,
+)
+from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
 )
 from tool_eval_bench.evals.helpers import (
@@ -44,6 +47,7 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.extended._shared import (
+    _ENGLISH_SOURCE_DESIGNATORS,
     _positive_argument_contains,
     _result_matches_if_present,
     _status_is_success,
@@ -115,7 +119,7 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
     valid_translations = [
         c
         for c in translations
-        if _normalize(_as_str(c.arguments.get("source_language"))) in ("english", "en")
+        if _normalize(_as_str(c.arguments.get("source_language"))) in _ENGLISH_SOURCE_DESIGNATORS
         and _positive_argument_contains(c.arguments.get("text"), "meeting")
     ]
     emails = [
@@ -144,15 +148,34 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     ordered = any(t.turn < e.turn for t in usable_translations for e in usable_emails)
     if translated_to_german and sent_email and email_has_german and ordered:
-        if len(translations) != 1 or len(emails) != 1 or len(email_calls) != 1:
+        # A call that came back with an explicit error (a rejected request or
+        # an --error-rate failure) did nothing, so a retry after it is not a
+        # duplicate. Count only the calls that went through.
+        def went_through(calls: list[ToolCallRecord]) -> list[ToolCallRecord]:
+            return [call for call in calls if not _has_explicit_tool_error(state, call)]
+
+        if (
+            len(went_through(translations)) != 1
+            or len(went_through(emails)) != 1
+            or len(went_through(email_calls)) != 1
+        ):
             return _partial(
                 "Translated and emailed the message but issued duplicate or incorrect email mutations."
             )
-        if not _address_observed_before(state, emails[0], "hans.mueller@firma.de"):
+        if not _address_observed_before(state, went_through(emails)[0], "hans.mueller@firma.de"):
             return _partial(
                 "Translated and emailed Hans at an address it never looked up with get_contacts."
             )
         return _pass("Translated to German and emailed the German version to Hans.")
+    if translated_to_german and sent_email and not usable_translations:
+        return _partial(
+            "Emailed Hans, but no translation call had an English source, the message text, "
+            "and a usable German result."
+        )
+    if translated_to_german and sent_email and not usable_emails:
+        return _partial(
+            "Translated the message, but send_email did not return a successful result."
+        )
     if translated_to_german and sent_email and not ordered:
         return _partial("Translated and emailed the message, but used the steps out of order.")
     if translated_to_german and sent_email and not email_has_german:

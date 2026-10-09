@@ -93,3 +93,9 @@ _GERMAN_MARKERS = re.compile(
     r"gerade|verfügbar|erneut|versuchen|dienst)\b",
     re.IGNORECASE,
 )
+
+
+# Every English designator the translate_text schema advertises as a source
+# language. A test keeps this a subset of TRANSLATE_LANGUAGE_DESIGNATORS so it
+# cannot drift from the schema.
+_ENGLISH_SOURCE_DESIGNATORS = frozenset({"english", "en", "en-us", "en-gb", "en-ca", "en-au"})

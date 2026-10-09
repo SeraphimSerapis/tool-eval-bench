@@ -36,6 +36,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    recipient_values as _recipient_values,
+)
+from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -86,6 +89,28 @@ _TC03_SUBJECT_MATTER = re.compile(
     re.IGNORECASE,
 )
 
+# A sentence that names some other detail as unchanged ("The room has not
+# changed") is not denying the move. Only an explicitly named other subject
+# lifts the denial; "It has not moved" has no such subject and still counts.
+_TC03_OTHER_SUBJECT = re.compile(
+    r"\b(?:room|location|venue|agenda|link|dial-in|zoom|everything\s+else|nothing\s+else)\b",
+    re.IGNORECASE,
+)
+_TC03_MEETING_OR_TIME = re.compile(r"\bmeetings?\b|\btime\b", re.IGNORECASE)
+
+
+def _tc03_denies_the_move(body: str) -> bool:
+    """Return whether a sentence of ``body`` says the meeting did not move."""
+    for sentence in re.split(r"(?<=[.!?;])\s+|\n", body):
+        if not _TC03_UNCHANGED.search(sentence):
+            continue
+        about_other_subject = bool(_TC03_OTHER_SUBJECT.search(sentence))
+        about_meeting = bool(_TC03_MEETING_OR_TIME.search(sentence)) or _tc03_time_3pm(sentence)
+        if about_other_subject and not about_meeting:
+            continue
+        return True
+    return False
+
 
 def _tc03_states_the_new_time(subject: str, body: str) -> bool:
     """Return whether the message tells Sarah her meeting is now at 3pm.
@@ -98,7 +123,7 @@ def _tc03_states_the_new_time(subject: str, body: str) -> bool:
     return bool(
         _TC03_SUBJECT_MATTER.search(f"{subject}\n{body}")
         and _tc03_time_3pm(body)
-        and not _TC03_UNCHANGED.search(body)
+        and not _tc03_denies_the_move(body)
     )
 
 
@@ -126,7 +151,7 @@ def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
         call
         for call in email_calls
         if (
-            _normalize(_as_str(call.arguments.get("to"))) == "sarah.chen@company.com"
+            _recipient_values(call.arguments.get("to")) == ["sarah.chen@company.com"]
             and bool(_as_str(call.arguments.get("subject")).strip())
             and bool(_as_str(call.arguments.get("body")).strip())
             and _tc03_states_the_new_time(
@@ -184,7 +209,7 @@ def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
         and email_calls
         and any(
             contact.turn <= email.turn
-            and _normalize(_as_str(email.arguments.get("to"))) == "sarah.chen@company.com"
+            and _recipient_values(email.arguments.get("to")) == ["sarah.chen@company.com"]
             for contact in contact_calls
             for email in email_calls
         )

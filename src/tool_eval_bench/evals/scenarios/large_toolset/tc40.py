@@ -87,7 +87,7 @@ def _tc40_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
                     "name": "Sarah Chen",
                     "email": "sarah.chen@customer.com",
                     "tier": "premium",
-                    "orders": ["ORD-2026-1847", "ORD-2026-1512"],
+                    "orders": ["ORD-2026-1847"],
                 },
                 "get_customer_profile",
             )

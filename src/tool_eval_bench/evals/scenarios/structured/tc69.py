@@ -19,6 +19,7 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback,
     normalize,
     positive_argument_contains,
+    reference_date,
 )
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -237,6 +238,12 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Direction should be "down" since change is negative
     if m.get("direction") != "down":
         return _partial("Market direction should be 'down' (stock dropped -1.11%).")
+
+    # A daily briefing is for today, and the system prompt gives the model
+    # today's date. --reference-date moves it, so derive it from the state.
+    today = reference_date(state).isoformat()
+    if data.get("date") != today:
+        return _partial(f"Briefing date doesn't match today's date ({today}).")
 
     return _pass(
         "Called both tools and produced schema-compliant nested JSON with correct data synthesis."
