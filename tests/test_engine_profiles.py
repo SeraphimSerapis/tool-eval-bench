@@ -29,7 +29,7 @@ from tool_eval_bench.domain.engines import (
     engine_profile_by_name,
     metrics_namespace_present,
 )
-from tool_eval_bench.runner.spec_live import _parse_snapshot, compute_delta
+from tool_eval_bench.runner.spec_live import _parse_snapshot
 
 
 def _duplicates(values: list[str]) -> list[str]:
@@ -153,7 +153,6 @@ def test_spec_live_labels_are_registry_keys() -> None:
     for _, text, _ in _LIVE_CASES:
         snap = _parse_snapshot(text)
         assert snap.spec_backend in keys
-        assert compute_delta(snap, snap).spec_metrics_source in keys
 
 
 def _backend_help() -> str:

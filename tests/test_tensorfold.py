@@ -127,7 +127,7 @@ def test_spec_metrics_aliases_are_not_double_counted():
     assert current.waiting_reqs == 1
     assert current.kv_cache_usage == 0.25
     delta = compute_delta(replace(previous, timestamp=1), replace(current, timestamp=2))
-    assert delta.spec_metrics_source == "tensorfold"
+    assert delta.counter_metrics_available is True
     assert delta.acceptance_rate == 0.8
     assert delta.cumulative_acceptance_rate == 0.8
     assert delta.acceptance_length is None

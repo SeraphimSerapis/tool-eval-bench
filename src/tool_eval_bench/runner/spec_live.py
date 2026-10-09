@@ -417,14 +417,6 @@ class MetricsSnapshot:
         )
 
     @property
-    def has_sglang_metrics(self) -> bool:
-        """True if this snapshot contains a known SGLang metric family."""
-        return self.sglang_spec_metrics_present or (
-            self.spec_backend == "sglang"
-            and (self.generation_tps > 0 or self.running_reqs > 0 or self.waiting_reqs > 0)
-        )
-
-    @property
     def has_llamacpp_metrics(self) -> bool:
         """True if this snapshot contains llama.cpp backend metrics."""
         return (
@@ -506,7 +498,6 @@ class SpecLiveDelta:
 
     # Direct gauges have no cumulative token totals to report.
     counter_metrics_available: bool = True
-    spec_metrics_source: str = "unknown"
 
     # SGLang DSpark fields, when exposed by the server.
     spec_cap_length: float | None = None
@@ -790,20 +781,6 @@ def compute_delta(prev: MetricsSnapshot, curr: MetricsSnapshot) -> SpecLiveDelta
         # Model names from Prometheus labels
         model_names=set(curr.model_names),
         counter_metrics_available=not is_sglang,
-        spec_metrics_source=(
-            "sglang"
-            if is_sglang
-            else "llamacpp"
-            if curr.llamacpp_spec_metrics_present
-            and not (curr.vllm_spec_metrics_present or curr.tensorfold_spec_metrics_present)
-            else "strata"
-            if curr.vllm_spec_metrics_present and curr.strata_metrics_present
-            else "vllm"
-            if curr.vllm_spec_metrics_present
-            else "tensorfold"
-            if curr.tensorfold_spec_metrics_present
-            else "unknown"
-        ),
     )
 
     if is_sglang:
