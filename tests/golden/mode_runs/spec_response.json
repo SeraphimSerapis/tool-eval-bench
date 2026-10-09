@@ -26,11 +26,13 @@
     "scores": {
       "samples": 2,
       "failed": 0,
+      "failed_runs": 0,
       "results": [
         {
           "prompt_type": "filler",
           "depth": 0,
           "runs": 1,
+          "failed_runs": 0,
           "spec_method": "eagle3",
           "pp_tokens": 512,
           "tg_tokens": 128,
@@ -65,6 +67,7 @@
           "prompt_type": "code",
           "depth": 4096,
           "runs": 1,
+          "failed_runs": 0,
           "spec_method": "eagle3",
           "pp_tokens": 512,
           "tg_tokens": 128,

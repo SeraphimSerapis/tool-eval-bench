@@ -211,20 +211,24 @@ def _resume_config_mismatches(
     extra_params: dict[str, Any] | None,
     scenario_packs: list[dict[str, Any]] | None,
     context_pressure: dict[str, Any] | None,
+    wire_format: str | None = None,
 ) -> list[str]:
     """Compare every user-controlled scoring condition persisted in a run.
 
     The current config is built the way the service builds the one it stores,
     so both sides share one schema and the comparison cannot drift from it.
+    ``wire_format`` is the run's ``--format`` choice; None detects it from
+    ``base_url``. It decides how the endpoint identity canonicalises the URL.
     """
+    resolved_format = _resolve_wire_format(wire_format, base_url)
     request = ScoredRun.from_args(
         args,
         model=model,
         backend=backend,
         base_url=base_url,
-        # Neither reaches the stored config.
+        # Never reaches the stored config.
         api_key=None,
-        wire_format="openai",
+        wire_format=resolved_format,
         scenarios=scenarios,
         extra_params=extra_params,
         scenario_packs=scenario_packs,
@@ -245,6 +249,7 @@ def _resume_config_mismatches(
         current,
         base_url=base_url,
         judge_base_url=request.judge.base_url if request.judge else None,
+        wire_format=resolved_format,
     )
 
 
@@ -1168,7 +1173,7 @@ def _resolve_endpoint(
     if not base_url:
         if not args.json:
             console.print("\n[dim]  No --base-url provided, scanning localhost…[/]")
-        discovered = _discover_server(headless=args.json, console=console)
+        discovered = _discover_server(headless=args.json, console=console, redact=args.redact_url)
         if discovered:
             base_url, discovered_backend = discovered
             if not backend:
@@ -1342,6 +1347,7 @@ def _run_spec_live_mode(target: _Target) -> None:
                 model_name=target.display_name,
                 poll_interval=args.spec_live_interval,
                 spec_method=spec_method_hint,
+                redact_endpoint=args.redact_url,
             )
         )
     except KeyboardInterrupt:
@@ -1662,6 +1668,7 @@ def _plan_resume(target: _Target, pressure: _PressureFill | None) -> None:
             extra_params=target.extra_params or None,
             scenario_packs=_pack_attestations(args),
             context_pressure=pressure.config if pressure is not None else None,
+            wire_format=target.wire_format,
         )
         if mismatches:
             report_run_failed(

@@ -261,6 +261,172 @@ def test_probe_without_redact_url_still_shows_the_host(
     assert "gpu.test" in outcome.out
 
 
+_NOT_A_MODEL_LISTING = [
+    pytest.param(
+        lambda: httpx.Response(
+            200, text="<html>Sign in</html>", headers={"Content-Type": "text/html"}
+        ),
+        id="html",
+    ),
+    pytest.param(lambda: httpx.Response(200, json=["m"]), id="json-array"),
+    pytest.param(lambda: httpx.Response(200, text=""), id="empty"),
+]
+
+
+@pytest.mark.parametrize("make_response", _NOT_A_MODEL_LISTING)
+def test_probe_rejects_a_2xx_listing_that_is_not_a_json_object(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, make_response: Any
+) -> None:
+    _mock_http(monkeypatch, lambda request: make_response())
+
+    console = cli.run("probe", "--base-url", BASE_URL)
+    headless = cli.run("probe", "--base-url", SECRET_URL, "--json")
+
+    assert console.code == headless.code == 2
+    assert "Invalid response" in console.flat_out
+    assert "not a JSON object" in console.flat_out
+    (event,) = _events(headless.err)
+    assert event["event"] == "probe_result"
+    assert event["status"] == "failed"
+    assert event["error_code"] == "invalid_response"
+    assert "not a JSON object" in event["error"]
+    assert "gpu.test" not in headless.err and "hunter2" not in headless.err
+
+
+def test_probe_invalid_response_honours_redact_url(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mock_http(
+        monkeypatch,
+        lambda request: httpx.Response(200, text=f"<a href='{SECRET_URL}'>login</a>"),
+    )
+
+    outcome = cli.run("probe", "--base-url", SECRET_URL, "--redact-url")
+
+    assert outcome.code == 2
+    assert "Invalid response" in outcome.flat_out
+    assert "gpu.test" not in outcome.out and "hunter2" not in outcome.out
+
+
+@pytest.mark.parametrize(
+    ("body", "models"),
+    [
+        ({"data": [{"id": "m"}, "junk", {"name": "x"}, {}]}, ["m", "x"]),
+        ({"data": "not a list"}, []),
+        ({}, []),
+        # The native Gemini listing names models under "models".
+        (
+            {"models": [{"name": "models/gemini-x"}, {"name": "tunedModels/t"}]},
+            ["gemini-x", "tunedModels/t"],
+        ),
+    ],
+    ids=["mixed-items", "data-not-a-list", "empty-object", "gemini-models"],
+)
+def test_probe_ready_on_any_json_object(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, body: dict[str, Any], models: list[str]
+) -> None:
+    _mock_http(monkeypatch, lambda request: httpx.Response(200, json=body))
+
+    outcome = cli.run("probe", "--base-url", BASE_URL, "--json")
+
+    assert outcome.code == 0
+    (event,) = _events(outcome.err)
+    assert event["status"] == "ready"
+    assert event["models"] == models
+
+
+def test_probe_lists_gemini_model_ids_in_the_console(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mock_http(
+        monkeypatch,
+        lambda request: httpx.Response(200, json={"models": [{"name": "models/gemini-x"}]}),
+    )
+
+    outcome = cli.run("probe", "--base-url", BASE_URL, "--format", "gemini")
+
+    assert outcome.code == 0
+    assert "Models: gemini-x" in outcome.flat_out
+
+
+@pytest.mark.parametrize(
+    ("status", "headers"),
+    [
+        (302, {"Location": "http://user:hunter2@gpu.test:8000/sign-in"}),
+        (307, {"Location": "/login"}),
+        (301, {}),
+    ],
+    ids=["302-to-sign-in", "307-relative", "301-without-location"],
+)
+def test_probe_treats_a_redirect_as_an_invalid_response(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, status: int, headers: dict[str, str]
+) -> None:
+    _mock_http(monkeypatch, lambda request: httpx.Response(status, headers=headers))
+
+    console = cli.run("probe", "--base-url", BASE_URL)
+    redacted = cli.run("probe", "--base-url", SECRET_URL, "--redact-url")
+    headless = cli.run("probe", "--base-url", SECRET_URL, "--json")
+
+    assert console.code == redacted.code == headless.code == 2
+    assert "Invalid response" in console.flat_out
+    assert f"redirect (HTTP {status}" in console.flat_out
+    assert "gpu.test" not in redacted.out and "hunter2" not in redacted.out
+    (event,) = _events(headless.err)
+    assert event["status"] == "failed"
+    assert event["error_code"] == "invalid_response"
+    assert "redirect" in event["error"]
+    assert "gpu.test" not in headless.err and "hunter2" not in headless.err
+
+
+def _discover_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tool_eval_bench.cli import server
+
+    async def discovered() -> tuple[str, str, str, int]:
+        return "http://localhost:8000", "unknown", "inference server", 8000
+
+    monkeypatch.setattr(server, "_discover_async", discovered)
+
+
+@pytest.mark.parametrize("redact", [True, False])
+def test_auto_discovered_url_honours_redact_url_in_the_console(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, redact: bool
+) -> None:
+    _discover_localhost(monkeypatch)
+    flags = ["--redact-url"] if redact else []
+
+    outcome = cli.run("--model", "m", "--scenarios", "TC-01", "--no-live", *flags)
+
+    assert outcome.code == 0, outcome.flat_out
+    assert "Auto-discovered" in outcome.flat_out
+    assert ("localhost:8000" in outcome.out) is not redact
+    if redact:
+        assert "http://***:8000" in outcome.flat_out
+
+
+@pytest.mark.parametrize("redact", [True, False])
+def test_server_discovered_event_keeps_the_url_a_consumer_connects_to(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, redact: bool
+) -> None:
+    # docs/artifacts.md: the event is the documented exception to redaction.
+    _discover_localhost(monkeypatch)
+    flags = ["--redact-url"] if redact else []
+
+    outcome = cli.run("--model", "m", "--scenarios", "TC-01", "--json", *flags)
+
+    assert outcome.code == 0, outcome.flat_err
+    (event,) = [e for e in _events(outcome.err) if e.get("event") == "server_discovered"]
+    assert event["base_url"] == "http://localhost:8000"
+
+
+def test_spec_live_receives_redact_url(cli: Cli) -> None:
+    calls = cli.record("tool_eval_bench.cli.spec_live_display", "run_spec_live", is_async=True)
+
+    outcome = cli.run(*CONNECTION, "--spec-live", "--redact-url")
+
+    assert outcome.code == 0
+    assert calls[0]["redact_endpoint"] is True
+
+
 @pytest.mark.parametrize(
     ("error", "code"),
     [
@@ -286,6 +452,64 @@ def test_preflight_failure_respects_the_display_url(
     assert exc_info.value.code == code
     text = console.export_text()
     assert "gpu.test" not in text and "hunter2" not in text
+
+
+_HTML_PAGE = httpx.Response(200, text="<html>Sign in</html>", headers={"Content-Type": "text/html"})
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        pytest.param(_HTML_PAGE, id="html"),
+        pytest.param(httpx.Response(200, json=["not", "an", "object"]), id="json-array"),
+        pytest.param(httpx.Response(200, text=""), id="empty"),
+    ],
+)
+def test_preflight_rejects_a_2xx_body_that_is_not_a_json_object(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], response: httpx.Response
+) -> None:
+    from tool_eval_bench.cli.probe import preflight_model_check
+
+    _mock_http(monkeypatch, lambda request: response)
+
+    with pytest.raises(SystemExit) as console_exit:
+        preflight_model_check(
+            Console(record=True, width=300), SECRET_URL, "m", None, display_url="http://***:8000"
+        )
+    with pytest.raises(SystemExit) as json_exit:
+        preflight_model_check(Console(), SECRET_URL, "m", None, headless=True)
+
+    assert console_exit.value.code == json_exit.value.code == 2
+    (event,) = _events(capsys.readouterr().err)
+    assert event["error"] == "invalid_response"
+    assert "not a JSON object" in event["message"]
+
+
+def test_preflight_invalid_response_console_message_respects_the_display_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench.cli.probe import preflight_model_check
+
+    _mock_http(
+        monkeypatch,
+        lambda request: httpx.Response(200, text=f"<a href='{SECRET_URL}'>login</a>"),
+    )
+    console = Console(record=True, width=300)
+
+    with pytest.raises(SystemExit):
+        preflight_model_check(console, SECRET_URL, "m", None, display_url="http://***:8000/v1")
+
+    text = console.export_text()
+    assert "Invalid response" in text
+    assert "gpu.test" not in text and "hunter2" not in text
+
+
+def test_preflight_accepts_a_json_object(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tool_eval_bench.cli.probe import preflight_model_check
+
+    _mock_http(monkeypatch, lambda request: httpx.Response(200, json={"choices": []}))
+
+    preflight_model_check(Console(), SECRET_URL, "m", None)
 
 
 @pytest.mark.parametrize("redact", [True, False])

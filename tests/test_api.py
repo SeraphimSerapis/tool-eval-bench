@@ -596,7 +596,7 @@ class TestProbeServer:
 
         from tool_eval_bench.cli.bench import _probe_server
 
-        mock_resp = MagicMock()
+        mock_resp = MagicMock(status_code=200)
         mock_resp.json.return_value = {"data": [{"id": "test-model"}]}
 
         console = Console(file=StringIO(), width=200, no_color=True)

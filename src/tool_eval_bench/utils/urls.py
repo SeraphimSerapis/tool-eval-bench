@@ -159,8 +159,25 @@ def endpoint_identity(url: str, *, wire_format: str = "openai") -> str:
     Every spelling of a base URL that sends requests to the same place gets the
     same identity; see :func:`canonical_endpoint_path`. ``wire_format`` defaults
     to the OpenAI format, which is what plugin, mode-run and judge endpoints speak.
+
+    A root that still ends in ``/v1`` (from ``…/v1/v1``) is hashed with a
+    trailing slash. The legacy hash kept ``/v1`` and stripped trailing slashes,
+    so without the slash the root of ``…/v1/v1`` would hash exactly like the
+    legacy identity of ``…/v1``, a different endpoint, and resume and the
+    leaderboard would take one for the other. Every other root hashes as
+    before, so its pre-canonical runs stay in its cohort. The wire format is
+    not hashed, so a root can still equal the legacy identity of a run stored
+    under another format at the same host and path, such as a Gemini ``…/v1``
+    root and an OpenAI-format ``…/v1`` run.
     """
-    return _endpoint_hash(url, lambda path: canonical_endpoint_path(path, wire_format=wire_format))
+
+    def canonical(path: str) -> str:
+        root = canonical_endpoint_path(path, wire_format=wire_format)
+        if wire_format != "gemini" and root.endswith("/v1"):
+            return f"{root}/"
+        return root
+
+    return _endpoint_hash(url, canonical)
 
 
 def legacy_endpoint_identity(url: str) -> str:

@@ -162,6 +162,8 @@ def run_spec_bench(
         label = f"{sample.prompt_type:>10} @ d{sample.depth}"
         if sample.runs > 1:
             label += f" ×{sample.runs}"
+        if sample.failed_runs and not sample.error:
+            label += f" [yellow]({sample.failed_runs} failed)[/]"
         if sample.error:
             console.print(f"  [red]✗[/] {label} — {sample.error}")
         else:
@@ -248,6 +250,8 @@ def run_spec_bench(
                 "samples": len(ok),
                 # A count only: error text can quote the server URL.
                 "failed": failed_count,
+                # Runs that failed inside cells that still have results.
+                "failed_runs": sum(s.failed_runs for s in ok),
                 "results": [s.to_result() for s in ok],
             },
             status="failed" if failed_count or stopped_early else "completed",

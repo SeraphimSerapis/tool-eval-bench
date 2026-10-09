@@ -719,6 +719,60 @@ def test_an_all_fail_sweep_still_reports_no_breaking_point(
     assert "- **Stopped Early**: 2 consecutive all-fail levels" in report
 
 
+def test_a_breaking_point_below_two_unscored_levels_is_a_lower_bound(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    passing = _summary(_result("TC-01", "pass"))
+    unscored = _summary(_result("TC-01", "fail", FailureKind.CONNECTION_ERROR))
+    persisted, out = _sweep(
+        monkeypatch,
+        tmp_path,
+        ["TC-01"],
+        _levels(passing, unscored, unscored, passing),
+        sweep_steps=4,
+    )
+
+    scores = persisted[0]["scores"]
+    assert (scores["levels"], scores["breaking_point"]) == (3, 0.5)
+    assert scores["breaking_point_lower_bound"] is True
+    assert "Breaking point: at least 50% (all scenarios pass; no higher level was scored)" in out
+    report = _report(persisted[0])
+    assert "- **Breaking Point**: at least 50% (no higher level was scored)" in report
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "steps"),
+    [
+        # Every planned level ran and the top one passed: nothing above it.
+        pytest.param(("pass", "pass", "pass"), 3, id="top-level-passed"),
+        # A scored failure above the breaking point is evidence, not a gap.
+        pytest.param(("pass", "fail", "unscored", "unscored"), 4, id="scored-fail-above"),
+        # Stopped by two all-fail levels: the levels above were scored.
+        pytest.param(("pass", "fail", "fail"), 4, id="all-fail-stop"),
+    ],
+)
+def test_a_breaking_point_with_scored_evidence_above_is_exact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, outcomes: tuple[str, ...], steps: int
+) -> None:
+    summaries = {
+        "pass": _summary(_result("TC-01", "pass")),
+        "fail": _summary(_result("TC-01", "fail", FailureKind.WRONG_TOOL)),
+        "unscored": _summary(_result("TC-01", "fail", FailureKind.TIMEOUT)),
+    }
+    persisted, out = _sweep(
+        monkeypatch,
+        tmp_path,
+        ["TC-01"],
+        _levels(*(summaries[o] for o in outcomes)),
+        sweep_steps=steps,
+    )
+
+    scores = persisted[0]["scores"]
+    assert scores["breaking_point"] is not None
+    assert scores["breaking_point_lower_bound"] is False
+    assert "at least" not in out and "at least" not in _report(persisted[0])
+
+
 def test_a_finished_sweep_has_no_stop_reason(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -786,9 +840,13 @@ def test_reporter_facade_forwards_interruption_and_stop_reason(tmp_path: Path) -
     stopped = reporter.write_pressure_sweep_report(
         run_id="r2", stop_reason="2 consecutive all-fail levels", **common
     ).read_text(encoding="utf-8")
+    lower_bound = reporter.write_pressure_sweep_report(
+        run_id="r3", **{**common, "breaking_point": 0.5}, breaking_point_lower_bound=True
+    ).read_text(encoding="utf-8")
 
     assert "- **Breaking Point**: withheld (interrupted after 1 of 4 levels)" in interrupted
     assert "- **Stopped Early**: 2 consecutive all-fail levels" in stopped
+    assert "- **Breaking Point**: at least 50% (no higher level was scored)" in lower_bound
 
 
 # -- Review follow-up: leaderboard cohorts ignore calibration noise -----------------

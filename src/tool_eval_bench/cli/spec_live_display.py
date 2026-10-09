@@ -52,7 +52,7 @@ from tool_eval_bench.runner.spec_live import (
     probe_server_spec_info,
     scrape_snapshot,
 )
-from tool_eval_bench.utils.urls import metrics_request_target
+from tool_eval_bench.utils.urls import metrics_request_target, redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -641,11 +641,14 @@ async def run_spec_live(
     model_name: str = "unknown",
     poll_interval: float = _POLL_INTERVAL,
     spec_method: str | None = None,
+    redact_endpoint: bool = False,
 ) -> None:
     """Run the live speculative decoding monitor (blocking).
 
     Polls /metrics at ``poll_interval`` and renders a Rich Live dashboard.
     Press Ctrl+C to exit gracefully, Ctrl+R to reset session counters.
+    ``redact_endpoint`` (``--redact-url``) masks the host of the metrics
+    endpoint the dashboard header shows.
 
     Uses the terminal alternate screen buffer so the dashboard occupies
     the entire terminal without disturbing previous output.
@@ -655,6 +658,7 @@ async def run_spec_live(
     # An explicit --metrics-url may live on a different host than the inference
     # API, so the bearer token only travels when the origins match.
     url, metrics_headers = metrics_request_target(base_url, metrics_url, api_key)
+    shown_endpoint = redact_url(url) if redact_endpoint else url
 
     # ── Probe server for spec decode config (draft model, method, k) ──
     server_spec_info: ServerSpecInfo | None = None
@@ -754,7 +758,7 @@ async def run_spec_live(
                     history,
                     start_time,
                     model_name,
-                    url,
+                    shown_endpoint,
                     0,
                     baseline_snap,
                     term_width=console.width,
@@ -907,7 +911,7 @@ async def run_spec_live(
                             history,
                             start_time,
                             model_name,
-                            url,
+                            shown_endpoint,
                             poll_count,
                             baseline_snap,
                             term_width=console.width,

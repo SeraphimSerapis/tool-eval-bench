@@ -730,6 +730,35 @@ def test_resume_without_reusable_outcomes_runs_everything(cli: Cli) -> None:
 
 
 @pytest.mark.parametrize(
+    ("prefix", "suffix"),
+    [
+        # "--" marks the dash-leading run ID as the positional, not an option.
+        pytest.param(["resume"], ["--", "-abc"], id="subcommand-separator"),
+        pytest.param([], ["--resume=-abc"], id="legacy-attached"),
+    ],
+)
+def test_resume_of_a_run_id_that_starts_with_a_dash(
+    cli: Cli, prefix: list[str], suffix: list[str]
+) -> None:
+    _store_interrupted_run([_checkpoint("TC-01", "pass")])
+    looked_up: list[str] = []
+    real_get = _FakeRepository.get
+
+    def recording_get(self: _FakeRepository, run_id: str) -> dict[str, Any] | None:
+        looked_up.append(run_id)
+        return real_get(self, run_id)
+
+    cli.monkeypatch.setattr(_FakeRepository, "get", recording_get)
+
+    outcome = cli.run(*prefix, *CONNECTION, "--scenarios", "TC-01", "TC-02", "--no-live", *suffix)
+
+    assert outcome.code == 0, outcome.flat_out
+    assert looked_up and set(looked_up) == {"-abc"}
+    (run,) = cli.run_kwargs
+    assert (run["scenarios"], run["resume_run_id"]) == (["TC-02"], "-abc")
+
+
+@pytest.mark.parametrize(
     ("stored", "message"),
     [
         pytest.param(None, "Run 'r-1' not found in history.", id="missing"),
@@ -1020,6 +1049,7 @@ def test_spec_live_maps_the_method_and_stops(cli: Cli) -> None:
             "model_name": "m",
             "poll_interval": 1.0,
             "spec_method": "draft_model",
+            "redact_endpoint": False,
         }
     ]
     assert cli.runs == [] and cli.leaves["preflight_model_check"] == []

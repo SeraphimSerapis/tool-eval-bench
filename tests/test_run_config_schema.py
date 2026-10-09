@@ -44,7 +44,7 @@ PACKS = [{"name": "heldout", "sha256": "ab" * 32}]
 FULL = RunSettings(
     model="m",
     backend="vllm",
-    base_url="http://localhost:8000",
+    base_url="http://localhost:8000/v1",
     temperature=0.0,
     timeout_seconds=120.0,
     max_turns=8,
@@ -80,6 +80,8 @@ PERTURBED: dict[str, Any] = {
     "weight_by_difficulty": True,
     "system_prompt": "Be verbose.",
     "decision_judge": {"set": "all", "checks": ["a"]},
+    # Reaches the config through endpoint_id: a Gemini base keeps FULL's /v1.
+    "wire_format": "gemini",
 }
 
 

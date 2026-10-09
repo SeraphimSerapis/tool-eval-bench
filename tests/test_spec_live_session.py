@@ -494,3 +494,16 @@ async def test_ctrl_r_restarts_the_session_throughput_average(
     )
     assert "Avg Gen t/s:     200.0  peak 200.0" in output
     assert "Session tokens:  80 accepted  / 100 drafted" in output
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("redact", [True, False])
+async def test_the_header_endpoint_honours_redact_url(monitor, redact: bool) -> None:
+    frames, _ = await monitor(
+        [_vllm(1000.0, accepted=100, drafted=200, gen_tps=40.0)], redact_endpoint=redact
+    )
+
+    shown = {_render(frame).count("127.0.0.1:8000") > 0 for frame in frames}
+    assert shown == {not redact}
+    if redact:
+        assert all("http://***:8000/metrics" in _render(frame) for frame in frames)

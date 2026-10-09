@@ -26,7 +26,7 @@ from tool_eval_bench.schema import COMMANDS_SCHEMA, get_schema
         (["spec-live", "--spec-live-interval", "2"], ["--spec-live", "--spec-live-interval", "2"]),
         (["history"], ["--history"]),
         (["leaderboard"], ["--leaderboard"]),
-        (["resume", "run-123", "--json"], ["--resume", "run-123", "--json"]),
+        (["resume", "run-123", "--json"], ["--resume=run-123", "--json"]),
     ],
 )
 def test_simple_subcommands_translate_to_legacy(subcommand: list[str], legacy: list[str]) -> None:
@@ -457,7 +457,30 @@ def test_subcommand_options_may_precede_the_positional(
 
 
 def test_separator_before_the_run_id_is_dropped() -> None:
-    assert translate_argv(["resume", "--json", "--", "run-9"]) == ["--resume", "run-9", "--json"]
+    assert translate_argv(["resume", "--json", "--", "run-9"]) == ["--resume=run-9", "--json"]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["resume", "--", "-abc"],
+        ["resume", "--json", "--", "-abc"],
+        ["--resume=-abc"],
+    ],
+)
+def test_a_run_id_that_starts_with_a_dash_reaches_the_namespace(argv: list[str]) -> None:
+    _, args = parse_cli_args(_make_parser, argv)
+    assert args.resume == "-abc"
+
+
+def test_a_dash_run_id_without_the_separator_is_a_usage_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # argparse reads an unmarked "-abc" as an option, as it does for any flag.
+    with pytest.raises(SystemExit) as exc_info:
+        parse_cli_args(_make_parser, ["resume", "-abc"])
+    assert exc_info.value.code == 2
+    assert "run_id" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

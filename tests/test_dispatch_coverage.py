@@ -742,8 +742,10 @@ def test_preflight_and_warmup_user_outcomes(monkeypatch: pytest.MonkeyPatch) -> 
                 raise RuntimeError("unexpected")
             if self.mode == "blank_error":
                 raise RuntimeError()
-            status = 500 if self.mode == "http" else 200
-            return httpx.Response(status, text="bad", request=httpx.Request("POST", url))
+            request = httpx.Request("POST", url)
+            if self.mode == "http":
+                return httpx.Response(500, text="bad", request=request)
+            return httpx.Response(200, json={"choices": []}, request=request)
 
     client = Client()
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)

@@ -67,6 +67,18 @@ def spec_decode_report(
             f"> {failed} of {failed + len(spec_samples)} cell(s) failed on every run and "
             "are not shown in this report."
         )
+    short = [s for s in spec_samples if getattr(s, "failed_runs", 0)]
+    if short:
+        cells = ", ".join(
+            f"{getattr(s, 'prompt_type', '?')} @ d{getattr(s, 'depth', 0)} "
+            f"({getattr(s, 'runs', 1)} of "
+            f"{getattr(s, 'runs', 1) + getattr(s, 'failed_runs', 0)} runs)"
+            for s in short
+        )
+        warnings.append(
+            f"> Some runs failed in {len(short)} cell(s) shown below, and their rows average "
+            f"only the runs that succeeded: {cells}."
+        )
     # One alert; a bare ">" line keeps each warning its own paragraph.
     failed_note: list[str] = []
     for line in warnings:

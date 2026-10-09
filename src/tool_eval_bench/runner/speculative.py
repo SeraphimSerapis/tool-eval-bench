@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from tool_eval_bench.domain.measurement import MeasurementClient, MeasurementClientFactory
@@ -190,6 +190,9 @@ class SpecDecodeSample:
 
     # Repeated measurements pooled into this sample (see pool_spec_samples).
     runs: int = 1
+    # Runs of this cell that failed and were left out of the pool, so a cell
+    # averaged over fewer runs than requested says so.
+    failed_runs: int = 0
     acceptance_rate_range: tuple[float, float] | None = None
 
     @property
@@ -324,6 +327,7 @@ class SpecDecodeSample:
             "prompt_type": self.prompt_type,
             "depth": self.depth,
             "runs": self.runs,
+            "failed_runs": self.failed_runs,
             "spec_method": self.spec_method,
             "pp_tokens": self.pp_tokens,
             "tg_tokens": self.tg_tokens,
@@ -398,14 +402,15 @@ def pool_spec_samples(samples: list[SpecDecodeSample]) -> SpecDecodeSample:
     mean, so each ratio property reads as the token-weighted pooled value
     while the displayed TTFT, total time, and token count stay per-request.
     Per-step arrays are concatenated because per-position rates are counts.
-    Failed runs are dropped; when every run failed the first failure is
-    returned as-is.
+    Failed runs are dropped and counted in ``failed_runs``; when every run
+    failed the first failure is returned as-is.
     """
     ok = [s for s in samples if s.error is None]
     if not ok:
         return samples[0]
+    failed = len(samples) - len(ok)
     if len(ok) == 1:
-        return ok[0]
+        return replace(ok[0], failed_runs=failed) if failed else ok[0]
     n = len(ok)
     first = ok[0]
 
@@ -434,6 +439,7 @@ def pool_spec_samples(samples: list[SpecDecodeSample]) -> SpecDecodeSample:
         baseline_tg_tps=first.baseline_tg_tps,
         prompt_type=first.prompt_type,
         runs=n,
+        failed_runs=failed,
     )
     # Rates from the pooled counters, not the mean of per-run rates, so a
     # short run does not weigh as much as a long one.

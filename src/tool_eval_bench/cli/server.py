@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 from tool_eval_bench.utils.metadata import backend_from_response
+from tool_eval_bench.utils.urls import redact_url
 
 # Ports to scan on localhost.  Order matters — first match wins.
 # A listening port is not engine identity. Unknown servers keep a neutral label.
@@ -49,6 +50,21 @@ def _headless_error(error_code: str, message: str, *, exit_code: int = 1) -> Non
     emit_headless_error(error_code, message, exit_code=exit_code)
 
 
+def _is_model_listing(resp: httpx.Response) -> bool:
+    """Whether a 200 body is a model list: a JSON object listing under ``data`` or ``models``.
+
+    A dev server, dashboard, or proxy on a scanned port often answers any path
+    with HTML or some other 200, and that is not an inference server.
+    """
+    try:
+        body = resp.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and any(
+        isinstance(body.get(key), list) for key in ("data", "models")
+    )
+
+
 async def _discover_async() -> tuple[str, str, str, int] | None:
     """Async probe loop for discover_server."""
     async with httpx.AsyncClient(timeout=3.0) as client:
@@ -58,10 +74,11 @@ async def _discover_async() -> tuple[str, str, str, int] | None:
                 resp = await client.get(f"{url}/v1/models")
                 if resp.status_code == 404:
                     resp = await client.get(f"{url}/models")
-                if resp.status_code == 200:
+                if resp.status_code == 200 and _is_model_listing(resp):
                     backend, server_name = detect_backend_from_response(resp, port)
                     return url, backend, server_name, port
-            except (httpx.ConnectError, httpx.TimeoutException):
+            except httpx.HTTPError:
+                # Refused, timed out, or not speaking HTTP at all: not a server.
                 continue
     return None
 
@@ -70,18 +87,21 @@ def discover_server(
     *,
     headless: bool = False,
     console: Any = None,
+    redact: bool = False,
 ) -> tuple[str, str] | None:
     """Probe localhost on common inference server ports.
 
-    Returns ``(base_url, backend_hint)`` for the first port that responds
-    to ``GET /v1/models`` (or ``GET /models`` as fallback) with HTTP 200.
-    Returns ``None`` if no server is found.
+    Returns ``(base_url, backend_hint)`` for the first port that answers
+    ``GET /v1/models`` (or ``GET /models`` as fallback) with HTTP 200 and a
+    JSON model list. Returns ``None`` if no server is found.
 
     The backend is identified from the server's response headers when
     possible, otherwise reported as an unidentified inference server.
 
     When *headless* is True, emits a JSONL event on stderr.
-    Otherwise prints to console.
+    Otherwise prints to console. *redact* (``--redact-url``) masks the host in
+    the console line only: the JSONL event keeps the real URL because a
+    consumer needs it to connect, as ``docs/artifacts.md`` documents.
     """
     result = asyncio.run(_discover_async())
     if result:
@@ -97,8 +117,9 @@ def discover_server(
             sys.stderr.write(json.dumps(msg) + "\n")
             sys.stderr.flush()
         elif console:
+            shown_url = redact_url(base_url) if redact else base_url
             console.print(
-                f"  [bold green]✓[/] Auto-discovered [bold]{server_name}[/] at [cyan]{base_url}[/]"
+                f"  [bold green]✓[/] Auto-discovered [bold]{server_name}[/] at [cyan]{shown_url}[/]"
             )
         return base_url, backend
     return None

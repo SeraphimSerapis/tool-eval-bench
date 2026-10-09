@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from tool_eval_bench.adapters.wire_format import detect_wire_format
+from tool_eval_bench.adapters.wire_format import detect_wire_format, resolve_wire_format
 from tool_eval_bench.domain.scenarios import ScenarioDefinition
 from tool_eval_bench.utils.fingerprint import comparison_fingerprint
 from tool_eval_bench.utils.urls import (
@@ -63,6 +63,9 @@ class RunSettings:
     weight_by_difficulty: bool
     system_prompt: str | None = None
     decision_judge: dict[str, Any] | None = None
+    #: The ``--format`` choice; None or ``auto`` detects it from ``base_url``.
+    #: Not stored itself; it decides how ``endpoint_id`` canonicalises the URL.
+    wire_format: str | None = None
 
 
 @dataclass(frozen=True)
@@ -272,13 +275,13 @@ RUN_CONFIG_FIELDS: tuple[ConfigField, ...] = (
         identifies_model=True,
         resume=ResumeCheck(Absent.SKIP, describe=_base_url_mismatch),
     ),
-    # The wire format comes from the URL, as auto-detection resolves it. The
-    # settings do not carry --format, so a native Gemini proxy on another host
-    # is canonicalised like an OpenAI endpoint.
+    # Canonicalised under the format requests use: an explicit --format gemini
+    # keeps a proxy's /v1 apart from its bare (v1beta) form.
     ConfigField(
         "endpoint_id",
         lambda i: endpoint_identity(
-            i.settings.base_url, wire_format=detect_wire_format(i.settings.base_url)
+            i.settings.base_url,
+            wire_format=resolve_wire_format(i.settings.wire_format, i.settings.base_url),
         ),
         Presence.ALWAYS,
         Fingerprint.INCLUDE,
@@ -507,6 +510,7 @@ def resume_mismatches(
     *,
     base_url: str | None = None,
     judge_base_url: str | None = None,
+    wire_format: str | None = None,
 ) -> list[str]:
     """Name every scoring condition in which a stored run differs from the current one.
 
@@ -514,10 +518,13 @@ def resume_mismatches(
     come from an older version).  Messages follow stored key order.
     ``base_url`` is the current run's unredacted URL. With it, a run stored
     before endpoint identities were canonical still resumes under any spelling
-    of the same endpoint. ``judge_base_url`` is the current decision judge's
-    unredacted URL and does the same for the judge.
+    of the same endpoint; ``wire_format`` is the current ``--format`` choice,
+    detected from ``base_url`` when None. ``judge_base_url`` is the current
+    decision judge's unredacted URL and does the same for the judge.
     """
-    previous = _with_current_endpoint_ids(previous, current, base_url, judge_base_url)
+    previous = _with_current_endpoint_ids(
+        previous, current, base_url, judge_base_url, wire_format=wire_format
+    )
     mismatches: list[str] = []
     for field in RUN_CONFIG_FIELDS:
         check = field.resume
@@ -541,6 +548,8 @@ def _with_current_endpoint_ids(
     current: dict[str, Any],
     base_url: str | None,
     judge_base_url: str | None,
+    *,
+    wire_format: str | None,
 ) -> dict[str, Any]:
     """Treat an identity the old algorithm computed for this endpoint as the current one.
 
@@ -554,7 +563,7 @@ def _with_current_endpoint_ids(
     updated = dict(previous)
     stored = previous.get("endpoint_id")
     if base_url is not None and stored in legacy_endpoint_identities(
-        base_url, wire_format=detect_wire_format(base_url)
+        base_url, wire_format=resolve_wire_format(wire_format, base_url)
     ):
         updated["endpoint_id"] = current.get("endpoint_id")
     old_judge, new_judge = previous.get("decision_judge"), current.get("decision_judge")

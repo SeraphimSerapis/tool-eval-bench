@@ -113,9 +113,45 @@ def test_pooled_window_is_unknown_when_the_stepped_runs_drafted_nothing() -> Non
 def test_pooling_drops_failed_runs_and_keeps_a_lone_failure() -> None:
     ok = _run(tg=100, total_ms=1100, drafted=100, accepted=80, steps=25)
     failed = _run(tg=0, total_ms=0, drafted=0, accepted=0, steps=0, error="boom")
-    assert pool_spec_samples([failed, ok]) is ok
+    survivor = pool_spec_samples([failed, ok])
+    assert (survivor.runs, survivor.failed_runs) == (1, 1)
+    assert survivor.effective_tg_tps == ok.effective_tg_tps
+    assert ok.failed_runs == 0, "pooling must not mutate the measured run"
     assert pool_spec_samples([failed]) is failed
     assert pool_spec_samples([ok]) is ok
+
+
+def test_pooling_counts_failed_runs_inside_a_surviving_cell() -> None:
+    a = _run(tg=100, total_ms=1100, drafted=100, accepted=80, steps=25)
+    b = _run(tg=100, total_ms=1100, drafted=100, accepted=60, steps=25)
+    failed = _run(tg=0, total_ms=0, drafted=0, accepted=0, steps=0, error="boom")
+
+    pooled = pool_spec_samples([a, failed, b])
+
+    assert (pooled.runs, pooled.failed_runs) == (2, 1)
+    assert pooled.to_result()["failed_runs"] == 1
+    assert pool_spec_samples([a, b]).failed_runs == 0
+
+
+def test_report_names_cells_that_averaged_fewer_runs(tmp_path: Path) -> None:
+    from tool_eval_bench.storage.reports.spec_decode import spec_decode_report
+
+    clean = _run(tg=100, total_ms=1100, drafted=100, accepted=80, steps=25)
+    short = pool_spec_samples(
+        [
+            _run(tg=100, total_ms=1100, drafted=100, accepted=80, steps=25),
+            _run(tg=0, total_ms=0, drafted=0, accepted=0, steps=0, error="boom"),
+            _run(tg=100, total_ms=1100, drafted=100, accepted=80, steps=25),
+        ]
+    )
+    short.depth = 4096
+
+    text = "\n".join(spec_decode_report("m", [short], label=None, temperature=0.0).header)
+    assert "Some runs failed in 1 cell(s)" in text
+    assert "code @ d4096 (2 of 3 runs)" in text
+
+    clean_text = "\n".join(spec_decode_report("m", [clean], label=None, temperature=0.0).header)
+    assert "Some runs failed" not in clean_text
 
 
 def test_pooling_concatenates_step_arrays_only_when_every_run_has_them() -> None:

@@ -25,7 +25,9 @@ tool-eval-bench --json
 
 Auto-discovery probes these ports in order:
 8000 (vLLM), 8080, 8081, 8082, 30000 (SGLang), 4000 (LiteLLM),
-3000, 11434 (Ollama), 5000 (TGI).
+3000, 11434 (Ollama), 5000 (TGI). The first port whose `/v1/models` (or `/models`
+when that is a 404) answers HTTP 200 with a JSON model list wins. A port that
+answers with an HTML page or any other body is skipped.
 
 ## Headless / JSON mode
 
@@ -93,12 +95,18 @@ Use `--probe` to wait for the server to be ready before benchmarking:
 
 ```bash
 tool-eval-bench --probe --base-url http://localhost:8000
-# Exit 0 = ready, exit 1 = not reachable
+# Exit 0 = ready, 1 = not reachable, 2 = answers, but not with a JSON model listing
 ```
+
+Exit 2 (`invalid_response`, also the `error_code` of the `--json` `probe_result`
+event) means something such as a proxy or a web app answers at that URL with a
+redirect, an HTML page, or another body that is not a JSON object. Waiting will
+not fix it, so stop polling.
 
 In a script:
 ```bash
 until tool-eval-bench --probe --json 2>/dev/null; do
+  test $? -eq 2 && exit 2  # not an inference server; check the URL
   sleep 5
 done
 tool-eval-bench --json --short
@@ -161,7 +169,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--probe` | Check server readiness and exit |
 | `--dry-run` | List scenarios that would run (no server needed). Reports 0 when the invocation runs no tool-call scenarios, such as `--perf-only` |
 | `--base-url URL` | Server endpoint |
-| `--redact-url` | Mask the server URL in console output, including `--probe` and pre-flight errors, for screenshots and recordings. Reports, stored runs, and `--json` error output are always redacted |
+| `--redact-url` | Mask the server URL in console output, including `--probe`, pre-flight errors, the auto-discovered localhost URL, and the `spec-live` metrics endpoint, for screenshots and recordings. Reports, stored runs, and `--json` error output are always redacted |
 | `--model NAME` | Model name (auto-detected if omitted) |
 | `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp`, `sglang`, `gemini`, `openai`, `anthropic`, `ninfer`, `tensorfold`, `halogen`, `strata`, `tabbyapi`, `unknown`. Auto-detected when omitted; otherwise `unknown`. |
 | `--provider NAME` | Read the endpoint from `TOOL_EVAL_<NAME>_*` env vars |
@@ -181,7 +189,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--error-rate RATE` | Inject random tool errors at this rate, 0 to 1, for robustness testing. An injected call returns a simulated 429, 500, or 503 without running the mock tool, so it changes no scenario state. When the model retries that tool in a later turn, scenarios that count calls exactly do not count the retry as a duplicate, and graders inspect the retry instead of the failed attempt |
 | `--fail-on-safety` | Exit 2 when a safety-critical scenario fails. With `--trials`, every trial still runs and an unsafe trial fails the gate |
 | `--diff RUN_ID` | Print a per-scenario comparison with a previous run after the run. `latest` means the newest completed tool-call run before this one. Ignored with `--json` |
-| `--resume RUN_ID` | Resume a previous run (skip already-passed scenarios). The run must exist and be unfinished; that is checked before any server work |
+| `--resume RUN_ID` | Resume a previous run (skip already-passed scenarios). The run must exist and be unfinished; that is checked before any server work. A run ID that starts with `-` is passed as `--resume=-ID` or `resume -- -ID` |
 | `--hardmode-only` | Run ONLY Hard Mode scenarios (equivalent to --hardmode --categories P) |
 | `--weight-by-difficulty` | Weight scores by difficulty tier (harder scenarios count more) |
 | `--system-prompt TEXT` | Replace the built-in system prompt with TEXT for every scenario |
