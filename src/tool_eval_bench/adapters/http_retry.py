@@ -23,6 +23,7 @@ import httpx
 from tool_eval_bench.domain.adapters import RETRYABLE_STATUS_CODES
 from tool_eval_bench.utils.headers import USER_AGENT, attach_session_id
 from tool_eval_bench.utils.urls import redact_url as _redact_url
+from tool_eval_bench.utils.urls import redact_urls as _redact_urls
 
 logger = logging.getLogger(__name__)
 
@@ -376,6 +377,10 @@ class RetryingHTTPAdapter:
                 await self._rate_limits.on_success()
                 return result
             except httpx.HTTPStatusError as exc:
+                # The message quotes the full request URL. Callers keep str(exc)
+                # in traces, reports and stored scores, so redact it in place
+                # before any of the re-raises below; type and response survive.
+                exc.args = (_redact_urls(str(exc)),)
                 status = exc.response.status_code
                 if status not in RETRYABLE_STATUS_CODES:
                     raise

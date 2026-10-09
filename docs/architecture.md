@@ -95,6 +95,7 @@ external dependencies.
 | `tools.py` | Universal tool definitions (12 tools), system prompt |
 | `tools_large.py` | Extended 52-tool definitions for Category L |
 | `errors.py` | Structured error code constants |
+| `redaction.py` | `redact_url` and `redact_urls`, so storage can redact server URLs without importing `utils` |
 
 ### `evals/` — Scenarios & Evaluators
 
@@ -279,7 +280,7 @@ Shared infrastructure:
 | `metadata.py` | System/backend metadata collection (engine probing) |
 | `openai_compat.py` | OpenAI-compatible request and response helpers |
 | `tokenizers.py` | Local tokenizer discovery for throughput prompts |
-| `urls.py` | URL construction, redaction, header helpers |
+| `urls.py` | URL construction and header helpers; re-exports the domain redaction functions |
 
 ---
 

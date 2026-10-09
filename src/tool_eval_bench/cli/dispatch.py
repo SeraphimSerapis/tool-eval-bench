@@ -140,6 +140,7 @@ from tool_eval_bench.utils.headers import attach_session_id as _attach_session_i
 from tool_eval_bench.utils.headers import parse_header_env as _parse_header_env
 from tool_eval_bench.utils.headers import parse_header_pairs as _parse_header_pairs
 from tool_eval_bench.utils.system_prompt import MAX_SYSTEM_PROMPT_BYTES, normalize_system_prompt
+from tool_eval_bench.utils.urls import redact_urls as _redact_urls
 
 logger = logging.getLogger(__name__)
 
@@ -1752,7 +1753,8 @@ def _run_json(
     except KeyboardInterrupt:
         sys.exit(1)
     except Exception as exc:
-        error_data = {"error": str(exc)}
+        # Shareable output like a report, so a quoted request URL is redacted.
+        error_data = {"error": _redact_urls(str(exc))}
         _emit_json_output(error_data, json_file=json_file)
         sys.exit(1)
 

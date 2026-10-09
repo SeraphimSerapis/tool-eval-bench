@@ -295,7 +295,8 @@ def _make_parser() -> argparse.ArgumentParser:
     output.add_argument(
         "--redact-url",
         action="store_true",
-        help="Mask the server URL in display output (for screenshots/recordings)",
+        help="Mask the server URL in console output, for screenshots and recordings. "
+        "Reports, stored runs, and --json error output are always redacted",
     )
     output.add_argument(
         "--alpha",

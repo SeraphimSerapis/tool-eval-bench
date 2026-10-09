@@ -21,6 +21,8 @@ from tool_eval_bench.domain.errors import (
     NO_MODELS,
 )
 from tool_eval_bench.utils.headers import USER_AGENT
+from tool_eval_bench.utils.urls import redact_url as _redact_url
+from tool_eval_bench.utils.urls import redact_urls as _redact_urls
 
 
 def _models_request(
@@ -269,8 +271,8 @@ def _probe_server(
             msg: dict[str, Any] = {
                 "event": "probe_result",
                 "status": "failed",
-                "base_url": base_url,
-                "error": str(exc) or type(exc).__name__,
+                "base_url": _redact_url(base_url),
+                "error": _redact_urls(str(exc)) or type(exc).__name__,
             }
             sys.stderr.write(json.dumps(msg) + "\n")
             sys.stderr.flush()
@@ -282,7 +284,7 @@ def _probe_server(
         msg = {
             "event": "probe_result",
             "status": "ready",
-            "base_url": base_url,
+            "base_url": _redact_url(base_url),
             "models": model_ids,
         }
         sys.stderr.write(json.dumps(msg) + "\n")

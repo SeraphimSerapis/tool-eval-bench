@@ -22,6 +22,16 @@ version line and the engine table are omitted and the rest of the report is
 unchanged. When only the engine probe fails, the engine table gives way to a
 short Environment table of host, platform, and Python version.
 
+Both artifacts are meant to be shareable, so every server URL in them is
+redacted the same way: the host becomes `***` with the port kept, and userinfo,
+query, and fragment are dropped. That covers report headers, stored configs,
+and HTTP error messages quoted in traces and error fields. `--json` error
+output, meaning the error envelope and the headless `error` events, follows the
+same rule, and so do both `probe_result` events. The `server_discovered` event
+is the exception: it reports the local URL it found unredacted, because a
+consumer needs it to connect. `--redact-url` only changes what the console
+shows.
+
 ## Run ID
 
 Each execution gets a unique ID: `YYYY-MM-DDTHH-MM-SS.ffffffZ_<short_hash>`.

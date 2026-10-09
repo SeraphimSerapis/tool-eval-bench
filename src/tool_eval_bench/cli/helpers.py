@@ -19,6 +19,7 @@ from tool_eval_bench.utils.fingerprint import (
     with_config_fingerprint as with_config_fingerprint,
 )
 from tool_eval_bench.utils.urls import redact_url as _redact_url
+from tool_eval_bench.utils.urls import redact_urls as _redact_urls
 
 
 def load_dotenv_file() -> None:
@@ -84,7 +85,8 @@ def emit_headless_error(error_code: str, message: str, *, exit_code: int = 1) ->
     Used in headless (--json) mode so agents can parse failure reasons
     instead of getting Rich-formatted console markup.
     """
-    msg = {"event": "error", "error": error_code, "message": message}
+    # --json output is shareable, so a URL in the message is redacted.
+    msg = {"event": "error", "error": error_code, "message": _redact_urls(message)}
     sys.stderr.write(json.dumps(msg) + "\n")
     sys.stderr.flush()
     sys.exit(exit_code)

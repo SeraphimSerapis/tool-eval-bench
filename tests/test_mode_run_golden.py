@@ -84,7 +84,8 @@ def _target(args: argparse.Namespace, run_context: RunContext | None) -> Any:
         display_name="Golden Model",
         backend="vllm",
         base_url=BASE_URL,
-        display_url="http://***:8000/v1",
+        # What dispatch passes without --redact-url: the raw, credentialed URL.
+        display_url=BASE_URL,
         api_key=None,
         wire_format="openai",
         extra_params={},
