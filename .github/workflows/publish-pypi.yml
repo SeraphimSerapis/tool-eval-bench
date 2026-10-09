@@ -3,11 +3,13 @@ name: Publish to PyPI
 # Uploads a tagged release to PyPI or TestPyPI with Trusted Publishing (OIDC).
 # There is no API token anywhere: PyPI trusts this repository, this workflow
 # file, and the named GitHub environment, all configured once by hand as
-# RELEASING.md describes. Until that setup exists, the publish job fails at the
-# token exchange and nothing is uploaded.
+# RELEASING.md describes. Until that setup exists, nothing can be uploaded.
 #
-# It never runs on push. It runs when a person publishes a GitHub release (the
-# draft release.yml opens), or when a person dispatches it for an existing tag.
+# It never runs on push. A person dispatches it for an existing tag, or, once
+# the repository variable PYPI_PUBLISH_ON_RELEASE is `true`, publishing a GitHub
+# release (the draft release.yml opens) starts it. Without the variable a
+# release event skips every job: referencing the `pypi` environment before it
+# exists would make GitHub create it unprotected.
 on:
   release:
     types: [published]
@@ -36,6 +38,9 @@ concurrency:
 jobs:
   # Built once here; both publish jobs upload these exact files.
   build:
+    # Release-triggered publishing is opt-in. When this skips, both publish jobs
+    # skip with it through `needs`.
+    if: github.event_name == 'workflow_dispatch' || vars.PYPI_PUBLISH_ON_RELEASE == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,9 +62,10 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
-          # setuptools-scm reads the tag to set the version. Without the full
-          # history the build would claim the previous release plus a dev suffix,
-          # and PyPI rejects the local version segment outright.
+          # setuptools-scm reads the tag to set the version. Checking out a tag
+          # fetches it even at depth 1, but full history keeps the version from
+          # depending on that detail. A build that misses the tag reports
+          # 0.0.0+unknown or a dev version, which the check below rejects.
           fetch-depth: 0
           persist-credentials: false
 
@@ -92,7 +98,26 @@ jobs:
           /tmp/smoke/bin/python -m pip install dist/*.whl
           /tmp/smoke/bin/python -m pip check
           /tmp/smoke/bin/tool-eval-bench --version
-          /tmp/smoke/bin/tool-eval-bench --help > /dev/null
+          /tmp/smoke/bin/tool-eval-bench --help
+          /tmp/smoke/bin/tool-eval-bench run --help
+          /tmp/smoke/bin/tool-eval-bench plugin --help
+
+      - name: Check the bundled scenarios survive packaging
+        run: |
+          /tmp/smoke/bin/python - <<'PY'
+          from importlib.resources import files
+          from tool_eval_bench.evals.scenarios import (
+              ALL_DISPLAY_DETAILS,
+              ALL_SCENARIOS,
+              ALL_SCENARIOS_WITH_HARDMODE,
+          )
+
+          assert (files("tool_eval_bench.evals.yaml_scenarios") / "weather.yaml").is_file()
+          assert len(ALL_SCENARIOS) == 69, len(ALL_SCENARIOS)
+          assert len(ALL_SCENARIOS_WITH_HARDMODE) == 92, len(ALL_SCENARIOS_WITH_HARDMODE)
+          assert set(ALL_DISPLAY_DETAILS) == {s.id for s in ALL_SCENARIOS_WITH_HARDMODE}
+          print("packaged scenarios verified")
+          PY
 
       - name: Upload the distributions
         uses: actions/upload-artifact@v7
