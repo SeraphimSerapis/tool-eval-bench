@@ -26,6 +26,7 @@ import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from dotenv import load_dotenv  # noqa: F401  (re-exported via _load_dotenv)
@@ -423,6 +424,20 @@ def _benchy_extra_args(args: argparse.Namespace) -> list[str] | None:
     return shlex.split(args.benchy_args)
 
 
+def _stored_tokenizer(tokenizer: str | None) -> str | None:
+    """Reduce a local tokenizer path to its basename; keep a Hugging Face repo id.
+
+    A path can name the user's home directory or a private mount, and the
+    stored config is exported and shared. A repo id such as ``Qwen/Qwen3-8B``
+    identifies the tokenizer and carries no local detail.
+    """
+    if tokenizer is None:
+        return None
+    if tokenizer.startswith(("/", "./", "../", "~")) or os.path.exists(tokenizer):
+        return Path(tokenizer).name
+    return tokenizer
+
+
 def _throughput_config(target: _Target) -> dict[str, Any]:
     """The stored config of a throughput run that no scored run carries.
 
@@ -445,7 +460,7 @@ def _throughput_config(target: _Target) -> dict[str, Any]:
         "runs": args.benchy_runs,
         "latency_mode": args.benchy_latency_mode,
         # The tokenizer builds the prompts and counts their tokens.
-        "tokenizer": getattr(args, "tokenizer", None),
+        "tokenizer": _stored_tokenizer(getattr(args, "tokenizer", None)),
         "benchy_args": redact_arguments(_benchy_extra_args(args) or []),
     }
 

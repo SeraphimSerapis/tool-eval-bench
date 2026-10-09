@@ -1150,6 +1150,34 @@ def test_perf_only_config_strips_credentials_from_benchy_args(cli: Cli) -> None:
     assert persisted["config"]["benchy_args"] == ["--api-key", "<redacted>", "--exact-tg"]
 
 
+@pytest.mark.parametrize(
+    ("tokenizer", "stored"),
+    [
+        ("/home/alice/models/qwen/tokenizer.json", "tokenizer.json"),
+        ("./models/qwen/", "qwen"),
+        ("../tok.json", "tok.json"),
+        ("~/models/tokenizer.json", "tokenizer.json"),
+        # Exists relative to the working directory, with no path prefix.
+        ("local-tok/tokenizer.json", "tokenizer.json"),
+        ("Qwen/Qwen3-8B", "Qwen/Qwen3-8B"),
+        ("gpt2", "gpt2"),
+    ],
+)
+def test_perf_only_config_keeps_only_the_basename_of_a_local_tokenizer(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, tokenizer: str, stored: str
+) -> None:
+    (cli.tmp_path / "local-tok").mkdir()
+    (cli.tmp_path / "local-tok" / "tokenizer.json").write_text("{}")
+    monkeypatch.chdir(cli.tmp_path)
+    cli.record("tool_eval_bench.cli.perf", "run_llama_benchy", lambda: [ThroughputSample()])
+
+    outcome = cli.run(*CONNECTION, "--perf-only", "--no-live", "--tokenizer", tokenizer)
+
+    assert outcome.code == 0
+    (persisted,) = _perf_rows(cli)
+    assert persisted["config"]["tokenizer"] == stored
+
+
 def test_perf_only_config_strips_abbreviated_key_flags_and_post_run_cmd(cli: Cli) -> None:
     # llama-benchy accepts any unambiguous prefix, so these are working keys.
     cli.record("tool_eval_bench.cli.perf", "run_llama_benchy", lambda: [ThroughputSample()])
