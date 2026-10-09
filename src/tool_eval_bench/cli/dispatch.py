@@ -34,6 +34,7 @@ from rich.console import Console
 from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
 from tool_eval_bench.adapters.wire_format import resolve_wire_format as _resolve_wire_format
 from tool_eval_bench.application.decision_audit import decision_judge_config, with_selected_checks
+from tool_eval_bench.application.run_config import RunSettings, build_run_config, resume_mismatches
 from tool_eval_bench.application.run_context import build_run_context, identify_backend
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.cli import model_probe as _model_probe
@@ -137,7 +138,6 @@ from tool_eval_bench.utils.headers import attach_session_id as _attach_session_i
 from tool_eval_bench.utils.headers import parse_header_env as _parse_header_env
 from tool_eval_bench.utils.headers import parse_header_pairs as _parse_header_pairs
 from tool_eval_bench.utils.system_prompt import MAX_SYSTEM_PROMPT_BYTES, normalize_system_prompt
-from tool_eval_bench.utils.urls import endpoint_identity
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +178,11 @@ def _resume_config_mismatches(
     scenario_packs: list[dict[str, Any]] | None,
     context_pressure: dict[str, Any] | None,
 ) -> list[str]:
-    """Compare every user-controlled scoring condition persisted in a run."""
+    """Compare every user-controlled scoring condition persisted in a run.
+
+    The current config is built the way the service builds the one it stores,
+    so both sides share one schema and the comparison cannot drift from it.
+    """
     from tool_eval_bench.evals.variants import apply_variants
 
     scenarios = apply_variants(scenarios, getattr(args, "variant_seed", None))
@@ -187,105 +191,31 @@ def _resume_config_mismatches(
         getattr(args, "decision_judge_model", None),
         judge_set=getattr(args, "decision_judge", None),
     )
-    current = {
-        "scenario_variants": {s.id: s.variant_metadata for s in scenarios if s.variant_metadata},
-        "model": model,
-        "backend": backend,
-        "base_url": _redact_url(base_url),
-        "endpoint_id": endpoint_identity(base_url),
-        "temperature": args.temperature,
-        "timeout_seconds": args.timeout,
-        "max_turns": args.max_turns,
-        "seed": args.seed,
-        "reference_date": args.reference_date,
-        "system_prompt": getattr(args, "system_prompt", None),
-        "decision_judge": (
+    settings = RunSettings(
+        model=model,
+        backend=backend,
+        base_url=base_url,
+        temperature=args.temperature,
+        timeout_seconds=args.timeout,
+        max_turns=args.max_turns,
+        seed=args.seed,
+        reference_date=args.reference_date,
+        concurrency=args.parallel,
+        error_rate=args.error_rate,
+        alpha=args.alpha,
+        extra_params=extra_params,
+        context_pressure_config=context_pressure,
+        weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
+        system_prompt=getattr(args, "system_prompt", None),
+        decision_judge=(
             with_selected_checks(judge_config, scenarios) if judge_config is not None else None
         ),
-        "scenario_ids": [scenario.id for scenario in scenarios],
-        "concurrency": args.parallel,
-        "error_rate": args.error_rate,
-        "alpha": args.alpha,
-        "extra_params": extra_params,
-        "weight_by_difficulty": getattr(args, "weight_by_difficulty", False),
-        "scenario_packs": scenario_packs,
-    }
-    # Older persisted runs predate some fields. Validate every condition they
-    # did record, while modern runs receive the full strict comparison.
-    mismatches = [
-        key
-        for key, value in current.items()
-        if (key in previous and previous[key] != value)
-        or (key == "scenario_variants" and previous.get(key, {}) != value)
-        # A run on the built-in prompt persists no system_prompt key at all, so
-        # absence means "built-in": resuming it with an override would otherwise
-        # merge two personas into one result.
-        or (key in {"system_prompt", "decision_judge"} and previous.get(key) != value)
-    ]
-    if "decision_judge" in mismatches:
-        mismatches = [key for key in mismatches if key != "decision_judge"]
-        mismatches.append(
-            _judge_mismatch(previous.get("decision_judge"), current["decision_judge"])
-        )
-    pressure = _pressure_mismatch(previous.get("context_pressure"), context_pressure)
-    if pressure is not None:
-        mismatches.append(pressure)
-    return mismatches
-
-
-def _pressure_mismatch(previous: Any, current: dict[str, Any] | None) -> str | None:
-    """Name a context-pressure difference that would merge two fill levels into one run.
-
-    A run without pressure persists no ``context_pressure`` key; the key has been
-    written since the option existed, so absence always means "no pressure".
-
-    The ratio and the fill target decide what the model sees. The detected
-    ``context_size`` is not compared: a restarted server can report a slightly
-    different KV capacity, and the fill target is quantised to whole filler
-    chunks, so drift that leaves the fill unchanged must not block a resume.
-    The calibrated ``fill_tokens`` is not compared either, because an unseeded
-    run draws fresh filler and lands within the calibration tolerance, never
-    on the same count twice.
-    """
-    if not previous and not current:
-        return None
-    if not previous or not current:
-        was = previous["ratio"] if previous else "off"
-        now = current["ratio"] if current else "off"
-        return f"context_pressure (was {was}, now {now})"
-    if previous.get("ratio") != current["ratio"]:
-        return f"context_pressure ratio (was {previous.get('ratio')}, now {current['ratio']})"
-    # Runs from before tokenizer calibration recorded no target.
-    old_target = previous.get("fill_tokens_target")
-    if old_target is not None and old_target != current["fill_tokens_target"]:
-        return (
-            f"context_pressure fill (was {old_target:,} tokens, "
-            f"now {current['fill_tokens_target']:,}; the context size changed)"
-        )
-    return None
-
-
-def _judge_mismatch(previous: Any, current: Any) -> str:
-    """Name the judge difference a user must undo to resume, when it is a set or check."""
-    if isinstance(previous, dict) and "set" not in previous:
-        # Audited before judge sets existed, which meant TC-89 only. No set
-        # reproduces that selection, so say why rather than name a bare key.
-        return "decision_judge (a TC-89-only audit from an earlier version)"
-    if not isinstance(previous, dict) or not isinstance(current, dict):
-        return "decision_judge"
-    if previous["set"] != current["set"]:
-        return f"decision_judge set (was {previous['set']}, now {current['set']})"
-    old_checks = set(previous.get("checks") or [])
-    new_checks = set(current.get("checks") or [])
-    if old_checks == new_checks:
-        # A URL or model change; the generic key already says enough.
-        return "decision_judge"
-    changes = []
-    if removed := sorted(old_checks - new_checks):
-        changes.append(f"was {', '.join(removed)}")
-    if added := sorted(new_checks - old_checks):
-        changes.append(f"now {', '.join(added)}")
-    return f"decision_judge checks ({'; '.join(changes)})"
+    )
+    # Metadata only feeds the fingerprint, which resume does not compare.
+    current = build_run_config(
+        settings, scenarios=scenarios, metadata={}, scenario_packs=scenario_packs
+    )
+    return resume_mismatches(previous, current)
 
 
 def _execution_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:

@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from tool_eval_bench.application.run_config import COHORT_EXCLUDED_KEYS, CONFIG_FINGERPRINT_KEY
 from tool_eval_bench.utils.ids import build_config_fingerprint
 
 # ---------------------------------------------------------------------------
@@ -151,14 +152,10 @@ def _shorten_model_name(name: str) -> str:
 def _cohort_fingerprint(config: dict[str, Any]) -> str:
     """Fingerprint benchmark conditions shared across different models.
 
-    The decision judge is excluded like it is from ``config_fingerprint``:
-    audits never change scores, so they must not split a cohort.
+    The schema decides which keys to drop.  It is an exclusion rather than an
+    allow-list so a key that only an older version stored still splits cohorts.
     """
-    comparable = {
-        key: value
-        for key, value in config.items()
-        if key not in {"model", "base_url", "endpoint_id", "config_fingerprint", "decision_judge"}
-    }
+    comparable = {key: value for key, value in config.items() if key not in COHORT_EXCLUDED_KEYS}
     return build_config_fingerprint(comparable)
 
 
@@ -230,7 +227,9 @@ def _extract_leaderboard_rows(
         if run_type != "tool_eval" or not _is_rank_eligible(run, config, scores):
             continue
 
-        fingerprint = config.get("config_fingerprint") or build_config_fingerprint(
+        # Runs stored before config_fingerprint existed cannot be rebuilt
+        # through the current schema, so hash everything they recorded.
+        fingerprint = config.get(CONFIG_FINGERPRINT_KEY) or build_config_fingerprint(
             {
                 "config": config,
                 "metadata": run.get("metadata") or {},
