@@ -12,7 +12,7 @@ from typing import Any
 from tool_eval_bench.adapters.anthropic import ANTHROPIC_VERSION, _apply_extra_params
 from tool_eval_bench.adapters.gemini import _generation_config
 from tool_eval_bench.adapters.wire_format import anthropic_messages_url, gemini_generate_url
-from tool_eval_bench.utils.headers import USER_AGENT
+from tool_eval_bench.utils.headers import USER_AGENT, merge_headers
 from tool_eval_bench.utils.urls import chat_completions_url
 
 _WARMUP_SYSTEM = "You are a helpful assistant."
@@ -44,7 +44,7 @@ def minimal_request(
         max_tokens=max_tokens,
         extra_params=extra_params,
     )
-    return url, payload, {"User-Agent": USER_AGENT, **format_headers, **(headers or {})}
+    return url, payload, merge_headers({"User-Agent": USER_AGENT}, format_headers, headers)
 
 
 def _minimal_request(

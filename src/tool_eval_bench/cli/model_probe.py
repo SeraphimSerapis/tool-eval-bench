@@ -20,7 +20,7 @@ from tool_eval_bench.domain.errors import (
     INVALID_RESPONSE,
     NO_MODELS,
 )
-from tool_eval_bench.utils.headers import USER_AGENT
+from tool_eval_bench.utils.headers import USER_AGENT, merge_headers
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 from tool_eval_bench.utils.urls import redact_urls as _redact_urls
 
@@ -36,7 +36,7 @@ def _models_request(
     *extra_headers* are the user's and are applied last.
     """
     url, headers = _models_url_and_auth(base_url, api_key, wire_format)
-    return url, {"User-Agent": USER_AGENT, **headers, **(extra_headers or {})}
+    return url, merge_headers({"User-Agent": USER_AGENT}, headers, extra_headers)
 
 
 def _models_url_and_auth(

@@ -1,0 +1,1 @@
+**Malformed-response warning redacts the URL.** When an OpenAI-compatible endpoint returned a body that was not JSON, the warning logged the full chat URL, credentials in the base URL included. It is now redacted like every other adapter log line.
