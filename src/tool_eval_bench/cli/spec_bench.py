@@ -363,7 +363,12 @@ def run_spec_bench(
                     "runs": runs,
                     "temperature": temperature,
                 },
-                scores={"samples": len(ok_samples)},
+                scores={
+                    "samples": len(ok_samples),
+                    # A count only: error text can quote the server URL.
+                    "failed": len(completed) - len(ok_samples),
+                    "results": [s.to_result() for s in ok_samples],
+                },
                 status="completed",
             ),
             spec_decode_report(display_name, ok_samples, label=label, temperature=temperature),
