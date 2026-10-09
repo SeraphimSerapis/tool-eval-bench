@@ -64,7 +64,7 @@ The Tokens column shows the prompt size plus the mean number of tokens the model
 
 With `--enable-prefix-caching`, the context-load row is labelled `ctx pp{depth}`, and tool-eval-bench adds `--extra-body cache_prompt=true` so llama.cpp reuses the cached prefix on the follow-up request. Without it, the always-on `--no-cache` would send `cache_prompt: false` and llama.cpp would prefill the whole prompt again. A `cache_prompt` value passed in `--benchy-args` takes precedence. Progress events do not say which phase a request belonged to, so a failed request in either phase marks both rows of that test point as failed.
 
-`--perf` combined with `--skip-tool-eval`, `--context-pressure-sweep`, `--spec-bench --skip-tool-eval`, or a plugin-only run such as `--gsm8k-only` saves the throughput sweep as its own run, exactly as `--perf-only` would.
+`--perf` combined with `--skip-tool-eval`, `--context-pressure-sweep`, `--spec-bench --skip-tool-eval`, or a plugin-only run such as `--gsm8k-only` saves the throughput sweep as its own run, exactly as `--perf-only` would. The run is saved as soon as the sweep finishes, before the other mode starts, so a failure there cannot lose it. A failed throughput cell still exits 1, after the other mode has run.
 
 ```bash
 # Throughput only (skip tool-call scenarios)

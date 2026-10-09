@@ -1819,7 +1819,7 @@ def _request(
 async def _run_with_events(
     monkeypatch: pytest.MonkeyPatch,
     benchmarks: list[dict],
-    events: list[dict],
+    events: list[object],
     *,
     prefix_caching: bool = False,
 ):
@@ -1905,6 +1905,19 @@ class TestPartiallyFailedCells:
         errors = [sample.error for sample in result.samples]
         assert errors[0] is not None and errors[0].startswith("ctx pp4096 tg32 @ d4096 c1:")
         assert errors[1] is not None and errors[1].startswith("pp4096 tg32 @ d4096 c1:")
+
+    async def test_json_lines_that_are_not_objects_are_not_events(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = await _run_with_events(
+            monkeypatch,
+            [_cell_entry()],
+            [123, ["HTTP 500"], "boom", None, *_request(1), *_request(2)],
+        )
+
+        (sample,) = result.samples
+        assert sample.error is None
+        assert sample.tg_tps > 0
 
     def test_long_request_errors_are_truncated(self) -> None:
         from tool_eval_bench.runner.throughput import ThroughputSample

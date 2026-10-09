@@ -998,14 +998,96 @@ def test_perf_is_saved_on_its_own_when_no_scored_run_follows(
     assert [event["run_type"] for event in events if event["event"] == "run_saved"] == ["perf"]
 
 
-def test_perf_followed_by_a_scored_run_is_not_saved_twice(cli: Cli) -> None:
-    cli.record("tool_eval_bench.cli.perf", "run_llama_benchy", lambda: [ThroughputSample()])
+@pytest.mark.parametrize(
+    ("extra", "leaf"),
+    [
+        pytest.param([], None, id="scenarios"),
+        pytest.param(
+            ["--spec-bench"],
+            ("tool_eval_bench.cli.spec_bench", "run_spec_bench", None),
+            id="spec-bench-then-scenarios",
+        ),
+        pytest.param(
+            ["--gsm8k"],
+            ("tool_eval_bench.cli.plugin_runners", "run_selected_plugins", False),
+            id="plugin-then-scenarios",
+        ),
+    ],
+)
+def test_perf_followed_by_a_scored_run_is_not_saved_twice(
+    cli: Cli, extra: list[str], leaf: tuple[str, str, Any] | None
+) -> None:
+    samples = [ThroughputSample()]
+    cli.record("tool_eval_bench.cli.perf", "run_llama_benchy", lambda: samples)
+    if leaf is not None:
+        cli.record(*leaf)
 
-    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--perf", "--no-live")
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--perf", *extra, "--no-live")
 
     assert outcome.code == 0
-    assert len(cli.runs) == 1
+    (run,) = cli.runs
+    assert run["throughput_samples"] == samples
     assert _perf_rows(cli) == []
+
+
+@pytest.mark.parametrize(
+    ("extra", "module_name", "attr"),
+    [
+        pytest.param(
+            ["--context-pressure-sweep", "0.5-1.0"],
+            "tool_eval_bench.cli.pressure",
+            "run_pressure_sweep",
+            id="sweep",
+        ),
+        pytest.param(
+            ["--spec-bench", "--skip-tool-eval"],
+            "tool_eval_bench.cli.spec_bench",
+            "run_spec_bench",
+            id="spec-bench",
+        ),
+        pytest.param(
+            ["--gsm8k-only"],
+            "tool_eval_bench.cli.plugin_runners",
+            "run_selected_plugins",
+            id="plugin-only",
+        ),
+    ],
+)
+def test_perf_is_saved_before_a_downstream_mode_that_exits(
+    cli: Cli, extra: list[str], module_name: str, attr: str
+) -> None:
+    cli.record("tool_eval_bench.cli.perf", "run_llama_benchy", lambda: [ThroughputSample()])
+    saved_when_downstream_started: list[int] = []
+
+    def downstream_exits() -> None:
+        saved_when_downstream_started.append(len(_perf_rows(cli)))
+        sys.exit(3)
+
+    cli.record(module_name, attr, downstream_exits)
+
+    outcome = cli.run(*CONNECTION, "--perf", *extra, "--no-live")
+
+    assert outcome.code == 3
+    assert saved_when_downstream_started == [1]
+    (persisted,) = _perf_rows(cli)
+    assert persisted["status"] == "completed"
+
+
+def test_failed_perf_cell_exits_only_after_the_downstream_mode(cli: Cli) -> None:
+    cli.record(
+        "tool_eval_bench.cli.perf",
+        "run_llama_benchy",
+        lambda: [ThroughputSample(), ThroughputSample(error="boom")],
+    )
+    spec_calls = cli.record("tool_eval_bench.cli.spec_bench", "run_spec_bench")
+
+    outcome = cli.run(*CONNECTION, "--perf", "--spec-bench", "--skip-tool-eval", "--no-live")
+
+    assert outcome.code == 1
+    assert len(spec_calls) == 1
+    (persisted,) = _perf_rows(cli)
+    assert persisted["status"] == "failed"
+    assert "Throughput benchmark failed in 1 cell(s)." in outcome.flat_out
 
 
 def test_perf_saved_on_its_own_still_fails_on_a_failed_cell(cli: Cli) -> None:

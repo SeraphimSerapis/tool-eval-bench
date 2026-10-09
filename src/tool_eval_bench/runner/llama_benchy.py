@@ -714,10 +714,13 @@ async def run_llama_benchy(
                 try:
                     event = json.loads(line)
                 except json.JSONDecodeError:
+                    event = None
+                if not isinstance(event, dict):
                     # llama-benchy prints per-request failures (``HTTP 400: …``)
                     # to stdout, alongside the progress JSONL.  Keep them: they
                     # are the only explanation available when a run finishes
-                    # with every metric empty.
+                    # with every metric empty.  A line that parses as JSON but
+                    # is not an object (``123``) is not an event either.
                     if line:
                         output_lines.append(line)
                     continue

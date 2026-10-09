@@ -42,7 +42,8 @@ Modes that have no result envelope (`--perf-only`, `--spec-bench`,
 write nothing to stdout. Their results go to the Markdown report and SQLite as
 usual, and a `run_saved` event on stderr gives the run ID and report path.
 `--perf` combined with `--skip-tool-eval`, `--context-pressure-sweep`, or a
-plugin-only run saves its throughput sweep the same way, as a separate `perf` run.
+plugin-only run saves its throughput sweep the same way, as a separate `perf` run,
+before the other mode starts.
 
 `--spec-live` and `--decision-live` are interactive monitors and exit 2 when
 combined with `--json`. Invalid arguments exit 2 with an `invalid_arguments`

@@ -487,18 +487,18 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
         # display of the samples drops them itself.
         return throughput_samples, False
 
-    _finalize_throughput(target, throughput_samples)
+    _exit_if_throughput_failed(target, _save_throughput(target, throughput_samples))
     return throughput_samples, True
 
 
-def _finalize_throughput(target: _Target, throughput_samples: list[ThroughputSample]) -> None:
-    """Persist a throughput sweep as its own ``perf`` run and report it.
+def _save_throughput(target: _Target, throughput_samples: list[ThroughputSample]) -> int:
+    """Persist a throughput sweep as its own ``perf`` run and return its failed-cell count.
 
-    Used by ``--perf-only`` and by ``--perf`` when spec-bench, a sweep, a
-    plugin-only run, or ``--skip-tool-eval`` ends the CLI before a scored run
-    could carry the samples. Both store the same config, so the same
-    measurement lands in the same fingerprint cohort. Exits 1 after saving
-    when any cell failed.
+    Used by ``--perf-only`` and by ``--perf`` when no scored run follows to
+    carry the samples (spec-bench, a sweep, a plugin-only run, or
+    ``--skip-tool-eval``). Both store the same config, so the same measurement
+    lands in the same fingerprint cohort. The caller decides when a failed
+    cell ends the CLI; see :func:`_exit_if_throughput_failed`.
     """
     args, console = target.args, target.console
     failed_count = sum(bool(sample.error) for sample in throughput_samples)
@@ -533,9 +533,15 @@ def _finalize_throughput(target: _Target, throughput_samples: list[ThroughputSam
     report_path = finalized.report_path
     report_run_saved(console, run, finalized)
     console.print(f"\n  [dim]Report saved to {report_path}[/]\n")
+    return failed_count
+
+
+def _exit_if_throughput_failed(target: _Target, failed_count: int) -> None:
+    """Report a failed throughput sweep and exit 1; a no-op when every cell succeeded."""
     if failed_count:
         report_run_failed(
-            console, f"[bold red]Throughput benchmark failed in {failed_count} cell(s).[/]"
+            target.console,
+            f"[bold red]Throughput benchmark failed in {failed_count} cell(s).[/]",
         )
         sys.exit(1)
 
@@ -915,24 +921,33 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser, console:
     throughput_samples, finished = _run_throughput_mode(target)
     if finished:
         return
-    # From here on, a mode that ends the CLI leaves --perf samples without the
-    # scored run that would have stored them, so they are saved on their own.
+    # --perf samples ride in the scored run's report. When no scored run
+    # follows, save them on their own now, before a mode that may end the
+    # process with sys.exit. A failed cell still exits 1, but only after that
+    # mode has had its turn.
+    perf_failed_count = 0
+    if throughput_samples and not _scored_run_follows(args):
+        perf_failed_count = _save_throughput(target, throughput_samples)
+        throughput_samples = []
     if _run_spec_bench_mode(target) or _run_pressure_sweep_mode(target):
-        _finalize_unclaimed_throughput(target, throughput_samples)
+        _exit_if_throughput_failed(target, perf_failed_count)
         return
 
     pressure = _prepare_context_pressure(target)
     if _run_plugins_mode(target) or _skip_tool_eval_mode(target):
-        _finalize_unclaimed_throughput(target, throughput_samples)
+        _exit_if_throughput_failed(target, perf_failed_count)
         return
     _run_scored_mode(target, throughput_samples, pressure)
 
 
-def _finalize_unclaimed_throughput(
-    target: _Target, throughput_samples: list[ThroughputSample]
-) -> None:
-    if throughput_samples:
-        _finalize_throughput(target, throughput_samples)
+def _scored_run_follows(args: argparse.Namespace) -> bool:
+    """Whether a scored tool-call run follows the throughput sweep in ``_run_cli``.
+
+    A context-pressure sweep runs scenarios but stores its own runs, so it does
+    not carry ``--perf`` samples. ``tests/test_cli_dispatch_golden.py`` pins
+    this against the routing for every mode that ends the CLI early.
+    """
+    return _sends_system_prompt(args) and args.context_pressure_sweep is None
 
 
 def _prepare_args(
