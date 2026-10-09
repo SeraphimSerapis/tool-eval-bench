@@ -803,7 +803,6 @@ def test_terminal_modes_show_actual_judge_activity(harness, monkeypatch, capsys,
 @pytest.mark.parametrize(
     "argv",
     [
-        ["run", "--decision-judge-base-url", JUDGE_URL],
         ["run", "--decision-judge-model", "clef-flash"],
         [
             "plugin",
@@ -827,6 +826,7 @@ def test_terminal_modes_show_actual_judge_activity(harness, monkeypatch, capsys,
 def test_cli_rejects_incomplete_or_inapplicable_judge_flags(monkeypatch, argv, capsys):
     monkeypatch.setattr("sys.argv", ["tool-eval-bench", *argv])
     monkeypatch.setattr("tool_eval_bench.cli.dispatch._load_dotenv", lambda: None)
+    monkeypatch.delenv("TOOL_EVAL_DECISION_JUDGE_BASE_URL", raising=False)
     with pytest.raises(SystemExit) as error:
         main()
     assert error.value.code == 2

@@ -609,6 +609,109 @@ def test_decision_judge_reaches_every_call_site(
     assert run["on_scenario_audit"] == audit
 
 
+def _judge_kwargs(run: dict[str, Any]) -> dict[str, Any]:
+    return {key: run[key] for key in run if key.startswith("decision_judge")}
+
+
+def test_decision_judge_env_supplies_the_connection(cli: Cli) -> None:
+    cli.monkeypatch.setenv("TOOL_EVAL_DECISION_JUDGE_BASE_URL", "http://judge.test/v1")
+    cli.monkeypatch.setenv("TOOL_EVAL_DECISION_JUDGE_MODEL", "env-judge")
+    detected = cli.record("tool_eval_bench.cli.model_probe", "_detect_model")
+
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--decision-judge", "--no-live")
+
+    assert outcome.code == 0
+    (run,) = cli.run_kwargs
+    assert _judge_kwargs(run) == {
+        "decision_judge_base_url": "http://judge.test/v1",
+        "decision_judge_model": "env-judge",
+        "decision_judge_api_key": None,
+        "decision_judge": "recommended",
+    }
+    assert detected == []
+
+
+def test_decision_judge_flags_beat_the_env(cli: Cli) -> None:
+    cli.monkeypatch.setenv("TOOL_EVAL_DECISION_JUDGE_BASE_URL", "http://env-judge.test/v1")
+    cli.monkeypatch.setenv("TOOL_EVAL_DECISION_JUDGE_MODEL", "env-judge")
+
+    outcome = cli.run(
+        *CONNECTION,
+        "--scenarios",
+        "TC-01",
+        "--decision-judge-base-url",
+        "http://flag-judge.test/v1",
+        "--decision-judge-model",
+        "flag-judge",
+        "--no-live",
+    )
+
+    assert outcome.code == 0
+    (run,) = cli.run_kwargs
+    assert run["decision_judge_base_url"] == "http://flag-judge.test/v1"
+    assert run["decision_judge_model"] == "flag-judge"
+
+
+def test_decision_judge_env_alone_does_not_enable_audits(cli: Cli) -> None:
+    # A judge in .env must not turn every command into an audited run.
+    cli.monkeypatch.setenv("TOOL_EVAL_DECISION_JUDGE_BASE_URL", "http://judge.test/v1")
+    cli.monkeypatch.setenv("TOOL_EVAL_DECISION_JUDGE_MODEL", "env-judge")
+
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--no-live")
+
+    assert outcome.code == 0
+    (run,) = cli.run_kwargs
+    assert _judge_kwargs(run) == {}
+
+
+@pytest.mark.parametrize("headless", [False, True], ids=["plain", "json"])
+def test_decision_judge_model_is_detected_from_the_judge(cli: Cli, headless: bool) -> None:
+    cli.monkeypatch.setenv("TOOL_EVAL_DECISION_JUDGE_BASE_URL", "http://judge.test:8084/v1")
+    cli.monkeypatch.setenv("TOOL_EVAL_DECISION_JUDGE_API_KEY", "judge-key")
+    detected = cli.record(
+        "tool_eval_bench.cli.model_probe", "_detect_model", ("clef-flash", "clef-flash")
+    )
+
+    outcome = cli.run(
+        *CONNECTION,
+        "--scenarios",
+        "TC-01",
+        "--decision-judge",
+        "all",
+        "--json" if headless else "--no-live",
+    )
+
+    assert outcome.code == 0
+    (call,) = cli.calls("_detect_model")
+    assert call["args"] == ("http://judge.test:8084/v1", "judge-key", "<console>")
+    assert call["headless"] is headless
+    # Only the judge's own key and no benchmark headers go to the judge.
+    assert call["headers"] is None
+    assert call["display_url"] != "http://judge.test:8084/v1"
+    assert "--decision-judge-model" in call["multiple_models_hint"]
+    assert len(detected) == 1
+    (run,) = cli.run_kwargs
+    assert run["decision_judge_model"] == "clef-flash"
+    assert run["decision_judge"] == "all"
+
+
+def test_decision_judge_url_is_checked_before_detection(cli: Cli) -> None:
+    detected = cli.record("tool_eval_bench.cli.model_probe", "_detect_model")
+
+    outcome = cli.run(
+        *CONNECTION,
+        "--scenarios",
+        "TC-01",
+        "--decision-judge-base-url",
+        "http://user:secret@judge.test/v1",
+    )
+
+    assert outcome.code == 2
+    assert "Decision judge URL must be HTTP(S)" in outcome.err
+    assert detected == []
+    assert cli.run_kwargs == []
+
+
 @pytest.mark.parametrize(
     "mode_flags", [[], ["--no-live"], ["--json"]], ids=["live", "plain", "json"]
 )

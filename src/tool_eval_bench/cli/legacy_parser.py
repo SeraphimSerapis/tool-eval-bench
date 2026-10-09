@@ -104,18 +104,20 @@ def _make_parser() -> argparse.ArgumentParser:
         default=None,
         choices=DECISION_JUDGE_SETS,
         help="Answer-audit set: recommended (11 scenarios, the default when only the "
-        "connection flags are given) or all (17). Requires --decision-judge-base-url "
-        "and --decision-judge-model",
+        "connection flags are given) or all (17). Needs a judge URL from "
+        "--decision-judge-base-url or TOOL_EVAL_DECISION_JUDGE_BASE_URL",
     )
     judge.add_argument(
         "--decision-judge-base-url",
         default=None,
-        help="Independent /v1/systemone endpoint for answer audits; scores stay unchanged",
+        help="Independent /v1/systemone endpoint for answer audits; scores stay unchanged. "
+        "Env: TOOL_EVAL_DECISION_JUDGE_BASE_URL",
     )
     judge.add_argument(
         "--decision-judge-model",
         default=None,
-        help="Judge model (requires --decision-judge-base-url). "
+        help="Judge model (default: auto-detected from the judge's /v1/models). "
+        "Env: TOOL_EVAL_DECISION_JUDGE_MODEL. "
         "Judge-only key: TOOL_EVAL_DECISION_JUDGE_API_KEY",
     )
 

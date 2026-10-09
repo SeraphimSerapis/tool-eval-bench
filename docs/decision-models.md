@@ -37,8 +37,16 @@ tool-eval-bench run --hardmode --base-url http://localhost:8000/v1 \
 ```
 
 `--decision-judge [recommended|all]` picks the set. The bare flag means
-`recommended`, and so do the two connection flags given alone. The set flag
-without both connection flags is a usage error.
+`recommended`, and so do the connection flags given alone. The set flag
+without a judge URL is a usage error.
+
+The URL and model also read `TOOL_EVAL_DECISION_JUDGE_BASE_URL` and
+`TOOL_EVAL_DECISION_JUDGE_MODEL`; flags win. The variables only configure the
+connection, so a run audits only when a judge flag is given. Without a model
+name the CLI asks the judge's `/v1/models` and uses the model it serves. When
+it serves several, the console offers a picker and `--json` exits 2 with
+`invalid_arguments` rather than pick one, because the judge model is recorded
+with every audit.
 
 | Scenario | Set | Check | What it asks | Evidence |
 |---|---|---|---|---|

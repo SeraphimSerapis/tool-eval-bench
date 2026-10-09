@@ -120,21 +120,25 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "choices": list(DECISION_JUDGE_SETS),
         "description": (
             "Answer-audit set; the bare flag and the connection flags alone mean "
-            "recommended. Requires decision_judge_base_url and decision_judge_model"
+            "recommended. Needs decision_judge_base_url or TOOL_EVAL_DECISION_JUDGE_BASE_URL"
         ),
     },
     {
         "name": "decision_judge_base_url",
         "type": "string",
         "default": None,
-        "description": "Independent /v1/systemone endpoint for answer audits; scores stay unchanged",
+        "description": (
+            "Independent /v1/systemone endpoint for answer audits; scores stay unchanged "
+            "(also TOOL_EVAL_DECISION_JUDGE_BASE_URL)"
+        ),
     },
     {
         "name": "decision_judge_model",
         "type": "string",
         "default": None,
         "description": (
-            "Judge model (requires decision_judge_base_url); judge-only key via "
+            "Judge model, auto-detected from the judge's /v1/models when omitted "
+            "(also TOOL_EVAL_DECISION_JUDGE_MODEL); judge-only key via "
             "TOOL_EVAL_DECISION_JUDGE_API_KEY"
         ),
     },

@@ -320,6 +320,19 @@ tool-eval-bench run --hardmode --base-url http://localhost:8000/v1 \
   --decision-judge-model clef-flash
 ```
 
+The judge connection can live in `.env` like the benchmark server's, after
+which `--decision-judge` alone turns audits on:
+
+```bash
+TOOL_EVAL_DECISION_JUDGE_BASE_URL=http://localhost:8084/v1
+TOOL_EVAL_DECISION_JUDGE_MODEL=    # optional: auto-detected from /v1/models
+```
+
+The model is read from the judge's `/v1/models` when neither
+`--decision-judge-model` nor `TOOL_EVAL_DECISION_JUDGE_MODEL` names one. If the
+judge serves several models, you pick one interactively; `--json` runs stop
+with `invalid_arguments` instead of guessing.
+
 `--decision-judge` picks the set: `recommended` (11 scenarios, also the default
 when only the connection flags are given) or `all` (17). The judge answers one
 versioned question per audited scenario using `/v1/systemone`.
@@ -337,7 +350,8 @@ and `decision_audit_result` progress events on stderr.
 
 Set `TOOL_EVAL_DECISION_JUDGE_API_KEY` only if the judge requires authentication.
 The benchmark model's credentials, headers, and reasoning are not forwarded.
-Auditing is off unless both judge connection flags are supplied. Audited and
+Auditing is off unless a judge flag is given; the environment variables alone
+never turn it on. Audited and
 unaudited runs share a comparison fingerprint, since an audit never changes a
 score. Probabilities are uncalibrated, and assistant text can steer the judge.
 See [answer audit limits and API configuration](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/decision-models.md#answer-audits).

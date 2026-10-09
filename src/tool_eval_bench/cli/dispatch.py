@@ -37,6 +37,7 @@ from rich.console import Console
 from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
 from tool_eval_bench.adapters.wire_format import resolve_wire_format as _resolve_wire_format
 from tool_eval_bench.application.decision_audit import (
+    check_decision_judge_url,
     decision_judge_config,
     with_selected_checks,  # noqa: F401  (cli.bench name)
 )
@@ -140,7 +141,13 @@ from tool_eval_bench.cli.run_io import stderr_progress_start as _stderr_progress
 from tool_eval_bench.cli.run_io import (
     stderr_progress_start_unredacted as _stderr_progress_start_unredacted,
 )
-from tool_eval_bench.cli.scored_run import JudgeConnection, ScoredRun
+from tool_eval_bench.cli.scored_run import (
+    DECISION_JUDGE_API_KEY_ENV,
+    DECISION_JUDGE_BASE_URL_ENV,
+    DECISION_JUDGE_MODEL_ENV,
+    JudgeConnection,
+    ScoredRun,
+)
 from tool_eval_bench.cli.server import (
     DISCOVERY_PORTS as _DISCOVERY_PORTS,
 )
@@ -365,6 +372,7 @@ def _detect_model(
     headless: bool = False,
     wire_format: str = "openai",
     headers: Mapping[str, str] | None = None,
+    multiple_models_hint: str | None = None,
 ) -> tuple[str, str]:
     """Compatibility wrapper preserving the historical asyncio patch seam."""
     _model_probe.asyncio = asyncio
@@ -376,6 +384,7 @@ def _detect_model(
         headless=headless,
         wire_format=wire_format,
         headers=headers,
+        multiple_models_hint=multiple_models_hint,
     )
 
 
@@ -727,6 +736,56 @@ def _decision_judge_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     return judge.service_kwargs() if judge is not None else {}
 
 
+def _judge_requested(args: argparse.Namespace) -> bool:
+    return any(
+        getattr(args, attr, None) is not None
+        for attr in ("decision_judge", "decision_judge_base_url", "decision_judge_model")
+    )
+
+
+def _apply_decision_judge_env(args: argparse.Namespace) -> None:
+    """Fill unset judge connection flags from ``TOOL_EVAL_DECISION_JUDGE_*``.
+
+    Only once a judge flag asks for a judge: like ``TOOL_EVAL_BASE_URL``, the
+    variables configure a connection and never switch audits on. A judge URL
+    in ``.env`` would otherwise reject every command that is not a scored run.
+    """
+    if not _judge_requested(args):
+        return
+    for attr, env in (
+        ("decision_judge_base_url", DECISION_JUDGE_BASE_URL_ENV),
+        ("decision_judge_model", DECISION_JUDGE_MODEL_ENV),
+    ):
+        if getattr(args, attr, None) is None:
+            setattr(args, attr, os.getenv(env) or None)
+
+
+def _detect_decision_judge_model(args: argparse.Namespace, console: Console) -> None:
+    """Ask the judge server for its model when no flag or env var named one.
+
+    A single served model is taken. Several open the interactive picker, and
+    stop a ``--json`` run rather than guess, since the judge model is recorded.
+    """
+    judge_url = getattr(args, "decision_judge_base_url", None)
+    if judge_url is None or getattr(args, "decision_judge_model", None) is not None:
+        return
+    # The judge host is masked wherever it is printed or stored.
+    display_url = _redact_url(judge_url)
+    if not args.json:
+        console.print(f"[dim]  Decision judge: {display_url}[/]")
+    model, _ = _detect_model(
+        judge_url,
+        os.environ.get(DECISION_JUDGE_API_KEY_ENV),
+        console,
+        display_url=display_url,
+        headless=args.json,
+        multiple_models_hint=(
+            f"pass --decision-judge-model or set {DECISION_JUDGE_MODEL_ENV} to choose one"
+        ),
+    )
+    args.decision_judge_model = model
+
+
 def _resolve_system_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """Materialize ``--system-prompt-file`` into ``args.system_prompt``.
 
@@ -1048,15 +1107,25 @@ def _prepare_args(
     _resolve_system_prompt(args, parser)
     _drop_unused_system_prompt(args, console)
     _validate_run_ranges(args, parser)
+    _apply_decision_judge_env(args)
+    judge_url = getattr(args, "decision_judge_base_url", None)
+    judge_model = getattr(args, "decision_judge_model", None)
     try:
-        judge_config = decision_judge_config(
-            getattr(args, "decision_judge_base_url", None),
-            getattr(args, "decision_judge_model", None),
-            judge_set=getattr(args, "decision_judge", None),
-        )
+        if _judge_requested(args) and judge_url is None:
+            raise ValueError(
+                "A decision judge requires --decision-judge-base-url or "
+                f"{DECISION_JUDGE_BASE_URL_ENV}"
+            )
+        if judge_url is not None and judge_model is None:
+            # _resolve_target asks this URL for the model, so check it first.
+            check_decision_judge_url(judge_url)
+        else:
+            decision_judge_config(
+                judge_url, judge_model, judge_set=getattr(args, "decision_judge", None)
+            )
     except ValueError as exc:
         parser.error(str(exc))
-    if judge_config is not None and (
+    if judge_url is not None and (
         getattr(args, "command", None) not in {None, "run", "resume"}
         or not _sends_system_prompt(args)
         or args.context_pressure_sweep is not None
@@ -1275,6 +1344,8 @@ def _resolve_target(
         )
         if not args.json:
             console.print()
+
+    _detect_decision_judge_model(args, console)
 
     # display_name is the human-readable model (e.g. "Intel/gemma-4-31B-it-int4-AutoRound")
     # model is the API alias (e.g. "gemma4") — used in all API calls

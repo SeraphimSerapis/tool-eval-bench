@@ -195,9 +195,9 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--weight-by-difficulty` | Weight scores by difficulty tier (harder scenarios count more) |
 | `--system-prompt TEXT` | Replace the built-in system prompt with TEXT for every scenario |
 | `--system-prompt-file PATH` | Read the system prompt override from a UTF-8 file, max 32 KiB (exclusive with `--system-prompt`) |
-| `--decision-judge [SET]` | Answer-audit set: `recommended` (11 scenarios; the bare flag, and the default when only the connection flags are given) or `all` (17). Needs both connection flags |
-| `--decision-judge-base-url URL` | Independent `/v1/systemone` endpoint for answer auditing; official scores stay unchanged |
-| `--decision-judge-model NAME` | Required judge model; authentication uses `TOOL_EVAL_DECISION_JUDGE_API_KEY`, never the benchmark's key |
+| `--decision-judge [SET]` | Answer-audit set: `recommended` (11 scenarios; the bare flag, and the default when only the connection flags are given) or `all` (17). Needs a judge URL from the flag or env |
+| `--decision-judge-base-url URL` | Independent `/v1/systemone` endpoint for answer auditing; official scores stay unchanged (env: `TOOL_EVAL_DECISION_JUDGE_BASE_URL`) |
+| `--decision-judge-model NAME` | Judge model, auto-detected from the judge's `/v1/models` when omitted (env: `TOOL_EVAL_DECISION_JUDGE_MODEL`); authentication uses `TOOL_EVAL_DECISION_JUDGE_API_KEY`, never the benchmark's key |
 | `--alpha F` | Quality weight in the deployability composite, 0 to 1 (default: 0.7; speed gets 1 − alpha) |
 
 ## Benchmark modes
@@ -253,10 +253,15 @@ commands ignore benchmark mode flags, but conflicting pairs are still rejected.
 
 ### Auditing answers
 
-Supply both `--decision-judge-base-url` and `--decision-judge-model` to audit the
-selected scenarios' answers with the `recommended` set. Add `--decision-judge all`
-for the larger set. Scenarios outside the set, and held-out packs, remain
-unaudited. The flags apply to `run`, `resume`, and flat scenario invocations.
+Supply `--decision-judge-base-url` to audit the selected scenarios' answers with
+the `recommended` set. Add `--decision-judge all` for the larger set. With
+`TOOL_EVAL_DECISION_JUDGE_BASE_URL` set, `--decision-judge` alone is enough; the
+variable never turns audits on by itself. The judge model comes from
+`--decision-judge-model`, then `TOOL_EVAL_DECISION_JUDGE_MODEL`, then the judge's
+`/v1/models`. A judge serving several models opens the model picker, and stops
+a `--json` run with `invalid_arguments`. Scenarios outside the set, and
+held-out packs, remain unaudited. The flags apply to `run`, `resume`, and flat
+scenario invocations.
 Keep the same judge flags, including the set, when resuming an audited run.
 Results include a separate `decision_audit`; no audit changes points, safety
 warnings, or the run's comparison fingerprint.
