@@ -785,17 +785,17 @@ async def run_scenario(
             )
         for producer, consumer in scenario.dependencies:
             # An injected producer answered with a simulated error, so it
-            # supplied nothing a later consumer could depend on.
-            sources = [
-                call for call in state.tool_calls if call.name == producer and not call.injected
-            ]
+            # supplied nothing a later consumer could depend on. It was still
+            # called, though: a consumer sent alongside it was batched, and
+            # one sent after it never saw a real result.
+            attempts = [call for call in state.tool_calls if call.name == producer]
+            sources = [call for call in attempts if not call.injected]
             targets = [call for call in state.tool_calls if call.name == consumer]
-            if (
-                any(not any(source.turn < target.turn for source in sources) for target in targets)
-                and sources
+            if attempts and any(
+                not any(source.turn < target.turn for source in sources) for target in targets
             ):
                 batched = any(
-                    source.turn == target.turn for source in sources for target in targets
+                    attempt.turn == target.turn for attempt in attempts for target in targets
                 )
                 violation = (
                     f"Batched {consumer} with {producer} in the same turn instead of waiting "

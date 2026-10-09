@@ -165,11 +165,148 @@ async def test_sse_without_an_event_stream_content_type_is_accepted(
 async def test_an_empty_but_valid_stream_is_not_flagged(
     adapter_type: type[BackendAdapter], base_url: str, sse: bytes, empty: bytes
 ) -> None:
-    for body in (empty, b""):
-        result = await _stream(adapter_type, base_url, body, {"content-type": "text/event-stream"})
+    result = await _stream(adapter_type, base_url, empty, {"content-type": "text/event-stream"})
 
-        assert result.content == ""
-        assert result.malformed is False
+    assert result.content == ""
+    assert result.malformed is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("adapter_type", "base_url", "sse", "empty"), _STREAMS)
+@pytest.mark.parametrize("body", [b"", b"\n\n", b": keep-alive\n\n: keep-alive\n\n"])
+async def test_a_stream_with_no_event_at_all_is_flagged(
+    adapter_type: type[BackendAdapter], base_url: str, sse: bytes, empty: bytes, body: bytes
+) -> None:
+    """An empty 200 or a comment-only stream carried no model output to grade."""
+    result = await _stream(adapter_type, base_url, body, {"content-type": "text/event-stream"})
+
+    assert result.content == "[malformed response]"
+    assert result.malformed is True
+
+
+# adapter, base URL, a non-streamed JSON response saying "hi"
+_JSON_BODIES = [
+    (OpenAICompatibleAdapter, "http://x:8000", {"choices": [{"message": {"content": "hi"}}]}),
+    (
+        AnthropicAdapter,
+        "https://opencode.ai/zen/go/v1/messages",
+        {"content": [{"type": "text", "text": "hi"}], "stop_reason": "end_turn"},
+    ),
+    (
+        GeminiAdapter,
+        "https://generativelanguage.googleapis.com/v1beta",
+        {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]},
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("adapter_type", "base_url", "body"), _JSON_BODIES)
+@pytest.mark.parametrize("indent", [None, 2])
+async def test_a_json_completion_labelled_as_an_event_stream_is_parsed(
+    adapter_type: type[BackendAdapter], base_url: str, body: dict[str, Any], indent: int | None
+) -> None:
+    """A server that ignored stream=true sent a whole completion, not a broken stream."""
+    encoded = json.dumps(body, indent=indent).encode()
+
+    result = await _stream(adapter_type, base_url, encoded, {"content-type": "text/event-stream"})
+
+    assert result.content == "hi"
+    assert result.malformed is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("adapter_type", "base_url", "body"), _JSON_BODIES)
+@pytest.mark.parametrize("content_type", ["application/json", "text/event-stream"])
+@pytest.mark.parametrize("stream", [True, False])
+async def test_a_json_body_that_is_not_an_object_is_flagged(
+    adapter_type: type[BackendAdapter],
+    base_url: str,
+    body: dict[str, Any],
+    content_type: str,
+    stream: bool,
+) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b'"hi"', headers={"content-type": content_type})
+
+    adapter: Any = adapter_type()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url=base_url,
+        api_key="k",
+        stream=stream,
+    )
+    await adapter.aclose()
+
+    assert result.content == "[malformed response]"
+    assert result.malformed is True
+
+
+# What streamGenerateContent returns without alt=sse: a JSON array of chunks.
+_GEMINI_CHUNKS = [
+    {"candidates": [{"content": {"parts": [{"text": "h"}]}}]},
+    {
+        "candidates": [
+            {
+                "content": {"parts": [{"functionCall": {"name": "f", "args": {"x": 1}}}]},
+                "finishReason": "STOP",
+            }
+        ],
+        "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 2},
+    },
+    {"candidates": [{"content": {"parts": [{"text": "i"}]}}]},
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content_type", ["application/json", "text/event-stream"])
+@pytest.mark.parametrize("stream", [True, False])
+async def test_gemini_merges_a_json_array_of_chunks(content_type: str, stream: bool) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=json.dumps(_GEMINI_CHUNKS).encode(), headers={"content-type": content_type}
+        )
+
+    adapter = GeminiAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="https://generativelanguage.googleapis.com/v1beta",
+        api_key="k",
+        stream=stream,
+    )
+    await adapter.aclose()
+
+    assert result.malformed is False
+    assert result.content == "hi"
+    assert [(c.name, json.loads(c.arguments_str)) for c in result.tool_calls] == [("f", {"x": 1})]
+    assert (result.prompt_tokens, result.completion_tokens) == (3, 2)
+    assert result.finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_gemini_reports_an_error_chunk_in_a_json_array() -> None:
+    chunks = [_GEMINI_CHUNKS[0], {"error": {"code": 503, "message": "overloaded"}}]
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=chunks)
+
+    adapter = GeminiAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    result = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url="https://generativelanguage.googleapis.com/v1beta",
+        api_key="k",
+        stream=True,
+    )
+    await adapter.aclose()
+
+    assert result.transport_error_status == 503
+    assert result.content == "[server error 503] overloaded"
 
 
 def test_plugin_guard_raises_on_a_malformed_result() -> None:

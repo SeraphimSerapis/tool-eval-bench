@@ -473,6 +473,8 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
             return graceful
         try:
             data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError(f"expected a JSON object, got {type(data).__name__}")
         except Exception as exc:
             logger.warning("Malformed JSON in response from %s: %s", _redact_url(url), exc)
             return ChatCompletionResult(
@@ -506,9 +508,10 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
         usage: dict[str, Any] = {}
         finish_reason: str | None = None
         stream_error: dict[str, Any] | None = None
-        # A non-blank line arrived, and at least one parsed as an SSE event.
-        saw_body = False
+        # Whether a line parsed as an SSE event, and the lines before the
+        # first one, which may be a plain JSON body.
         saw_event = False
+        unparsed_lines: list[str] = []
 
         async with client.stream(
             "POST", url, json=payload, headers=headers, timeout=timeout
@@ -540,11 +543,13 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                 except (json.JSONDecodeError, TypeError):
                     pass
                 else:
-                    elapsed_ms = (time.perf_counter() - started) * 1000
-                    return self._parse_response(data, elapsed_ms)
+                    if isinstance(data, dict):
+                        elapsed_ms = (time.perf_counter() - started) * 1000
+                        return self._parse_response(data, elapsed_ms)
 
             async for line in response.aiter_lines():
-                saw_body = saw_body or bool(line.strip())
+                if not saw_event:
+                    unparsed_lines.append(line)
                 sse_data = _sse_payload(line)
                 if sse_data is None:
                     continue
@@ -611,10 +616,18 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                     break
 
         elapsed_ms = (time.perf_counter() - started) * 1000
-        if saw_body and not saw_event:
-            # HTTP 200 with a body that is neither JSON nor SSE, such as a
-            # proxy's HTML page. An empty completion would be graded as the
-            # model's answer, so flag it the way the non-streamed path does.
+        if not saw_event:
+            # A server that ignored stream=true can still label a plain JSON
+            # completion as an event stream. Anything else with no SSE event,
+            # an empty body, a comment-only stream, or a proxy's HTML page,
+            # would be graded as an empty answer, so flag it the way the
+            # non-streamed path does.
+            try:
+                data = json.loads("\n".join(unparsed_lines))
+            except json.JSONDecodeError:
+                data = None
+            if isinstance(data, dict):
+                return self._parse_response(data, elapsed_ms)
             logger.warning("Malformed stream from %s: no SSE data event", _redact_url(url))
             return ChatCompletionResult(
                 content="[malformed response]",

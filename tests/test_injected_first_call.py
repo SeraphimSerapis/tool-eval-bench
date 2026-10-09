@@ -411,11 +411,11 @@ def test_variant_retry_after_an_injected_attempt_still_passes(
     assert retried.status == ScenarioStatus.PASS, retried.summary
 
 
-def _read_with_search(trace: Trace, read_turn: int) -> Trace:
-    """Move the read into the search's turn, before the search result could name the file."""
+def _merged_into_first_turn(trace: Trace, later_turn: int) -> Trace:
+    """Move a later turn's calls into the first turn, before the first turn's results arrive."""
     merged = [dict(t) for t in trace]
-    merged[0] = {**merged[0], "calls": [*merged[0]["calls"], *merged[read_turn]["calls"]]}
-    del merged[read_turn]
+    merged[0] = {**merged[0], "calls": [*merged[0]["calls"], *merged[later_turn]["calls"]]}
+    del merged[later_turn]
     return merged
 
 
@@ -424,7 +424,7 @@ def test_an_injected_attempt_does_not_satisfy_a_data_dependency(
     monkeypatch: pytest.MonkeyPatch, scenario_id: str, read_turn: int
 ) -> None:
     """An earlier injected search returned nothing, so it cannot ground the read."""
-    trace = _read_with_search(_TRACES[scenario_id], read_turn)
+    trace = _merged_into_first_turn(_TRACES[scenario_id], read_turn)
     clean = _run(monkeypatch, scenario_id, trace, set())
     extra, position = _with_extra_copy(trace, 0, 0)
 
@@ -432,6 +432,47 @@ def test_an_injected_attempt_does_not_satisfy_a_data_dependency(
 
     assert clean.status != ScenarioStatus.PASS, clean.summary
     assert (*_grade(retried), retried.summary) == (*_grade(clean), clean.summary)
+
+
+# (scenario, consumer turn, producer, consumer) for declared dependencies
+# whose reference trace calls the producer alone in the first turn.
+_DEPENDENCIES = [
+    ("TC-03", 1, "get_contacts", "send_email"),
+    ("TC-08", 1, "get_weather", "set_reminder"),
+]
+
+
+@pytest.mark.parametrize(("scenario_id", "consumer_turn", "producer", "consumer"), _DEPENDENCIES)
+def test_a_consumer_batched_with_an_injected_producer_is_batched(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario_id: str,
+    consumer_turn: int,
+    producer: str,
+    consumer: str,
+) -> None:
+    trace = _merged_into_first_turn(_TRACES[scenario_id], consumer_turn)
+
+    result = _run(monkeypatch, scenario_id, trace, {0})
+
+    assert "injected=true" in result.raw_log
+    assert result.status == ScenarioStatus.FAIL
+    assert result.summary.startswith(f"Batched {consumer} with {producer}"), result.summary
+
+
+@pytest.mark.parametrize(("scenario_id", "consumer_turn", "producer", "consumer"), _DEPENDENCIES)
+def test_a_consumer_after_an_injected_only_producer_never_observed_it(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario_id: str,
+    consumer_turn: int,
+    producer: str,
+    consumer: str,
+) -> None:
+    """The only producer call returned a simulated error, so nothing grounded the consumer."""
+    result = _run(monkeypatch, scenario_id, _TRACES[scenario_id], {0})
+
+    assert "injected=true" in result.raw_log
+    assert result.status == ScenarioStatus.FAIL
+    assert result.summary == f"Called {consumer} before observing a {producer} result."
 
 
 # ---------------------------------------------------------------------------
@@ -530,7 +571,7 @@ def test_tc08_evaluator_does_not_read_a_retried_weather_error() -> None:
 
 def test_tc38_evaluator_does_not_order_by_an_injected_search() -> None:
     """The runner's dependency audit masks this, so check the evaluator on its own."""
-    steps, answer = _steps(_read_with_search(_TRACES["TC-38"], 2))
+    steps, answer = _steps(_merged_into_first_turn(_TRACES["TC-38"], 2))
     tc38 = _scenario("TC-38")
     clean = _replay(tc38, steps, answer)
 
