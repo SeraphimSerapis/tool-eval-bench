@@ -29,7 +29,11 @@ from typing import Any
 
 import httpx
 
-from tool_eval_bench.adapters.http_retry import RetryingHTTPAdapter, stream_error_is_infrastructure
+from tool_eval_bench.adapters.http_retry import (
+    PreEventLines,
+    RetryingHTTPAdapter,
+    stream_error_is_infrastructure,
+)
 from tool_eval_bench.adapters.wire_format import gemini_generate_url
 from tool_eval_bench.domain.adapters import (
     RETRYABLE_STATUS_CODES,
@@ -586,7 +590,7 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
         # Whether a line parsed as an SSE event, and the lines before the
         # first one, which may be a plain JSON body.
         saw_event = False
-        unparsed_lines: list[str] = []
+        unparsed_lines = PreEventLines()
 
         async with client.stream(
             "POST", url, json=payload, headers=headers, timeout=timeout
@@ -624,7 +628,7 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
 
             async for line in response.aiter_lines():
                 if not saw_event:
-                    unparsed_lines.append(line)
+                    unparsed_lines.add(line)
                 sse_data = _sse_payload(line)
                 if sse_data is None:
                     continue
@@ -656,10 +660,7 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
             # an empty body, a comment-only stream, or a proxy's HTML page,
             # would be graded as an empty answer, so flag it the way the
             # non-streamed path does.
-            try:
-                data = json.loads("\n".join(unparsed_lines))
-            except json.JSONDecodeError:
-                data = None
+            data = unparsed_lines.json()
             parsed = self._parse_unstreamed(data, elapsed_ms)
             if parsed is not None:
                 return parsed

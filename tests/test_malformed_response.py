@@ -15,6 +15,7 @@ import pytest
 
 from tool_eval_bench.adapters.anthropic import AnthropicAdapter
 from tool_eval_bench.adapters.gemini import GeminiAdapter
+from tool_eval_bench.adapters.http_retry import MAX_PRE_EVENT_CHARS, PreEventLines
 from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
 from tool_eval_bench.domain.adapters import BackendAdapter, ChatCompletionResult, ProviderToolCall
 from tool_eval_bench.domain.plugin import TransportRejectedError, raise_for_transport_error
@@ -184,6 +185,34 @@ async def test_a_stream_with_no_event_at_all_is_flagged(
     assert result.malformed is True
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("adapter_type", "base_url", "sse", "empty"), _STREAMS)
+@pytest.mark.parametrize("junk_chars", [20, MAX_PRE_EVENT_CHARS + 1])
+async def test_a_stream_after_leading_junk_still_parses(
+    adapter_type: type[BackendAdapter], base_url: str, sse: bytes, empty: bytes, junk_chars: int
+) -> None:
+    """The cap only stops collecting; an SSE event that arrives later is still read."""
+    junk = b"x" * junk_chars + b"\n"
+
+    result = await _stream(
+        adapter_type, base_url, junk + sse, {"content-type": "text/event-stream"}
+    )
+
+    assert result.content == "hi"
+    assert result.malformed is False
+
+
+def test_pre_event_lines_stop_at_the_limit() -> None:
+    lines = PreEventLines(limit=10)
+    lines.add("123456789")  # nine characters plus the newline: exactly at the limit
+    assert not lines.overflowed
+    assert lines.json() == 123456789
+
+    lines.add("")
+    assert lines.overflowed
+    assert lines.json() is None
+
+
 # adapter, base URL, a non-streamed JSON response saying "hi"
 _JSON_BODIES = [
     (OpenAICompatibleAdapter, "http://x:8000", {"choices": [{"message": {"content": "hi"}}]}),
@@ -213,6 +242,21 @@ async def test_a_json_completion_labelled_as_an_event_stream_is_parsed(
 
     assert result.content == "hi"
     assert result.malformed is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("adapter_type", "base_url", "body"), _JSON_BODIES)
+async def test_an_oversized_body_with_no_sse_event_is_flagged(
+    adapter_type: type[BackendAdapter], base_url: str, body: dict[str, Any]
+) -> None:
+    """Past the cap the buffer is dropped, even if the whole body would have parsed."""
+    padded = {**body, "padding": "x" * MAX_PRE_EVENT_CHARS}
+    encoded = json.dumps(padded, indent=2).encode()
+
+    result = await _stream(adapter_type, base_url, encoded, {"content-type": "text/event-stream"})
+
+    assert result.content == "[malformed response]"
+    assert result.malformed is True
 
 
 @pytest.mark.asyncio

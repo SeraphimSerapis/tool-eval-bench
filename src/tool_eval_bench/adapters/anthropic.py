@@ -33,7 +33,11 @@ from typing import Any
 
 import httpx
 
-from tool_eval_bench.adapters.http_retry import RetryingHTTPAdapter, stream_error_is_infrastructure
+from tool_eval_bench.adapters.http_retry import (
+    PreEventLines,
+    RetryingHTTPAdapter,
+    stream_error_is_infrastructure,
+)
 from tool_eval_bench.adapters.wire_format import anthropic_messages_url
 from tool_eval_bench.domain.adapters import (
     RETRYABLE_STATUS_CODES,
@@ -511,7 +515,7 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
         # Whether a line parsed as an SSE event, and the lines before the
         # first one, which may be a plain JSON body.
         saw_event = False
-        unparsed_lines: list[str] = []
+        unparsed_lines = PreEventLines()
 
         async with client.stream(
             "POST", url, json=payload, headers=headers, timeout=timeout
@@ -549,7 +553,7 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
 
             async for line in response.aiter_lines():
                 if not saw_event:
-                    unparsed_lines.append(line)
+                    unparsed_lines.add(line)
                 sse_data = _sse_payload(line)
                 if sse_data is None:
                     continue
@@ -622,10 +626,7 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
             # an empty body, a comment-only stream, or a proxy's HTML page,
             # would be graded as an empty answer, so flag it the way the
             # non-streamed path does.
-            try:
-                data = json.loads("\n".join(unparsed_lines))
-            except json.JSONDecodeError:
-                data = None
+            data = unparsed_lines.json()
             if isinstance(data, dict):
                 return self._parse_response(data, elapsed_ms)
             logger.warning("Malformed stream from %s: no SSE data event", _redact_url(url))
