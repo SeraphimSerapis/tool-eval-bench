@@ -27,7 +27,7 @@ async def test_speculative_measurement_prometheus_and_llamacpp_fallback(
         return next(counters)
 
     async def stream(*args: object, **kwargs: object):
-        return _sample(draft_n=10, draft_n_accepted=6)
+        return _sample()
 
     monkeypatch.setattr(speculative, "scrape_spec_metrics", scrape)
     monkeypatch.setattr(speculative, "_stream_one", stream)
@@ -38,9 +38,14 @@ async def test_speculative_measurement_prometheus_and_llamacpp_fallback(
         prompt_type="code",
         spec_info=speculative.SpecDecodeInfo(has_prometheus=True, method="mtp"),
     )
+    assert sample.acceptance_source == "prometheus"
     assert sample.acceptance_rate == 0.7
     assert sample.acceptance_length == 4.5
 
+    async def stream_with_timings(*args: object, **kwargs: object):
+        return _sample(draft_n=10, draft_n_accepted=6)
+
+    monkeypatch.setattr(speculative, "_stream_one", stream_with_timings)
     monkeypatch.setattr(speculative, "scrape_spec_metrics", lambda *args, **kwargs: None)
     fallback = await speculative.measure_spec_single(
         MagicAsyncClient(),
@@ -49,6 +54,7 @@ async def test_speculative_measurement_prometheus_and_llamacpp_fallback(
         prompt_type="structured",
         spec_info=speculative.SpecDecodeInfo(),
     )
+    assert fallback.acceptance_source == "timings"
     assert fallback.acceptance_rate == 0.6
 
 

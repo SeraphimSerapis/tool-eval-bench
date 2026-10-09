@@ -614,7 +614,10 @@ generation request when the backend exposes counters:
 - `llamacpp:spec_decode_num_draft_tokens_total`
 - `llamacpp:spec_decode_num_drafts_total`
 
-The delta between before/after gives per-request acceptance metrics.
+The delta between before/after gives per-request acceptance metrics when the
+response carries no request-scoped counts. vLLM's per-request field,
+TensorFold's counts, and the llama.cpp and Strata `timings` win over the delta
+when present.
 Each depth × prompt cell is measured `--spec-runs` times (default 3) and the
 counters are pooled, because one request is only a few dozen speculative
 steps; the row shows the pooled α and the per-run range. Requests are greedy
@@ -633,7 +636,8 @@ This requires `concurrency=1` for accurate isolation.
 |---|---|---|---|
 | vLLM | ✅ Always | ✅ Per-request response metrics when enabled, else `/metrics` | Response field or Prometheus counters |
 | SGLang | ✅ Always | `spec-live` only | Direct gauges are server state, not request-local counters |
-| llama.cpp | ✅ Always | ✅ On current builds with `--metrics` | Prometheus counters |
+| llama.cpp | ✅ Always | ✅ Per-request response `timings` | Response timings; the `/metrics` step delta adds τ when no other request drafted |
+| Strata | ✅ Always | ✅ Per-request response `timings`, else `/metrics` | Response timings or Prometheus counters |
 | Other | ✅ Always | ❌ Not available | — |
 
 When acceptance rate metrics are unavailable, the benchmark still reports

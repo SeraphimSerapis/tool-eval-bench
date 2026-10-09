@@ -46,10 +46,10 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > | Backend | Acceptance Rate Source | What You Get |
 > |---|---|---|
 > | **vLLM** | `metrics.speculative_decoding` in each response when the server runs with `--per-request-spec-decode-metrics`; otherwise Prometheus `/metrics` (`spec_decode_*` counter deltas) | α %, acceptance length (τ), draft window, waste ratio; `detailed` mode adds exact per-position acceptance |
-> | **llama.cpp** | Current Prometheus counters, with per-request `timings` fallback | Full counter metrics on current builds; α % and waste ratio from response timings on older builds |
+> | **llama.cpp** | `timings.draft_n` / `draft_n_accepted` in each response | α % and waste ratio, exact per request. With `--metrics` on current builds, τ, draft window, and Steps/s too, whenever no other request drafted during the measurement |
 > | **TensorFold** | MLX `speculative` or CUDA `tensorfold` request-local counts; otherwise `tensorfold:spec_decode_*` counter deltas | α % and waste ratio; step-based estimates stay unavailable without a step counter |
 > | **SGLang** | No request-local counter contract | Effective t/s remains available; use `spec-live` for the server's current acceptance gauges |
-> | **Strata** | Prometheus `vllm:spec_decode_*` counter deltas | α % and waste ratio; no draft-step counter, so τ and draft window stay unknown |
+> | **Strata** | `timings.draft_n` / `draft_n_accepted` in each response; otherwise Prometheus `vllm:spec_decode_*` counter deltas | α % and waste ratio; no draft-step counter, so τ and draft window stay unknown |
 >
 > **vLLM per-request metrics** are optional but worth turning on. Prometheus
 > counters are server-wide, so any concurrent traffic lands in the delta
@@ -65,9 +65,15 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > tool-eval-bench --spec-bench --base-url http://vllm:8080/v1
 > ```
 >
-> For **llama.cpp**, use `--spec-method=mtp` or the matching configured method
-> when a build only exposes per-request timings. Current builds also expose
-> cumulative speculative counters for `spec-live` when metrics are enabled:
+> **llama.cpp and Strata** return each request's draft counts in the response
+> `timings`, so spec-bench reads acceptance from the request, and other traffic
+> on the server cannot skew it. Timings carry no step count. On llama.cpp the
+> `/metrics` step delta fills in τ and draft window only when its draft and
+> accepted deltas equal the request's, which proves no other request drafted
+> in between. llama.cpp leaves `draft_n` out of `timings` when a request drafted
+> nothing, so spec-bench reads a missing field there as zero drafts. Strata also
+> leaves it out when its engine reported no counts, so Strata falls back to the
+> `/metrics` delta. llama.cpp names no method, so pass `--spec-method` to label one:
 > ```bash
 > # llama.cpp with MTP speculative decoding
 > tool-eval-bench --spec-bench --spec-method mtp
@@ -110,7 +116,7 @@ tool-eval-bench spec-live --metrics-url http://vllm:8080/metrics
 The dashboard shows:
 - **Acceptance rate gauge** — color-coded 0–100% bar over a 30-second rolling window of counter deltas, so a workload change shows up within a few server updates. The session average is a running mean that converges and then hides such changes, so it sits in the metrics grid and the exit summary instead. Direct-gauge backends (SGLang) show the gauge value.
 - **Draft efficiency gauge** — τ/window utilization with tuning hints when both values are available
-- **Method badge** — uses explicit configuration or metric labels only. Generic speculative counters report `unknown`; use `--spec-method` to label a known configuration.
+- **Method badge** — uses explicit configuration or metric labels only. Generic speculative counters report `unknown`; use `--spec-method` to label a known configuration. Strata is recognised by its `strata:` metrics and shows MTP, the only way it drafts.
 - **Draft model name** — shown only when an explicit server configuration identifies it. Multiple `/v1/models` entries are not treated as a drafter relationship.
 - **Per-position acceptance bars** — shown for vLLM and current llama.cpp builds when their per-position counters are exported. When vLLM also exports `spec_decode_num_draft_tokens_per_pos`, it is the denominator, which keeps rates exact for proposers whose draft length varies (ngram, suffix)
 - **Throughput sparklines** — the last 60 polls of rolling-window accept rate, gen t/s, accepted t/s, and waste ratio with min/max annotations

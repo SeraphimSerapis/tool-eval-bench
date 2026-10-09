@@ -281,6 +281,17 @@ async def detect_spec_decoding(
                     info.detail = (
                         "TensorFold draft counters available; proposer configuration unknown"
                     )
+                elif re.search(r"^llamacpp:", text, re.MULTILINE):
+                    # llama-server renders these counters on every scrape, with
+                    # or without a draft model, and its responses carry this
+                    # request's draft counts in timings.
+                    info.active = parse_prometheus_spec_metrics(text).draft_tokens > 0
+                    info.has_per_request_timings = True
+                    info.method = "unknown"
+                    info.detail = (
+                        "llama.cpp draft counters available; per-request counts "
+                        "come from response timings (draft_n/draft_n_accepted)"
+                    )
                 elif re.search(r"^strata:", text, re.MULTILINE):
                     # Strata renders these counters on every scrape, drafting or
                     # not. Its drafts come from the model's MTP head.

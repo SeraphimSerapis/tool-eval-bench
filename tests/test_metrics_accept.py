@@ -18,7 +18,7 @@ from tests.test_spec_live_shutdown import install_spec_live_harness
 from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
 from tool_eval_bench.cli import spec_live_display as display
 from tool_eval_bench.runner.spec_detection import detect_spec_decoding, scrape_spec_metrics
-from tool_eval_bench.runner.spec_live import scrape_snapshot
+from tool_eval_bench.runner.spec_live import _parse_snapshot, compute_delta, scrape_snapshot
 from tool_eval_bench.utils import metadata
 from tool_eval_bench.utils.urls import metrics_request_target
 
@@ -153,6 +153,33 @@ async def test_spec_live_snapshot_reads_strata_load_and_counters() -> None:
     assert snap.kv_cache_usage == pytest.approx(0.25)
     assert snap.generation_tokens_total == 300
     assert (snap.draft_tokens, snap.accepted_tokens) == (120, 90)
+
+
+def test_spec_live_labels_strata_counters_as_strata() -> None:
+    previous = _parse_snapshot(_strata_prometheus(drafted=100, accepted=70))
+    current = _parse_snapshot(_strata_prometheus(drafted=120, accepted=85))
+
+    delta = compute_delta(previous, current)
+
+    assert current.spec_backend == "strata"
+    assert current.spec_method == "mtp"
+    assert delta.spec_metrics_source == "strata"
+    assert delta.spec_method == "mtp"
+    assert delta.acceptance_rate == pytest.approx(15 / 20)
+    assert delta.counter_metrics_available is True
+
+
+def test_spec_live_keeps_vllm_label_when_strata_is_only_a_label_value() -> None:
+    text = (
+        'vllm:spec_decode_num_draft_tokens_total{model_name="acme/strata:7b"} 120\n'
+        'vllm:spec_decode_num_accepted_tokens_total{model_name="acme/strata:7b"} 90\n'
+        'proxy:requests_info{model_name="x",note="\\nstrata:live_state"} 1\n'
+    )
+    snap = _parse_snapshot(text)
+
+    assert snap.spec_backend == "vllm"
+    assert snap.spec_method == "unknown"
+    assert compute_delta(snap, snap).spec_metrics_source == "vllm"
 
 
 @pytest.mark.asyncio

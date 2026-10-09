@@ -57,11 +57,17 @@ def write_spec_decode_report(
 
     # Check if acceptance rate is available
     has_ar = any(getattr(s, "acceptance_rate", None) is not None for s in spec_samples)
-    sources: set[str] = {
-        src for s in spec_samples if isinstance(src := getattr(s, "acceptance_source", None), str)
-    }
+    # Same gate as the CLI summary: a server that drafted nothing (llama.cpp
+    # without a draft model reports 0/0 timings) has a source but no rate.
+    sources: set[str] = (
+        {src for s in spec_samples if isinstance(src := getattr(s, "acceptance_source", None), str)}
+        if has_ar
+        else set()
+    )
     if sources == {"response"}:
         md.append("- **Acceptance Source**: per-request response metrics (exact)")
+    elif sources == {"timings"}:
+        md.append("- **Acceptance Source**: per-request response timings (exact)")
     elif sources:
         md.append(f"- **Acceptance Source**: {', '.join(sorted(sources))}")
         if "prometheus" in sources:

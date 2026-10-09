@@ -78,6 +78,37 @@ def test_pooling_weights_by_tokens_not_by_run() -> None:
     assert pooled.acceptance_source == "response"
 
 
+def _stepless(drafted: int, accepted: int) -> SpecDecodeSample:
+    """A timings run whose step count was refused because of cross-traffic."""
+    sample = _run(tg=100, total_ms=1100, drafted=drafted, accepted=accepted, steps=1)
+    sample.num_drafts_delta = None
+    sample.acceptance_length = None
+    return sample
+
+
+def test_pooled_tau_and_window_use_only_runs_with_steps() -> None:
+    stepped = _run(tg=100, total_ms=1100, drafted=100, accepted=60, steps=30)
+    pooled = pool_spec_samples([stepped, _stepless(drafted=200, accepted=150)])
+    assert pooled.acceptance_rate == pytest.approx(210 / 300)  # α still pools every run
+    assert pooled.acceptance_length == pytest.approx(1.0 + 60 / 30)  # not 1 + 210 / 30
+    assert pooled.draft_window == pytest.approx(100 / 30)  # not 150 / 30
+
+
+def test_pooled_tau_is_unknown_when_no_run_has_steps() -> None:
+    pooled = pool_spec_samples([_stepless(100, 60), _stepless(200, 150)])
+    assert pooled.acceptance_rate == pytest.approx(210 / 300)
+    assert pooled.acceptance_length is None
+    assert pooled.draft_window is None
+    assert pooled.verify_steps_per_s is None
+
+
+def test_pooled_window_is_unknown_when_the_stepped_runs_drafted_nothing() -> None:
+    idle = _run(tg=100, total_ms=1100, drafted=0, accepted=0, steps=4)
+    pooled = pool_spec_samples([idle, _stepless(200, 150)])
+    assert pooled.acceptance_length == 1.0
+    assert pooled.draft_window is None
+
+
 def test_pooling_drops_failed_runs_and_keeps_a_lone_failure() -> None:
     ok = _run(tg=100, total_ms=1100, drafted=100, accepted=80, steps=25)
     failed = _run(tg=0, total_ms=0, drafted=0, accepted=0, steps=0, error="boom")
