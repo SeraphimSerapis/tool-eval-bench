@@ -412,8 +412,7 @@ async def test_scored_run_artifacts_never_carry_the_credentialed_url(
     from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
     from tool_eval_bench.storage.reports import MarkdownReporter
 
-    repo = open_repository(db_path=str(tmp_path / "bench.sqlite"))
-    try:
+    with open_repository(db_path=str(tmp_path / "bench.sqlite")) as repo:
         service = BenchmarkService(repo=repo, reporter=MarkdownReporter(root=str(tmp_path)))
         monkeypatch.setattr(service, "_adapter_for", _failing_adapter)
 
@@ -426,8 +425,6 @@ async def test_scored_run_artifacts_never_carry_the_credentialed_url(
         )
 
         stored = repo.get(run_data["run_id"])
-    finally:
-        repo.close()
 
     row = json.dumps(stored)
     report = Path(run_data["report_path"]).read_text(encoding="utf-8")
