@@ -238,6 +238,22 @@ jobs:
         with:
           python-version: '3.13'
 
+      # Anonymous Docker Hub pulls share a rate limit with every other job on the
+      # runner's IP, which failed this job with 429s and auth-endpoint timeouts.
+      # Google's pull-through cache serves the same digests, and the daemon falls
+      # back to Docker Hub on a miss. Merge into any existing daemon.json rather
+      # than replacing the runner's settings. Local builds are unaffected.
+      - name: Pull Docker Hub images through mirror.gcr.io
+        run: |
+          config=/etc/docker/daemon.json
+          current="$(sudo cat "$config" 2>/dev/null || true)"
+          [ -n "$current" ] || current='{}'
+          echo "$current" \
+            | jq '."registry-mirrors" = ["https://mirror.gcr.io"]' \
+            | sudo tee "$config" >/dev/null
+          sudo systemctl restart docker
+          docker info --format '{{json .RegistryConfig.Mirrors}}' | grep -F mirror.gcr.io
+
       # The docker build is the long pole; the wheel build is independent of
       # it. The lock check stays sequential because it pip-installs uv into the
       # same interpreter the wheel build's pip upgrade would touch.
