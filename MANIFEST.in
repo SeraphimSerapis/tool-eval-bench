@@ -1,0 +1,13 @@
+# setuptools-scm adds every tracked file to the sdist. A source build needs only
+# the package, its metadata, and the files pyproject.toml names, so drop the rest.
+# The test suite stays out: it reads the Dockerfile, docs, scripts, and Git
+# history, none of which a source build carries.
+exclude *
+include pyproject.toml README.md LICENSE CHANGELOG.md
+prune .github
+prune changelog.d
+prune compare
+prune docs
+prune examples
+prune scripts
+prune tests

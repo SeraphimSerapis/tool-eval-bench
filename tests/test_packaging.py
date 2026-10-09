@@ -84,3 +84,39 @@ def test_compose_persists_reports_and_sqlite_history() -> None:
         'user: "${LOCAL_UID:?set LOCAL_UID to id -u}:${LOCAL_GID:?set LOCAL_GID to id -g}"'
         in compose
     )
+
+
+def _manifest_commands(command: str) -> set[str]:
+    lines = (ROOT / "MANIFEST.in").read_text(encoding="utf-8").splitlines()
+    return {
+        argument
+        for line in lines
+        if line.split(maxsplit=1)[:1] == [command]
+        for argument in line.split()[1:]
+    }
+
+
+def test_sdist_drops_every_tracked_top_level_directory_but_src() -> None:
+    # setuptools-scm adds every tracked file, so a new top-level directory
+    # ships in the sdist unless MANIFEST.in prunes it.
+    listed = run(  # noqa: S603 -- fixed git executable and repository-local path
+        ["git", "-C", str(ROOT), "ls-files"],
+        check=True,
+        capture_output=True,
+        env=_git_env_without_repository(),
+        text=True,
+        encoding="utf-8",
+    )
+    directories = {path.split("/")[0] for path in listed.stdout.splitlines() if "/" in path}
+
+    assert "src" in directories
+    assert directories - {"src"} == _manifest_commands("prune")
+
+
+def test_sdist_keeps_the_files_a_source_build_reads() -> None:
+    with (ROOT / "pyproject.toml").open("rb") as file:
+        project = tomllib.load(file)["project"]
+
+    assert "*" in _manifest_commands("exclude")
+    assert {"pyproject.toml", project["readme"], "LICENSE"} <= _manifest_commands("include")
+    assert "src" not in _manifest_commands("prune")
