@@ -34,6 +34,7 @@ from rich.console import Console
 from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
 from tool_eval_bench.adapters.wire_format import resolve_wire_format as _resolve_wire_format
 from tool_eval_bench.application.decision_audit import decision_judge_config, with_selected_checks
+from tool_eval_bench.application.run_context import build_run_context, identify_backend
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.cli import model_probe as _model_probe
 from tool_eval_bench.cli.command_registry import PLUGIN_FLAG_STEMS
@@ -123,7 +124,7 @@ from tool_eval_bench.cli.spec_bench import (
 from tool_eval_bench.domain.errors import (
     NO_SERVER,
 )
-from tool_eval_bench.domain.models import ChatMessage
+from tool_eval_bench.domain.models import ChatMessage, RunContext
 from tool_eval_bench.domain.scenarios import (
     AuditPhase,
     Category,
@@ -672,47 +673,40 @@ def _build_run_context(
     base_url: str,
     api_key: str | None,
     extra_params: dict[str, Any],
-) -> Any | None:
+) -> RunContext | None:
     """Collect execution-context metadata for the report.
 
     Built before the mode branches so the throughput and spec-decode paths get
     engine detection too.  Failure is not fatal: the run proceeds with a report
     that lacks the context block.
     """
-    try:
-        from tool_eval_bench.utils.metadata import collect_run_context
-
-        run_context = asyncio.run(
-            collect_run_context(
-                model=model,
-                backend=backend,
-                base_url=base_url,
-                api_key=api_key,
-                temperature=args.temperature,
-                max_turns=args.max_turns,
-                timeout_seconds=args.timeout,
-                seed=args.seed,
-                scenario_selector=_scenario_selector_label(args),
-                trials=max(1, args.trials),
-                parallel=args.parallel,
-                error_rate=args.error_rate,
-                thinking_enabled=not args.no_think,
-                extra_params=extra_params or None,
-                context_pressure=args.context_pressure,
-                system_prompt=getattr(args, "system_prompt", None),
-                label=args.label,
-                probe_engine=not args.no_probe_engine,
-            )
+    run_context = asyncio.run(
+        build_run_context(
+            model=model,
+            backend=backend,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=args.temperature,
+            max_turns=args.max_turns,
+            timeout_seconds=args.timeout,
+            seed=args.seed,
+            scenario_selector=_scenario_selector_label(args),
+            trials=max(1, args.trials),
+            parallel=args.parallel,
+            error_rate=args.error_rate,
+            extra_params=extra_params,
+            context_pressure=args.context_pressure,
+            system_prompt=getattr(args, "system_prompt", None),
+            label=args.label,
+            probe_engine=not args.no_probe_engine,
         )
-        if not args.json and run_context.engine_name:
-            engine_str = run_context.engine_name
-            if run_context.engine_version:
-                engine_str += f" {run_context.engine_version}"
-            console.print(f"  [dim]🔍 Engine: {engine_str}[/]")
-        return run_context
-    except Exception as exc:
-        logger.warning("Failed to build RunContext: %s", exc)
-        return None
+    )
+    if run_context is not None and not args.json and run_context.engine_name:
+        engine_str = run_context.engine_name
+        if run_context.engine_version:
+            engine_str += f" {run_context.engine_version}"
+        console.print(f"  [dim]🔍 Engine: {engine_str}[/]")
+    return run_context
 
 
 def _run_spec_bench_mode(target: _Target) -> bool:
@@ -926,31 +920,25 @@ def main() -> None:
         wire_format = _resolve_wire_format(args.format, base_url)
     except ValueError as exc:
         parser.error(str(exc))
-    if wire_format in ("gemini", "anthropic") and not backend_explicit:
-        # Engine probing (/metrics, /props, /version) is meaningless against a
-        # hosted API, and "vllm" would be a false label on every report.
-        backend = wire_format
-        backend_explicit = True
-
-    # Identify the engine independently of the request format. Local discovery
-    # may have found only an unidentified server. Explicit labels are preserved.
-    if not backend_explicit and base_url and not args.probe and not args.no_probe_engine:
-        from tool_eval_bench.utils.metadata import probe_backend_hint as _probe_backend_hint
-
-        hint = asyncio.run(_probe_backend_hint(base_url, api_key))
-        if hint:
-            backend, backend_label = hint
-            if args.json:
-                sys.stderr.write(
-                    json.dumps({"event": "backend_detected", "backend": backend}) + "\n"
-                )
-                sys.stderr.flush()
-            else:
-                console.print(f"[dim]  Detected backend: {backend_label}[/]")
-
-    # Default backend if still unset (detection above was inconclusive, or skipped)
-    if not backend:
-        backend = "unknown"
+    # An explicit label (flag, env, or provider) is kept, including "unknown".
+    # A label from local discovery is only the fallback for an inconclusive probe.
+    detection = asyncio.run(
+        identify_backend(
+            backend if backend_explicit else None,
+            base_url=base_url,
+            api_key=api_key,
+            wire_format=wire_format,
+            probe=bool(base_url) and not args.probe and not args.no_probe_engine,
+            fallback=backend or "unknown",
+        )
+    )
+    backend = detection.backend
+    if detection.server_name:
+        if args.json:
+            sys.stderr.write(json.dumps({"event": "backend_detected", "backend": backend}) + "\n")
+            sys.stderr.flush()
+        else:
+            console.print(f"[dim]  Detected backend: {detection.server_name}[/]")
 
     # --probe: check if server is reachable and exit
     if args.probe:

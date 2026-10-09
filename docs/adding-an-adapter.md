@@ -36,7 +36,7 @@ counts, and timing. The runner never sees provider JSON, so parsing quirks stop 
 
 4. **Teach the pre-flight paths the format** where they build requests without an adapter:
    `adapters/requests.py` (warm-up body), `cli/model_probe.py` (model listing and auth headers),
-   and the hosted-backend label in `cli/dispatch.py`.
+   and the hosted-backend label in `application/run_context.py`.
 
 Test against a mocked HTTP transport rather than a live endpoint. `tests/test_adapter.py` shows the
 shape: assert on the request body your adapter builds and on how it parses a canned response,

@@ -197,6 +197,14 @@ class TestFingerprintIncludesCodeIdentity:
 
         assert one_slot["config_fingerprint"] != three_slots["config_fingerprint"]
 
+    def test_recorded_thinking_flag_does_not_change_comparison_cohort(self) -> None:
+        # The flag restates extra_params, which the config already fingerprints,
+        # so correcting how it is derived must not re-cohort history.
+        on = _config({"git_sha": "aaaaaaa", "thinking_enabled": True})
+        off = _config({"git_sha": "aaaaaaa", "thinking_enabled": False})
+
+        assert on["config_fingerprint"] == off["config_fingerprint"]
+
 
 class TestSystemPromptProvenance:
     """A custom system prompt is a scoring condition: it must change the cohort."""
