@@ -1449,6 +1449,99 @@ class TestPressureSweepIntegration:
 
         assert "system_prompt" not in persisted[0]["config"]
 
+    def test_sweep_persists_the_run_context(self, tmp_path, monkeypatch) -> None:
+        """A sweep stores the engine facts every other run type stores.
+
+        The fingerprint must not move: a sweep's cohort is its config, as for
+        perf and plugin runs, so sweeps saved before the metadata was recorded
+        still compare with new ones.
+        """
+        import io
+
+        from rich.console import Console
+
+        from tool_eval_bench.adapters import factory
+        from tool_eval_bench.cli.helpers import (
+            metadata_for_storage,
+            parse_sweep_range,
+            with_config_fingerprint,
+        )
+        from tool_eval_bench.cli.pressure import run_pressure_sweep
+        from tool_eval_bench.domain.models import RunContext
+        from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
+        from tool_eval_bench.runner import orchestrator
+
+        scenario = ScenarioDefinition(
+            id="TC-01",
+            title="Test",
+            category=Category.A,
+            user_message="test",
+            description="test",
+            handle_tool_call=lambda s, c: {},
+            evaluate=lambda s: None,
+        )
+        monkeypatch.setattr(
+            orchestrator, "run_all_scenarios", AsyncMock(return_value=self._make_summary(["pass"]))
+        )
+        monkeypatch.setattr(factory, "build_adapter", lambda *a, **k: AsyncMock())
+        context = RunContext(
+            tool_version="test",
+            git_sha=None,
+            hostname="host",
+            platform_info="linux",
+            python_version="3.13",
+            model="test-model",
+            backend="vllm",
+            base_url="http://***:8080",
+            thinking_enabled=False,
+            engine_name="vLLM",
+            engine_version="0.11.0",
+            max_model_len=32768,
+            quantization="fp8",
+            slot_count=4,
+        )
+
+        def sweep(run_context: RunContext | None) -> dict[str, Any]:
+            args = self._make_args(sweep="0.5-1.0", steps=2, context_size=32768)
+            args.system_prompt = None
+            args.output_dir = str(tmp_path)
+            args.timeout = 60.0
+            persisted: list[dict[str, Any]] = []
+            with patch("asyncio.new_event_loop", return_value=_ImmediateEventLoop()):
+                run_pressure_sweep(
+                    Console(file=io.StringIO(), force_terminal=False),
+                    "test-model",
+                    "test-model",
+                    "vllm",
+                    "http://localhost:8080",
+                    None,
+                    args,
+                    parse_sweep_range=parse_sweep_range,
+                    resolve_scenarios=lambda _args: [scenario],
+                    with_config_fingerprint=with_config_fingerprint,
+                    persist_plugin_run=persisted.append,
+                    metadata_for_storage=metadata_for_storage,
+                    label="nightly",
+                    run_context=run_context,
+                )
+            return persisted[0]
+
+        with_context = sweep(context)
+        without_context = sweep(None)
+
+        metadata = with_context["metadata"]
+        assert metadata["engine_name"] == "vLLM"
+        assert metadata["engine_version"] == "0.11.0"
+        assert metadata["max_model_len"] == 32768
+        assert metadata["quantization"] == "fp8"
+        assert metadata["slot_count"] == 4
+        assert metadata["thinking_enabled"] is False
+        assert metadata["label"] == "nightly"
+        assert (
+            with_context["config"]["config_fingerprint"]
+            == without_context["config"]["config_fingerprint"]
+        )
+
     def _make_summary(self, statuses: list[str]) -> Any:
         """Build a mock ModelScoreSummary with given statuses."""
         from tool_eval_bench.domain.scenarios import (

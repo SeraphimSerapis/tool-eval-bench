@@ -16,6 +16,7 @@ from typing import Any
 from rich.console import Console
 
 from tool_eval_bench.application.finalization import finalize_completed_run
+from tool_eval_bench.domain.models import RunContext
 
 
 def _report_then_persist_spec_bench(
@@ -88,6 +89,7 @@ def run_spec_bench(
     with_config_fingerprint: Any = None,
     persist_plugin_run: Any = None,
     label: str | None = None,
+    run_context: RunContext | None = None,
 ) -> list:
     """Run speculative decoding benchmark and display results.
 
@@ -378,7 +380,7 @@ def run_spec_bench(
         from tool_eval_bench.storage.reports import MarkdownReporter
 
         reporter = MarkdownReporter(root=output_dir)
-        metadata = metadata_for_storage(None)
+        metadata = metadata_for_storage(run_context)
         if label:
             metadata["label"] = label
         run_data = {

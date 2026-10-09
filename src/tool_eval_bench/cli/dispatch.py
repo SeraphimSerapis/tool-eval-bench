@@ -742,6 +742,7 @@ def _run_spec_bench_mode(target: _Target) -> bool:
             with_config_fingerprint=_with_config_fingerprint,
             persist_plugin_run=_persist_plugin_run,
             label=args.label,
+            run_context=target.run_context,
         )
         # If --spec-bench is the only mode, or user explicitly skipped tool-eval
         if args.skip_tool_eval or (
