@@ -311,8 +311,10 @@ def test_dispatch_main_skip_and_perf_only_routes(
     }
 
 
-def test_regular_perf_keeps_only_successful_samples(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Failed cells must not change the existing combined-run input contract."""
+def test_regular_perf_hands_failed_cells_to_the_scored_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The service counts failed cells in the stored row; the reports drop them."""
     from tool_eval_bench.cli import dispatch
 
     good = _sample()
@@ -342,7 +344,7 @@ def test_regular_perf_keeps_only_successful_samples(monkeypatch: pytest.MonkeyPa
 
     samples, finished = dispatch._run_throughput_mode(target)
 
-    assert samples == [good]
+    assert samples == [good, failed]
     assert finished is False
 
 

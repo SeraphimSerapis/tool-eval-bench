@@ -406,8 +406,11 @@ JSON_CALLBACKS = {
             {**FULL_RUN_KWARGS, "throughput_samples": "<0 samples>", **PLAIN_CALLBACKS},
             id="plain",
         ),
-        # Current behaviour: the JSON path passes no throughput_samples at all.
-        pytest.param(["--json"], {**FULL_RUN_KWARGS, **JSON_CALLBACKS}, id="json"),
+        pytest.param(
+            ["--json"],
+            {**FULL_RUN_KWARGS, "throughput_samples": "<0 samples>", **JSON_CALLBACKS},
+            id="json",
+        ),
     ],
 )
 def test_scored_run_kwargs_per_call_site(
@@ -512,14 +515,13 @@ def test_scored_run_defaults(cli: Cli) -> None:
 @pytest.mark.parametrize(
     ("mode_flags", "samples"),
     [
-        pytest.param([], "<1 samples>", id="live"),
-        pytest.param(["--no-live"], "<1 samples>", id="plain"),
-        pytest.param(["--json"], None, id="json"),
+        # Failed cells included: the service counts them in the stored row.
+        pytest.param([], "<2 samples>", id="live"),
+        pytest.param(["--no-live"], "<2 samples>", id="plain"),
+        pytest.param(["--json"], "<2 samples>", id="json"),
     ],
 )
-def test_perf_samples_reach_the_scored_run(
-    cli: Cli, mode_flags: list[str], samples: str | None
-) -> None:
+def test_perf_samples_reach_the_scored_run(cli: Cli, mode_flags: list[str], samples: str) -> None:
     cli.record(
         "tool_eval_bench.cli.perf",
         "run_llama_benchy",
@@ -698,10 +700,9 @@ def test_resume_reruns_only_what_needs_it(
         "resume_run_id": "r-1",
         "resume_prior_results": ["TC-01"],
         "resume_scenarios": ["TC-01", "TC-02"],
+        "throughput_samples": "<0 samples>",
         **callbacks,
     }
-    if mode_flags != ["--json"]:
-        expected["throughput_samples"] = "<0 samples>"
     assert cli.run_kwargs == [expected]
     if mode_flags != ["--json"]:
         assert "Resume: preserving 1 completed outcomes in r-1, running 1 remaining" in (
