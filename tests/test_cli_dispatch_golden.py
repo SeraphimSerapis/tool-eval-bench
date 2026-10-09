@@ -991,7 +991,8 @@ def test_perf_is_saved_on_its_own_when_no_scored_run_follows(
     if leaf is not None:
         cli.record(*leaf)
     output_dir = str(cli.tmp_path / "reports")
-    outcome = cli.run(*CONNECTION, "--perf-only", "--json", "--output-dir", output_dir)
+    perf_only_outcome = cli.run(*CONNECTION, "--perf-only", "--json", "--output-dir", output_dir)
+    assert perf_only_outcome.code == 0
     (perf_only,) = _perf_rows(cli)
 
     outcome = cli.run(
