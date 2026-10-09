@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 from tool_eval_bench.utils.metadata import backend_from_response
+from tool_eval_bench.utils.urls import redact_url
 
 # Ports to scan on localhost.  Order matters — first match wins.
 # A listening port is not engine identity. Unknown servers keep a neutral label.
@@ -70,6 +71,7 @@ def discover_server(
     *,
     headless: bool = False,
     console: Any = None,
+    redact: bool = False,
 ) -> tuple[str, str] | None:
     """Probe localhost on common inference server ports.
 
@@ -81,7 +83,9 @@ def discover_server(
     possible, otherwise reported as an unidentified inference server.
 
     When *headless* is True, emits a JSONL event on stderr.
-    Otherwise prints to console.
+    Otherwise prints to console. *redact* (``--redact-url``) masks the host in
+    the console line only: the JSONL event keeps the real URL because a
+    consumer needs it to connect, as ``docs/artifacts.md`` documents.
     """
     result = asyncio.run(_discover_async())
     if result:
@@ -97,8 +101,9 @@ def discover_server(
             sys.stderr.write(json.dumps(msg) + "\n")
             sys.stderr.flush()
         elif console:
+            shown_url = redact_url(base_url) if redact else base_url
             console.print(
-                f"  [bold green]✓[/] Auto-discovered [bold]{server_name}[/] at [cyan]{base_url}[/]"
+                f"  [bold green]✓[/] Auto-discovered [bold]{server_name}[/] at [cyan]{shown_url}[/]"
             )
         return base_url, backend
     return None

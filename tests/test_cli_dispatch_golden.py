@@ -1049,6 +1049,7 @@ def test_spec_live_maps_the_method_and_stops(cli: Cli) -> None:
             "model_name": "m",
             "poll_interval": 1.0,
             "spec_method": "draft_model",
+            "redact_endpoint": False,
         }
     ]
     assert cli.runs == [] and cli.leaves["preflight_model_check"] == []

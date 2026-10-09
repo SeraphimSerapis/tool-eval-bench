@@ -261,6 +261,55 @@ def test_probe_without_redact_url_still_shows_the_host(
     assert "gpu.test" in outcome.out
 
 
+def _discover_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tool_eval_bench.cli import server
+
+    async def discovered() -> tuple[str, str, str, int]:
+        return "http://localhost:8000", "unknown", "inference server", 8000
+
+    monkeypatch.setattr(server, "_discover_async", discovered)
+
+
+@pytest.mark.parametrize("redact", [True, False])
+def test_auto_discovered_url_honours_redact_url_in_the_console(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, redact: bool
+) -> None:
+    _discover_localhost(monkeypatch)
+    flags = ["--redact-url"] if redact else []
+
+    outcome = cli.run("--model", "m", "--scenarios", "TC-01", "--no-live", *flags)
+
+    assert outcome.code == 0, outcome.flat_out
+    assert "Auto-discovered" in outcome.flat_out
+    assert ("localhost:8000" in outcome.out) is not redact
+    if redact:
+        assert "http://***:8000" in outcome.flat_out
+
+
+@pytest.mark.parametrize("redact", [True, False])
+def test_server_discovered_event_keeps_the_url_a_consumer_connects_to(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, redact: bool
+) -> None:
+    # docs/artifacts.md: the event is the documented exception to redaction.
+    _discover_localhost(monkeypatch)
+    flags = ["--redact-url"] if redact else []
+
+    outcome = cli.run("--model", "m", "--scenarios", "TC-01", "--json", *flags)
+
+    assert outcome.code == 0, outcome.flat_err
+    (event,) = [e for e in _events(outcome.err) if e.get("event") == "server_discovered"]
+    assert event["base_url"] == "http://localhost:8000"
+
+
+def test_spec_live_receives_redact_url(cli: Cli) -> None:
+    calls = cli.record("tool_eval_bench.cli.spec_live_display", "run_spec_live", is_async=True)
+
+    outcome = cli.run(*CONNECTION, "--spec-live", "--redact-url")
+
+    assert outcome.code == 0
+    assert calls[0]["redact_endpoint"] is True
+
+
 @pytest.mark.parametrize(
     ("error", "code"),
     [

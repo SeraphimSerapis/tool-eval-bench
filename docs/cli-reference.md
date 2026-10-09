@@ -161,7 +161,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--probe` | Check server readiness and exit |
 | `--dry-run` | List scenarios that would run (no server needed). Reports 0 when the invocation runs no tool-call scenarios, such as `--perf-only` |
 | `--base-url URL` | Server endpoint |
-| `--redact-url` | Mask the server URL in console output, including `--probe` and pre-flight errors, for screenshots and recordings. Reports, stored runs, and `--json` error output are always redacted |
+| `--redact-url` | Mask the server URL in console output, including `--probe`, pre-flight errors, the auto-discovered localhost URL, and the `spec-live` metrics endpoint, for screenshots and recordings. Reports, stored runs, and `--json` error output are always redacted |
 | `--model NAME` | Model name (auto-detected if omitted) |
 | `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp`, `sglang`, `gemini`, `openai`, `anthropic`, `ninfer`, `tensorfold`, `halogen`, `strata`, `tabbyapi`, `unknown`. Auto-detected when omitted; otherwise `unknown`. |
 | `--provider NAME` | Read the endpoint from `TOOL_EVAL_<NAME>_*` env vars |

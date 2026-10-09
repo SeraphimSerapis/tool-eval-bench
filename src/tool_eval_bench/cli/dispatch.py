@@ -1168,7 +1168,7 @@ def _resolve_endpoint(
     if not base_url:
         if not args.json:
             console.print("\n[dim]  No --base-url provided, scanning localhost…[/]")
-        discovered = _discover_server(headless=args.json, console=console)
+        discovered = _discover_server(headless=args.json, console=console, redact=args.redact_url)
         if discovered:
             base_url, discovered_backend = discovered
             if not backend:
@@ -1342,6 +1342,7 @@ def _run_spec_live_mode(target: _Target) -> None:
                 model_name=target.display_name,
                 poll_interval=args.spec_live_interval,
                 spec_method=spec_method_hint,
+                redact_endpoint=args.redact_url,
             )
         )
     except KeyboardInterrupt:
