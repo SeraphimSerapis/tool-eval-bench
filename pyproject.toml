@@ -125,6 +125,7 @@ Homepage = "https://github.com/SeraphimSerapis/tool-eval-bench"
 Repository = "https://github.com/SeraphimSerapis/tool-eval-bench"
 Documentation = "https://github.com/SeraphimSerapis/tool-eval-bench#readme"
 Issues = "https://github.com/SeraphimSerapis/tool-eval-bench/issues"
+Changelog = "https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

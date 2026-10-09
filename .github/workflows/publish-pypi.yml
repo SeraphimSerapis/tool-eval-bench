@@ -1,0 +1,175 @@
+name: Publish to PyPI
+
+# Uploads a tagged release to PyPI or TestPyPI with Trusted Publishing (OIDC).
+# There is no API token anywhere: PyPI trusts this repository, this workflow
+# file, and the named GitHub environment, all configured once by hand as
+# RELEASING.md describes. Until that setup exists, nothing can be uploaded.
+#
+# It never runs on push. A person dispatches it for an existing tag, or, once
+# the repository variable PYPI_PUBLISH_ON_RELEASE is `true`, publishing a GitHub
+# release (the draft release.yml opens) starts it. Without the variable a
+# release event skips every job: referencing the `pypi` environment before it
+# exists would make GitHub create it unprotected.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to publish, with the leading v (e.g. v2.7.0)'
+        required: true
+        type: string
+      target:
+        description: 'Package index to upload to'
+        required: true
+        default: testpypi
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+permissions: {}
+
+# A second trigger for the same tag waits rather than racing the first upload.
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  # Built once here; both publish jobs upload these exact files.
+  build:
+    # Release-triggered publishing is opt-in. When this skips, both publish jobs
+    # skip with it through `needs`.
+    if: github.event_name == 'workflow_dispatch' || vars.PYPI_PUBLISH_ON_RELEASE == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+
+    steps:
+      # The tag arrives as free text on dispatch, so it is checked before it is
+      # used as a ref, and passed through the environment rather than
+      # interpolated into the script.
+      - name: Validate the release tag
+        run: |
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
+            echo "::error::'$RELEASE_TAG' is not a release tag like v2.7.0 or v2.8.0rc1"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          # setuptools-scm reads the tag to set the version. Checking out a tag
+          # fetches it even at depth 1, but full history keeps the version from
+          # depending on that detail. A build that misses the tag reports
+          # 0.0.0+unknown or a dev version, which the check below rejects.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Check the built version matches the tag
+        run: |
+          expected="${RELEASE_TAG#v}"
+          for dist in dist/tool_eval_bench-"$expected"-*.whl dist/tool_eval_bench-"$expected".tar.gz; do
+            test -f "$dist" || { echo "::error::missing $dist"; ls dist; exit 1; }
+          done
+          built=(dist/*)
+          test "${#built[@]}" -eq 2 || { echo "::error::unexpected files in dist/"; ls dist; exit 1; }
+
+      - name: Check the package metadata renders
+        run: python -m twine check --strict dist/*
+
+      - name: Smoke-test the wheel in a clean environment
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/python -m pip install --upgrade pip
+          /tmp/smoke/bin/python -m pip install dist/*.whl
+          /tmp/smoke/bin/python -m pip check
+          /tmp/smoke/bin/tool-eval-bench --version
+          /tmp/smoke/bin/tool-eval-bench --help
+          /tmp/smoke/bin/tool-eval-bench run --help
+          /tmp/smoke/bin/tool-eval-bench plugin --help
+
+      - name: Check the bundled scenarios survive packaging
+        run: |
+          /tmp/smoke/bin/python - <<'PY'
+          from importlib.resources import files
+          from tool_eval_bench.evals.scenarios import (
+              ALL_DISPLAY_DETAILS,
+              ALL_SCENARIOS,
+              ALL_SCENARIOS_WITH_HARDMODE,
+          )
+
+          assert (files("tool_eval_bench.evals.yaml_scenarios") / "weather.yaml").is_file()
+          assert len(ALL_SCENARIOS) == 69, len(ALL_SCENARIOS)
+          assert len(ALL_SCENARIOS_WITH_HARDMODE) == 92, len(ALL_SCENARIOS_WITH_HARDMODE)
+          assert set(ALL_DISPLAY_DETAILS) == {s.id for s in ALL_SCENARIOS_WITH_HARDMODE}
+          print("packaged scenarios verified")
+          PY
+
+      - name: Upload the distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  # Each index has its own environment because PyPI and TestPyPI each bind their
+  # trusted publisher to one environment name. Protect `pypi` with required
+  # reviewers so a dispatch or release still waits for an approval click.
+  publish-pypi:
+    needs: build
+    if: github.event_name == 'release' || inputs.target == 'pypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/tool-eval-bench/
+    permissions:
+      # The OIDC token PyPI exchanges for a short-lived upload credential. Only
+      # this job can mint one.
+      id-token: write
+
+    steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@v7
+        with:
+          name: python-dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  publish-testpypi:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/tool-eval-bench/
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@v7
+        with:
+          name: python-dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/

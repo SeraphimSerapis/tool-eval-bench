@@ -93,12 +93,92 @@ a changelog (upgrade instructions, a known-issues note, coverage gaps recorded
 in step 4), then publish it. Nothing is public until you do. Leave
 `CHANGELOG.md` as the generated record.
 
+Publishing the release does not upload to PyPI unless the repository variable
+`PYPI_PUBLISH_ON_RELEASE` is `true`, which the next section's setup turns on.
+
 To produce the notes locally, or if the workflow is unavailable:
 
 ```bash
 scripts/release_notes.py X.Y.Z > /tmp/notes.md
 gh release create vX.Y.Z --title "vX.Y.Z" --notes-file /tmp/notes.md
 ```
+
+## Publishing to PyPI
+
+`tool-eval-bench` is not on PyPI yet. `.github/workflows/publish-pypi.yml` is
+ready to upload it, but **nothing reaches PyPI until the one-time setup below is
+done and a person triggers the workflow.** It never runs on push. A published
+release triggers an upload only after step 4 below; until then, a release event
+starts the workflow but every job skips.
+
+The workflow uses
+[Trusted Publishing](https://docs.pypi.org/trusted-publishers/): PyPI accepts an
+OIDC token from this repository's workflow instead of an API token, so there is
+no secret to store or rotate. It builds the sdist and wheel once from the tag,
+checks the built version matches the tag, runs `twine check --strict`, smoke
+tests the wheel, and hands those exact files to the publish job. The publish job
+runs in a GitHub environment, so a required reviewer has to approve it.
+
+These are separate builds from the files `release.yml` attaches to the GitHub
+release, so their hashes will not match the PyPI files.
+
+### One-time setup
+
+1. **Create the GitHub environments.** Under Settings, Environments, add
+   `pypi` and `testpypi`. On `pypi`, enable **Required reviewers** and add
+   yourself. Under **Deployment branches and tags**, choose selected branches
+   and tags and allow the `main` branch and `v*` tags: a release event runs on
+   the tag, a manual dispatch runs on the branch it was started from.
+2. **Add a pending publisher on PyPI.** At
+   <https://pypi.org/manage/account/publishing/>, add a GitHub publisher with:
+
+   | Field | Value |
+   | --- | --- |
+   | PyPI project name | `tool-eval-bench` |
+   | Owner | `SeraphimSerapis` |
+   | Repository name | `tool-eval-bench` |
+   | Workflow name | `publish-pypi.yml` |
+   | Environment name | `pypi` |
+
+   A pending publisher does not reserve the name. The first successful upload
+   creates the project, and the publisher becomes a normal one.
+3. **Optionally, do the same on TestPyPI** at
+   <https://test.pypi.org/manage/account/publishing/> with environment name
+   `testpypi`. TestPyPI is a separate account and a separate index.
+4. **Turn on publishing from releases.** Under Settings, Secrets and variables,
+   Actions, Variables, add the repository variable `PYPI_PUBLISH_ON_RELEASE`
+   with the value `true`. Do this only after steps 1 to 3. Without it, the
+   workflow runs only when dispatched by hand.
+
+The workflow file name and environment names are part of the trust
+configuration. Renaming either breaks publishing until PyPI is updated to match.
+
+Do step 1 before steps 2 and 4. If a job references an environment that does
+not exist, GitHub creates it with no protection rules, so an upload could run
+without an approval.
+
+Optional hardening: the workflow publishes whatever a `v*` tag points at, so a
+tag ruleset (Settings, Rules, Rulesets) that restricts who can create, move, or
+delete `v*` tags closes the remaining gap.
+
+### Releasing to PyPI
+
+1. Tag and let `release.yml` open the draft, as above.
+2. Optional dry run: run **Publish to PyPI** from the Actions tab with the tag
+   (for example `v2.8.0`) and target `testpypi`, then check
+   <https://test.pypi.org/project/tool-eval-bench/>. An index never accepts the
+   same version twice, so a TestPyPI upload cannot be retried for that tag.
+3. Publish the GitHub release. With `PYPI_PUBLISH_ON_RELEASE` set to `true`,
+   that starts **Publish to PyPI**, which builds, checks, and then waits for
+   approval on the `pypi` environment. Approve it.
+
+If the release was published before step 4, or the variable is not set, run
+**Publish to PyPI** by hand with the tag and target `pypi` instead. PyPI files
+cannot be replaced: a broken upload needs a new version, or a yank.
+
+Before the first upload, note that the PyPI page renders `README.md` as is.
+Relative links and the screenshot path (`docs/...`) resolve against PyPI, not
+GitHub, so they break there unless the README uses absolute URLs.
 
 ## Post-release
 
