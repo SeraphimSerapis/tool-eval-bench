@@ -369,7 +369,8 @@ def run_pressure_sweep(
     breaking_point: float | None = None
     first_degradation: float | None = None
 
-    for lr in level_results:
+    breaking_index = -1
+    for index, lr in enumerate(level_results):
         ratio = lr["ratio"]
         score = lr["score_pct"]
         excluded = set(lr["excluded_scenarios"])
@@ -397,6 +398,7 @@ def run_pressure_sweep(
         all_pass = all(v == "pass" for v in scored)
         if all_pass:
             breaking_point = ratio
+            breaking_index = index
         if first_degradation is None and not all_pass:
             first_degradation = ratio
 
@@ -404,12 +406,26 @@ def run_pressure_sweep(
     # far is only a lower bound. An observed degradation stays real.
     if interrupted:
         breaking_point = None
+    # The same holds when every level above the breaking point went unscored
+    # or never ran, as after two levels with nothing scored: the endpoint, not
+    # the model, stopped answering, so the model's limit was never observed.
+    higher = level_results[breaking_index + 1 :]
+    breaking_point_lower_bound = (
+        breaking_point is not None
+        and all(lr["score_pct"] is None for lr in higher)
+        and (bool(higher) or len(level_results) < len(levels))
+    )
 
     lines.append("")
     if interrupted:
         lines.append(
             f"  [bold red]Breaking point:[/] withheld (interrupted after "
             f"{len(level_results)} of {len(levels)} levels)"
+        )
+    elif breaking_point is not None and breaking_point_lower_bound:
+        lines.append(
+            f"  [bold yellow]Breaking point:[/] at least {breaking_point:.0%} "
+            "(all scenarios pass; no higher level was scored)"
         )
     elif breaking_point is not None:
         lines.append(f"  [bold green]Breaking point:[/] {breaking_point:.0%} (all scenarios pass)")
@@ -471,6 +487,7 @@ def run_pressure_sweep(
             "interrupted": interrupted,
             "stop_reason": stop_reason,
             "breaking_point": breaking_point,
+            "breaking_point_lower_bound": breaking_point_lower_bound,
             "first_degradation": first_degradation,
             "level_results": level_results,
         },
@@ -491,6 +508,7 @@ def run_pressure_sweep(
             planned_levels=len(levels),
             interrupted=interrupted,
             stop_reason=stop_reason,
+            breaking_point_lower_bound=breaking_point_lower_bound,
         ),
         run_context=run_context,
         output_dir=getattr(args, "output_dir", None),

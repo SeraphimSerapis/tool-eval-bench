@@ -25,6 +25,7 @@
       "interrupted": false,
       "stop_reason": null,
       "breaking_point": 0.5,
+      "breaking_point_lower_bound": false,
       "first_degradation": 0.7,
       "level_results": [
         {

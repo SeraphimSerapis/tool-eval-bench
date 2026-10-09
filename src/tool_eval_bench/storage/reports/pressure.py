@@ -30,6 +30,7 @@ def write_pressure_sweep_report(
     planned_levels: int | None = None,
     interrupted: bool = False,
     stop_reason: str | None = None,
+    breaking_point_lower_bound: bool = False,
 ) -> Path:
     """Write a trace-complete artifact for a context-pressure sweep.
 
@@ -47,6 +48,7 @@ def write_pressure_sweep_report(
         planned_levels=planned_levels,
         interrupted=interrupted,
         stop_reason=stop_reason,
+        breaking_point_lower_bound=breaking_point_lower_bound,
     )
     return write_mode_report(root, run_id, report, run_context)
 
@@ -64,16 +66,23 @@ def pressure_sweep_report(
     planned_levels: int | None = None,
     interrupted: bool = False,
     stop_reason: str | None = None,
+    breaking_point_lower_bound: bool = False,
 ) -> ModeReport:
     """Build the context-pressure sweep report content.
 
     *server* is redacted here, so no caller can put credentials in the report.
+    *breaking_point_lower_bound* marks a breaking point with no scored level
+    above it, so a higher level might still pass.
     """
     if interrupted:
         planned = planned_levels if planned_levels is not None else "?"
         breaking_line = (
             f"- **Breaking Point**: withheld (interrupted after {len(level_results)} "
             f"of {planned} levels)"
+        )
+    elif breaking_point is not None and breaking_point_lower_bound:
+        breaking_line = (
+            f"- **Breaking Point**: at least {breaking_point:.0%} (no higher level was scored)"
         )
     elif breaking_point is not None:
         breaking_line = f"- **Breaking Point**: {breaking_point:.0%}"

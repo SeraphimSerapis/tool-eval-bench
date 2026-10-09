@@ -64,6 +64,11 @@ endpoint rather than the model has stopped answering. When no level was scored
 at all, the breaking point reads `n/a` rather than `none`. A sweep that stops
 early stores the reason as `stop_reason`, and the panel and report show it.
 
+When no level above the breaking point was scored, because those levels were
+all excluded or never ran after such a stop, the model's limit was not
+observed. The breaking point is then only a lower bound: the panel and report
+read "at least 50%", and the stored run sets `breaking_point_lower_bound: true`.
+
 An interrupted sweep (Ctrl-C) is still saved, but the stored run has
 `interrupted: true`, records `planned_levels`, and withholds the breaking point,
 since the levels it never reached could still have passed. The report says
