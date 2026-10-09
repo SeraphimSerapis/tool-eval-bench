@@ -2660,5 +2660,221 @@
       "calls": [],
       "answer": "Rotated your tenant's deployment-key (now version 8) and emailed admin@acme.io that the new key is live."
     }
+  ],
+  "TC-93": [
+    {
+      "calls": [
+        {
+          "name": "get_document_info",
+          "arguments": {
+            "document_id": "DOC-HB-2024"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "extract_text",
+          "arguments": {
+            "document_id": "DOC-HB-2024",
+            "page_index": 16
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Printed page 12 (physical index 16, after five roman-numeral front-matter pages) specifies 24 N·m for the M8 flange bolts, tightened in a star pattern."
+    }
+  ],
+  "TC-94": [
+    {
+      "calls": [
+        {
+          "name": "inspect_file",
+          "arguments": {
+            "path": "/scans/lab_notes.pdf"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "ocr_image",
+          "arguments": {
+            "path": "/scans/lab_notes.pdf"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Despite the .pdf name, lab_notes.pdf is a three-page TIFF, so I ran OCR on it. It records sample ID LN-7731."
+    }
+  ],
+  "TC-95": [
+    {
+      "calls": [
+        {
+          "name": "get_document_info",
+          "arguments": {
+            "document_id": "DOC-INSP-4"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "extract_text",
+          "arguments": {
+            "document_id": "DOC-INSP-4",
+            "pages": [
+              1,
+              2
+            ]
+          }
+        },
+        {
+          "name": "ocr_pages",
+          "arguments": {
+            "document_id": "DOC-INSP-4",
+            "pages": [
+              3,
+              4
+            ]
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Pages 1-2 came from the text layer; only scanned pages 3-4 went through OCR. The inspector was R. Okafor, and the final verdict is REJECTED: weld 3 must be repaired before re-inspection."
+    }
+  ],
+  "TC-96": [
+    {
+      "calls": [
+        {
+          "name": "search_index",
+          "arguments": {
+            "collection": "reactor-logs",
+            "query": "\"reactor reached 900 K\""
+          }
+        },
+        {
+          "name": "list_collection",
+          "arguments": {
+            "collection": "reactor-logs"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "ocr_document",
+          "arguments": {
+            "collection": "reactor-logs",
+            "document": "scan_0412.pdf"
+          }
+        },
+        {
+          "name": "ocr_document",
+          "arguments": {
+            "collection": "reactor-logs",
+            "document": "scan_0419.pdf"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Yes. The index (14 documents) had no match, but two scans were not indexed yet. After OCR, scan_0419.pdf contains the exact phrase on page 2: \"14:05 reactor reached 900 K\". scan_0412.pdf only has a near miss (890 K)."
+    }
+  ],
+  "TC-97": [
+    {
+      "calls": [
+        {
+          "name": "copy_document",
+          "arguments": {
+            "document_id": "DOC-CONTRACT-88"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "find_text",
+          "arguments": {
+            "document_id": "DOC-CONTRACT-88-C1",
+            "text": "CUST-7714"
+          }
+        },
+        {
+          "name": "list_annotations",
+          "arguments": {
+            "document_id": "DOC-CONTRACT-88-C1"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "apply_redaction",
+          "arguments": {
+            "document_id": "DOC-CONTRACT-88-C1",
+            "page": 2,
+            "text": "CUST-7714",
+            "mode": "remove"
+          }
+        },
+        {
+          "name": "delete_annotation",
+          "arguments": {
+            "document_id": "DOC-CONTRACT-88-C1",
+            "annotation_id": "ANN-7"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "find_text",
+          "arguments": {
+            "document_id": "DOC-CONTRACT-88-C1",
+            "text": "CUST-7714"
+          }
+        },
+        {
+          "name": "list_annotations",
+          "arguments": {
+            "document_id": "DOC-CONTRACT-88-C1"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Done. The redacted copy is DOC-CONTRACT-88-C1. I removed CUST-7714 from page 2's content and text layer and deleted annotation ANN-7, which also named it. A fresh search and annotation listing on the copy find no trace. DOC-CONTRACT-88 is unchanged."
+    }
   ]
 }

@@ -27,7 +27,7 @@ class TestHardmodeRegistry:
     """Registry-level checks."""
 
     def test_scenario_count(self):
-        assert len(HARDMODE_SCENARIOS) == 23
+        assert len(HARDMODE_SCENARIOS) == 28
 
     def test_all_category_p(self):
         for s in HARDMODE_SCENARIOS:
@@ -36,7 +36,7 @@ class TestHardmodeRegistry:
     def test_ids_start_at_70(self):
         ids = [int(s.id.split("-")[1]) for s in HARDMODE_SCENARIOS]
         assert min(ids) == 70
-        assert max(ids) == 92
+        assert max(ids) == 97
 
     def test_unique_ids(self):
         ids = [s.id for s in HARDMODE_SCENARIOS]

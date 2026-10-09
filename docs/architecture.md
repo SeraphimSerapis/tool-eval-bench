@@ -124,6 +124,7 @@ different helpers under the same name.
 | `scenarios/hardmode_expanded/` | P (opt-in expansion) | TC-75 – TC-84 |
 | `scenarios/hardmode_transactional/` | P (transactional and reasoning continuity) | TC-85 – TC-89 |
 | `scenarios/hardmode_governance/` | P (policy, authorization, and tenancy) | TC-90 – TC-92 |
+| `scenarios/hardmode_documents/` | P (document pages, formats, and layers) | TC-93 – TC-97 |
 | `packs.py` | none | Held-out YAML scenario-pack loading and content attestations |
 | `yaml_loader.py` | none | The declarative scenario format, used by held-out packs |
 | `yaml_scenarios/` | none | Three worked YAML examples: a single call, a chain, and restraint |
@@ -133,14 +134,14 @@ different helpers under the same name.
 Registries, all built by `evals/scenarios/__init__.py`:
 - `SCENARIOS` — core 15 (used by `--short`)
 - `ALL_SCENARIOS` — full 69
-- `ALL_SCENARIOS_WITH_HARDMODE` — full 92
+- `ALL_SCENARIOS_WITH_HARDMODE` — full 97
 
 The CLI's public scenario selection follows these rules:
 
 - The default pool is the standard 69 scenarios.
-- `--hardmode` adds all 23 Category P scenarios. `--hardmode-only` selects
+- `--hardmode` adds all 28 Category P scenarios. `--hardmode-only` selects
   Category P alone.
-- Explicit IDs resolve against all 92 public scenarios, so
+- Explicit IDs resolve against all 97 public scenarios, so
   `--scenarios TC-85` selects a Hard Mode scenario without `--hardmode`.
   Explicit IDs take precedence over `--short` and `--categories`.
   Unknown IDs fail before model discovery.
@@ -157,7 +158,7 @@ single call, a two-call chain, and restraint.
 
 This exists for [held-out packs](scenario-packs.md), where a third party needs
 private scenarios without shipping executable Python. It is not a migration
-path for the 92 public scenarios: the subset matches tool calls positionally
+path for the 97 public scenarios: the subset matches tool calls positionally
 and cannot inspect tool results, while 77% of the Python evaluators read the
 model's free text and 33% read what a tool returned. `answer_contains` reaches
 the PARTIAL tier, which is the one gap worth closing; the rest of the

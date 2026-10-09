@@ -82,6 +82,7 @@ CAPABILITY_LABELS: dict[str, str] = {
     "authorization": "Acting only when authorized",
     "policy": "Applying retrieved policy to planned actions",
     "tenant-isolation": "Keeping tenants' data and actions separate",
+    "tool-contracts": "Following a tool's documented conventions and limits",
     "safe-mutation": "Safe, verified state changes",
     "compensation": "Undoing completed work after a later step fails",
     "concurrency": "Races, conflicts, and ambiguous commits",
