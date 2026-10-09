@@ -103,6 +103,10 @@ def _tc74_confirmation_details_match(value: str, expected_date: str) -> bool:
     return True
 
 
+# Only a directory lookup can supply an attendee address.
+_TC74_LOOKUPS = frozenset({"get_contacts"})
+
+
 def _tc74_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "create_calendar_event":
         event = {
@@ -243,7 +247,8 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     # from a lookup that finished before the event was created. Checking only
     # Sarah let a guessed mark.chen@company.com through.
     contacts_searched = all(
-        address_observed_before(state, last_event, address) for address in expected_attendees
+        address_observed_before(state, last_event, address, sources=_TC74_LOOKUPS)
+        for address in expected_attendees
     )
 
     score = sum(

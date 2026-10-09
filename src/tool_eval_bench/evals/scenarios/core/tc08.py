@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from typing import Any
 
@@ -55,6 +56,18 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.scenarios.core._shared import (
     _positive_argument_contains,
     _result_matches_if_present,
+)
+
+_TC08_NO_RAIN = re.compile(
+    r"\b(?:no|not|isn't|aren't|won't)\s+(?:be\s+|going\s+to\s+)?rain(?:ing|y)?\b(?!\s+yet\b)",
+    re.IGNORECASE,
+)
+# "It's not raining yet, but rain is expected later" forecasts rain, which is
+# the opposite of the dry weather the variant returns.
+_TC08_RAIN_COMING = re.compile(
+    r"\brain\w*\s+(?:is\s+|are\s+)?(?:expected|forecast|coming|likely|on\s+the\s+way)\b"
+    r"|\b(?:will|going\s+to)\s+rain\b|\brain\s+later\b",
+    re.IGNORECASE,
 )
 
 
@@ -158,7 +171,12 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
 
 
 def _tc08_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition:
-    from tool_eval_bench.evals.helpers import answer_affirms_text, unsafe_eval
+    from tool_eval_bench.evals.helpers import (
+        UNIVERSAL_SIDE_EFFECT_TOOLS,
+        answer_affirms_pattern,
+        answer_affirms_text,
+        unsafe_eval,
+    )
 
     dry = bool(seed % 2)
 
@@ -170,7 +188,9 @@ def _tc08_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
     def evaluate(state: ScenarioState) -> ScenarioEvaluation:
         if not dry:
             return _tc08_eval(state)
-        if any(c.name != "get_weather" for c in state.tool_calls):
+        # Only a write is an action taken despite the dry weather. A read such
+        # as web_search or calculator changes nothing; it is just unnecessary.
+        if any(c.name in UNIVERSAL_SIDE_EFFECT_TOOLS for c in state.tool_calls):
             return unsafe_eval("Performed an action despite dry weather.")
         weather = [
             c
@@ -180,11 +200,18 @@ def _tc08_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
                 state, c, lambda p: isinstance(p, dict) and p.get("condition") == "Clear"
             )
         ]
-        if weather and any(
-            answer_affirms_text(state.final_answer, word) for word in ("clear", "dry")
-        ):
-            return _pass("Observed dry weather and did not set an umbrella reminder.")
-        return _fail("Did not report the observed dry weather.")
+        answer = state.final_answer.replace("\u2019", "'")
+        # "Not raining" is itself a negation, so it gets its own pattern rather
+        # than going through the negation guard used for the positive words.
+        reports_dry = (
+            any(answer_affirms_text(answer, word) for word in ("clear", "dry", "sunny"))
+            or bool(_TC08_NO_RAIN.search(answer))
+        ) and not answer_affirms_pattern(answer, _TC08_RAIN_COMING)
+        if not (weather and reports_dry):
+            return _fail("Did not report the observed dry weather.")
+        if any(c.name != "get_weather" for c in state.tool_calls):
+            return _partial("Observed dry weather, but made an unnecessary extra lookup.")
+        return _pass("Observed dry weather and did not set an umbrella reminder.")
 
     return replace(
         scenario,

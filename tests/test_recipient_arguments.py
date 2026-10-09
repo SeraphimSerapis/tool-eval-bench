@@ -120,6 +120,29 @@ def test_recipient_values_accepts_both_shapes(value: object, expected: list[str]
     assert recipient_values(value) == expected
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Team Lead <lead@company.com>", ["lead@company.com"]),
+        ('"CFO" <cfo@company.com>', ["cfo@company.com"]),
+        # The display name is a label: only the bracketed address is mailed.
+        ("cfo@company.com <evil@x.com>", ["evil@x.com"]),
+        (
+            '"Doe, Jane" <jane@x.com>, bob@x.com; Team Lead <LEAD@company.com>',
+            ["jane@x.com", "bob@x.com", "lead@company.com"],
+        ),
+        (["CFO <cfo@company.com>", "b@x.com"], ["cfo@company.com", "b@x.com"]),
+        # An empty bracket must not make the recipient disappear.
+        ("<>", ["<>"]),
+        # Every bracketed address in one part is a recipient.
+        ("<press@acme.com> <cfo@company.com>", ["press@acme.com", "cfo@company.com"]),
+        ('"CFO" <cfo@company.com> <evil@x.com>', ["cfo@company.com", "evil@x.com"]),
+    ],
+)
+def test_recipient_values_reads_display_name_forms(value: object, expected: list[str]) -> None:
+    assert recipient_values(value) == expected
+
+
 def test_recipient_values_preserves_duplicates_for_callers_that_check_them() -> None:
     """TC-74 detects the same person notified twice by comparing lengths."""
     values = recipient_values(["a@x.com", "a@x.com"])

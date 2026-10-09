@@ -61,9 +61,27 @@ def _tc28_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
-_TC28_CORRECTION = re.compile(
-    r"\b(?:typo|misspell\w*|mis-?typed|spelling|correct\w*|fix\w*|replace\w*|"
-    r"change\w*|should\s+(?:be|read)|instead\s+of|rather\s+than)\b|->|\u2192"
+# A correction frame counts only when localhost is its object. A bare
+# correction word anywhere in the answer let "the typo is the port: it should
+# be 5433" pass, because "localhost" also appeared, described as fine.
+_TC28_CORRECTION_TO_LOCALHOST = re.compile(
+    r"(?:"
+    r"\bshould\s+(?:be|read|say)"
+    r"|\b(?:change|correct|fix|replace|update|rename)\w*(?:\s+[^\s.;!?]+){0,4}?\s+(?:to|with|as)"
+    # "Set the host to localhost" is a fix; "the host is set to localhost" is
+    # a (wrong) description of the file.
+    r"|(?<!is )(?<!'s )(?<!was )(?<!been )\bset(?:\s+[^\s.;!?]+){0,4}?\s+(?:to|as)"
+    r"|\buse|\bmeant(?:\s+to\s+be)?|\b(?:typo|misspell\w*)\s+(?:of|for)"
+    # "The correct value is localhost" names the fix; "the host is correct:
+    # localhost" calls the current value fine.
+    r"|(?<!is )(?<!'s )(?<!was )"
+    r"\b(?:correct(?:ed)?|right|proper|intended|fixed)(?:\s+\w+){0,2}?\s*(?:is|would\s+be|:)"
+    r"|\b(?:fix|correction)(?:\s+\w+){0,2}?\s*:|->|=>|\u2192"
+    r")\s*[`'\"]?localhost\b"
+)
+# "I don't see a typo" carries a correction word, so it used to read as a fix.
+_TC28_TYPO_DENIAL = re.compile(
+    r"\bno\s+typos?\b|(?:n't|\bnot)\s+(?:(?:see|find|spot|notice)\s+)?(?:a|any)\s+typos?\b"
 )
 
 
@@ -83,14 +101,19 @@ def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:
     The typo is 'localhsot' → 'localhost'.
     """
     read_calls = [c for c in state.tool_calls if c.name == "read_file"]
-    answer = state.final_answer.lower()
+    answer = state.final_answer.lower().replace("\u2019", "'")
 
     # The task is to describe the fix, so the corrected value is required.
     # Quoting the misspelling next to it is unambiguous; otherwise the answer
-    # has to frame "localhost" as a correction, in any of the ways a person
-    # would write one. Spotting "localhsot" without the fix is not the fix.
+    # has to frame "localhost" as the target of a correction, in any of the
+    # ways a person would write one, and must not deny that a typo exists.
+    # Spotting "localhsot" without the fix is not the fix.
     found_typo = "localhost" in answer and (
-        "localhsot" in answer or bool(_TC28_CORRECTION.search(answer))
+        "localhsot" in answer
+        or (
+            bool(_TC28_CORRECTION_TO_LOCALHOST.search(answer))
+            and not _TC28_TYPO_DENIAL.search(answer)
+        )
     )
 
     if len(read_calls) == 0:

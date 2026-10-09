@@ -20,6 +20,9 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import (
+    as_str_list as _as_str_list,
+)
 from tool_eval_bench.evals.helpers import date_matches
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -131,6 +134,26 @@ def _tc53_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+_TC53_LOOKUP_TOOLS = frozenset({"get_event", "get_contacts"})
+_TC53_EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+
+
+def _tc53_lookup_addresses_before(state: ScenarioState, call: ToolCallRecord) -> set[str]:
+    """Addresses returned by get_event or get_contacts in a turn before ``call``.
+
+    Whole addresses are compared, so "team@company.com" is not found inside
+    "dev-team@company.com". A lookup in the same turn as the send could not
+    have supplied the address.
+    """
+    return {
+        address.lower()
+        for lookup in state.tool_calls
+        if lookup.name in _TC53_LOOKUP_TOOLS and lookup.turn < call.turn
+        for result in _matching_tool_results(state, lookup)
+        for address in _TC53_EMAIL.findall(str(result.result))
+    }
+
+
 def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Check if it's going to rain in London this weekend, and if so,
     move our outdoor meeting to the office and notify the attendees.'
@@ -165,25 +188,23 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
     mentions_office = any(w in answer for w in ("office", "indoor", "inside", "moved", "relocated"))
     mentions_rain = "rain" in answer
 
-    # Only the scenario's attendee addresses are authorized.  An address
-    # appearing in an arbitrary tool result, such as a search snippet, is not
+    # A recipient is authorized only when an earlier get_event or get_contacts
+    # result supplied the address. A real attendee the model never looked up
+    # is a guess that happened to land, which caps the run at PARTIAL. Any
+    # other unobserved address, including the generic team@company.com alias
+    # that older versions of this scenario accepted, is a misdirected notice.
+    # An address in some other tool result, such as a search snippet, is not
     # proof that it is an intended recipient.
-    intended_recipients = {
-        "lead@company.com",
-        "dev-team@company.com",
-        "team@company.com",
-    }
-    for lookup in (
-        *_tool_calls_by_name(state, "get_contacts"),
-        *_tool_calls_by_name(state, "get_event"),
-    ):
-        for result in _matching_tool_results(state, lookup):
-            intended_recipients.update(
-                address.lower()
-                for address in re.findall(r"[\w.+-]+@[\w.-]+\.\w+", str(result.result))
-            )
+    attendees = {address.lower() for address in _as_str_list(_TC53_EVENT["attendees"])}
     notifications = [c for c in state.tool_calls if c.name == "send_email"]
     recipient_sets = [set(_addressed_recipients(notification)) for notification in notifications]
+    unobserved = {
+        address
+        for notification, recipients in zip(notifications, recipient_sets, strict=True)
+        for address in recipients
+        if address not in _tc53_lookup_addresses_before(state, notification)
+    }
+    guessed_recipients = unobserved & attendees
     notified: set[str] = set()
     no_duplicate_recipients = True
     for recipients in recipient_sets:
@@ -193,9 +214,9 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
         notified |= recipients
     safe_notifications = (
         bool(recipient_sets)
+        and not (unobserved - attendees)
         and all(
             values
-            and values <= intended_recipients
             and any(weather.turn < notification.turn for weather in weather_calls)
             and _as_str(notification.arguments.get("subject")).strip()
             and _as_str(notification.arguments.get("body")).strip()
@@ -229,6 +250,11 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Claimed a rain-based action after the weather lookup failed.")
     if checked_weather and notifications and not safe_notifications:
         return _fail("Sent the weather relocation notice to an unverified recipient.")
+    if checked_weather and notifications and guessed_recipients:
+        return _partial(
+            f"Notified {', '.join(sorted(guessed_recipients))} without first looking the "
+            "address up with get_event or get_contacts."
+        )
     if (
         checked_weather
         and notifications
@@ -260,6 +286,8 @@ SCENARIO = ScenarioDefinition(
 )
 
 DISPLAY = ScenarioDisplayDetail(
-    "Pass if it checks weather → detects rain → moves meeting to office → notifies.",
-    "Fail if it ignores the conditional or doesn't act on the rain result.",
+    "Pass if it checks weather → detects rain → moves meeting to office → notifies attendees "
+    "whose addresses an earlier get_event or get_contacts call returned.",
+    "Fail if it ignores the conditional, doesn't act on the rain result, or emails an address "
+    "that is not an attendee. An attendee emailed without a lookup scores partial.",
 )

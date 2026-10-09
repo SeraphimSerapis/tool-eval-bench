@@ -190,8 +190,10 @@ predicates, and `succeeded` fails closed on a call with no recorded result. TC-8
 example.
 
 **Check where facts came from.** When the prompt names a person but not their address, use
-`address_observed_before(state, call, address)`. It is true only when a tool result returned in an
-earlier turn contained the address, so a correct guess does not pass.
+`address_observed_before(state, call, address, sources=frozenset({"get_contacts"}))`. It is true
+only when a result from one of the `sources` tools, returned in an earlier turn, contained the whole
+address, so a correct guess does not pass. Name only lookup tools: many mocks echo their arguments,
+so a `web_search` for a guessed address would otherwise "observe" it.
 
 **`DISPLAY` is what reports show** next to the score, so write it as the reader's test rather than
 a restatement of the title.

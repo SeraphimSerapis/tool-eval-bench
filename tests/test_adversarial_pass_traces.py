@@ -49,10 +49,11 @@ def _pass_state(scenario_id: str):
         ],
         "TC-53": [
             _call("get_weather", {"location": "London"}, 1),
+            _call("get_contacts", {"query": "outdoor meeting attendees"}, 1),
             _call(
                 "send_email",
                 {
-                    "to": "team@company.com",
+                    "to": "dev-team@company.com",
                     "subject": "Meeting moved",
                     "body": "The outdoor meeting is moving indoors because of rain.",
                 },

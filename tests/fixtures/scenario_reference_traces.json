@@ -1083,6 +1083,12 @@
           "arguments": {
             "location": "London"
           }
+        },
+        {
+          "name": "get_contacts",
+          "arguments": {
+            "query": "outdoor meeting attendees"
+          }
         }
       ],
       "answer": ""

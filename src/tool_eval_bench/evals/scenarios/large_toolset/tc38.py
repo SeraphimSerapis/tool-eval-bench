@@ -51,6 +51,9 @@ from tool_eval_bench.evals.scenarios.large_toolset._shared import (
     _is_engineering_department,
 )
 
+# Either directory can supply the manager address.
+_TC38_LOOKUPS = frozenset({"get_contacts", "get_org_chart"})
+
 
 def _tc38_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "search_files":
@@ -211,7 +214,9 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
         email = cast(ToolCallRecord, email)
         if not (search.turn < read.turn < email.turn and manager.turn < email.turn):
             return _partial("Completed the calls, but violated a data dependency before email.")
-        if not _address_observed_before(state, email, "jordan.park@company.com"):
+        if not _address_observed_before(
+            state, email, "jordan.park@company.com", sources=_TC38_LOOKUPS
+        ):
             return _partial("Emailed the manager at an address no earlier lookup returned.")
         return _pass("Completed the full 4-step chain correctly from 52 tools.")
     if steps == 4 and domain_calls:

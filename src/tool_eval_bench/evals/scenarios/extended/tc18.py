@@ -43,6 +43,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
+from tool_eval_bench.evals.helpers import recipient_values as _recipient_values
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
@@ -52,6 +53,9 @@ from tool_eval_bench.evals.scenarios.extended._shared import (
     _result_matches_if_present,
     _status_is_success,
 )
+
+# Only a directory lookup can supply the recipient address.
+_TC18_LOOKUPS = frozenset({"get_contacts"})
 
 
 def _tc18_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -125,7 +129,7 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
     emails = [
         c
         for c in email_calls
-        if _normalize(_as_str(c.arguments.get("to"))) == "hans.mueller@firma.de"
+        if _recipient_values(c.arguments.get("to")) == ["hans.mueller@firma.de"]
     ]
     usable_translations = [
         call
@@ -162,7 +166,9 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _partial(
                 "Translated and emailed the message but issued duplicate or incorrect email mutations."
             )
-        if not _address_observed_before(state, went_through(emails)[0], "hans.mueller@firma.de"):
+        if not _address_observed_before(
+            state, went_through(emails)[0], "hans.mueller@firma.de", sources=_TC18_LOOKUPS
+        ):
             return _partial(
                 "Translated and emailed Hans at an address it never looked up with get_contacts."
             )
