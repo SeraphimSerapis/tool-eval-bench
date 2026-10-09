@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from tool_eval_bench.domain.scenarios import (
     Category,
@@ -21,6 +21,7 @@ from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import first_counted as _first_counted
 from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
@@ -83,7 +84,10 @@ def _tc37_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
 
     if used_weather and total_calls == 1:
-        weather_call = next(c for c in state.tool_calls if c.name == "get_weather")
+        weather_call = cast(
+            ToolCallRecord,
+            _first_counted(state.tool_calls, lambda c: c.name == "get_weather"),
+        )
         if not _result_is_usable_if_present(state, weather_call):
             return _partial("get_weather returned an error, so Berlin weather cannot be confirmed.")
         # Verify the model surfaced actual weather data (temp 8 or condition).

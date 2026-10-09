@@ -367,3 +367,76 @@ def test_tc85_ambiguous_timeout_still_fires_after_an_injected_first_create() -> 
     result = variant.handle_tool_call(state, attempt)
 
     assert result.get("ambiguous") is True
+
+
+def test_tc85_ambiguous_timeout_still_fires_after_a_same_turn_injected_create() -> None:
+    tc85 = _scenario("TC-85")
+    assert tc85.variant_factory is not None
+    variant = tc85.variant_factory(tc85, 2)
+    state = ScenarioState()
+    state.tool_calls.append(_record("create_credential", injected=True, turn=1))
+    attempt = _record("create_credential", turn=1)
+    state.tool_calls.append(attempt)
+
+    result = variant.handle_tool_call(state, attempt)
+
+    assert result.get("ambiguous") is True
+
+
+# ---------------------------------------------------------------------------
+# TC-61 handlers ignore injected submissions and polls
+# ---------------------------------------------------------------------------
+
+_SUBMIT = 'analyze_data(source="transactions_2026")'
+_POLL = 'check_job_status("job_tc61_9f3a")'
+
+
+def _run_code(code: str, *, turn: int, injected: bool = False) -> ToolCallRecord:
+    return ToolCallRecord(
+        id=f"run-{turn}-{injected}",
+        name="run_code",
+        raw_arguments=json.dumps({"code": code}),
+        arguments={"code": code},
+        turn=turn,
+        injected=injected,
+    )
+
+
+def test_tc61_resubmission_after_an_injected_submission_gets_a_job() -> None:
+    tc61 = _scenario("TC-61")
+    state = ScenarioState()
+    state.tool_calls.append(_run_code(_SUBMIT, turn=1, injected=True))
+    resubmit = _run_code(_SUBMIT, turn=2)
+    state.tool_calls.append(resubmit)
+
+    result = tc61.handle_tool_call(state, resubmit)
+
+    assert result["status"] == "pending"
+    assert result["job_id"] == "job_tc61_9f3a"
+
+
+def test_tc61_a_real_second_submission_is_still_refused() -> None:
+    tc61 = _scenario("TC-61")
+    state = ScenarioState()
+    state.tool_calls.append(_run_code(_SUBMIT, turn=1))
+    resubmit = _run_code(_SUBMIT, turn=2)
+    state.tool_calls.append(resubmit)
+
+    result = tc61.handle_tool_call(state, resubmit)
+
+    assert "already submitted" in result["error"]
+
+
+def test_tc61_slow_job_variant_does_not_count_injected_polls() -> None:
+    # Variant mode 1 (seed % 3 == 1) needs three polls before the job completes.
+    tc61 = _scenario("TC-61")
+    assert tc61.variant_factory is not None
+    variant = tc61.variant_factory(tc61, 1)
+    state = ScenarioState()
+    state.tool_calls.append(_run_code(_SUBMIT, turn=1))
+    state.tool_calls.append(_run_code(_POLL, turn=2, injected=True))
+    state.tool_calls.append(_run_code(_POLL, turn=3, injected=True))
+    poll = _run_code(_POLL, turn=4)
+    state.tool_calls.append(poll)
+
+    assert variant.handle_tool_call(state, poll)["status"] == "pending"

@@ -347,6 +347,9 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
         reasoning_parts: list[str] = []
         stream_usage: dict = {}  # usage from final chunk
         finish_reason: str | None = None
+        # A non-blank line arrived, and at least one parsed as an SSE event.
+        saw_body = False
+        saw_event = False
 
         async with client.stream(
             "POST", url, json=payload, headers=headers, timeout=timeout
@@ -413,11 +416,13 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     return self._parse_response(data, elapsed_ms)
 
             async for line in response.aiter_lines():
+                saw_body = saw_body or bool(line.strip())
                 if line.startswith("error:"):
                     # llama-server builds before ggml-org/llama.cpp#16109
                     # (September 2025) report a mid-stream failure in a
                     # non-standard ``error:`` field instead of ``data:``.
                     chunk: dict[str, Any] = {"error": _parse_sse_error_field(line[6:])}
+                    saw_event = True
                 else:
                     if not line.startswith("data:"):
                         continue
@@ -425,6 +430,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     if payload_str.startswith(" "):
                         payload_str = payload_str[1:]
                     if payload_str.strip() == "[DONE]":
+                        saw_event = True
                         break
 
                     try:
@@ -433,6 +439,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                         continue
                     if not isinstance(chunk, dict):
                         continue
+                    saw_event = True
 
                 error = completion_stream_error(chunk)
                 if error is not None:
@@ -549,6 +556,18 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     message_extra_content = delta["extra_content"]
 
         elapsed_ms = (time.perf_counter() - started) * 1000
+        if saw_body and not saw_event:
+            # HTTP 200 with a body that is neither JSON nor SSE, such as a
+            # proxy's HTML page. An empty completion would be graded as the
+            # model's answer, so flag it the way the non-streamed path does.
+            logger.warning("Malformed stream from %s: no SSE data event", _redact_url(url))
+            return ChatCompletionResult(
+                content="[malformed response]",
+                tool_calls=[],
+                raw_response={},
+                elapsed_ms=elapsed_ms,
+                malformed=True,
+            )
         content = "".join(content_parts)
         reasoning_str = "".join(reasoning_parts) or None
 

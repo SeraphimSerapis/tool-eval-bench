@@ -784,7 +784,11 @@ async def run_scenario(
                 "requested; backend enforcement is not independently measured"
             )
         for producer, consumer in scenario.dependencies:
-            sources = [call for call in state.tool_calls if call.name == producer]
+            # An injected producer answered with a simulated error, so it
+            # supplied nothing a later consumer could depend on.
+            sources = [
+                call for call in state.tool_calls if call.name == producer and not call.injected
+            ]
             targets = [call for call in state.tool_calls if call.name == consumer]
             if (
                 any(not any(source.turn < target.turn for source in sources) for target in targets)

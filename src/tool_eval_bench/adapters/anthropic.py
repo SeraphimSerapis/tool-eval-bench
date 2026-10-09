@@ -506,6 +506,9 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
         usage: dict[str, Any] = {}
         finish_reason: str | None = None
         stream_error: dict[str, Any] | None = None
+        # A non-blank line arrived, and at least one parsed as an SSE event.
+        saw_body = False
+        saw_event = False
 
         async with client.stream(
             "POST", url, json=payload, headers=headers, timeout=timeout
@@ -541,10 +544,13 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                     return self._parse_response(data, elapsed_ms)
 
             async for line in response.aiter_lines():
+                saw_body = saw_body or bool(line.strip())
                 sse_data = _sse_payload(line)
                 if sse_data is None:
                     continue
                 chunk_str = sse_data.strip()
+                if chunk_str == "[DONE]":
+                    saw_event = True
                 if not chunk_str or chunk_str == "[DONE]":
                     continue
                 try:
@@ -553,6 +559,7 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                     continue
                 if not isinstance(event, dict):
                     continue
+                saw_event = True
 
                 kind = event.get("type")
                 if kind == "message_start":
@@ -604,6 +611,18 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                     break
 
         elapsed_ms = (time.perf_counter() - started) * 1000
+        if saw_body and not saw_event:
+            # HTTP 200 with a body that is neither JSON nor SSE, such as a
+            # proxy's HTML page. An empty completion would be graded as the
+            # model's answer, so flag it the way the non-streamed path does.
+            logger.warning("Malformed stream from %s: no SSE data event", _redact_url(url))
+            return ChatCompletionResult(
+                content="[malformed response]",
+                tool_calls=[],
+                raw_response={},
+                elapsed_ms=elapsed_ms,
+                malformed=True,
+            )
         # A tool_use block whose stop event never arrived still has its
         # fragments; parse what there is rather than sending an empty input.
         for index, fragments in partial_json.items():

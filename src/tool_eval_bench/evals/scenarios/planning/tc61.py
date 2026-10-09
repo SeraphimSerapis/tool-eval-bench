@@ -111,7 +111,11 @@ def _tc61_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     previous = [
         c
         for c in state.tool_calls
-        if c is not call and c.turn < call.turn and c.name == "run_code" and _is_submission(c)
+        if c is not call
+        and c.turn < call.turn
+        and c.name == "run_code"
+        and not c.injected
+        and _is_submission(c)
     ]
     if _is_submission(call):
         if previous:
@@ -266,7 +270,7 @@ def _tc61_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
     def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         result = _tc61_handle(state, call)
         if result.get("status") == "complete":
-            polls = sum(_is_genuine_poll(c) for c in state.tool_calls)
+            polls = sum(_is_genuine_poll(c) for c in state.tool_calls if not c.injected)
             if mode == 1 and polls < 3:
                 return _noise(
                     {

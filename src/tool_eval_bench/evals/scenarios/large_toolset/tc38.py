@@ -25,6 +25,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import first_counted as _first_counted
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
@@ -186,26 +187,15 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
 
     if steps == 4 and not domain_calls:
-        search = next((c for c in state.tool_calls if c.name == "search_files"), None)
-        read = next((c for c in state.tool_calls if c.name == "read_file"), None)
-        manager = next(
-            (
-                c
-                for c in state.tool_calls
-                if c.name == "get_contacts" and _includes_text(c.arguments.get("query"), "manager")
+        search = _first_counted(state.tool_calls, lambda c: c.name == "search_files")
+        read = _first_counted(state.tool_calls, lambda c: c.name == "read_file")
+        manager = _first_counted(
+            state.tool_calls,
+            lambda c: (
+                c.name == "get_contacts" and _includes_text(c.arguments.get("query"), "manager")
             ),
-            None,
-        )
-        manager = manager or next(
-            (
-                c
-                for c in state.tool_calls
-                if c.name == "get_org_chart"
-                and _is_engineering_department(c.arguments.get("department"))
-            ),
-            None,
-        )
-        email = next((c for c in state.tool_calls if c.name == "send_email"), None)
+        ) or _first_counted(state.tool_calls, _is_manager_verification)
+        email = _first_counted(state.tool_calls, lambda c: c.name == "send_email")
         if any(call is None for call in (search, read, manager, email)):
             return _partial("Completed the calls, but one dependency record was incomplete.")
         search = cast(ToolCallRecord, search)

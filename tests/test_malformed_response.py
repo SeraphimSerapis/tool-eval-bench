@@ -75,6 +75,103 @@ async def test_a_parseable_body_is_not_flagged() -> None:
     assert result.malformed is False
 
 
+# ---------------------------------------------------------------------------
+# Streamed bodies
+# ---------------------------------------------------------------------------
+
+# adapter, base URL, a valid SSE body saying "hi", a valid SSE body with no output
+_STREAMS = [
+    (
+        OpenAICompatibleAdapter,
+        "http://x:8000",
+        b'data: {"choices": [{"delta": {"content": "hi"}}]}\n\ndata: [DONE]\n\n',
+        b"data: [DONE]\n\n",
+    ),
+    (
+        AnthropicAdapter,
+        "https://opencode.ai/zen/go/v1/messages",
+        b"event: content_block_delta\n"
+        b'data: {"type": "content_block_delta", "index": 0,'
+        b' "delta": {"type": "text_delta", "text": "hi"}}\n\n',
+        b'event: message_stop\ndata: {"type": "message_stop"}\n\n',
+    ),
+    (
+        GeminiAdapter,
+        "https://generativelanguage.googleapis.com/v1beta",
+        b'data: {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}\n\n',
+        b'data: {"candidates": []}\n\n',
+    ),
+]
+
+
+async def _stream(
+    adapter_type: type[BackendAdapter],
+    base_url: str,
+    body: bytes,
+    headers: dict[str, str] | None = None,
+) -> ChatCompletionResult:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers=headers)
+
+    adapter: Any = adapter_type()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    result: ChatCompletionResult = await adapter.chat_completion(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        base_url=base_url,
+        api_key="k",
+        stream=True,
+    )
+    await adapter.aclose()
+    return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("adapter_type", "base_url", "sse", "empty"), _STREAMS)
+@pytest.mark.parametrize("content_type", ["text/html", "text/event-stream"])
+async def test_streamed_body_with_no_sse_event_is_flagged(
+    adapter_type: type[BackendAdapter], base_url: str, sse: bytes, empty: bytes, content_type: str
+) -> None:
+    result = await _stream(
+        adapter_type,
+        base_url,
+        b"<html>\n<body>proxy</body>\n</html>",
+        {"content-type": content_type},
+    )
+
+    assert result.content == "[malformed response]"
+    assert result.malformed is True
+    assert result.transport_error_status is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("adapter_type", "base_url", "sse", "empty"), _STREAMS)
+@pytest.mark.parametrize("headers", [None, {"content-type": "text/plain"}])
+async def test_sse_without_an_event_stream_content_type_is_accepted(
+    adapter_type: type[BackendAdapter],
+    base_url: str,
+    sse: bytes,
+    empty: bytes,
+    headers: dict[str, str] | None,
+) -> None:
+    result = await _stream(adapter_type, base_url, sse, headers)
+
+    assert result.content == "hi"
+    assert result.malformed is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("adapter_type", "base_url", "sse", "empty"), _STREAMS)
+async def test_an_empty_but_valid_stream_is_not_flagged(
+    adapter_type: type[BackendAdapter], base_url: str, sse: bytes, empty: bytes
+) -> None:
+    for body in (empty, b""):
+        result = await _stream(adapter_type, base_url, body, {"content-type": "text/event-stream"})
+
+        assert result.content == ""
+        assert result.malformed is False
+
+
 def test_plugin_guard_raises_on_a_malformed_result() -> None:
     with pytest.raises(TransportRejectedError, match="not valid JSON"):
         raise_for_transport_error(_MALFORMED)
