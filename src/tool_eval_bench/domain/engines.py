@@ -56,8 +56,8 @@ class EngineProfile:
     ``SpecDecodeInfo.has_per_request_timings``, which ``speculative`` and
     ``throughput`` also read as "llama.cpp detected" for their log hints."""
     fixed_spec_method: str | None = None
-    """The only proposer the engine has. Spec detection reports it over any
-    method label; spec-live uses it only when no label names a method."""
+    """The only proposer the engine has. Spec detection and spec-live report it
+    when no explicit method label names one; a label wins."""
     spec_counter_detail: str | None = None
     """``SpecDecodeInfo.detail`` when this engine's spec counters are found."""
     reports_request_context_window: bool = False

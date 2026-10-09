@@ -402,12 +402,11 @@ _SPEC_CASES: list[tuple[str, str | None, str, tuple[bool, str, bool, bool, str]]
         (True, "mtp", True, False, STRATA_DETAIL),
     ),
     (
-        # Current behaviour (finding 3): detection forces mtp over an explicit
-        # method label, while spec-live lets the label win.
+        # An explicit method label wins over Strata's fixed mtp, as in spec-live.
         "strata-method-label",
         _counters("vllm:", 10, 5, 4, labels='spec_method="eagle"') + STRATA_NS,
         "auto",
-        (True, "mtp", True, False, STRATA_DETAIL),
+        (True, "eagle", True, False, STRATA_DETAIL),
     ),
     (
         # Halogen exports llama.cpp metrics, and detection reads them as such.
@@ -498,7 +497,7 @@ _LIVE_CASES: list[tuple[str, str, tuple[str, str, str]]] = [
     ("strata", _counters("vllm:", 10, 5, 4) + STRATA_NS, ("strata", "strata", "mtp")),
     ("strata-zero", _counters("vllm:", 0) + STRATA_NS, ("strata", "strata", "mtp")),
     (
-        # Current behaviour (finding 3): spec-live lets a label win over mtp.
+        # An explicit method label wins over Strata's fixed mtp, as in detection.
         "strata-method-label",
         _counters("vllm:", 10, 5, 4, labels='spec_method="eagle"') + STRATA_NS,
         ("strata", "strata", "eagle"),
@@ -558,6 +557,34 @@ def test_spec_live_labels(text: str, expected: tuple[str, str, str]) -> None:
 
     assert (snap.spec_backend, delta.spec_metrics_source, delta.spec_method) == expected
     assert snap.spec_method == delta.spec_method
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("text", "method"),
+    [
+        pytest.param(_counters("vllm:", 10, 5, 4) + STRATA_NS, "mtp", id="strata"),
+        pytest.param(
+            _counters("vllm:", 10, 5, 4, labels='spec_method="eagle"') + STRATA_NS,
+            "eagle",
+            id="strata-label",
+        ),
+        pytest.param(
+            _counters("tensorfold:", 10, 5, 4, labels='spec_method="eagle3"'),
+            "eagle3",
+            id="tensorfold-label",
+        ),
+        pytest.param(
+            _counters("llamacpp:", 10, 5, 4, labels='spec_method="draft"'),
+            "draft_model",
+            id="llamacpp-label",
+        ),
+    ],
+)
+async def test_detection_and_spec_live_agree_on_method(text: str, method: str) -> None:
+    info = await detect_spec_decoding(_MetricsOnly(text), "http://test")  # type: ignore[arg-type]
+
+    assert info.method == _parse_snapshot(text).spec_method == method
 
 
 # ---------------------------------------------------------------------------
