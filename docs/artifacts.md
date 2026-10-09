@@ -61,8 +61,8 @@ against each other within a cohort: the same settings and the same
 Deployment facts are deliberately not part of the cohort, since models on one
 server often differ in quantization or context window. Runs from different
 cohorts stay visible but receive no misleading global rank. `export` restarts
-the CSV `rank` column per cohort and includes the `cohort` label and
-`cohort_fingerprint` in both CSV and JSON.
+the CSV `rank` column per cohort. CSV adds `cohort` and `cohort_fingerprint`
+columns; JSON carries the same values as `cohort_label` and `cohort_fingerprint`.
 
 The version is derived from git by setuptools-scm, so a build installed straight
 from a commit reports which commit it came from rather than claiming to be the
@@ -103,8 +103,9 @@ The label is an annotation only. It does not affect the run ID or the
 Every scenario result is checkpointed to SQLite the moment it finishes, so a
 Ctrl-C or a dropped connection midway through the suite costs you only the
 scenario in flight. Interrupted scored runs appear in `tool-eval-bench history`
-marked `interrupted — resumable`. Throughput, context-pressure, and spec-bench
-runs cannot be resumed, so `history` shows their bare status.
+marked `interrupted — resumable`. Throughput, context-pressure, spec-bench, and
+plugin (GSM8K, MMLU, IFEval) runs cannot be resumed, so `history` shows their
+bare status.
 
 `tool-eval-bench resume RUN_ID` replays the finished work from the checkpoints
 and runs only the missing, corrupt, or infrastructure-failed scenarios. Pass,

@@ -336,7 +336,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     # ─── MODEL CARDS ───
     runner_label, winner_label = card_labels(tie)
     lines.append(f"""    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-      <!-- Runner-up -->
+      <!-- Second card -->
       <div class="light-card rounded-3xl p-5 border border-slate-300">
         <div class="flex items-start justify-between">
           <div>
@@ -354,7 +354,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
           <div class="px-2.5 py-0.5 bg-rose-200 text-rose-800 rounded-full text-[10px] font-bold">{esc(r["rating"])}</div>
         </div>
       </div>
-      <!-- Winner -->
+      <!-- First card -->
       <div class="light-card rounded-3xl p-5 border border-emerald-300 shadow-sm ring-1 ring-emerald-200">
         <div class="flex items-start justify-between">
           <div>
@@ -468,7 +468,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     # Safety row
     ws = str(wc_cnt)
     rs = f"{rc_cnt} critical" if rc_cnt > 0 else str(rc_cnt)
-    sv = "Winner" if wc_cnt <= rc_cnt else rl
+    sv = "Even" if wc_cnt == rc_cnt else (wl if wc_cnt < rc_cnt else rl)
     wsc = "text-emerald-600" if wc_cnt == 0 else "text-rose-600"
     rsc = "text-rose-600" if rc_cnt > 0 else "text-emerald-600"
     lines.append(f"""            <tr>
@@ -695,7 +695,8 @@ def generate_html(da: dict, db: dict, out: str) -> None:
         '      <div class="section-header font-semibold mb-3 px-1 flex items-center gap-x-2 text-slate-800">'
     )
     lines.append('        <i class="fa-solid fa-balance-scale text-slate-600"></i>')
-    lines.append("        <span>Winner vs. Runner-up: Strengths &amp; Weaknesses</span>")
+    sw_title = f"{wl} vs. {rl}" if tie else "Winner vs. Runner-up"
+    lines.append(f"        <span>{sw_title}: Strengths &amp; Weaknesses</span>")
     lines.append("      </div>")
     lines.append('      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">')
 
@@ -742,11 +743,10 @@ def generate_html(da: dict, db: dict, out: str) -> None:
         lines.append(
             """            <li class="flex items-start gap-x-2"><i class="fa-solid fa-minus text-amber-600 mt-1 text-xs"></i> <span>No significant weaknesses identified \u2014 wins or ties in every category.</span></li>"""
         )
-    if r_fails:
-        if len(r_fails) > len(w_fails):
-            lines.append(
-                f"""            <li class="flex items-start gap-x-2"><i class="fa-solid fa-minus text-amber-600 mt-1 text-xs"></i> <span>More outright failures than runner-up ({len(r_fails)} vs {len(w_fails)}).</span></li>"""
-            )
+    if len(w_fails) > len(r_fails):
+        lines.append(
+            f"""            <li class="flex items-start gap-x-2"><i class="fa-solid fa-minus text-amber-600 mt-1 text-xs"></i> <span>More outright failures than {rl} ({len(w_fails)} vs {len(r_fails)}).</span></li>"""
+        )
     lines.append("          </ul>")
     lines.append("        </div>")
     lines.append("      </div>")

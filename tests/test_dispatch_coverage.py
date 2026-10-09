@@ -519,6 +519,8 @@ def test_dispatch_live_and_plain_multitrial(
     monkeypatch.setattr(dispatch, "BenchmarkDisplay", Display)
     monkeypatch.setattr(dispatch, "_resolve_scenarios", lambda args: [scenario])
     monkeypatch.setattr(dispatch, "_print_diff", lambda *args: None)
+    attestation = [{"name": "pack", "scenario_count": 1, "content_hash": "abc"}]
+    monkeypatch.setattr(dispatch, "_pack_attestations", lambda args: attestation)
     summary_calls: list[dict] = []
 
     def write_summary_report(*args, **kwargs):
@@ -534,6 +536,7 @@ def test_dispatch_live_and_plain_multitrial(
     # Both runners tell the summary writer which scenarios are held out.
     assert len(summary_calls) == 2
     assert all(call["scenario_metadata"]["TC-X"].held_out for call in summary_calls)
+    assert all(call["scenario_packs"] == attestation for call in summary_calls)
 
 
 def test_probe_server_success_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:

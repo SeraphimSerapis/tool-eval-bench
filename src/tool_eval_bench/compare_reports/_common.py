@@ -20,17 +20,18 @@ def _tv(field, txt, strip_bt=False):
     """Read the value cell of a two-column ``| Field | value |`` table row.
 
     The report writer bolds only some labels (``**Label**``), so the bold is
-    optional, and the value stops at the next pipe.  Writers HTML-escape cell
-    text, so the value is unescaped here and re-escaped by ``esc`` on output.
+    optional, and the value stops at the next unescaped pipe.  Writers escape
+    pipes in code spans as ``\\|`` and HTML-escape other cell text, so both are
+    undone here; ``esc`` re-escapes the value on output.
     """
     m = re.search(
-        rf"(?:^|\|)[ \t]*(?:\*\*)?{re.escape(field)}(?:\*\*)?[ \t]*\|[ \t]*([^|\n]*?)[ \t]*(?:\||$)",
+        rf"(?:^|\|)[ \t]*(?:\*\*)?{re.escape(field)}(?:\*\*)?[ \t]*\|[ \t]*((?:\\\||[^|\n])*?)[ \t]*(?:\||$)",
         txt,
         re.M,
     )
     if not m:
         return ""
-    v = html.unescape(m.group(1).strip())
+    v = html.unescape(m.group(1).strip().replace("\\|", "|"))
     return v.strip("`") if strip_bt else v
 
 

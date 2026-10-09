@@ -134,6 +134,7 @@ class MarkdownReporter:
         report_paths: list[str] | None = None,
         run_context: RunContext | None = None,
         scenario_metadata: Mapping[str, ScenarioReportMetadata] | None = None,
+        scenario_packs: list[dict[str, Any]] | None = None,
     ) -> Path:
         """Write a consolidated cross-trial summary report."""
         return write_summary_report(
@@ -146,6 +147,7 @@ class MarkdownReporter:
             report_paths=report_paths,
             run_context=run_context,
             scenario_metadata=scenario_metadata,
+            scenario_packs=scenario_packs,
         )
 
     def write_spec_decode_report(

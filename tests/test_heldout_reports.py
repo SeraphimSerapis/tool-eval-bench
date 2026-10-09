@@ -93,6 +93,14 @@ def test_summary_withholds_held_out_summaries_in_never_passes_and_partials(
         assert "public failure reason" in md
 
 
+def test_summary_held_out_note_attests_to_the_pack(tmp_path: Path) -> None:
+    held = _held_out_scenario(tmp_path)
+    summaries = [score_results([_pack_result(held, ScenarioStatus.FAIL)], [held])] * 2
+    pack = {"name": "private", "scenario_count": 1, "content_hash": "sha256:abc"}
+    md = _summary_md(tmp_path, summaries, scenario_report_metadata([held]), scenario_packs=[pack])
+    assert "> - pack `private`: 1 scenario(s), content hash `sha256:abc`" in md
+
+
 def test_summary_without_metadata_still_prints_summaries(tmp_path: Path) -> None:
     held = _held_out_scenario(tmp_path)
     summaries = [score_results([_pack_result(held, ScenarioStatus.FAIL)], [held])] * 2

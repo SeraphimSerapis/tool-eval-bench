@@ -89,11 +89,18 @@ def parse_summary(fp: str) -> dict:
     d["consistent_partials"] = _parse_consistent_partials(txt)
 
     # Deployability
-    d["quality"] = int(_r(r"\*\*Quality\*\*.*?\|\s*(\d+)\s*/\s*100", txt) or 0)
-    d["responsiveness"] = int(_r(r"\*\*Responsiveness\*\*.*?\|\s*(\d+)\s*/\s*100", txt) or 0)
-    d["deployability"] = int(_r(r"\*\*Deployability\*\*.*?\|\s*\*\*(\d+)\*\*", txt) or 0)
+    # The writer does not bold these labels; older reports did.
+    d["quality"] = int(
+        _r(r"^\|\s*(?:\*\*)?Quality(?:\*\*)?\s*\|\s*(\d+)\s*/\s*100", txt, fl=re.M) or 0
+    )
+    d["responsiveness"] = int(
+        _r(r"^\|\s*(?:\*\*)?Responsiveness(?:\*\*)?\s*\|\s*(\d+)\s*/\s*100", txt, fl=re.M) or 0
+    )
+    d["deployability"] = int(
+        _r(r"^\|\s*(?:\*\*)?Deployability(?:\*\*)?\s*\|\s*\*\*(\d+)\*\*", txt, fl=re.M) or 0
+    )
     d["alpha"] = _r(r"\|\s*Deployability\s*\|.*?\(\u03b1=([\d.]+)\)", txt)
-    d["median_turn"] = _r(r"\*\*Median Turn\*\*.*?\|\s*([\d.]+)s", txt)
+    d["median_turn"] = _r(r"^\|\s*(?:\*\*)?Median Turn(?:\*\*)?\s*\|\s*([\d.]+)s", txt, fl=re.M)
 
     return d
 
@@ -426,7 +433,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     r_rating_display = r_rating_parts[0].strip() if r_rating_parts else r["rating"]
 
     lines.append(f"""    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-      <!-- Runner-up -->
+      <!-- Second card -->
       <div class="light-card rounded-3xl p-5 border border-slate-300">
         <div class="flex items-start justify-between">
           <div>
@@ -444,7 +451,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
           <div class="px-2.5 py-0.5 bg-rose-200 text-rose-800 rounded-full text-[10px] font-bold">{esc(r_rating_display)}</div>
         </div>
       </div>
-      <!-- Winner -->
+      <!-- First card -->
       <div class="light-card rounded-3xl p-5 border border-emerald-300 shadow-sm ring-1 ring-emerald-200">
         <div class="flex items-start justify-between">
           <div>
@@ -581,7 +588,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     # Safety row
     w_safe_str = str(w_safe_max)
     r_safe_str = f"{r_safe_max} max" if r_safe_max > 0 else str(r_safe_max)
-    sv = "Winner" if w_safe_max <= r_safe_max else rl
+    sv = "Even" if w_safe_max == r_safe_max else (wl if w_safe_max < r_safe_max else rl)
     wsc = "text-emerald-600" if w_safe_max == 0 else "text-rose-600"
     rsc = "text-rose-600" if r_safe_max > 0 else "text-emerald-600"
     lines.append(f"""            <tr>
@@ -839,7 +846,8 @@ def generate_html(da: dict, db: dict, out: str) -> None:
         '      <div class="section-header font-semibold mb-3 px-1 flex items-center gap-x-2 text-slate-800">'
     )
     lines.append('        <i class="fa-solid fa-balance-scale text-slate-600"></i>')
-    lines.append("        <span>Winner vs. Runner-up: Strengths &amp; Weaknesses</span>")
+    sw_title = f"{wl} vs. {rl}" if tie else "Winner vs. Runner-up"
+    lines.append(f"        <span>{sw_title}: Strengths &amp; Weaknesses</span>")
     lines.append("      </div>")
     lines.append('      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">')
 

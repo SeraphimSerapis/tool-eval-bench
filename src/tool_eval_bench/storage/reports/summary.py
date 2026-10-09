@@ -52,13 +52,15 @@ def write_summary_report(
     report_paths: list[str] | None = None,
     run_context: RunContext | None = None,
     scenario_metadata: Mapping[str, ScenarioReportMetadata] | None = None,
+    scenario_packs: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Write a consolidated cross-trial summary report.
 
     This synthesizes N individual trial reports into a single document with
     reliability metrics, per-scenario variance, and failure analysis.
     Scenarios marked held-out in ``scenario_metadata`` keep their statuses but
-    have their summaries withheld, as in the per-trial report.
+    have their summaries withheld, as in the per-trial report, and the
+    held-out note attests to ``scenario_packs``.
     """
     held_out = held_out_ids(scenario_metadata)
     now = datetime.now(timezone.utc)
@@ -316,7 +318,7 @@ def write_summary_report(
 
     shown_held_out = sorted(held_out & set(scenario_ids))
     if shown_held_out:
-        md.extend(_render_held_out_note(shown_held_out, None))
+        md.extend(_render_held_out_note(shown_held_out, scenario_packs))
         md.append("")
 
     # ── Deployability (from first summary with data) ──

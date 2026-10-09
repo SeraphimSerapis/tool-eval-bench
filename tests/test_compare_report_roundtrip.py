@@ -6,6 +6,8 @@ guard against drift is to feed them real writer output.
 
 from __future__ import annotations
 
+import dataclasses
+import re
 from pathlib import Path
 
 import pytest
@@ -111,6 +113,8 @@ def test_tool_eval_html_names_differing_settings_and_does_not_crown_a_tie(
     assert "clear winner" not in html
     assert "tie at 100 / 100" in html
     assert "Tie:" in html
+    assert "<span>a vs. b: Strengths &amp; Weaknesses</span>" in html
+    assert ">Even</span>" in html  # safety row
     _assert_cards_not_crowned(html)
 
 
@@ -129,7 +133,18 @@ def test_tool_eval_html_keeps_the_winner_when_scores_differ(tmp_path: Path) -> N
     assert 'class="winner-badge"' in html
     assert "(Winner)</th>" in html
     assert ">TIED</div>" not in html
+    assert "Winner vs. Runner-up" in html
+    # b has the extra failure, so it is not listed among a's weaknesses.
+    assert "More outright failures" not in html
     assert "Both runs used the same backend vllm, temperature 0.0, thinking disabled." in html
+
+
+def test_pipe_in_model_id_survives_the_round_trip(tmp_path: Path) -> None:
+    path = _scenario_report(tmp_path, "run-a", _ctx("a/model|x"), _result(ScenarioStatus.PASS))
+    assert "| Model (API) | `a/model\\|x` |" in Path(path).read_text(encoding="utf-8")
+    assert cmp_tool_eval.parse_md(path)["model_api"] == "a/model|x"
+    summary = _summary_report(tmp_path / "s", 2, "a/model|x")
+    assert cmp_summary.parse_summary(summary)["model_api"] == "a/model|x"
 
 
 def test_config_note_claims_nothing_when_no_settings_were_recorded() -> None:
@@ -151,7 +166,14 @@ def test_deployability_label_uses_the_reported_alpha(a: str, b: str, label: str)
 
 def _summary_report(tmp_path: Path, trials: int, model: str = "M") -> str:
     # Trial 1 is clean; every later trial has a safety warning.
-    summaries = [score_results([_result(ScenarioStatus.PASS)], [SCENARIO])] + [
+    first = dataclasses.replace(
+        score_results([_result(ScenarioStatus.PASS)], [SCENARIO]),
+        responsiveness=64,
+        deployability=89,
+        alpha=0.7,
+        median_turn_ms=2300.0,
+    )
+    summaries = [first] + [
         score_results([_result(ScenarioStatus.FAIL, "sent money")], [SCENARIO])
         for _ in range(trials - 1)
     ]
@@ -169,7 +191,7 @@ def _summary_report(tmp_path: Path, trials: int, model: str = "M") -> str:
         "per_category": {},
     }
     path = MarkdownReporter(root=str(tmp_path)).write_summary_report(
-        f"run-{model}", model, summaries, agg, run_context=_ctx(model)
+        "run-" + re.sub(r"\W", "_", model), model, summaries, agg, run_context=_ctx(model)
     )
     return str(path)
 
@@ -183,6 +205,15 @@ def test_summary_parser_reads_pass_at_k_for_any_trial_count(tmp_path: Path, tria
     # Every trial's count, not only trial 1's; the aggregate dash is skipped.
     assert parsed["safety_warnings"] == [0] + [1] * (trials - 1)
     assert parsed["temperature"] == "0.0"
+
+
+def test_summary_parser_reads_the_unbolded_deployability_rows(tmp_path: Path) -> None:
+    parsed = cmp_summary.parse_summary(_summary_report(tmp_path, 2))
+    assert parsed["quality"] == 100
+    assert parsed["responsiveness"] == 64
+    assert parsed["deployability"] == 89
+    assert parsed["alpha"] == "0.7"
+    assert parsed["median_turn"] == "2.3"
 
 
 def test_summary_html_labels_reliability_with_the_trial_count(tmp_path: Path) -> None:
@@ -199,6 +230,7 @@ def test_summary_html_labels_reliability_with_the_trial_count(tmp_path: Path) ->
 
 
 def _assert_cards_not_crowned(html: str) -> None:
+    assert "Winner" not in re.sub(r'class="[^"]*"', "", html)
     assert html.count(">TIED</div>") == 2
     assert ">WINNER<" not in html and ">RUNNER-UP<" not in html
     assert 'class="winner-badge"' not in html

@@ -1845,6 +1845,7 @@ def _run_with_live_display(
                     report_paths=report_paths,
                     run_context=run_context,
                     scenario_metadata=scenario_report_metadata(scenarios),
+                    scenario_packs=_pack_attestations(args),
                 )
                 console.print(f"  [dim]📊 Summary report: {summary_path}[/]\n")
 
@@ -2042,6 +2043,7 @@ def _run_plain(
                 report_paths=rp_list,
                 run_context=run_context,
                 scenario_metadata=scenario_report_metadata(resolved),
+                scenario_packs=_pack_attestations(args),
             )
             console.print(f"  [dim]📊 Summary report: {summary_path}[/]\n")
 

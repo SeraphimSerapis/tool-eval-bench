@@ -110,6 +110,15 @@ def _markdown_table_cell(value: object) -> str:
     return html.escape(text, quote=False).replace("|", "&#124;").replace("\\n", "<br>")
 
 
+def _code_cell(value: object) -> str:
+    """Render an identifier as a code span inside a Markdown table cell.
+
+    GFM splits table cells on ``|`` even inside code spans, unless the pipe is
+    written ``\\|``. Entities would show literally inside the code span.
+    """
+    return "`" + str(value).replace("|", "\\|") + "`"
+
+
 def _markdown_heading(value: object) -> str:
     """Render an untrusted heading label without allowing extra Markdown lines."""
     return html.escape(safe_label_text(str(value)), quote=False).replace("\\n", " ")
@@ -170,11 +179,11 @@ def _render_run_parameters(ctx: RunContext) -> list[str]:
         [
             f"| Backend | {ctx.backend} |",
             f"| Server | `{ctx.base_url}` |",
-            f"| Model (API) | `{ctx.model}` |",
+            f"| Model (API) | {_code_cell(ctx.model)} |",
         ]
     )
     if ctx.server_model_root and ctx.server_model_root != ctx.model:
-        md.append(f"| Model (Root) | `{ctx.server_model_root}` |")
+        md.append(f"| Model (Root) | {_code_cell(ctx.server_model_root)} |")
     md.extend(
         [
             f"| Temperature | {ctx.temperature} |",
