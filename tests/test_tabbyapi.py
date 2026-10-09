@@ -229,8 +229,9 @@ async def test_loaded_model_id_is_recorded_verbatim(monkeypatch):
 async def test_unusable_loaded_card_keeps_the_list_entry(monkeypatch, loaded):
     install_tabby(monkeypatch, auth=True, models=CATALOG, loaded=loaded)
 
-    info = await metadata._probe_engine("http://test", KEY, "tabbyapi")
-    assert info["server_model_id"] == "Llama-3.1-70B-Instruct-AWQ"
+    # The entry matching the requested model, not the AWQ checkpoint listed first.
+    info = await metadata._probe_engine("http://test", KEY, "tabbyapi", model=MODEL_ID)
+    assert info["server_model_id"] == MODEL_ID
     assert info["slot_count"] == 4  # /props is still read
 
 

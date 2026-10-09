@@ -111,6 +111,8 @@ class TestGitShaProvenance:
             calls.append(args)
             if args == ("rev-parse", "--is-inside-work-tree"):
                 return b"true\n"
+            if args == ("rev-parse", "--show-toplevel"):
+                return f"{_source_root()}\n".encode()
             if args == ("rev-parse", "--short", "HEAD"):
                 return b"abc1234\n"
             if args == ("status", "--porcelain"):
@@ -128,6 +130,8 @@ class TestGitShaProvenance:
             args = tuple(cmd[3:])
             if args == ("rev-parse", "--is-inside-work-tree"):
                 return b"true\n"
+            if args == ("rev-parse", "--show-toplevel"):
+                return f"{_source_root()}\n".encode()
             if args == ("rev-parse", "--short", "HEAD"):
                 return b"abc1234\n"
             return b""
@@ -158,6 +162,100 @@ class TestGitShaProvenance:
         monkeypatch.setattr(metadata_module.subprocess, "check_output", fake_check_output)
 
         assert _git_sha() is None
+
+
+class TestGitShaEnclosingRepository:
+    """Only this project's own checkout may lend the run its SHA.
+
+    Each case lays out a package copy inside a temporary repository and points
+    the module's ``__file__`` at it, which is all ``_git_sha`` anchors on.
+    """
+
+    @staticmethod
+    def _repo(root: Path, *, ignore: str = "") -> None:
+        env = _git_env_without_repository()
+        root.mkdir(parents=True, exist_ok=True)
+        if ignore:
+            (root / ".gitignore").write_text(ignore, encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True, env=env)
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True, env=env)
+        subprocess.run(
+            ["git", "-c", "user.email=a@b", "-c", "user.name=t", "commit", "-q", "-m", "init"],
+            cwd=root,
+            check=True,
+            env=env,
+        )
+
+    @staticmethod
+    def _package_at(package_dir: Path) -> Path:
+        """Create ``<package_dir>/utils/metadata.py`` and return that path."""
+        module = package_dir / "utils" / "metadata.py"
+        module.parent.mkdir(parents=True)
+        module.write_text("", encoding="utf-8")
+        return module
+
+    @staticmethod
+    def _pyproject(root: Path, name: str) -> None:
+        (root / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n', encoding="utf-8")
+
+    def _sha_for(self, module: Path, monkeypatch: pytest.MonkeyPatch) -> str | None:
+        import tool_eval_bench.utils.metadata as metadata_module
+
+        monkeypatch.setattr(metadata_module, "__file__", str(module))
+        return _git_sha()
+
+    def test_wheel_in_an_ignored_venv_of_another_repo_has_no_sha(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        userproj = tmp_path / "userproj"
+        site = userproj / ".venv" / "lib" / "python3" / "site-packages"
+        module = self._package_at(site / "tool_eval_bench")
+        self._pyproject(userproj, "userproj")
+        self._repo(userproj, ignore=".venv/\n")
+
+        assert self._sha_for(module, monkeypatch) is None
+
+    def test_own_checkout_reports_its_sha(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checkout = tmp_path / "checkout"
+        module = self._package_at(checkout / "src" / "tool_eval_bench")
+        self._pyproject(checkout, "tool-eval-bench")
+        self._repo(checkout)
+        head = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=checkout,
+                env=_git_env_without_repository(),
+            )
+            .decode()
+            .strip()
+        )
+
+        assert self._sha_for(module, monkeypatch) == head
+
+    def test_src_layout_of_another_project_has_no_sha(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checkout = tmp_path / "other"
+        module = self._package_at(checkout / "src" / "tool_eval_bench")
+        self._pyproject(checkout, "someone-elses-fork")
+        self._repo(checkout)
+
+        assert self._sha_for(module, monkeypatch) is None
+
+    def test_copy_vendored_below_the_top_level_has_no_sha(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The copy is tracked and even carries this project's pyproject, but
+        # the work tree it belongs to is the enclosing repository.
+        userproj = tmp_path / "userproj"
+        vendored = userproj / "vendor" / "tool-eval-bench"
+        module = self._package_at(vendored / "src" / "tool_eval_bench")
+        self._pyproject(vendored, "tool-eval-bench")
+        self._repo(userproj)
+
+        assert self._sha_for(module, monkeypatch) is None
 
 
 class TestFingerprintIncludesCodeIdentity:
@@ -235,6 +333,8 @@ class TestSystemPromptProvenance:
         )
         persisted = dict(config)
         fingerprint = persisted.pop("config_fingerprint")
+        # Persisted for resume, but endpoint_id is what tells endpoints apart.
+        persisted.pop("base_url")
         # The payload shape predates this PR; rebuilt here so a future change to
         # the default config has to be deliberate.
         expected = build_config_fingerprint(
@@ -336,6 +436,13 @@ class TestSystemPromptResumeCompatibility:
         assert "system_prompt" in self._mismatches(
             {"system_prompt": "Be terse."}, system_prompt=None
         )
+
+
+def _source_root() -> Path:
+    """The checkout that holds the imported package under ``src/``."""
+    import tool_eval_bench
+
+    return Path(tool_eval_bench.__file__).resolve().parent.parent.parent
 
 
 def _package_head() -> str | None:

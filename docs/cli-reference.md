@@ -251,8 +251,9 @@ tool-eval-bench --gsm8k-only --mmlu-only --ifeval-only
 ```
 
 GSM8K, MMLU, and IFEval datasets are downloaded from HuggingFace on first use
-and cached locally. Install `pip install tool-eval-bench[hf]` for rate-limit-free
-downloads. The needle benchmark generates its own cases and downloads nothing.
+and cached locally. Install the `[hf]` extra for rate-limit-free downloads
+(`pip install -e '.[hf]'` in a checkout, or the `uv tool install` form in
+[benchmarks.md](benchmarks.md)). The needle benchmark generates its own cases and downloads nothing.
 
 | Flag | Purpose |
 |------|---------|

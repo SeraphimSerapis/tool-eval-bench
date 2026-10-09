@@ -159,7 +159,7 @@ class TestPersistedMetadataRedaction:
     async def test_endpoint_host_is_not_persisted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import tool_eval_bench.utils.metadata as metadata_module
 
-        async def no_probe(base_url: str, api_key: str | None) -> dict:
+        async def no_probe(base_url: str, api_key: str | None, *, model: str | None) -> dict:
             return {}
 
         monkeypatch.setattr(metadata_module, "_probe_models", no_probe)
@@ -182,7 +182,7 @@ class TestPersistedMetadataRedaction:
     ) -> None:
         import tool_eval_bench.utils.metadata as metadata_module
 
-        async def no_probe(base_url: str, api_key: str | None) -> dict:
+        async def no_probe(base_url: str, api_key: str | None, *, model: str | None) -> dict:
             return {}
 
         monkeypatch.setattr(metadata_module, "_probe_models", no_probe)

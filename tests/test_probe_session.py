@@ -347,3 +347,44 @@ async def test_a_real_socket_that_never_answers_costs_two_timeouts(monkeypatch) 
     assert connections == 2
     # The full ladder is six rungs, 1.5 s at this timeout.
     assert elapsed < 1.5
+
+
+async def test_a_body_that_trickles_forever_is_cut_off_at_the_probe_timeout(monkeypatch) -> None:
+    """httpx's timeout is per read, so a server that drips its body never trips it.
+
+    Each probe must still end at ``_PROBE_TIMEOUT``, and the overrun must count
+    as a timeout: two in a row end the ladder, not one (the builtin
+    ``TimeoutError`` is an ``OSError``, which would latch it at once).
+    """
+    connections = 0
+
+    async def drip(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        nonlocal connections
+        connections += 1
+        try:
+            await reader.readuntil(b"\r\n\r\n")
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n")
+            while True:
+                writer.write(b"x")
+                await writer.drain()
+                await asyncio.sleep(0.02)
+        except (ConnectionError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(drip, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr(metadata, "_PROBE_TIMEOUT", 0.25)
+    try:
+        started = time.monotonic()
+        # The outer bound only keeps a regression from hanging the suite.
+        hint = await asyncio.wait_for(metadata.probe_backend_hint(f"http://127.0.0.1:{port}"), 10)
+        elapsed = time.monotonic() - started
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert hint is None
+    assert connections == 2
+    assert elapsed < 1.5

@@ -315,7 +315,15 @@ async def _detect_from_model_listing(
             model_list = data.get("data", [])
             if not model_list:
                 return None
-            target = next((m for m in model_list if m.get("id") == model), model_list[0])
+            # Exact id match, or the only entry (llama.cpp lists a file path).
+            # With several models and no match, sizing the fill from another
+            # model's window is worse than not knowing it.
+            target = next((m for m in model_list if m.get("id") == model), None)
+            if target is None and len(model_list) == 1:
+                target = model_list[0]
+            if target is None:
+                logger.debug("No /v1/models entry matches %r", model)
+                return None
             for field_name in ("max_model_len", "context_window", "max_tokens"):
                 val = target.get(field_name)
                 if type(val) is int and val > 0:

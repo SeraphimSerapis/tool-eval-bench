@@ -10,7 +10,7 @@ The primary security considerations are:
 - **API keys** stored in `.env` files (never committed to git)
 - **Dataset downloads** — benchmark plugins (GSM8K, MMLU, IFEval) download
   datasets from HuggingFace on first use.  Two download methods are supported:
-  - **`datasets` library** (`pip install tool-eval-bench[hf]`): downloads
+  - **`datasets` library** (the `[hf]` extra, `pip install -e '.[hf]'`): downloads
     directly from the HuggingFace git repo.  Uses `trust_remote_code=False`
     to prevent execution of untrusted code from dataset cards.
   - **REST API fallback**: read-only HTTPS `GET` requests to
