@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlparse, urlsplit, urlunsplit
+from urllib.parse import urlparse, urlsplit
 
+from tool_eval_bench.domain.redaction import redact_url as redact_url
+from tool_eval_bench.domain.redaction import redact_urls as redact_urls
 from tool_eval_bench.utils.ids import build_config_fingerprint
 
 # Only plain HTTP(S) makes sense for an inference endpoint.  Anything else
@@ -129,22 +131,6 @@ def metrics_request_target(
 
 def _bearer(api_key: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"} if api_key else {}
-
-
-def redact_url(url: str) -> str:
-    """Mask the authority and remove query credentials from a persisted URL.
-
-    e.g. http://192.168.10.5:8080 → http://***:8080
-    """
-    parsed = urlsplit(url)
-    if not parsed.hostname:
-        return urlunsplit((parsed.scheme, "", parsed.path, "", ""))
-    try:
-        port = parsed.port
-    except ValueError:
-        port = None
-    redacted_netloc = "***" if port is None else f"***:{port}"
-    return urlunsplit((parsed.scheme, redacted_netloc, parsed.path, "", ""))
 
 
 def endpoint_identity(url: str) -> str:

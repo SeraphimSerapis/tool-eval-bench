@@ -11,6 +11,7 @@ import pytest
 from tool_eval_bench.runner.llama_benchy import (
     _build_command,
     _failure_hint,
+    _invalid_sample_error,
     _parse_benchmark_entry,
     _redact_command,
     _stat_mean,
@@ -1491,6 +1492,21 @@ class TestFailureHint:
     def test_falls_back_when_no_http_error_was_seen(self):
         hint = _failure_hint(["Measuring latency using mode: generation..."])
         assert "Check endpoint authentication" in hint
+
+
+class TestInvalidSampleError:
+    def test_redacts_urls_quoted_in_request_errors(self):
+        from tool_eval_bench.runner.throughput import ThroughputSample
+
+        error = _invalid_sample_error(
+            ThroughputSample(pp_tokens=2048, tg_tokens=512),
+            ["401 for url 'http://user:hunter2@gpu-box.internal:8000/v1?api_key=sk-leak'"],
+        )
+
+        assert error is not None
+        assert "for url 'http://***:8000/v1'" in error
+        for secret in ("hunter2", "sk-leak", "gpu-box"):
+            assert secret not in error
 
 
 class TestRoleChunkGuard:

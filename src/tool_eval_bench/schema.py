@@ -343,7 +343,10 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "redact_url",
         "type": "bool",
         "default": False,
-        "description": "Mask the server URL in reports",
+        "description": (
+            "Mask the server URL in console output; reports, stored runs, "
+            "and --json error output are always redacted"
+        ),
     },
     {
         "name": "output_dir",

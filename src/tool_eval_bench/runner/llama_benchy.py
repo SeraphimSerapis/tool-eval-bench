@@ -32,6 +32,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from tool_eval_bench.runner.throughput import ThroughputSample
+from tool_eval_bench.utils.urls import redact_urls
 
 logger = logging.getLogger(__name__)
 
@@ -456,7 +457,9 @@ def _invalid_sample_error(sample: ThroughputSample, errors: list[str]) -> str | 
     """Describe an all-zero cell, using llama-benchy's request error when present."""
     if any(value > 0 for value in (sample.pp_tps, sample.tg_tps, sample.ttft_ms, sample.total_ms)):
         return None
-    detail = "; ".join(dict.fromkeys(errors)) or "no usable throughput metrics"
+    # The error is llama-benchy's own text and may quote the request URL; it
+    # lands in the report and the stored scores.
+    detail = "; ".join(dict.fromkeys(map(redact_urls, errors))) or "no usable throughput metrics"
     return (
         f"pp{sample.label_pp} tg{sample.tg_tokens} @ d{sample.label_depth} "
         f"c{sample.concurrency}: {detail}"

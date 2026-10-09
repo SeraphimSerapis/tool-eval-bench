@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.domain.redaction import redact_url
 from tool_eval_bench.storage.reports._common import _trace_block
 from tool_eval_bench.storage.reports.mode import ModeReport, write_mode_report
 
@@ -27,11 +28,14 @@ def write_pressure_sweep_report(
     label: str | None = None,
     run_context: RunContext | None = None,
 ) -> Path:
-    """Write a trace-complete artifact for a context-pressure sweep."""
+    """Write a trace-complete artifact for a context-pressure sweep.
+
+    *display_url* is redacted before it is written, whatever the caller passes.
+    """
     report = pressure_sweep_report(
         model=model,
         backend=backend,
-        display_url=display_url,
+        server=display_url,
         context_size=context_size,
         level_results=level_results,
         breaking_point=breaking_point,
@@ -45,17 +49,20 @@ def pressure_sweep_report(
     *,
     model: str,
     backend: str,
-    display_url: str,
+    server: str,
     context_size: int,
     level_results: list[dict[str, Any]],
     breaking_point: float | None,
     first_degradation: float | None,
     label: str | None,
 ) -> ModeReport:
-    """Build the context-pressure sweep report content."""
+    """Build the context-pressure sweep report content.
+
+    *server* is redacted here, so no caller can put credentials in the report.
+    """
     header = [
         f"- **Backend**: {backend}",
-        f"- **Server**: {display_url}",
+        f"- **Server**: {redact_url(server)}",
         f"- **Context Window**: {context_size:,} tokens",
         f"- **Executed Levels**: {len(level_results)}",
         (

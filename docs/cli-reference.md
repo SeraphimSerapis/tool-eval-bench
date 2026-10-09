@@ -115,6 +115,7 @@ replaces it.
 | `--probe` | Check server readiness and exit |
 | `--dry-run` | List scenarios that would run (no server needed) |
 | `--base-url URL` | Server endpoint |
+| `--redact-url` | Mask the server URL in console output, for screenshots and recordings. Reports, stored runs, and `--json` error output are always redacted |
 | `--model NAME` | Model name (auto-detected if omitted) |
 | `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp`, `sglang`, `gemini`, `openai`, `anthropic`, `ninfer`, `tensorfold`, `halogen`, `strata`, `tabbyapi`, `unknown`. Auto-detected when omitted; otherwise `unknown`. |
 | `--provider NAME` | Read the endpoint from `TOOL_EVAL_<NAME>_*` env vars |

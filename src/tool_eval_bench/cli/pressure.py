@@ -16,9 +16,10 @@ from typing import Any
 from rich.console import Console
 
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
-from tool_eval_bench.cli.resolve import parse_sweep_range, resolve_scenarios
+from tool_eval_bench.cli.resolve import parse_sweep_range, redact_url, resolve_scenarios
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.storage.reports.pressure import pressure_sweep_report
+from tool_eval_bench.utils.urls import redact_urls
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +266,7 @@ def run_pressure_sweep(
                     break
             except Exception as exc:
                 console.print(f"[red]error: {exc}[/]")
+                error = redact_urls(str(exc))
                 level_results.append(
                     {
                         "ratio": ratio,
@@ -274,20 +276,20 @@ def run_pressure_sweep(
                                 "scenario_id": sid,
                                 "status": "fail",
                                 "points": 0,
-                                "summary": f"Sweep level failed: {exc}",
+                                "summary": f"Sweep level failed: {error}",
                                 "note": None,
                                 "tool_calls_made": [],
                                 "expected_behavior": "",
                                 "duration_seconds": 0.0,
                                 "turn_count": 0,
-                                "raw_log": str(exc),
+                                "raw_log": error,
                             }
                             for sid in scenario_ids
                         ],
                         "score_pct": 0,
                         "pass_count": 0,
                         "fill_tokens": fill_tokens,
-                        "error": str(exc),
+                        "error": error,
                     }
                 )
                 consecutive_all_fail += 1
@@ -384,7 +386,8 @@ def run_pressure_sweep(
         pressure_sweep_report(
             model=display_name,
             backend=backend,
-            display_url=display_url or base_url,
+            # The report is a shareable artifact: redacted whatever --redact-url says.
+            server=redact_url(base_url),
             context_size=context_size,
             level_results=level_results,
             breaking_point=breaking_point,

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.domain.redaction import redact_url
 from tool_eval_bench.storage.reports._common import append_benchy_throughput_rows
 from tool_eval_bench.storage.reports.mode import ModeReport, write_mode_report
 
@@ -48,13 +49,14 @@ def throughput_report(
     """Build the throughput-only report content.
 
     ``model`` is the display name in the title; ``served_model`` is the model
-    ID sent to the API.  A ``None`` fact is left out of the header.
+    ID sent to the API.  A ``None`` fact is left out of the header.  ``server``
+    is redacted here, so no caller can put credentials in the report.
     """
     header: list[str] = []
     if backend is not None:
         header.append(f"- **Backend**: {backend}")
     if server is not None:
-        header.append(f"- **Server**: {server}")
+        header.append(f"- **Server**: {redact_url(server)}")
     if served_model is not None:
         header.append(f"- **Model (API)**: `{served_model}`")
     if model_root and model_root != served_model:

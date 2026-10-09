@@ -13,8 +13,8 @@ real ``httpx.AsyncClient`` and its lifetime.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, Protocol, cast
 
 import httpx
@@ -24,6 +24,7 @@ from tool_eval_bench.utils.urls import (
     chat_completions_url,
     metrics_request_target,
     models_url,
+    redact_urls,
     root_url,
 )
 
@@ -132,13 +133,12 @@ class _ConfiguredMeasurementClient:
 
     async def completion(self, payload: dict[str, Any]) -> MeasurementResponse:
         """Send one non-streaming completion and return the raw response."""
-        return cast(
-            MeasurementResponse,
+        return _StatusErrorRedactingResponse(
             await self._client.post(
                 self._completion_url,
                 json=payload,
                 headers=self._completion_headers,
-            ),
+            )
         )
 
     def stream_completion(
@@ -149,12 +149,74 @@ class _ConfiguredMeasurementClient:
         Returns the context manager rather than awaiting it, so the caller
         controls when the stream opens and can timestamp each line itself.
         """
-        return cast(
-            AbstractAsyncContextManager[MeasurementResponse],
+        return _redacting_status_errors(
             self._client.stream(
                 "POST", self._completion_url, json=payload, headers=self._completion_headers
-            ),
+            )
         )
+
+
+def _redact_status_error(exc: httpx.HTTPStatusError) -> None:
+    # httpx quotes the full request URL, credentials included, in the message,
+    # and runners keep str(exc) as an error that lands in reports and scores.
+    exc.args = (redact_urls(str(exc)),)
+
+
+class _StatusErrorRedactingResponse:
+    """A response whose ``raise_for_status`` never quotes the request URL.
+
+    Runners call ``raise_for_status()`` on a non-streaming completion after
+    this client has returned it, outside any context it controls, so the
+    redaction rides on the response itself.  Everything else is the httpx
+    response unchanged.
+    """
+
+    def __init__(self, response: httpx.Response) -> None:
+        self._response = response
+
+    @property
+    def status_code(self) -> int:
+        return self._response.status_code
+
+    @property
+    def text(self) -> str:
+        return self._response.text
+
+    @property
+    def headers(self) -> Mapping[str, str]:
+        return self._response.headers
+
+    def json(self) -> dict[str, Any]:
+        return cast(dict[str, Any], self._response.json())
+
+    def raise_for_status(self) -> httpx.Response:
+        try:
+            return self._response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            _redact_status_error(exc)
+            raise
+
+    async def aread(self) -> bytes:
+        return await self._response.aread()
+
+    def aiter_lines(self) -> AsyncIterator[str]:
+        return self._response.aiter_lines()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._response, name)
+
+
+@asynccontextmanager
+async def _redacting_status_errors(
+    stream: AbstractAsyncContextManager[httpx.Response],
+) -> AsyncIterator[MeasurementResponse]:
+    """Redact the request URL from a status error the caller raises inside the stream."""
+    try:
+        async with stream as response:
+            yield cast(MeasurementResponse, response)
+    except httpx.HTTPStatusError as exc:
+        _redact_status_error(exc)
+        raise
 
 
 class HTTPMeasurementClient(_ConfiguredMeasurementClient):
