@@ -5,3 +5,6 @@ wrong result list. A list pair on other input now counts as an example when an e
 A cubed example, a wrong stated result, and an unmarked pair such as "squares [1, 2, 3, 4, 5],
 giving [1, 4, 9, 16, 25]" still fail. TC-29 scores can rise for answers that illustrate the
 comprehension.
+
+A list item longer than 12 digits no longer crashes the evaluator. The list is read as a wrong
+result.

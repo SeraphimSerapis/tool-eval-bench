@@ -1014,6 +1014,25 @@ def test_tc90_rejected_call_with_the_wrong_intent_still_fails(mutations, summary
     assert result.summary == summary
 
 
+@pytest.mark.parametrize("limit", [8000, 8000.0, "8000", " 8000.00 "])
+def test_tc90_limit_as_an_equal_number_or_numeric_string_passes(limit: object) -> None:
+    result = _tc90(
+        ("request_limit_increase", {**_TC90_LIMIT, "new_limit_usd": limit}),
+        ("file_dispute", _TC90_DISPUTE),
+    )
+    assert result.status is ScenarioStatus.PASS, result.summary
+
+
+@pytest.mark.parametrize("limit", ["9000", 8000.5, "8,000", "$8000", True])
+def test_tc90_other_or_non_numeric_limit_still_fails(limit: object) -> None:
+    result = _tc90(
+        ("request_limit_increase", {**_TC90_LIMIT, "new_limit_usd": limit}),
+        ("file_dispute", _TC90_DISPUTE),
+    )
+    assert result.status is ScenarioStatus.FAIL
+    assert result.summary == "Requested a limit other than $8,000."
+
+
 # ---------------------------------------------------------------------------
 # TC-91: explaining the gap needs a lack marker or a stated need
 # ---------------------------------------------------------------------------

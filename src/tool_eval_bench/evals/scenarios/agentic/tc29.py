@@ -70,8 +70,17 @@ _TC29_EXAMPLE_MARKER = re.compile(
 _TC29_SENTENCE_END = re.compile(r"(?<!\be\.g)(?<!\bi\.e)[.!?](?=\s)|\n", re.IGNORECASE)
 
 
-def _tc29_ints(items: str) -> tuple[int, ...]:
-    return tuple(int(item) for item in items.split(","))
+def _tc29_ints(items: str) -> tuple[int, ...] | None:
+    """The list's integers, or None when an item is too long to be one of them.
+
+    ``int()`` raises past 4,300 digits. Bounding the list regex instead would
+    hide "[0, 1, 4, 9, 16, 99999999999999]" from the wrong-list check, so an
+    oversized item makes the list unreadable, which no allowed list matches.
+    """
+    parts = [item.strip() for item in items.split(",")]
+    if any(len(part.lstrip("-")) > 12 for part in parts):
+        return None
+    return tuple(int(part) for part in parts)
 
 
 def _tc29_example_spans(answer: str) -> list[tuple[int, int]]:
@@ -83,14 +92,16 @@ def _tc29_example_spans(answer: str) -> list[tuple[int, int]]:
     spans = []
     for match in _TC29_EXAMPLE_PAIR.finditer(answer):
         result = _tc29_ints(match["result"])
+        if result is None:
+            continue
         if match["items"] is not None:
             inputs = _tc29_ints(match["items"])
         elif int(match["stop"]) == len(result):  # Never expand a huge range(N).
             inputs = tuple(range(len(result)))
         else:
             continue
-        if inputs == (0, 1, 2, 3, 4):
-            continue  # The real input: its output is the stated result.
+        if inputs is None or inputs == (0, 1, 2, 3, 4):
+            continue  # Unreadable, or the real input whose output is the stated result.
         if result != tuple(value * value for value in inputs):
             continue
         prefix = answer[: match.start()]

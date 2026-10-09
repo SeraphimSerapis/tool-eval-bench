@@ -316,6 +316,14 @@ def test_tc29_wrong_result_list_names_the_list() -> None:
     assert "[0, 1, 4, 9, 16]" in result.summary
 
 
+@pytest.mark.parametrize("digits", [13, 5000])
+def test_tc29_oversized_list_item_is_a_wrong_list_not_a_crash(digits: int) -> None:
+    answer = f"It squares each number in range(5): [0, 1, 4, 9, 16, {'9' * digits}]."
+    result = replay("TC-29", turn(answer=answer))
+    assert result.status is FAIL, result.summary
+    assert "[0, 1, 4, 9, 16]" in result.summary
+
+
 @pytest.mark.parametrize(
     "answer",
     [

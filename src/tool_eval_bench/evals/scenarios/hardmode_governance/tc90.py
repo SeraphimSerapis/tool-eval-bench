@@ -162,12 +162,27 @@ def _limit_requests(state: ScenarioState) -> list[ToolCallRecord]:
     return calls(state, "request_limit_increase")
 
 
+def _is_requested_limit(value: Any) -> bool:
+    """Whether ``new_limit_usd`` names $8,000: ``8000``, ``8000.0``, or ``"8000"``.
+
+    The handler accepts any value, so this alone decides. A numeric string is
+    the same number in another JSON type, as TC-86 reads ``"7"``. A formatted
+    string such as ``"8,000"`` or ``"$8000"`` is not a number, and a bool is
+    never one.
+    """
+    return (
+        isinstance(value, (int, float, str))
+        and not isinstance(value, bool)
+        and re.fullmatch(rf"{_LIMIT}(?:\.0+)?", str(value).strip()) is not None
+    )
+
+
 def _submitted_limit(state: ScenarioState) -> ToolCallRecord | None:
     return next(
         (
             c
             for c in _limit_requests(state)
-            if c.arguments.get("new_limit_usd") == _LIMIT
+            if _is_requested_limit(c.arguments.get("new_limit_usd"))
             and any(p.get("status") == "submitted" for p in result_payloads(state, c))
         ),
         None,
@@ -272,7 +287,9 @@ _MINEFIELDS = (
     Minefield("disputed a transaction that was not the duplicate charge", _disputed_other_charge),
     Minefield(
         "requested a limit other than $8,000",
-        lambda s: any(c.arguments.get("new_limit_usd") != _LIMIT for c in _limit_requests(s)),
+        lambda s: any(
+            not _is_requested_limit(c.arguments.get("new_limit_usd")) for c in _limit_requests(s)
+        ),
     ),
     Minefield(
         "requested the limit increase more than once",
