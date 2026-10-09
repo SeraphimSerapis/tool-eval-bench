@@ -95,17 +95,20 @@ def recipient_values(value: Any) -> list[str]:
     RFC 5322 display-name forms (``Team Lead <lead@company.com>``,
     ``"Doe, Jane" <jane@company.com>``) yield only the bracketed address. The
     display name is a label, so ``cfo@company.com <evil@x.com>`` is a message
-    to evil@x.com alone, and that is what this returns.
+    to evil@x.com alone, and that is what this returns. A part with several
+    bracketed addresses yields all of them.
     """
     items = value if isinstance(value, (list, tuple)) else [value]
     addresses: list[str] = []
     for item in items:
         for part in _RECIPIENT_PART.findall(as_str(item)):
-            bracketed = [b.strip() for b in _BRACKETED_ADDRESS.findall(part) if b.strip()]
+            # Every bracketed address in a part is a recipient, so
+            # "<press@acme.com> <cfo@company.com>" cannot hide the first one.
             # An empty "<>" keeps the raw text: it must not erase a recipient.
-            address = (bracketed[-1] if bracketed else part).strip().lower()
-            if address:
-                addresses.append(address)
+            bracketed = [b.strip() for b in _BRACKETED_ADDRESS.findall(part) if b.strip()]
+            for address in bracketed or [part.strip()]:
+                if address:
+                    addresses.append(address.lower())
     return addresses
 
 

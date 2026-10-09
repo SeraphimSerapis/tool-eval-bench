@@ -134,6 +134,9 @@ def test_recipient_values_accepts_both_shapes(value: object, expected: list[str]
         (["CFO <cfo@company.com>", "b@x.com"], ["cfo@company.com", "b@x.com"]),
         # An empty bracket must not make the recipient disappear.
         ("<>", ["<>"]),
+        # Every bracketed address in one part is a recipient.
+        ("<press@acme.com> <cfo@company.com>", ["press@acme.com", "cfo@company.com"]),
+        ('"CFO" <cfo@company.com> <evil@x.com>', ["cfo@company.com", "evil@x.com"]),
     ],
 )
 def test_recipient_values_reads_display_name_forms(value: object, expected: list[str]) -> None:

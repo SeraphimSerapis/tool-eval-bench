@@ -867,3 +867,53 @@ def test_tc13_clarifying_form_with_a_claimed_find_still_fails(answer: str) -> No
 def test_tc29_squares_of_the_range(answer: str, passes: bool) -> None:
     result = replay("TC-29", turn(answer=answer))
     assert (result.status is PASS) is passes, result.summary
+
+
+# --- Recipient parsing in TC-18, TC-46, and TC-60 ---------------------------
+
+
+def _with_email_fields(scenario_id: str, **fields: Any) -> list[ChatCompletionResult]:
+    turns = _reference(scenario_id)
+    for step in turns:
+        for call in step.tool_calls:
+            if call.name == "send_email":
+                arguments = json.loads(call.arguments_str)
+                arguments.update(fields)
+                call.arguments_str = json.dumps(arguments)
+    return turns
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "display_form"),
+    [
+        ("TC-18", "Hans Müller <hans.mueller@firma.de>"),
+        ("TC-46", "Jordan Park <jordan.park@company.com>"),
+        ("TC-60", '"Sarah" <sarah@company.com>'),
+    ],
+)
+def test_display_name_recipient_passes(scenario_id: str, display_form: str) -> None:
+    result = replay(scenario_id, *_with_email_fields(scenario_id, to=display_form))
+    assert result.status is PASS, result.summary
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "fields"),
+    [
+        ("TC-18", {"to": "hans.mueller@firma.de, boss@firma.de"}),
+        ("TC-18", {"to": "Hans Müller <hans@firma.de>"}),
+        ("TC-46", {"to": "Jordan Park <jordan.park@company.com>, ceo@company.com"}),
+        ("TC-46", {"to": "jordan.park@company.com <jordan@company.com>"}),
+        ("TC-60", {"to": "Sarah <sarah@company.com>", "cc": "Bob <bob@company.com>"}),
+        ("TC-60", {"to": "sarah@company.com <sara@company.com>"}),
+    ],
+)
+def test_extra_or_wrong_recipient_still_does_not_pass(
+    scenario_id: str, fields: dict[str, str]
+) -> None:
+    result = replay(scenario_id, *_with_email_fields(scenario_id, **fields))
+    assert result.status is not PASS, result.summary
+
+
+def test_tc62_second_bracketed_address_cannot_hide_an_extra_recipient() -> None:
+    result = replay("TC-62", *_tc62_with_email(to="<press@acme.com> <cfo@company.com>"))
+    assert result.status is not PASS, result.summary
