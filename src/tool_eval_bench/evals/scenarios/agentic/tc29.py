@@ -52,13 +52,59 @@ _TC29_SQUARES_OF_RANGE = re.compile(
 )
 _TC29_INT_LIST = re.compile(r"\[\s*(-?\d+(?:\s*,\s*-?\d+)*)\s*\]")
 # The result, and the range it iterates over, are the only lists a correct
-# explanation writes out.
+# explanation writes out, apart from a worked example on other input.
 _TC29_ALLOWED_LISTS = frozenset({(0, 1, 4, 9, 16), (0, 1, 2, 3, 4)})
+# A worked example maps some other input to its squares: "for example,
+# [1, 2, 3] becomes [1, 4, 9]" or "if it were range(3) it would give [0, 1, 4]".
+_TC29_EXAMPLE_PAIR = re.compile(
+    r"(?:\[\s*(?P<items>-?\d+(?:\s*,\s*-?\d+)*)\s*\]|\brange\s*\(\s*(?P<stop>\d{1,3})\s*\))"
+    r"[^\[\].!?\n]{1,40}?"
+    r"\[\s*(?P<result>-?\d+(?:\s*,\s*-?\d+)*)\s*\]"
+)
+# Without a marker the pair is a claim about this code: "It squares
+# [1, 2, 3, 4, 5], giving [1, 4, 9, 16, 25]" misreads range(5) and must fail.
+_TC29_EXAMPLE_MARKER = re.compile(
+    r"\b(?:example|instance|such\s+as|suppose|imagine|if)\b|\be\.g\.", re.IGNORECASE
+)
+# "e.g." and "i.e." do not end the sentence the marker has to sit in.
+_TC29_SENTENCE_END = re.compile(r"(?<!\be\.g)(?<!\bi\.e)[.!?](?=\s)|\n", re.IGNORECASE)
+
+
+def _tc29_ints(items: str) -> tuple[int, ...]:
+    return tuple(int(item) for item in items.split(","))
+
+
+def _tc29_example_spans(answer: str) -> list[tuple[int, int]]:
+    """Spans of worked examples on input other than range(5).
+
+    Only an example that squares its own input is exempt, so a cubed example
+    ("[1, 2, 3] becomes [1, 8, 27]") still states a wrong list.
+    """
+    spans = []
+    for match in _TC29_EXAMPLE_PAIR.finditer(answer):
+        result = _tc29_ints(match["result"])
+        if match["items"] is not None:
+            inputs = _tc29_ints(match["items"])
+        elif int(match["stop"]) == len(result):  # Never expand a huge range(N).
+            inputs = tuple(range(len(result)))
+        else:
+            continue
+        if inputs == (0, 1, 2, 3, 4):
+            continue  # The real input: its output is the stated result.
+        if result != tuple(value * value for value in inputs):
+            continue
+        prefix = answer[: match.start()]
+        sentence_start = max((end.end() for end in _TC29_SENTENCE_END.finditer(prefix)), default=0)
+        if _TC29_EXAMPLE_MARKER.search(prefix[sentence_start:]):
+            spans.append(match.span())
+    return spans
 
 
 def _tc29_states_wrong_list(answer: str) -> bool:
+    examples = _tc29_example_spans(answer)
     return any(
-        tuple(int(item) for item in match.group(1).split(",")) not in _TC29_ALLOWED_LISTS
+        _tc29_ints(match.group(1)) not in _TC29_ALLOWED_LISTS
+        and not any(start <= match.start() and match.end() <= end for start, end in examples)
         for match in _TC29_INT_LIST.finditer(answer)
     )
 

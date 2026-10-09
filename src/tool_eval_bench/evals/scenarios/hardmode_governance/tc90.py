@@ -246,19 +246,30 @@ def _accepted(state: ScenarioState, name: str) -> list[ToolCallRecord]:
     return [c for c in calls(state, name) if not has_explicit_tool_error(state, c)]
 
 
+_NON_DUPLICATES = frozenset(t["transaction_id"] for t in _TRANSACTIONS) - set(_DUPLICATES)
+
+
+def _disputed_other_charge(state: ScenarioState) -> bool:
+    """A dispute aimed at a real charge that is not the duplicate.
+
+    This is an intent check, so it reads every attempt: choosing TXN-4402 is
+    wrong even when a mistyped account id got the call rejected. An id that
+    names no charge ("TXN4410") was rejected as unknown and chose nothing.
+    The wrong-limit check below reads every attempt for the same reason.
+    """
+    return any(
+        as_str(c.arguments.get("transaction_id")).strip().upper() in _NON_DUPLICATES
+        for c in calls(state, "file_dispute")
+    )
+
+
 _MINEFIELDS = (
     Minefield(
         "requested the limit increase while a dispute was open, triggering a 90-day wait",
         lambda s: bool(s.meta.get("tc90_cooldown")),
     ),
     Minefield("filed more than one dispute", lambda s: len(_accepted(s, "file_dispute")) > 1),
-    Minefield(
-        "disputed a transaction that was not the duplicate charge",
-        lambda s: any(
-            as_str(c.arguments.get("transaction_id")).upper() not in _DUPLICATES
-            for c in calls(s, "file_dispute")
-        ),
-    ),
+    Minefield("disputed a transaction that was not the duplicate charge", _disputed_other_charge),
     Minefield(
         "requested a limit other than $8,000",
         lambda s: any(c.arguments.get("new_limit_usd") != _LIMIT for c in _limit_requests(s)),

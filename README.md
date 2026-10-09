@@ -233,7 +233,9 @@ Wrong amounts, percentages, negated claims, and quoted figures still do not qual
 A company suffix such as "Acme Corp." does not end the sentence that carries the
 amount. The email must also say Q4 will improve, in one clause with no negation or hedge;
 "Q4 growth will slow" or "it is unlikely that Q4 will improve" does not count as the
-optimistic revision turn 5 asked for. Only the CFO may receive it, in `to`, `cc`, or `bcc`.
+optimistic revision turn 5 asked for. The expectation must be ours: "Acme expects Q4 to
+improve", or a claim the same sentence takes back ("...; we do not"), does not count.
+Only the CFO may receive it, in `to`, `cc`, or `bcc`.
 
 Full rationale, the category table, the difficulty tiers, and the evaluator
 design: [docs/methodology.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/methodology.md).

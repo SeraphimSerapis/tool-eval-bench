@@ -46,10 +46,14 @@ from tool_eval_bench.evals.scenarios.hardmode._shared import (
 )
 
 # The window stops at a sentence or clause end: "apologies if you were not on
-# the original invite. The review is now scheduled" confirms the meeting.
+# the original invite. The review is now scheduled" confirms the meeting. A
+# comma ends it too when a new subject follows ("if you are not free, the
+# review is scheduled"), but not an aside ("has not, as of now, been
+# scheduled" still denies it).
 _TC74_NEGATED_CONFIRMATION = re.compile(
     r"\b(?:do\s+not|don't|doesn't|didn't|isn't|wasn't|hasn't|not|never)\b"
-    r"[^.!?;\n]{0,80}\b(?:scheduled|confirmed)\b",
+    r"(?:(?!,\s*(?:(?:and|but|so|yet|or)\s+)?(?:the|this|it|we|i|you|your|our|"
+    r"everyone|both|mark|sarah)\b)[^.!?;\n]){0,80}\b(?:scheduled|confirmed)\b",
     re.IGNORECASE,
 )
 
