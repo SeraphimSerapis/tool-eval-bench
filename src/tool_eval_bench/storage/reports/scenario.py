@@ -208,9 +208,15 @@ def write_scenario_report(
         fill_tokens = context_pressure_config.get("fill_tokens", 0)
         ctx_size = context_pressure_config.get("context_size", 0)
         pct = int(ratio * 100)
+        estimate_note = (
+            "; estimated, the server has no compatible /tokenize"
+            if context_pressure_config.get("fill_tokens_estimated")
+            else ""
+        )
         md.insert(
             -1,
-            f"- **Context Pressure**: {pct}% (~{fill_tokens:,} tokens prefilled of {ctx_size:,} context)",
+            f"- **Context Pressure**: {pct}% (~{fill_tokens:,} tokens prefilled of "
+            f"{ctx_size:,} context{estimate_note})",
         )
 
     # Safety warnings

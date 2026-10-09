@@ -517,6 +517,13 @@ def _validate_scenario_selection(
         _resolve_scenarios(args)
     except ValueError as exc:
         parser.error(str(exc))
+    if packs and args.context_pressure_sweep is not None:
+        # The sweep report renders every trace and its config records no pack
+        # attestation, so running a held-out pack there would publish it.
+        parser.error(
+            "--scenario-pack cannot be combined with --context-pressure-sweep: "
+            "the sweep report publishes full traces"
+        )
     if packs and not args.json:
         total = sum(len(p.scenarios) for p in packs)
         names = ", ".join(f"{p.name} ({p.content_hash})" for p in packs)
@@ -1230,6 +1237,8 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
     from rich.progress import BarColumn, Progress, TextColumn
 
     from tool_eval_bench.runner.context_pressure import (
+        _RESERVED_FOR_OUTPUT,
+        _RESERVED_FOR_SCENARIO,
         build_pressure_messages,
         calibrate_pressure_messages,
         prepare_context_pressure,
@@ -1250,6 +1259,17 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
                 reported_context=reported_context_window(target.run_context),
             )
         )
+        if ratio > 0 and pressure_cfg.fill_tokens == 0:
+            # A light ratio may legitimately give a small fill; none at all
+            # means the window cannot hold the reserve, and the run would be
+            # stored as pressured while the model saw no filler.
+            raise ValueError(
+                f"Context window {pressure_cfg.detected_context:,} tokens is too small for "
+                f"--context-pressure: {_RESERVED_FOR_OUTPUT + _RESERVED_FOR_SCENARIO:,} "
+                "tokens are reserved for output and the scenario, leaving no room for filler. "
+                "Check --context-size; on llama.cpp the window is per slot (-c divided by "
+                "--parallel)."
+            )
 
         if not args.json and pressure_cfg.fill_tokens > 0:
             with Progress(
@@ -1275,6 +1295,7 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
             )
 
         # Calibrate using server-side tokenizer for exact token counts
+        estimated: list[bool] = []
         pressure_messages, actual_fill_tokens = asyncio.run(
             calibrate_pressure_messages(
                 pressure_messages,
@@ -1284,15 +1305,20 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
                 api_key,
                 client_factory=HTTPMeasurementClient,
                 seed=args.seed,
+                on_estimated=lambda: estimated.append(True),
             )
         )
 
-        pressure_config_dict = {
+        pressure_config_dict: dict[str, Any] = {
             "ratio": pressure_cfg.ratio,
             "fill_tokens": actual_fill_tokens,
             "fill_tokens_target": pressure_cfg.fill_tokens,
             "context_size": pressure_cfg.detected_context,
         }
+        if estimated:
+            # No usable /tokenize: fill_tokens is the 4 chars/token estimate,
+            # which runs well above real counts on common tokenizers.
+            pressure_config_dict["fill_tokens_estimated"] = True
         if not args.json:
             # Compute tool token estimate for selected scenarios
             from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
@@ -1305,10 +1331,6 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
                     max_toolset = s.tools_override
             tool_tokens_est = len(json.dumps(max_toolset)) // 4
             num_tools = len(max_toolset)
-
-            from tool_eval_bench.runner.context_pressure import (
-                _RESERVED_FOR_OUTPUT,
-            )
 
             budget = pressure_cfg.budget_breakdown(tool_tokens=tool_tokens_est)
             fill_k = pressure_cfg.fill_tokens / 1024

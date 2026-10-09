@@ -375,7 +375,7 @@ def test_single_run_passes_the_llamacpp_window(monkeypatch: pytest.MonkeyPatch) 
 
     class Pressure:
         ratio = 0.1
-        fill_tokens = 0
+        fill_tokens = context_pressure.compute_fill_budget(81920, 0.1)
         detected_context = 81920
 
         def summary(self) -> str:

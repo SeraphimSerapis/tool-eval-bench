@@ -10,15 +10,19 @@
       "start": 0.5,
       "end": 0.9,
       "steps": 3,
+      "context_size": 32768,
+      "seed": 7,
       "scenarios": [
         "TC-01",
         "TC-02"
       ],
       "system_prompt": "Be terse.",
-      "config_fingerprint": "cc70fa5e6ca5"
+      "config_fingerprint": "f8a3bfd70808"
     },
     "scores": {
       "levels": 3,
+      "planned_levels": 3,
+      "interrupted": false,
       "breaking_point": 0.5,
       "first_degradation": 0.7,
       "level_results": [
@@ -60,7 +64,8 @@
           ],
           "score_pct": 100.0,
           "pass_count": 2,
-          "fill_tokens": 8272
+          "fill_tokens": 8272,
+          "excluded_count": 0
         },
         {
           "ratio": 0.7,
@@ -100,7 +105,8 @@
           ],
           "score_pct": 50.0,
           "pass_count": 1,
-          "fill_tokens": 10340
+          "fill_tokens": 10340,
+          "excluded_count": 0
         },
         {
           "ratio": 0.9,
@@ -140,7 +146,8 @@
           ],
           "score_pct": 50.0,
           "pass_count": 1,
-          "fill_tokens": 14476
+          "fill_tokens": 14476,
+          "excluded_count": 0
         }
       ]
     },

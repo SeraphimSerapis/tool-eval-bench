@@ -10,16 +10,20 @@
       "start": 0.5,
       "end": 0.9,
       "steps": 3,
+      "context_size": 32768,
+      "seed": 7,
       "scenarios": [
         "TC-01",
         "TC-02"
       ],
-      "config_fingerprint": "8aa8326ba655"
+      "config_fingerprint": "ce8c13cf339c"
     },
     "scores": {
       "levels": 3,
+      "planned_levels": 3,
+      "interrupted": false,
       "breaking_point": 0.5,
-      "first_degradation": 0.7,
+      "first_degradation": 0.9,
       "level_results": [
         {
           "ratio": 0.5,
@@ -59,7 +63,8 @@
           ],
           "score_pct": 100.0,
           "pass_count": 2,
-          "fill_tokens": 8272
+          "fill_tokens": 8272,
+          "excluded_count": 0
         },
         {
           "ratio": 0.7,
@@ -93,9 +98,10 @@
               "raw_log": "level exploded"
             }
           ],
-          "score_pct": 0,
+          "score_pct": null,
           "pass_count": 0,
           "fill_tokens": 10340,
+          "excluded_count": 2,
           "error": "level exploded"
         },
         {
@@ -136,7 +142,8 @@
           ],
           "score_pct": 50.0,
           "pass_count": 1,
-          "fill_tokens": 14476
+          "fill_tokens": 14476,
+          "excluded_count": 0
         }
       ]
     },
@@ -171,5 +178,5 @@
     },
     "report_path": "<YYYY>/<MM>/<RUN_ID>.md"
   },
-  "report": "# Context Pressure Sweep — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: context-pressure-sweep\n- **tool-eval-bench**: `v0.0.0+golden abc1234`\n- **Backend**: vllm\n- **Server**: http://***:8000/v1\n- **Context Window**: 32,768 tokens\n- **Executed Levels**: 3\n- **Breaking Point**: 50%\n- **First Degradation**: 70%\n\n## Inference Engine\n\n| Property | Value |\n|---|---|\n| Engine | vLLM 0.11.0 |\n| Max Model Length | 32,768 |\n| Quantization | fp8 |\n| GPU Count | 2 |\n| Server Slots | 4 |\n| Spec Decoding | eagle3 |\n| Host | `golden-host` |\n| Platform | `Linux-golden` |\n| Python | 3.13.0 |\n\n## Level 1 — 50%\n\n- **Fill Tokens**: 8,272\n- **Pass Rate**: 100.0%\n\n### TC-01\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-01 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-01\n```\n\n### TC-02\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-02 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-02\n```\n\n## Level 2 — 70%\n\n- **Fill Tokens**: 10,340\n- **Pass Rate**: 0.0%\n- **Level Error**: level exploded\n\n### TC-01\n\n- **Status**: fail\n- **Points**: 0 / 2\n- **Summary**: Sweep level failed: level exploded\n- **Expected**: \n- **Tool Calls**: none\n\n#### Full trace\n\n```text\nlevel exploded\n```\n\n### TC-02\n\n- **Status**: fail\n- **Points**: 0 / 2\n- **Summary**: Sweep level failed: level exploded\n- **Expected**: \n- **Tool Calls**: none\n\n#### Full trace\n\n```text\nlevel exploded\n```\n\n## Level 3 — 90%\n\n- **Fill Tokens**: 14,476\n- **Pass Rate**: 50.0%\n\n### TC-01\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-01 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-01\n```\n\n### TC-02\n\n- **Status**: partial\n- **Points**: 1 / 2\n- **Summary**: TC-02 partial\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-02\n```\n"
+  "report": "# Context Pressure Sweep — Golden Model\n\n- **Run ID**: `<RUN_ID>`\n- **Date**: `<DATE>`\n- **Mode**: context-pressure-sweep\n- **tool-eval-bench**: `v0.0.0+golden abc1234`\n- **Backend**: vllm\n- **Server**: http://***:8000/v1\n- **Context Window**: 32,768 tokens\n- **Executed Levels**: 3\n- **Breaking Point**: 50%\n- **First Degradation**: 90%\n\n## Inference Engine\n\n| Property | Value |\n|---|---|\n| Engine | vLLM 0.11.0 |\n| Max Model Length | 32,768 |\n| Quantization | fp8 |\n| GPU Count | 2 |\n| Server Slots | 4 |\n| Spec Decoding | eagle3 |\n| Host | `golden-host` |\n| Platform | `Linux-golden` |\n| Python | 3.13.0 |\n\n## Level 1 — 50%\n\n- **Fill Tokens**: 8,272\n- **Pass Rate**: 100.0%\n\n### TC-01\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-01 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-01\n```\n\n### TC-02\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-02 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-02\n```\n\n## Level 2 — 70%\n\n- **Fill Tokens**: 10,340\n- **Pass Rate**: n/a (no scenario was scored)\n- **Excluded**: 2 (infrastructure failures, not counted in the pass rate)\n- **Level Error**: level exploded\n\n### TC-01\n\n- **Status**: fail\n- **Points**: 0 / 2\n- **Summary**: Sweep level failed: level exploded\n- **Expected**: \n- **Tool Calls**: none\n\n#### Full trace\n\n```text\nlevel exploded\n```\n\n### TC-02\n\n- **Status**: fail\n- **Points**: 0 / 2\n- **Summary**: Sweep level failed: level exploded\n- **Expected**: \n- **Tool Calls**: none\n\n#### Full trace\n\n```text\nlevel exploded\n```\n\n## Level 3 — 90%\n\n- **Fill Tokens**: 14,476\n- **Pass Rate**: 50.0%\n\n### TC-01\n\n- **Status**: pass\n- **Points**: 2 / 2\n- **Summary**: TC-01 pass\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-01\n```\n\n### TC-02\n\n- **Status**: partial\n- **Points**: 1 / 2\n- **Summary**: TC-02 partial\n- **Expected**: call get_weather\n- **Tool Calls**: get_weather(Berlin)\n\n#### Full trace\n\n```text\ntrace for TC-02\n```\n"
 }

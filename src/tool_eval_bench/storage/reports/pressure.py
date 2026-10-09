@@ -55,21 +55,29 @@ def pressure_sweep_report(
     breaking_point: float | None,
     first_degradation: float | None,
     label: str | None,
+    planned_levels: int | None = None,
+    interrupted: bool = False,
 ) -> ModeReport:
     """Build the context-pressure sweep report content.
 
     *server* is redacted here, so no caller can put credentials in the report.
     """
+    if interrupted:
+        planned = planned_levels if planned_levels is not None else "?"
+        breaking_line = (
+            f"- **Breaking Point**: withheld (interrupted after {len(level_results)} "
+            f"of {planned} levels)"
+        )
+    elif breaking_point is not None:
+        breaking_line = f"- **Breaking Point**: {breaking_point:.0%}"
+    else:
+        breaking_line = "- **Breaking Point**: none"
     header = [
         f"- **Backend**: {backend}",
         f"- **Server**: {redact_url(server)}",
         f"- **Context Window**: {context_size:,} tokens",
         f"- **Executed Levels**: {len(level_results)}",
-        (
-            f"- **Breaking Point**: {breaking_point:.0%}"
-            if breaking_point is not None
-            else "- **Breaking Point**: none"
-        ),
+        breaking_line,
         (
             f"- **First Degradation**: {first_degradation:.0%}"
             if first_degradation is not None
@@ -78,14 +86,27 @@ def pressure_sweep_report(
     ]
     markdown: list[str] = []
     for index, level in enumerate(level_results, start=1):
+        fill_line = f"- **Fill Tokens**: {level['fill_tokens']:,}"
+        if level.get("fill_tokens_estimated"):
+            fill_line += " (target; not measured, the server has no compatible /tokenize)"
+        score = level["score_pct"]
         markdown.extend(
             [
                 f"## Level {index} — {level['ratio']:.0%}",
                 "",
-                f"- **Fill Tokens**: {level['fill_tokens']:,}",
-                f"- **Pass Rate**: {level['score_pct']:.1f}%",
+                fill_line,
+                (
+                    f"- **Pass Rate**: {score:.1f}%"
+                    if score is not None
+                    else "- **Pass Rate**: n/a (no scenario was scored)"
+                ),
             ]
         )
+        if level.get("excluded_count"):
+            markdown.append(
+                f"- **Excluded**: {level['excluded_count']} "
+                "(infrastructure failures, not counted in the pass rate)"
+            )
         if level.get("error"):
             markdown.append(f"- **Level Error**: {level['error']}")
         markdown.append("")

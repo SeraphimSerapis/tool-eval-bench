@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import logging
 import sys
 from typing import Any
@@ -60,6 +61,9 @@ def run_pressure_sweep(
     from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
     from tool_eval_bench.cli.helpers import adapter_options
     from tool_eval_bench.runner.context_pressure import (
+        _RESERVED_FOR_OUTPUT,
+        _RESERVED_FOR_SCENARIO,
+        _TOKENS_PER_FILLER_CHUNK,
         ContextPressureConfig,
         build_pressure_messages,
         calibrate_pressure_messages,
@@ -143,14 +147,32 @@ def run_pressure_sweep(
         report_run_failed(console, f"\n[bold red]Error:[/] {exc}")
         sys.exit(1)
 
+    top_fill = compute_fill_budget(context_size, end)
+    if top_fill < _TOKENS_PER_FILLER_CHUNK:
+        report_run_failed(
+            console,
+            f"[bold red]Error:[/] Context window {context_size:,} tokens is too small for a "
+            f"pressure sweep: {_RESERVED_FOR_OUTPUT + _RESERVED_FOR_SCENARIO:,} tokens are "
+            f"reserved for output and the scenario, leaving {top_fill:,} filler tokens at "
+            f"{end:.0%}, less than one {_TOKENS_PER_FILLER_CHUNK:,}-token filler chunk. "
+            "Check --context-size; on llama.cpp the window is per slot (-c divided by "
+            "--parallel).",
+        )
+        sys.exit(1)
+
     _STATUS_EMOJI = {
         "pass": "✅",
         "partial": "⚠️ ",
         "fail": "❌",
     }
+    _EXCLUDED_EMOJI = "➖"
 
     level_results: list[dict[str, Any]] = []
+    # Scenario IDs left out of each level's score, parallel to level_results.
+    level_excluded: list[set[str]] = []
     consecutive_all_fail = 0
+    consecutive_unscored = 0
+    interrupted = False
 
     try:
         for level_idx, ratio in enumerate(levels):
@@ -171,6 +193,7 @@ def run_pressure_sweep(
 
             import asyncio as _aio
 
+            estimated: list[bool] = []
             _loop = _aio.new_event_loop()
             try:
                 pressure_messages, actual_fill = _loop.run_until_complete(
@@ -182,6 +205,7 @@ def run_pressure_sweep(
                         api_key,
                         client_factory=HTTPMeasurementClient,
                         seed=level_seed,
+                        on_estimated=functools.partial(estimated.append, True),
                     )
                 )
             finally:
@@ -235,71 +259,99 @@ def run_pressure_sweep(
                 results_map: dict[str, str] = {}
                 for sr in summary.scenario_results:
                     results_map[sr.scenario_id] = sr.status.value
+                # Infrastructure failures (timeouts, connection errors, 5xx, and
+                # TC-45's exclusion on an endpoint that ignores tool_choice) say
+                # nothing about the model at this fill. As in scored runs they
+                # leave the pass rate, the breaking point, and the early stop.
+                excluded = {
+                    sr.scenario_id
+                    for sr in summary.scenario_results
+                    if sr.is_infrastructure_failure
+                }
 
                 pass_count = sum(1 for s in results_map.values() if s == "pass")
-                total = len(scenarios)
-                score_pct = (pass_count / total * 100) if total else 0
-
-                emoji_str = "  ".join(
-                    _STATUS_EMOJI.get(results_map.get(sid, "fail"), "❌") for sid in scenario_ids
+                scored_total = len(scenarios) - len(excluded)
+                score_pct: float | None = (
+                    pass_count / scored_total * 100 if scored_total > 0 else None
                 )
-                console.print(f"{emoji_str}  [bold]{score_pct:.0f}%[/]")
-
-                level_results.append(
-                    {
-                        "ratio": ratio,
-                        "results": results_map,
-                        "scenario_results": [
-                            result.to_dict() for result in summary.scenario_results
-                        ],
-                        "score_pct": score_pct,
-                        "pass_count": pass_count,
-                        "fill_tokens": fill_tokens,
-                    }
-                )
-
-                if pass_count == 0:
-                    consecutive_all_fail += 1
-                else:
-                    consecutive_all_fail = 0
-
-                if consecutive_all_fail >= 2:
-                    console.print("  [dim]··· stopped (2 consecutive all-fail levels)[/]")
-                    break
+                level: dict[str, Any] = {
+                    "ratio": ratio,
+                    "results": results_map,
+                    "scenario_results": [result.to_dict() for result in summary.scenario_results],
+                    "score_pct": score_pct,
+                    "pass_count": pass_count,
+                    "fill_tokens": fill_tokens,
+                    "excluded_count": len(excluded),
+                }
             except Exception as exc:
-                console.print(f"[red]error: {exc}[/]")
+                # The whole level failed before any scenario could be scored:
+                # an infrastructure failure, not evidence about the model.
                 error = redact_urls(str(exc))
-                level_results.append(
-                    {
-                        "ratio": ratio,
-                        "results": {sid: "fail" for sid in scenario_ids},
-                        "scenario_results": [
-                            {
-                                "scenario_id": sid,
-                                "status": "fail",
-                                "points": 0,
-                                "summary": f"Sweep level failed: {error}",
-                                "note": None,
-                                "tool_calls_made": [],
-                                "expected_behavior": "",
-                                "duration_seconds": 0.0,
-                                "turn_count": 0,
-                                "raw_log": error,
-                            }
-                            for sid in scenario_ids
-                        ],
-                        "score_pct": 0,
-                        "pass_count": 0,
-                        "fill_tokens": fill_tokens,
-                        "error": error,
-                    }
+                excluded = set(scenario_ids)
+                pass_count = 0
+                scored_total = 0
+                score_pct = None
+                level = {
+                    "ratio": ratio,
+                    "results": {sid: "fail" for sid in scenario_ids},
+                    "scenario_results": [
+                        {
+                            "scenario_id": sid,
+                            "status": "fail",
+                            "points": 0,
+                            "summary": f"Sweep level failed: {error}",
+                            "note": None,
+                            "tool_calls_made": [],
+                            "expected_behavior": "",
+                            "duration_seconds": 0.0,
+                            "turn_count": 0,
+                            "raw_log": error,
+                        }
+                        for sid in scenario_ids
+                    ],
+                    "score_pct": score_pct,
+                    "pass_count": pass_count,
+                    "fill_tokens": fill_tokens,
+                    "excluded_count": len(excluded),
+                    "error": error,
+                }
+                console.print(f"[red]error: {exc}[/]")
+            else:
+                emoji_str = "  ".join(
+                    _EXCLUDED_EMOJI
+                    if sid in excluded
+                    else _STATUS_EMOJI.get(results_map.get(sid, "fail"), "❌")
+                    for sid in scenario_ids
                 )
-                consecutive_all_fail += 1
-                if consecutive_all_fail >= 2:
-                    console.print("  [dim]··· stopped (2 consecutive all-fail levels)[/]")
-                    break
+                score_text = f"{score_pct:.0f}%" if score_pct is not None else "n/a"
+                excluded_text = f"  [dim]({len(excluded)} excluded)[/]" if excluded else ""
+                console.print(f"{emoji_str}  [bold]{score_text}[/]{excluded_text}")
+
+            if estimated:
+                # No usable /tokenize: the level ran on the 4 chars/token
+                # estimate, so its real fill is unmeasured.
+                level["fill_tokens_estimated"] = True
+            level_results.append(level)
+            level_excluded.append(excluded)
+
+            # A level with nothing scored is neither a pass nor a fail, so it
+            # leaves the all-fail run alone; two in a row mean the endpoint,
+            # not the model, has stopped answering.
+            if scored_total == 0:
+                consecutive_unscored += 1
+            else:
+                consecutive_unscored = 0
+                consecutive_all_fail = consecutive_all_fail + 1 if pass_count == 0 else 0
+
+            if consecutive_all_fail >= 2:
+                console.print("  [dim]··· stopped (2 consecutive all-fail levels)[/]")
+                break
+            if consecutive_unscored >= 2:
+                console.print("  [dim]··· stopped (2 consecutive levels with nothing scored)[/]")
+                break
 
     except KeyboardInterrupt:
+        interrupted = True
         console.print("\n[bold red]Interrupted.[/]")
 
     if not level_results:
@@ -312,12 +364,18 @@ def run_pressure_sweep(
     breaking_point: float | None = None
     first_degradation: float | None = None
 
-    for lr in level_results:
+    for lr, excluded in zip(level_results, level_excluded, strict=True):
         ratio = lr["ratio"]
         score = lr["score_pct"]
         emoji_str = "  ".join(
-            _STATUS_EMOJI.get(lr["results"].get(sid, "fail"), "❌") for sid in scenario_ids
+            _EXCLUDED_EMOJI
+            if sid in excluded
+            else _STATUS_EMOJI.get(lr["results"].get(sid, "fail"), "❌")
+            for sid in scenario_ids
         )
+        if score is None:
+            lines.append(f"  [bold]{ratio:>4.0%}[/]  {emoji_str}   n/a  {'░' * 20}")
+            continue
         bar_len = int(score / 100 * 20)
         if score >= 100:
             bar_color = "green"
@@ -329,20 +387,36 @@ def run_pressure_sweep(
 
         lines.append(f"  [bold]{ratio:>4.0%}[/]  {emoji_str}   {score:>3.0f}%  {bar}")
 
-        all_pass = all(v == "pass" for v in lr["results"].values())
+        scored = [v for sid, v in lr["results"].items() if sid not in excluded]
+        all_pass = all(v == "pass" for v in scored)
         if all_pass:
             breaking_point = ratio
         if first_degradation is None and not all_pass:
             first_degradation = ratio
 
+    # Levels never reached could still pass, so the highest passing level so
+    # far is only a lower bound. An observed degradation stays real.
+    if interrupted:
+        breaking_point = None
+
     lines.append("")
-    if breaking_point is not None:
+    if interrupted:
+        lines.append(
+            f"  [bold red]Breaking point:[/] withheld (interrupted after "
+            f"{len(level_results)} of {len(levels)} levels)"
+        )
+    elif breaking_point is not None:
         lines.append(f"  [bold green]Breaking point:[/] {breaking_point:.0%} (all scenarios pass)")
     else:
         lines.append("  [bold red]Breaking point:[/] none (no level had all scenarios pass)")
     if first_degradation is not None:
         lines.append(
             f"  [bold yellow]Degradation:[/]    {first_degradation:.0%} (first partial/fail)"
+        )
+    if any(level_excluded):
+        lines.append(
+            f"  [dim]{_EXCLUDED_EMOJI} excluded from scoring (timeout, server or connection "
+            "error, or not hostable on this endpoint)[/]"
         )
 
     header = "  ".join(f"[dim]{sid}[/]" for sid in scenario_ids)
@@ -366,17 +440,25 @@ def run_pressure_sweep(
         "start": start,
         "end": end,
         "steps": steps,
+        # The effective window, after --context-size and the KV-capacity cap:
+        # it sets every level's fill, as the seed sets its filler text.
+        "context_size": context_size,
+        "seed": args.seed,
         "scenarios": scenario_ids,
     }
     # Present only for an override, as in a scored run's config.
     system_prompt = getattr(args, "system_prompt", None)
     if system_prompt is not None:
         sweep_fields["system_prompt"] = system_prompt
+    # Status stays "completed" even when interrupted: history and resume treat
+    # any other status as a resumable scored run.
     run = ModeRun(
         run_type="context-pressure",
         config=sweep_fields,
         scores={
             "levels": len(level_results),
+            "planned_levels": len(levels),
+            "interrupted": interrupted,
             "breaking_point": breaking_point,
             "first_degradation": first_degradation,
             "level_results": level_results,
@@ -395,6 +477,8 @@ def run_pressure_sweep(
             breaking_point=breaking_point,
             first_degradation=first_degradation,
             label=label,
+            planned_levels=len(levels),
+            interrupted=interrupted,
         ),
         run_context=run_context,
         output_dir=getattr(args, "output_dir", None),
