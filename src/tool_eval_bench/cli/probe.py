@@ -8,10 +8,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 
 from tool_eval_bench.adapters.requests import minimal_request
 from tool_eval_bench.cli.helpers import emit_headless_error
-from tool_eval_bench.domain.errors import CONNECTION_FAILED, MODEL_NOT_AVAILABLE
+from tool_eval_bench.domain.errors import CONNECTION_FAILED, INVALID_RESPONSE, MODEL_NOT_AVAILABLE
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.utils.openai_compat import (
     max_tokens_retry_payload,
@@ -19,6 +20,14 @@ from tool_eval_bench.utils.openai_compat import (
     sampling_retry_payload,
 )
 from tool_eval_bench.utils.urls import redact_urls
+
+
+def _is_json_object(response: Any) -> bool:
+    """Whether a response body parses as a JSON object, as every wire format answers."""
+    try:
+        return isinstance(response.json(), dict)
+    except ValueError:
+        return False
 
 
 def preflight_model_check(
@@ -90,6 +99,22 @@ def preflight_model_check(
                 "Check server logs for model loading errors.[/]"
             )
             sys.exit(3)
+        if response.status_code < 400 and not _is_json_object(response):
+            # An HTML page from a proxy or a misrouted path answers 200 too;
+            # passing it would start a run whose every request fails to parse.
+            content_type = response.headers.get("Content-Type", "unknown")
+            message = (
+                f"Pre-flight request for model '{model}' returned a body that is not a JSON "
+                f"object (HTTP {response.status_code}, Content-Type: {content_type}). "
+                f"Body snippet: {response.text[:200]!r}"
+            )
+            if headless:
+                emit_headless_error(INVALID_RESPONSE, message, exit_code=2)
+            if show_url != base_url:
+                message = redact_urls(message)
+            console.print("[bold red]✗ Invalid response[/]")
+            console.print(f"[red]{escape(message)}[/]")
+            sys.exit(2)
     except httpx.ConnectError:
         if headless:
             emit_headless_error(

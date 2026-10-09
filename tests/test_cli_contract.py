@@ -288,6 +288,64 @@ def test_preflight_failure_respects_the_display_url(
     assert "gpu.test" not in text and "hunter2" not in text
 
 
+_HTML_PAGE = httpx.Response(200, text="<html>Sign in</html>", headers={"Content-Type": "text/html"})
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        pytest.param(_HTML_PAGE, id="html"),
+        pytest.param(httpx.Response(200, json=["not", "an", "object"]), id="json-array"),
+        pytest.param(httpx.Response(200, text=""), id="empty"),
+    ],
+)
+def test_preflight_rejects_a_2xx_body_that_is_not_a_json_object(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], response: httpx.Response
+) -> None:
+    from tool_eval_bench.cli.probe import preflight_model_check
+
+    _mock_http(monkeypatch, lambda request: response)
+
+    with pytest.raises(SystemExit) as console_exit:
+        preflight_model_check(
+            Console(record=True, width=300), SECRET_URL, "m", None, display_url="http://***:8000"
+        )
+    with pytest.raises(SystemExit) as json_exit:
+        preflight_model_check(Console(), SECRET_URL, "m", None, headless=True)
+
+    assert console_exit.value.code == json_exit.value.code == 2
+    (event,) = _events(capsys.readouterr().err)
+    assert event["error"] == "invalid_response"
+    assert "not a JSON object" in event["message"]
+
+
+def test_preflight_invalid_response_console_message_respects_the_display_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench.cli.probe import preflight_model_check
+
+    _mock_http(
+        monkeypatch,
+        lambda request: httpx.Response(200, text=f"<a href='{SECRET_URL}'>login</a>"),
+    )
+    console = Console(record=True, width=300)
+
+    with pytest.raises(SystemExit):
+        preflight_model_check(console, SECRET_URL, "m", None, display_url="http://***:8000/v1")
+
+    text = console.export_text()
+    assert "Invalid response" in text
+    assert "gpu.test" not in text and "hunter2" not in text
+
+
+def test_preflight_accepts_a_json_object(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tool_eval_bench.cli.probe import preflight_model_check
+
+    _mock_http(monkeypatch, lambda request: httpx.Response(200, json={"choices": []}))
+
+    preflight_model_check(Console(), SECRET_URL, "m", None)
+
+
 @pytest.mark.parametrize("redact", [True, False])
 def test_warmup_failure_respects_the_display_url(
     monkeypatch: pytest.MonkeyPatch, redact: bool
