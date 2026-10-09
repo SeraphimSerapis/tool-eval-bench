@@ -562,6 +562,7 @@ async def calibrate_pressure_messages(
     *,
     client_factory: MeasurementClientFactory,
     seed: int | None = None,
+    on_estimated: Callable[[], None] | None = None,
 ) -> tuple[list[ChatMessage], int]:
     """Calibrate filler messages to hit the exact token target.
 
@@ -570,7 +571,8 @@ async def calibrate_pressure_messages(
     match the target.  Returns ``(calibrated_messages, actual_tokens)``.
 
     If tokenization is unavailable, returns the messages unchanged with
-    the char-based estimate.
+    the char-based estimate and calls *on_estimated*, so a caller that
+    persists the count can mark it as an estimate rather than a measurement.
     """
     if not messages or target_tokens <= 0:
         return messages, 0
@@ -585,6 +587,8 @@ async def calibrate_pressure_messages(
             "Tokenizer unavailable, using char estimate: ~%d tokens",
             int(est),
         )
+        if on_estimated is not None:
+            on_estimated()
         return messages, int(est)
 
     delta = actual - target_tokens

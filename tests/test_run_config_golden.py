@@ -337,7 +337,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
             "fill_tokens_target": 15000,
             "context_size": 32768,
         },
-        "config_fingerprint": "1228b626218c",
+        "config_fingerprint": "2e288611bf7d",
     },
     "empty_pressure": {
         "model": "m",
@@ -441,7 +441,7 @@ EXPECTED_CONFIGS: dict[str, dict[str, Any]] = {
                 "scenario_count": 2,
             }
         ],
-        "config_fingerprint": "4dcba5723b22",
+        "config_fingerprint": "4b5aa6c2508f",
     },
     "credentialed_url": {
         "model": "m",
@@ -729,12 +729,12 @@ EXPECTED_COHORTS: dict[str, str] = {
     "other_model": "78bb227fb58d",
     "legacy_key": "9bf7a01ff466",
     "unsorted_ids": "167b1b7e0748",
-    "pressure": "9fbb00ee305c",
-    "everything": "e1c7f4adc5dc",
+    "pressure": "e6443279647b",
+    "everything": "2afd758fb15a",
 }
 EXPECTED_ROWS: list[tuple[str, str, str, int]] = [
     ("r2", "fc14bde869b4", "78bb227fb58d", 2),
-    ("r3", "1228b626218c", "9fbb00ee305c", 1),
+    ("r3", "2e288611bf7d", "e6443279647b", 1),
     ("r4", "fc14bde869b4", "78bb227fb58d", 1),
     ("r5", "0cac0195d776", "78bb227fb58d", 1),
 ]

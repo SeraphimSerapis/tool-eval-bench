@@ -63,6 +63,9 @@ class MarkdownReporter:
         first_degradation: float | None,
         label: str | None = None,
         run_context: RunContext | None = None,
+        planned_levels: int | None = None,
+        interrupted: bool = False,
+        stop_reason: str | None = None,
     ) -> Path:
         """Write a trace-complete artifact for a context-pressure sweep."""
         return write_pressure_sweep_report(
@@ -77,6 +80,9 @@ class MarkdownReporter:
             first_degradation=first_degradation,
             label=label,
             run_context=run_context,
+            planned_levels=planned_levels,
+            interrupted=interrupted,
+            stop_reason=stop_reason,
         )
 
     def write_scenario_report(

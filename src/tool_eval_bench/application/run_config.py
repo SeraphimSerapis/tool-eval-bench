@@ -132,6 +132,9 @@ class ConfigField:
     identifies_model: bool
     #: None when resume does not compare the key.
     resume: ResumeCheck | None
+    #: Projects the stored value to what an ``INCLUDE`` fingerprint hashes.
+    #: None hashes the value exactly as stored.
+    fingerprint_view: Callable[[Any], Any] | None = None
 
 
 def _pressure_mismatch(previous: Any, current: dict[str, Any] | None) -> str | None:
@@ -164,6 +167,17 @@ def _pressure_mismatch(previous: Any, current: dict[str, Any] | None) -> str | N
             f"now {current['fill_tokens_target']:,}; the context size changed)"
         )
     return None
+
+
+def _pressure_fingerprint(value: dict[str, Any]) -> dict[str, Any]:
+    """The context-pressure block without its calibrated ``fill_tokens``.
+
+    The ratio, fill target, and window decide what the model sees. The
+    calibrated count differs on every unseeded run (see
+    :func:`_pressure_mismatch`), so hashing it would put two otherwise identical
+    pressure runs in separate cohorts.
+    """
+    return {key: item for key, item in value.items() if key != "fill_tokens"}
 
 
 def _judge_mismatch(previous: Any, current: Any) -> str | None:
@@ -363,6 +377,7 @@ RUN_CONFIG_FIELDS: tuple[ConfigField, ...] = (
         Fingerprint.INCLUDE,
         identifies_model=False,
         resume=ResumeCheck(Absent.UNSET, describe=_pressure_mismatch),
+        fingerprint_view=_pressure_fingerprint,
     ),
     # Written only when set, so a missing key means the run had no packs.
     # Resuming such a run with a pack would score held-out scenarios under the
@@ -391,6 +406,28 @@ COHORT_EXCLUDED_KEYS = frozenset(
     }
 )
 
+_FINGERPRINT_VIEWS = {
+    field.key: field.fingerprint_view
+    for field in RUN_CONFIG_FIELDS
+    if field.fingerprint_view is not None
+}
+
+
+def cohort_config(config: dict[str, Any]) -> dict[str, Any]:
+    """The part of a stored config that groups different models into one cohort.
+
+    Drops :data:`COHORT_EXCLUDED_KEYS` and projects each field that declares a
+    ``fingerprint_view``, so the cohort ignores what the fingerprint ignores.
+    Keys only an older version stored are kept, so they still split cohorts.
+    """
+    comparable: dict[str, Any] = {}
+    for key, value in config.items():
+        if key in COHORT_EXCLUDED_KEYS:
+            continue
+        view = _FINGERPRINT_VIEWS.get(key)
+        comparable[key] = view(value) if view is not None and isinstance(value, dict) else value
+    return comparable
+
 
 def build_run_config(
     settings: RunSettings,
@@ -414,7 +451,8 @@ def build_run_config(
             continue
         config[field.key] = value
         if field.fingerprint is Fingerprint.INCLUDE:
-            fingerprint_config[field.key] = value
+            view = field.fingerprint_view
+            fingerprint_config[field.key] = view(value) if view is not None else value
         elif field.fingerprint is Fingerprint.SORTED:
             fingerprint_config[field.key] = sorted(value)
     config[CONFIG_FINGERPRINT_KEY] = comparison_fingerprint(fingerprint_config, metadata)

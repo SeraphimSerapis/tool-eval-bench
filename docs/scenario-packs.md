@@ -26,3 +26,5 @@ Pack scenarios are scored identically to public ones — they contribute to `fin
 - **The report attests to which pack produced the number.** Each pack is hashed by filename and file bytes, and the hash is recorded in the run config and folded into `config_fingerprint`. Readers can confirm two published scores were measured against the same held-out set — and that it was not edited in between — without seeing its contents. Editing or renaming a scenario changes the hash, so `compare` will flag the runs as non-comparable.
 
 Scenario IDs must not collide with the public suite or with another pack; a collision is an error rather than a silent override.
+
+`--scenario-pack` cannot be combined with `--context-pressure-sweep`. The sweep report publishes the full trace of every scenario and has no held-out handling, so the combination is refused before any request is made. A single `--context-pressure` run is a scored run and withholds pack traces as described above.

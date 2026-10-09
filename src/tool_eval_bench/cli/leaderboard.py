@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from tool_eval_bench.application.run_config import COHORT_EXCLUDED_KEYS, CONFIG_FINGERPRINT_KEY
+from tool_eval_bench.application.run_config import CONFIG_FINGERPRINT_KEY, cohort_config
 from tool_eval_bench.utils.ids import build_config_fingerprint
 
 # ---------------------------------------------------------------------------
@@ -155,8 +155,7 @@ def _cohort_fingerprint(config: dict[str, Any]) -> str:
     The schema decides which keys to drop.  It is an exclusion rather than an
     allow-list so a key that only an older version stored still splits cohorts.
     """
-    comparable = {key: value for key, value in config.items() if key not in COHORT_EXCLUDED_KEYS}
-    return build_config_fingerprint(comparable)
+    return build_config_fingerprint(cohort_config(config))
 
 
 def _cohort_label(config: dict[str, Any], cohort_fingerprint: str) -> str:

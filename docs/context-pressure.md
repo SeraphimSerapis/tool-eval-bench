@@ -26,7 +26,7 @@ tool-eval-bench compare <baseline_id> <pressure_id>
 | `--context-pressure` | off | Fill ratio (0.0–1.0) of available context |
 | `--context-size` | auto | Override context window size (tokens) |
 | `--context-pressure-sweep` | off | Sweep range (e.g. `0.5-1.0`) — find the breaking point |
-| `--sweep-steps` | 5 | Number of intervals for sweep (N+1 test levels) |
+| `--sweep-steps` | 5 | Number of pressure levels to test (minimum 2) |
 
 `tool-eval-bench resume RUN_ID` does not read the pressure settings back from
 the stored run, so pass the same `--context-pressure`, and the same
@@ -51,6 +51,39 @@ tool-eval-bench bench --context-pressure-sweep 0.5-1.0 --categories O
 ```
 
 The sweep runs each selected scenario at every pressure level, displays a compact summary panel with pass/fail status per level, and reports the **breaking point** (highest pressure where all scenarios still pass). It early-stops after 2 consecutive all-fail levels.
+
+Infrastructure failures are left out of the score, as they are in scored runs:
+timeouts, connection errors, 5xx responses, and TC-45 on an endpoint that does
+not enforce `tool_choice='required'`. They do not count against a level's pass
+rate, the breaking point, the first degradation, or the all-fail early stop. A
+level that fails as a whole, before any scenario is scored, counts the same way.
+Each level stores `excluded_count` and the `excluded_scenarios` IDs, and the
+report marks each excluded scenario. A level where every scenario was excluded
+shows no pass rate, and two such levels in a row stop the sweep, because the
+endpoint rather than the model has stopped answering. When no level was scored
+at all, the breaking point reads `n/a` rather than `none`. A sweep that stops
+early stores the reason as `stop_reason`, and the panel and report show it.
+
+An interrupted sweep (Ctrl-C) is still saved, but the stored run has
+`interrupted: true`, records `planned_levels`, and withholds the breaking point,
+since the levels it never reached could still have passed. The report says
+after how many of the planned levels it stopped.
+
+The sweep refuses to start when the context window cannot hold real pressure:
+16,096 tokens are reserved for output and the scenario, and the fill at the top
+of the range must be at least one 2,048-token filler chunk. On a smaller window
+every level would run nearly unpressured and still report a breaking point. A
+single `--context-pressure` run refuses a ratio and window that give no filler
+at all.
+
+`--scenario-pack` cannot be combined with `--context-pressure-sweep`. The sweep
+report publishes every trace, which would burn a held-out pack. A single
+`--context-pressure` run with a pack is a scored run and withholds pack traces
+as usual.
+
+The stored sweep config records the effective context size, after
+`--context-size` and the KV-capacity cap, and the seed. Both change every
+level's filler, so sweeps that differ in either are not grouped together.
 
 The context window size is auto-detected. `--context-size` wins when given.
 Otherwise the first of these that answers is used:
@@ -83,6 +116,13 @@ The filler is designed to defeat server-side prefix caching (vLLM, llama.cpp):
 - **Noise injection**: random ticket IDs, timestamps, IP addresses, and version strings are sprinkled throughout the text at sentence boundaries
 - **Unique nonces**: each chunk gets a unique session/chunk identifier prefix
 - **Per-scenario isolation**: each scenario gets a unique nonce injected into the filler to prevent cross-scenario prefix cache reuse
+
+Filler is sized at about 4 characters per token, then calibrated against the
+server's `/tokenize` endpoint (vLLM). On a server without a compatible
+`/tokenize`, the fill stays at that estimate, which runs above the real count on
+common tokenizers. A scored run then stores `fill_tokens_estimated: true` in its
+`context_pressure` config, a sweep stores it on each affected level, and the
+reports label the fill as estimated.
 
 Unseeded filler uses nonces to reduce prefix-cache reuse. When `--seed` is set,
 filler generation is deterministic per pressure level. The same seed, context
