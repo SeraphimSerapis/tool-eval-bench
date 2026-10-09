@@ -9,18 +9,19 @@ the message into a JSONL event when the console is headless.
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, NoReturn
 
 from rich.console import Console
 from rich.text import Text
 
 from tool_eval_bench.application.mode_runs import FinalizedRun, ModeRun
-from tool_eval_bench.domain.errors import RUN_FAILED
+from tool_eval_bench.domain.errors import INVALID_ARGUMENTS, RUN_FAILED
 from tool_eval_bench.utils.urls import redact_urls
 
 
@@ -52,6 +53,22 @@ def report_run_failed(console: Console, markup: str) -> None:
 def emit_run_failed(message: str) -> None:
     """Emit a ``run_failed`` error event; the caller still exits."""
     emit_event({"event": "error", "error": RUN_FAILED, "message": redact_urls(message)})
+
+
+def exit_invalid_arguments(message: str) -> NoReturn:
+    """Emit an ``invalid_arguments`` error event and exit 2, as argparse would."""
+    emit_event({"event": "error", "error": INVALID_ARGUMENTS, "message": redact_urls(message)})
+    sys.exit(2)
+
+
+def headless_usage_errors(parser: argparse.ArgumentParser) -> None:
+    """Make ``parser.error`` exit through :func:`exit_invalid_arguments`.
+
+    Installed once the arguments have parsed and ``--json`` is known, so it
+    covers the validation ``main`` does afterwards; errors argparse raises
+    while parsing still print its usage text.
+    """
+    parser.error = exit_invalid_arguments  # type: ignore[method-assign]
 
 
 def report_run_saved(console: Console, run: ModeRun, finalized: FinalizedRun) -> None:

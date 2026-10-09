@@ -54,6 +54,7 @@ from tool_eval_bench.cli.display import BenchmarkDisplay, decision_audit_line
 from tool_eval_bench.cli.headless import (
     HeadlessConsole,
     emit_run_failed,
+    headless_usage_errors,
     json_logging,
     report_run_failed,
     report_run_saved,
@@ -827,7 +828,10 @@ def main() -> None:
         return
 
     # --json-file implies --json; _prepare_args records that on the namespace.
-    with json_logging(bool(args.json or args.json_file)):
+    headless = bool(args.json or args.json_file)
+    if headless:
+        headless_usage_errors(parser)
+    with json_logging(headless):
         _run_cli(args, parser, console)
 
 

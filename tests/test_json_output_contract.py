@@ -28,6 +28,7 @@ from tests.test_mode_run_golden import (
 from tool_eval_bench.cli.headless import (
     HeadlessConsole,
     _JsonLinesLogHandler,
+    exit_invalid_arguments,
     json_logging,
     report_run_failed,
 )
@@ -282,10 +283,58 @@ def test_interactive_monitors_reject_json(cli: Cli, monitor: str) -> None:
     outcome = cli.run(*CONNECTION, monitor, "--json")
 
     assert outcome.code == 2
-    assert f"{monitor} is an interactive monitor and cannot be combined with --json" in (
-        outcome.flat_err
-    )
+    events, envelope = _contract(outcome.out, outcome.err)
+    assert envelope is None
+    assert events[-1] == {
+        "event": "error",
+        "error": "invalid_arguments",
+        "message": f"{monitor} is an interactive monitor and cannot be combined with --json",
+    }
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        pytest.param(
+            [*CONNECTION, "--scenarios", "TC-999"], "Unknown scenario", id="unknown-scenario"
+        ),
+        pytest.param(
+            [*CONNECTION, "--categories", "Z"], "Unknown categories: Z", id="unknown-category"
+        ),
+        pytest.param(
+            [*CONNECTION, "--backend-kwargs", "[1]"],
+            "--backend-kwargs must be a JSON object (dict), got list",
+            id="backend-kwargs",
+        ),
+        pytest.param(
+            [*CONNECTION, "--system-prompt", "a", "--system-prompt-file", "p.txt"],
+            "--system-prompt and --system-prompt-file are mutually exclusive",
+            id="system-prompt",
+        ),
+        pytest.param(
+            ["--dry-run", "--scenarios", "TC-999"], "Unknown scenarios: TC-999", id="dry-run"
+        ),
+    ],
+)
+def test_a_usage_error_after_parsing_is_an_invalid_arguments_event(
+    cli: Cli, argv: list[str], message: str
+) -> None:
+    outcome = cli.run(*argv, "--json")
+
+    assert outcome.code == 2
+    events, envelope = _contract(outcome.out, outcome.err)
+    assert envelope is None
+    assert events[-1]["error"] == "invalid_arguments"
+    assert message in events[-1]["message"]
+    assert cli.runs == []
+
+
+def test_a_parse_time_error_keeps_argparse_usage_text(cli: Cli) -> None:
+    outcome = cli.run(*CONNECTION, "--json", "--no-such-flag")
+
+    assert outcome.code == 2
     assert outcome.out == ""
+    assert outcome.err.startswith("usage:")
 
 
 # -- cli.headless units ----------------------------------------------------------------
@@ -338,3 +387,14 @@ def test_headless_console_prints_nothing(capsys: pytest.CaptureFixture[str]) -> 
     HeadlessConsole().print("[bold]visible?[/]")
 
     assert capsys.readouterr().out == ""
+
+
+def test_exit_invalid_arguments_redacts_and_exits_two(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exited:
+        exit_invalid_arguments(f"bad --base-url {SECRET_URL}")
+
+    assert exited.value.code == 2
+    (line,) = capsys.readouterr().err.splitlines()
+    event = json.loads(line)
+    assert event["error"] == "invalid_arguments"
+    assert "hunter2" not in event["message"]
