@@ -99,9 +99,9 @@ tool-eval-bench --probe --base-url http://localhost:8000
 ```
 
 Exit 2 (`invalid_response`, also the `error_code` of the `--json` `probe_result`
-event) means something such as a proxy or a web app answers at that URL with an
-HTML page or another body that is not a JSON object. Waiting will not fix it, so
-stop polling.
+event) means something such as a proxy or a web app answers at that URL with a
+redirect, an HTML page, or another body that is not a JSON object. Waiting will
+not fix it, so stop polling.
 
 In a script:
 ```bash

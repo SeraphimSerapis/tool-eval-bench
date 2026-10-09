@@ -266,7 +266,8 @@ def _probe_server(
 
     Exits 0 if the server answers the model listing with a JSON object, 1 if
     it is unreachable or answers with an error, and 2 (``invalid_response``)
-    if it answers 2xx with anything else, such as a proxy's HTML page.
+    if it redirects or answers 2xx with anything else, such as a proxy
+    sending the request to a sign-in page.
     Console lines show *display_url* (the ``--redact-url`` form) when given.
     """
     import httpx
@@ -277,7 +278,9 @@ def _probe_server(
     async def _check() -> httpx.Response:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(endpoint, headers=request_headers)
-            resp.raise_for_status()
+            # httpx does not follow redirects; a 3xx is reported below.
+            if not 300 <= resp.status_code < 400:
+                resp.raise_for_status()
             return resp
 
     try:
@@ -298,18 +301,32 @@ def _probe_server(
             console.print(f"[bold red]✗[/] Server at {show_url} is not ready: {detail}")
         sys.exit(1)
 
+    if 300 <= resp.status_code < 400:
+        location = resp.headers.get("Location", "no Location header")
+        _report_invalid_probe_response(
+            console,
+            f"Server at {base_url} answered the model listing with a redirect "
+            f"(HTTP {resp.status_code} to {location}).",
+            base_url,
+            show_url,
+            headless=headless,
+        )
     try:
         data = resp.json()
     except ValueError:
         data = None
     if not isinstance(data, dict):
-        _report_invalid_probe_response(console, resp, base_url, show_url, headless=headless)
-    listed = data.get("data")
-    model_ids: list[str] = (
-        [str(m["id"]) for m in listed if isinstance(m, dict) and m.get("id")]
-        if isinstance(listed, list)
-        else []
-    )
+        content_type = resp.headers.get("Content-Type", "unknown")
+        _report_invalid_probe_response(
+            console,
+            f"Server at {base_url} answered the model listing with a body that is not a JSON "
+            f"object (HTTP {resp.status_code}, Content-Type: {content_type}). "
+            f"Body snippet: {resp.text[:200]!r}",
+            base_url,
+            show_url,
+            headless=headless,
+        )
+    model_ids = _listed_model_ids(data)
 
     if headless:
         msg = {
@@ -327,25 +344,35 @@ def _probe_server(
     sys.exit(0)
 
 
+def _listed_model_ids(data: dict[str, Any]) -> list[str]:
+    """Model IDs from an OpenAI (``data``/``id``) or native Gemini (``models``/``name``) listing.
+
+    Entries that are not objects, or name no model, are skipped.
+    """
+    listed = data.get("data") or data.get("models")
+    if not isinstance(listed, list):
+        return []
+    ids = (
+        m.get("id") or str(m.get("name", "")).removeprefix("models/")
+        for m in listed
+        if isinstance(m, dict)
+    )
+    return [str(model_id) for model_id in ids if model_id]
+
+
 def _report_invalid_probe_response(
     console: Console,
-    resp: Any,
+    message: str,
     base_url: str,
     show_url: str,
     *,
     headless: bool,
 ) -> NoReturn:
-    """Exit 2 for a 2xx model listing that is not a JSON object.
+    """Exit 2 with ``invalid_response`` for a model listing no wait will fix.
 
-    Waiting will not fix it: something answers at the URL, but not an
-    inference server's model listing.
+    Something answers at the URL, but not with an inference server's model
+    listing.
     """
-    content_type = resp.headers.get("Content-Type", "unknown")
-    message = (
-        f"Server at {base_url} answered the model listing with a body that is not a JSON "
-        f"object (HTTP {resp.status_code}, Content-Type: {content_type}). "
-        f"Body snippet: {resp.text[:200]!r}"
-    )
     if headless:
         event = {
             "event": "probe_result",

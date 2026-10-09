@@ -311,11 +311,16 @@ def test_probe_invalid_response_honours_redact_url(
 @pytest.mark.parametrize(
     ("body", "models"),
     [
-        ({"data": [{"id": "m"}, "junk", {"name": "x"}]}, ["m"]),
+        ({"data": [{"id": "m"}, "junk", {"name": "x"}, {}]}, ["m", "x"]),
         ({"data": "not a list"}, []),
         ({}, []),
+        # The native Gemini listing names models under "models".
+        (
+            {"models": [{"name": "models/gemini-x"}, {"name": "tunedModels/t"}]},
+            ["gemini-x", "tunedModels/t"],
+        ),
     ],
-    ids=["mixed-items", "data-not-a-list", "empty-object"],
+    ids=["mixed-items", "data-not-a-list", "empty-object", "gemini-models"],
 )
 def test_probe_ready_on_any_json_object(
     cli: Cli, monkeypatch: pytest.MonkeyPatch, body: dict[str, Any], models: list[str]
@@ -328,6 +333,49 @@ def test_probe_ready_on_any_json_object(
     (event,) = _events(outcome.err)
     assert event["status"] == "ready"
     assert event["models"] == models
+
+
+def test_probe_lists_gemini_model_ids_in_the_console(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mock_http(
+        monkeypatch,
+        lambda request: httpx.Response(200, json={"models": [{"name": "models/gemini-x"}]}),
+    )
+
+    outcome = cli.run("probe", "--base-url", BASE_URL, "--format", "gemini")
+
+    assert outcome.code == 0
+    assert "Models: gemini-x" in outcome.flat_out
+
+
+@pytest.mark.parametrize(
+    ("status", "headers"),
+    [
+        (302, {"Location": "http://user:hunter2@gpu.test:8000/sign-in"}),
+        (307, {"Location": "/login"}),
+        (301, {}),
+    ],
+    ids=["302-to-sign-in", "307-relative", "301-without-location"],
+)
+def test_probe_treats_a_redirect_as_an_invalid_response(
+    cli: Cli, monkeypatch: pytest.MonkeyPatch, status: int, headers: dict[str, str]
+) -> None:
+    _mock_http(monkeypatch, lambda request: httpx.Response(status, headers=headers))
+
+    console = cli.run("probe", "--base-url", BASE_URL)
+    redacted = cli.run("probe", "--base-url", SECRET_URL, "--redact-url")
+    headless = cli.run("probe", "--base-url", SECRET_URL, "--json")
+
+    assert console.code == redacted.code == headless.code == 2
+    assert "Invalid response" in console.flat_out
+    assert f"redirect (HTTP {status}" in console.flat_out
+    assert "gpu.test" not in redacted.out and "hunter2" not in redacted.out
+    (event,) = _events(headless.err)
+    assert event["status"] == "failed"
+    assert event["error_code"] == "invalid_response"
+    assert "redirect" in event["error"]
+    assert "gpu.test" not in headless.err and "hunter2" not in headless.err
 
 
 def _discover_localhost(monkeypatch: pytest.MonkeyPatch) -> None:

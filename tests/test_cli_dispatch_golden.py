@@ -732,7 +732,7 @@ def test_resume_without_reusable_outcomes_runs_everything(cli: Cli) -> None:
 @pytest.mark.parametrize(
     ("prefix", "suffix"),
     [
-        # Options go before "--": after it every token is positional.
+        # "--" marks the dash-leading run ID as the positional, not an option.
         pytest.param(["resume"], ["--", "-abc"], id="subcommand-separator"),
         pytest.param([], ["--resume=-abc"], id="legacy-attached"),
     ],

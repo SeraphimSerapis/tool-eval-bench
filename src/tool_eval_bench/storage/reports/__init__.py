@@ -66,6 +66,7 @@ class MarkdownReporter:
         planned_levels: int | None = None,
         interrupted: bool = False,
         stop_reason: str | None = None,
+        breaking_point_lower_bound: bool = False,
     ) -> Path:
         """Write a trace-complete artifact for a context-pressure sweep."""
         return write_pressure_sweep_report(
@@ -83,6 +84,7 @@ class MarkdownReporter:
             planned_levels=planned_levels,
             interrupted=interrupted,
             stop_reason=stop_reason,
+            breaking_point_lower_bound=breaking_point_lower_bound,
         )
 
     def write_scenario_report(

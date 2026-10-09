@@ -840,9 +840,13 @@ def test_reporter_facade_forwards_interruption_and_stop_reason(tmp_path: Path) -
     stopped = reporter.write_pressure_sweep_report(
         run_id="r2", stop_reason="2 consecutive all-fail levels", **common
     ).read_text(encoding="utf-8")
+    lower_bound = reporter.write_pressure_sweep_report(
+        run_id="r3", **{**common, "breaking_point": 0.5}, breaking_point_lower_bound=True
+    ).read_text(encoding="utf-8")
 
     assert "- **Breaking Point**: withheld (interrupted after 1 of 4 levels)" in interrupted
     assert "- **Stopped Early**: 2 consecutive all-fail levels" in stopped
+    assert "- **Breaking Point**: at least 50% (no higher level was scored)" in lower_bound
 
 
 # -- Review follow-up: leaderboard cohorts ignore calibration noise -----------------
