@@ -91,14 +91,27 @@ def recipient_values(value: Any) -> list[str]:
 
     Duplicates survive so a caller can still catch the same person notified
     twice; use ``set(recipient_values(...))`` when only identity matters.
+
+    RFC 5322 display-name forms (``Team Lead <lead@company.com>``,
+    ``"Doe, Jane" <jane@company.com>``) yield only the bracketed address. The
+    display name is a label, so ``cfo@company.com <evil@x.com>`` is a message
+    to evil@x.com alone, and that is what this returns.
     """
     items = value if isinstance(value, (list, tuple)) else [value]
-    return [
-        part.strip().lower()
-        for item in items
-        for part in re.split(r"[,;]", as_str(item))
-        if part.strip()
-    ]
+    addresses: list[str] = []
+    for item in items:
+        for part in _RECIPIENT_PART.findall(as_str(item)):
+            bracketed = [b.strip() for b in _BRACKETED_ADDRESS.findall(part) if b.strip()]
+            # An empty "<>" keeps the raw text: it must not erase a recipient.
+            address = (bracketed[-1] if bracketed else part).strip().lower()
+            if address:
+                addresses.append(address)
+    return addresses
+
+
+# One recipient: quoted strings and <...> may contain the separators.
+_RECIPIENT_PART = re.compile(r'(?:"[^"]*"?|<[^>]*>?|[^,;"<])+')
+_BRACKETED_ADDRESS = re.compile(r"<([^<>]*)>")
 
 
 def addressed_recipients(call: ToolCallRecord) -> list[str]:

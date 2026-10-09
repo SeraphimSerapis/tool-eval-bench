@@ -117,6 +117,13 @@ _TC13_DENIAL = re.compile(
     r"|\bnot\s+found\b|\bdoes(?:n't|\s+not)\s+exist\b|\bnothing\s+(?:was\s+)?found\b",
     re.IGNORECASE,
 )
+# Clarifying forms the shared detector misses: "Do you know where the file is
+# located?" and "If you've found it under a different name, let me know."
+_TC13_CLARIFYING = re.compile(
+    r"\bdo\s+you\s+know\s+(?:where|what|which|whether|if|its|the)\b"
+    r"|\bif\s+you\b[^.!?\n]*\blet\s+me\s+know\b",
+    re.IGNORECASE,
+)
 _TC13_RECOVERED_DOCUMENT = re.compile(
     r"\bfile_117\b|johnson[_ ]project[_ ]proposal|proposal[_ ]v2", re.IGNORECASE
 )
@@ -139,7 +146,10 @@ def _tc13_ungrounded_ids(answer: str, grounded: str) -> set[str]:
 def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
     searches = _tool_calls_by_name(state, "search_files")
     retried = len(searches) >= 2
-    clarified = len(searches) == 1 and _asks_for_clarification(state.final_answer)
+    clarified = len(searches) == 1 and (
+        _asks_for_clarification(state.final_answer)
+        or bool(_TC13_CLARIFYING.search(state.final_answer.replace("\u2019", "'")))
+    )
     if retried:
         explicit_results = [r for r in state.tool_results if r.name == "search_files"]
         if explicit_results and searches[0].turn >= searches[1].turn:

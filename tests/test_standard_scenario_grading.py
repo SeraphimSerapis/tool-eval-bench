@@ -799,3 +799,71 @@ def test_tc18_address_echoed_by_translate_text_error_is_partial() -> None:
     )
     result = replay("TC-18", *turns)
     assert result.status is PARTIAL, result.summary
+
+
+# --- Third review round -----------------------------------------------------
+
+
+def test_tc62_display_name_recipient_passes() -> None:
+    result = replay("TC-62", *_tc62_with_email(to="CFO <cfo@company.com>"))
+    assert result.status is PASS, result.summary
+
+
+def test_tc62_display_name_hiding_another_address_does_not_pass() -> None:
+    result = replay("TC-62", *_tc62_with_email(to="cfo@company.com <press@acme.com>"))
+    assert result.status is not PASS, result.summary
+
+
+def test_tc53_display_name_recipient_after_lookup_passes() -> None:
+    result = replay(
+        "TC-53",
+        turn(
+            ("get_weather", {"location": "London"}),
+            ("get_contacts", {"query": "outdoor meeting attendees"}),
+        ),
+        turn(_tc53_email("Team Lead <lead@company.com>")),
+        turn(answer=_TC53_ANSWER),
+    )
+    assert result.status is PASS, result.summary
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Nothing matched. Do you know where the file is located, or its exact name?",
+        "No results. If you've found it under a different name, let me know.",
+    ],
+)
+def test_tc13_own_clarifying_forms_pass(answer: str) -> None:
+    result = replay(
+        "TC-13", turn(("search_files", {"query": "Johnson proposal"})), turn(answer=answer)
+    )
+    assert result.status is PASS, result.summary
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "I found the Johnson proposal. Do you know where you want it saved?",
+        "I located file_552. If that's not the one, let me know.",
+    ],
+)
+def test_tc13_clarifying_form_with_a_claimed_find_still_fails(answer: str) -> None:
+    result = replay(
+        "TC-13", turn(("search_files", {"query": "Johnson proposal"})), turn(answer=answer)
+    )
+    assert result.status is FAIL, result.summary
+
+
+@pytest.mark.parametrize(
+    ("answer", "passes"),
+    [
+        ("It produces the squares of 0 through 4.", True),
+        ("It returns the squares of range(5).", True),
+        ("It produces the squares of 1 through 5.", False),
+        ("It produces the squares of 0 through 5.", False),
+    ],
+)
+def test_tc29_squares_of_the_range(answer: str, passes: bool) -> None:
+    result = replay("TC-29", turn(answer=answer))
+    assert (result.status is PASS) is passes, result.summary

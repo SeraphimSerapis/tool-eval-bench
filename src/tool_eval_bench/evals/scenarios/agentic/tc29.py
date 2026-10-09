@@ -43,6 +43,13 @@ _TC29_SQUARING = re.compile(
     re.IGNORECASE,
 )
 _TC29_POWER_FORM = re.compile(r"\bx\s*\*\*\s*2\b|\bx\u00b2")
+# "The squares of 0 through 4" states the operation and the range together.
+# The range must be the right one: "squares of 1 through 5" is wrong.
+_TC29_SQUARES_OF_RANGE = re.compile(
+    r"\bsquares?\s+of\s+(?:the\s+)?(?:(?:numbers|integers|values)\s+)?(?:from\s+)?"
+    r"(?:(?:0|zero)\s*(?:through|thru|to|-|\u2013|\.\.)\s*(?:4|four)\b|range\s*\(\s*5\s*\))",
+    re.IGNORECASE,
+)
 _TC29_INT_LIST = re.compile(r"\[\s*(-?\d+(?:\s*,\s*-?\d+)*)\s*\]")
 # The result, and the range it iterates over, are the only lists a correct
 # explanation writes out.
@@ -95,7 +102,10 @@ def _tc29_eval(state: ScenarioState) -> ScenarioEvaluation:
                 )
             )
         )
-    ) or (names_comprehension and _answer_affirms_pattern(answer, _TC29_POWER_FORM))
+    ) or (
+        (names_comprehension and _answer_affirms_pattern(answer, _TC29_POWER_FORM))
+        or _answer_affirms_pattern(answer, _TC29_SQUARES_OF_RANGE)
+    )
     wrong_list = _tc29_states_wrong_list(answer)
 
     if used_web:
