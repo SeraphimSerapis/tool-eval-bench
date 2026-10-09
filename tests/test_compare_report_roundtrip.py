@@ -111,6 +111,7 @@ def test_tool_eval_html_names_differing_settings_and_does_not_crown_a_tie(
     assert "clear winner" not in html
     assert "tie at 100 / 100" in html
     assert "Tie:" in html
+    _assert_cards_not_crowned(html)
 
 
 def test_tool_eval_html_keeps_the_winner_when_scores_differ(tmp_path: Path) -> None:
@@ -124,6 +125,10 @@ def test_tool_eval_html_keeps_the_winner_when_scores_differ(tmp_path: Path) -> N
     cmp_tool_eval.generate_html(a, b, str(out))
     html = out.read_text(encoding="utf-8")
     assert "clear winner" in html
+    assert ">WINNER</span>" in html and ">RUNNER-UP</div>" in html
+    assert 'class="winner-badge"' in html
+    assert "(Winner)</th>" in html
+    assert ">TIED</div>" not in html
     assert "Both runs used the same backend vllm, temperature 0.0, thinking disabled." in html
 
 
@@ -190,3 +195,11 @@ def test_summary_html_labels_reliability_with_the_trial_count(tmp_path: Path) ->
     assert "Pass@3" in html
     assert "\u2078" not in html and "\u2088" not in html
     assert "clear winner" not in html  # identical runs tie
+    _assert_cards_not_crowned(html)
+
+
+def _assert_cards_not_crowned(html: str) -> None:
+    assert html.count(">TIED</div>") == 2
+    assert ">WINNER<" not in html and ">RUNNER-UP<" not in html
+    assert 'class="winner-badge"' not in html
+    assert "(Winner)</th>" not in html

@@ -14,6 +14,7 @@ from typing import Any
 from tool_eval_bench.compare_reports._common import (
     _r,
     _tv,
+    card_labels,
     config_note,
     deployability_label,
     diff_display,
@@ -418,6 +419,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     </div>""")
 
     # ─── MODEL CARDS ───
+    runner_label, winner_label = card_labels(tie)
     w_rating_parts = w["rating"].split("(")
     w_rating_display = w_rating_parts[0].strip() if w_rating_parts else w["rating"]
     r_rating_parts = r["rating"].split("(")
@@ -428,7 +430,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
       <div class="light-card rounded-3xl p-5 border border-slate-300">
         <div class="flex items-start justify-between">
           <div>
-            <div class="model-label text-rose-700 tracking-widest">RUNNER-UP</div>
+            {runner_label}
             <div class="font-semibold text-xl tracking-tight mt-1">{esc(rdn)}</div>
             <div class="text-xs text-slate-600 mt-0.5">{esc(rd)}</div>
           </div>
@@ -446,10 +448,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
       <div class="light-card rounded-3xl p-5 border border-emerald-300 shadow-sm ring-1 ring-emerald-200">
         <div class="flex items-start justify-between">
           <div>
-            <div class="flex items-center gap-x-2">
-              <span class="model-label text-emerald-700 tracking-widest">WINNER</span>
-              <span class="winner-badge"><i class="fa-solid fa-trophy mr-1"></i> BEST</span>
-            </div>
+            {winner_label}
             <div class="font-semibold text-xl tracking-tight mt-1 text-emerald-900">{esc(wdn)}</div>
             <div class="text-xs text-emerald-800 mt-0.5">{esc(wd)}</div>
           </div>
@@ -531,7 +530,7 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     lines.append("          <thead>")
     lines.append(f"""            <tr class="bg-slate-200 border-b-2 border-slate-400">
               <th class="text-left py-3 px-6 font-semibold w-1/3">Metric</th>
-              <th class="text-center py-3 px-4 font-semibold text-emerald-700">{wl} (Winner)</th>
+              <th class="text-center py-3 px-4 font-semibold text-emerald-700">{wl}{"" if tie else " (Winner)"}</th>
               <th class="text-center py-3 px-4 font-semibold">{rl}</th>
               <th class="text-center py-3 px-4 font-semibold w-20">\u0394</th>
             </tr>""")

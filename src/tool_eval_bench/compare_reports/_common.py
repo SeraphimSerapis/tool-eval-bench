@@ -71,6 +71,24 @@ def deployability_label(da: dict, db: dict) -> str:
     return "Deployability"
 
 
+def card_labels(tie: bool) -> tuple[str, str]:
+    """Return the (second card, first card) label markup for the model cards.
+
+    On a tie neither card is crowned: both read TIED and the trophy is dropped.
+    """
+    if tie:
+        tied = '<div class="model-label text-slate-600 tracking-widest">TIED</div>'
+        return tied, tied
+    runner = '<div class="model-label text-rose-700 tracking-widest">RUNNER-UP</div>'
+    winner = (
+        '<div class="flex items-center gap-x-2">\n'
+        '              <span class="model-label text-emerald-700 tracking-widest">WINNER</span>\n'
+        '              <span class="winner-badge"><i class="fa-solid fa-trophy mr-1"></i> BEST</span>\n'
+        "            </div>"
+    )
+    return runner, winner
+
+
 def dname(d: dict) -> str:
     return d["model_api"] or d["model_name"]
 
