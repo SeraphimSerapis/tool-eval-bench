@@ -13,7 +13,12 @@ from typing import Any
 from rich.console import Console
 
 from tool_eval_bench.cli.headless import report_run_failed
-from tool_eval_bench.storage.reports._common import PP_ESTIMATED_NOTE, sample_pp_estimated
+from tool_eval_bench.storage.reports._common import (
+    PP_ESTIMATED_NOTE,
+    benchy_row_label,
+    benchy_tokens_label,
+    sample_pp_estimated,
+)
 
 
 def _measurement_run_key(event: dict[str, Any]) -> tuple[Any, ...]:
@@ -281,7 +286,7 @@ def run_llama_benchy(
 
         labels: list[str] = []
         for s in ok_samples:
-            labels.append(f"pp{s.label_pp} tg{s.tg_tokens} @ d{s.label_depth}")
+            labels.append(benchy_row_label(s))
         test_col_width = max(len(lbl) for lbl in labels)
 
         table = Table(
@@ -307,7 +312,7 @@ def run_llama_benchy(
                 f"{s.tg_tps:,.1f}",
                 f"{s.ttft_ms:,.0f}",
                 f"{s.total_ms:,.0f}",
-                f"{s.pp_tokens}+{s.tg_tokens}",
+                benchy_tokens_label(s),
             )
 
         console.print(table)

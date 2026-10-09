@@ -268,7 +268,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "no_warmup",
         "type": "bool",
         "default": False,
-        "description": "Skip server warm-up request",
+        "description": "Skip the tool-eval-bench warm-up request (llama-benchy keeps its own warm-up)",
     },
     {
         "name": "no_preflight",

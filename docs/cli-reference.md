@@ -34,12 +34,15 @@ Always use `--json` for machine-readable output.  In this mode:
 - **stdout** contains only the JSON result envelope
 - **stderr** contains JSONL progress events (one per line); warnings arrive as `log` events
 - Interactive prompts are skipped (first model is auto-selected)
-- Warmup, banners, tables, and progress bars are suppressed in every mode
+- Warmup, banners, tables, and progress bars are suppressed in every mode. llama-benchy
+  still runs its own warm-up, so `--perf` measures the same way with or without `--json`
 
 Modes that have no result envelope (`--perf-only`, `--spec-bench`,
 `--context-pressure-sweep`, and the accuracy plugins such as `--gsm8k-only`)
 write nothing to stdout. Their results go to the Markdown report and SQLite as
 usual, and a `run_saved` event on stderr gives the run ID and report path.
+`--perf` combined with `--skip-tool-eval`, `--context-pressure-sweep`, or a
+plugin-only run saves its throughput sweep the same way, as a separate `perf` run.
 
 `--spec-live` and `--decision-live` are interactive monitors and exit 2 when
 combined with `--json`. Invalid arguments exit 2 with an `invalid_arguments`
@@ -136,7 +139,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--temperature F` | Sampling temperature (default: 0.0 = greedy) |
 | `--timeout F` | Per-request timeout in seconds (default: 60) |
 | `--no-think` | Disable thinking/reasoning (critical for Qwen3/DeepSeek) |
-| `--no-warmup` | Skip server warm-up request |
+| `--no-warmup` | Skip the tool-eval-bench warm-up request. llama-benchy (`--perf`, `--perf-only`) always runs its own warm-up |
 | `--hardmode` | Include 23 Hard Mode scenarios (Category P) |
 | `--categories A B K` | Run only specific categories (A–P). P needs `--hardmode`; a filter that matches no scenario is a usage error (exit 2) |
 | `--scenarios TC-01 TC-07` | Run specific scenario IDs |

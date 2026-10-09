@@ -8,7 +8,22 @@
       "backend": "vllm",
       "base_url": "http://***:8000/v1",
       "mode": "perf-only",
-      "config_fingerprint": "dcb82174caa3"
+      "pp": 2048,
+      "tg": 128,
+      "depths": [
+        0,
+        4096,
+        8192
+      ],
+      "concurrency": [
+        1,
+        2,
+        4
+      ],
+      "runs": 3,
+      "latency_mode": "generation",
+      "benchy_args": [],
+      "config_fingerprint": "5a32c62a21f5"
     },
     "scores": {
       "samples": 1,

@@ -294,6 +294,15 @@ class ThroughputSample:
     # llama-benchy counted a pre-content stream chunk as its first response.
     # Reports mark such rows with an asterisk.
     pp_estimated: bool = False
+    # Mean output tokens per successful llama-benchy request in this cell.
+    # ``tg_tokens`` stays the configured value because it is the cell key and
+    # the row label; a model that stops early generates fewer. None when the
+    # run emitted no per-request progress events.
+    observed_tg_tokens: float | None = None
+    # True for the context-load row llama-benchy adds under
+    # ``--enable-prefix-caching``. It shares every other coordinate with the
+    # inference row that follows it.
+    is_context_prefill: bool = False
 
     @property
     def effective_tg_tps(self) -> float:
@@ -355,9 +364,11 @@ class ThroughputSample:
         rounded. Error text is not part of it: a failed cell is only counted,
         because the message can quote the server URL. Per-token timestamps and
         the raw spec-decode payloads are left out; llama-benchy, which produces
-        these samples, never fills them.
+        these samples, never fills them. ``observed_tg_tokens`` and
+        ``is_context_prefill`` appear only when they carry information, so rows
+        from other producers keep their shape.
         """
-        return {
+        result: dict[str, Any] = {
             "requested_pp": self.requested_pp,
             "requested_depth": self.requested_depth,
             "pp_tokens": self.pp_tokens,
@@ -371,6 +382,11 @@ class ThroughputSample:
             "pp_estimated": self.pp_estimated,
             "calibration_confidence": self.calibration_confidence,
         }
+        if self.observed_tg_tokens is not None:
+            result["observed_tg_tokens"] = self.observed_tg_tokens
+        if self.is_context_prefill:
+            result["is_context_prefill"] = True
+        return result
 
 
 @dataclass
@@ -651,6 +667,11 @@ async def _stream_one(
     measurement = client
     try:
         async with measurement.stream_completion(payload) as response:
+            if response.status_code >= 400:
+                # Read the error body while the stream is open. Leaving the
+                # ``async with`` closes it, and the retry checks below need
+                # the body text.
+                await response.aread()
             response.raise_for_status()
 
             async for raw_line in _completion_lines(response):
@@ -785,6 +806,7 @@ async def _stream_one(
                 tg,
                 api_key,
                 tok_cfg,
+                temperature=temperature,
                 _include_token_ids=False,
             )
         elapsed = (time.perf_counter() - t0) * 1000

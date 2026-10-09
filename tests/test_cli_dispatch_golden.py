@@ -543,7 +543,8 @@ def test_perf_samples_reach_the_scored_run(cli: Cli, mode_flags: list[str], samp
             "latency_mode": "generation",
             "skip_coherence": True,
             "extra_args": None,
-            "skip_warmup": True,
+            # llama-benchy keeps its warm-up in every mode, as llama-bench does.
+            "skip_warmup": False,
             "tokenizer": None,
             "backend": "vllm",
         }
@@ -944,6 +945,116 @@ def test_perf_only_persists_and_exits_by_cell_status(cli: Cli) -> None:
         "results": [samples[0].to_result()],
     }
     assert "Throughput benchmark failed in 1 cell(s)." in outcome.flat_out
+
+
+def _perf_rows(cli: Cli) -> list[dict[str, Any]]:
+    rows = [call["args"][0] for call in cli.leaves.get("persist_run", [])]
+    return [row for row in rows if row["run_type"] == "perf"]
+
+
+@pytest.mark.parametrize(
+    ("extra", "leaf"),
+    [
+        pytest.param(["--skip-tool-eval"], None, id="skip-tool-eval"),
+        pytest.param(
+            ["--context-pressure-sweep", "0.5-1.0"],
+            ("tool_eval_bench.cli.pressure", "run_pressure_sweep", None),
+            id="sweep",
+        ),
+        pytest.param(
+            ["--spec-bench", "--skip-tool-eval"],
+            ("tool_eval_bench.cli.spec_bench", "run_spec_bench", None),
+            id="spec-bench",
+        ),
+        pytest.param(
+            ["--gsm8k-only"],
+            ("tool_eval_bench.cli.plugin_runners", "run_selected_plugins", True),
+            id="plugin-only",
+        ),
+    ],
+)
+def test_perf_is_saved_on_its_own_when_no_scored_run_follows(
+    cli: Cli, extra: list[str], leaf: tuple[str, str, Any] | None
+) -> None:
+    samples = [ThroughputSample()]
+    cli.record("tool_eval_bench.cli.perf", "run_llama_benchy", lambda: samples)
+    if leaf is not None:
+        cli.record(*leaf)
+    output_dir = str(cli.tmp_path / "reports")
+    outcome = cli.run(*CONNECTION, "--perf-only", "--json", "--output-dir", output_dir)
+    (perf_only,) = _perf_rows(cli)
+
+    outcome = cli.run(
+        *CONNECTION, "--scenarios", "TC-01", "--perf", *extra, "--json", "--output-dir", output_dir
+    )
+
+    assert outcome.code == 0
+    assert cli.runs == []
+    _, persisted = _perf_rows(cli)
+    # The same measurement as --perf-only, so the same stored config and cohort.
+    assert persisted["config"] == perf_only["config"]
+    assert persisted["scores"] == {"samples": 1, "results": [samples[0].to_result()]}
+    events = [json.loads(line) for line in outcome.err.splitlines()]
+    assert [event["run_type"] for event in events if event["event"] == "run_saved"] == ["perf"]
+
+
+def test_perf_followed_by_a_scored_run_is_not_saved_twice(cli: Cli) -> None:
+    cli.record("tool_eval_bench.cli.perf", "run_llama_benchy", lambda: [ThroughputSample()])
+
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--perf", "--no-live")
+
+    assert outcome.code == 0
+    assert len(cli.runs) == 1
+    assert _perf_rows(cli) == []
+
+
+def test_perf_saved_on_its_own_still_fails_on_a_failed_cell(cli: Cli) -> None:
+    cli.record(
+        "tool_eval_bench.cli.perf",
+        "run_llama_benchy",
+        lambda: [ThroughputSample(), ThroughputSample(error="boom")],
+    )
+
+    outcome = cli.run(*CONNECTION, "--perf", "--skip-tool-eval", "--no-live")
+
+    assert outcome.code == 1
+    (persisted,) = _perf_rows(cli)
+    assert persisted["status"] == "failed"
+    assert "Throughput benchmark failed in 1 cell(s)." in outcome.flat_out
+
+
+def test_perf_only_fingerprint_follows_the_workload(cli: Cli) -> None:
+    cli.record("tool_eval_bench.cli.perf", "run_llama_benchy", lambda: [ThroughputSample()])
+    workloads = [
+        [],
+        [],
+        ["--depth", "0"],
+        ["--concurrency", "1"],
+        ["--pp", "512"],
+        ["--tg", "64"],
+        ["--benchy-runs", "5"],
+        ["--benchy-latency-mode", "api"],
+        ["--benchy-args=--enable-prefix-caching"],
+    ]
+
+    for flags in workloads:
+        assert cli.run(*CONNECTION, "--perf-only", "--no-live", *flags).code == 0
+
+    fingerprints = [row["config"]["config_fingerprint"] for row in _perf_rows(cli)]
+    assert fingerprints[0] == fingerprints[1], "an identical workload shares a cohort"
+    assert len(set(fingerprints[1:])) == len(workloads) - 1
+
+
+def test_perf_only_config_strips_credentials_from_benchy_args(cli: Cli) -> None:
+    cli.record("tool_eval_bench.cli.perf", "run_llama_benchy", lambda: [ThroughputSample()])
+
+    outcome = cli.run(
+        *CONNECTION, "--perf-only", "--no-live", "--benchy-args=--api-key sk-secret --exact-tg"
+    )
+
+    assert outcome.code == 0
+    (persisted,) = _perf_rows(cli)
+    assert persisted["config"]["benchy_args"] == ["--api-key", "<redacted>", "--exact-tg"]
 
 
 SPEC_BENCH_CALL = {

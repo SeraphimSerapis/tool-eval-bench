@@ -415,22 +415,49 @@ class _Target:
     run_context: RunContext | None
 
 
+def _benchy_extra_args(args: argparse.Namespace) -> list[str] | None:
+    if not args.benchy_args:
+        return None
+    import shlex
+
+    return shlex.split(args.benchy_args)
+
+
+def _throughput_config(target: _Target) -> dict[str, Any]:
+    """The stored config of a throughput run that no scored run carries.
+
+    The workload fields keep different sweeps out of one fingerprint cohort.
+    ``--benchy-args`` is stored with credentials stripped, because it can
+    carry ``--api-key``.
+    """
+    from tool_eval_bench.runner.llama_benchy import redact_arguments
+
+    args = target.args
+    return {
+        "model": target.model,
+        "backend": target.backend,
+        "base_url": target.base_url,
+        "mode": "perf-only",
+        "pp": args.pp,
+        "tg": args.tg,
+        "depths": _parse_int_list(args.depth),
+        "concurrency": _parse_int_list(args.concurrency),
+        "runs": args.benchy_runs,
+        "latency_mode": args.benchy_latency_mode,
+        "benchy_args": redact_arguments(_benchy_extra_args(args) or []),
+    }
+
+
 def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
     """Run the llama-benchy throughput sweep.
 
     Returns the samples and whether the CLI is finished; ``--perf-only`` writes
-    its own report and stops, while ``--perf`` hands its samples to the
-    tool-call run that follows.
+    its own report and stops, while ``--perf`` hands its samples to whatever
+    runs next. ``_run_cli`` persists them itself when no scored run follows.
     """
     args, console = target.args, target.console
     if not (args.perf or args.perf_only):
         return [], False
-
-    benchy_extra: list[str] | None = None
-    if args.benchy_args:
-        import shlex
-
-        benchy_extra = shlex.split(args.benchy_args)
 
     throughput_samples = _run_llama_benchy(
         console,
@@ -445,10 +472,12 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
         runs=args.benchy_runs,
         latency_mode=args.benchy_latency_mode,
         skip_coherence=True,
-        extra_args=benchy_extra,
-        # We already warmed the server, so skip llama-benchy's own warm-up and
-        # save two requests.
-        skip_warmup=not args.no_warmup,
+        extra_args=_benchy_extra_args(args),
+        # llama-benchy always warms up, as llama-bench does: its global
+        # warm-up requests plus a discarded first run of every cell. Its
+        # --no-warmup drops both, so each cell's first measured run would be
+        # cold. tool-eval-bench's --no-warmup covers only its own warm-up.
+        skip_warmup=False,
         tokenizer=getattr(args, "tokenizer", None),
         backend=target.backend,
     )
@@ -458,6 +487,20 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
         # display of the samples drops them itself.
         return throughput_samples, False
 
+    _finalize_throughput(target, throughput_samples)
+    return throughput_samples, True
+
+
+def _finalize_throughput(target: _Target, throughput_samples: list[ThroughputSample]) -> None:
+    """Persist a throughput sweep as its own ``perf`` run and report it.
+
+    Used by ``--perf-only`` and by ``--perf`` when spec-bench, a sweep, a
+    plugin-only run, or ``--skip-tool-eval`` ends the CLI before a scored run
+    could carry the samples. Both store the same config, so the same
+    measurement lands in the same fingerprint cohort. Exits 1 after saving
+    when any cell failed.
+    """
+    args, console = target.args, target.console
     failed_count = sum(bool(sample.error) for sample in throughput_samples)
     successful_count = len(throughput_samples) - failed_count
     scores: dict[str, Any] = {"samples": len(throughput_samples)}
@@ -468,12 +511,7 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
     run_context = target.run_context
     run = ModeRun(
         run_type="perf",
-        config={
-            "model": target.model,
-            "backend": target.backend,
-            "base_url": target.base_url,
-            "mode": "perf-only",
-        },
+        config=_throughput_config(target),
         scores=scores,
         status="failed" if failed_count else "completed",
     )
@@ -500,7 +538,6 @@ def _run_throughput_mode(target: _Target) -> tuple[list, bool]:
             console, f"[bold red]Throughput benchmark failed in {failed_count} cell(s).[/]"
         )
         sys.exit(1)
-    return throughput_samples, True
 
 
 def _reject_unknown_categories(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -876,13 +913,26 @@ def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser, console:
 
     target = _ready_target(target, endpoint.probe_headers)
     throughput_samples, finished = _run_throughput_mode(target)
-    if finished or _run_spec_bench_mode(target) or _run_pressure_sweep_mode(target):
+    if finished:
+        return
+    # From here on, a mode that ends the CLI leaves --perf samples without the
+    # scored run that would have stored them, so they are saved on their own.
+    if _run_spec_bench_mode(target) or _run_pressure_sweep_mode(target):
+        _finalize_unclaimed_throughput(target, throughput_samples)
         return
 
     pressure = _prepare_context_pressure(target)
     if _run_plugins_mode(target) or _skip_tool_eval_mode(target):
+        _finalize_unclaimed_throughput(target, throughput_samples)
         return
     _run_scored_mode(target, throughput_samples, pressure)
+
+
+def _finalize_unclaimed_throughput(
+    target: _Target, throughput_samples: list[ThroughputSample]
+) -> None:
+    if throughput_samples:
+        _finalize_throughput(target, throughput_samples)
 
 
 def _prepare_args(

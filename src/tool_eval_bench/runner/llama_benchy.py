@@ -25,7 +25,7 @@ import os
 import shlex
 import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -121,8 +121,8 @@ def _redact_argument(arg: str) -> str:
     return arg
 
 
-def _redact_command(cmd: list[str]) -> str:
-    """Render a command for logging without exposing credentials.
+def redact_arguments(cmd: list[str]) -> list[str]:
+    """Return *cmd* with endpoint credentials replaced or stripped.
 
     Covers both channels an endpoint credential can travel by: an explicit
     ``--api-key`` value, and anything embedded in a URL argument.
@@ -142,7 +142,12 @@ def _redact_command(cmd: list[str]) -> str:
         else:
             redacted.append(_redact_argument(arg))
 
-    return shlex.join(redacted)
+    return redacted
+
+
+def _redact_command(cmd: list[str]) -> str:
+    """Render a command for logging without exposing credentials."""
+    return shlex.join(redact_arguments(cmd))
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +162,24 @@ def _extra_args_set_return_token_ids(extra_args: list[str] | None) -> bool:
     tweak, so a value set there wins over the SGLang default below.
     """
     return any("return_token_ids" in arg for arg in extra_args or ())
+
+
+def _needs_cache_prompt(extra_args: list[str] | None) -> bool:
+    """Report whether ``--enable-prefix-caching`` needs ``cache_prompt=true`` added.
+
+    ``--no-cache`` makes llama-benchy send ``cache_prompt: false``, and
+    llama.cpp then re-prefills the whole prompt on the follow-up request that
+    is supposed to reuse the cached prefix. A ``cache_prompt`` value the user
+    already passed wins.
+    """
+    args = extra_args or ()
+    return "--enable-prefix-caching" in args and not any("cache_prompt" in arg for arg in args)
+
+
+# asyncio's default StreamReader limit is 64 KiB per line. llama-benchy prints
+# a failed request's whole error body on one line, so a long validation error
+# would abort the run and lose every finished cell.
+_PIPE_LINE_LIMIT = 16 * 1024 * 1024
 
 
 def _failure_hint(output_lines: list[str]) -> str:
@@ -260,6 +283,15 @@ def _build_command(
     if (backend or "").lower() == "sglang" and not _extra_args_set_return_token_ids(extra_args):
         cmd.extend(["--extra-body", "return_token_ids=false"])
 
+    # ``--no-cache`` stays on for its per-request prompt suffix, which stops
+    # one run reusing another's prompt. It also sends ``cache_prompt: false``,
+    # which would stop llama.cpp reusing the prefix that
+    # ``--enable-prefix-caching`` measures. ``--extra-body`` is appended and
+    # merged after that default, so this turns the cache back on for both
+    # phases. vLLM and SGLang ignore the field.
+    if no_cache and _needs_cache_prompt(extra_args):
+        cmd.extend(["--extra-body", "cache_prompt=true"])
+
     # JSON output
     cmd.extend(["--format", "json"])
     if output_file:
@@ -351,7 +383,8 @@ def _labeled_prefill_tokens(
     Match llama-benchy's numerator for each phase: depth for context load,
     prompt for its prefix-cached follow-up, and depth plus prompt for a
     standard run. ``--enable-prefix-caching`` is accepted through
-    ``--benchy-args`` even when this tool passes ``--no-cache``.
+    ``--benchy-args``; :func:`_build_command` then re-enables ``cache_prompt``
+    so the follow-up really reuses the prefix despite ``--no-cache``.
     """
     if is_ctx_prefill:
         return depth
@@ -361,14 +394,22 @@ def _labeled_prefill_tokens(
 
 
 def _parse_benchmark_entry(
-    entry: dict[str, Any], *, prefix_caching_enabled: bool = False
+    entry: dict[str, Any],
+    *,
+    prefix_caching_enabled: bool = False,
+    observed_tg_tokens: float | None = None,
 ) -> ThroughputSample:
-    """Convert a single llama-benchy benchmark entry to a ThroughputSample."""
+    """Convert a single llama-benchy benchmark entry to a ThroughputSample.
+
+    ``observed_tg_tokens`` is the mean output length the progress stream
+    reported for this cell. llama-benchy's ``response_size`` is the configured
+    ``tg``, which is only an upper bound when the model stops early.
+    """
     concurrency = entry.get("concurrency", 1)
     depth = entry.get("context_size", 0)
     pp_tokens = entry.get("prompt_size", 0)
     tg_tokens = entry.get("response_size", 0)
-    is_ctx_prefill = entry.get("is_context_prefill_phase", False)
+    is_ctx_prefill = bool(entry.get("is_context_prefill_phase", False))
 
     # Extract mean values from stat objects
     pp_tps = _stat_mean(entry.get("pp_throughput", {}))
@@ -396,7 +437,6 @@ def _parse_benchmark_entry(
             honest_pp_tps = prefill_tokens / (e2e_ttft_ms / 1000.0)
             pp_tps = honest_pp_tps
             pp_req_tps = honest_pp_tps
-            est_ppt_ms = e2e_ttft_ms
             pp_estimated = True
 
     # Concurrent rows display the batch total, which is what llama-benchy's
@@ -408,9 +448,13 @@ def _parse_benchmark_entry(
         display_pp = pp_req_tps if pp_req_tps > 0 else pp_tps
         display_tg = tg_req_tps if tg_req_tps > 0 else tg_tps
 
-    # Estimate total time from est_ppt + generation time
-    gen_time_ms = (tg_tokens / tg_req_tps * 1000) if tg_req_tps > 0 else 0
-    total_ms = est_ppt_ms + gen_time_ms if est_ppt_ms > 0 else 0
+    # Total request time on the same base as the TTFT column: time to the
+    # first content token plus the per-request generation time. est_ppt is
+    # latency-subtracted and can count a pre-content chunk, so a Total built
+    # on it could fall below TTFT or to zero.
+    generated = observed_tg_tokens if observed_tg_tokens is not None else tg_tokens
+    gen_time_ms = (generated / tg_req_tps * 1000) if tg_req_tps > 0 else 0
+    total_ms = e2e_ttft_ms + gen_time_ms if e2e_ttft_ms > 0 else 0
 
     # If this is a context prefill phase, override pp label
     req_pp = depth if is_ctx_prefill else pp_tokens
@@ -428,6 +472,8 @@ def _parse_benchmark_entry(
         requested_depth=depth,
         calibration_confidence="llama-benchy",
         pp_estimated=pp_estimated,
+        observed_tg_tokens=observed_tg_tokens,
+        is_context_prefill=is_ctx_prefill,
     )
 
 
@@ -444,7 +490,11 @@ def _sample_cell_key(sample: ThroughputSample) -> tuple[int, int, int, int]:
 
 
 def _progress_cell_key(event: dict[str, Any]) -> tuple[int, int, int, int]:
-    """Return one progress event's matrix coordinates."""
+    """Return the matrix coordinates of a progress event or a benchmark entry.
+
+    Both use llama-benchy's configured ``prompt_size``, ``response_size``,
+    ``context_size``, and ``concurrency``.
+    """
     return (
         int(event.get("prompt_size", 0)),
         int(event.get("response_size", 0)),
@@ -453,21 +503,61 @@ def _progress_cell_key(event: dict[str, Any]) -> tuple[int, int, int, int]:
     )
 
 
+# One request error can echo a whole request body. The text lands in the
+# console, the report, and the run_failed message, so keep each one short.
+_MAX_ERROR_CHARS = 300
+
+
+def _short_error(error: str) -> str:
+    error = redact_urls(error)
+    if len(error) <= _MAX_ERROR_CHARS:
+        return error
+    return error[:_MAX_ERROR_CHARS] + "…"
+
+
 def _invalid_sample_error(sample: ThroughputSample, errors: list[str]) -> str | None:
-    """Describe an all-zero cell, using llama-benchy's request error when present."""
-    if any(value > 0 for value in (sample.pp_tps, sample.tg_tps, sample.ttft_ms, sample.total_ms)):
+    """Describe a cell that cannot be published as a clean measurement.
+
+    A cell is invalid when every metric is zero or when any of its requests
+    failed. llama-benchy drops failed requests and computes the cell from the
+    survivors, so a c2 cell that lost one request would report one request's
+    throughput as the batch total, and a c1 cell would average fewer runs than
+    requested.
+
+    Progress events carry no phase, and llama-benchy gives the context-load
+    and inference rows of an ``--enable-prefix-caching`` cell the same
+    coordinates. A failure in either phase therefore flags both rows. That is
+    deliberate: telling them apart would mean inferring the phase from request
+    order.
+    """
+    all_zero = not any(
+        value > 0 for value in (sample.pp_tps, sample.tg_tps, sample.ttft_ms, sample.total_ms)
+    )
+    if not errors and not all_zero:
         return None
     # The error is llama-benchy's own text and may quote the request URL; it
     # lands in the report and the stored scores.
-    detail = "; ".join(dict.fromkeys(map(redact_urls, errors))) or "no usable throughput metrics"
-    return (
-        f"pp{sample.label_pp} tg{sample.tg_tokens} @ d{sample.label_depth} "
-        f"c{sample.concurrency}: {detail}"
+    detail = "; ".join(dict.fromkeys(map(_short_error, errors)))
+    phase = "ctx " if sample.is_context_prefill else ""
+    label = (
+        f"{phase}pp{sample.label_pp} tg{sample.tg_tokens} @ d{sample.label_depth} "
+        f"c{sample.concurrency}"
     )
+    if all_zero:
+        return f"{label}: {detail or 'no usable throughput metrics'}"
+    return f"{label}: {len(errors)} request(s) failed: {detail}"
 
 
-def parse_json_output(data: dict[str, Any]) -> LlamaBenchyResult:
-    """Parse a complete llama-benchy JSON output into a LlamaBenchyResult."""
+def parse_json_output(
+    data: dict[str, Any],
+    *,
+    observed_tg_tokens: Mapping[tuple[int, int, int, int], float] | None = None,
+) -> LlamaBenchyResult:
+    """Parse a complete llama-benchy JSON output into a LlamaBenchyResult.
+
+    ``observed_tg_tokens`` maps a cell's ``(pp, tg, depth, concurrency)`` to
+    the mean output length its progress events reported.
+    """
     result = LlamaBenchyResult(
         version=data.get("version", ""),
         timestamp=data.get("timestamp", ""),
@@ -478,8 +568,13 @@ def parse_json_output(data: dict[str, Any]) -> LlamaBenchyResult:
     )
 
     prefix_caching_enabled = data.get("prefix_caching_enabled") is True
+    observed = observed_tg_tokens or {}
     for entry in data.get("benchmarks", []):
-        sample = _parse_benchmark_entry(entry, prefix_caching_enabled=prefix_caching_enabled)
+        sample = _parse_benchmark_entry(
+            entry,
+            prefix_caching_enabled=prefix_caching_enabled,
+            observed_tg_tokens=observed.get(_progress_cell_key(entry)),
+        )
         result.samples.append(sample)
 
     return result
@@ -540,6 +635,7 @@ async def run_llama_benchy(
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
         output_file = f.name
 
+    proc: asyncio.subprocess.Process | None = None
     try:
         cmd = _build_command(
             base_url,
@@ -583,14 +679,17 @@ async def run_llama_benchy(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            limit=_PIPE_LINE_LIMIT,
         )
 
         # With --emit-progress -, llama-benchy writes JSONL progress events to
         # stdout and regular output to stderr.  Read both concurrently to avoid
         # pipe-buffer deadlock.
+        stderr, stdout = proc.stderr, proc.stdout
         output_lines: list[str] = []
         request_cells: dict[int, tuple[int, int, int, int]] = {}
         cell_errors: dict[tuple[int, int, int, int], list[str]] = {}
+        cell_tokens: dict[tuple[int, int, int, int], list[int]] = {}
         # Known noisy lines from transformers/HF Hub we suppress from display
         _SUPPRESS = (
             "PyTorch was not found",
@@ -599,18 +698,18 @@ async def run_llama_benchy(
         )
 
         async def _read_stderr() -> None:
-            if proc.stderr is None:
+            if stderr is None:
                 return
-            async for raw_line in proc.stderr:
+            async for raw_line in stderr:
                 line = raw_line.decode("utf-8", errors="replace").rstrip()
                 output_lines.append(line)
                 if on_output and not any(s in line for s in _SUPPRESS):
                     on_output(line)
 
         async def _read_stdout() -> None:
-            if proc.stdout is None:
+            if stdout is None:
                 return
-            async for raw_line in proc.stdout:
+            async for raw_line in stdout:
                 line = raw_line.decode("utf-8", errors="replace").rstrip()
                 try:
                     event = json.loads(line)
@@ -629,8 +728,11 @@ async def run_llama_benchy(
                 elif event_type == "request_end" and request_id is not None:
                     cell = request_cells.pop(int(request_id), None)
                     error = event.get("error")
+                    total_tokens = event.get("total_tokens")
                     if cell is not None and isinstance(error, str) and error:
                         cell_errors.setdefault(cell, []).append(error)
+                    elif cell is not None and isinstance(total_tokens, int):
+                        cell_tokens.setdefault(cell, []).append(total_tokens)
                 if on_progress:
                     on_progress(event)
 
@@ -704,7 +806,10 @@ async def run_llama_benchy(
             )
 
         raw_data = json.loads(output_path.read_text(encoding="utf-8"))
-        result = parse_json_output(raw_data)
+        observed_tg_tokens = {
+            cell: sum(tokens) / len(tokens) for cell, tokens in cell_tokens.items() if tokens
+        }
+        result = parse_json_output(raw_data, observed_tg_tokens=observed_tg_tokens)
         for sample in result.samples:
             sample.error = _invalid_sample_error(
                 sample,
@@ -724,6 +829,13 @@ async def run_llama_benchy(
         return result
 
     finally:
+        # A reader error or cancellation can leave the child running.
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.wait()
         # Clean up temp file
         try:
             Path(output_file).unlink(missing_ok=True)
