@@ -14,6 +14,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -105,7 +106,7 @@ def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
                 and parsed.get("humidity") == 82
             )
             if correct_values and valid_types and no_extra:
-                if len(state.tool_calls) != 1:
+                if len(_counted_calls(state.tool_calls)) != 1:
                     return _partial(
                         "Returned correct JSON, but made unnecessary additional tool calls."
                     )

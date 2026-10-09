@@ -867,9 +867,10 @@ are not removed from the denominator. The result also records answered items and
 completion rate so callers can distinguish wrong answers from missing work. A
 request the server rejects (for example a 401 or a 404 that the adapter reports
 as a `[server error N]` result rather than raising) counts as an error, never as
-a graded answer. A selection that leaves no items to evaluate (a limit of zero
-after filtering, or an empty dataset) fails the run instead of saving a 0/0
-result.
+a graded answer. So does a 200 response whose body is not valid JSON, which the
+adapter reports as `[malformed response]`. A selection that leaves no items to
+evaluate (a limit of zero after filtering, or an empty dataset) fails the run
+instead of saving a 0/0 result.
 
 When a response has no `content`, GSM8K, MMLU, and IFEval grade the reasoning
 text instead, for models that put their final answer there. That fallback

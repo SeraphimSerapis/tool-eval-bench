@@ -72,6 +72,10 @@ class ChatCompletionResult:
     # True when the adapter can identify a rejection that happened inside the
     # serving stack before inference, even if an earlier turn produced output.
     transport_error_is_infrastructure: bool = False
+    # True when the server answered but the body was not valid JSON. The
+    # adapter puts a "[malformed response]" placeholder in ``content``; like a
+    # transport error, that is not a model answer and must not be graded.
+    malformed: bool = False
 
 
 class BackendAdapter(ABC):

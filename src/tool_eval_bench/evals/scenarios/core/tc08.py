@@ -20,6 +20,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     asks_for_clarification as _asks_for_clarification,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     datetime_matches as _datetime_matches,
 )
@@ -134,7 +135,11 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
         if weather.turn < reminder.turn
     ]
     if ordered_pairs:
-        if len(reminder_calls) != 1 or len(weather_calls) != 1 or len(state.tool_calls) != 2:
+        if (
+            len(_counted_calls(reminder_calls)) != 1
+            or len(_counted_calls(weather_calls)) != 1
+            or len(_counted_calls(state.tool_calls)) != 2
+        ):
             return _partial(
                 "Checked the weather but issued duplicate or additional reminder mutations."
             )
@@ -145,7 +150,7 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
         # partial credit for the attempted chain without treating the reminder
         # as justified. A concrete non-rain result is a wrong branch instead.
         weather_result_is_error = any(
-            not _result_is_usable_if_present(state, call) for call in weather_calls
+            not _result_is_usable_if_present(state, call) for call in _counted_calls(weather_calls)
         )
         if weather_result_is_error:
             return _partial(
@@ -157,7 +162,7 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
             )
 
         reminder_result_is_error = any(
-            not _result_is_usable_if_present(state, call) for call in reminder_calls
+            not _result_is_usable_if_present(state, call) for call in _counted_calls(reminder_calls)
         )
         if reminder_result_is_error or not usable_reminder_calls:
             return _partial(

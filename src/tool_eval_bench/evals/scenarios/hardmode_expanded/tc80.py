@@ -24,6 +24,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import first_counted as _first_counted
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
@@ -177,12 +178,21 @@ def _tc80_eval(state: ScenarioState) -> ScenarioEvaluation:
         ),
         None,
     )
-    availability = next((c for c in state.tool_calls if c.name == "check_availability"), None)
+    availability = _first_counted(state.tool_calls, lambda c: c.name == "check_availability")
     # The prompt names the event by title, so the id has to come from a lookup.
     # Reaching it any other way is a guess that happened to land, and that
     # includes reading the event in the same turn as the search, before the
-    # search result could have supplied the id.
-    resolved_by_lookup = bool(search and get_event and search.turn < get_event.turn)
+    # search result could have supplied the id. Every read of that id counts,
+    # including one --error-rate failed: the model had still guessed it.
+    resolved_by_lookup = bool(
+        search
+        and get_event
+        and all(
+            search.turn < c.turn
+            for c in state.tool_calls
+            if c.name == "get_event" and c.arguments.get("event_id") == "release_review"
+        )
+    )
     correct_availability = bool(
         availability
         and availability.arguments.get("date") == "2026-03-27"

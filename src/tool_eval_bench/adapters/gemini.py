@@ -24,11 +24,16 @@ from __future__ import annotations
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
-from tool_eval_bench.adapters.http_retry import RetryingHTTPAdapter, stream_error_is_infrastructure
+from tool_eval_bench.adapters.http_retry import (
+    PreEventLines,
+    RetryingHTTPAdapter,
+    stream_error_is_infrastructure,
+)
 from tool_eval_bench.adapters.wire_format import gemini_generate_url
 from tool_eval_bench.domain.adapters import (
     RETRYABLE_STATUS_CODES,
@@ -365,6 +370,67 @@ def _stream_error(error: object) -> tuple[int, str]:
     return status, str(error.get("message") or error)[:200]
 
 
+def _stream_error_result(
+    chunk: dict[str, Any], elapsed_ms: float, ttft_ms: float | None
+) -> ChatCompletionResult:
+    """The result for a chunk that reports an error after HTTP 200.
+
+    Partial text and calls are discarded, as the OpenAI-compatible adapter
+    does, so the failure is not graded as the model's answer.
+    """
+    status, message = _stream_error(chunk["error"])
+    return ChatCompletionResult(
+        content=f"[server error {status}] {message}",
+        raw_response=chunk,
+        elapsed_ms=elapsed_ms,
+        ttft_ms=ttft_ms,
+        transport_error_status=status,
+        transport_error_is_infrastructure=stream_error_is_infrastructure(status),
+    )
+
+
+@dataclass
+class _Chunks:
+    """What a sequence of GenerateContentResponse chunks adds up to."""
+
+    texts: list[str] = field(default_factory=list)
+    thoughts: list[str] = field(default_factory=list)
+    tool_calls: list[ProviderToolCall] = field(default_factory=list)
+    usage: dict[str, Any] = field(default_factory=dict)
+    finish_reason: str | None = None
+
+    def add(self, chunk: dict[str, Any]) -> bool:
+        """Merge one chunk; return whether it carried generated output."""
+        if chunk.get("usageMetadata"):
+            self.usage = chunk["usageMetadata"]
+        candidates = chunk.get("candidates") or []
+        if not candidates:
+            return False
+        if candidates[0].get("finishReason"):
+            self.finish_reason = _finish_reason(candidates[0]["finishReason"])
+        parts = (candidates[0].get("content") or {}).get("parts") or []
+        texts, thoughts, calls = _parse_parts(parts)
+        self.texts.extend(texts)
+        self.thoughts.extend(thoughts)
+        self.tool_calls.extend(calls)
+        # Native Gemini thinking chunks are generated output even though they
+        # are not visible answer text.
+        return bool(texts or thoughts or calls)
+
+    def result(self, elapsed_ms: float, ttft_ms: float | None = None) -> ChatCompletionResult:
+        return ChatCompletionResult(
+            content="".join(self.texts),
+            tool_calls=_assign_call_ids(self.tool_calls),
+            raw_response={},
+            elapsed_ms=elapsed_ms,
+            ttft_ms=ttft_ms,
+            reasoning="".join(self.thoughts) or None,
+            prompt_tokens=self.usage.get("promptTokenCount"),
+            completion_tokens=_completion_tokens(self.usage),
+            finish_reason=self.finish_reason,
+        )
+
+
 def _parse_parts(
     parts: list[dict[str, Any]],
 ) -> tuple[list[str], list[str], list[ProviderToolCall]]:
@@ -496,14 +562,18 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
         try:
             data = response.json()
         except Exception as exc:
+            data = None
             logger.warning("Malformed JSON in response from %s: %s", _redact_url(url), exc)
-            return ChatCompletionResult(
-                content="[malformed response]",
-                tool_calls=[],
-                raw_response={},
-                elapsed_ms=elapsed_ms,
-            )
-        return self._parse_response(data, elapsed_ms)
+        parsed = self._parse_unstreamed(data, elapsed_ms)
+        if parsed is not None:
+            return parsed
+        return ChatCompletionResult(
+            content="[malformed response]",
+            tool_calls=[],
+            raw_response={},
+            elapsed_ms=elapsed_ms,
+            malformed=True,
+        )
 
     async def _stream_request(
         self,
@@ -516,11 +586,11 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
         """Stream SSE chunks, measuring TTFT on the first content part."""
         started = time.perf_counter()
         ttft_ms: float | None = None
-        texts: list[str] = []
-        thoughts: list[str] = []
-        tool_calls: list[ProviderToolCall] = []
-        usage: dict[str, Any] = {}
-        finish_reason: str | None = None
+        chunks = _Chunks()
+        # Whether a line parsed as an SSE event, and the lines before the
+        # first one, which may be a plain JSON body.
+        saw_event = False
+        unparsed_lines = PreEventLines()
 
         async with client.stream(
             "POST", url, json=payload, headers=headers, timeout=timeout
@@ -552,13 +622,19 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
                     pass
                 else:
                     elapsed_ms = (time.perf_counter() - started) * 1000
-                    return self._parse_response(data, elapsed_ms)
+                    parsed = self._parse_unstreamed(data, elapsed_ms)
+                    if parsed is not None:
+                        return parsed
 
             async for line in response.aiter_lines():
+                if not saw_event:
+                    unparsed_lines.add(line)
                 sse_data = _sse_payload(line)
                 if sse_data is None:
                     continue
                 chunk_str = sse_data.strip()
+                if chunk_str == "[DONE]":
+                    saw_event = True
                 if not chunk_str or chunk_str == "[DONE]":
                     continue
                 try:
@@ -567,52 +643,55 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
                     continue
                 if not isinstance(chunk, dict):
                     continue
+                saw_event = True
 
                 if chunk.get("error") is not None:
                     # After HTTP 200 Gemini can still fail mid-stream with a
-                    # ``{"error": {...}}`` chunk.  Discard partial text and
-                    # calls, as the OpenAI-compatible adapter does, so the
-                    # failure is not graded as the model's answer.
-                    status, message = _stream_error(chunk["error"])
-                    return ChatCompletionResult(
-                        content=f"[server error {status}] {message}",
-                        raw_response=chunk,
-                        elapsed_ms=(time.perf_counter() - started) * 1000,
-                        ttft_ms=ttft_ms,
-                        transport_error_status=status,
-                        transport_error_is_infrastructure=stream_error_is_infrastructure(status),
-                    )
-
-                if chunk.get("usageMetadata"):
-                    usage = chunk["usageMetadata"]
-
-                candidates = chunk.get("candidates") or []
-                if not candidates:
-                    continue
-                if candidates[0].get("finishReason"):
-                    finish_reason = _finish_reason(candidates[0]["finishReason"])
-                parts = (candidates[0].get("content") or {}).get("parts") or []
-                chunk_texts, chunk_thoughts, chunk_calls = _parse_parts(parts)
-                # Native Gemini thinking chunks are generated output even
-                # though they are not visible answer text.
-                if ttft_ms is None and (chunk_texts or chunk_thoughts or chunk_calls):
+                    # ``{"error": {...}}`` chunk.
+                    elapsed_ms = (time.perf_counter() - started) * 1000
+                    return _stream_error_result(chunk, elapsed_ms, ttft_ms)
+                if chunks.add(chunk) and ttft_ms is None:
                     ttft_ms = (time.perf_counter() - started) * 1000
-                texts.extend(chunk_texts)
-                thoughts.extend(chunk_thoughts)
-                tool_calls.extend(chunk_calls)
 
         elapsed_ms = (time.perf_counter() - started) * 1000
-        return ChatCompletionResult(
-            content="".join(texts),
-            tool_calls=_assign_call_ids(tool_calls),
-            raw_response={},
-            elapsed_ms=elapsed_ms,
-            ttft_ms=ttft_ms,
-            reasoning="".join(thoughts) or None,
-            prompt_tokens=usage.get("promptTokenCount"),
-            completion_tokens=_completion_tokens(usage),
-            finish_reason=finish_reason,
-        )
+        if not saw_event:
+            # A server that ignored alt=sse can still label a plain JSON
+            # response as an event stream. Anything else with no SSE event,
+            # an empty body, a comment-only stream, or a proxy's HTML page,
+            # would be graded as an empty answer, so flag it the way the
+            # non-streamed path does.
+            data = unparsed_lines.json()
+            parsed = self._parse_unstreamed(data, elapsed_ms)
+            if parsed is not None:
+                return parsed
+            logger.warning("Malformed stream from %s: no SSE data event", _redact_url(url))
+            return ChatCompletionResult(
+                content="[malformed response]",
+                tool_calls=[],
+                raw_response={},
+                elapsed_ms=elapsed_ms,
+                malformed=True,
+            )
+        return chunks.result(elapsed_ms, ttft_ms)
+
+    def _parse_unstreamed(self, data: Any, elapsed_ms: float) -> ChatCompletionResult | None:
+        """Parse a whole JSON body, or return None when it is not a response.
+
+        ``streamGenerateContent`` without ``alt=sse`` answers with a JSON array
+        of GenerateContentResponse chunks, merged here as the SSE path would.
+        """
+        if isinstance(data, dict):
+            return self._parse_response(data, elapsed_ms)
+        if not isinstance(data, list) or not any(isinstance(item, dict) for item in data):
+            return None
+        chunks = _Chunks()
+        for chunk in data:
+            if not isinstance(chunk, dict):
+                continue
+            if chunk.get("error") is not None:
+                return _stream_error_result(chunk, elapsed_ms, None)
+            chunks.add(chunk)
+        return chunks.result(elapsed_ms)
 
     @staticmethod
     def _graceful_error(

@@ -1,9 +1,9 @@
 """Scoring contracts shared by the accuracy plugins (GSM8K, MMLU, IFEval, needle).
 
-These run the real plugins against small preloaded datasets.  The rejected
+These run the real plugins against small preloaded datasets.  The failed
 request cases go through the real ``OpenAICompatibleAdapter`` over an
 ``httpx.MockTransport``, because the bug lived in how the adapter's soft
-``[server error N]`` result reached the graders.
+``[server error N]`` and ``[malformed response]`` results reached the graders.
 """
 
 from __future__ import annotations
@@ -39,6 +39,22 @@ def _rejecting_adapter() -> OpenAICompatibleAdapter:
     adapter = OpenAICompatibleAdapter()
     adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(always_401))
     return adapter
+
+
+def _malformed_adapter() -> OpenAICompatibleAdapter:
+    """A real adapter whose server answers 200 with a body that is not JSON."""
+
+    def proxy_page(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>proxy</html>")
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(proxy_page))
+    return adapter
+
+
+@pytest.fixture(params=[_rejecting_adapter, _malformed_adapter], ids=["rejected", "malformed"])
+def failing_adapter(request: pytest.FixtureRequest) -> OpenAICompatibleAdapter:
+    return request.param()
 
 
 class _FixedAdapter:
@@ -80,26 +96,26 @@ _IFEVAL_ITEMS = [
 
 
 # ---------------------------------------------------------------------------
-# Rejected requests are errors, never graded answers
+# Rejected requests and malformed responses are errors, never graded answers
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-class TestRejectedRequests:
-    async def test_gsm8k(self) -> None:
+class TestFailedRequests:
+    async def test_gsm8k(self, failing_adapter: OpenAICompatibleAdapter) -> None:
         # Ground truth 401 would match the "[server error 401]" text if graded.
         items = [GSM8KItem(0, "How many?", "#### 401", 401.0)]
         result = await GSM8KPlugin().run(
-            _rejecting_adapter(), model="m", base_url="http://x", n_shots=0, _preloaded_items=items
+            failing_adapter, model="m", base_url="http://x", n_shots=0, _preloaded_items=items
         )
         assert result.details["errors"] == 1
         assert result.details["correct"] == 0
         assert result.details["status"] == "incomplete"
 
-    async def test_mmlu(self) -> None:
+    async def test_mmlu(self, failing_adapter: OpenAICompatibleAdapter) -> None:
         items = [_mmlu_item(0, "anatomy")]
         result = await MMLUPlugin().run(
-            _rejecting_adapter(),
+            failing_adapter,
             model="m",
             base_url="http://x",
             n_shots=0,
@@ -109,19 +125,19 @@ class TestRejectedRequests:
         assert result.details["correct"] == 0
         assert result.item_results[0]["is_error"] is True
 
-    async def test_ifeval(self) -> None:
-        # The error body has no commas and is under 50 words, so grading it
-        # would pass both prompts.
+    async def test_ifeval(self, failing_adapter: OpenAICompatibleAdapter) -> None:
+        # Both placeholder texts have no commas and are under 50 words, so
+        # grading them would pass both prompts.
         result = await IFEvalPlugin().run(
-            _rejecting_adapter(), model="m", base_url="http://x", _preloaded_items=_IFEVAL_ITEMS
+            failing_adapter, model="m", base_url="http://x", _preloaded_items=_IFEVAL_ITEMS
         )
         assert result.details["errors"] == 2
         assert result.details["prompts_passed"] == 0
 
-    async def test_needle(self) -> None:
+    async def test_needle(self, failing_adapter: OpenAICompatibleAdapter) -> None:
         cases = build_cases([1024], [0.5], seed=1)
         result = await NeedlePlugin().run(
-            _rejecting_adapter(), model="m", base_url="http://x", cases=cases
+            failing_adapter, model="m", base_url="http://x", cases=cases
         )
         assert result.details["errors"] == 1
         assert result.details["retrieved"] == 0

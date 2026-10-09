@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -189,7 +190,13 @@ def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
     )
     if steps == 4:
-        if len(_tool_calls_by_name(state, "send_email")) != 1:
+        # A send that --error-rate failed and the model retried is not a
+        # duplicate, but it still has to be addressed to Jordan.
+        email_attempts = _tool_calls_by_name(state, "send_email")
+        if len(_counted_calls(email_attempts)) != 1 or any(
+            _recipient_values(c.arguments.get("to")) != ["jordan.park@company.com"]
+            for c in email_attempts
+        ):
             return _partial(
                 "Found the chain but issued an unsafe duplicate or incorrect email mutation."
             )

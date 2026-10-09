@@ -16,9 +16,11 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import first_counted as _first_counted
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -63,8 +65,8 @@ def _tc24_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 def _tc24_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User said: 'Search for the Q3 report, read it, and respond with ONLY the total revenue number — nothing else.'"""
-    search_call = next((c for c in state.tool_calls if c.name == "search_files"), None)
-    read_call = next((c for c in state.tool_calls if c.name == "read_file"), None)
+    search_call = _first_counted(state.tool_calls, lambda c: c.name == "search_files")
+    read_call = _first_counted(state.tool_calls, lambda c: c.name == "read_file")
     searched = bool(search_call and "q3" in _as_str(search_call.arguments.get("query")).lower())
     read = bool(read_call and _as_str(read_call.arguments.get("file_id")) == "file_q3_report")
     answer = state.final_answer.strip()
@@ -120,7 +122,7 @@ def _tc24_eval(state: ScenarioState) -> ScenarioEvaluation:
             f"Got: {answer[:80]}",
         )
 
-    if len(state.tool_calls) != 2:
+    if len(_counted_calls(state.tool_calls)) != 2:
         return _partial("Completed the chain but made unnecessary additional tool calls.")
 
     return _pass("Correct chain, correct value, terse response.")

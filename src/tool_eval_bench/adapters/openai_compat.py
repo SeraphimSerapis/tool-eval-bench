@@ -17,6 +17,7 @@ import httpx
 from tool_eval_bench.adapters.http_retry import (
     DEFAULT_MAX_RATE_LIMIT_RETRIES,
     DEFAULT_MAX_RETRIES,
+    PreEventLines,
     RateLimitCoordinator,
     RateLimitObserver,
     RateLimitStatus,
@@ -314,6 +315,8 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
             )
         try:
             data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError(f"expected a JSON object, got {type(data).__name__}")
         except Exception as exc:
             logger.warning("Malformed JSON in response from %s: %s", _redact_url(url), exc)
             return ChatCompletionResult(
@@ -321,6 +324,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                 tool_calls=[],
                 raw_response={},
                 elapsed_ms=elapsed_ms,
+                malformed=True,
             )
         return self._parse_response(data, elapsed_ms)
 
@@ -346,6 +350,10 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
         reasoning_parts: list[str] = []
         stream_usage: dict = {}  # usage from final chunk
         finish_reason: str | None = None
+        # Whether a line parsed as an SSE event, and the lines before the
+        # first one, which may be a plain JSON body.
+        saw_event = False
+        unparsed_lines = PreEventLines()
 
         async with client.stream(
             "POST", url, json=payload, headers=headers, timeout=timeout
@@ -408,15 +416,19 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     # the body is not an ordinary JSON document.
                     pass
                 else:
-                    elapsed_ms = (time.perf_counter() - started) * 1000
-                    return self._parse_response(data, elapsed_ms)
+                    if isinstance(data, dict):
+                        elapsed_ms = (time.perf_counter() - started) * 1000
+                        return self._parse_response(data, elapsed_ms)
 
             async for line in response.aiter_lines():
+                if not saw_event:
+                    unparsed_lines.add(line)
                 if line.startswith("error:"):
                     # llama-server builds before ggml-org/llama.cpp#16109
                     # (September 2025) report a mid-stream failure in a
                     # non-standard ``error:`` field instead of ``data:``.
                     chunk: dict[str, Any] = {"error": _parse_sse_error_field(line[6:])}
+                    saw_event = True
                 else:
                     if not line.startswith("data:"):
                         continue
@@ -424,6 +436,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     if payload_str.startswith(" "):
                         payload_str = payload_str[1:]
                     if payload_str.strip() == "[DONE]":
+                        saw_event = True
                         break
 
                     try:
@@ -432,6 +445,7 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                         continue
                     if not isinstance(chunk, dict):
                         continue
+                    saw_event = True
 
                 error = completion_stream_error(chunk)
                 if error is not None:
@@ -548,6 +562,23 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     message_extra_content = delta["extra_content"]
 
         elapsed_ms = (time.perf_counter() - started) * 1000
+        if not saw_event:
+            # A server that ignored stream=true can still label a plain JSON
+            # completion as an event stream. Anything else with no SSE event,
+            # an empty body, a comment-only stream, or a proxy's HTML page,
+            # would be graded as an empty answer, so flag it the way the
+            # non-streamed path does.
+            data = unparsed_lines.json()
+            if isinstance(data, dict):
+                return self._parse_response(data, elapsed_ms)
+            logger.warning("Malformed stream from %s: no SSE data event", _redact_url(url))
+            return ChatCompletionResult(
+                content="[malformed response]",
+                tool_calls=[],
+                raw_response={},
+                elapsed_ms=elapsed_ms,
+                malformed=True,
+            )
         content = "".join(content_parts)
         reasoning_str = "".join(reasoning_parts) or None
 

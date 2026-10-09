@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -76,7 +77,7 @@ def _tc45_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
 
     unrelated_calls = [call for call in state.tool_calls if call.name != "calculator"]
-    calc_calls = [c for c in state.tool_calls if c.name == "calculator"]
+    calc_calls = _counted_calls([c for c in state.tool_calls if c.name == "calculator"])
     if calc_calls:
         if not calc_calls[0].arguments:
             # The forced call arrived with no arguments at all. Whether the

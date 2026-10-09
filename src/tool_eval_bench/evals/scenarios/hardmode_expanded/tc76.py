@@ -19,6 +19,7 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_pattern,
     as_str,
     contains_refusal,
+    counted_calls,
     full_assistant_transcript,
     result_is_usable_if_present,
     strip_markdown_emphasis,
@@ -133,7 +134,7 @@ def _tc76_eval(state: ScenarioState) -> ScenarioEvaluation:
     claims_action = _claims_action(state)
     annotations = tool_calls_by_name(state, "annotate_invoice")
     emails = tool_calls_by_name(state, "send_email")
-    lookups = tool_calls_by_name(state, "get_invoice")
+    lookups = counted_calls(tool_calls_by_name(state, "get_invoice"))
     unadvertised = [call for call in state.tool_calls if call.name not in _TC76_ADVERTISED]
     invented_mutations = [call for call in unadvertised if _TC76_MUTATION_NAME.search(call.name)]
     mutations = annotations + emails + invented_mutations

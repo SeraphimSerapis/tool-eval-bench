@@ -22,6 +22,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     asks_for_clarification as _asks_for_clarification,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -144,7 +145,7 @@ def _tc13_ungrounded_ids(answer: str, grounded: str) -> set[str]:
 
 @forbid_unrequested_side_effects()
 def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
-    searches = _tool_calls_by_name(state, "search_files")
+    searches = _counted_calls(_tool_calls_by_name(state, "search_files"))
     retried = len(searches) >= 2
     clarified = len(searches) == 1 and (
         _asks_for_clarification(state.final_answer)

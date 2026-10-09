@@ -18,6 +18,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     days_after_reference as _days_after_reference,
 )
@@ -186,7 +187,9 @@ def _tc26_eval(state: ScenarioState) -> ScenarioEvaluation:
     event was created with NO attendees (from the tool response), rather
     than hallucinating names. This tests genuine cross-turn state recall.
     """
-    create_calls = [c for c in state.tool_calls if c.name == "create_calendar_event"]
+    create_calls = _counted_calls(
+        [c for c in state.tool_calls if c.name == "create_calendar_event"]
+    )
     if not create_calls:
         return _fail("Did not create the calendar event.")
 

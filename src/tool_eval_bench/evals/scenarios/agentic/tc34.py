@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -154,7 +155,7 @@ def _tc34_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
     if not read_notes:
         return _partial("Read a file, but not the Q3 planning notes fixture.")
-    if any(not _result_is_usable_if_present(state, call) for call in read_notes):
+    if any(not _result_is_usable_if_present(state, call) for call in _counted_calls(read_notes)):
         return _partial("The Q3 planning notes read failed, so their contents cannot be trusted.")
 
     # Provenance is established by what the search returned, not by how the

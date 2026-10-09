@@ -19,6 +19,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str_list as _as_str_list,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     date_matches as _date_matches,
 )
@@ -88,7 +89,7 @@ def _tc05_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 @forbid_unrequested_side_effects({"create_calendar_event": 1})
 def _tc05_eval(state: ScenarioState) -> ScenarioEvaluation:
-    event_calls = _tool_calls_by_name(state, "create_calendar_event")
+    event_calls = _counted_calls(_tool_calls_by_name(state, "create_calendar_event"))
     event = event_calls[0] if event_calls else None
     if not event:
         return _fail("Did not create the calendar event.")

@@ -21,6 +21,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -111,7 +112,11 @@ def _tc61_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     previous = [
         c
         for c in state.tool_calls
-        if c is not call and c.turn < call.turn and c.name == "run_code" and _is_submission(c)
+        if c is not call
+        and c.turn < call.turn
+        and c.name == "run_code"
+        and not c.injected
+        and _is_submission(c)
     ]
     if _is_submission(call):
         if previous:
@@ -199,7 +204,9 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     First run_code returns pending. Model must retry/poll to get the result.
     """
-    run_calls = _tool_calls_by_name(state, "run_code")
+    # A run that --error-rate failed and the model re-ran is neither the
+    # submission nor a poll.
+    run_calls = _counted_calls(_tool_calls_by_name(state, "run_code"))
 
     answer = state.final_answer.lower()
     # Either the record count or the anomaly count reports the result, but a
@@ -234,8 +241,15 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     first_call = run_calls[0] if run_calls else None
     poll_calls = run_calls[1:]
+    # A poll attempt the harness failed still names the job id, so it has to
+    # follow the submission that returned that id like any other poll.
+    polled_before_submission = any(
+        _is_genuine_poll(call) and (first_call is None or call.turn <= first_call.turn)
+        for call in _tool_calls_by_name(state, "run_code")
+    )
     first_result_ok = bool(
         first_call
+        and not polled_before_submission
         and _is_submission(first_call)
         and _result_matches_if_present(state, first_call, pending_result)
     )
@@ -266,7 +280,7 @@ def _tc61_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
     def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         result = _tc61_handle(state, call)
         if result.get("status") == "complete":
-            polls = sum(_is_genuine_poll(c) for c in state.tool_calls)
+            polls = sum(_is_genuine_poll(c) for c in state.tool_calls if not c.injected)
             if mode == 1 and polls < 3:
                 return _noise(
                     {
@@ -286,12 +300,18 @@ def _tc61_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
     def evaluate(state: ScenarioState) -> ScenarioEvaluation:
         if mode != 2:
             return _tc61_eval(state)
-        calls = _tool_calls_by_name(state, "run_code")
+        calls = _counted_calls(_tool_calls_by_name(state, "run_code"))
+        # As in the base grader, a poll the harness failed still named the
+        # job id, so it has to follow the submission too.
         if (
             len(calls) == 2
             and _is_submission(calls[0])
             and _is_genuine_poll(calls[1])
             and calls[0].turn < calls[1].turn
+            and not any(
+                _is_genuine_poll(c) and c.turn <= calls[0].turn
+                for c in _tool_calls_by_name(state, "run_code")
+            )
         ):
             failed = any(
                 r.call_id == calls[1].id

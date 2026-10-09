@@ -15,9 +15,11 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import first_counted as _first_counted
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -89,7 +91,7 @@ def _tc25_eval(state: ScenarioState) -> ScenarioEvaluation:
             "Weather tool returned an error — couldn't evaluate the temperature condition."
         )
 
-    if len(weather_calls) > 1:
+    if len(_counted_calls(weather_calls)) > 1:
         return _partial("Called get_weather multiple times instead of reusing the first result.")
 
     recorded_temperatures: list[float] = []
@@ -108,21 +110,18 @@ def _tc25_eval(state: ScenarioState) -> ScenarioEvaluation:
     if len(reminder_calls) == 0:
         return _fail("Checked weather (5°C) but did not set the coat reminder.")
 
-    if any(call.turn <= weather_calls[0].turn for call in reminder_calls):
+    first_weather = _counted_calls(weather_calls)[0]
+    if any(call.turn <= first_weather.turn for call in reminder_calls):
         return _fail("Set the reminder before receiving the weather result.")
 
-    coat_mentioned = any(
-        "coat" in _as_str(c.arguments.get("message")).lower() for c in reminder_calls
+    coat_call = _first_counted(
+        reminder_calls,
+        lambda call: "coat" in _as_str(call.arguments.get("message")).lower(),
     )
-    if coat_mentioned:
-        coat_call = next(
-            call
-            for call in reminder_calls
-            if "coat" in _as_str(call.arguments.get("message")).lower()
-        )
+    if coat_call is not None:
         if not _result_is_usable_if_present(state, coat_call):
             return _partial("The coat reminder call returned an explicit error.")
-        if len(state.tool_calls) != 2:
+        if len(_counted_calls(state.tool_calls)) != 2:
             return _partial("Completed the conditional request with unnecessary additional calls.")
         return _pass("Checked weather once, recognized 5°C < 10°C, set coat reminder.")
     return _partial("Set a reminder but didn't mention bringing a coat.")

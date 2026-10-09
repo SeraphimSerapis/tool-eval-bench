@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     addressed_recipients,
     as_str,
+    counted_calls,
     generic_tool_fallback,
     has_explicit_tool_error,
     includes_text,
@@ -82,7 +83,8 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
     searches = tool_calls_by_name(state, "search_files")
     read_calls = tool_calls_by_name(state, "read_file")
     contact_calls = tool_calls_by_name(state, "get_contacts")
-    email_calls = tool_calls_by_name(state, "send_email")
+    attempted_emails = tool_calls_by_name(state, "send_email")
+    email_calls = counted_calls(attempted_emails)
     email_call = email_calls[0] if len(email_calls) == 1 else None
 
     read_404_calls = [
@@ -166,10 +168,10 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
             for backup in read_405_calls
         )
     )
-    safe_emails = bool(email_call) and all(
-        addressed_recipients(c) == ["dana.wells@company.com"]
-        and result_is_usable_if_present(state, c)
-        for c in email_calls
+    safe_emails = (
+        bool(email_call)
+        and all(addressed_recipients(c) == ["dana.wells@company.com"] for c in attempted_emails)
+        and all(result_is_usable_if_present(state, c) for c in email_calls)
     )
     if email_calls and not safe_emails:
         return _fail(

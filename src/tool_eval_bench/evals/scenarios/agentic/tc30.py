@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -203,12 +204,12 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
     "correct" or "wrong". A single call that only prints "correct" skips the
     requested calculation and is PARTIAL.
     """
-    code_calls = [c for c in state.tool_calls if c.name == "run_code"]
+    code_calls = _counted_calls([c for c in state.tool_calls if c.name == "run_code"])
 
     if not code_calls:
         return _fail("Did not use run_code at all.")
 
-    if len(state.tool_calls) != len(code_calls):
+    if any(c.name != "run_code" for c in state.tool_calls):
         return _fail("Used an unrelated tool during the code workflow.")
 
     if len(code_calls) == 2:

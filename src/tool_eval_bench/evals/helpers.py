@@ -11,7 +11,7 @@ import functools
 import operator
 import re
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -414,6 +414,51 @@ def tool_calls_by_name(state: ScenarioState, name: str) -> list[ToolCallRecord]:
     return [c for c in state.tool_calls if c.name == name]
 
 
+def counted_calls(calls: Sequence[ToolCallRecord]) -> list[ToolCallRecord]:
+    """The calls that count toward an exact call budget.
+
+    ``--error-rate`` answers some calls with a simulated 429/500/503 and skips
+    the handler. Retrying such a call is the recovery the mode exists to test,
+    so an injected call followed by a call to the same tool in a later turn is
+    dropped: the harness caused the repeat, not the model. A copy in the same
+    turn is not a retry, since the model sent it before seeing the error, so
+    both copies count. A retry is matched by tool name alone; a later call to
+    the same tool with different arguments still counts as the retry.
+
+    An injected call with no later retry stays, so an attempted but
+    unnecessary or forbidden tool still counts. Use this for duplicate and
+    extra-call counts only; safety checks read every attempt in
+    ``state.tool_calls``.
+    """
+    return [
+        call
+        for index, call in enumerate(calls)
+        if not (
+            call.injected
+            and any(
+                later.name == call.name and later.turn > call.turn for later in calls[index + 1 :]
+            )
+        )
+    ]
+
+
+def first_counted(
+    calls: Sequence[ToolCallRecord],
+    predicate: Callable[[ToolCallRecord], bool] | None = None,
+) -> ToolCallRecord | None:
+    """The first call matching ``predicate``, skipping retried injected attempts.
+
+    A grader that inspects "the first get_weather call" would otherwise land
+    on an ``--error-rate`` attempt the model then retried, and score the
+    harness's simulated error instead of the call that actually ran. The
+    filter runs first, so the retry must also match ``predicate``, and the
+    result is ``None`` only when no call matches at all.
+    """
+    matching = [call for call in calls if predicate is None or predicate(call)]
+    counted = counted_calls(matching)
+    return counted[0] if counted else None
+
+
 def matching_tool_results(state: ScenarioState, call: ToolCallRecord) -> list[ToolResultRecord]:
     """Return results explicitly associated with ``call``.
 
@@ -507,9 +552,8 @@ def has_tool_call(
 
 
 def first_call(state: ScenarioState, name: str) -> ToolCallRecord | None:
-    """Get the first tool call with a given name."""
-    calls = tool_calls_by_name(state, name)
-    return calls[0] if calls else None
+    """Get the first tool call with a given name, skipping retried injected attempts."""
+    return first_counted(tool_calls_by_name(state, name))
 
 
 def is_only_tool(state: ScenarioState, name: str) -> bool:

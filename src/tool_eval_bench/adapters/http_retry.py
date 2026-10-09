@@ -11,12 +11,13 @@ live here so every adapter behaves identically under pressure.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import httpx
 
@@ -167,6 +168,47 @@ def stream_error_is_infrastructure(status: int, *, context_overflow: bool = Fals
     is not something the model's answer caused either.
     """
     return status >= 500 or status in RETRYABLE_STATUS_CODES or context_overflow
+
+
+# A stream with no SSE event is parsed as one JSON document, so the adapters
+# keep the lines that arrive before the first event. A server that streams
+# non-SSE text without end would grow that buffer without bound; past this
+# many characters the body is too large to be a plain completion.
+MAX_PRE_EVENT_CHARS = 1 << 20
+
+
+class PreEventLines:
+    """The lines a stream sent before its first SSE event, up to ``limit`` characters.
+
+    Once the limit is passed the buffer stops collecting and drops what it
+    holds, so ``json()`` returns None and the caller reports the stream as
+    malformed unless an SSE event arrives later.
+    """
+
+    def __init__(self, limit: int = MAX_PRE_EVENT_CHARS) -> None:
+        self._lines: list[str] = []
+        self._chars = 0
+        self._limit = limit
+        self.overflowed = False
+
+    def add(self, line: str) -> None:
+        if self.overflowed:
+            return
+        self._chars += len(line) + 1
+        if self._chars > self._limit:
+            self.overflowed = True
+            self._lines.clear()
+            return
+        self._lines.append(line)
+
+    def json(self) -> Any:
+        """The collected lines as one JSON document, or None if they do not parse."""
+        if self.overflowed:
+            return None
+        try:
+            return json.loads("\n".join(self._lines))
+        except json.JSONDecodeError:
+            return None
 
 
 def _backoff_delay(attempt: int, response: httpx.Response | None = None) -> float:

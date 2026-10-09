@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from tool_eval_bench.domain.scenarios import (
     Category,
@@ -17,9 +17,11 @@ from tool_eval_bench.evals.helpers import answer_affirms_text as _answer_affirms
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import first_counted as _first_counted
 from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
@@ -152,13 +154,16 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
     used_shipping = _has_tool_call(state, "get_shipping_status")
     used_customer = _has_tool_call(state, "get_customer_profile")
     used_contacts = _has_tool_call(state, "get_contacts")
-    total_calls = len(state.tool_calls)
+    total_calls = len(_counted_calls(state.tool_calls))
 
     answer = state.final_answer.lower()
     mentions_status = _answer_affirms_text(answer, "shipped")
 
     if used_order and total_calls == 1 and mentions_status:
-        order_call = next(c for c in state.tool_calls if c.name == "get_order_status")
+        order_call = cast(
+            ToolCallRecord,
+            _first_counted(state.tool_calls, lambda c: c.name == "get_order_status"),
+        )
         if not _result_is_usable_if_present(state, order_call):
             return _partial(
                 "get_order_status returned an error, so order details cannot be confirmed."
@@ -174,7 +179,9 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
         and total_calls == 2
         and resolved_by_lookup
         and mentions_status
-        and all(_result_is_usable_if_present(state, call) for call in state.tool_calls)
+        and all(
+            _result_is_usable_if_present(state, call) for call in _counted_calls(state.tool_calls)
+        )
     ):
         return _pass(
             "Resolved the customer's order id, then read its status with get_order_status."

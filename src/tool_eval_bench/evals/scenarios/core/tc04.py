@@ -22,6 +22,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -98,7 +99,7 @@ def _tc04_eval(state: ScenarioState) -> ScenarioEvaluation:
             re.IGNORECASE,
         )
         if has_data:
-            if len(state.tool_calls) != 1:
+            if len(_counted_calls(state.tool_calls)) != 1:
                 return _partial(
                     "Used the right weather parameters but added an unnecessary tool call."
                 )

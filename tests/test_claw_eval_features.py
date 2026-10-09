@@ -2,7 +2,7 @@
 
 import random
 
-from tool_eval_bench.runner.orchestrator import _INJECTED_ERRORS, _maybe_inject_error
+from tool_eval_bench.runner.orchestrator import _INJECTED_ERRORS, _draw_injected_error
 
 
 class TestErrorInjection:
@@ -10,17 +10,13 @@ class TestErrorInjection:
 
     def test_no_injection_at_zero_rate(self) -> None:
         """error_rate=0.0 should never inject errors."""
-        original = {"temperature": 14, "condition": "Cloudy"}
         for _ in range(100):
-            result = _maybe_inject_error(original, 0.0)
-            assert result is original
+            assert _draw_injected_error(0.0) is None
 
     def test_always_injects_at_full_rate(self) -> None:
         """error_rate=1.0 should always inject errors."""
-        original = {"temperature": 14, "condition": "Cloudy"}
         for _ in range(20):
-            result = _maybe_inject_error(original, 1.0)
-            assert result in _INJECTED_ERRORS
+            assert _draw_injected_error(1.0) in _INJECTED_ERRORS
 
     def test_injected_errors_have_status(self) -> None:
         """Every injected error has an 'error' message and 'status' code."""
@@ -32,17 +28,14 @@ class TestErrorInjection:
     def test_probabilistic_injection(self) -> None:
         """At error_rate=0.5, roughly half the results should be errors."""
         random.seed(42)
-        original = {"ok": True}
-        results = [_maybe_inject_error(original, 0.5) for _ in range(1000)]
+        results = [_draw_injected_error(0.5) for _ in range(1000)]
         error_count = sum(1 for r in results if r in _INJECTED_ERRORS)
         # Should be roughly 500 ± 50 (very generous band)
         assert 350 < error_count < 650, f"Got {error_count} errors out of 1000"
 
     def test_negative_rate_no_injection(self) -> None:
         """Negative error rate should behave like 0."""
-        original = {"data": "safe"}
-        result = _maybe_inject_error(original, -0.5)
-        assert result is original
+        assert _draw_injected_error(-0.5) is None
 
 
 class TestPassAtKMetrics:

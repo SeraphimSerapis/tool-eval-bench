@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
+from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -81,7 +82,8 @@ def _tc27_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     Should make exactly 2 get_weather calls (different units), not 1 or 3+.
     """
-    weather_calls = [c for c in state.tool_calls if c.name == "get_weather"]
+    # A lookup that --error-rate failed and the model retried is not a third call.
+    weather_calls = _counted_calls([c for c in state.tool_calls if c.name == "get_weather"])
 
     if len(weather_calls) == 2:
         if any(
