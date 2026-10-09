@@ -25,17 +25,24 @@ import os
 import sys
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
 
 from dotenv import load_dotenv  # noqa: F401  (re-exported via _load_dotenv)
 from rich.console import Console
 
 from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
 from tool_eval_bench.adapters.wire_format import resolve_wire_format as _resolve_wire_format
-from tool_eval_bench.application.decision_audit import decision_judge_config, with_selected_checks
+from tool_eval_bench.application.decision_audit import (
+    decision_judge_config,
+    with_selected_checks,  # noqa: F401  (cli.bench name)
+)
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
-from tool_eval_bench.application.run_config import RunSettings, build_run_config, resume_mismatches
+from tool_eval_bench.application.run_config import (
+    RunSettings,  # noqa: F401  (cli.bench name)
+    build_run_config,
+    resume_mismatches,
+)
 from tool_eval_bench.application.run_context import build_run_context, identify_backend
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.cli import model_probe as _model_probe
@@ -111,6 +118,7 @@ from tool_eval_bench.cli.run_io import median as _median  # noqa: F401
 from tool_eval_bench.cli.run_io import stderr_progress_audit as _stderr_progress_audit
 from tool_eval_bench.cli.run_io import stderr_progress_result as _stderr_progress_result
 from tool_eval_bench.cli.run_io import stderr_progress_start as _stderr_progress_start
+from tool_eval_bench.cli.scored_run import JudgeConnection, ScoredRun
 from tool_eval_bench.cli.server import (
     DISCOVERY_PORTS as _DISCOVERY_PORTS,
 )
@@ -141,6 +149,9 @@ from tool_eval_bench.utils.headers import parse_header_env as _parse_header_env
 from tool_eval_bench.utils.headers import parse_header_pairs as _parse_header_pairs
 from tool_eval_bench.utils.system_prompt import MAX_SYSTEM_PROMPT_BYTES, normalize_system_prompt
 from tool_eval_bench.utils.urls import redact_urls as _redact_urls
+
+if TYPE_CHECKING:
+    from tool_eval_bench.runner.throughput import ThroughputSample
 
 logger = logging.getLogger(__name__)
 
@@ -186,37 +197,28 @@ def _resume_config_mismatches(
     The current config is built the way the service builds the one it stores,
     so both sides share one schema and the comparison cannot drift from it.
     """
-    from tool_eval_bench.evals.variants import apply_variants
-
-    scenarios = apply_variants(scenarios, getattr(args, "variant_seed", None))
-    judge_config = decision_judge_config(
-        getattr(args, "decision_judge_base_url", None),
-        getattr(args, "decision_judge_model", None),
-        judge_set=getattr(args, "decision_judge", None),
-    )
-    settings = RunSettings(
+    request = ScoredRun.from_args(
+        args,
         model=model,
         backend=backend,
         base_url=base_url,
-        temperature=args.temperature,
-        timeout_seconds=args.timeout,
-        max_turns=args.max_turns,
-        seed=args.seed,
-        reference_date=args.reference_date,
-        concurrency=args.parallel,
-        error_rate=args.error_rate,
-        alpha=args.alpha,
+        # Neither reaches the stored config.
+        api_key=None,
+        wire_format="openai",
+        scenarios=scenarios,
         extra_params=extra_params,
+        scenario_packs=scenario_packs,
         context_pressure_config=context_pressure,
-        weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
-        system_prompt=getattr(args, "system_prompt", None),
-        decision_judge=(
-            with_selected_checks(judge_config, scenarios) if judge_config is not None else None
-        ),
+        # The caller's scenarios are the protocol being compared, whatever an
+        # earlier resume left on args.
+        resume_scenarios=scenarios,
     )
     # Metadata only feeds the fingerprint, which resume does not compare.
     current = build_run_config(
-        settings, scenarios=scenarios, metadata={}, scenario_packs=scenario_packs
+        request.run_settings(),
+        scenarios=request.config_scenarios(),
+        metadata={},
+        scenario_packs=scenario_packs,
     )
     return resume_mismatches(previous, current)
 
@@ -529,15 +531,9 @@ def _check_endpoint_ready(
 
 
 def _decision_judge_kwargs(args: argparse.Namespace) -> dict[str, Any]:
-    base_url = getattr(args, "decision_judge_base_url", None)
-    if base_url is None:
-        return {}
-    return {
-        "decision_judge_base_url": base_url,
-        "decision_judge_model": getattr(args, "decision_judge_model", None),
-        "decision_judge_api_key": os.environ.get("TOOL_EVAL_DECISION_JUDGE_API_KEY"),
-        "decision_judge": getattr(args, "decision_judge", None),
-    }
+    """The service's judge kwargs; kept as a ``cli.bench`` name, the runners use ``ScoredRun``."""
+    judge = JudgeConnection.from_args(args)
+    return judge.service_kwargs() if judge is not None else {}
 
 
 def _resolve_system_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -577,6 +573,13 @@ def _resolve_system_prompt(args: argparse.Namespace, parser: argparse.ArgumentPa
         parser.error(f"{source}: {exc}")
 
 
+def _any_plugin_selected(args: argparse.Namespace) -> bool:
+    """Whether any accuracy plugin runs, through ``--<plugin>`` or ``--<plugin>-only``."""
+    return any(
+        getattr(args, stem) or getattr(args, f"{stem}_only") for stem in PLUGIN_FLAG_STEMS.values()
+    )
+
+
 def _sends_system_prompt(args: argparse.Namespace) -> bool:
     """Whether this invocation runs tool-call scenarios, the override's only consumer.
 
@@ -590,9 +593,7 @@ def _sends_system_prompt(args: argparse.Namespace) -> bool:
     """
     if args.spec_live or args.decision_live or args.perf_only:
         return False
-    other_benchmarks = args.perf or any(
-        getattr(args, stem) or getattr(args, f"{stem}_only") for stem in PLUGIN_FLAG_STEMS.values()
-    )
+    other_benchmarks = args.perf or _any_plugin_selected(args)
     if args.spec_bench and (args.skip_tool_eval or not other_benchmarks):
         return False
     if args.context_pressure_sweep is not None:
@@ -712,18 +713,7 @@ def _run_spec_bench_mode(target: _Target) -> bool:
         )
         # If --spec-bench is the only mode, or user explicitly skipped tool-eval
         if args.skip_tool_eval or (
-            not args.perf
-            and not args.perf_only
-            and not args.gsm8k
-            and not args.gsm8k_only
-            and not args.mmlu
-            and not args.mmlu_only
-            and not args.ifeval
-            and not args.ifeval_only
-            and not args.needle
-            and not args.needle_only
-            and not args.decision_bench
-            and not args.decision_bench_only
+            not args.perf and not args.perf_only and not _any_plugin_selected(args)
         ):
             return True
     return False
@@ -753,6 +743,27 @@ def _run_pressure_sweep_mode(target: _Target) -> bool:
     return False
 
 
+@dataclass(frozen=True)
+class _Endpoint:
+    """The connection ``main`` resolved before a model is chosen."""
+
+    base_url: str
+    api_key: str | None
+    backend: str
+    wire_format: str
+    model: str | None
+    # Pre-flight requests are single-shot conversations of their own.
+    probe_headers: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class _PressureFill:
+    """Context-pressure filler for the scored run, and the config it records."""
+
+    messages: list[ChatMessage]
+    config: dict[str, Any]
+
+
 def main() -> None:
     _load_dotenv()
     from tool_eval_bench.cli.legacy_parser import make_parser
@@ -766,6 +777,48 @@ def main() -> None:
         _run_compare_report_command(args, console)
         return
 
+    _prepare_args(args, parser, console)
+
+    if _handle_local_command(
+        args,
+        console,
+        resolve_scenarios=_resolve_scenarios,
+        print_history=_print_history,
+        print_leaderboard=_print_leaderboard,
+        export_runs=_export_runs,
+        compare_runs=_compare_runs,
+    ):
+        return
+
+    _validate_explicit_scenarios(args, parser)
+    endpoint = _resolve_endpoint(args, parser, console)
+    if args.probe:
+        _run_probe_mode(args, console, endpoint)
+        return
+
+    target = _resolve_target(args, parser, console, endpoint)
+    if args.spec_live:
+        _run_spec_live_mode(target)
+        return
+    if args.decision_live:
+        _run_decision_live_mode(target)
+        return
+
+    target = _ready_target(target, endpoint.probe_headers)
+    throughput_samples, finished = _run_throughput_mode(target)
+    if finished or _run_spec_bench_mode(target) or _run_pressure_sweep_mode(target):
+        return
+
+    pressure = _prepare_context_pressure(target)
+    if _run_plugins_mode(target) or _skip_tool_eval_mode(target):
+        return
+    _run_scored_mode(target, throughput_samples, pressure)
+
+
+def _prepare_args(
+    args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console
+) -> None:
+    """Normalize the parsed flags that every later step reads."""
     # --json-file implies --json
     if args.json_file:
         args.json = True
@@ -790,17 +843,8 @@ def main() -> None:
     ):
         parser.error("Decision judge audits require a run or resume of tool-call scenarios")
 
-    if _handle_local_command(
-        args,
-        console,
-        resolve_scenarios=_resolve_scenarios,
-        print_history=_print_history,
-        print_leaderboard=_print_leaderboard,
-        export_runs=_export_runs,
-        compare_runs=_compare_runs,
-    ):
-        return
 
+def _validate_explicit_scenarios(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     # Validate explicit scenario IDs before server discovery or benchmark
     # requests. This keeps a typo from turning into an empty run or a server
     # failure. Probe/history/dry-run keep their own command semantics.
@@ -810,6 +854,11 @@ def main() -> None:
         except ValueError as exc:
             parser.error(str(exc))
 
+
+def _resolve_endpoint(
+    args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console
+) -> _Endpoint:
+    """Resolve the server, credentials, headers, wire format, and backend label."""
     # Cascade: CLI flag → provider-scoped env → generic env → auto-discovery.
     # A selected provider owns its api_key and model: the generic
     # TOOL_EVAL_API_KEY is for whatever the generic base URL points at, and
@@ -903,22 +952,42 @@ def main() -> None:
         else:
             console.print(f"[dim]  Detected backend: {detection.server_name}[/]")
 
-    # --probe: check if server is reachable and exit
-    if args.probe:
-        _probe_server(
-            console,
-            base_url,
-            api_key,
-            headless=args.json,
-            wire_format=wire_format,
-            headers=probe_headers,
-        )
-        return
+    return _Endpoint(
+        base_url=base_url,
+        api_key=api_key,
+        backend=backend,
+        wire_format=wire_format,
+        model=model,
+        probe_headers=probe_headers,
+    )
+
+
+def _run_probe_mode(args: argparse.Namespace, console: Console, endpoint: _Endpoint) -> None:
+    """``--probe``: check whether the server is reachable."""
+    _probe_server(
+        console,
+        endpoint.base_url,
+        endpoint.api_key,
+        headless=args.json,
+        wire_format=endpoint.wire_format,
+        headers=endpoint.probe_headers,
+    )
+
+
+def _resolve_target(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    console: Console,
+    endpoint: _Endpoint,
+) -> _Target:
+    """Pick the model and request parameters; the run context is attached later."""
+    base_url, api_key, wire_format = endpoint.base_url, endpoint.api_key, endpoint.wire_format
 
     # URL redaction for display (actual API calls use real base_url)
     display_url = _redact_url(base_url) if args.redact_url else base_url
 
     # Auto-detect model if not provided
+    model = endpoint.model
     display_name: str | None = None
     if not model:
         if not args.json:
@@ -931,7 +1000,7 @@ def main() -> None:
             display_url=display_url,
             headless=args.json,
             wire_format=wire_format,
-            headers=probe_headers,
+            headers=endpoint.probe_headers,
         )
         if not args.json:
             console.print()
@@ -940,7 +1009,30 @@ def main() -> None:
     # model is the API alias (e.g. "gemma4") — used in all API calls
     display_name = display_name or model
 
-    # Build extra_params from sampling / thinking flags
+    extra_params = _build_extra_params(args, parser)
+
+    _validate_scenario_selection(args, parser, console)
+
+    return _Target(
+        args=args,
+        parser=parser,
+        console=console,
+        model=model,
+        display_name=display_name,
+        backend=endpoint.backend,
+        base_url=base_url,
+        display_url=display_url,
+        api_key=api_key,
+        wire_format=wire_format,
+        extra_params=extra_params,
+        run_context=None,
+    )
+
+
+def _build_extra_params(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> dict[str, Any]:
+    """Build extra_params from the sampling and thinking flags."""
     extra_params: dict[str, Any] = {}
     if args.no_think:
         extra_params["chat_template_kwargs"] = {"enable_thinking": False}
@@ -969,248 +1061,241 @@ def main() -> None:
                     extra_params[k] = v
         except json.JSONDecodeError as exc:
             parser.error(f"--backend-kwargs is not valid JSON: {exc}")
+    return extra_params
 
-    _validate_scenario_selection(args, parser, console)
 
-    # -- spec-live: standalone live monitor (exits after session) --
-    if args.spec_live:
-        # Map CLI choice names to internal method identifiers
-        _method_map = {
-            "draft": "draft_model",
-            "standalone": "draft_model",
-            "nextn": "mtp",
-        }
-        raw_method = args.spec_method
-        spec_method_hint = _method_map.get(raw_method, raw_method) if raw_method != "auto" else None
+def _run_spec_live_mode(target: _Target) -> None:
+    """``--spec-live``: standalone live monitor (exits after session)."""
+    args = target.args
+    # Map CLI choice names to internal method identifiers
+    _method_map = {
+        "draft": "draft_model",
+        "standalone": "draft_model",
+        "nextn": "mtp",
+    }
+    raw_method = args.spec_method
+    spec_method_hint = _method_map.get(raw_method, raw_method) if raw_method != "auto" else None
 
-        from tool_eval_bench.cli.spec_live_display import run_spec_live
+    from tool_eval_bench.cli.spec_live_display import run_spec_live
 
-        try:
-            asyncio.run(
-                run_spec_live(
-                    base_url,
-                    api_key=api_key,
-                    metrics_url=args.metrics_url,
-                    model_name=display_name,
-                    poll_interval=args.spec_live_interval,
-                    spec_method=spec_method_hint,
-                )
+    try:
+        asyncio.run(
+            run_spec_live(
+                target.base_url,
+                api_key=target.api_key,
+                metrics_url=args.metrics_url,
+                model_name=target.display_name,
+                poll_interval=args.spec_live_interval,
+                spec_method=spec_method_hint,
             )
-        except KeyboardInterrupt:
-            pass
-        return
+        )
+    except KeyboardInterrupt:
+        pass
 
-    # -- decision-live: standalone canary monitor (exits after session) --
-    if args.decision_live:
-        from tool_eval_bench.cli.decision_live_display import run_decision_live
-        from tool_eval_bench.cli.helpers import adapter_options
-        from tool_eval_bench.domain.decision import DecisionUnsupportedError
-        from tool_eval_bench.plugins.decision.typed_decisions import DatasetIntegrityError
 
-        try:
-            asyncio.run(
-                run_decision_live(
-                    base_url,
-                    model=model,
-                    api_key=api_key,
-                    metrics_url=args.metrics_url,
-                    display_url=display_url,
-                    interval=args.decision_live_interval,
-                    timeout_seconds=args.timeout,
-                    adapter_options=adapter_options(args),
-                )
+def _run_decision_live_mode(target: _Target) -> None:
+    """``--decision-live``: standalone canary monitor (exits after session)."""
+    args = target.args
+    from tool_eval_bench.cli.decision_live_display import run_decision_live
+    from tool_eval_bench.cli.helpers import adapter_options
+    from tool_eval_bench.domain.decision import DecisionUnsupportedError
+    from tool_eval_bench.plugins.decision.typed_decisions import DatasetIntegrityError
+
+    try:
+        asyncio.run(
+            run_decision_live(
+                target.base_url,
+                model=target.model,
+                api_key=target.api_key,
+                metrics_url=args.metrics_url,
+                display_url=target.display_url,
+                interval=args.decision_live_interval,
+                timeout_seconds=args.timeout,
+                adapter_options=adapter_options(args),
             )
-        except KeyboardInterrupt:
-            pass
-        except (DecisionUnsupportedError, DatasetIntegrityError) as exc:
-            console.print(f"\n[bold red]Decision monitor error:[/] {exc}")
-            sys.exit(1)
-        return
+        )
+    except KeyboardInterrupt:
+        pass
+    except (DecisionUnsupportedError, DatasetIntegrityError) as exc:
+        target.console.print(f"\n[bold red]Decision monitor error:[/] {exc}")
+        sys.exit(1)
 
+
+def _ready_target(target: _Target, probe_headers: Mapping[str, str]) -> _Target:
+    """Gate on a model that answers, then attach the run context every mode reports."""
+    args, console = target.args, target.console
     # A decision model has no chat endpoint to preflight or warm; the plugin
     # reports an unreachable or unsupported endpoint itself.
     if not args.decision_bench_only:
         _check_endpoint_ready(
             args,
             console,
-            base_url=base_url,
-            model=model,
-            api_key=api_key,
-            wire_format=wire_format,
-            extra_params=extra_params,
+            base_url=target.base_url,
+            model=target.model,
+            api_key=target.api_key,
+            wire_format=target.wire_format,
+            extra_params=target.extra_params,
             headers=probe_headers,
         )
 
     run_context = _build_run_context(
         args,
         console,
-        model=model,
-        backend=backend,
-        base_url=base_url,
-        api_key=api_key,
-        extra_params=extra_params,
+        model=target.model,
+        backend=target.backend,
+        base_url=target.base_url,
+        api_key=target.api_key,
+        extra_params=target.extra_params,
+    )
+    return replace(target, run_context=run_context)
+
+
+def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
+    """Build the ``--context-pressure`` filler.
+
+    Scales ``args.timeout`` for a large fill; that must happen before the
+    resume check and the run read it.
+    """
+    args, console = target.args, target.console
+    base_url, model, api_key = target.base_url, target.model, target.api_key
+    if args.context_pressure is None:
+        return None
+
+    from rich.progress import BarColumn, Progress, TextColumn
+
+    from tool_eval_bench.runner.context_pressure import (
+        build_pressure_messages,
+        calibrate_pressure_messages,
+        prepare_context_pressure,
+        reported_context_window,
     )
 
-    target = _Target(
-        args=args,
-        parser=parser,
-        console=console,
-        model=model,
-        display_name=display_name,
-        backend=backend,
-        base_url=base_url,
-        display_url=display_url,
-        api_key=api_key,
-        wire_format=wire_format,
-        extra_params=extra_params,
-        run_context=run_context,
-    )
-
-    throughput_samples, finished = _run_throughput_mode(target)
-    if finished:
-        return
-
-    if _run_spec_bench_mode(target):
-        return
-
-    if _run_pressure_sweep_mode(target):
-        return
-
-    # -- Context pressure --
-    pressure_messages: list[ChatMessage] | None = None
-    pressure_config_dict: dict | None = None
-    if args.context_pressure is not None:
-        from rich.progress import BarColumn, Progress, TextColumn
-
-        from tool_eval_bench.runner.context_pressure import (
-            build_pressure_messages,
-            calibrate_pressure_messages,
-            prepare_context_pressure,
-            reported_context_window,
+    ratio = max(0.0, min(1.0, args.context_pressure))
+    try:
+        pressure_cfg = asyncio.run(
+            prepare_context_pressure(
+                base_url,
+                model,
+                api_key,
+                ratio=ratio,
+                context_size_override=args.context_size,
+                metrics_url=args.metrics_url,
+                client_factory=HTTPMeasurementClient,
+                reported_context=reported_context_window(target.run_context),
+            )
         )
 
-        ratio = max(0.0, min(1.0, args.context_pressure))
-        try:
-            pressure_cfg = asyncio.run(
-                prepare_context_pressure(
-                    base_url,
-                    model,
-                    api_key,
-                    ratio=ratio,
-                    context_size_override=args.context_size,
-                    metrics_url=args.metrics_url,
-                    client_factory=HTTPMeasurementClient,
-                    reported_context=reported_context_window(run_context),
-                )
-            )
-
-            if not args.json and pressure_cfg.fill_tokens > 0:
-                with Progress(
-                    TextColumn("  [bold cyan]⚡ Filling context[/]"),
-                    BarColumn(bar_width=40),
-                    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                    TextColumn("[dim]{task.completed:,}/{task.total:,} tokens[/]"),
-                    console=console,
-                ) as progress:
-                    task = progress.add_task("fill", total=pressure_cfg.fill_tokens)
-                    pressure_messages = build_pressure_messages(
-                        pressure_cfg,
-                        on_chunk=lambda tokens_so_far: progress.update(
-                            task,
-                            completed=tokens_so_far,
-                        ),
-                        seed=args.seed,
-                    )
-            else:
+        if not args.json and pressure_cfg.fill_tokens > 0:
+            with Progress(
+                TextColumn("  [bold cyan]⚡ Filling context[/]"),
+                BarColumn(bar_width=40),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("[dim]{task.completed:,}/{task.total:,} tokens[/]"),
+                console=console,
+            ) as progress:
+                task = progress.add_task("fill", total=pressure_cfg.fill_tokens)
                 pressure_messages = build_pressure_messages(
                     pressure_cfg,
+                    on_chunk=lambda tokens_so_far: progress.update(
+                        task,
+                        completed=tokens_so_far,
+                    ),
                     seed=args.seed,
                 )
-
-            # Calibrate using server-side tokenizer for exact token counts
-            pressure_messages, actual_fill_tokens = asyncio.run(
-                calibrate_pressure_messages(
-                    pressure_messages,
-                    pressure_cfg.fill_tokens,
-                    base_url,
-                    model,
-                    api_key,
-                    client_factory=HTTPMeasurementClient,
-                    seed=args.seed,
-                )
+        else:
+            pressure_messages = build_pressure_messages(
+                pressure_cfg,
+                seed=args.seed,
             )
 
-            pressure_config_dict = {
-                "ratio": pressure_cfg.ratio,
-                "fill_tokens": actual_fill_tokens,
-                "fill_tokens_target": pressure_cfg.fill_tokens,
-                "context_size": pressure_cfg.detected_context,
-            }
-            if not args.json:
-                # Compute tool token estimate for selected scenarios
-                from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
+        # Calibrate using server-side tokenizer for exact token counts
+        pressure_messages, actual_fill_tokens = asyncio.run(
+            calibrate_pressure_messages(
+                pressure_messages,
+                pressure_cfg.fill_tokens,
+                base_url,
+                model,
+                api_key,
+                client_factory=HTTPMeasurementClient,
+                seed=args.seed,
+            )
+        )
 
-                selected_sc = _resolve_scenarios(args)
+        pressure_config_dict = {
+            "ratio": pressure_cfg.ratio,
+            "fill_tokens": actual_fill_tokens,
+            "fill_tokens_target": pressure_cfg.fill_tokens,
+            "context_size": pressure_cfg.detected_context,
+        }
+        if not args.json:
+            # Compute tool token estimate for selected scenarios
+            from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
 
-                max_toolset = UNIVERSAL_TOOLS
-                for s in selected_sc:
-                    if s.tools_override and len(s.tools_override) > len(max_toolset):
-                        max_toolset = s.tools_override
-                tool_tokens_est = len(json.dumps(max_toolset)) // 4
-                num_tools = len(max_toolset)
+            selected_sc = _resolve_scenarios(args)
 
-                from tool_eval_bench.runner.context_pressure import (
-                    _RESERVED_FOR_OUTPUT,
+            max_toolset = UNIVERSAL_TOOLS
+            for s in selected_sc:
+                if s.tools_override and len(s.tools_override) > len(max_toolset):
+                    max_toolset = s.tools_override
+            tool_tokens_est = len(json.dumps(max_toolset)) // 4
+            num_tools = len(max_toolset)
+
+            from tool_eval_bench.runner.context_pressure import (
+                _RESERVED_FOR_OUTPUT,
+            )
+
+            budget = pressure_cfg.budget_breakdown(tool_tokens=tool_tokens_est)
+            fill_k = pressure_cfg.fill_tokens / 1024
+            tool_k = tool_tokens_est / 1024
+            out_k = _RESERVED_FOR_OUTPUT / 1024
+            head_k = budget["remaining_headroom_tokens"] / 1024
+
+            console.print(
+                f"  [dim]  {pressure_cfg.summary()} — "
+                f"{len(pressure_messages or [])} filler messages[/]"
+            )
+            console.print(
+                f"  [dim]  Budget: [bold]{fill_k:.0f}K[/] fill │ "
+                f"~{tool_k:.0f}K tools ({num_tools} loaded) │ "
+                f"{out_k:.0f}K output │ "
+                f"{head_k:.0f}K scenario headroom[/]\n"
+            )
+        # Auto-scale timeout for context pressure: large fills need
+        # significant prefill time.  Without this, a 182K fill at the
+        # default 60s timeout will fail while the same level passes in
+        # a --context-pressure-sweep (which has its own auto-scaling).
+        # Scaled from the target, not the calibrated count: the timeout is
+        # persisted, fingerprinted, and checked on resume, and unseeded
+        # filler calibrates to a slightly different count every run.
+        if pressure_cfg.fill_tokens > 0:
+            fill_scaling = pressure_cfg.fill_tokens / 50_000 * 60.0
+            scaled_timeout = max(args.timeout, 120.0 + fill_scaling)
+            if scaled_timeout > args.timeout:
+                logger.info(
+                    "Auto-scaling timeout from %.0fs to %.0fs for %d fill tokens",
+                    args.timeout,
+                    scaled_timeout,
+                    pressure_cfg.fill_tokens,
                 )
+                args.timeout = scaled_timeout
 
-                budget = pressure_cfg.budget_breakdown(tool_tokens=tool_tokens_est)
-                fill_k = pressure_cfg.fill_tokens / 1024
-                tool_k = tool_tokens_est / 1024
-                out_k = _RESERVED_FOR_OUTPUT / 1024
-                head_k = budget["remaining_headroom_tokens"] / 1024
+    except ValueError as exc:
+        console.print(f"\n[bold red]Error:[/] {exc}")
+        sys.exit(1)
+    return _PressureFill(messages=pressure_messages, config=pressure_config_dict)
 
-                console.print(
-                    f"  [dim]  {pressure_cfg.summary()} — "
-                    f"{len(pressure_messages or [])} filler messages[/]"
-                )
-                console.print(
-                    f"  [dim]  Budget: [bold]{fill_k:.0f}K[/] fill │ "
-                    f"~{tool_k:.0f}K tools ({num_tools} loaded) │ "
-                    f"{out_k:.0f}K output │ "
-                    f"{head_k:.0f}K scenario headroom[/]\n"
-                )
-            # Auto-scale timeout for context pressure: large fills need
-            # significant prefill time.  Without this, a 182K fill at the
-            # default 60s timeout will fail while the same level passes in
-            # a --context-pressure-sweep (which has its own auto-scaling).
-            # Scaled from the target, not the calibrated count: the timeout is
-            # persisted, fingerprinted, and checked on resume, and unseeded
-            # filler calibrates to a slightly different count every run.
-            if pressure_cfg.fill_tokens > 0:
-                fill_scaling = pressure_cfg.fill_tokens / 50_000 * 60.0
-                scaled_timeout = max(args.timeout, 120.0 + fill_scaling)
-                if scaled_timeout > args.timeout:
-                    logger.info(
-                        "Auto-scaling timeout from %.0fs to %.0fs for %d fill tokens",
-                        args.timeout,
-                        scaled_timeout,
-                        pressure_cfg.fill_tokens,
-                    )
-                    args.timeout = scaled_timeout
 
-        except ValueError as exc:
-            console.print(f"\n[bold red]Error:[/] {exc}")
-            sys.exit(1)
-
-    # -- External benchmark plugins --
+def _run_plugins_mode(target: _Target) -> bool:
+    """Run the selected accuracy plugins. Returns True when the CLI is done."""
+    args = target.args
     from tool_eval_bench.cli.plugin_runners import run_selected_plugins
 
-    if run_selected_plugins(
-        console,
-        model,
-        display_name,
-        base_url,
-        api_key,
+    return run_selected_plugins(
+        target.console,
+        target.model,
+        target.display_name,
+        target.base_url,
+        target.api_key,
         args,
         runners={
             "gsm8k": _run_gsm8k_benchmark,
@@ -1219,46 +1304,41 @@ def main() -> None:
             "needle": _run_needle_benchmark,
             "decision": _run_decision_benchmark,
         },
-        extra_params=extra_params or None,
+        extra_params=target.extra_params or None,
         output_dir=args.output_dir,
-        run_context=run_context,
-    ):
-        return
-
-    # -- Skip tool-call scenarios if requested --
-    if args.skip_tool_eval:
-        any_benchmark = (
-            args.perf
-            or args.perf_only
-            or args.spec_bench
-            or args.spec_live
-            or args.gsm8k
-            or args.gsm8k_only
-            or args.mmlu
-            or args.mmlu_only
-            or args.ifeval
-            or args.ifeval_only
-            or args.needle
-            or args.needle_only
-            or args.decision_bench
-            or args.decision_bench_only
-        )
-        if not any_benchmark:
-            console.print(
-                "\n  [yellow]⚠ --skip-tool-eval has no effect without "
-                "--perf, --perf-only, --spec-bench, --gsm8k, --mmlu, --ifeval, "
-                "--needle, or --decision-bench.[/]\n"
-            )
-        return
-
-    # -- Tool-call scenarios --
-    service = BenchmarkService(
-        reporter=MarkdownReporter(root=args.output_dir),
+        run_context=target.run_context,
     )
-    use_live = not args.json and not args.no_live
-    trials = max(1, args.trials)
 
-    # -- Resume: preserve completed model outcomes under the original run ID --
+
+def _skip_tool_eval_mode(target: _Target) -> bool:
+    """``--skip-tool-eval``: stop before the scenarios. Returns True when the CLI is done."""
+    args = target.args
+    if not args.skip_tool_eval:
+        return False
+    any_benchmark = (
+        args.perf
+        or args.perf_only
+        or args.spec_bench
+        or args.spec_live
+        or _any_plugin_selected(args)
+    )
+    if not any_benchmark:
+        target.console.print(
+            "\n  [yellow]⚠ --skip-tool-eval has no effect without "
+            "--perf, --perf-only, --spec-bench, --gsm8k, --mmlu, --ifeval, "
+            "--needle, or --decision-bench.[/]\n"
+        )
+    return True
+
+
+def _plan_resume(target: _Target, pressure: _PressureFill | None) -> None:
+    """Preserve completed model outcomes under the original run ID.
+
+    Leaves the plan on ``args._resume_*`` (and narrows ``args.scenarios`` to
+    the rerun subset), where ``ScoredRun.from_args`` reads it; exits 1 when the
+    run cannot be resumed.
+    """
+    args, console = target.args, target.console
     resume_prior_results: list[dict] | None = None
     resume_scenarios: list[ScenarioDefinition] | None = None
     if args.resume:
@@ -1289,14 +1369,14 @@ def main() -> None:
         prev_config = prev_run.get("config") or {}
         mismatches = _resume_config_mismatches(
             prev_config,
-            model=model,
-            backend=backend,
-            base_url=base_url,
+            model=target.model,
+            backend=target.backend,
+            base_url=target.base_url,
             scenarios=resume_scenarios,
             args=args,
-            extra_params=extra_params or None,
+            extra_params=target.extra_params or None,
             scenario_packs=_pack_attestations(args),
-            context_pressure=pressure_config_dict,
+            context_pressure=pressure.config if pressure is not None else None,
         )
         if mismatches:
             console.print(
@@ -1367,58 +1447,76 @@ def main() -> None:
     if not hasattr(args, "_resume_remaining_scenarios"):
         args._resume_remaining_scenarios = None
 
+
+def _run_scored_mode(
+    target: _Target,
+    throughput_samples: list[ThroughputSample],
+    pressure: _PressureFill | None,
+) -> None:
+    """Run the tool-call scenarios through the live, JSON, or plain runner."""
+    args, console = target.args, target.console
+    service = BenchmarkService(
+        reporter=MarkdownReporter(root=args.output_dir),
+    )
+    use_live = not args.json and not args.no_live
+    trials = max(1, args.trials)
+
+    _plan_resume(target, pressure)
+
     if trials > 1 and not args.json:
         console.print(f"[dim]  Running {trials} trials for statistical measurement…[/]\n")
 
+    pressure_messages = pressure.messages if pressure is not None else None
+    pressure_config = pressure.config if pressure is not None else None
     if use_live:
         _run_with_live_display(
             service,
             console,
-            model,
-            display_name,
-            backend,
-            base_url,
-            api_key,
+            target.model,
+            target.display_name,
+            target.backend,
+            target.base_url,
+            target.api_key,
             args,
             throughput_samples=throughput_samples,
-            extra_params=extra_params or None,
+            extra_params=target.extra_params or None,
             context_pressure_messages=pressure_messages,
-            context_pressure_config=pressure_config_dict,
-            display_url=display_url,
-            run_context=run_context,
-            wire_format=wire_format,
+            context_pressure_config=pressure_config,
+            display_url=target.display_url,
+            run_context=target.run_context,
+            wire_format=target.wire_format,
         )
     elif args.json:
         _run_json(
             service,
-            model,
-            backend,
-            base_url,
-            api_key,
+            target.model,
+            target.backend,
+            target.base_url,
+            target.api_key,
             args,
-            extra_params=extra_params or None,
+            extra_params=target.extra_params or None,
             context_pressure_messages=pressure_messages,
-            context_pressure_config=pressure_config_dict,
-            run_context=run_context,
-            wire_format=wire_format,
+            context_pressure_config=pressure_config,
+            run_context=target.run_context,
+            wire_format=target.wire_format,
         )
     else:
         _run_plain(
             service,
             console,
-            model,
-            display_name,
-            backend,
-            base_url,
-            api_key,
+            target.model,
+            target.display_name,
+            target.backend,
+            target.base_url,
+            target.api_key,
             args,
             throughput_samples=throughput_samples,
-            extra_params=extra_params or None,
+            extra_params=target.extra_params or None,
             context_pressure_messages=pressure_messages,
-            context_pressure_config=pressure_config_dict,
-            display_url=display_url,
-            run_context=run_context,
-            wire_format=wire_format,
+            context_pressure_config=pressure_config,
+            display_url=target.display_url,
+            run_context=target.run_context,
+            wire_format=target.wire_format,
         )
 
 
@@ -1526,49 +1624,37 @@ def _run_with_live_display(
     )
     display.start()
 
-    async def run_trial(*, show: bool = False) -> dict:
-        callbacks: dict = _decision_judge_kwargs(args)
-        if callbacks:
+    async def run_trial(request: ScoredRun, *, show: bool = False) -> dict:
+        callbacks: dict = {}
+        if request.audits_answers:
             callbacks["on_scenario_audit"] = display.on_scenario_audit
         if show:
             callbacks["on_scenario_start"] = display.on_scenario_start
             callbacks["on_scenario_result"] = display.on_scenario_result
             callbacks["rate_limit_observer"] = display.on_rate_limit
         return await service.run_benchmark(
-            model=model,
-            backend=backend,
-            base_url=base_url,
-            api_key=api_key,
-            scenarios=scenarios,
-            temperature=args.temperature,
-            timeout_seconds=args.timeout,
-            max_turns=args.max_turns,
-            reference_date=args.reference_date,
-            system_prompt=getattr(args, "system_prompt", None),
-            variant_seed=getattr(args, "variant_seed", None),
-            seed=args.seed,
+            **request.service_kwargs(),
             throughput_samples=throughput_samples or [],
-            concurrency=args.parallel,
-            error_rate=args.error_rate,
-            alpha=args.alpha,
-            extra_params=extra_params,
-            context_pressure_messages=context_pressure_messages,
-            context_pressure_config=context_pressure_config,
-            run_context=run_context,
-            weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
-            resume_run_id=getattr(args, "_resume_run_id", None),
-            resume_prior_results=getattr(args, "_resume_prior_results", None),
-            resume_scenarios=getattr(args, "_resume_scenarios", None),
-            scenario_packs=_pack_attestations(args),
-            wire_format=wire_format,
-            extra_headers=getattr(args, "_request_headers", None),
-            session_header=getattr(args, "_session_header", None),
             **callbacks,
         )
 
     async def run_all_trials() -> None:
         """Run all trials in a single event loop for connection reuse."""
-        result = await run_trial(show=True)
+        request = ScoredRun.from_args(
+            args,
+            model=model,
+            backend=backend,
+            base_url=base_url,
+            api_key=api_key,
+            wire_format=wire_format,
+            scenarios=scenarios,
+            extra_params=extra_params,
+            scenario_packs=_pack_attestations(args),
+            context_pressure_messages=context_pressure_messages,
+            context_pressure_config=context_pressure_config,
+            run_context=run_context,
+        )
+        result = await run_trial(request, show=True)
 
         # When resuming, the service has already merged prior results into
         # result["scores"].  Use that merged summary for display instead of
@@ -1637,7 +1723,7 @@ def _run_with_live_display(
         if trials > 1:
             for t in range(2, trials + 1):
                 console.print(f"  [dim]Running trial {t}/{trials}\u2026[/]", end=" ")
-                trial_result = await run_trial(show=False)
+                trial_result = await run_trial(request, show=False)
                 trial_scores = trial_result.get("scores", {})
                 trial_score_results = trial_scores.get("scenario_results", [])
 
@@ -1713,45 +1799,32 @@ def _run_json(
     resolved = _execution_scenarios(args)
     json_file = getattr(args, "json_file", None)
 
-    async def run() -> dict:
+    async def run(request: ScoredRun) -> dict:
         return await service.run_benchmark(
-            model=model,
-            backend=backend,
-            base_url=base_url,
-            api_key=api_key,
-            scenarios=resolved,
-            temperature=args.temperature,
-            timeout_seconds=args.timeout,
-            max_turns=args.max_turns,
-            reference_date=args.reference_date,
-            system_prompt=getattr(args, "system_prompt", None),
-            variant_seed=getattr(args, "variant_seed", None),
-            seed=args.seed,
-            concurrency=args.parallel,
-            error_rate=args.error_rate,
-            alpha=args.alpha,
-            extra_params=extra_params,
-            context_pressure_messages=context_pressure_messages,
-            context_pressure_config=context_pressure_config,
-            run_context=run_context,
-            weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
-            resume_run_id=getattr(args, "_resume_run_id", None),
-            resume_prior_results=getattr(args, "_resume_prior_results", None),
-            resume_scenarios=getattr(args, "_resume_scenarios", None),
-            scenario_packs=_pack_attestations(args),
-            wire_format=wire_format,
-            extra_headers=getattr(args, "_request_headers", None),
-            session_header=getattr(args, "_session_header", None),
-            **_decision_judge_kwargs(args),
+            **request.service_kwargs(),
             on_scenario_start=_stderr_progress_start,
             on_scenario_result=_stderr_progress_result,
             on_scenario_audit=_stderr_progress_audit,
         )
 
     try:
+        request = ScoredRun.from_args(
+            args,
+            model=model,
+            backend=backend,
+            base_url=base_url,
+            api_key=api_key,
+            wire_format=wire_format,
+            scenarios=resolved,
+            extra_params=extra_params,
+            scenario_packs=_pack_attestations(args),
+            context_pressure_messages=context_pressure_messages,
+            context_pressure_config=context_pressure_config,
+            run_context=run_context,
+        )
         results = []
         for _t in range(trials):
-            results.append(asyncio.run(run()))
+            results.append(asyncio.run(run(request)))
     except KeyboardInterrupt:
         sys.exit(1)
     except Exception as exc:
@@ -1820,51 +1893,39 @@ def _run_plain(
     trials = max(1, args.trials)
     started = time.time()
 
-    async def run(*, show: bool = False) -> dict:
-        callbacks: dict = _decision_judge_kwargs(args)
-        if callbacks:
+    async def run(request: ScoredRun, *, show: bool = False) -> dict:
+        callbacks: dict = {}
+        if request.audits_answers:
             callbacks["on_scenario_audit"] = _plain_on_audit
         if show:
             callbacks["on_scenario_start"] = _plain_on_start
             callbacks["on_scenario_result"] = _plain_on_result
         return await service.run_benchmark(
-            model=model,
-            backend=backend,
-            base_url=base_url,
-            api_key=api_key,
-            scenarios=resolved,
-            temperature=args.temperature,
-            timeout_seconds=args.timeout,
-            max_turns=args.max_turns,
-            reference_date=args.reference_date,
-            system_prompt=getattr(args, "system_prompt", None),
-            variant_seed=getattr(args, "variant_seed", None),
-            seed=args.seed,
+            **request.service_kwargs(),
             throughput_samples=throughput_samples or [],
-            concurrency=args.parallel,
-            error_rate=args.error_rate,
-            alpha=args.alpha,
-            extra_params=extra_params,
-            context_pressure_messages=context_pressure_messages,
-            context_pressure_config=context_pressure_config,
-            run_context=run_context,
-            weight_by_difficulty=getattr(args, "weight_by_difficulty", False),
-            resume_run_id=getattr(args, "_resume_run_id", None),
-            resume_prior_results=getattr(args, "_resume_prior_results", None),
-            resume_scenarios=getattr(args, "_resume_scenarios", None),
-            scenario_packs=_pack_attestations(args),
-            wire_format=wire_format,
-            extra_headers=getattr(args, "_request_headers", None),
-            session_header=getattr(args, "_session_header", None),
             **callbacks,
         )
 
     try:
+        request = ScoredRun.from_args(
+            args,
+            model=model,
+            backend=backend,
+            base_url=base_url,
+            api_key=api_key,
+            wire_format=wire_format,
+            scenarios=resolved,
+            extra_params=extra_params,
+            scenario_packs=_pack_attestations(args),
+            context_pressure_messages=context_pressure_messages,
+            context_pressure_config=context_pressure_config,
+            run_context=run_context,
+        )
         all_results_dicts = []
         for t in range(1, trials + 1):
             if t > 1:
                 console.print(f"\n[dim]  --- Trial {t}/{trials} ---[/]\n")
-            all_results_dicts.append(asyncio.run(run(show=True)))
+            all_results_dicts.append(asyncio.run(run(request, show=True)))
     except KeyboardInterrupt:
         console.print("\n[bold red]Interrupted.[/]")
         sys.exit(1)
