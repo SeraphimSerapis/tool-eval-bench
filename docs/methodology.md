@@ -590,7 +590,7 @@ metrics, you can't tell whether your MTP configuration is actually helping.
 
 | Metric | Definition | Source |
 |---|---|---|
-| **Effective t/s** | Output tokens ÷ wall-clock generation time | Always available (stream timing) |
+| **Effective t/s** | Tokens after the first ÷ wall-clock time after the first token, the same `(N − 1)` window the throughput baseline uses | Always available (stream timing) |
 | **Acceptance rate (α)** | Accepted tokens ÷ drafted tokens | Prometheus `/metrics` (vLLM/SGLang) |
 | **Waste ratio** | 1 − α (fraction of drafted tokens rejected) | Computed from α |
 | **Acceptance length (τ)** | 1 + accepted draft tokens ÷ speculative steps for counter backends; direct gauge for SGLang | Prometheus `/metrics` |
@@ -598,7 +598,7 @@ metrics, you can't tell whether your MTP configuration is actually helping.
 | **Draft t/s** | Drafted tokens ÷ wall-clock generation time | Prometheus `/metrics` + timing |
 | **Verify steps/s** | Speculative steps ÷ wall-clock generation time. A lower bound on the no-spec decode rate, so Effective t/s ÷ Steps/s (≈ τ) is a ceiling on the speedup | Counters + timing |
 | **Speedup ratio** | Effective t/s ÷ baseline t/s | Requires `--baseline-tgs` |
-| **Goodput** | Only accepted (verified) tokens per second | Prometheus `/metrics` |
+| **Goodput** | Only accepted (verified) draft tokens per second. Stored as `null` when the sample has no acceptance counters | Prometheus `/metrics` or response counts |
 
 ### Data Collection
 
@@ -706,13 +706,15 @@ When Prometheus counters are available, `--spec-bench` computes window
 utilization metrics that reveal whether the draft configuration is optimal:
 
 - **Draft window** = `draft_tokens ÷ num_drafts` (average tokens drafted per step)
-- **Window utilization** = `τ ÷ draft_window` (fraction of draft positions accepted)
+- **Window utilization** = `(τ − 1) ÷ draft_window` (fraction of draft positions accepted).
+  τ counts the verifier's bonus token, which was never drafted, so it is subtracted. For
+  counter backends this works out to α; it sits next to the window to frame the tuning question.
 - **Waste ratio** = `1 − α` (fraction of GPU compute discarded)
 
-For example, a DFlash model with `draft_window=15` but `τ=3.5` has only 23%
-window utilization — positions 4–15 are mostly wasted compute.  The CLI
-automatically suggests reducing `num_speculative_tokens` when utilization
-drops below 50%.
+For example, a DFlash model with `draft_window=15` but `τ=3.5` accepts 2.5 drafted tokens
+per step, 17% window utilization, so positions 4–15 are mostly wasted compute. The CLI
+suggests reducing `num_speculative_tokens` when utilization drops below 50% and the
+suggestion, `max(⌊1.5 × (τ − 1)⌋, 2)`, is smaller than the current window.
 
 ---
 

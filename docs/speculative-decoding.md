@@ -41,7 +41,7 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > (≈ τ) is a ceiling on the real speedup. `--baseline-tgs` from a run without
 > speculation gives the measured figure.
 
-> **Acceptance rate.** The primary metric is **effective t/s** — output tokens ÷ wall-clock time — which always works. Acceptance rate and draft statistics use different extraction methods depending on the backend:
+> **Acceptance rate.** The primary metric is **effective t/s**, which always works: tokens after the first ÷ wall-clock time after the first token, the window a throughput baseline uses. Acceptance rate and draft statistics use different extraction methods depending on the backend:
 >
 > | Backend | Acceptance Rate Source | What You Get |
 > |---|---|---|
@@ -90,6 +90,20 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > needs the same credential and lives elsewhere, expose it without auth or put it
 > behind the same origin.
 
+> **Failed cells.** A cell that fails on every run is left out of the results,
+> and the run is stored with status `failed` and a report note saying how many
+> cells are missing, as `--perf-only` does. Under `--json` it ends in a
+> `run_failed` event. When a tool-call run or plugin follows (no
+> `--skip-tool-eval`), spec-bench stores the failed row, reports `run_failed`,
+> and carries on; otherwise it exits 1. An interrupt or error mid-run stores
+> the cells that finished as a failed run before exiting 1.
+
+> **Comparing runs.** The stored config records the workload: `--pp`, `--tg`,
+> `--depth`, the selected prompt types, `--baseline-tgs`, and a SHA-256 of any
+> selected `--spec-prompt-file` text. Runs only share a comparison cohort when
+> all of these match; the order of depths and prompt types does not matter. `--spec-method` aliases are stored under one name, so
+> `draft` and `standalone` both read `draft_model`, and `nextn` reads `mtp`.
+
 ## Live speculative decoding monitor
 
 Keep a **real-time terminal dashboard** open while working. `spec-live`
@@ -115,23 +129,26 @@ tool-eval-bench spec-live --metrics-url http://vllm:8080/metrics
 
 The dashboard shows:
 - **Acceptance rate gauge** — color-coded 0–100% bar over a 30-second rolling window of counter deltas, so a workload change shows up within a few server updates. The session average is a running mean that converges and then hides such changes, so it sits in the metrics grid and the exit summary instead. Direct-gauge backends (SGLang) show the gauge value.
-- **Draft efficiency gauge** — τ/window utilization with tuning hints when both values are available
+- **Draft efficiency gauge** — τ next to the draft window, with a tuning hint when `(τ − 1) ÷ window` utilization is low and a smaller window is worth trying
 - **Method badge** — uses explicit configuration or metric labels only. Generic speculative counters report `unknown`; use `--spec-method` to label a known configuration. Strata is recognised by its `strata:` metrics and shows MTP, the only way it drafts.
 - **Draft model name** — shown only when an explicit server configuration identifies it. Multiple `/v1/models` entries are not treated as a drafter relationship.
 - **Per-position acceptance bars** — shown for vLLM and current llama.cpp builds when their per-position counters are exported. When vLLM also exports `spec_decode_num_draft_tokens_per_pos`, it is the denominator, which keeps rates exact for proposers whose draft length varies (ngram, suffix)
 - **Throughput sparklines** — the last 60 polls of rolling-window accept rate, gen t/s, accepted t/s, and waste ratio with min/max annotations
-- **Session averages** — session α (pooled counters), gen t/s, and accepted t/s (visible immediately with 0.0 initial values)
+- **Session averages** — session α (pooled counters), and gen t/s and accepted t/s averaged over the polls that generated or accepted tokens (visible immediately with 0.0 initial values). SGLang exports no token counters, so its accepted and drafted t/s show `—`
 - **Scrape health** — a failed poll turns the header red and dates the numbers on screen (`⚠ 3 failed polls, data 00:42 old`), so a dead server never looks like a quiet one
-- **Engine status** — GPU KV cache, prefix cache hit rate, running/waiting requests, prompt t/s
+- **Engine status** — GPU KV cache, prefix cache hit rate, running/waiting requests (summed across vLLM data-parallel engines), prompt t/s
 - **Session totals** — cumulative accepted/drafted tokens and session-wide acceptance rate
 
 Cumulative counter history and token totals are session-relative. Throughput,
 KV-cache, queue, and SGLang acceptance gauges show the server's current state.
+Older vLLM throughput gauges read zero between internal updates, so the panel
+holds their last reading over a zero for up to 10 seconds; a rate derived from
+token counters is never held, and an idle server reads idle.
 Prometheus counter series are server-wide, so other clients and concurrent
 requests contribute to session deltas. Use an isolated server when you need a
 request-local comparison.
 
-Press **Ctrl+R** to reset all session counters and history without restarting.  This lets you switch workloads and measure each independently.  Press **Ctrl+C** to exit; the session summary reports the pooled session α and τ, how far the 30-second window ranged, whole-session average and peak gen t/s, and the session token totals.
+Press **Ctrl+R** to reset all session counters and history without restarting.  This lets you switch workloads and measure each independently.  Press **Ctrl+C** to exit; the session summary reports the pooled session α and τ, how far the 30-second window ranged, the session's average gen t/s over polls that generated tokens and its peak, and the session token totals.
 
 | Flag | Default | Purpose |
 |---|---|---|

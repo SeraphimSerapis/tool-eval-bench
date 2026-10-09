@@ -333,7 +333,7 @@ When `--json` mode emits an error event, the `error` field is one of:
 | `model_not_available` | 3 | Model is listed but fails a real request |
 | `no_server` | 2 | Auto-discovery found no server on localhost |
 | `invalid_arguments` | 2 | The arguments parsed but are invalid, such as an unknown scenario or category, malformed `--backend-kwargs`, or `--json` with an interactive monitor |
-| `run_failed` | 1 | The run started but could not finish: a resume was rejected, setup failed, or a benchmark mode failed. The message names the cause |
+| `run_failed` | 1 | The run started but could not finish: a resume was rejected, setup failed, or a benchmark mode failed. The message names the cause. One exception: when `--spec-bench` fails and a tool-call run or plugin follows it, the event arrives mid-stream, the remaining modes still run, and the exit status and envelope reflect them |
 
 These constants are defined in `tool_eval_bench.domain.errors` for
 programmatic consumers.

@@ -19,7 +19,10 @@ from tests.test_mode_run_golden import _args, _context, _spec_samples, _target
 from tool_eval_bench.runner.speculative import SpecDecodeSample
 
 
-def _run_spec_bench(monkeypatch: pytest.MonkeyPatch, out: Path, samples: list[Any]) -> None:
+def _run_spec_bench(
+    monkeypatch: pytest.MonkeyPatch, out: Path, samples: list[Any], *extra: str
+) -> tuple[bool, int | None]:
+    """Run spec-bench dispatch; return (stopped, exit code or None)."""
     from tool_eval_bench.cli.dispatch import _run_spec_bench_mode
     from tool_eval_bench.runner import speculative
 
@@ -29,8 +32,11 @@ def _run_spec_bench(monkeypatch: pytest.MonkeyPatch, out: Path, samples: list[An
         return samples
 
     monkeypatch.setattr(speculative, "run_spec_bench", fake_run)
-    args = _args(out, "--spec-bench", "--depth", "0,4096", "--spec-prompts", "filler,code")
-    assert _run_spec_bench_mode(_target(args, _context()))
+    args = _args(out, "--spec-bench", "--depth", "0,4096", "--spec-prompts", "filler,code", *extra)
+    try:
+        return _run_spec_bench_mode(_target(args, _context())), None
+    except SystemExit as exc:
+        return True, int(exc.code or 0)
 
 
 def test_stored_spec_bench_results_read_back_through_history_and_export(
@@ -50,11 +56,13 @@ def test_stored_spec_bench_results_read_back_through_history_and_export(
         prompt_type="structured",
         error="Server error '503' for url 'http://user:secret@gpu-box.internal:8000/v1'",
     )
-    _run_spec_bench(monkeypatch, tmp_path / "runs", [ok[0], failed, ok[1]])
+    # A failed cell fails the run, as --perf-only does, once the row is stored.
+    assert _run_spec_bench(monkeypatch, tmp_path / "runs", [ok[0], failed, ok[1]]) == (True, 1)
 
     [listed] = run_queries.recent_runs()
     stored = run_queries.get_run(listed["run_id"])
     assert stored is not None
+    assert stored["status"] == "failed"
     scores = stored["scores"]
     assert scores == listed["scores"]
     assert scores["samples"] == 2
@@ -75,6 +83,238 @@ def test_stored_spec_bench_results_read_back_through_history_and_export(
     assert json.loads(capsys.readouterr().out) == []
 
 
+def _failed(depth: int = 0) -> SpecDecodeSample:
+    return SpecDecodeSample(depth=depth, prompt_type="filler", error="[server error 500] boom")
+
+
+def test_every_cell_failing_is_stored_and_reported_as_a_failed_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Like --perf-only: store the row, say so in the report, exit 1."""
+    from tool_eval_bench.application import run_queries
+
+    monkeypatch.chdir(tmp_path)
+
+    assert _run_spec_bench(monkeypatch, tmp_path / "runs", [_failed(0), _failed(4096)]) == (True, 1)
+
+    [listed] = run_queries.recent_runs()
+    assert listed["status"] == "failed"
+    assert listed["scores"] == {"samples": 0, "failed": 2, "results": []}
+    [report] = (tmp_path / "runs").rglob("*.md")
+    text = report.read_text(encoding="utf-8")
+    assert "2 of 2 cell(s) failed on every run" in text
+    assert "No successful samples recorded." in text
+
+
+def test_a_failed_cell_does_not_stop_a_combined_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A tool-call run follows (no --skip-tool-eval), so spec-bench stores and carries on."""
+    from tool_eval_bench.application import run_queries
+
+    monkeypatch.chdir(tmp_path)
+
+    assert _run_spec_bench(monkeypatch, tmp_path / "runs", [_failed()], "--perf") == (False, None)
+    [listed] = run_queries.recent_runs()
+    assert listed["status"] == "failed"
+
+
+def test_a_method_alias_is_stored_under_its_canonical_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tool_eval_bench.application import run_queries
+
+    monkeypatch.chdir(tmp_path)
+    samples = _spec_samples("response", 1)
+
+    _run_spec_bench(monkeypatch, tmp_path / "runs", samples, "--spec-method", "nextn")
+
+    [listed] = run_queries.recent_runs()
+    stored = run_queries.get_run(listed["run_id"])
+    assert stored is not None
+    assert stored["config"]["method"] == "mtp"
+
+
+@pytest.mark.parametrize(
+    ("hint", "canonical"),
+    [
+        ("draft", "draft_model"),
+        ("standalone", "draft_model"),
+        ("nextn", "mtp"),
+        ("eagle3", "eagle3"),
+        ("auto", None),
+    ],
+)
+def test_canonical_spec_method_hint(hint: str, canonical: str | None) -> None:
+    from tool_eval_bench.runner.spec_detection import canonical_spec_method_hint
+
+    assert canonical_spec_method_hint(hint) == canonical
+
+
+def test_detection_reports_the_canonical_method_for_an_alias() -> None:
+    """Without /metrics, the hint is all there is; it must not be stored raw."""
+    import asyncio
+
+    from tool_eval_bench.runner.spec_detection import detect_spec_decoding
+
+    class NoMetrics:
+        async def metrics(self, metrics_url: str | None = None) -> Any:
+            raise RuntimeError("no /metrics")
+
+    info = asyncio.run(
+        detect_spec_decoding(NoMetrics(), "http://x/v1", backend_hint="standalone")  # type: ignore[arg-type]
+    )
+    assert info.method == "draft_model"
+
+
+def _fingerprint(**overrides: Any) -> str:
+    from tool_eval_bench.cli.spec_bench import _spec_bench_config
+    from tool_eval_bench.utils.fingerprint import with_config_fingerprint
+
+    params: dict[str, Any] = {
+        "spec_method": "auto",
+        "runs": 3,
+        "temperature": 0.0,
+        "pp": 2048,
+        "tg": 128,
+        "depths": [0],
+        "prompt_types": ["filler"],
+        "baseline_tg_tps": None,
+        "custom_prompts": None,
+    }
+    params.update(overrides)
+    config = _spec_bench_config("m", "http://h:1/v1", **params)
+    return str(with_config_fingerprint(config, {})["config_fingerprint"])
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"pp": 512},
+        {"tg": 1024},
+        {"depths": [65536]},
+        {"prompt_types": ["code"]},
+        {"baseline_tg_tps": 30.0},
+        {"prompt_types": ["mine"], "custom_prompts": {"mine": "Translate this"}},
+    ],
+)
+def test_a_different_workload_is_a_different_cohort(change: dict[str, Any]) -> None:
+    assert _fingerprint(**change) != _fingerprint()
+
+
+def test_method_aliases_share_a_cohort() -> None:
+    assert _fingerprint(spec_method="draft") == _fingerprint(spec_method="standalone")
+    assert _fingerprint(spec_method="draft") == _fingerprint(spec_method="draft_model")
+
+
+def test_listing_order_does_not_split_a_cohort() -> None:
+    assert _fingerprint(depths=[0, 4096]) == _fingerprint(depths=[4096, 0])
+    assert _fingerprint(prompt_types=["filler", "code"]) == _fingerprint(
+        prompt_types=["code", "filler"]
+    )
+
+
+def _direct_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_run: Callable[..., Any],
+    **kwargs: Any,
+) -> tuple[Console, int | None]:
+    """Call cli.spec_bench.run_spec_bench directly; return its console and exit code."""
+    from tool_eval_bench.cli import spec_bench as cli_spec
+    from tool_eval_bench.runner import speculative
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(speculative, "run_spec_bench", fake_run)
+    console = Console(record=True, width=200)
+    try:
+        cli_spec.run_spec_bench(
+            console,
+            "m",
+            "m",
+            "http://h:1/v1",
+            None,
+            pp=16,
+            tg=16,
+            depths=[0, 4096],
+            output_dir=str(tmp_path / "runs"),
+            **kwargs,
+        )
+    except SystemExit as exc:
+        return console, int(exc.code or 0)
+    return console, None
+
+
+def test_start_panel_shows_the_canonical_method(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def fake_run(*args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+    console, _ = _direct_run(monkeypatch, tmp_path, fake_run, spec_method="nextn")
+    text = console.export_text()
+    assert "method=mtp" in text
+    assert "method=nextn" not in text
+
+
+@pytest.mark.parametrize("raised", [KeyboardInterrupt(), RuntimeError("boom")])
+def test_a_run_stopped_midway_stores_the_finished_cells_as_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, raised: BaseException
+) -> None:
+    from tool_eval_bench.application import run_queries
+
+    finished = _spec_samples("response", 1)[0]
+
+    async def fake_run(*args: Any, on_sample: Callable[..., Any], **kwargs: Any) -> list[Any]:
+        await on_sample(finished, 0, 2)
+        raise raised
+
+    _, code = _direct_run(monkeypatch, tmp_path, fake_run)
+
+    assert code == 1
+    [listed] = run_queries.recent_runs()
+    assert listed["status"] == "failed"
+    assert listed["scores"]["samples"] == 1 and listed["scores"]["failed"] == 0
+    [report] = (tmp_path / "runs").rglob("*.md")
+    assert "The run stopped before every cell ran." in report.read_text(encoding="utf-8")
+
+
+def test_a_run_that_fails_before_any_cell_stores_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tool_eval_bench.application import run_queries
+
+    async def fake_run(*args: Any, **kwargs: Any) -> list[Any]:
+        raise RuntimeError("connection refused")
+
+    _, code = _direct_run(monkeypatch, tmp_path, fake_run)
+
+    assert code == 1
+    assert run_queries.recent_runs() == []
+
+
+def test_custom_prompt_text_is_hashed_not_stored() -> None:
+    from tool_eval_bench.cli.spec_bench import _spec_bench_config
+
+    def config(text: str) -> dict[str, Any]:
+        return _spec_bench_config(
+            "m",
+            "http://h:1/v1",
+            spec_method="auto",
+            runs=1,
+            temperature=0.0,
+            pp=2048,
+            tg=128,
+            depths=[0],
+            prompt_types=["mine"],
+            baseline_tg_tps=None,
+            custom_prompts={"mine": text, "unused": "not selected"},
+        )
+
+    assert "Translate this" not in json.dumps(config("Translate this"))
+    assert config("one")["custom_prompts_sha256"] != config("two")["custom_prompts_sha256"]
+
+
 def test_to_result_keeps_derived_metrics_and_drops_per_step_arrays() -> None:
     sample = SpecDecodeSample(
         tg_tokens=100,
@@ -90,8 +330,8 @@ def test_to_result_keeps_derived_metrics_and_drops_per_step_arrays() -> None:
 
     result = sample.to_result()
 
-    assert result["effective_tg_tps"] == 100.0
-    assert result["speedup_ratio"] == 2.0
+    assert result["effective_tg_tps"] == 99.0
+    assert result["speedup_ratio"] == 1.98
     assert result["waste_ratio"] == 0.5
     assert result["per_position_acceptance"] == [0.5, 0.5]
     # A list, because the row is JSON; a tuple would not compare equal on read-back.
@@ -108,6 +348,7 @@ def test_to_result_leaves_unmeasured_metrics_empty() -> None:
     for key in (
         "acceptance_rate",
         "acceptance_rate_range",
+        "goodput",
         "speedup_ratio",
         "draft_window",
         "draft_tps",

@@ -8,15 +8,19 @@ a summary table, and a Markdown report.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
 from tool_eval_bench.cli.headless import report_run_failed, report_run_saved
 from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.domain.spec_decode import suggested_draft_window, window_utilization
+from tool_eval_bench.runner.spec_detection import canonical_spec_method_hint
 from tool_eval_bench.storage.reports.spec_decode import spec_decode_report
 
 
@@ -54,6 +58,49 @@ def load_spec_prompt_file(path: str | None) -> dict[str, str]:
     return prompts
 
 
+def _spec_bench_config(
+    model: str,
+    base_url: str,
+    *,
+    spec_method: str,
+    runs: int,
+    temperature: float,
+    pp: int,
+    tg: int,
+    depths: list[int],
+    prompt_types: list[str],
+    baseline_tg_tps: float | None,
+    custom_prompts: dict[str, str] | None,
+) -> dict[str, Any]:
+    """The stored spec-bench config; every key joins the comparison fingerprint.
+
+    The workload (prompt lengths, depths, prompt selection, baseline) is part of
+    it, so runs that measured different things never share a cohort. Custom
+    prompt text is hashed rather than stored.
+    """
+    config: dict[str, Any] = {
+        "model": model,
+        "base_url": base_url,
+        "mode": "spec-bench",
+        "method": canonical_spec_method_hint(spec_method) or "auto",
+        "runs": runs,
+        "temperature": temperature,
+        "pp": pp,
+        "tg": tg,
+        # Sorted: the order cells run in does not change what was measured.
+        "depths": sorted(depths),
+        "prompt_types": sorted(prompt_types),
+        "baseline_tg_tps": baseline_tg_tps,
+    }
+    selected = {
+        label: text for label, text in (custom_prompts or {}).items() if label in prompt_types
+    }
+    if selected:
+        payload = json.dumps(selected, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        config["custom_prompts_sha256"] = hashlib.sha256(payload).hexdigest()
+    return config
+
+
 def run_spec_bench(
     console: Console,
     model: str,
@@ -77,7 +124,12 @@ def run_spec_bench(
 ) -> list:
     """Run speculative decoding benchmark and display results.
 
-    Returns a list of SpecDecodeSample objects.
+    Returns one SpecDecodeSample per cell, failed cells included. The run is
+    always stored; when any cell failed it is stored as failed and a
+    ``run_failed`` message is reported, but this does not exit, because a
+    tool-call run or plugin may still follow. The caller exits non-zero when
+    spec-bench is the last mode. An interrupt or error mid-run stores the
+    cells that finished as a failed run, then exits 1.
     """
     from rich.panel import Panel
     from rich.table import Table
@@ -87,6 +139,7 @@ def run_spec_bench(
     from tool_eval_bench.runner.speculative import SpecDecodeSample, run_spec_bench
 
     prompt_types = prompt_types or ["filler", "code", "structured"]
+    method_label = canonical_spec_method_hint(spec_method) or spec_method
 
     console.print()
     baseline_str = f"  baseline={baseline_tg_tps:.1f} t/s" if baseline_tg_tps else ""
@@ -94,7 +147,7 @@ def run_spec_bench(
     console.print(
         Panel(
             f"[bold]{display_name}[/]\n"
-            f"[dim]tg={tg}  depth={depths}  prompts={prompt_types}  method={spec_method}"
+            f"[dim]tg={tg}  depth={depths}  prompts={prompt_types}  method={method_label}"
             f"{runs_str}  temperature={temperature:g}{baseline_str}[/]",
             title="[bold]🔮 Speculative Decoding Benchmark[/]",
             border_style="bright_magenta",
@@ -168,12 +221,65 @@ def run_spec_bench(
             custom_prompts=custom_prompts,
         )
 
+    def _persist(*, stopped_early: bool) -> int:
+        """Store the run and write its report; return the failed-cell count.
+
+        Like --perf-only, every run is stored, and a cell that failed on every
+        run marks the whole run failed, as does a run that stopped early.
+        """
+        ok = [s for s in completed if not s.error]
+        failed_count = len(completed) - len(ok)
+        run = ModeRun(
+            run_type="spec-bench",
+            config=_spec_bench_config(
+                model,
+                base_url,
+                spec_method=spec_method,
+                runs=runs,
+                temperature=temperature,
+                pp=pp,
+                tg=tg,
+                depths=depths,
+                prompt_types=prompt_types,
+                baseline_tg_tps=baseline_tg_tps,
+                custom_prompts=custom_prompts,
+            ),
+            scores={
+                "samples": len(ok),
+                # A count only: error text can quote the server URL.
+                "failed": failed_count,
+                "results": [s.to_result() for s in ok],
+            },
+            status="failed" if failed_count or stopped_early else "completed",
+        )
+        finalized = finalize_mode_run(
+            run,
+            spec_decode_report(
+                display_name,
+                ok,
+                label=label,
+                temperature=temperature,
+                failed=failed_count,
+                stopped_early=stopped_early,
+            ),
+            run_context=run_context,
+            output_dir=output_dir,
+        )
+        report_run_saved(console, run, finalized)
+        console.print(f"\n  [dim]📄 Report saved to {finalized.report_path}[/]")
+        return failed_count
+
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
+        # Keep the cells that finished; an interrupted run is a failed run.
+        if completed:
+            _persist(stopped_early=True)
         report_run_failed(console, "\n[bold red]Interrupted.[/]")
         sys.exit(1)
     except Exception as exc:
+        if completed:
+            _persist(stopped_early=True)
         report_run_failed(console, f"\n[bold red]Error: {exc}[/]")
         sys.exit(1)
 
@@ -303,7 +409,7 @@ def run_spec_bench(
                 ]
                 avg_window = sum(draft_windows) / len(draft_windows)
                 avg_tau = sum(acceptance_lengths) / len(acceptance_lengths)
-                utilization = (avg_tau / avg_window * 100) if avg_window > 0 else 0
+                utilization = (window_utilization(avg_tau, avg_window) or 0.0) * 100
                 avg_waste = (
                     sum(s.waste_ratio for s in with_window if s.waste_ratio is not None)
                     / len(with_window)
@@ -313,12 +419,12 @@ def run_spec_bench(
                     "green" if utilization >= 50 else "yellow" if utilization >= 25 else "red"
                 )
                 console.print(
-                    f"  [dim]Draft window:[/] [{util_style}]{avg_tau:.1f}/{avg_window:.0f} "
-                    f"positions used ({utilization:.0f}% utilization)[/{util_style}]  "
-                    f"[dim]Avg waste: {avg_waste:.0f}%[/]"
+                    f"  [dim]Draft window:[/] [{util_style}]{avg_tau - 1:.1f}/{avg_window:.0f} "
+                    f"drafted positions accepted ({utilization:.0f}% utilization)"
+                    f"[/{util_style}]  [dim]Avg waste: {avg_waste:.0f}%[/]"
                 )
-                if utilization < 50:
-                    optimal = max(int(avg_tau * 1.5), 2)
+                optimal = suggested_draft_window(avg_tau, avg_window)
+                if utilization < 50 and optimal is not None:
                     console.print(
                         f"  [yellow]💡 Consider reducing num_speculative_tokens to "
                         f"~{optimal} (currently ~{avg_window:.0f})[/]"
@@ -351,35 +457,13 @@ def run_spec_bench(
                 "llama.cpp: start with --metrics flag).[/]"
             )
 
-    # Write report
-    if ok_samples:
-        run = ModeRun(
-            run_type="spec-bench",
-            config={
-                "model": model,
-                "base_url": base_url,
-                "mode": "spec-bench",
-                "method": spec_method,
-                "runs": runs,
-                "temperature": temperature,
-            },
-            scores={
-                "samples": len(ok_samples),
-                # A count only: error text can quote the server URL.
-                "failed": len(completed) - len(ok_samples),
-                "results": [s.to_result() for s in ok_samples],
-            },
-            status="completed",
+    failed_count = _persist(stopped_early=False)
+    if failed_count:
+        # The caller decides whether to exit: a combined run still has modes to go.
+        report_run_failed(
+            console,
+            f"[bold red]Speculative decoding benchmark failed in {failed_count} cell(s).[/]",
         )
-        finalized = finalize_mode_run(
-            run,
-            spec_decode_report(display_name, ok_samples, label=label, temperature=temperature),
-            run_context=run_context,
-            output_dir=output_dir,
-        )
-        report_run_saved(console, run, finalized)
-        report_path = finalized.report_path
-        console.print(f"\n  [dim]📄 Report saved to {report_path}[/]")
 
     try:
         from tool_eval_bench import __version__

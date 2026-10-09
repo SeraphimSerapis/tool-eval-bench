@@ -171,6 +171,18 @@ def _canonical_spec_method(value: str) -> str | None:
     return None
 
 
+def canonical_spec_method_hint(value: str) -> str | None:
+    """The method name to report and store for a ``--spec-method`` value.
+
+    Aliases such as ``draft``, ``standalone``, and ``nextn`` become
+    ``draft_model`` and ``mtp``, so spec-bench, spec-live, and stored rows use
+    one name per method. Returns None for ``auto`` (or an empty value).
+    """
+    if value in ("auto", ""):
+        return None
+    return _canonical_spec_method(value) or value
+
+
 def _detect_spec_method(text: str, profile: EngineProfile | None = None) -> str:
     """Detect a method only when a sample carries an explicit method label.
 
@@ -333,7 +345,7 @@ async def detect_spec_decoding(
             "suffix",
             "custom_class",
         }:
-            info.method = backend_hint
+            info.method = canonical_spec_method_hint(backend_hint) or backend_hint
             if not info.active:
                 info.active = True
                 # Only assume per-request timings if we positively identified

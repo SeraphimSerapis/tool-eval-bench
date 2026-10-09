@@ -279,6 +279,111 @@ def _render(frame: Any) -> str:
     return buffer.getvalue()
 
 
+def _grid_line(frame: Any, *labels: str) -> str:
+    """The metrics-grid row holding every one of *labels*."""
+    return next(line for line in _render(frame).split("\n") if all(lb in line for lb in labels))
+
+
+@pytest.mark.asyncio
+async def test_a_held_gauge_lapses_once_the_server_has_been_idle(monitor) -> None:
+    """The sticky value bridges a refresh, not thirty seconds of silence."""
+    snaps = [
+        _vllm(1000.0, accepted=0, drafted=0, gen_tps=0.0),
+        _vllm(1001.0, accepted=80, drafted=100, gen_tps=200.0),
+    ]
+    snaps += [_vllm(1002.0 + i, accepted=80, drafted=100, gen_tps=0.0) for i in range(30)]
+
+    frames, _ = await monitor(snaps)
+
+    gen_line = _grid_line(frames[-1], "Gen t/s", "Session α")
+    assert "200.0" not in gen_line, gen_line.strip()
+    assert "0.0" in gen_line
+
+
+@pytest.mark.asyncio
+async def test_a_counter_derived_idle_poll_is_not_held(monitor) -> None:
+    """A zero token-counter delta means nothing was generated; showing the old rate lies."""
+
+    def counted(timestamp: float, tokens: float) -> MetricsSnapshot:
+        snap = _vllm(timestamp, accepted=tokens / 2, drafted=tokens, gen_tps=0.0)
+        snap.generation_tokens_total = tokens
+        return snap
+
+    frames, _ = await monitor([counted(1000.0, 0), counted(1001.0, 150), counted(1002.0, 150)])
+
+    assert "150.0" in _grid_line(frames[-2], "Gen t/s", "Session α")
+    assert "150.0" not in _grid_line(frames[-1], "Gen t/s", "Session α")
+
+
+@pytest.mark.asyncio
+async def test_session_average_gen_tps_ignores_idle_polls(monitor) -> None:
+    """Idle polls must not be averaged in at the last reading."""
+    snaps = [
+        _vllm(1000.0, accepted=0, drafted=0, gen_tps=0.0),
+        _vllm(1001.0, accepted=80, drafted=100, gen_tps=200.0),
+        _vllm(1002.0, accepted=160, drafted=200, gen_tps=200.0),
+        _vllm(1003.0, accepted=170, drafted=220, gen_tps=20.0),
+    ]
+    snaps += [_vllm(1004.0 + i, accepted=170, drafted=220, gen_tps=0.0) for i in range(10)]
+
+    frames, output = await monitor(snaps)
+
+    # (200 + 200 + 20) / 3, the polls that generated tokens.
+    assert "Avg Gen t/s:     140.0" in output
+    assert "140.0" in _grid_line(frames[-1], "Avg Gen t/s")
+
+
+@pytest.mark.asyncio
+async def test_zero_acceptance_is_shown_as_zero_not_as_no_data(monitor) -> None:
+    """Every draft rejected is a real 0%, so waste is 100%, not a dash."""
+    frames, _ = await monitor(
+        [_vllm(1000.0 + i, accepted=0, drafted=100.0 * i, gen_tps=30.0) for i in range(4)]
+    )
+
+    waste = _grid_line(frames[-1], "Waste Ratio").split("Waste Ratio")[1]
+    assert "100.0%" in waste
+    assert "0.0%" in _grid_line(frames[-1], "ACCEPTANCE RATE")
+
+
+@pytest.mark.asyncio
+async def test_zero_waste_is_coloured_as_good(monitor) -> None:
+    """Every draft accepted: 0.0% waste must not take the no-data colour, red."""
+    frames, _ = await monitor(
+        [_vllm(1000.0 + i, accepted=100.0 * i, drafted=100.0 * i, gen_tps=30.0) for i in range(4)]
+    )
+
+    buffer = StringIO()
+    Console(file=buffer, width=140, force_terminal=True, color_system="standard").print(frames[-1])
+    line = next(row for row in buffer.getvalue().split("\n") if "Waste Ratio" in row)
+    waste = line.split("Waste Ratio")[1]
+    assert "0.0%" in waste
+    assert "\x1b[1;92m" in waste  # bold bright_green
+    assert "91m" not in waste  # no bright_red
+
+
+@pytest.mark.asyncio
+async def test_sglang_token_rates_are_unknown_not_zero(monitor) -> None:
+    """SGLang exposes acceptance gauges but no token counters."""
+
+    def snap(timestamp: float) -> MetricsSnapshot:
+        return MetricsSnapshot(
+            timestamp=timestamp,
+            sglang_acceptance_rate=0.7,
+            sglang_acceptance_length=3.1,
+            sglang_spec_metrics_present=True,
+            generation_tps=60.0,
+            spec_backend="sglang",
+        )
+
+    frames, _ = await monitor([snap(1000.0), snap(1001.0), snap(1002.0)])
+
+    rates = _grid_line(frames[-1], "Accepted t/s", "Drafted t/s").split("Waste Ratio")[0]
+    accepted, drafted = rates.split("Drafted t/s")
+    assert accepted.split("Accepted t/s")[1].split()[0] == "—"
+    assert drafted.split()[0] == "—"
+    assert "—" in _grid_line(frames[-1], "Avg Acc t/s")
+
+
 class _FakeStdin:
     """A stdin with a real-looking descriptor; pytest's capture has none."""
 

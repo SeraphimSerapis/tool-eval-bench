@@ -975,7 +975,7 @@ SPEC_BENCH_CALL = {
 def test_spec_bench_stops_unless_another_benchmark_follows(
     cli: Cli, extra: list[str], scored: bool
 ) -> None:
-    cli.record("tool_eval_bench.cli.spec_bench", "run_spec_bench")
+    cli.record("tool_eval_bench.cli.spec_bench", "run_spec_bench", returns=list)
 
     outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--spec-bench", "--no-live", *extra)
 

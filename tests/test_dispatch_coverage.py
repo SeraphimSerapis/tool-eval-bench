@@ -994,7 +994,7 @@ def test_dispatch_spec_and_sweep_modes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         dispatch,
         "_run_spec_bench",
-        lambda *a, **k: called.append(("spec", k)),
+        lambda *a, **k: called.append(("spec", k)) or [],
     )
     monkeypatch.setattr(
         sys,

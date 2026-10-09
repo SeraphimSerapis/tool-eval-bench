@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tests.conftest import MeasurementTestClient
+from tool_eval_bench.domain.spec_decode import suggested_draft_window, window_utilization
 from tool_eval_bench.runner.speculative import (
     SpecDecodeCounters,
     SpecDecodeInfo,
@@ -186,14 +187,26 @@ vllm:spec_decode_num_drafts_total{engine="0"} 5.25e+03
 
 class TestSpecDecodeSample:
     def test_effective_tg_tps(self):
-        """Effective t/s = output tokens / (wall time - TTFT)."""
+        """Effective t/s = (output tokens - 1) / (wall time - TTFT)."""
         s = SpecDecodeSample(
             tg_tokens=100,
             total_ms=2000,  # 2 seconds total
             ttft_ms=500,  # 0.5s TTFT → 1.5s gen time
         )
-        # 100 tokens / 1.5s = 66.67 t/s
-        assert s.effective_tg_tps == pytest.approx(100 / 1.5, rel=0.01)
+        # The first token arrived at TTFT, so 99 tokens / 1.5s = 66.0 t/s
+        assert s.effective_tg_tps == pytest.approx(99 / 1.5)
+
+    def test_effective_tg_tps_matches_stream_rate_formula(self):
+        """With no speculation gain, effective t/s equals the N-1 stream rate."""
+        s = SpecDecodeSample(tg_tokens=101, total_ms=2100, ttft_ms=100, tg_tps=50.0)
+        s.baseline_tg_tps = 50.0
+        assert s.effective_tg_tps == pytest.approx(50.0)
+        assert s.speedup_ratio == pytest.approx(1.0)
+
+    def test_effective_tg_tps_single_token_keeps_full_count(self):
+        """One token with a TTFT has no inter-token interval; keep N, not 0."""
+        s = SpecDecodeSample(tg_tokens=1, total_ms=1000, ttft_ms=500)
+        assert s.effective_tg_tps == pytest.approx(2.0)
 
     def test_effective_tg_tps_no_ttft(self):
         """When TTFT is 0, use total time."""
@@ -216,14 +229,19 @@ class TestSpecDecodeSample:
         # 80 accepted / 1.5s gen time = 53.33 t/s
         assert s.goodput == pytest.approx(80 / 1.5, rel=0.01)
 
-    def test_goodput_falls_back_to_effective(self):
-        """Without accepted tokens, goodput = effective t/s."""
+    def test_goodput_is_none_without_acceptance_counters(self):
+        """Without accepted tokens there is no goodput; output t/s is not a stand-in."""
         s = SpecDecodeSample(
             tg_tokens=100,
             total_ms=2000,
             ttft_ms=500,
         )
-        assert s.goodput == s.effective_tg_tps
+        assert s.goodput is None
+
+    def test_goodput_zero_accepted_is_zero(self):
+        """A measured zero acceptance is 0 t/s, distinct from unavailable."""
+        s = SpecDecodeSample(tg_tokens=100, total_ms=2000, ttft_ms=500, accepted_tokens_delta=0)
+        assert s.goodput == 0.0
 
     def test_speedup_ratio(self):
         """Speedup ratio = effective / baseline."""
@@ -233,8 +251,8 @@ class TestSpecDecodeSample:
             ttft_ms=500,
             baseline_tg_tps=40.0,
         )
-        effective = 100 / 1.5  # ~66.67
-        assert s.speedup_ratio == pytest.approx(effective / 40.0, rel=0.01)
+        effective = 99 / 1.5  # 66.0
+        assert s.speedup_ratio == pytest.approx(effective / 40.0)
 
     def test_speedup_ratio_none_without_baseline(self):
         """No baseline → no speedup ratio."""
@@ -364,9 +382,33 @@ class TestSpecDecodeSample:
         )
         assert s.draft_window == pytest.approx(15.0)
         assert s.acceptance_length == pytest.approx(1 + 70 / 21, rel=0.01)
-        # Window utilization: τ/window = 4.33/15 = 29% — poor
-        utilization = s.acceptance_length / s.draft_window
-        assert utilization == pytest.approx(0.289, rel=0.01)
+        # Window utilization: (τ - 1)/window = 3.33/15 = 22%, which equals α
+        utilization = window_utilization(s.acceptance_length, s.draft_window)
+        assert utilization == pytest.approx(70 / 315)
+        assert utilization == pytest.approx(s.acceptance_rate)
+
+
+class TestWindowUtilization:
+    def test_full_acceptance_is_exactly_one(self):
+        """Every drafted position accepted: τ = W + 1, utilization 100%, not above."""
+        assert window_utilization(5.0, 4.0) == pytest.approx(1.0)
+
+    def test_zero_acceptance_is_zero(self):
+        """τ = 1 means no draft was accepted, so utilization is 0, not 1/W."""
+        assert window_utilization(1.0, 4.0) == 0.0
+
+    def test_empty_window_is_none(self):
+        assert window_utilization(2.0, 0.0) is None
+
+    def test_suggestion_never_matches_a_window_of_two(self):
+        """A window of 2 is already the floor, so there is nothing to reduce to."""
+        assert suggested_draft_window(1.2, 2.0) is None
+
+    def test_suggestion_fires_for_an_oversized_window(self):
+        assert suggested_draft_window(3.0, 15.0) == 3
+
+    def test_suggestion_none_when_window_is_already_small_enough(self):
+        assert suggested_draft_window(3.0, 3.0) is None
 
 
 # ---------------------------------------------------------------------------

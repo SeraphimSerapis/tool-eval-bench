@@ -41,7 +41,8 @@ def emit_event(event: dict[str, Any]) -> None:
 def report_run_failed(console: Console, markup: str) -> None:
     """Print a failure, or emit it as a ``run_failed`` error event under ``--json``.
 
-    The caller still exits; this only decides where the message goes.
+    This only decides where the message goes. Most callers exit 1 next; a
+    spec-bench failure in a combined run does not, and later modes still run.
     """
     if isinstance(console, HeadlessConsole):
         # One line: the markup is laid out for a terminal.
@@ -51,7 +52,7 @@ def report_run_failed(console: Console, markup: str) -> None:
 
 
 def emit_run_failed(message: str) -> None:
-    """Emit a ``run_failed`` error event; the caller still exits."""
+    """Emit a ``run_failed`` error event; whether to exit is the caller's choice."""
     emit_event({"event": "error", "error": RUN_FAILED, "message": redact_urls(message)})
 
 

@@ -750,7 +750,7 @@ def _run_spec_bench_mode(target: _Target) -> bool:
         # A file with no explicit selection runs every prompt in it.
         if custom_prompts and not any(label in custom_prompts for label in spec_prompts):
             spec_prompts = spec_prompts + list(custom_prompts)
-        _run_spec_bench(
+        spec_samples = _run_spec_bench(
             console,
             model,
             display_name,
@@ -774,6 +774,10 @@ def _run_spec_bench_mode(target: _Target) -> bool:
         if args.skip_tool_eval or (
             not args.perf and not args.perf_only and not _any_plugin_selected(args)
         ):
+            # The failed row and its run_failed message are already out; as with
+            # --perf-only, only the last mode turns a failed cell into exit 1.
+            if any(sample.error for sample in spec_samples):
+                sys.exit(1)
             return True
     return False
 
@@ -1160,16 +1164,10 @@ def _build_extra_params(
 def _run_spec_live_mode(target: _Target) -> None:
     """``--spec-live``: standalone live monitor (exits after session)."""
     args = target.args
-    # Map CLI choice names to internal method identifiers
-    _method_map = {
-        "draft": "draft_model",
-        "standalone": "draft_model",
-        "nextn": "mtp",
-    }
-    raw_method = args.spec_method
-    spec_method_hint = _method_map.get(raw_method, raw_method) if raw_method != "auto" else None
-
     from tool_eval_bench.cli.spec_live_display import run_spec_live
+    from tool_eval_bench.runner.spec_detection import canonical_spec_method_hint
+
+    spec_method_hint = canonical_spec_method_hint(args.spec_method)
 
     try:
         asyncio.run(

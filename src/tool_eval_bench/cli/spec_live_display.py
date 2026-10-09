@@ -18,6 +18,7 @@ import os
 import signal
 import time
 from collections import deque
+from dataclasses import dataclass, replace
 
 import httpx
 from rich.console import Console, Group, RenderableType
@@ -54,6 +55,32 @@ from tool_eval_bench.runner.spec_live import (
 from tool_eval_bench.utils.urls import metrics_request_target
 
 logger = logging.getLogger(__name__)
+
+# vLLM's deprecated throughput gauges read 0 between its internal updates,
+# roughly every 10 s. A zero is bridged for at most this long; after that the
+# server is idle, and the dashboard must say so.
+_STICKY_GAUGE_MAX_AGE_S = 10.0
+
+
+@dataclass
+class _StickyGauge:
+    """The last non-zero reading of a gauge that can flicker to zero."""
+
+    value: float = 0.0
+    seen_at: float | None = None
+
+    def apply(self, reading: float, now: float, *, may_hold: bool) -> float:
+        """Return *reading*, or the held value when *reading* is a recent flicker.
+
+        *may_hold* is False for counter-derived readings: a zero counter delta
+        means nothing happened, so it is never papered over.
+        """
+        if reading > 0:
+            self.value, self.seen_at = reading, now
+            return reading
+        if may_hold and self.seen_at is not None and now - self.seen_at <= _STICKY_GAUGE_MAX_AGE_S:
+            return self.value
+        return reading
 
 
 def _build_dashboard(
@@ -182,7 +209,9 @@ def _build_dashboard(
     # grid and the exit summary.
     session_ar = delta.cumulative_acceptance_rate
     rolling = delta.rolling_acceptance_rate
-    ar = rolling if rolling is not None else session_ar if session_ar is not None else 0.0
+    # None means no acceptance data yet; 0.0 is a drafter whose every token
+    # was rejected, which is exactly what this monitor exists to show.
+    ar = rolling if rolling is not None else session_ar
     ar_label = (
         f" ◈ ACCEPTANCE RATE ({_ROLLING_WINDOW_S:g}s)  "
         if rolling is not None
@@ -192,14 +221,15 @@ def _build_dashboard(
     gauge_line = Text()
     gauge_line.append("\n ")
     gauge_line.append(ar_label, style="bold bright_magenta")
-    gauge_line.append_text(_gauge_bar(ar, width=gauge_w))
+    gauge_line.append_text(_gauge_bar(ar if ar is not None else 0.0, width=gauge_w))
 
-    # Annotate with τ/window utilization and inferred num_speculative_tokens
+    # Annotate with τ, the draft window, and inferred num_speculative_tokens.
+    # τ counts the bonus token, so it is not a fraction of the window.
     tau = delta.cumulative_acceptance_length
     win = delta.cumulative_draft_window
     nst = delta.num_spec_tokens
     if tau and win and win > 0:
-        gauge_line.append(f"  τ={tau:.1f}/{win:.0f}", style="dim")
+        gauge_line.append(f"  τ={tau:.1f} win={win:.0f}", style="dim")
         if nst is not None:
             gauge_line.append(f"  [k={nst}]", style="dim cyan")
 
@@ -221,13 +251,13 @@ def _build_dashboard(
     win_str = f"{win:.1f}" if win is not None else "—"
     nst_str = str(nst) if nst is not None else "—"
     # Cumulative waste
-    waste = (1.0 - ar) if ar > 0 else None
+    waste = (1.0 - ar) if ar is not None else None
     waste_str = f"{waste * 100:.1f}%" if waste is not None else "—"
     waste_color = (
         "bright_green"
-        if waste and waste < 0.3
+        if waste is not None and waste < 0.3
         else "yellow"
-        if waste and waste < 0.6
+        if waste is not None and waste < 0.6
         else "bright_red"
     )
 
@@ -241,12 +271,15 @@ def _build_dashboard(
         Text("  Spec Tokens", style="dim"),
         Text(nst_str, style="bold cyan"),
     )
+    # Gauge-only backends (SGLang) have no token counters, so these rates are
+    # unknown rather than zero, like the session totals below.
+    has_counters = delta.counter_metrics_available
     metrics.add_row(
         Text("  Accepted t/s", style="dim"),
-        Text(f"{delta.accepted_tps:.1f}", style="bold green"),
+        Text(f"{delta.accepted_tps:.1f}", style="bold green") if has_counters else Text("—", "dim"),
         Text("│", style="dim"),
         Text("  Drafted t/s", style="dim"),
-        Text(f"{delta.drafted_tps:.1f}", style="bold"),
+        Text(f"{delta.drafted_tps:.1f}", style="bold") if has_counters else Text("—", "dim"),
         Text("│", style="dim"),
         Text("  Waste Ratio", style="dim"),
         Text(waste_str, style=f"bold {waste_color}" if waste is not None else "dim"),
@@ -353,7 +386,9 @@ def _build_dashboard(
     )
     session_table.add_row(
         Text("Session α", style="dim"),
-        Text(f"{session_ar * 100:.1f}%", style=f"bold {_ar_color(session_ar)}"),
+        Text(f"{session_ar * 100:.1f}%", style=f"bold {_ar_color(session_ar)}")
+        if session_ar is not None
+        else Text("—", style="dim"),
     )
 
     engine_panel = Panel(
@@ -380,9 +415,10 @@ def _build_dashboard(
         )
         is not None
     ]
-    # For throughput, use gen_tps gauge (always updated) and filter accepted to active intervals
+    # History holds raw readings, so an idle poll is a zero here even while the
+    # grid holds a flickering gauge's last value. Accepted t/s needs counters.
     gen_hist = [d.generation_tps for d in history]
-    acc_hist = [d.accepted_tps for d in history if d.had_activity]
+    acc_hist = [d.accepted_tps for d in history if d.had_activity and d.counter_metrics_available]
     waste_hist = [1.0 - rate for rate in ar_hist]
 
     spark_table = Table.grid(padding=(0, 1))
@@ -392,14 +428,14 @@ def _build_dashboard(
     spark_table.add_column("range", width=16, justify="right", no_wrap=True)
 
     # Accept Rate sparkline
-    ar_current = f"{ar * 100:.1f}%" if ar else "—"
+    ar_current = f"{ar * 100:.1f}%" if ar is not None else "—"
     ar_range = ""
     if len(ar_hist) > 1:
         ar_range = f"↕{min(ar_hist) * 100:.0f}–{max(ar_hist) * 100:.0f}%"
     spark_table.add_row(
         Text("Accept Rate", style="bold"),
         _sparkline(ar_hist, width=spark_w),
-        Text(ar_current, style=f"bold {_ar_color(ar)}"),
+        Text(ar_current, style=f"bold {_ar_color(ar)}" if ar is not None else "dim"),
         Text(ar_range, style="dim"),
     )
 
@@ -421,7 +457,7 @@ def _build_dashboard(
     spark_table.add_row(
         Text("Accepted t/s", style="bold"),
         _sparkline(acc_hist, width=spark_w),
-        Text(f"{delta.accepted_tps:.1f}", style="bold green"),
+        Text(f"{delta.accepted_tps:.1f}", style="bold green") if has_counters else Text("—", "dim"),
         Text(acc_range, style="dim"),
     )
 
@@ -459,7 +495,10 @@ def _build_dashboard(
     avg_table.add_column("value", no_wrap=True)
 
     avg_ar = session_ar if session_ar is not None else 0.0
-    avg_gen = mean(gen_hist) if gen_hist else 0.0
+    # Both throughput averages cover the polls that did the work, the same
+    # definition the exit summary uses for gen t/s.
+    generating = [value for value in gen_hist if value > 0]
+    avg_gen = mean(generating) if generating else 0.0
     avg_acc = mean(acc_hist) if acc_hist else 0.0
 
     avg_table.add_row(
@@ -472,7 +511,7 @@ def _build_dashboard(
     )
     avg_table.add_row(
         Text("Avg Acc t/s", style="dim"),
-        Text(f"{avg_acc:.1f}", style="bold green"),
+        Text(f"{avg_acc:.1f}", style="bold green") if has_counters else Text("—", "dim"),
     )
 
     avg_panel = Panel(
@@ -637,18 +676,18 @@ async def run_spec_live(
     reset_flash_remaining = 0  # show reset banner for N poll cycles
     failed_polls = 0  # consecutive scrapes that returned nothing
     last_scrape_ok: float | None = None
-    # Whole-session generation throughput, independent of the history window.
+    # Generation throughput over the polls that generated tokens, across the
+    # whole session rather than the history window.  Accumulated from raw
+    # readings, before any sticky value stands in for a zero.
     gen_tps_sum = 0.0
     gen_tps_count = 0
     gen_tps_peak = 0.0
 
-    # Sticky gauges — vLLM resets gauge metrics to 0 between its ~10s
-    # internal update intervals.  We keep the last non-zero value so the
-    # dashboard doesn't flicker between real values and zero.
-    _sticky_gen_tps: float = 0.0
-    _sticky_prompt_tps: float = 0.0
-    _sticky_gpu_cache_pct: float = 0.0
-    _sticky_prefix_cache_pct: float = 0.0
+    # Sticky gauges: see _StickyGauge.  KV cache is not held, because 0% is a
+    # valid idle reading (compute_delta treats it as one).
+    sticky_gen_tps = _StickyGauge()
+    sticky_prompt_tps = _StickyGauge()
+    sticky_prefix_cache_pct = _StickyGauge()
 
     stop_event = asyncio.Event()
     signal_count = 0
@@ -821,40 +860,38 @@ async def run_spec_live(
                                 elif sess_drafts == 0:
                                     delta.per_position_rates = {}
 
-                            # Update sticky gauges — keep last non-zero value
-                            if delta.generation_tps > 0:
-                                _sticky_gen_tps = delta.generation_tps
-                            if delta.prompt_tps > 0:
-                                _sticky_prompt_tps = delta.prompt_tps
-                            if delta.gpu_cache_pct > 0:
-                                _sticky_gpu_cache_pct = delta.gpu_cache_pct
-                            if delta.prefix_cache_hit_pct > 0:
-                                _sticky_prefix_cache_pct = delta.prefix_cache_hit_pct
-
-                            # Apply sticky values when current reading is zero
-                            if delta.generation_tps == 0:
-                                delta.generation_tps = _sticky_gen_tps
-                            if delta.prompt_tps == 0:
-                                delta.prompt_tps = _sticky_prompt_tps
-                            if delta.gpu_cache_pct == 0:
-                                delta.gpu_cache_pct = _sticky_gpu_cache_pct
-                            if delta.prefix_cache_hit_pct == 0:
-                                delta.prefix_cache_hit_pct = _sticky_prefix_cache_pct
-
-                            history.append(delta)
-                            apply_rolling_rates(history, _ROLLING_WINDOW_S)
-                            last_delta = delta
-                            if delta.generation_tps > 0:
-                                gen_tps_sum += delta.generation_tps
-                                gen_tps_count += 1
-                                gen_tps_peak = max(gen_tps_peak, delta.generation_tps)
-
                             # Override spec method from --spec-method CLI flag
                             if spec_method is not None:
                                 delta.spec_method = spec_method
                             # Override spec method from ServerSpecInfo (API probe)
                             elif server_spec_info and server_spec_info.spec_method:
                                 delta.spec_method = server_spec_info.spec_method
+
+                            # History and the session average keep the raw
+                            # readings, so an idle poll counts as idle.
+                            history.append(delta)
+                            apply_rolling_rates(history, _ROLLING_WINDOW_S)
+                            if delta.generation_tps > 0:
+                                gen_tps_sum += delta.generation_tps
+                                gen_tps_count += 1
+                                gen_tps_peak = max(gen_tps_peak, delta.generation_tps)
+
+                            # Only the copy on screen bridges a gauge flicker.
+                            now = snap.timestamp
+                            last_delta = replace(
+                                delta,
+                                generation_tps=sticky_gen_tps.apply(
+                                    delta.generation_tps,
+                                    now,
+                                    may_hold=delta.generation_tps_is_gauge,
+                                ),
+                                prompt_tps=sticky_prompt_tps.apply(
+                                    delta.prompt_tps, now, may_hold=delta.prompt_tps_is_gauge
+                                ),
+                                prefix_cache_hit_pct=sticky_prefix_cache_pct.apply(
+                                    delta.prefix_cache_hit_pct, now, may_hold=True
+                                ),
+                            )
                         prev_snap = snap
                     elif snap is not None and prev_snap is None:
                         # First scrape, no spec decode counters yet — store for next
@@ -985,10 +1022,9 @@ async def run_spec_live(
                         gen_tps_sum = 0.0
                         gen_tps_count = 0
                         gen_tps_peak = 0.0
-                        _sticky_gen_tps = 0.0
-                        _sticky_prompt_tps = 0.0
-                        _sticky_gpu_cache_pct = 0.0
-                        _sticky_prefix_cache_pct = 0.0
+                        sticky_gen_tps = _StickyGauge()
+                        sticky_prompt_tps = _StickyGauge()
+                        sticky_prefix_cache_pct = _StickyGauge()
                         reset_flash_remaining = 3  # show banner for 3 poll cycles
     except OSError:
         # On SIGHUP the controlling terminal (PTY) is already gone, so Rich's

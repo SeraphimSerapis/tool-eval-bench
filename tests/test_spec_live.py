@@ -212,6 +212,51 @@ vllm:spec_decode_num_accepted_tokens_per_pos_total{engine="1",position="0"} 40
         assert snap.has_spec_decode is False
         assert snap.has_llamacpp_metrics is False
 
+    def test_data_parallel_request_counts_are_summed(self):
+        """Each DP engine reports its own queue; the server's load is the total."""
+        text = """\
+vllm:num_requests_running{engine="0",model_name="m"} 3.0
+vllm:num_requests_running{engine="1",model_name="m"} 5.0
+vllm:num_requests_waiting{engine="0",model_name="m"} 1.0
+vllm:num_requests_waiting{engine="1",model_name="m"} 4.0
+vllm:gpu_cache_usage_perc{engine="0",model_name="m"} 0.25
+vllm:gpu_cache_usage_perc{engine="1",model_name="m"} 0.5
+"""
+        snap = _parse_snapshot(text)
+        delta = compute_delta(snap, snap)
+        assert (delta.running_reqs, delta.waiting_reqs) == (8, 5)
+        # A percentage is still one engine's state, not a sum.
+        assert snap.gpu_cache_usage == pytest.approx(0.25)
+
+
+class TestThroughputSource:
+    """compute_delta says whether a rate came from a gauge, so idle is not held."""
+
+    def test_gauge_reading_is_flagged_as_a_gauge(self):
+        prev = MetricsSnapshot(timestamp=100.0)
+        curr = MetricsSnapshot(timestamp=101.0, generation_tps=40.0, prompt_tps=90.0)
+        delta = compute_delta(prev, curr)
+        assert delta.generation_tps_is_gauge and delta.prompt_tps_is_gauge
+
+    def test_counter_derived_rate_is_not_a_gauge(self):
+        prev = MetricsSnapshot(timestamp=100.0, generation_tokens_total=100)
+        curr = MetricsSnapshot(timestamp=101.0, generation_tokens_total=150)
+        delta = compute_delta(prev, curr)
+        assert delta.generation_tps == pytest.approx(50.0)
+        assert delta.generation_tps_is_gauge is False
+
+    def test_a_zero_confirmed_by_a_counter_is_idle_not_a_flicker(self):
+        prev = MetricsSnapshot(timestamp=100.0, generation_tokens_total=150)
+        curr = MetricsSnapshot(timestamp=101.0, generation_tokens_total=150)
+        delta = compute_delta(prev, curr)
+        assert delta.generation_tps == 0.0
+        assert delta.generation_tps_is_gauge is False
+
+    def test_a_zero_without_a_counter_may_be_a_gauge_refreshing(self):
+        delta = compute_delta(MetricsSnapshot(timestamp=100.0), MetricsSnapshot(timestamp=101.0))
+        assert delta.generation_tps == 0.0
+        assert delta.generation_tps_is_gauge is True
+
 
 # ---------------------------------------------------------------------------
 # compute_delta
@@ -933,12 +978,47 @@ sglang:num_queue_reqs{tp_rank="0",pp_rank="0"} 2
         assert delta.counter_metrics_available is False
         assert delta.cumulative_acceptance_rate == pytest.approx(0.40)
         assert delta.cumulative_acceptance_length == pytest.approx(1.40)
-        assert delta.cumulative_draft_window == pytest.approx(6.0)
+        # num_draft_tokens=6 counts the root token, so 5 positions were drafted.
+        assert delta.cumulative_draft_window == pytest.approx(5.0)
+        assert delta.num_spec_tokens == 6
         assert delta.spec_num_steps == 2
         assert delta.spec_cap_length == pytest.approx(4.0)
         assert delta.spec_block_accept_length == pytest.approx(3.2)
         assert delta.total_accepted == 0
         assert delta.total_drafted == 0
+
+    def test_utilization_excludes_the_root_token(self):
+        """topk=1, 3 steps: num_draft_tokens=4 is the root plus 3 drafts."""
+        from tool_eval_bench.domain.spec_decode import window_utilization
+
+        snap = MetricsSnapshot(
+            timestamp=101.0,
+            sglang_acceptance_rate=1.0,
+            sglang_acceptance_length=4.0,
+            sglang_num_draft_tokens=4,
+            sglang_spec_metrics_present=True,
+            spec_backend="sglang",
+        )
+        delta = compute_delta(MetricsSnapshot(timestamp=100.0), snap)
+        assert delta.cumulative_draft_window == pytest.approx(3.0)
+        # Every draft accepted: τ = 4, utilization (4 − 1) ÷ (4 − 1) = 100%.
+        tau, window = delta.cumulative_acceptance_length, delta.cumulative_draft_window
+        assert tau is not None and window is not None
+        assert window_utilization(tau, window) == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("num_draft_tokens", [0, 1])
+    def test_a_root_only_window_is_unknown(self, num_draft_tokens: int):
+        snap = MetricsSnapshot(
+            timestamp=101.0,
+            sglang_acceptance_rate=0.5,
+            sglang_acceptance_length=1.5,
+            sglang_num_draft_tokens=num_draft_tokens,
+            sglang_spec_metrics_present=True,
+            spec_backend="sglang",
+        )
+        delta = compute_delta(MetricsSnapshot(timestamp=100.0), snap)
+        assert delta.cumulative_draft_window is None
+        assert delta.draft_window is None
 
     def test_zero_gauges_are_present_but_not_summed(self):
         text = (
@@ -1612,6 +1692,31 @@ class TestDashboardSpecBadge:
         assert "num_speculative_tokens" in text
         assert "current: 8" in text
 
+    def test_sglang_hint_suggests_a_value_for_its_own_knob(self):
+        """SGLang's num_draft_tokens counts the root, so the suggestion is window + 1."""
+        from tool_eval_bench.cli.spec_live_rendering import _efficiency_insight
+
+        # num_draft_tokens=8 is 7 drafted positions; τ=2 accepts 1, so 2 would do.
+        sglang = self._make_delta(
+            cumulative_acceptance_rate=0.14,
+            cumulative_acceptance_length=2.0,
+            cumulative_draft_window=7.0,
+            num_spec_tokens=8,
+            counter_metrics_available=False,
+        )
+        text = str(_efficiency_insight(sglang))
+        assert "reducing --speculative-num-draft-tokens to ~3 (current: 8)" in text
+
+        counters = self._make_delta(
+            cumulative_acceptance_rate=0.14,
+            cumulative_acceptance_length=2.0,
+            cumulative_draft_window=7.0,
+            num_spec_tokens=7,
+        )
+        assert "reducing num_speculative_tokens to ~2 (current: 7)" in str(
+            _efficiency_insight(counters)
+        )
+
     def test_mtp_efficiency_insight_guidance(self):
         """MTP with good utilization shows MTP-specific guidance."""
         from tool_eval_bench.cli.spec_live_rendering import _efficiency_insight
@@ -1619,7 +1724,8 @@ class TestDashboardSpecBadge:
         delta = self._make_delta(
             spec_method="mtp",
             cumulative_acceptance_rate=0.65,
-            cumulative_acceptance_length=0.65,
+            # τ counts the verifier's bonus token: 0.65 accepted drafts per step.
+            cumulative_acceptance_length=1.65,
             cumulative_draft_window=1.0,
             num_spec_tokens=1,
         )
