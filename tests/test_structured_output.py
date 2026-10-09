@@ -640,7 +640,7 @@ class TestTC69MultiToolComplex:
 
     def test_pass_correct(self) -> None:
         data = {
-            "date": "2026-04-19",
+            "date": "2026-03-20",
             "weather": {
                 "location": "San Francisco",
                 "temperature": 18,
@@ -728,7 +728,7 @@ class TestTC69MultiToolComplex:
 
     def test_partial_invented_temperature(self) -> None:
         data = {
-            "date": "2026-04-19",
+            "date": "2026-03-20",
             "weather": {"location": "San Francisco", "temperature": 21, "condition": "Foggy"},
             "market": {"ticker": "AAPL", "price": 192.30, "direction": "down"},
             "action_items": ["Check weather"],
@@ -746,7 +746,7 @@ class TestTC69MultiToolComplex:
 
     def test_fail_missing_tool(self) -> None:
         data = {
-            "date": "2026-04-19",
+            "date": "2026-03-20",
             "weather": {"location": "SF", "temperature": 18, "condition": "Foggy"},
             "market": {"ticker": "AAPL", "price": 192.30, "direction": "down"},
             "action_items": ["Check weather"],
@@ -760,7 +760,7 @@ class TestTC69MultiToolComplex:
 
     def test_partial_wrong_direction(self) -> None:
         data = {
-            "date": "2026-04-19",
+            "date": "2026-03-20",
             "weather": {"location": "San Francisco", "temperature": 18, "condition": "Foggy"},
             "market": {"ticker": "AAPL", "price": 192.30, "direction": "up"},  # wrong
             "action_items": ["Check weather"],
@@ -830,7 +830,7 @@ class TestIssue5ListValuedEnums:
     def test_tc69_direction_as_list(self) -> None:
         """TC-69: 'direction' is a list instead of a string."""
         data = {
-            "date": "2026-04-19",
+            "date": "2026-03-20",
             "weather": {"location": "San Francisco", "temperature": 18, "condition": "Foggy"},
             "market": {"ticker": "AAPL", "price": 192.30, "direction": ["down"]},
             "action_items": ["Check weather"],

@@ -149,7 +149,12 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     facts = re.compile(r"(?<!\d)14(?!\d)|\bbewölkt\w*", re.IGNORECASE)
     affirmed = []
     for match in facts.finditer(answer_lower):
-        clause = re.split(r"[.!?;]", answer_lower[: match.start()])[-1]
+        # A denial reaches only its own clause. "Es regnet nicht und es hat 14
+        # Grad" denies rain, not the temperature, so conjunctions and
+        # prepositions that open a new phrase end the scope as well.
+        clause = re.split(
+            r"[.!?;,:]|\b(?:und|aber|sondern|bei|mit)\b", answer_lower[: match.start()]
+        )[-1]
         denied = re.search(r"\b(?:nicht|kein\w*|weder|not|never)\b(?:\s+\w+){0,5}\s*$", clause)
         affirmed.append(not bool(denied))
     wrong_units = re.search(r"\b14\s*(?:grad\s*)?(?:°\s*f\b|fahrenheit\b|f\b)", answer_lower)

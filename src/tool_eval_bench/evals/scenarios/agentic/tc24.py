@@ -70,7 +70,11 @@ def _tc24_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer.strip()
 
     has_revenue = bool(re.fullmatch(r"\$?(?:4,250,000|4250000)(?:\.00)?", answer))
-    mentions_revenue = "4250000" in answer.replace(",", "")
+    # "$4.25 million" is the right value in the wrong (non-terse) format, so it
+    # lands in the extra-text PARTIAL. A bare "4.25" is not accepted.
+    mentions_revenue = "4250000" in answer.replace(",", "") or bool(
+        re.search(r"(?<![\d.])\$?4\.25\s*(?:m\b|million\b)", answer, re.IGNORECASE)
+    )
 
     if (
         search_call is None

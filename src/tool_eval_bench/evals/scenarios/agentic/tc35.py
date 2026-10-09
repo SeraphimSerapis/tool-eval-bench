@@ -49,7 +49,7 @@ def _tc35_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
-_TC35_ANSWER = re.compile(r"\b500\s*(?:degrees?\s*)?(?:°\s*)?k(?:elvin)?\b")
+_TC35_ANSWER = re.compile(r"\b500\s*(?:degrees?\s*)?(?:°\s*)?k(?:elvins?)?\b")
 
 
 _TC35_OTHER_SCALE = re.compile(

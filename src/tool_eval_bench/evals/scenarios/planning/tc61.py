@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import replace
 from typing import Any
 
@@ -154,11 +155,14 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
     run_calls = _tool_calls_by_name(state, "run_code")
 
     answer = state.final_answer.lower()
+    # Either the record count or the anomaly count reports the result, but a
+    # wrong anomaly count anywhere in the answer ("13 anomalies") is not the
+    # result, even beside the right record count.
     has_result = (
         _answer_affirms_number(answer, "15420")
         or _answer_affirms_number(answer, "15,420")
-        or "3 anomal" in answer
-    )
+        or bool(re.search(r"(?<![\d.])(?:3|three)\s+anomal", answer))
+    ) and not any(int(count) != 3 for count in re.findall(r"(?<![\d.])(\d+)\s+anomal", answer))
 
     def pending_result(payload: Any) -> bool:
         return (

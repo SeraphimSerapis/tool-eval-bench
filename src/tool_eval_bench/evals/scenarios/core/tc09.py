@@ -13,9 +13,6 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_affirms_number as _answer_affirms_number,
-)
-from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -43,6 +40,7 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
+    _answer_affirms_rounded_value,
     _numeric_value,
     _positive_argument_contains,
     _result_matches_if_present,
@@ -110,12 +108,13 @@ def _tc09_eval(state: ScenarioState) -> ScenarioEvaluation:
             state, stock_call, _tc09_stock_result_is_msft
         ):
             return _partial("The stock result was unusable, so its value cannot be confirmed.")
-        # Verify the model actually surfaced the tool result values.
-        # Use digit-boundary match for temperature (12) to avoid false
-        # positives from the stock price (412.78) which contains "12".
-        # (?<!\d)12(?!\d) matches "12C", "12°C", "12 degrees" but not "412".
-        has_temp = _answer_affirms_number(state.final_answer, "12")
-        has_price = _answer_affirms_number(state.final_answer, "412")
+        # Verify the model actually surfaced the tool result values. Each
+        # stated number must be the tool value at the precision the answer
+        # chose: "412", "412.8" and "412.78" report the price, "412.99" does
+        # not. Digit boundaries keep the "12" inside "412.78" from counting
+        # as the temperature.
+        has_temp = _answer_affirms_rounded_value(state.final_answer, "12")
+        has_price = _answer_affirms_rounded_value(state.final_answer, "412.78")
         if has_temp and has_price:
             if len(state.tool_calls) != 2:
                 return _partial("Handled both requested tools but added an unnecessary tool call.")

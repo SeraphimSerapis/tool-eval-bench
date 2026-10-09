@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -14,7 +15,13 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    _is_negated,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
+)
+from tool_eval_bench.evals.helpers import (
+    has_explicit_tool_error as _has_explicit_tool_error,
 )
 from tool_eval_bench.evals.helpers import (
     matching_tool_results as _matching_tool_results,
@@ -173,3 +180,56 @@ def _result_matches_error_if_present(state: ScenarioState, call: ToolCallRecord)
         return False
     results = _matching_tool_results(state, call)
     return not results or any(_tc14_result_is_error(result.result) for result in results)
+
+
+def _first_call_without_error(state: ScenarioState, name: str) -> ToolCallRecord | None:
+    """The first ``name`` call whose result is not an explicit error.
+
+    A call that came back with an error, whether the mock rejected it or
+    ``--error-rate`` injected the failure, produced nothing the model could
+    use or misuse, so the retry after it is the call to grade. When every
+    attempt errored, the first call is returned so callers can still see that
+    the tool was tried and that it failed.
+    """
+    calls = [call for call in state.tool_calls if call.name == name]
+    return next(
+        (call for call in calls if not _has_explicit_tool_error(state, call)),
+        calls[0] if calls else None,
+    )
+
+
+def _only_error_retries_before_last(state: ScenarioState, calls: list[ToolCallRecord]) -> bool:
+    """Whether every call except the last came back with an explicit error.
+
+    Repeating a correct call after a failure is recovery. Repeating it after a
+    usable result is a redundant duplicate.
+    """
+    return all(_has_explicit_tool_error(state, call) for call in calls[:-1])
+
+
+_STATED_NUMBER = re.compile(r"(?<![\d.])(\d+)(?:\.(\d+))?(?!\d)")
+
+
+def _answer_affirms_rounded_value(answer: str, value: str) -> bool:
+    """Whether ``answer`` asserts ``value`` at the precision it chose.
+
+    A stated number passes when it equals ``value`` rounded or truncated to
+    the number of decimals the answer wrote, so 187, 187.4 and 187.42 all
+    report a price of 187.42 while 187.99 does not. ``answer_affirms_number``
+    lets any decimal tail follow an integer needle, which is how a wrong
+    "$187.99" used to pass. Negated mentions ("not 187.42") are rejected.
+    """
+    collapsed = re.sub(r"(?<=\d),(?=\d)", "", answer)
+    expected = Decimal(value)
+    for match in _STATED_NUMBER.finditer(collapsed):
+        stated = Decimal(match.group(0))
+        quantum = Decimal(1).scaleb(-len(match.group(2) or ""))
+        accepted = {
+            expected.quantize(quantum, rounding=ROUND_HALF_UP),
+            expected.quantize(quantum, rounding=ROUND_DOWN),
+        }
+        if stated in accepted and not _is_negated(
+            collapsed[max(0, match.start() - 120) : match.start()]
+        ):
+            return True
+    return False
