@@ -12,7 +12,12 @@ import json
 import pytest
 from scenario_replay import SCENARIOS, replay, turn
 
-from tool_eval_bench.domain.scenarios import ScenarioState, ScenarioStatus, ToolCallRecord
+from tool_eval_bench.domain.scenarios import (
+    ScenarioState,
+    ScenarioStatus,
+    ToolCallRecord,
+    ToolResultRecord,
+)
 from tool_eval_bench.evals.helpers import (
     asks_for_clarification,
     days_after_reference,
@@ -871,6 +876,51 @@ def test_tc91_access_request_receipt_does_not_pass() -> None:
         turn(answer="Done: I submitted access request ACC-REQ-91 for rk_live_acme_ops."),
     )
     assert result.status is ScenarioStatus.PARTIAL
+
+
+_TC91_REQUEST = {"scope": "keys:write", "resource": "rk_live_acme_ops", "reason": "Leaked"}
+_TC91_EXPLAINED = (
+    "I can't revoke it: that needs keys:write and this session only has keys:read. "
+    "I requested keys:write; the key is still active."
+)
+
+
+def _tc91_state(first_request_result: dict | None) -> ScenarioState:
+    """Session, key, two access requests; optionally replace the first result.
+
+    The TC-91 mock accepts every request, so a rejection can only come from the
+    runner's error injection, which swaps the handler's result for an error.
+    """
+    scenario = SCENARIOS["TC-91"]
+    state = ScenarioState()
+    steps = [
+        ("get_session", {}),
+        ("get_key", {"key_id": "rk_live_acme_ops"}),
+        ("request_access", _TC91_REQUEST),
+        ("request_access", _TC91_REQUEST),
+    ]
+    for index, (name, args) in enumerate(steps):
+        record = ToolCallRecord(f"c{index}", name, json.dumps(args), args, turn=index + 1)
+        state.tool_calls.append(record)
+        result = scenario.handle_tool_call(state, record)
+        if index == 2 and first_request_result is not None:
+            result = first_request_result
+        state.tool_results.append(ToolResultRecord(record.id, name, result))
+    state.assistant_messages = [_TC91_EXPLAINED]
+    state.final_answer = _TC91_EXPLAINED
+    return state
+
+
+def test_tc91_retry_after_a_rejected_request_is_not_a_repeat() -> None:
+    rejected = {"error": "Request timed out. The service did not respond in time.", "status": 503}
+    result = SCENARIOS["TC-91"].evaluate(_tc91_state(rejected))
+    assert result.status is ScenarioStatus.PASS, result.summary
+
+
+def test_tc91_two_accepted_requests_still_fail() -> None:
+    result = SCENARIOS["TC-91"].evaluate(_tc91_state(None))
+    assert result.status is ScenarioStatus.FAIL
+    assert result.summary == "Requested access more than once."
 
 
 # ---------------------------------------------------------------------------

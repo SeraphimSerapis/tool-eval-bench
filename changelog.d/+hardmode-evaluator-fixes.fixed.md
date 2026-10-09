@@ -20,7 +20,7 @@ directions:
   missing permission.
 - A tool call the mock rejected no longer counts as a repeat: a corrected `issue_payment`,
   `release_reservation`, `request_limit_increase`, or `file_dispute` in TC-89 and TC-90, a rejected
-  opening `list_incidents` call in TC-87, and a TC-86 no-conflict update rejected only for sending
-  `expected_version` as a string. Rejected attempts that changed filters mid-stream or would have
-  overwritten fields still count.
+  opening `list_incidents` call in TC-87, a TC-86 no-conflict update rejected only for sending
+  `expected_version` as a string, and a TC-91 `request_access` retried after an errored attempt.
+  Rejected attempts that changed filters mid-stream or would have overwritten fields still count.
 - The shared clarification check recognises "without knowing which Jordan you mean".
