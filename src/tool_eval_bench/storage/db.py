@@ -8,12 +8,13 @@ import logging
 import sqlite3
 import threading
 import time
+from collections.abc import Collection
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 # Wait rather than fail when another process holds the write lock (concurrent
 # runs against different endpoints share one database file).
@@ -91,6 +92,33 @@ def _add_column(conn: sqlite3.Connection, ddl: str) -> None:
     except sqlite3.OperationalError as exc:
         if "duplicate column name" not in str(exc):
             raise
+
+
+#: Shortest session prefix ``resolve_session_prefix`` accepts.  Session ids are
+#: 32 hex characters, so six already leave 16 million possibilities.
+SESSION_PREFIX_MIN_LENGTH = 6
+
+_SELECT_RUNS = (
+    "SELECT run_id, created_at, status, model, config_json, "
+    "scores_json, metadata_json, run_type, report_path, session_id "
+    "FROM scenario_runs"
+)
+
+
+def _run_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+    """Map a ``_SELECT_RUNS`` row to the dict every read method returns."""
+    return {
+        "run_id": row[0],
+        "created_at": row[1],
+        "status": row[2],
+        "model": row[3],
+        "config": json.loads(row[4]),
+        "scores": json.loads(row[5]) if row[5] else None,
+        "metadata": json.loads(row[6]) if row[6] else {},
+        "run_type": row[7],
+        "report_path": row[8],
+        "session_id": row[9],
+    }
 
 
 class RunRepository:
@@ -172,7 +200,8 @@ class RunRepository:
                   scores_json TEXT,
                   metadata_json TEXT,
                   run_type TEXT NOT NULL DEFAULT 'tool_eval',
-                  report_path TEXT
+                  report_path TEXT,
+                  session_id TEXT
                 )
                 """
             )
@@ -216,6 +245,17 @@ class RunRepository:
                     """
                 )
                 version = 4
+            if version < 5:
+                # Groups every row one CLI invocation wrote, so ``card`` can
+                # find them without guessing from timestamps. Older rows stay
+                # NULL: they predate the grouping and cannot be reconstructed.
+                if "session_id" not in columns:
+                    _add_column(conn, "ALTER TABLE scenario_runs ADD COLUMN session_id TEXT")
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_scenario_runs_session_id "
+                    "ON scenario_runs(session_id)"
+                )
+                version = 5
             if version != int(conn.execute("PRAGMA user_version").fetchone()[0]):
                 conn.execute(f"PRAGMA user_version = {version}")
 
@@ -230,17 +270,25 @@ class RunRepository:
         ``scores_json``: they dominate the blob (a 69-scenario run's traces run
         to megabytes) and every ``list()`` for ``history`` or ``leaderboard``
         would otherwise deserialize all of them just to read a score.
+
+        ``session_id`` is read from ``run_data["metadata"]`` rather than passed
+        separately: every persist path already stores ``RunContext.to_dict()``
+        there, so each one is tagged without its own plumbing.  A write without
+        one keeps the stored id, so resuming a CLI run through the Python API,
+        which sets no session, does not drop the run out of its session.
         """
         scores, traces = _split_traces(run_data.get("scores", {}))
+        metadata = run_data.get("metadata") or {}
+        session_id = metadata.get("session_id") if isinstance(metadata, dict) else None
         with self._conn as conn:
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
                 """
                 INSERT INTO scenario_runs(
                     run_id, created_at, status, model, config_json,
-                    scores_json, metadata_json, run_type, report_path
+                    scores_json, metadata_json, run_type, report_path, session_id
                 )
-                VALUES(?,?,?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(run_id) DO UPDATE SET
                   created_at=excluded.created_at,
                   status=excluded.status,
@@ -249,7 +297,8 @@ class RunRepository:
                   scores_json=excluded.scores_json,
                   metadata_json=excluded.metadata_json,
                   run_type=excluded.run_type,
-                  report_path=excluded.report_path
+                  report_path=excluded.report_path,
+                  session_id=COALESCE(excluded.session_id, scenario_runs.session_id)
                 """,
                 (
                     run_data["run_id"],
@@ -261,6 +310,7 @@ class RunRepository:
                     json.dumps(run_data.get("metadata", {})),
                     run_data.get("run_type", "tool_eval"),
                     run_data.get("report_path"),
+                    session_id if isinstance(session_id, str) else None,
                 ),
             )
             conn.executemany(
@@ -365,27 +415,15 @@ class RunRepository:
         """
         with self._conn as conn:
             row = conn.execute(
-                "SELECT run_id, created_at, status, model, config_json, "
-                "scores_json, metadata_json, run_type, report_path "
-                "FROM scenario_runs WHERE run_id=?",
+                _SELECT_RUNS + " WHERE run_id=?",
                 (run_id,),
             ).fetchone()
         if not row:
             return None
-        scores = json.loads(row[5]) if row[5] else None
+        run = _run_from_row(row)
         if include_traces:
-            scores = _merge_traces(scores, self.get_traces(run_id))
-        return {
-            "run_id": row[0],
-            "created_at": row[1],
-            "status": row[2],
-            "model": row[3],
-            "config": json.loads(row[4]),
-            "scores": scores,
-            "metadata": json.loads(row[6]) if row[6] else {},
-            "run_type": row[7] if len(row) > 7 else "tool_eval",
-            "report_path": row[8] if len(row) > 8 else None,
-        }
+            run["scores"] = _merge_traces(run["scores"], self.get_traces(run_id))
+        return run
 
     def list(
         self,
@@ -405,11 +443,7 @@ class RunRepository:
         ``history``, ``leaderboard``, and ``export``, none of which read traces.
         Use ``get()`` when a full run is needed.
         """
-        query = (
-            "SELECT run_id, created_at, status, model, config_json, "
-            "scores_json, metadata_json, run_type, report_path "
-            "FROM scenario_runs"
-        )
+        query = _SELECT_RUNS
         conditions: list[str] = []
         params: list[str | int] = []
         for column, value in (("model", model), ("run_type", run_type), ("status", status)):
@@ -439,20 +473,7 @@ class RunRepository:
 
         with self._conn as conn:
             rows = conn.execute(query, params).fetchall()
-        return [
-            {
-                "run_id": r[0],
-                "created_at": r[1],
-                "status": r[2],
-                "model": r[3],
-                "config": json.loads(r[4]),
-                "scores": json.loads(r[5]) if r[5] else None,
-                "metadata": json.loads(r[6]) if r[6] else {},
-                "run_type": r[7] if len(r) > 7 else "tool_eval",
-                "report_path": r[8] if len(r) > 8 else None,
-            }
-            for r in rows
-        ]
+        return [_run_from_row(r) for r in rows]
 
     def get_latest(
         self,
@@ -466,6 +487,86 @@ class RunRepository:
         if not runs:
             return None
         return self.get(runs[0]["run_id"])
+
+    def list_session(self, session_id: str) -> List[dict[str, Any]]:
+        """Return every run tagged with *session_id*, oldest first, without traces.
+
+        Each dict has the ``get()`` shape, ``session_id`` included.  Rows that
+        share a timestamp keep insertion order, so a session's runs read in the
+        order the invocation wrote them.
+        """
+        with self._conn as conn:
+            rows = conn.execute(
+                _SELECT_RUNS + " WHERE session_id = ? ORDER BY created_at, rowid",
+                (session_id,),
+            ).fetchall()
+        return [_run_from_row(r) for r in rows]
+
+    def latest_session_id(
+        self,
+        *,
+        model: str | None = None,
+        run_types: Collection[str] | None = None,
+        statuses: Collection[str] | None = None,
+    ) -> str | None:
+        """Return the session of the newest run that has one and matches every filter.
+
+        A session qualifies when at least one of its rows matches all given
+        filters; the newest such row decides which session wins.  ``model``
+        matches the stored ``model`` column exactly.  ``None`` skips a filter,
+        and an empty collection matches nothing.  Rows written before schema
+        v5 have no session id and are skipped.
+        """
+        if (run_types is not None and not run_types) or (statuses is not None and not statuses):
+            return None
+        query = "SELECT session_id FROM scenario_runs WHERE session_id IS NOT NULL"
+        params: list[str] = []
+        if model:
+            query += " AND model = ?"
+            params.append(model)
+        for column, values in (("run_type", run_types), ("status", statuses)):
+            if values is not None:
+                ordered = sorted(set(values))
+                query += f" AND {column} IN ({', '.join('?' * len(ordered))})"
+                params.extend(ordered)
+        query += " ORDER BY created_at DESC, rowid DESC LIMIT 1"
+        with self._conn as conn:
+            row = conn.execute(query, params).fetchone()
+        return str(row[0]) if row else None
+
+    def resolve_session_prefix(self, prefix: str) -> str | None:
+        """Resolve a full session id or a unique prefix of it.
+
+        An exact id always resolves.  Otherwise the prefix needs at least
+        ``SESSION_PREFIX_MIN_LENGTH`` characters, so a short typo cannot pick a
+        session at random.  Returns ``None`` when nothing matches.
+
+        Raises:
+            ValueError: when the prefix matches more than one session.
+        """
+        with self._conn as conn:
+            if conn.execute(
+                "SELECT 1 FROM scenario_runs WHERE session_id = ? LIMIT 1", (prefix,)
+            ).fetchone():
+                return prefix
+            if len(prefix) < SESSION_PREFIX_MIN_LENGTH:
+                return None
+            # substr rather than LIKE, so "%" or "_" in the input stay literal.
+            matches = [
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT session_id FROM scenario_runs "
+                    "WHERE session_id IS NOT NULL AND substr(session_id, 1, ?) = ? "
+                    "ORDER BY session_id LIMIT 3",
+                    (len(prefix), prefix),
+                ).fetchall()
+            ]
+        if len(matches) > 1:
+            shown = ", ".join(matches[:2]) + (", ..." if len(matches) > 2 else "")
+            raise ValueError(
+                f"Session prefix '{prefix}' is ambiguous; it matches {shown}. Use more characters."
+            )
+        return matches[0] if matches else None
 
     def get_scenario_results(
         self, run_id: str, *, include_traces: bool = True

@@ -166,9 +166,9 @@ def test_pre_rename_decision_flags_are_rejected(
     assert error in capsys.readouterr().err
 
 
-def test_schema_v8_describes_every_command() -> None:
+def test_schema_v9_describes_every_command() -> None:
     schema = get_schema()
-    assert schema["schema_version"] == "8"
+    assert schema["schema_version"] == "9"
     assert schema["commands"] is COMMANDS_SCHEMA
     assert set(COMMANDS_SCHEMA) == KNOWN_COMMANDS
 
@@ -258,7 +258,7 @@ def test_subprocess_help_is_command_specific(command: str, included: str, exclud
     # --decision-bench/--decision-bench-only names wrap onto two more (206 -> 208).
     # Listing --fail-on-safety, --scenario-pack/--pack-only, and --tokenizer,
     # which bench already accepted, brought it to 227, and --include-held-out,
-    # which sits with the pack flags, to 231.
+    # which sits with the pack flags, to 231. --perf-preset brought it to 232.
     assert len(completed.stdout.splitlines()) < 235
 
 

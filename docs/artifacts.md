@@ -99,6 +99,32 @@ with no ASCII representation gets a deterministic `label-<hash>` marker.
 The label is an annotation only. It does not affect the run ID or the
 `config_fingerprint`, so identical runs with different labels stay comparable.
 
+## Sessions
+
+One CLI invocation can store several rows: a `perf` row, one row per plugin, a
+`spec-bench` or `context-pressure` row, and one `tool_eval` row per trial. Each
+of them carries the same opaque `session_id`, generated once per invocation, in
+the `scenario_runs.session_id` column and in the stored metadata. `card` uses it
+to find every row of one invocation. When `--perf` runs before a scored run, the
+throughput samples ride inside the `tool_eval` row instead of a row of their own.
+
+The session id rides on the RunContext, so rows from an invocation whose context
+could not be built have none. Rows written before schema version 5 have none
+either, and the Python API does not set one. It is not part of the run ID or the
+`config_fingerprint`. Markdown reports, `export`, and the card leave it out. The
+`--json` and `--json-file` result carries it in `metadata.session_id`, like the
+rest of the stored metadata.
+
+`tool-eval-bench history` shows the first eight characters of each run's
+session in its `Session` column. A session can be named by its full id or by a
+unique prefix of at least six characters; an ambiguous prefix is an error.
+
+A resume joins the session of the run it resumes. The scored run finishes under
+its original run ID, so it stays grouped with the rows its first invocation wrote
+before the interruption. Resuming a run stored without a session id starts a new
+session. A later write without a session id, such as a resume through the Python
+API, keeps the stored one.
+
 ## Resuming
 
 Every scenario result is checkpointed to SQLite the moment it finishes, so a

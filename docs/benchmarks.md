@@ -77,6 +77,9 @@ tool-eval-bench bench --perf-only --pp 2048 --tg 128 --depth "0 4096 8192 16384 
 # Throughput + tool-call scenarios
 tool-eval-bench bench --perf --depth "0 4096" --concurrency "1,2,4"
 
+# Long-context sweep: concurrency at depth 0, then cached-prefix depths to 128K
+tool-eval-bench bench --perf-only --perf-preset long
+
 # Customize measurement runs and latency mode
 tool-eval-bench bench --perf --benchy-runs 5 --benchy-latency-mode generation
 
@@ -104,11 +107,34 @@ tool-eval-bench bench --perf --tokenizer /models/Qwen3.6/tokenizer.json
 |---|---|---|
 | `--perf` | off | Run llama-benchy throughput before scenarios |
 | `--perf-only` | off | Run ONLY llama-benchy throughput |
+| `--perf-preset` | `short` | Grid: `short`, or `long` for a depth sweep to 131072 (see [Presets](#presets)) |
 | `--pp` | 2048 | Prompt tokens |
 | `--tg` | 128 | Generation tokens |
-| `--depth` | `"0,4096,8192"` | Context depths (comma/space separated) |
+| `--depth` | preset | Context depths (comma/space separated); `"0,4096,8192"` under `short` |
 | `--concurrency` | `"1,2,4"` | Concurrency levels |
 | `--benchy-runs` | 3 | Measurement iterations per test point |
 | `--benchy-latency-mode` | `generation` | Latency mode: `api`, `generation`, `none` |
 | `--benchy-args` | — | Pass-through for arbitrary llama-benchy flags |
 | `--tokenizer` | auto | Local tokenizer.json path; overrides HF-cache auto-detection |
+
+### Presets
+
+`--perf-preset` picks the grid. `short`, the default, is the sweep `--perf` has always run: pp 2048, tg 128, depths 0, 4096, and 8192, concurrency 1, 2, and 4, three runs per point. A `short` run keeps the same config fingerprint as a run made before presets existed.
+
+`long` measures what a long agent conversation costs. llama-benchy runs the full cross product of its flags in one invocation, so asking for 128K depth at concurrency 4 would put four 128K requests in flight and exhaust the KV cache. `long` runs two llama-benchy invocations instead and stores them as one run:
+
+1. Concurrency 1, 2, and 4 at depth 0.
+2. Concurrency 1 at depths 16384, 32768, 65536, and 131072, with llama-benchy's `--enable-prefix-caching`. Depth 0 at concurrency 1 is not measured again.
+
+Depths where `depth + pp + tg` plus 256 tokens of chat-template headroom would not fit the served context window are skipped, with a note. Depth 0 always runs in the first pass; when `pp + tg` alone does not fit, a warning says even those cells will fail. When the server does not report its window, every depth runs and a warning says the deepest cells may fail. After the first pass, a rough lower bound on the second pass's wall time is printed, computed from the depth-0 speeds. The second pass is skipped when every cell of the first one failed, and the stored config then records only the first pass.
+
+If llama-benchy stops during the second pass, with an error or on Ctrl+C, the first pass's results are kept. Each cell of the second pass counts as failed and the run is stored with status failed. After Ctrl+C the run is saved on its own and the command exits 1, even if a scored run was meant to follow.
+
+Explicit flags override the preset. Under `long`, `--depth` sets the depth pass and `--concurrency` sets the depth-0 pass; the depth pass always runs at concurrency 1. `--pp`, `--tg`, and `--benchy-runs` apply to both passes. The preset name is stored with the run but is not part of the fingerprint, which already covers the depths and concurrency levels it expands to.
+
+Each depth in the second pass produces two rows. Every run, the warm-up included, draws fresh corpus text from a random offset, so a run never reuses a prefix cached by an earlier one:
+
+- The `ctx pp{depth}` row is the context-load request: `depth` tokens of system message and a one-character user message. Its TTFT is a cold prefill of `depth` tokens.
+- The row after it sends the same system message with the `pp`-token prompt. On a server with prefix caching, its TTFT is the cost of `pp` new tokens on a cached `depth`-token prefix, which is what each turn of a growing conversation pays. Its tg t/s is decode speed at `depth + pp` context. If the server does not cache prefixes, this TTFT stays close to the cold one.
+
+Depth 0 has only the standard row, which is cold.

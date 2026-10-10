@@ -4,6 +4,7 @@
 # history, none of which a source build carries.
 exclude *
 include pyproject.toml README.md LICENSE CHANGELOG.md
+recursive-include src/tool_eval_bench/storage/reports/card/fonts *.ttf *.txt
 prune .github
 prune changelog.d
 prune compare

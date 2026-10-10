@@ -216,9 +216,10 @@ These run alongside the tool-call scenarios, or on their own with `--skip-tool-e
 |------|---------|
 | `--perf` | Throughput benchmark (llama-benchy style pp/tg sweep) |
 | `--perf-only` | Throughput only, skip the scenarios |
+| `--perf-preset NAME` | Throughput grid: `short` (default) or `long`, which adds a single-stream depth sweep to 131072 tokens within the served context window. See [benchmarks](benchmarks.md#presets) |
 | `--pp N`, `--tg N` | Prompt and generation tokens per request (default: 2048, 128) |
-| `--depth LIST` | Context depths, comma separated (default: `0,4096,8192`) |
-| `--concurrency LIST` | Concurrency levels for `--perf` (default: `1,2,4`) |
+| `--depth LIST` | Context depths, comma separated (default: the preset's, `0,4096,8192` for `short`). Under `long` it sets the depth pass |
+| `--concurrency LIST` | Concurrency levels for `--perf` (default: `1,2,4`). Under `long` it sets the depth-0 pass |
 | `--benchy-runs N` | Measurement runs per throughput test point (default: 3) |
 | `--spec-bench` | Speculative-decoding benchmark: effective t/s, acceptance rate, τ, per-position acceptance |
 | `--spec-method M` | Method hint when the server does not identify it (`--help` lists the choices) |
@@ -390,6 +391,54 @@ endpoint again (or set `TOOL_EVAL_BASE_URL`); a different endpoint is refused.
 Runs that used context pressure, a decision judge, scenario variants, or a
 held-out pack need options only the CLI has, so resume those with
 `tool-eval-bench resume RUN_ID` and the original flags.
+
+## Results card
+
+`card` renders stored runs as one shareable SVG, with optional PNG. It reads
+SQLite only and needs no server, like `history` and `export`. Every run one
+invocation stores is tagged with the same session, so a card normally shows one
+invocation:
+
+```bash
+tool-eval-bench --seed 42 --perf --perf-preset long --needle --gsm8k --mmlu --ifeval
+tool-eval-bench card --png --hardware "RTX 5090 32GB"
+```
+
+| Option | Purpose |
+|--------|---------|
+| `SESSION` | Session to render, as a full id or a unique prefix of at least 6 characters (default: `latest`, the newest session holding a run the card can show) |
+| `--run RUN_ID` | Build the card from this run instead of a session, repeatable. Overrides `SESSION` and works for runs stored before sessions existed |
+| `--model NAME` | With `latest`, use the newest session of this model (matched against the stored model name) |
+| `--hardware TEXT` | Hardware line on the card. Nothing is detected, so it is shown only when given |
+| `--layout portrait\|landscape` | Card layout (default: `portrait`) |
+| `-o`, `--output PATH` | Card path. A `.png` path writes PNG and puts the SVG beside it |
+| `--png` | Also write a PNG beside the SVG |
+| `--scale N` | PNG pixel scale relative to the SVG (default: 2) |
+| `--output-dir DIR` | Root of the default path, `<DIR>/cards/<model>-<YYYYMMDD>.svg` (default: `./runs`) |
+
+The card uses the newest completed run of each kind in the selection: the
+tool-call run, the throughput sweep (a `--perf-only` row or the samples a scored
+`--perf` run carries), needle, GSM8K, MMLU, and IFEval. A sweep at concurrency
+above 1 stores the batch total, so the card shows that total. The per-request
+rate is the measured one stored with the sweep; for older rows without it, the
+card divides the total by the concurrency. Missing sections render as not
+measured, and the command prints the flags that would fill them.
+
+A session run with `--trials N` shows the mean of its trials: the score and
+category percentages are averaged, the pass, partial, and fail counts are the
+rounded mean per trial, and the rating is recomputed from the mean score. It
+is safety-capped if any trial was. A needle cell whose request errored, such as
+a context overflow, is counted as an error rather than drawn as a miss.
+
+PNG export needs `pip install 'tool-eval-bench[card]'`. Without it, a PNG
+request still writes the SVG, prints that command, then exits 1. `card` exits 1 when no stored
+run matches or when `--run` ids belong to more than one model, and does not
+accept `--json`. The flat form is `--card [SESSION]`
+with `--card-run`, `--card-hardware`, `--card-layout`, `--card-output`,
+`--card-png`, and `--card-scale`.
+
+A card never carries a hostname, server URL, session or run id, label,
+tokenizer path, or system prompt. The model name is stripped of any path.
 
 ## Understanding the JSON output
 

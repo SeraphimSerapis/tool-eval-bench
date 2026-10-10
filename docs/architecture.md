@@ -97,6 +97,7 @@ external dependencies.
 | `tools_large.py` | Extended 52-tool definitions for Category L |
 | `errors.py` | Structured error code constants |
 | `redaction.py` | `redact_url` and `redact_urls`, so storage can redact server URLs without importing `utils` |
+| `card.py` | `CardData` and its parts, the contract between `application/card_data.py` and the card renderer. It has no field for a session id, run id, hostname, or server URL, so none can reach a shared image |
 
 ### `evals/` — Scenarios & Evaluators
 
@@ -177,6 +178,7 @@ difference is what makes Python the right language for an evaluator.
 | `spec_live.py` | Live monitor data layer (Prometheus scraping, delta computation) |
 | `llama_benchy.py` | External llama-benchy subprocess integration |
 | `context_pressure.py` | Filler generation, calibration, prefix-cache busting |
+| `perf_presets.py` | `--perf-preset` grids and `plan_perf`, which turns a preset plus explicit overrides into one or two llama-benchy passes capped at the context window |
 
 `throughput` and `speculative` both use `spec_detection`; only `speculative`
 depends on `throughput` for streaming and prompt construction. Keeping detection
@@ -224,6 +226,7 @@ Shared infrastructure:
 | `run_config.py` | `RunSettings` and `RUN_CONFIG_FIELDS`, the one declaration of every persisted config key. Each row says whether the key is written, fingerprinted, compared on `--resume`, and kept in the leaderboard's cross-model cohort. The builder, the resume check, and the cohort exclusions all derive from it. A new run setting needs a row, and `tests/test_run_config_schema.py` fails until it has one |
 | `run_context.py` | Backend detection (`identify_backend`) and `RunContext` collection, shared by the CLI and the Python API |
 | `run_queries.py` | Read queries against stored runs, each owning the repository's lifetime |
+| `card_data.py` | `build_card_data` maps stored runs onto `CardData`, newest completed run of each kind, copying named fields only. `load_card_data` selects the runs by session or run id through `run_queries` |
 
 ### `storage/` — Persistence
 
@@ -231,6 +234,7 @@ Shared infrastructure:
 |---|---|
 | `db.py` | `RunRepository` — SQLite persistence for run results |
 | `reports/` | `MarkdownReporter` — generates `runs/YYYY/MM/<run_id>.md` reports. A facade over one writer per report type (`scenario`, `summary`, `spec_decode`, `pressure`, `throughput`), with the shared substrate in `_common.py`. `mode.py` holds `ModeReport` and `write_mode_report`, the header skeleton shared by the sweep, spec-bench, throughput, and plugin reports; those modes build a `ModeReport` and let it place the file |
+| `reports/card/` | The results card renderer: `render_card_svg(CardData)` draws the SVG and `svg_to_png` exports PNG through the optional `[card]` extra (`resvg-py`), raising `PngExportUnavailable` without it |
 
 ### `cli/` — Delivery Layer
 
@@ -244,6 +248,7 @@ Shared infrastructure:
 | `scored_run.py` | `ScoredRun`, the one place that turns the flags into `run_benchmark` kwargs (for the live, plain, and `--json` runners) and the `RunSettings` the resume check compares |
 | `compare_report.py` | HTML comparison command for Markdown reports |
 | `local_commands.py` | Dry-run and local command rendering |
+| `card.py` | The `card` command: loads `CardData` through `application.card_data`, renders it with `storage.reports.card`, and writes the SVG and optional PNG |
 | `model_probe.py` | Model discovery and availability probing |
 | `plugin_runners.py` | Shared persistence/progress lifecycle and plugin-specific execution |
 | `plugin_lifecycle.py` | Shared plugin execution, and the plugin `ModeRun`/`ModeReport` handed to `finalize_mode_run` |

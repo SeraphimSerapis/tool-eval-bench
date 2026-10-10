@@ -538,8 +538,21 @@
     "required": false
   },
   {
+    "choices": [
+      "short",
+      "long"
+    ],
+    "default": "short",
+    "dest": "perf_preset",
+    "flags": [
+      "--perf-preset"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
     "choices": null,
-    "default": 2048,
+    "default": null,
     "dest": "pp",
     "flags": [
       "--pp"
@@ -549,7 +562,7 @@
   },
   {
     "choices": null,
-    "default": 128,
+    "default": null,
     "dest": "tg",
     "flags": [
       "--tg"
@@ -559,7 +572,7 @@
   },
   {
     "choices": null,
-    "default": "0,4096,8192",
+    "default": null,
     "dest": "depth",
     "flags": [
       "--depth"
@@ -569,7 +582,7 @@
   },
   {
     "choices": null,
-    "default": "1,2,4",
+    "default": null,
     "dest": "concurrency",
     "flags": [
       "--concurrency"
@@ -579,7 +592,7 @@
   },
   {
     "choices": null,
-    "default": 3,
+    "default": null,
     "dest": "benchy_runs",
     "flags": [
       "--benchy-runs"
@@ -1056,6 +1069,79 @@
     "dest": "resume",
     "flags": [
       "--resume"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "card",
+    "flags": [
+      "--card"
+    ],
+    "nargs": "?",
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "card_run",
+    "flags": [
+      "--card-run"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "card_hardware",
+    "flags": [
+      "--card-hardware"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": [
+      "portrait",
+      "landscape"
+    ],
+    "default": "portrait",
+    "dest": "card_layout",
+    "flags": [
+      "--card-layout"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "card_output",
+    "flags": [
+      "--card-output"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "card_png",
+    "flags": [
+      "--card-png"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 2.0,
+    "dest": "card_scale",
+    "flags": [
+      "--card-scale"
     ],
     "nargs": null,
     "required": false

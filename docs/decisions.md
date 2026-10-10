@@ -45,3 +45,15 @@ the two entry points would disagree. The token closes both paths for every bind 
 The UI stops only runs it launched and resumes only `interrupted` runs whose stored config it
 can rebuild, refusing the rest with a pointer to `tool-eval-bench resume`. Revisit if the UI
 gains multi-user access, which would need real accounts instead of one shared token.
+
+## Grouping runs by CLI invocation
+
+Every row one CLI invocation stores carries an explicit `session_id`, generated once per
+invocation and stored in its own indexed column. `card` reads a session back by that id.
+Matching rows by model and a time window was rejected: two invocations against one model
+minutes apart would merge, and a long scored run would split from the perf sweep before it.
+The cost is a schema migration and rows from before it that no card can group.
+
+A resume adopts the session of the run it resumes, so the completed scored run stays with the
+rows its interrupted invocation wrote. Revisit if a card needs to combine separate invocations
+on purpose, which would call for a user-named grouping rather than an implicit one.

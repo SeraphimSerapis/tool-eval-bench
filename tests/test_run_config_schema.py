@@ -86,7 +86,9 @@ PERTURBED: dict[str, Any] = {
 
 
 def _build(settings: RunSettings) -> dict[str, Any]:
-    return build_run_config(settings, scenarios=SCENARIOS, metadata={}, scenario_packs=PACKS)
+    return build_run_config(
+        settings, scenarios=SCENARIOS, metadata={}, scenario_packs=PACKS, perf_preset="long"
+    )
 
 
 def test_every_setting_has_a_perturbation() -> None:
@@ -132,5 +134,24 @@ def test_cohort_drops_model_identity_and_unfingerprinted_keys() -> None:
         "base_url",
         "endpoint_id",
         "decision_judge",
+        "perf_preset",
         CONFIG_FINGERPRINT_KEY,
     }
+
+
+def test_perf_preset_is_stored_without_moving_the_fingerprint() -> None:
+    scenarios = [_scenario("TC-01")]
+    without = build_run_config(FULL, scenarios=scenarios, metadata={})
+    with_long = build_run_config(FULL, scenarios=scenarios, metadata={}, perf_preset="long")
+
+    assert "perf_preset" not in without
+    assert with_long["perf_preset"] == "long"
+    assert with_long[CONFIG_FINGERPRINT_KEY] == without[CONFIG_FINGERPRINT_KEY]
+
+
+def test_perf_preset_never_blocks_a_resume() -> None:
+    # Throughput never changes the score, so a resume need not match the preset.
+    assert resume_mismatches(_build(FULL), {**_build(FULL), "perf_preset": "short"}) == []
+    stored = _build(FULL)
+    del stored["perf_preset"]
+    assert resume_mismatches(stored, _build(FULL)) == []

@@ -304,6 +304,11 @@ class TestNeedlePlugin:
         result = await NeedlePlugin().run(adapter, model="m", base_url="http://x", cases=cases)
         assert result.score == 50.0
         assert result.details["effective_context"] is None
+        # The grid survives storage as coordinates and outcome, with no text.
+        assert result.details["cells"] == [
+            {"context_tokens": 1024, "depth_percent": 0.0, "found": True},
+            {"context_tokens": 1024, "depth_percent": 1.0, "found": False},
+        ]
 
     async def test_request_failure_counts_as_a_miss_not_a_crash(self) -> None:
         cases = _cases((0.0, 1.0))
@@ -317,6 +322,11 @@ class TestNeedlePlugin:
         assert result.details["retrieved"] == 1
         assert result.details["incomplete"] is True
         assert result.details["completion_rate"] == 50.0
+        # Only the errored cell carries the flag, so storage can tell it from a miss.
+        assert result.details["cells"] == [
+            {"context_tokens": 1024, "depth_percent": 0.0, "found": False, "error": True},
+            {"context_tokens": 1024, "depth_percent": 1.0, "found": True},
+        ]
 
     async def test_empty_grid_returns_a_zero_result(self) -> None:
         result = await NeedlePlugin().run(_StubAdapter(), model="m", base_url="http://x", cases=[])

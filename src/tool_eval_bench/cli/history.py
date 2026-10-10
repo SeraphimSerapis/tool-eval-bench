@@ -140,6 +140,8 @@ def print_history(console: Console) -> None:
         expand=True,
     )
     table.add_column("Run ID", min_width=30, no_wrap=True)
+    # Enough of the session id to pass to ``card``, which accepts a prefix.
+    table.add_column("Session", width=8, no_wrap=True)
     table.add_column("Model", min_width=20)
     table.add_column("Score", justify="right", width=8)
     table.add_column("Rating", min_width=16)
@@ -161,8 +163,10 @@ def print_history(console: Console) -> None:
                 rating = f"[yellow]{status}[/]"
         created = run.get("created_at", "?")[:19]
         context = _extract_context_summary(run)
+        session_id = run.get("session_id")
         table.add_row(
             f"[dim]{escape(str(run['run_id']))}[/]",
+            f"[dim]{escape(str(session_id)[:8])}[/]" if session_id else "[dim]—[/]",
             escape(str(run.get("model", "?"))),
             f"[bold]{escape(str(score))}[/]",
             rating,

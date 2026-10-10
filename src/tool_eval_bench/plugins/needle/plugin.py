@@ -211,6 +211,20 @@ class NeedlePlugin(BenchmarkPlugin):
                 "by_length": by_length,
                 "by_depth": by_depth,
                 "effective_context": _effective_context(lengths, by_length),
+                # The stored row keeps details but not item_results, so this is
+                # the only persisted copy of the grid. Coordinates and outcome
+                # only: question and response text stay out of storage. An
+                # errored cell, such as a context overflow, is marked so a
+                # reader never mistakes it for a retrieval miss.
+                "cells": [
+                    {
+                        "context_tokens": r["context_tokens"],
+                        "depth_percent": r["depth_percent"],
+                        "found": r["found"],
+                        **({"error": True} if r.get("is_error") else {}),
+                    }
+                    for r in results
+                ],
             },
             item_results=results,
             metadata={"dataset": "synthetic (generated locally)"},

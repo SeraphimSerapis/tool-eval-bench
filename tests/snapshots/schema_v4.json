@@ -367,32 +367,42 @@
       "type": "bool"
     },
     {
-      "default": 2048,
-      "description": "Prompt tokens for throughput benchmark",
+      "choices": [
+        "short",
+        "long"
+      ],
+      "default": "short",
+      "description": "Throughput grid: 'short' sweeps depths 0,4096,8192 at concurrency 1,2,4; 'long' sweeps concurrency at depth 0, then depths up to 131072 at concurrency 1 within the served context window",
+      "name": "perf_preset",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Prompt tokens for throughput benchmark; null takes the preset's (2048 for both presets), a value overrides it",
       "name": "pp",
       "type": "int"
     },
     {
-      "default": 128,
-      "description": "Generation tokens for throughput benchmark",
+      "default": null,
+      "description": "Generation tokens for throughput benchmark; null takes the preset's (128 for both presets), a value overrides it",
       "name": "tg",
       "type": "int"
     },
     {
-      "default": "0,4096,8192",
-      "description": "Context depths for throughput sweep, comma separated",
+      "default": null,
+      "description": "Context depths for throughput sweep, comma separated; null takes the preset's ('0,4096,8192' for 'short'), a value overrides it, which for 'long' sets the depth pass",
       "name": "depth",
       "type": "string"
     },
     {
-      "default": "1,2,4",
-      "description": "Concurrency levels for throughput sweep",
+      "default": null,
+      "description": "Concurrency levels for throughput sweep; null takes the preset's ('1,2,4' for both presets), a value overrides it, which for 'long' sets the depth-0 pass",
       "name": "concurrency",
       "type": "string"
     },
     {
-      "default": 3,
-      "description": "Measurement runs per test point (llama-benchy)",
+      "default": null,
+      "description": "Measurement runs per test point (llama-benchy); null takes the preset's (3 for both presets), a value overrides it",
       "name": "benchy_runs",
       "type": "int"
     },
@@ -695,6 +705,53 @@
       "type": "string"
     },
     {
+      "const": "latest",
+      "default": null,
+      "description": "Render a shareable results card from a stored session and exit",
+      "name": "card",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Build the card from these stored runs instead of a session",
+      "name": "card_run",
+      "type": "list[string]"
+    },
+    {
+      "default": null,
+      "description": "Hardware line printed on the card (free text, not detected)",
+      "name": "card_hardware",
+      "type": "string"
+    },
+    {
+      "choices": [
+        "portrait",
+        "landscape"
+      ],
+      "default": "portrait",
+      "description": "Card layout",
+      "name": "card_layout",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Card file path; a .png path also writes PNG",
+      "name": "card_output",
+      "type": "string"
+    },
+    {
+      "default": false,
+      "description": "Also write a PNG beside the SVG (needs the [card] extra)",
+      "name": "card_png",
+      "type": "bool"
+    },
+    {
+      "default": 2.0,
+      "description": "PNG pixel scale relative to the SVG size",
+      "name": "card_scale",
+      "type": "float"
+    },
+    {
       "default": false,
       "description": "Launch the local web UI and exit when stopped",
       "name": "serve",
@@ -727,6 +784,12 @@
         "perf_only",
         "spec_bench",
         "context_pressure_sweep"
+      ]
+    },
+    "card": {
+      "description": "Render a shareable results card from stored runs",
+      "legacy_flags": [
+        "card"
       ]
     },
     "compare": {
@@ -813,5 +876,5 @@
       ]
     }
   },
-  "schema_version": "8"
+  "schema_version": "9"
 }

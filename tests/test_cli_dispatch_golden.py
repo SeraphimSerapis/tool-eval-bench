@@ -376,6 +376,7 @@ FULL_RUN_KWARGS: dict[str, Any] = {
     "wire_format": "openai",
     "extra_headers": {"X-Team": "bench"},
     "session_header": "X-Session-Id",
+    "perf_preset": None,
 }
 
 LIVE_CALLBACKS = {
@@ -502,6 +503,7 @@ DEFAULT_RUN_KWARGS: dict[str, Any] = {
     "wire_format": "openai",
     "extra_headers": {},
     "session_header": None,
+    "perf_preset": None,
 }
 
 
@@ -535,6 +537,7 @@ def test_perf_samples_reach_the_scored_run(cli: Cli, mode_flags: list[str], samp
 
     assert outcome.code == 0
     assert [run.get("throughput_samples") for run in cli.run_kwargs] == [samples]
+    assert [run.get("perf_preset") for run in cli.run_kwargs] == ["short"]
     assert cli.calls("run_llama_benchy") == [
         {
             "args": ("<console>", "m", "m", BASE_URL, None),
@@ -550,6 +553,8 @@ def test_perf_samples_reach_the_scored_run(cli: Cli, mode_flags: list[str], samp
             "skip_warmup": False,
             "tokenizer": None,
             "backend": "vllm",
+            "enable_prefix_caching": False,
+            "title": None,
         }
     ]
 

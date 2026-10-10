@@ -184,6 +184,7 @@ class BenchmarkService:
         on_scenario_audit: OnScenarioAudit | None = None,
         on_scenario_turn: OnScenarioTurn | None = None,
         decision_judge: DecisionJudgeSet | None = None,
+        perf_preset: str | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
 
@@ -193,8 +194,11 @@ class BenchmarkService:
         summary so the stored run contains the complete result set.
         ``resume_scenarios`` retains definitions that are not in the rerun
         subset, including held-out pack and Hard Mode scenarios.
+        ``perf_preset`` names the ``--perf-preset`` that produced
+        ``throughput_samples``; it is stored only when samples are attached.
         """
         validate_run_parameters(max_turns=max_turns, error_rate=error_rate, alpha=alpha)
+        stored_perf_preset = perf_preset if throughput_samples else None
         judge_config = decision_judge_config(
             decision_judge_base_url, decision_judge_model, decision_judge_api_key, decision_judge
         )
@@ -287,6 +291,7 @@ class BenchmarkService:
             scenarios=config_scenarios,
             metadata=metadata,
             scenario_packs=scenario_packs,
+            perf_preset=stored_perf_preset,
         )
 
         # Build run ID (reuse original for resumed runs)
@@ -391,6 +396,7 @@ class BenchmarkService:
                 scenarios=merged_scenarios,
                 metadata=metadata,
                 scenario_packs=scenario_packs,
+                perf_preset=stored_perf_preset,
             )
             logger.info(
                 "Resume merge: %d prior + %d new = %d total scenarios (score: %d)",

@@ -145,6 +145,11 @@ def handle_local_command(
             output_dir=getattr(args, "output_dir", None),
             redact_url=bool(getattr(args, "redact_url", False)),
         )
+    elif getattr(args, "card", None) is not None or getattr(args, "card_run", None):
+        _reject_json(args, "--card")
+        from tool_eval_bench.cli.card import run_card_command
+
+        run_card_command(args, console)
     elif args.dry_run:
         _render_dry_run(args, console, resolve_scenarios)
     else:

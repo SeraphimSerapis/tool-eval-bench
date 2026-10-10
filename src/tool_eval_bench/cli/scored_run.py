@@ -91,6 +91,9 @@ class ScoredRun:
     resume_prior_results: list[dict[str, Any]] | None
     resume_scenarios: list[ScenarioDefinition] | None
     judge: JudgeConnection | None
+    #: ``--perf-preset`` when ``--perf`` runs first; the service stores it only
+    #: if throughput samples actually reach the run.
+    perf_preset: str | None = None
 
     @classmethod
     def from_args(
@@ -150,6 +153,9 @@ class ScoredRun:
                 else getattr(args, "_resume_scenarios", None)
             ),
             judge=JudgeConnection.from_args(args),
+            perf_preset=(
+                getattr(args, "perf_preset", None) if getattr(args, "perf", False) else None
+            ),
         )
 
     @property
@@ -207,6 +213,7 @@ class ScoredRun:
             "wire_format": self.wire_format,
             "extra_headers": self.extra_headers,
             "session_header": self.session_header,
+            "perf_preset": self.perf_preset,
             **(self.judge.service_kwargs() if self.judge is not None else {}),
         }
 

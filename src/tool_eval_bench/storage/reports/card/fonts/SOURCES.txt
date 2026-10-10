@@ -1,0 +1,49 @@
+Fonts bundled for the benchmark card PNG export
+================================================
+
+These files are subsets of upstream fonts, generated with fontTools. Do not
+edit them by hand; regenerate them from the upstream releases with the
+settings below.
+
+Upstream
+--------
+Inter 4.1, SIL Open Font License 1.1 (Inter-OFL.txt)
+  https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+  extras/ttf/Inter-Regular.ttf      -> Inter-Regular.ttf
+  extras/ttf/Inter-Medium.ttf       -> Inter-Medium.ttf
+  extras/ttf/Inter-SemiBold.ttf     -> Inter-SemiBold.ttf
+  extras/ttf/InterDisplay-Bold.ttf  -> InterDisplay-Bold.ttf
+
+JetBrains Mono 2.304, SIL Open Font License 1.1 (JetBrainsMono-OFL.txt)
+  https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip
+  fonts/ttf/JetBrainsMonoNL-Regular.ttf -> JetBrainsMonoNL-Regular.ttf
+  fonts/ttf/JetBrainsMonoNL-Medium.ttf  -> JetBrainsMonoNL-Medium.ttf
+
+Neither font declares a Reserved Font Name, so modified versions may keep the
+original family names.
+
+Modifications
+-------------
+1. Subset to these code points (Latin, Latin Extended A/B, Greek, Cyrillic,
+   punctuation, currency, letterlike symbols, arrows, math operators,
+   geometric shapes, stars, warning sign, check marks, replacement character):
+
+     U+0020-007E,U+00A0-024F,U+0370-03FF,U+0400-04FF,U+2000-206F,U+20A0-20CF,
+     U+2100-214F,U+2190-21FF,U+2200-22FF,U+25A0-25FF,U+2605-2606,U+26A0,
+     U+2713-2717,U+FFFD
+
+2. Layout features kept: kern, tnum, liga, calt, case, ccmp, locl, mark, mkmk.
+   Hinting removed. All name records kept.
+
+3. Inter only: the cmap entries for the digits 0-9 point at the tabular (tnum)
+   glyphs. resvg ignores font-feature-settings, so this is the only way to get
+   aligned numerals in the PNG. JetBrains Mono is monospaced already.
+
+Equivalent pyftsubset call for step 1 and 2:
+
+  pyftsubset SRC.ttf --output-file=OUT.ttf --unicodes="<ranges above>" \
+    --layout-features="kern,tnum,liga,calt,case,ccmp,locl,mark,mkmk" \
+    --no-hinting --name-IDs="*"
+
+Step 3 reads the GSUB tnum single-substitution lookups (unwrapping extension
+lookups) and replaces each digit's cmap glyph with its tnum alternate.

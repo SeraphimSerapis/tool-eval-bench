@@ -64,6 +64,7 @@ SCENARIOS = (
 PERF = (
     "perf",
     "perf_only",
+    "perf_preset",
     "pp",
     "tg",
     "depth",
@@ -235,6 +236,12 @@ COMMAND_SPECS = (
         "Export stored runs",
         translation="export",
         legacy_flags=("export",),
+    ),
+    CommandSpec(
+        "card",
+        "Render a shareable results card from stored runs",
+        translation="card",
+        legacy_flags=("card",),
     ),
     CommandSpec(
         "resume",

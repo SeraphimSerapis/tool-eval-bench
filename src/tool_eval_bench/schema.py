@@ -37,7 +37,7 @@ from tool_eval_bench.domain.engines import BACKEND_LABELS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 # Argument schema version — bump when adding/removing/renaming args.
-SCHEMA_VERSION = "8"
+SCHEMA_VERSION = "9"
 
 COMMANDS_SCHEMA: dict[str, dict[str, Any]] = commands_schema()
 
@@ -399,34 +399,50 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Run ONLY llama-benchy throughput benchmark (skip tool-call scenarios)",
     },
     {
+        "name": "perf_preset",
+        "type": "string",
+        "default": "short",
+        "choices": ["short", "long"],
+        "description": "Throughput grid: 'short' sweeps depths 0,4096,8192 at concurrency "
+        "1,2,4; 'long' sweeps concurrency at depth 0, then depths up to 131072 at "
+        "concurrency 1 within the served context window",
+    },
+    {
         "name": "pp",
         "type": "int",
-        "default": 2048,
-        "description": "Prompt tokens for throughput benchmark",
+        "default": None,
+        "description": "Prompt tokens for throughput benchmark; null takes the preset's "
+        "(2048 for both presets), a value overrides it",
     },
     {
         "name": "tg",
         "type": "int",
-        "default": 128,
-        "description": "Generation tokens for throughput benchmark",
+        "default": None,
+        "description": "Generation tokens for throughput benchmark; null takes the preset's "
+        "(128 for both presets), a value overrides it",
     },
     {
         "name": "depth",
         "type": "string",
-        "default": "0,4096,8192",
-        "description": "Context depths for throughput sweep, comma separated",
+        "default": None,
+        "description": "Context depths for throughput sweep, comma separated; null takes the "
+        "preset's ('0,4096,8192' for 'short'), a value overrides it, which for 'long' sets "
+        "the depth pass",
     },
     {
         "name": "concurrency",
         "type": "string",
-        "default": "1,2,4",
-        "description": "Concurrency levels for throughput sweep",
+        "default": None,
+        "description": "Concurrency levels for throughput sweep; null takes the preset's "
+        "('1,2,4' for both presets), a value overrides it, which for 'long' sets the "
+        "depth-0 pass",
     },
     {
         "name": "benchy_runs",
         "type": "int",
-        "default": 3,
-        "description": "Measurement runs per test point (llama-benchy)",
+        "default": None,
+        "description": "Measurement runs per test point (llama-benchy); null takes the "
+        "preset's (3 for both presets), a value overrides it",
     },
     {
         "name": "benchy_latency_mode",
@@ -750,6 +766,51 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "type": "int",
         "default": None,
         "description": "Bind port for --serve (default: 8765, or the next free port; 0 = any free port)",
+    },
+    # -- Results card --
+    {
+        "name": "card",
+        "type": "string",
+        "default": None,
+        "const": "latest",
+        "description": "Render a shareable results card from a stored session and exit",
+    },
+    {
+        "name": "card_run",
+        "type": "list[string]",
+        "default": None,
+        "description": "Build the card from these stored runs instead of a session",
+    },
+    {
+        "name": "card_hardware",
+        "type": "string",
+        "default": None,
+        "description": "Hardware line printed on the card (free text, not detected)",
+    },
+    {
+        "name": "card_layout",
+        "type": "string",
+        "default": "portrait",
+        "choices": ["portrait", "landscape"],
+        "description": "Card layout",
+    },
+    {
+        "name": "card_output",
+        "type": "string",
+        "default": None,
+        "description": "Card file path; a .png path also writes PNG",
+    },
+    {
+        "name": "card_png",
+        "type": "bool",
+        "default": False,
+        "description": "Also write a PNG beside the SVG (needs the [card] extra)",
+    },
+    {
+        "name": "card_scale",
+        "type": "float",
+        "default": 2.0,
+        "description": "PNG pixel scale relative to the SVG size",
     },
     # -- Scoring --
     {

@@ -32,6 +32,9 @@ class ModeRun:
     config: Mapping[str, Any]
     scores: dict[str, Any]
     status: Literal["completed", "failed"]
+    #: Config keys stored for readers but left out of the fingerprint, such as
+    #: a label for a grid the fingerprint already covers.
+    unfingerprinted: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -49,7 +52,9 @@ def finalize_mode_run(
 ) -> FinalizedRun:
     """Write the report, then persist the run, and return where it landed."""
     metadata = run_context.to_dict() if run_context is not None else {}
-    config = with_config_fingerprint(run.config, metadata)
+    hashed = {key: value for key, value in run.config.items() if key not in run.unfingerprinted}
+    config = with_config_fingerprint(hashed, metadata)
+    config.update({key: run.config[key] for key in run.unfingerprinted if key in run.config})
     run_id = build_run_id(config)
     if report.label:
         metadata["label"] = report.label

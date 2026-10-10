@@ -114,6 +114,11 @@ class RunContext:
     # Part of the config fingerprint via the persisted run config. Kept last:
     # positional RunContext construction (tests, callers) predates this field.
     system_prompt: str | None = None
+    # Opaque id shared by every run one CLI invocation stores, so ``card`` can
+    # group perf, plugin, and scored rows. Never part of a fingerprint and
+    # never rendered in shareable reports. Last for the same positional
+    # construction reason as ``system_prompt``.
+    session_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-safe dict for metadata_json storage."""

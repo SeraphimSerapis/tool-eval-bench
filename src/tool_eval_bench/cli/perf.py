@@ -21,6 +21,19 @@ from tool_eval_bench.storage.reports._common import (
 )
 
 
+class PerfPassFailed(Exception):
+    """One llama-benchy invocation stopped without returning results.
+
+    ``markup`` is the message to show. ``interrupted`` is True for Ctrl+C,
+    which should still end the CLI once the finished passes are saved.
+    """
+
+    def __init__(self, markup: str, *, interrupted: bool = False) -> None:
+        super().__init__(markup)
+        self.markup = markup
+        self.interrupted = interrupted
+
+
 def _measurement_run_key(event: dict[str, Any]) -> tuple[Any, ...]:
     """Stable key for one llama-benchy measurement run (not one HTTP request)."""
     return (
@@ -160,10 +173,15 @@ def run_llama_benchy(
     extra_args: list[str] | None = None,
     tokenizer: str | None = None,
     backend: str | None = None,
+    enable_prefix_caching: bool = False,
+    title: str | None = None,
 ) -> list:
     """Run llama-benchy externally and display results.
 
-    Returns a list of ThroughputSample objects for report persistence.
+    ``title`` names the pass in the header when a preset runs more than one.
+    Returns a list of ThroughputSample objects for report persistence. Raises
+    :class:`PerfPassFailed` when llama-benchy stops without results, including
+    on Ctrl+C; the caller reports it and decides whether the CLI ends.
     """
     from rich.panel import Panel
     from rich.table import Table
@@ -185,13 +203,15 @@ def run_llama_benchy(
 
     tokenizer = _resolve_benchy_tokenizer(console, model, display_name, base_url, tokenizer)
 
+    caching = "  prefix-caching=on" if enable_prefix_caching else ""
+    header = "⚡ llama-benchy Throughput Benchmark" + (f" · {title}" if title else "")
     console.print()
     console.print(
         Panel(
             f"[bold]{display_name}[/]\n"
             f"[dim]pp={pp}  tg={tg}  depth={depths}  concurrency={concurrency_levels}  "
-            f"runs={runs}  latency={latency_mode}[/]",
-            title="[bold]⚡ llama-benchy Throughput Benchmark[/]",
+            f"runs={runs}  latency={latency_mode}{caching}[/]",
+            title=f"[bold]{header}[/]",
             border_style="bright_cyan",
         )
     )
@@ -253,6 +273,7 @@ def run_llama_benchy(
                 extra_args=extra_args,
                 tokenizer=tokenizer,
                 on_progress=on_progress,
+                enable_prefix_caching=enable_prefix_caching,
             )
 
             failed_samples = [sample for sample in benchy_result.samples if sample.error]
@@ -262,14 +283,11 @@ def run_llama_benchy(
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
-        report_run_failed(console, "\n[bold red]Interrupted.[/]")
-        sys.exit(1)
+        raise PerfPassFailed("\n[bold red]Interrupted.[/]", interrupted=True) from None
     except RuntimeError as exc:
-        report_run_failed(console, f"\n[bold red]llama-benchy error:[/] {exc}")
-        sys.exit(1)
+        raise PerfPassFailed(f"\n[bold red]llama-benchy error:[/] {exc}") from exc
     except Exception as exc:
-        report_run_failed(console, f"\n[bold red]Error: {exc}[/]")
-        sys.exit(1)
+        raise PerfPassFailed(f"\n[bold red]Error: {exc}[/]") from exc
 
     if benchy_result is None:
         console.print("[bold red]No results from llama-benchy.[/]")

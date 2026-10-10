@@ -49,6 +49,9 @@ web = [
   "starlette>=0.40.0",
   "uvicorn>=0.30.0",
 ]
+card = [
+  "resvg-py>=0.5.0,<0.6",
+]
 dev = [
   "mypy>=1.15.0",
   "types-PyYAML>=6.0.12",
@@ -144,6 +147,9 @@ tool_eval_bench = [
   "plugins/decision/vendor/typed_decisions/*",
   "web/static/*",
   "py.typed",
+  # The card's PNG export needs its bundled fonts, their OFL texts, and SOURCES.txt.
+  "storage/reports/card/fonts/*.ttf",
+  "storage/reports/card/fonts/*.txt",
 ]
 
 [tool.setuptools.packages.find]

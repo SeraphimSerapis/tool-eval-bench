@@ -11,6 +11,7 @@ from tool_eval_bench.application.decision_audit import (
 )
 from tool_eval_bench.cli.command_registry import COMMAND_SPECS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
+from tool_eval_bench.runner.perf_presets import DEFAULT_PERF_PRESET, PERF_PRESETS
 
 
 def _positive_int(value: str) -> int:
@@ -360,19 +361,29 @@ def _make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run ONLY throughput benchmark (skip tool-call scenarios)",
     )
-    perf_grp.add_argument("--pp", type=int, default=2048, help="Prompt tokens (default: 2048)")
-    perf_grp.add_argument("--tg", type=int, default=128, help="Generation tokens (default: 128)")
+    perf_grp.add_argument(
+        "--perf-preset",
+        default=DEFAULT_PERF_PRESET,
+        choices=list(PERF_PRESETS),
+        help="short, or long: depths to 128K at c1 (default: short)",
+    )
+    # None means "not given": the preset fills it in after parsing.
+    perf_grp.add_argument("--pp", type=int, default=None, help="Prompt tokens (default: 2048)")
+    perf_grp.add_argument("--tg", type=int, default=None, help="Generation tokens (default: 128)")
     perf_grp.add_argument(
         "--depth",
         type=str,
-        default="0,4096,8192",
-        help="Context depths, comma separated (default: '0,4096,8192')",
+        default=None,
+        help="Context depths, comma separated (default: preset)",
     )
     perf_grp.add_argument(
-        "--concurrency", type=str, default="1,2,4", help="Concurrency levels (default: '1,2,4')"
+        "--concurrency",
+        type=str,
+        default=None,
+        help="Concurrency levels (default: preset)",
     )
     perf_grp.add_argument(
-        "--benchy-runs", type=int, default=3, help="Measurement runs per test point (default: 3)"
+        "--benchy-runs", type=int, default=None, help="Measurement runs per test point (default: 3)"
     )
     perf_grp.add_argument(
         "--benchy-latency-mode",
@@ -711,6 +722,57 @@ def _make_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PORT",
         help="Bind port for --serve (default: 8765, or the next free port; 0 = any free port)",
+    )
+
+    # -- Results card ------------------------------------------------------
+    card_grp = parser.add_argument_group("results card")
+    card_grp.add_argument(
+        "--card",
+        nargs="?",
+        const="latest",
+        default=None,
+        metavar="SESSION",
+        help="Render a shareable results card from a stored session and exit. SESSION is "
+        "a session id or a unique prefix of at least 6 characters (default: the latest "
+        "session; --model narrows it to one model)",
+    )
+    card_grp.add_argument(
+        "--card-run",
+        action="append",
+        default=None,
+        metavar="RUN_ID",
+        help="Build the card from this stored run instead of a session (repeatable)",
+    )
+    card_grp.add_argument(
+        "--card-hardware",
+        default=None,
+        metavar="TEXT",
+        help="Hardware line printed on the card, e.g. 'RTX 5090 32GB' (not detected)",
+    )
+    card_grp.add_argument(
+        "--card-layout",
+        choices=["portrait", "landscape"],
+        default="portrait",
+        help="Card layout (default: portrait)",
+    )
+    card_grp.add_argument(
+        "--card-output",
+        default=None,
+        metavar="PATH",
+        help="Card file path; a .png path also writes PNG "
+        "(default: <output-dir>/cards/<model>-<YYYYMMDD>.svg)",
+    )
+    card_grp.add_argument(
+        "--card-png",
+        action="store_true",
+        help="Also write a PNG beside the SVG (needs the [card] extra)",
+    )
+    card_grp.add_argument(
+        "--card-scale",
+        type=float,
+        default=2.0,
+        metavar="N",
+        help="PNG pixel scale relative to the SVG size (default: 2)",
     )
 
     # -- Scoring options ---------------------------------------------------

@@ -305,6 +305,10 @@ class ThroughputSample:
     # ``--enable-prefix-caching``. It shares every other coordinate with the
     # inference row that follows it.
     is_context_prefill: bool = False
+    # llama-benchy's mean per-request decode rate for a concurrent cell, where
+    # ``tg_tps`` is the batch total. None at concurrency 1, where the two are
+    # the same number and ``tg_tps`` already holds it.
+    tg_req_tps: float | None = None
 
     @property
     def effective_tg_tps(self) -> float:
@@ -366,9 +370,9 @@ class ThroughputSample:
         rounded. Error text is not part of it: a failed cell is only counted,
         because the message can quote the server URL. Per-token timestamps and
         the raw spec-decode payloads are left out; llama-benchy, which produces
-        these samples, never fills them. ``observed_tg_tokens`` and
-        ``is_context_prefill`` appear only when they carry information, so rows
-        from other producers keep their shape.
+        these samples, never fills them. ``observed_tg_tokens``,
+        ``is_context_prefill``, and ``tg_req_tps`` appear only when they carry
+        information, so rows from other producers keep their shape.
         """
         result: dict[str, Any] = {
             "requested_pp": self.requested_pp,
@@ -388,6 +392,8 @@ class ThroughputSample:
             result["observed_tg_tokens"] = self.observed_tg_tokens
         if self.is_context_prefill:
             result["is_context_prefill"] = True
+        if self.tg_req_tps is not None:
+            result["tg_req_tps"] = self.tg_req_tps
         return result
 
 

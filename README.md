@@ -267,6 +267,7 @@ design: [docs/methodology.md](https://github.com/SeraphimSerapis/tool-eval-bench
 | `decision-live` | Monitor a decision model with live canary probes |
 | `compare` | Compare stored runs or Markdown reports |
 | `history`, `leaderboard`, `export` | Inspect or export persisted results |
+| `card` | Render a shareable results card from stored runs |
 | `resume` | Continue an incomplete run |
 | `serve` | Launch the local web UI for browsing, live runs, comparisons, and launching benchmarks; open the sign-in link it prints ([details](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/cli-reference.md#web-ui-serve)) |
 
@@ -365,6 +366,38 @@ never turn it on. Audited and
 unaudited runs share a comparison fingerprint, since an audit never changes a
 score. Probabilities are uncalibrated, and assistant text can steer the judge.
 See [answer audit limits and API configuration](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/decision-models.md#answer-audits).
+
+### Share a results card
+
+`tool-eval-bench card` turns one benchmark session into a single image you can
+post: decode and prefill speed, time to first token across context depths,
+concurrency scaling, needle retrieval, tool-calling quality, and accuracy
+benchmarks. Every run one invocation stores shares a session, so run
+everything at once and then render the card:
+
+```bash
+tool-eval-bench --seed 42 --perf --perf-preset long --needle --gsm8k --mmlu --ifeval
+tool-eval-bench card --png --hardware "RTX 5090 32GB"
+```
+
+The card is written to `runs/cards/<model>-<YYYYMMDD>.svg`, plus a `.png` with
+`--png`. PNG export needs the optional renderer, `pip install
+'tool-eval-bench[card]'`; without it the SVG is still written and the command
+exits 1. A section the
+session did not measure is marked as such, and the command prints the flags
+that would fill it.
+
+`card SESSION` renders an older session, `--model M` picks the latest session
+for one model, and `--run RUN_ID` (repeatable) builds a card from specific
+runs, including runs stored before sessions existed. A unique session prefix of
+6 or more characters is enough. `--layout landscape`
+suits a link preview; portrait is the default. Hardware is never detected, so
+pass `--hardware` if you want it on the image.
+
+The card carries no hostname, server URL, session or run id, label, tokenizer
+path, or system prompt. Its short fingerprint names the configuration of the
+scored run, or of the throughput run when there is none, so readers can tell
+whether two cards measured the same setup.
 
 ## Programmatic API
 

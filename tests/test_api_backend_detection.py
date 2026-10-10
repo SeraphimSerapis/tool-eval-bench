@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 from collections.abc import Callable
 from typing import Any
@@ -306,6 +307,9 @@ def test_cli_and_api_record_the_same_metadata(monkeypatch, capsys, server, cli_a
     cli = _cli_metadata(monkeypatch, cli_args)
     api = asyncio.run(_run(**api_kwargs))["metadata"]
 
+    # Only the CLI groups its runs into sessions; the API stores none.
+    assert re.fullmatch(r"[0-9a-f]{32}", cli.pop("session_id"))
+    assert "session_id" not in api
     assert api == cli
     stderr_events = [json.loads(line) for line in capsys.readouterr().err.splitlines() if line]
     assert {"event": "backend_detected", "backend": server} in stderr_events

@@ -90,6 +90,8 @@ def _command_help(command: str, *, include_legacy_options: bool = True) -> argpa
         parser.add_argument("-o", "--output")
     elif command == "resume":
         parser.add_argument("run_id")
+    elif command == "card":
+        _add_card_options(parser)
     elif command == "compare-report":
         parser.add_argument("report_a", help="First Markdown report")
         parser.add_argument("report_b", help="Second Markdown report")
@@ -238,6 +240,74 @@ def _export_argv(argv: list[str]) -> list[str]:
     return translated
 
 
+def _add_card_options(parser: argparse.ArgumentParser) -> None:
+    """The ``card`` subcommand's own options, translated by :func:`_card_argv`."""
+    parser.add_argument(
+        "session",
+        nargs="?",
+        default="latest",
+        help="Session id or a unique prefix of at least 6 characters (default: latest)",
+    )
+    parser.add_argument(
+        "--run",
+        action="append",
+        metavar="RUN_ID",
+        help="Use this stored run instead of a session (repeatable); "
+        "works for runs stored before sessions existed",
+    )
+    parser.add_argument(
+        "--hardware", metavar="TEXT", help="Hardware line for the card, e.g. 'RTX 5090 32GB'"
+    )
+    parser.add_argument("--layout", choices=("portrait", "landscape"), default="portrait")
+    parser.add_argument(
+        "-o",
+        "--output",
+        metavar="PATH",
+        help="Card path; a .png path also writes PNG "
+        "(default: <output-dir>/cards/<model>-<YYYYMMDD>.svg)",
+    )
+    parser.add_argument(
+        "--png", action="store_true", help="Also write PNG (needs tool-eval-bench[card])"
+    )
+    parser.add_argument(
+        "--scale", type=float, default=2.0, metavar="N", help="PNG scale (default: 2)"
+    )
+    # Defined here rather than copied from the flat parser, whose help
+    # describes a benchmark run. They translate to the same --model and
+    # --output-dir flags.
+    parser.add_argument(
+        "--model", metavar="MODEL", help="With the default session, use this model's latest one"
+    )
+    parser.add_argument(
+        "--output-dir", metavar="DIR", help="Root for the default card path (default: ./runs/)"
+    )
+
+
+def _card_argv(argv: list[str]) -> list[str]:
+    args = _command_help("card").parse_args(argv)
+    # Attached with "=" so a session id that starts with "-" stays a value.
+    translated = [
+        f"--card={args.session}",
+        "--card-layout",
+        args.layout,
+        "--card-scale",
+        str(args.scale),
+    ]
+    for run_id in args.run or ():
+        translated.append(f"--card-run={run_id}")
+    if args.hardware is not None:
+        translated.append(f"--card-hardware={args.hardware}")
+    if args.output is not None:
+        translated.append(f"--card-output={args.output}")
+    if args.png:
+        translated.append("--card-png")
+    if args.model is not None:
+        translated.append(f"--model={args.model}")
+    if args.output_dir is not None:
+        translated.append(f"--output-dir={args.output_dir}")
+    return translated
+
+
 def translate_argv(argv: Sequence[str]) -> list[str]:
     """Translate a subcommand invocation into legacy flat-parser arguments."""
     values = list(argv)
@@ -261,6 +331,8 @@ def translate_argv(argv: Sequence[str]) -> list[str]:
         return values
     if spec.translation == "export":
         return _export_argv(rest)
+    if spec.translation == "card":
+        return _card_argv(rest)
     if spec.translation == "resume":
         run_id, remaining = _take_positional(rest, "resume", "run_id")
         if run_id is None:

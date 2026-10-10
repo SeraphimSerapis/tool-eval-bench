@@ -185,16 +185,18 @@ def _extra_args_set_return_token_ids(extra_args: list[str] | None) -> bool:
     return any("return_token_ids" in arg for arg in extra_args or ())
 
 
-def _needs_cache_prompt(extra_args: list[str] | None) -> bool:
+def _needs_cache_prompt(extra_args: list[str] | None, enable_prefix_caching: bool = False) -> bool:
     """Report whether ``--enable-prefix-caching`` needs ``cache_prompt=true`` added.
 
     ``--no-cache`` makes llama-benchy send ``cache_prompt: false``, and
     llama.cpp then re-prefills the whole prompt on the follow-up request that
     is supposed to reuse the cached prefix. A ``cache_prompt`` value the user
-    already passed wins.
+    already passed wins. The mode is on when the caller asks for it or when
+    ``--benchy-args`` passes the flag.
     """
     args = extra_args or ()
-    return "--enable-prefix-caching" in args and not any("cache_prompt" in arg for arg in args)
+    enabled = enable_prefix_caching or "--enable-prefix-caching" in args
+    return enabled and not any("cache_prompt" in arg for arg in args)
 
 
 # asyncio's default StreamReader limit is 64 KiB per line. llama-benchy prints
@@ -232,9 +234,12 @@ def _build_command(
     backend: str | None = None,
     output_file: str | None = None,
     extra_args: list[str] | None = None,
+    enable_prefix_caching: bool = False,
 ) -> list[str]:
     """Build the llama-benchy command line.
 
+    ``enable_prefix_caching`` turns on llama-benchy's ``--enable-prefix-caching``
+    mode; see :func:`_parse_benchmark_entry` for the two rows it produces.
     Returns the full argument list suitable for ``asyncio.create_subprocess_exec``.
     """
     prefix = _find_llama_benchy()
@@ -310,8 +315,12 @@ def _build_command(
     # ``--enable-prefix-caching`` measures. ``--extra-body`` is appended and
     # merged after that default, so this turns the cache back on for both
     # phases. vLLM and SGLang ignore the field.
-    if no_cache and _needs_cache_prompt(extra_args):
+    if no_cache and _needs_cache_prompt(extra_args, enable_prefix_caching):
         cmd.extend(["--extra-body", "cache_prompt=true"])
+    # A flag repeated through --benchy-args is harmless to llama-benchy's
+    # store_true, but one copy keeps the logged command readable.
+    if enable_prefix_caching and "--enable-prefix-caching" not in (extra_args or ()):
+        cmd.append("--enable-prefix-caching")
 
     # JSON output
     cmd.extend(["--format", "json"])
@@ -425,6 +434,26 @@ def _parse_benchmark_entry(
     ``observed_tg_tokens`` is the mean output length the progress stream
     reported for this cell. llama-benchy's ``response_size`` is the configured
     ``tg``, which is only an upper bound when the model stops early.
+
+    What each row's ``ttft_ms`` means (llama-benchy 0.4.0, ``runner.py``):
+
+    * Standard row, any depth without prefix caching and depth 0 always: one
+      request, system message of ``depth`` corpus tokens plus a ``pp``-token
+      user prompt. Cold: every run, the warm-up included, draws a fresh random
+      corpus offset (``prompts.py`` ``generate``), so no run shares a prefix
+      with another and the server's prefix cache cannot flatter it.
+    * ``is_context_prefill`` row, ``--enable-prefix-caching`` at depth > 0:
+      the context-load request, the same fresh ``depth``-token system message
+      with a one-character user message. Its TTFT is the cold prefill of
+      ``depth`` tokens. Map it to a cold TTFT at that depth.
+    * The inference row that follows it: the same system message with the
+      ``pp``-token prompt, sent once the context load finished. On a server
+      that caches prefixes, its TTFT is ``pp`` new tokens on a cached
+      ``depth``-token prefix, the cost a growing agent conversation pays each
+      turn. Map it to the cached-prefix TTFT. Its ``tg_tps`` is decode at
+      ``depth + pp`` context. If the server does not cache, this row prefills
+      everything again and its TTFT approaches the cold one, which is itself
+      the finding.
     """
     concurrency = entry.get("concurrency", 1)
     depth = entry.get("context_size", 0)
@@ -497,6 +526,7 @@ def _parse_benchmark_entry(
         pp_estimated=pp_estimated,
         observed_tg_tokens=observed_tg_tokens,
         is_context_prefill=is_ctx_prefill,
+        tg_req_tps=tg_req_tps if concurrency > 1 and tg_req_tps > 0 else None,
     )
 
 
@@ -627,6 +657,7 @@ async def run_llama_benchy(
     extra_args: list[str] | None = None,
     on_output: Callable[[str], None] | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
+    enable_prefix_caching: bool = False,
 ) -> LlamaBenchyResult:
     """Run llama-benchy as a subprocess and parse the results.
 
@@ -677,6 +708,7 @@ async def run_llama_benchy(
             backend=backend,
             output_file=output_file,
             extra_args=extra_args,
+            enable_prefix_caching=enable_prefix_caching,
         )
 
         logger.info("Running llama-benchy: %s", _redact_command(cmd))

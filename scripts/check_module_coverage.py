@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 
 MODULE_FLOORS = {
+    "src/tool_eval_bench/application/card_data.py": 95.0,
+    "src/tool_eval_bench/cli/card.py": 90.0,
     "src/tool_eval_bench/cli/compare_report.py": 80.0,
     "src/tool_eval_bench/cli/dispatch.py": 70.0,
     "src/tool_eval_bench/cli/parser.py": 75.0,

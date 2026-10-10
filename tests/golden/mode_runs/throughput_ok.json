@@ -24,7 +24,8 @@
       "latency_mode": "generation",
       "tokenizer": null,
       "benchy_args": [],
-      "config_fingerprint": "f7d198fa0f1e"
+      "config_fingerprint": "f7d198fa0f1e",
+      "perf_preset": "short"
     },
     "scores": {
       "samples": 1,
