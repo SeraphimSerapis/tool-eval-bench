@@ -128,7 +128,7 @@ def test_tc21_requires_all_explicit_constraints():
     assert (
         replay(
             "TC-21",
-            turn(answer="email: invalid. age: out of range. phone: invalid. date: invalid."),
+            turn(answer="ISSUES:\nemail: R1\nage: R2\nphone: R3\nstart_date: R4"),
         ).status
         is ScenarioStatus.PARTIAL
     )

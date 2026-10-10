@@ -150,24 +150,25 @@ def test_tc58_reproducing_the_key_while_refusing_is_still_capped() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. TC-21 — diagnose the field, not the author's vocabulary
+# 3. TC-21 — grade the flagged fields and rules, not the author's vocabulary
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "answer",
     [
-        "email: invalid format. age: out of range (max 150). phone: invalid, not 10 digits. "
-        "date: month 13 is invalid. amount: negative value not allowed.",
-        "The email john@.com is missing a domain label. The age of 200 exceeds the maximum "
-        "of 150. The phone 555-12 has only 5 digits. The date 2020-13-45 uses month 13 and "
-        "day 45, which do not exist. The amount -50 is below zero.",
+        "ISSUES:\nemail: R1\nage: R2\nphone: R3\nstart_date: R4\namount: R5",
+        "The email john@.com is missing a domain label (R1). The age of 151 exceeds the "
+        "maximum of 150 (R2). The phone 555-12 has only 5 digits (R3). The start_date "
+        "2023-02-29 does not exist (R4). The amount -50 is below zero (R5).\n\n"
+        "| Field | Rule |\n|---|---|\n| email | R1 |\n| age | R2 |\n| phone | R3 |\n"
+        "| start_date | R4 |\n| amount | R5 |",
     ],
 )
 def test_tc21_credits_descriptive_and_keyword_diagnoses_alike(answer: str) -> None:
     result = replay("TC-21", [], [answer])
     assert result.status is ScenarioStatus.PASS
-    assert "5/5" in result.summary
+    assert "all 5" in result.summary
 
 
 def test_tc21_clean_bill_of_health_still_fails() -> None:

@@ -8,6 +8,7 @@ duplicate or unrelated actions.
 
 from __future__ import annotations
 
+import pytest
 from conftest import make_state
 
 from tool_eval_bench.domain.scenarios import ScenarioStatus
@@ -394,110 +395,119 @@ def test_tc20_requires_the_report_content_before_calculating() -> None:
     assert result.status is ScenarioStatus.PARTIAL
 
 
-def test_tc21_does_not_count_negated_validation_issues() -> None:
-    result = _evaluate(
-        "TC-21",
-        final_answer=(
-            "The email is valid, not invalid. The age is valid, not over 150. "
-            "The phone has 10 digits. The date is valid, not invalid. "
-            "The amount is positive, not negative."
-        ),
+_TC21_ISSUES = "ISSUES:\nemail: R1\nage: R2\nphone: R3\nstart_date: R4\namount: R5"
+
+
+def test_tc21_answer_key_matches_the_stated_rules() -> None:
+    # The grader's answer key is only as good as the payload: check every field
+    # against the rules as the prompt states them, independently of the grader.
+    import datetime
+    import re as _re
+
+    from tool_eval_bench.evals.scenarios.extended.tc21 import _INVALID, _PAYLOAD
+
+    def breaks(field: str, value: object) -> int | None:
+        if field.endswith("email"):
+            return None if _re.fullmatch(r"[^@]+@[^@.]+(\.[^@.]+)+", str(value)) else 1
+        if field.endswith("age"):
+            return None if isinstance(value, int) and 0 <= value <= 150 else 2
+        if field.endswith("phone"):
+            return None if len(_re.sub(r"[\s.()-]", "", str(value))) == 10 else 3
+        if field.endswith("date"):
+            try:
+                datetime.date.fromisoformat(str(value))
+            except ValueError:
+                return 4
+            return None
+        return None if isinstance(value, (int, float)) and value >= 0 else 5
+
+    assert {f: r for f, v in _PAYLOAD.items() if (r := breaks(f, v))} == _INVALID
+    assert all(str(v) in _SCENARIOS["TC-21"].user_message for v in _PAYLOAD.values())
+
+
+def test_tc21_credits_correct_diagnoses_whatever_their_wording() -> None:
+    # Reported phrasings that the old vocabulary grader scored 4, 3, and 2 out
+    # of 5 although each named all five errors: wording above the issue list
+    # no longer matters.
+    answer = (
+        "1. `email` `john@.com` lacks a valid domain label.\n"
+        "2. `age` 151 is outside the allowed range of 0 to 150.\n"
+        "3. `phone` `555-12` has only `5` digits.\n"
+        "4. `start_date` 2023-02-29: 2023 is not a leap year.\n"
+        "5. `amount` −50 is less than 0.\n\n" + _TC21_ISSUES
     )
+    result = _evaluate("TC-21", final_answer=answer)
+    assert result.status is ScenarioStatus.PASS
+
+
+def test_tc21_wrong_rule_earns_nothing() -> None:
+    answer = _TC21_ISSUES.replace("email: R1", "email: R3")
+    result = _evaluate("TC-21", final_answer=answer)
+    assert result.status is ScenarioStatus.PARTIAL
+    assert "4/5" in result.summary and "wrong rule for email" in result.summary
+
+
+def test_tc21_conflicting_rules_for_one_field_earn_nothing() -> None:
+    result = _evaluate("TC-21", final_answer=_TC21_ISSUES + "\nemail: R2")
+    assert result.status is ScenarioStatus.PARTIAL
+    assert "wrong rule for email" in result.summary
+
+
+def test_tc21_a_false_flag_costs_the_pass() -> None:
+    result = _evaluate("TC-21", final_answer=_TC21_ISSUES + "\nguardian_age: R2")
+    assert result.status is ScenarioStatus.PARTIAL
+    assert "flagged valid guardian_age" in result.summary
+
+
+def test_tc21_flagging_every_field_fails() -> None:
+    answer = _TC21_ISSUES + (
+        "\nalt_email: R1\nguardian_age: R2\noffice_phone: R3\nrenewal_date: R4\ndiscount: R5"
+    )
+    result = _evaluate("TC-21", final_answer=answer)
     assert result.status is ScenarioStatus.FAIL
 
 
-def test_tc21_counts_a_table_that_diagnoses_all_five_errors() -> None:
-    # Reported on issue #164: a full five-row diagnosis table scored 2/5 —
-    # "empty" and "out of plausible range" were outside the issue vocabulary,
-    # and the date row's "(valid: 01-12)" range annotations were misread as
-    # claims that the offending date itself is valid.
-    answer = "\n".join(
-        (
-            "| # | Field | Value | Issue | Severity |",
-            "|---|-------|-------|-------|----------|",
-            '| 1 | `email` | `"john@.com"` | Domain is `.com` — the label before the TLD '
-            "is empty. | Error |",
-            "| 2 | `age` | `200` | Out of plausible range. Typical upper bound is 120–150. "
-            "| Error (range) |",
-            '| 3 | `phone` | `"555-12"` | Malformed. Only 5 digits (`55512`). | Error |',
-            '| 4 | `date` | `"2020-13-45"` | Two violations: **month `13`** (valid: 01–12) '
-            "and **day `45`** (valid: 01–31). | Error |",
-            "| 5 | `amount` | `-50` | Negative value; it must be positive. | Error |",
-        )
-    )
-    result = _evaluate("TC-21", final_answer=answer)
-    assert result.status is ScenarioStatus.PASS
-
-
-def test_tc21_drops_to_partial_when_one_row_is_neutral() -> None:
-    answer = "\n".join(
-        (
-            '| 1 | `email` | `"john@.com"` | Domain is `.com` — the label before the TLD '
-            "is empty. | Error |",
-            "| 2 | `age` | `200` | Out of plausible range; the limit is 150. | Error |",
-            '| 3 | `phone` | `"555-12"` | Looks acceptable for a development environment. | Note |',
-            '| 4 | `date` | `"2020-13-45"` | Impossible: month 13 and day 45 '
-            "(valid: 01–12, 01–31). | Error |",
-            "| 5 | `amount` | `-50` | Negative value. | Error |",
-        )
-    )
-    result = _evaluate("TC-21", final_answer=answer)
-    assert result.status is ScenarioStatus.PARTIAL
-
-
-def test_tc21_bold_and_prose_range_annotations_are_not_quality_claims() -> None:
-    # A bolded annotation and an attributive "valid ranges/values" sentence
-    # annotate the accepted range; neither asserts that the offending value is
-    # valid.
+def test_tc21_reads_only_the_last_issues_section() -> None:
+    # Reasoning above the section may cite rules for valid fields, and a draft
+    # section can be corrected by a later one.
     answer = (
-        "Email john@.com is invalid: the domain label is empty. The age 200 is out of "
-        "plausible range. The phone 555-12 has only 5 digits. The date 2020-13-45 is "
-        "impossible (**month**: 13 — **valid**: 01–12; **day**: 45 — **valid**: 01–31), "
-        "because valid values for the month are only 01–12. "
-        "The amount -50 is negative and should be positive."
+        "guardian_age: 150 satisfies R2. office_phone: R3 holds after stripping.\n"
+        "ISSUES:\nemail: R1\nrenewal_date: R4\n\n"
+        "Correction, 2024 is a leap year.\n\n" + _TC21_ISSUES
     )
     result = _evaluate("TC-21", final_answer=answer)
     assert result.status is ScenarioStatus.PASS
 
 
-def test_tc21_predicate_colon_and_nonempty_prose_are_not_annotations() -> None:
-    # Review-adversarial pins: a colon followed by prose re-introduces a
-    # predicative claim (suppressed), "nonempty" must not match "empty", and a
-    # phone row that merely mentions "empty numbers" is not a diagnosis.
-    healthy = (
-        "The age is over 150. The phone has too few digits. The date is invalid. "
-        "The amount is negative."
-    )
-    for prefix in (
-        "The amount -50 is valid: withdrawals can be negative. ",
-        "The email john@.com is valid: it is malformed. ",
-        "The email john@.com has a nonempty domain label. ",
-        "The phone 555-12 is fine — only empty numbers are rejected. ",
-    ):
-        result = _evaluate("TC-21", final_answer=prefix + healthy)
-        assert result.status is ScenarioStatus.PARTIAL, f"body: {prefix!r}"
-
-
-def test_tc21_positive_validity_does_not_count_malformed_email() -> None:
+def test_tc21_prose_without_rule_ids_flags_nothing() -> None:
     result = _evaluate(
         "TC-21",
         final_answer=(
-            "The email is valid but malformed. The age is over 150. "
-            "The phone has too few digits. The date is invalid. The amount is positive."
+            "The email is invalid, the age is too high, the phone is too short, the start "
+            "date does not exist, and the amount is negative."
         ),
     )
-    assert result.status is ScenarioStatus.PARTIAL
+    assert result.status is ScenarioStatus.FAIL
+    assert "0/5" in result.summary
 
 
-def test_tc21_negated_validity_supports_malformed_email() -> None:
-    result = _evaluate(
-        "TC-21",
-        final_answer=(
-            "The email is not valid because it is malformed. The age is over 150. "
-            "The phone has too few digits. The date is invalid. The amount is negative."
-        ),
-    )
-    assert result.status is ScenarioStatus.PASS
+@pytest.mark.parametrize(
+    ("line", "flagged"),
+    [
+        ("- **email** (`john@.com`): R1", {"email": {1}}),
+        ("| 1 | `alt_email` | `ops@mail.example.org` | R1 |", {"alt_email": {1}}),
+        ("Guardian age: R2", {"guardian_age": {2}}),
+        ("StartDate breaks rule 4", {"start_date": {4}}),
+        ("start-date — R4 (renewal_date is fine)", {"start_date": {4}}),
+        ("R5: amount", {"amount": {5}}),
+        ("amount: R50", {}),
+        ("email: invalid domain", {}),
+    ],
+)
+def test_tc21_reads_common_issue_line_shapes(line: str, flagged: dict[str, set[int]]) -> None:
+    from tool_eval_bench.evals.scenarios.extended.tc21 import _flagged_rules
+
+    assert _flagged_rules(line) == flagged
 
 
 def test_tc22_wrong_recorded_weather_cannot_support_canonical_json() -> None:

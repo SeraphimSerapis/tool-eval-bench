@@ -445,7 +445,7 @@
   "TC-21": [
     {
       "calls": [],
-      "answer": "The email is not valid because it is malformed. The age is over 150. The phone has too few digits. The date is invalid. The amount is negative."
+      "answer": "The email has no domain name before .com, age 151 is above 150, the phone has 5 digits, 2023 has no February 29, and the amount is negative.\nISSUES:\nemail: R1\nage: R2\nphone: R3\nstart_date: R4\namount: R5"
     }
   ],
   "TC-22": [
