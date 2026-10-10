@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from tool_eval_bench.domain.card import (
     AccuracyResult,
     CardData,
@@ -63,23 +65,28 @@ def _needle_grid(
     contexts: tuple[int, ...],
     misses: set[tuple[int, float]],
     errored: frozenset[tuple[int, float]] = frozenset(),
+    depths: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0),
 ) -> NeedleSummary:
-    depths = (0.0, 0.25, 0.5, 0.75, 1.0)
+    """Every cell, errored ones included, the way card data builds the grid."""
     cells = tuple(
-        NeedleCell(ctx, d, (ctx, d) not in misses)
+        NeedleCell(ctx, d, (ctx, d) not in misses and (ctx, d) not in errored, (ctx, d) in errored)
         for ctx in contexts
         for d in depths
-        if (ctx, d) not in errored
     )
-    found = sum(c.found for c in cells)
+    answered = [c for c in cells if not c.error]
+    found = sum(c.found for c in answered)
     effective = None
     for ctx in contexts:
-        if all(c.found for c in cells if c.context_tokens == ctx):
+        row = [c for c in answered if c.context_tokens == ctx]
+        if row and all(c.found for c in row):
             effective = ctx
         else:
             break
     return NeedleSummary(
-        cells=cells, accuracy=found / len(cells), effective_context=effective, errors=len(errored)
+        cells=cells,
+        accuracy=found / len(answered) if answered else 0.0,
+        effective_context=effective,
+        errors=len(errored),
     )
 
 
@@ -270,12 +277,167 @@ def real_sparse() -> CardData:
             suite_size=69,
         ),
         accuracy=(
-            AccuracyResult("GSM8K", 0.70),
-            AccuracyResult("MMLU", 0.25),
-            AccuracyResult("IFEval", 0.0),
+            AccuracyResult("GSM8K", 0.70, "10 of 1,319 q", items=10),
+            AccuracyResult("MMLU", 0.25, "28 of 14,042 q", errors=24, items=28),
+            AccuracyResult("IFEval", 0.0, "3 of 541 prompts", items=3),
         ),
         fingerprint="5e1f0c3a7b",
     )
+
+
+def _long_perf(
+    depths: tuple[int, ...], *, level: int = 1, estimated: bool = False
+) -> list[PerfPoint]:
+    out = []
+    for i, d in enumerate(depths):
+        tg = 120.0 - 6 * i
+        out.append(
+            PerfPoint(
+                d, level, 3000.0 - 150 * i, tg, tg * level, 400.0 + d / 20, tg_estimated=estimated
+            )
+        )
+    return out
+
+
+def interrupted_long() -> CardData:
+    """A long preset stopped at 16K by an interrupted depth pass, with failed cells."""
+    base = full_long()
+    return replace(
+        base,
+        perf=tuple(_long_perf((0, 4 * K, 8 * K, 16 * K))),
+        needle=None,
+        perf_incomplete=True,
+        perf_failed_cells=3,
+    )
+
+
+def window_capped_long() -> CardData:
+    """A long preset that finished but stopped at 16K because the server window is 32K."""
+    base = full_long()
+    return replace(
+        base,
+        max_context=32 * K,
+        perf=tuple(_long_perf((0, 16 * K))),
+        needle=None,
+    )
+
+
+def window_capped_deep() -> CardData:
+    """A long preset capped at 64K by a 96K window: deep enough to chart."""
+    base = full_long()
+    return replace(
+        base,
+        max_context=96 * K,
+        perf=tuple(_long_perf((0, 4 * K, 8 * K, 16 * K, 32 * K, 64 * K))),
+    )
+
+
+def _subset(**changes: object) -> ToolEvalSummary:
+    te = ToolEvalSummary(
+        score=100.0,
+        rating="★★★★★ Excellent",
+        passed=3,
+        partial=0,
+        failed=0,
+        total=3,
+        categories=(CategoryScore("A", "Tool Selection", 100.0),),
+        suite_size=69,
+    )
+    return replace(te, **changes)  # type: ignore[arg-type]
+
+
+def subset_3_of_69() -> CardData:
+    return replace(real_sparse(), accuracy=())
+
+
+def hardmode_only() -> CardData:
+    te = ToolEvalSummary(
+        score=47.3,
+        rating="★★ Weak",
+        passed=10,
+        partial=6,
+        failed=12,
+        total=28,
+        categories=_categories((0,) * 15 + (47.3,))[15:],
+        hardmode=True,
+        hardmode_only=True,
+        suite_size=28,
+    )
+    return replace(full_long(), tool_eval=te)
+
+
+def scenario_pack() -> CardData:
+    te = replace(
+        _tool_eval(hardmode=False),
+        scenario_pack=True,
+        suite_size=None,
+        total=40,
+        passed=31,
+        partial=5,
+        failed=4,
+    )
+    return replace(tool_eval_only(), tool_eval=te)
+
+
+def excluded_scenarios() -> CardData:
+    te = replace(_tool_eval(hardmode=False), total=66, passed=54, excluded=3)
+    return replace(tool_eval_only(), tool_eval=te)
+
+
+def all_errored_needle() -> CardData:
+    contexts = (8 * K, 16 * K, 32 * K)
+    errored = frozenset((c, d) for c in contexts for d in (0.0, 0.25, 0.5, 0.75, 1.0))
+    return replace(full_long(), needle=_needle_grid(contexts, set(), errored))
+
+
+def cjk_model() -> CardData:
+    return replace(
+        full_long(), model="通义千问/Qwen3-235B-A22B-思考版-FP8", hardware="昇腾 910B ×8"
+    )
+
+
+def compact_smarts() -> CardData:
+    """Long preset, needle, accuracy with caveats, no tool eval: the old overlap case."""
+    base = full_long()
+    return replace(
+        base,
+        tool_eval=None,
+        accuracy=(
+            AccuracyResult("GSM8K", 0.75, "4 of 1,319 q", errors=24, items=28),
+            AccuracyResult("MMLU", 0.712, "limited to 200 q", items=200),
+            AccuracyResult("IFEval", 0.843),
+        ),
+    )
+
+
+def sparse_perf_accuracy() -> CardData:
+    """Perf and accuracy only: the sparse landscape that used to be mostly placeholders."""
+    return replace(compact_smarts(), needle=None)
+
+
+def no_single_stream() -> CardData:
+    """Concurrency 2 and up only, per-request decode derived from the aggregate."""
+    perf = _long_perf((0, 8 * K, 32 * K, 128 * K), level=2, estimated=True)
+    perf += [
+        PerfPoint(0, c, 3000.0, 100.0 - c, (100.0 - c) * c, 500.0, tg_estimated=True)
+        for c in (4, 8)
+    ]
+    return replace(full_long(), perf=tuple(perf))
+
+
+def needle_single_cell() -> CardData:
+    return replace(full_long(), needle=_needle_grid((32 * K,), set(), depths=(0.5,)))
+
+
+def needle_eleven_depths() -> CardData:
+    depths = tuple(i / 10 for i in range(11))
+    return replace(
+        full_long(), needle=_needle_grid((8 * K, 32 * K), {(32 * K, 0.5)}, depths=depths)
+    )
+
+
+def accuracy_only() -> CardData:
+    return replace(compact_smarts(), perf=(), needle=None, perf_preset=None)
 
 
 ALL = {
@@ -285,4 +447,19 @@ ALL = {
     "d_extreme": extreme,
     "e_needle_misses": needle_misses,
     "f_real_sparse": real_sparse,
+    "g_interrupted_long": interrupted_long,
+    "h_window_capped_long": window_capped_long,
+    "i_window_capped_deep": window_capped_deep,
+    "j_subset_3_of_69": subset_3_of_69,
+    "k_hardmode_only": hardmode_only,
+    "l_scenario_pack": scenario_pack,
+    "m_excluded": excluded_scenarios,
+    "n_all_errored_needle": all_errored_needle,
+    "o_cjk_model": cjk_model,
+    "p_compact_smarts": compact_smarts,
+    "q_sparse_perf_accuracy": sparse_perf_accuracy,
+    "r_no_single_stream": no_single_stream,
+    "s_needle_single_cell": needle_single_cell,
+    "t_needle_eleven_depths": needle_eleven_depths,
+    "u_accuracy_only": accuracy_only,
 }

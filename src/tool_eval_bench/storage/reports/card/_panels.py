@@ -6,36 +6,49 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
-from tool_eval_bench.domain.card import CardData, NeedleSummary, PerfPoint, ToolEvalSummary
+from tool_eval_bench.domain.card import (
+    AccuracyResult,
+    CardData,
+    NeedleSummary,
+    PerfPoint,
+    ToolEvalSummary,
+)
 from tool_eval_bench.storage.reports.card import _format as fmt
 from tool_eval_bench.storage.reports.card._data import (
-    LONG_CONTEXT_MIN_DEPTH,
+    accuracy_is_thin,
+    accuracy_note,
+    cap_note,
     concurrency_series,
     has_long_context,
     is_subset,
+    needs_caution,
     rating_parts,
-    scenario_label,
+    scope_label,
     score_details,
     single_stream,
+    stream_concurrency,
     ttft_note,
+    window_capped,
 )
-from tool_eval_bench.storage.reports.card._fonts import FAMILIES, FontKey, text_width
+from tool_eval_bench.storage.reports.card._fonts import FontKey, text_width
 from tool_eval_bench.storage.reports.card._svg import (
+    Run,
     attrs,
     circle,
-    esc,
     first_fit,
     fit,
     line,
     polyline,
     rect,
+    runs_text,
+    runs_width,
     text,
-    tspan,
 )
 from tool_eval_bench.storage.reports.card._theme import (
     DECODE,
     FAIL,
     FAINT,
+    GOOD,
     MUTED,
     PAD,
     PARTIAL,
@@ -56,8 +69,12 @@ MID = " \u00b7 "
 HEADER_H = 32
 DOT_FILL = "#0B1020"
 
-# Heights a panel needs in its compact (not measured or summary-only) state.
+# Heights a panel needs in its compact (summary-only) state and as a hint strip.
 COMPACT_H = 128.0
+HINT_H = 88.0
+# Small labels (axes, legends) stay at least this size so a card shared at
+# phone width is still readable.
+LABEL = 13.0
 
 
 # --------------------------------------------------------------------------- frames
@@ -99,23 +116,62 @@ def pill(
     if max_width is not None:
         label = fit(label, max_width - 2 * pad, size, font=font, weight=weight, tracking=tracking)
     w = text_width(label, size, font=font, weight=weight, tracking=tracking) + 2 * pad
+    body = _pill_shape(x, y, w, height, fill, fill_opacity, stroke_opacity, dashed) + text(
+        x + pad,
+        y + height / 2 + size * 0.36,
+        label,
+        size=size,
+        fill=color,
+        font=font,
+        weight=weight,
+        tracking=tracking,
+    )
+    return body, w
+
+
+def _pill_shape(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    fill: str,
+    fill_opacity: float,
+    stroke_opacity: float,
+    dashed: bool = False,
+) -> str:
     shape = attrs(
         x=float(x),
         y=float(y),
         width=float(w),
-        height=float(height),
-        rx=height / 2,
+        height=float(h),
+        rx=h / 2,
         fill=fill,
         fill_opacity=fill_opacity,
         stroke=fill,
         stroke_opacity=stroke_opacity,
         stroke_dasharray="4 4" if dashed else None,
     )
-    label_y = y + height / 2 + size * 0.36
-    body = f"<rect {shape}/>" + text(
-        x + pad, label_y, label, size=size, fill=color, font=font, weight=weight, tracking=tracking
+    return f"<rect {shape}/>"
+
+
+def warn_pill(x: float, y: float, label: str, *, max_width: float) -> tuple[str, float]:
+    return pill(
+        x,
+        y,
+        label,
+        size=13,
+        font="sans",
+        weight=600,
+        color=WARN,
+        fill=WARN,
+        fill_opacity=0.10,
+        stroke_opacity=0.45,
+        height=28,
+        max_width=max_width,
     )
-    return body, w
+
+
+FLAG_SIZE = 13.0
 
 
 def flag_pill(
@@ -125,21 +181,35 @@ def flag_pill(
         x,
         y,
         flag,
-        size=12,
+        size=FLAG_SIZE,
         color=color,
         fill=color,
         fill_opacity=0.08,
         stroke_opacity=0.35,
-        height=26,
+        height=28,
         pad=10,
         max_width=max_width,
     )
 
 
 def pills_width(flags: tuple[str, ...]) -> float:
-    return sum(text_width(f, 12, font="mono", weight=500) + 20 for f in flags) + 8 * max(
+    return sum(text_width(f, FLAG_SIZE, font="mono", weight=500) + 20 for f in flags) + 8 * max(
         len(flags) - 1, 0
     )
+
+
+def _flag_row(x: float, y: float, room: float, flags: tuple[str, ...], color: str) -> str:
+    """Flags left to right; a flag that would not fit is shortened, never dropped."""
+    out = []
+    px = x
+    for i, flag in enumerate(flags):
+        left = len(flags) - i - 1
+        # The small allowance absorbs float rounding when the row is sized exactly.
+        budget = x + room - px - left * 48 + 0.01
+        chip, w = flag_pill(px, y, flag, color, max_width=max(budget, 40.0))
+        out.append(chip)
+        px += w + 8
+    return "".join(out)
 
 
 def panel_header(
@@ -147,13 +217,17 @@ def panel_header(
     title: str,
     color: str,
     *,
-    subtitle: str | None = None,
+    subtitle: str | list[str] | None = None,
+    subtitle_color: str = MUTED,
     callout: str | None = None,
     callout_label: str | None = None,
     callout_color: str = TEXT,
     right_reserved: float = 0.0,
 ) -> str:
-    """Title on the left and an optional callout on the right, sharing a baseline."""
+    """Title on the left and an optional callout on the right, sharing a baseline.
+
+    ``subtitle`` may list wordings, longest first; the first that fits is used.
+    """
     base = box.y + PAD + 24
     x = box.x + PAD
     out = [rect(x, base - 10, 8, 8, fill=color, rx=2)]
@@ -165,30 +239,23 @@ def panel_header(
     right = box.right - PAD
     used = right_reserved
     if callout:
-        label_w = text_width(callout_label, 13, weight=500) + 8 if callout_label else 0.0
-        number_w = text_width(callout, 26, font="display", weight=700)
-        used = number_w + label_w
-        out.append(
-            text(
-                right - label_w,
-                base,
-                callout,
-                size=26,
-                fill=callout_color,
-                font="display",
-                weight=700,
-                anchor="end",
-            )
-        )
+        runs = [Run(callout, 26, callout_color, "display", 700)]
         if callout_label:
-            out.append(
-                text(right, base, callout_label, size=13, fill=MUTED, weight=500, anchor="end")
-            )
+            runs.append(Run(callout_label, 13, MUTED, "sans", 500, gap=8))
+        used = runs_width(runs)
+        out.append(runs_text(right, base, runs, anchor="end"))
     if subtitle:
         space = right - used - 16 - (title_x + title_w + 12)
+        options = [subtitle] if isinstance(subtitle, str) else subtitle
         if space > 60:
             out.append(
-                text(title_x + title_w + 12, base, fit(subtitle, space, 13), size=13, fill=MUTED)
+                text(
+                    title_x + title_w + 12,
+                    base,
+                    first_fit(options, space, 13),
+                    size=13,
+                    fill=subtitle_color,
+                )
             )
     return "".join(out)
 
@@ -265,38 +332,42 @@ def missing_panel(
 ) -> str:
     """The intentional empty state: what is missing and the flag that fills it.
 
-    Tall boxes center the message over a faint skeleton of the missing chart;
-    short ones put the flags in the header row so the panel still reads at a
-    glance.
+    A strip-height box is a one- or two-line hint; a short box puts the flags
+    in the header row; a tall one centers the message over a faint skeleton of
+    the missing chart.
     """
+    if box.h < 120:
+        return hint_strip(box, title, color, message, flags)
     out = [frame(box, dashed=True)]
     body = content_box(box)
     if box.h < 200:
-        flags_w = pills_width(flags)
-        out.append(panel_header(box, title, color, right_reserved=flags_w))
-        px = box.right - PAD - min(flags_w, body.w)
-        for flag in flags:
-            chip, w = flag_pill(px, box.y + PAD + 6, flag, color, max_width=body.w)
-            out.append(chip)
-            px += w + 8
+        flags_w = min(pills_width(flags), body.w)
+        title_w = 16 + text_width(title, 13, weight=600, tracking=1.6)
         y = body.y + 6
-        out.append(
-            text(
-                body.x,
-                y + 14,
-                fit(message, body.w, 17, weight=500),
-                size=17,
-                fill=TEXT_2,
-                weight=500,
-            )
+        message_line = text(
+            body.x,
+            y + 14,
+            fit(message, body.w, 17, weight=500),
+            size=17,
+            fill=TEXT_2,
+            weight=500,
         )
+        if title_w + 16 + flags_w > body.w:
+            # Too narrow for title and flags on one row: the flags go under the message.
+            out.append(panel_header(box, title, color))
+            out.append(message_line)
+            out.append(_flag_row(body.x, y + 26, body.w, flags, color))
+            return "".join(out)
+        out.append(panel_header(box, title, color, right_reserved=flags_w))
+        out.append(_flag_row(box.right - PAD - flags_w, box.y + PAD + 5, flags_w, flags, color))
+        out.append(message_line)
         if note and body.h > 44:
             out.append(text(body.x, y + 40, fit(note, body.w, 13), size=13, fill=MUTED))
         return "".join(out)
     out.append(panel_header(box, title, color))
     if ghost_kind:
         out.append(ghost(ghost_kind, body))
-    block_h = 24 + 16 + 26 + (30 if note else 0)
+    block_h = 24 + 16 + 28 + (30 if note else 0)
     y = body.y + max((body.h - block_h) / 2, 0)
     cx = box.x + box.w / 2
     out.append(
@@ -311,13 +382,58 @@ def missing_panel(
         )
     )
     y += 40
-    px = cx - min(pills_width(flags), body.w) / 2
-    for flag in flags:
-        chip, w = flag_pill(px, y, flag, color, max_width=body.w)
-        out.append(chip)
-        px += w + 8
+    flags_w = min(pills_width(flags), body.w)
+    out.append(_flag_row(cx - flags_w / 2, y, flags_w, flags, color))
     if note:
-        out.append(text(cx, y + 54, fit(note, body.w, 13), size=13, fill=MUTED, anchor="middle"))
+        out.append(text(cx, y + 56, fit(note, body.w, 13), size=13, fill=MUTED, anchor="middle"))
+    return "".join(out)
+
+
+def hint_strip(box: Box, title: str, color: str, message: str, flags: tuple[str, ...]) -> str:
+    """A compact hint: what was not measured and the flag that measures it.
+
+    Wide strips use one row; narrow ones put the flags on a second row.
+    """
+    out = [frame(box, dashed=True, radius=min(RADIUS, box.h / 3))]
+    x = box.x + PAD
+    room = box.w - 2 * PAD
+    title_text = fit(title, room - 16, 13, weight=600, tracking=1.6)
+    title_w = 16 + text_width(title_text, 13, weight=600, tracking=1.6)
+    flags_w = pills_width(flags)
+    message_w = text_width(message, 15, weight=500)
+    one_row = title_w + 16 + min(message_w, 160) + 16 + flags_w <= room
+    base = box.y + box.h / 2 + 5 if one_row else box.y + box.h / 2 - 9
+    out.append(rect(x, base - 10, 8, 8, fill=color, rx=2))
+    out.append(text(x + 16, base, title_text, size=13, fill=TEXT_2, weight=600, tracking=1.6))
+    if one_row:
+        msg_room = room - title_w - 16 - flags_w - 16
+        out.append(
+            text(
+                x + title_w + 16,
+                base,
+                fit(message, msg_room, 15, weight=500),
+                size=15,
+                fill=TEXT_2,
+                weight=500,
+            )
+        )
+        out.append(
+            _flag_row(box.right - PAD - flags_w, box.y + box.h / 2 - 14, flags_w, flags, color)
+        )
+        return "".join(out)
+    msg_room = room - title_w - 12
+    if msg_room >= 80:
+        out.append(
+            text(
+                x + title_w + 12,
+                base,
+                fit(message, msg_room, 14, weight=500),
+                size=14,
+                fill=TEXT_2,
+                weight=500,
+            )
+        )
+    out.append(_flag_row(x, base + 10, room, flags, color))
     return "".join(out)
 
 
@@ -355,10 +471,21 @@ def log_step(decades: int, height: float, min_gap: float = 22.0) -> int:
     return step
 
 
-def tick_duration(ms: float) -> str:
-    if ms >= 1000:
-        return f"{ms / 1000:g} s"
-    return f"{ms:g} ms"
+# Time ticks in milliseconds. Past 10 s they follow minutes and hours rather
+# than decades, so labels read "1 min" and "1 h" instead of "100 s" or "1e+06 s".
+_TIME_TICKS = (0.1, 1, 10, 100, 1e3, 1e4, 6e4, 6e5, 3.6e6, 3.6e7, 3.6e8)
+
+
+def time_ticks(lo: int, hi: int, height: float, min_gap: float = 22.0) -> list[float]:
+    """Readable ticks between 10**lo and 10**hi ms, at least ``min_gap`` px apart."""
+    span = (hi - lo) or 1
+    candidates = [t for t in _TIME_TICKS if 10.0**lo <= t <= 10.0**hi]
+    kept: list[float] = []
+    for t in candidates:
+        y = math.log10(t)
+        if not kept or (y - math.log10(kept[-1])) / span * height >= min_gap:
+            kept.append(t)
+    return kept
 
 
 def depth_position(depth: int) -> float:
@@ -392,7 +519,22 @@ def grid_line(x1: float, x2: float, y: float) -> str:
 
 
 def axis_label(x: float, y: float, label: str, *, anchor: str = "end") -> str:
-    return text(x, y, label, size=12, fill=MUTED, font="mono", anchor=anchor)
+    return text(x, y, label, size=LABEL, fill=MUTED, font="mono", anchor=anchor)
+
+
+def mono_width(label: str, size: float = LABEL) -> float:
+    return text_width(label, size, font="mono")
+
+
+def bar_color(percent: float) -> str:
+    """One colour scale for every score bar and accuracy value on the card."""
+    if percent >= 85:
+        return PASS
+    if percent >= 60:
+        return GOOD
+    if percent >= 40:
+        return PARTIAL
+    return FAIL
 
 
 # --------------------------------------------------------------------------- hero tiles
@@ -407,6 +549,7 @@ class Hero:
     value: str = ""
     unit: str = ""
     sub: str | tuple[str, ...] | None = None
+    sub_color: str = TEXT_2
     sub2: str | tuple[str, ...] | None = None
     sub2_color: str = MUTED
     stars: tuple[int, str] | None = None
@@ -418,6 +561,13 @@ class Hero:
         return not self.value
 
 
+def _value_runs(value: str, unit: str, size: float, color: str) -> list[Run]:
+    runs = [Run(value, size, TEXT, "display", 700, tracking=-0.5)]
+    if unit:
+        runs.append(Run(unit, round(size * 0.36), color, "sans", 600, gap=size * 0.1))
+    return runs
+
+
 def hero_value_size(heroes: list[Hero], boxes: list[Box], max_size: float = 56) -> float:
     """One value size for the whole row, so the numbers read as a set."""
     size = max_size
@@ -425,12 +575,7 @@ def hero_value_size(heroes: list[Hero], boxes: list[Box], max_size: float = 56) 
         if hero.missing:
             continue
         room = box.w - 2 * PAD
-        while size > 28:
-            w = text_width(hero.value, size, font="display", weight=700, tracking=-0.5)
-            if hero.unit:
-                w += text_width(hero.unit, round(size * 0.36), weight=600) + size * 0.1
-            if w <= room:
-                break
+        while size > 28 and runs_width(_value_runs(hero.value, hero.unit, size, hero.color)) > room:
             size -= 2
     return size
 
@@ -458,37 +603,18 @@ def hero_tile(box: Box, hero: Hero, value_size: float) -> str:
     sub_y = sub2_y - 20
     if hero.missing:
         out.append(text(x, label_y + 40, "Not measured", size=19, fill=TEXT_2, weight=500))
-        px = x
-        for flag in hero.flags:
-            if px + pills_width((flag,)) > x + room and px > x:
-                break
-            chip, w = flag_pill(px, sub2_y - 18, flag, hero.color, max_width=x + room - px)
-            out.append(chip)
-            px += w + 6
+        out.append(_flag_row(x, sub2_y - 20, room, hero.flags, hero.color))
         return "".join(out)
     # The value sits midway between the label and the first detail line, by cap height.
     cap = value_size * 0.73
     value_y = (label_y + sub_y - 18) / 2 + cap / 2
-    value_w = text_width(hero.value, value_size, font="display", weight=700, tracking=-0.5)
-    out.append(
-        f"<text {attrs(x=float(x), y=float(value_y), font_family=FAMILIES['display'], font_size=float(value_size), font_weight=700, fill=TEXT, letter_spacing=-0.5)}>{esc(hero.value)}</text>"
-    )
-    if hero.unit:
-        unit_size = round(value_size * 0.36)
-        out.append(
-            text(
-                x + value_w + value_size * 0.1,
-                value_y,
-                hero.unit,
-                size=unit_size,
-                fill=hero.color,
-                weight=600,
-            )
-        )
+    out.append(runs_text(x, value_y, _value_runs(hero.value, hero.unit, value_size, hero.color)))
     if hero.stars is not None:
         out.append(_stars(x, sub_y, room, hero.stars, hero.color, capped=hero.capped, size=14))
     elif hero.sub:
-        out.append(text(x, sub_y, first_fit(_variants(hero.sub), room, 13), size=13, fill=TEXT_2))
+        out.append(
+            text(x, sub_y, first_fit(_variants(hero.sub), room, 13), size=13, fill=hero.sub_color)
+        )
     if hero.sub2:
         out.append(
             text(
@@ -512,34 +638,22 @@ def _stars(
     capped: bool,
     size: float = 15,
 ) -> str:
+    """Rating stars, the rating word, and "capped" when the safety cap applied."""
     filled, word = stars
-    glyphs = tspan("\u2605" * filled, fill=color) + tspan("\u2605" * (5 - filled), fill=FAINT)
-    out = [
-        f"<text {attrs(x=float(x), y=float(y), font_family=FAMILIES['sans'], font_size=float(size), letter_spacing=1.0)}>{glyphs}</text>"
-    ]
-    stars_w = text_width("\u2605" * 5, size, tracking=1.0) + 10
+    runs = [Run("\u2605" * filled, size, color, tracking=1.0)] if filled else []
+    if filled < 5:
+        runs.append(Run("\u2605" * (5 - filled), size, FAINT, tracking=1.0))
     word_size = size - 1
-    word_room = room - stars_w
-    out.append(
-        text(
-            x + stars_w,
-            y,
-            fit(word, word_room, word_size, weight=500),
-            size=word_size,
-            fill=TEXT_2,
-            weight=500,
-        )
-    )
+    word_room = room - runs_width(runs) - 10
     if capped:
-        wx = (
-            x
-            + stars_w
-            + text_width(fit(word, word_room, word_size, weight=500), word_size, weight=500)
-            + 8
+        word_room -= text_width("capped", word_size - 1, weight=500) + 8
+    if word and word_room > 24:
+        runs.append(
+            Run(fit(word, word_room, word_size, weight=500), word_size, TEXT_2, weight=500, gap=10)
         )
-        if wx + 50 < x + room:
-            out.append(text(wx, y, "capped", size=word_size - 1, fill=WARN, weight=500))
-    return "".join(out)
+    if capped:
+        runs.append(Run("capped", word_size - 1, WARN, weight=500, gap=8))
+    return runs_text(x, y, runs)
 
 
 # --------------------------------------------------------------------------- tool score block
@@ -548,67 +662,81 @@ def _stars(
 def score_block(box: Box, te: ToolEvalSummary) -> str:
     """The big tool-calling score used when no speed numbers lead the card.
 
-    The score, rating, scenario count, and outcome bar form one group centered
-    below the label, and a pass-rate ring fills the right side when the block
-    is large enough.
+    The score, rating, scope, and outcome bar form one group centered below the
+    label, and an outcome ring fills the right side when the block is large
+    enough. A subset withholds the stars: a rating earned on 3 of 69 scenarios
+    is not a rating of the model.
     """
     out = [frame(box), rect(box.x + PAD, box.y, 56, 3, fill=TOOL, rx=1.5)]
     x = box.x + PAD
     room = box.w - 2 * PAD
     radius = min((box.h - 2 * PAD) / 2 - 12, 128.0, room * 0.22)
-    if radius >= 64 and room - 2 * radius - 48 >= 220:
-        cx = box.right - PAD - radius - 8
-        cy = box.y + box.h / 2
-        out.append(_ring(cx, cy, radius, te))
+    ring = radius >= 64 and room - 2 * radius - 48 >= 220
+    if ring:
+        out.append(_ring(box.right - PAD - radius - 8, box.y + box.h / 2, radius, te))
         room -= 2 * radius + 48
     label_y = box.y + PAD + 12
     out.append(
         text(x, label_y, "TOOL CALLING SCORE", size=13, fill=TEXT_2, weight=600, tracking=1.4)
     )
     area_top, area_bottom = label_y + 16, box.bottom - PAD
-    score = f"{max(0.0, min(te.score, 100.0)):.0f}"
+    score = fmt.score(te.score)
     details_h, bar_gap, bar_h = 58.0, 32.0, 36.0
     size = max(
         48.0, min(132.0, (area_bottom - area_top - details_h - bar_gap - bar_h) / 0.73 * 0.9)
     )
-    unit_size = round(size * 0.28)
-    while (
-        size > 48
-        and text_width(score, size, font="display", weight=700, tracking=-2)
-        + text_width("/100", unit_size, weight=600)
-        + 8
-        > room
-    ):
+
+    def score_runs(size: float) -> list[Run]:
+        return [
+            Run(score, size, TEXT, "display", 700, tracking=-2),
+            Run("/100", round(size * 0.28), TOOL, "sans", 600, gap=6),
+        ]
+
+    while size > 48 and runs_width(score_runs(size)) > room:
         size -= 4
-        unit_size = round(size * 0.28)
     cap = size * 0.73
     group_h = cap + details_h + bar_gap + bar_h
     base = area_top + max((area_bottom - area_top - group_h) / 2, 0) + cap
-    subset = is_subset(te.total, te.suite_size)
-    score_w = text_width(score, size, font="display", weight=700, tracking=-2)
-    out.append(
-        f"<text {attrs(x=float(x - size * 0.04), y=float(base), font_family=FAMILIES['display'], font_size=float(size), font_weight=700, fill=TEXT, letter_spacing=-2.0)}>{esc(score)}</text>"
-    )
-    out.append(text(x + score_w + 6, base, "/100", size=unit_size, fill=TOOL, weight=600))
-    out.append(
-        _stars(x, base + 32, room, rating_parts(te.rating), TOOL, capped=te.safety_capped, size=17)
-    )
-    out.append(
-        text(
-            x,
-            base + 56,
-            first_fit(score_details(te, passed=True), room, 14, weight=500),
-            size=14,
-            fill=WARN if subset else MUTED,
-            weight=500,
+    out.append(runs_text(x - size * 0.04, base, score_runs(size)))
+    details: list[str]
+    if is_subset(te):
+        out.append(warn_pill(x, base + 13, scope_label(te), max_width=room)[0])
+        parts = [] if ring else [f"{te.passed} of {te.total} passed"]
+        if te.trials > 1:
+            parts.append(f"mean of {te.trials} trials")
+        if te.safety_capped:
+            parts.append("safety-capped")
+        details = [MID.join(parts)] if parts else []
+        color = MUTED
+    else:
+        out.append(
+            _stars(
+                x, base + 32, room, rating_parts(te.rating), TOOL, capped=te.safety_capped, size=17
+            )
         )
-    )
+        details = score_details(te, passed=not ring)
+        color = WARN if needs_caution(te) else MUTED
+    if details:
+        out.append(
+            text(
+                x,
+                base + 58,
+                first_fit(details, room, 14, weight=500),
+                size=14,
+                fill=color,
+                weight=500,
+            )
+        )
     out.append(outcome_bar(Box(x, base + details_h + bar_gap, room, bar_h), te))
     return "".join(out)
 
 
 def _ring(cx: float, cy: float, r: float, te: ToolEvalSummary) -> str:
-    """Pass rate as a ring: passes, then partials, starting at twelve o'clock."""
+    """Outcomes as a ring: passes, then partials, then failures, from twelve o'clock.
+
+    The center gives the pass count rather than a percentage, so it never
+    competes with the 0-100 score beside it.
+    """
     total = max(te.passed + te.partial + te.failed, 1)
     circumference = 2 * math.pi * r
     width = max(10.0, r * 0.12)
@@ -622,13 +750,16 @@ def _ring(cx: float, cy: float, r: float, te: ToolEvalSummary) -> str:
             f"<circle {attrs(cx=float(cx), cy=float(cy), r=float(r), fill='none', stroke=color, stroke_width=width, stroke_dasharray=f'{length:.2f} {circumference:.2f}', stroke_dashoffset=f'{-start:.2f}', transform=f'rotate(-90 {cx:.2f} {cy:.2f})', opacity=0.95 if color == PASS else 0.9)}/>"
         )
         start += length
-    pct = fmt.percent(te.passed / total)
-    size = r * 0.42
+    label = f"{te.passed}/{te.total}"
+    size = r * 0.34
+    inside = 2 * r - 2 * width - 24
+    while size > 14 and text_width(label, size, font="display", weight=700) > inside:
+        size -= 1
     out.append(
         text(
             cx,
             cy + size * 0.2,
-            pct,
+            label,
             size=size,
             fill=TEXT,
             font="display",
@@ -636,14 +767,16 @@ def _ring(cx: float, cy: float, r: float, te: ToolEvalSummary) -> str:
             anchor="middle",
         )
     )
-    out.append(
-        text(cx, cy + size * 0.2 + 24, "scenarios passed", size=13, fill=MUTED, anchor="middle")
-    )
+    out.append(text(cx, cy + size * 0.2 + 24, "passed", size=13, fill=MUTED, anchor="middle"))
     return "".join(out)
+
+
+# --------------------------------------------------------------------------- accuracy
 
 
 ACCURACY_ROW_MAX = 112.0
 ACCURACY_ROW_COMFORT = 84.0
+_ACCURACY_FLAGS = ("--gsm8k", "--mmlu", "--ifeval")
 
 
 def accuracy_height(count: int) -> float:
@@ -651,8 +784,12 @@ def accuracy_height(count: int) -> float:
     return PAD + HEADER_H + 16 + count * ACCURACY_ROW_COMFORT + PAD
 
 
+def accuracy_min_height(count: int) -> float:
+    return PAD + HEADER_H + 16 + count * 48.0 + PAD
+
+
 def accuracy_panel(box: Box, data: CardData) -> str:
-    """External accuracy benchmarks as large numbers, for cards led by the tool score."""
+    """External accuracy benchmarks as large numbers."""
     title = "ACCURACY"
     if not data.accuracy:
         return missing_panel(
@@ -665,12 +802,12 @@ def accuracy_panel(box: Box, data: CardData) -> str:
             ghost_kind="bars",
         )
     out = [frame(box), panel_header(box, title, PREFILL)]
-    out.append(_accuracy_rows(content_box(box), data))
+    out.append(_accuracy_rows(content_box(box), data.accuracy))
     return "".join(out)
 
 
-def _accuracy_rows(body: Box, data: CardData) -> str:
-    results = list(data.accuracy)
+def _accuracy_rows(body: Box, results: tuple[AccuracyResult, ...]) -> str:
+    """One row per benchmark: name and any caveat on the left, the score on the right."""
     row_h = min(body.h / len(results), ACCURACY_ROW_MAX)
     top = body.y + max((body.h - row_h * len(results)) / 2, 0)
     size = max(20.0, min(48.0, row_h * 0.46))
@@ -678,14 +815,21 @@ def _accuracy_rows(body: Box, data: CardData) -> str:
     out = []
     for i, result in enumerate(results):
         y = top + i * row_h
-        base = y + row_h / 2 + size * 0.36 - 6
-        name = fit(result.name, body.w * 0.45, 15, weight=500)
-        out.append(text(body.x, base, name, size=15, fill=TEXT_2, weight=500))
-        if result.detail:
-            out.append(
-                text(body.x, base - 20, fit(result.detail, body.w * 0.45, 12), size=12, fill=MUTED)
-            )
+        bar = row_h >= 44
+        base = y + row_h / 2 + size * 0.36 - (6 if bar else 0)
         value = fmt.percent(result.accuracy)
+        value_w = text_width(value, size, font="display", weight=700)
+        left_room = body.w - value_w - 24
+        name = fit(result.name, min(left_room, body.w * 0.6), 15, weight=500)
+        name_w = text_width(name, 15, weight=500)
+        runs = [Run(name, 15, TEXT_2, weight=500)]
+        notes = [n for n in (accuracy_note(result), accuracy_note(result, detail=False)) if n]
+        note_room = left_room - name_w - 10
+        if notes and note_room >= 48:
+            # The stored detail goes first when space runs out; the error count stays.
+            color = WARN if result.errors > 0 else MUTED
+            runs.append(Run(first_fit(notes, note_room, 13), 13, color, gap=10))
+        out.append(runs_text(body.x, base, runs))
         out.append(
             text(
                 body.right,
@@ -699,13 +843,18 @@ def _accuracy_rows(body: Box, data: CardData) -> str:
             )
         )
         bar_y = base + 12
-        if row_h >= 40 and bar_y + bar_h <= y + row_h:
+        if bar and bar_y + bar_h <= y + row_h:
             out.append(rect(body.x, bar_y, body.w, bar_h, fill=FAINT, rx=bar_h / 2))
-            frac = max(0.0, min(result.accuracy, 1.0))
+            frac = max(0.0, min(result.accuracy, 1.0)) if math.isfinite(result.accuracy) else 0.0
             if frac > 0:
                 out.append(
                     rect(
-                        body.x, bar_y, max(body.w * frac, bar_h), bar_h, fill=PREFILL, rx=bar_h / 2
+                        body.x,
+                        bar_y,
+                        max(body.w * frac, bar_h),
+                        bar_h,
+                        fill=bar_color(frac * 100),
+                        rx=bar_h / 2,
                     )
                 )
     return "".join(out)
@@ -728,15 +877,28 @@ def long_context_panel(box: Box, data: CardData) -> str:
         )
     series = single_stream(data)
     if not has_long_context(data):
-        return depth_strip(box, series)
+        return depth_strip(box, data)
+    level = stream_concurrency(data)
+    deepest = fmt.tokens(series[-1].depth)
+    if data.perf_incomplete:
+        subtitle = [f"depth pass incomplete, stopped at {deepest}", "depth pass incomplete"]
+        subtitle_color = WARN
+    elif window_capped(data):
+        subtitle = [cap_note(data), f"capped at {deepest}"]
+        subtitle_color = WARN
+    else:
+        stream = "single stream (c=1)" if level == 1 else f"per request at c={level}"
+        subtitle = [f"{stream} by context depth", stream]
+        subtitle_color = MUTED
     out = [
         frame(box),
-        panel_header(box, title, DECODE, subtitle="single stream (c=1) by context depth"),
+        panel_header(box, title, DECODE, subtitle=subtitle, subtitle_color=subtitle_color),
     ]
     body = content_box(box, extra=-4)
-    note = ttft_note(data)
     body = Box(body.x, body.y, body.w, body.h - 24)
-    out.append(text(body.x, body.bottom + 22, first_fit(note, body.w, 12), size=12, fill=MUTED))
+    out.append(
+        text(body.x, body.bottom + 22, first_fit(ttft_note(data), body.w, 13), size=13, fill=MUTED)
+    )
     if body.w >= body.h * 1.5:
         half = (body.w - 48) / 2
         first = Box(body.x, body.y, half, body.h)
@@ -752,56 +914,77 @@ def long_context_panel(box: Box, data: CardData) -> str:
             )
         )
     else:
-        half = (body.h - 40) / 2
+        half = (body.h - 32) / 2
         first = Box(body.x, body.y, body.w, half)
-        second = Box(body.x, body.y + half + 40, body.w, half)
+        second = Box(body.x, body.y + half + 32, body.w, half)
     out.append(_decode_chart(first, series))
     out.append(_ttft_chart(second, series))
     return "".join(out)
 
 
-def depth_strip(box: Box, series: list[PerfPoint]) -> str:
-    """Short sweeps: the measured depths as numbers, plus how to get the chart."""
-    flags = ("--perf --perf-preset long",)
-    out = [frame(box, dashed=True)]
-    out.append(panel_header(box, "LONG CONTEXT", DECODE, right_reserved=pills_width(flags)))
-    px = box.right - PAD - pills_width(flags)
-    out.append(flag_pill(px, box.y + PAD + 6, flags[0], DECODE)[0])
-    body = content_box(box)
-    deepest = series[-1].depth if series else 0
-    if len(series) <= 1:
-        message = f"Measured at depth {fmt.tokens(deepest)} only"
+def depth_strip(box: Box, data: CardData) -> str:
+    """Sweeps too shallow to chart: the measured depths as numbers, and why it stops there.
+
+    The hint to run the long preset appears only when that would help: not
+    after a long run that the context window capped, and not after a long run
+    that was interrupted.
+    """
+    series = single_stream(data)
+    deepest = fmt.tokens(series[-1].depth if series else 0)
+    first = fmt.tokens(series[0].depth if series else 0)
+    flags: tuple[str, ...] = ("--perf --perf-preset long",)
+    to_128k = "The long preset charts decode and TTFT to 128K."
+    if data.perf_incomplete:
+        message = f"Depth pass incomplete: stopped at {deepest}"
+        note = "Rerun the sweep to chart decode and TTFT by depth."
+        if data.perf_preset == "long":
+            flags = ()
+    elif window_capped(data):
+        message = f"Long preset {cap_note(data)}"
+        note = "A larger served context window lets the sweep go deeper."
+        flags = ()
+    elif data.perf_preset == "short":
+        span = f"depths {first} to {deepest}" if len(series) > 1 else f"depth {deepest} only"
+        message = f"Short preset: {span}"
+        note = to_128k
+    elif len(series) <= 1:
+        message = f"Measured at depth {deepest} only"
+        note = to_128k
     else:
-        message = f"Sweep stopped at {fmt.tokens(deepest)}"
-    notes = (
-        f"The chart needs depths past {fmt.tokens(LONG_CONTEXT_MIN_DEPTH)}.",
-        "The long preset sweeps to 128K.",
-    )
-    msg_w = max(text_width(message, 17, weight=500), text_width(notes[0], 13), 220.0)
+        message = f"Depths {first} to {deepest} only"
+        note = to_128k
+    out = [frame(box, dashed=True)]
+    flags_w = pills_width(flags) if flags else 0.0
+    out.append(panel_header(box, "LONG CONTEXT", DECODE, right_reserved=flags_w))
+    if flags:
+        px = box.right - PAD - flags_w
+        out.append(_flag_row(px, box.y + PAD + 5, flags_w, flags, DECODE))
+    body = content_box(box)
+    msg_w = max(text_width(message, 17, weight=500), text_width(note, 13), 220.0)
     out.append(
         text(
             body.x,
             body.y + 14,
             fit(message, body.w, 17, weight=500),
             size=17,
-            fill=TEXT_2,
+            fill=WARN if data.perf_incomplete else TEXT_2,
             weight=500,
         )
     )
-    col_w = 132.0
+    col_w = 140.0
     beside = body.x + msg_w + 40
-    if len(series) > 1 and body.right - beside >= col_w * len(series):
+    if body.right - beside >= col_w * len(series):
         out.append(_depth_stats(beside, body.y - 2, col_w, series))
-        room = beside - body.x - 24
-        out.append(text(body.x, body.y + 38, fit(notes[0], room, 13), size=13, fill=MUTED))
-        out.append(text(body.x, body.y + 56, fit(notes[1], room, 13), size=13, fill=MUTED))
-    elif len(series) > 1 and body.h >= 110 and body.w >= col_w * len(series):
-        out.append(text(body.x, body.y + 40, fit(" ".join(notes), body.w, 13), size=13, fill=MUTED))
+        out.append(
+            text(body.x, body.y + 40, fit(note, beside - body.x - 24, 13), size=13, fill=MUTED)
+        )
+    elif body.h >= 110 and body.w >= 110 * len(series):
+        out.append(text(body.x, body.y + 40, fit(note, body.w, 13), size=13, fill=MUTED))
         out.append(
             _depth_stats(body.x, body.y + 68, min(col_w * 1.2, body.w / len(series)), series)
         )
     else:
-        out.append(text(body.x, body.y + 40, fit(" ".join(notes), body.w, 13), size=13, fill=MUTED))
+        out.append(text(body.x, body.y + 40, fit(note, body.w, 13), size=13, fill=MUTED))
     return "".join(out)
 
 
@@ -810,18 +993,33 @@ def _depth_stats(x: float, y: float, col_w: float, series: list[PerfPoint]) -> s
     for i, p in enumerate(series):
         cx = x + i * col_w
         out.append(
-            text(cx, y + 6, f"depth {fmt.tokens(p.depth)}", size=12, fill=MUTED, font="mono")
+            text(cx, y + 6, f"depth {fmt.tokens(p.depth)}", size=LABEL, fill=MUTED, font="mono")
         )
-        rate = fmt.rate(p.tg_tps)
-        out.append(text(cx, y + 32, rate, size=22, fill=TEXT, font="display", weight=700))
-        rate_w = text_width(rate, 22, font="display", weight=700)
-        out.append(text(cx + rate_w + 5, y + 32, "tok/s", size=12, fill=DECODE, weight=600))
+        out.append(
+            runs_text(
+                cx,
+                y + 32,
+                [
+                    Run(fmt.rate(p.tg_tps), 22, TEXT, "display", 700),
+                    Run("tok/s", 13, DECODE, weight=600, gap=5),
+                ],
+            )
+        )
         out.append(
             text(
-                cx, y + 52, f"TTFT {fmt.duration_text(p.ttft_ms)}", size=12, fill=TTFT, font="mono"
+                cx,
+                y + 52,
+                f"TTFT {fmt.duration_text(p.ttft_ms)}",
+                size=LABEL,
+                fill=TTFT,
+                font="mono",
             )
         )
     return "".join(out)
+
+
+_CHART_TOP = 44.0
+_AXIS_H = 30.0
 
 
 def _chart_heading(
@@ -831,17 +1029,14 @@ def _chart_heading(
     base = box.y + 22
     out = [circle(box.x + 5, base - 5, 5, fill=color)]
     out.append(text(box.x + 18, base, label, size=15, fill=TEXT, weight=600))
-    cl_w = text_width(callout_label, 13, weight=500)
-    out.append(text(box.right, base, callout_label, size=13, fill=MUTED, weight=500, anchor="end"))
     out.append(
-        text(
-            box.right - cl_w - 8,
+        runs_text(
+            box.right,
             base + 1,
-            callout,
-            size=26,
-            fill=color,
-            font="display",
-            weight=700,
+            [
+                Run(callout, 26, color, "display", 700),
+                Run(callout_label, 13, MUTED, weight=500, gap=8),
+            ],
             anchor="end",
         )
     )
@@ -854,8 +1049,7 @@ def _depth_axis(plot: Box, depths: list[int]) -> tuple[list[float], str]:
     span = hi - lo or 1.0
     xs = [plot.x + 10 + (p - lo) / span * (plot.w - 20) for p in positions]
     labels = [fmt.tokens(d) for d in depths]
-    widths = [text_width(lbl, 12, font="mono") for lbl in labels]
-    keep = spaced_labels(xs, widths)
+    keep = spaced_labels(xs, [mono_width(lbl) for lbl in labels])
     out = [
         axis_label(x, plot.bottom + 22, lbl, anchor="middle")
         for x, lbl, k in zip(xs, labels, keep, strict=True)
@@ -864,14 +1058,29 @@ def _depth_axis(plot: Box, depths: list[int]) -> tuple[list[float], str]:
     return xs, "".join(out)
 
 
+def _decode_callout(series: list[PerfPoint]) -> tuple[str, str]:
+    """The decode change from the shallowest to the deepest depth.
+
+    A near-zero base makes a percentage meaningless (+29,900%), so the deepest
+    speed is shown instead.
+    """
+    base, last = series[0], series[-1]
+    peak = max(p.tg_tps for p in series)
+    at = f"at {fmt.tokens(last.depth)}"
+    if base.tg_tps <= 0 or base.tg_tps < peak * 0.01:
+        return fmt.rate(last.tg_tps), f"tok/s {at}"
+    change = last.tg_tps / base.tg_tps - 1
+    if abs(change) > 9.99:
+        return fmt.rate(last.tg_tps), f"tok/s {at}"
+    return fmt.signed_percent(change), at
+
+
 def _decode_chart(box: Box, series: list[PerfPoint]) -> str:
     base, last = series[0], series[-1]
-    change = last.tg_tps / base.tg_tps - 1 if base.tg_tps > 0 else 0.0
-    heading, _ = _chart_heading(
-        box, "Decode tok/s", DECODE, fmt.signed_percent(change), f"at {fmt.tokens(last.depth)}"
-    )
+    callout, callout_label = _decode_callout(series)
+    heading, _ = _chart_heading(box, "Decode tok/s", DECODE, callout, callout_label)
     out = [heading]
-    plot = Box(box.x + 44, box.y + 52, box.w - 44, box.h - 52 - 30)
+    plot = Box(box.x + 44, box.y + _CHART_TOP, box.w - 44, box.h - _CHART_TOP - _AXIS_H)
     values = [p.tg_tps for p in series]
     positive = [v for v in values if v > 0]
     # A sweep spanning 9,000 to 2 tok/s would flatten into the axis on a linear
@@ -939,23 +1148,23 @@ def _end_labels(
     for (x, y), label, anchor in ((pts[0], labels[0], "start"), (pts[-1], labels[1], "end")):
         if not label:
             continue
-        w = text_width(label, 12, font="mono", weight=500)
+        w = text_width(label, LABEL, font="mono", weight=500)
         lx = x + 8 if anchor == "start" else x - 8
         x0, x1 = (lx, lx + w) if anchor == "start" else (lx - w, lx)
         extent = _span_extent(lines, x0 - 2, x1 + 2) or (y, y)
         top_line, bottom_line = min(extent[0], y), max(extent[1], y)
         above = top_line - 8
-        below = bottom_line + 18
-        fits_above = above - 10 >= plot.y - 18
+        below = bottom_line + 19
+        fits_above = above - 11 >= plot.y - 18
         fits_below = below <= plot.bottom + 6
         if fits_above and (not fits_below or y - above <= below - y):
             ly = above
         elif fits_below:
             ly = below
         else:
-            ly = max(above, plot.y - 8)
+            ly = max(above, plot.y - 7)
         out.append(
-            text(lx, ly, label, size=12, fill=TEXT_2, font="mono", weight=500, anchor=anchor)
+            text(lx, ly, label, size=LABEL, fill=TEXT_2, font="mono", weight=500, anchor=anchor)
         )
     return "".join(out)
 
@@ -967,43 +1176,62 @@ def _ttft_chart(box: Box, series: list[PerfPoint]) -> str:
         box, "TTFT", TTFT, fmt.duration_text(last.ttft_ms), f"cold at {fmt.tokens(last.depth)}"
     )
     out = [heading]
+    callout_w = runs_width(
+        [
+            Run(fmt.duration_text(last.ttft_ms), 26, TTFT, "display", 700),
+            Run(f"cold at {fmt.tokens(last.depth)}", 13, MUTED, weight=500, gap=8),
+        ]
+    )
     if cached:
         # The cached line matters to agents that re-send a long prefix, so its
         # latest value goes in the legend rather than fighting the lines for room.
-        warm_text = f"cached {fmt.duration_text(cached[-1].cached_ttft_ms or 0.0)}"
         lx = label_right + 16
         ly = box.y + 22
-        out.append(line(lx, ly - 4, lx + 16, ly - 4, stroke=TTFT_CACHED, width=2, dash="4 3"))
-        out.append(text(lx + 22, ly, warm_text, size=12, fill=TTFT_CACHED, font="mono", weight=500))
-    plot = Box(box.x + 52, box.y + 52, box.w - 52, box.h - 52 - 30)
+        room = box.right - callout_w - 16 - (lx + 22)
+        warm = first_fit(
+            [
+                f"cached {fmt.duration_text(cached[-1].cached_ttft_ms or 0.0)}",
+                fmt.duration_text(cached[-1].cached_ttft_ms or 0.0),
+            ],
+            room,
+            LABEL,
+            font="mono",
+            weight=500,
+        )
+        if room >= 40:
+            out.append(line(lx, ly - 4, lx + 16, ly - 4, stroke=TTFT_CACHED, width=2, dash="4 3"))
+            out.append(
+                text(lx + 22, ly, warm, size=LABEL, fill=TTFT_CACHED, font="mono", weight=500)
+            )
+    plot = Box(box.x + 60, box.y + _CHART_TOP, box.w - 60, box.h - _CHART_TOP - _AXIS_H)
     values = [p.ttft_ms for p in series] + [
         p.cached_ttft_ms for p in cached if p.cached_ttft_ms is not None
     ]
     lo, hi = log_decades(values)
-    step = log_step(hi - lo, plot.h)
 
     def y_of(v: float) -> float:
         v = max(v, 10.0**lo)
         return plot.bottom - (math.log10(v) - lo) / (hi - lo) * plot.h
 
-    for k in range(lo, hi + 1, step):
-        out.append(grid_line(plot.x, plot.right, y_of(10.0**k)))
-        out.append(axis_label(plot.x - 10, y_of(10.0**k) + 4, tick_duration(10.0**k)))
+    for t in time_ticks(lo, hi, plot.h):
+        out.append(grid_line(plot.x, plot.right, y_of(t)))
+        out.append(axis_label(plot.x - 10, y_of(t) + 4, fmt.axis_duration(t)))
     xs, labels = _depth_axis(plot, [p.depth for p in series])
     out.append(labels)
     cold = [(x, y_of(p.ttft_ms)) for x, p in zip(xs, series, strict=True)]
     area = [(cold[0][0], plot.bottom), *cold, (cold[-1][0], plot.bottom)]
     out.append(f'<polygon points="{polyline(area)}" fill="url(#ttftArea)"/>')
+    warm_pts: list[tuple[float, float]] = []
     if cached:
-        warm = [
+        warm_pts = [
             (x, y_of(p.cached_ttft_ms))
             for x, p in zip(xs, series, strict=True)
             if p.cached_ttft_ms is not None
         ]
         out.append(
-            f'<polyline points="{polyline(warm)}" fill="none" stroke="{TTFT_CACHED}" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.9"/>'
+            f'<polyline points="{polyline(warm_pts)}" fill="none" stroke="{TTFT_CACHED}" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round" opacity="0.9"/>'
         )
-        for x, y in warm:
+        for x, y in warm_pts:
             out.append(circle(x, y, 3, fill=TTFT_CACHED))
     out.append(
         f'<polyline points="{polyline(cold)}" fill="none" stroke="{TTFT}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round" filter="url(#glow)"/>'
@@ -1016,7 +1244,7 @@ def _ttft_chart(box: Box, series: list[PerfPoint]) -> str:
             cold,
             [fmt.duration_text(series[0].ttft_ms), ""],
             plot,
-            obstacles=[warm] if cached else None,
+            obstacles=[warm_pts] if warm_pts else None,
         )
     )
     return "".join(out)
@@ -1044,7 +1272,7 @@ def concurrency_panel(box: Box, data: CardData) -> str:
             box,
             title,
             PREFILL,
-            f"Single stream only: {fmt.rate(only.tg_tps_total)} tok/s",
+            f"One concurrency level only: {fmt.rate(only.tg_tps_total)} tok/s",
             ("--perf --concurrency 1,2,4,8",),
             note="More concurrency levels chart aggregate throughput",
         )
@@ -1058,31 +1286,46 @@ def concurrency_panel(box: Box, data: CardData) -> str:
             PREFILL,
             subtitle=f"depth {fmt.tokens(single.depth)}",
             callout=fmt.rate(peak.tg_tps_total),
-            callout_label="tok/s peak",
+            callout_label="tok/s max aggregate",
         ),
     ]
     body = content_box(box, extra=-10)
     legend_y = body.y + 6
+    estimated = any(p.tg_estimated for p in series)
+    per_request = "per request (est.)" if estimated else "per request"
     out.append(rect(body.x, legend_y - 9, 10, 10, fill="url(#bar)", rx=2))
-    out.append(text(body.x + 16, legend_y, "aggregate", size=12, fill=MUTED, font="mono"))
-    lx = body.x + 16 + text_width("aggregate", 12, font="mono") + 16
+    out.append(text(body.x + 16, legend_y, "aggregate", size=LABEL, fill=MUTED, font="mono"))
+    lx = body.x + 16 + mono_width("aggregate") + 16
     out.append(circle(lx + 4, legend_y - 4, 4, fill=TEXT))
-    out.append(text(lx + 14, legend_y, "per request", size=12, fill=MUTED, font="mono"))
+    out.append(text(lx + 14, legend_y, per_request, size=LABEL, fill=MUTED, font="mono"))
+    legend_right = lx + 14 + mono_width(per_request)
     speedup = peak.tg_tps_total / single.tg_tps_total if single.tg_tps_total > 0 else 0.0
     if speedup > 0 and peak.concurrency != single.concurrency:
-        out.append(
-            text(
-                body.right,
-                legend_y,
-                f"{speedup:.1f}\u00d7 at c={peak.concurrency}",
-                size=12,
-                fill=PREFILL,
-                font="mono",
-                weight=500,
-                anchor="end",
-            )
+        options = (
+            [f"{speedup:.1f}\u00d7 at c={peak.concurrency}"]
+            if single.concurrency == 1
+            else [
+                f"{speedup:.1f}\u00d7 c={single.concurrency} to {peak.concurrency}",
+                f"{speedup:.1f}\u00d7",
+            ]
         )
-    plot = Box(body.x + 40, body.y + 30, body.w - 40, body.h - 30 - 24)
+        room = body.right - legend_right - 16
+        label = first_fit(options, room, LABEL, font="mono", weight=500)
+        if mono_width(label) <= room:
+            out.append(
+                text(
+                    body.right,
+                    legend_y,
+                    label,
+                    size=LABEL,
+                    fill=PREFILL,
+                    font="mono",
+                    weight=500,
+                    anchor="end",
+                )
+            )
+    # Room above the plot for the value label over the tallest bar.
+    plot = Box(body.x + 40, body.y + 40, body.w - 40, body.h - 40 - 24)
     # Scale to just above the peak, not to the next round tick, so the bars
     # use the plot height; ticks above the scale are simply not drawn.
     top = max(peak.tg_tps_total * 1.12, 1e-9)
@@ -1097,9 +1340,7 @@ def concurrency_panel(box: Box, data: CardData) -> str:
     slot = plot.w / len(series)
     bar_w = min(slot * 0.58, 64.0)
     centers = [plot.x + slot * (i + 0.5) for i in range(len(series))]
-    show_values = all(
-        text_width(fmt.rate(p.tg_tps_total), 12, font="mono") <= slot - 4 for p in series
-    )
+    show_values = all(mono_width(fmt.rate(p.tg_tps_total)) <= slot - 4 for p in series)
     for cx, p in zip(centers, series, strict=True):
         y = y_of(p.tg_tps_total)
         out.append(
@@ -1115,7 +1356,7 @@ def concurrency_panel(box: Box, data: CardData) -> str:
                     cx,
                     y - lift,
                     fmt.rate(p.tg_tps_total),
-                    size=12,
+                    size=LABEL,
                     fill=TEXT_2,
                     font="mono",
                     weight=500,
@@ -1123,14 +1364,14 @@ def concurrency_panel(box: Box, data: CardData) -> str:
                 )
             )
         label = f"c={p.concurrency}"
-        if text_width(label, 12, font="mono") > slot - 6:
+        if mono_width(label) > slot - 6:
             label = str(p.concurrency)
         out.append(axis_label(cx, plot.bottom + 22, label, anchor="middle"))
-    per_request = [(cx, y_of(p.tg_tps)) for cx, p in zip(centers, series, strict=True)]
+    dots = [(cx, y_of(p.tg_tps)) for cx, p in zip(centers, series, strict=True)]
     out.append(
-        f'<polyline points="{polyline(per_request)}" fill="none" stroke="{TEXT}" stroke-width="1.5" stroke-opacity="0.5" stroke-dasharray="3 4"/>'
+        f'<polyline points="{polyline(dots)}" fill="none" stroke="{TEXT}" stroke-width="1.5" stroke-opacity="0.5" stroke-dasharray="3 4"/>'
     )
-    for x, y in per_request:
+    for x, y in dots:
         out.append(circle(x, y, 4, fill=TEXT, stroke=DOT_FILL, stroke_width=2.0))
     return "".join(out)
 
@@ -1151,79 +1392,142 @@ def needle_panel(box: Box, data: CardData) -> str:
             note="Hides a fact at every depth of each context length",
             ghost_kind="heatmap",
         )
-    effective = fmt.tokens(needle.effective_context) if needle.effective_context else "none"
-    out = [
-        frame(box),
-        panel_header(
-            box,
-            title,
-            PASS,
-            callout=effective,
-            callout_label="effective context",
-            callout_color=PASS if needle.effective_context else FAIL,
-        ),
-    ]
-    body = content_box(box)
-    if not needle.cells:
-        out.append(_needle_summary(body, needle))
+    callout = _needle_callout(needle)
+    out = [frame(box)]
+    if callout is None:
+        out.append(panel_header(box, title, PASS))
     else:
+        value, color = callout
+        out.append(
+            panel_header(
+                box,
+                title,
+                PASS,
+                callout=value,
+                callout_label="effective context",
+                callout_color=color,
+            )
+        )
+    body = content_box(box)
+    if needle.cells:
         out.append(_needle_heatmap(body, needle))
+    else:
+        out.append(_needle_summary(body, needle))
     return "".join(out)
 
 
+def needle_errors(needle: NeedleSummary) -> int:
+    return max(needle.errors, sum(c.error for c in needle.cells))
+
+
+def _all_errored(needle: NeedleSummary) -> bool:
+    if needle.cells:
+        return all(c.error for c in needle.cells)
+    return needle.errors > 0 and needle.accuracy <= 0
+
+
+def _needle_callout(needle: NeedleSummary) -> tuple[str, str] | None:
+    """The effective context, marked "~" because haystack sizes are token estimates.
+
+    When no length passed at every depth the callout says retrieval failed below
+    the smallest length tried; when nothing was answered there is no callout.
+    """
+    if _all_errored(needle):
+        return None
+    if needle.effective_context:
+        return f"~{fmt.tokens(needle.effective_context)}", PASS
+    answered = [c.context_tokens for c in needle.cells if not c.error]
+    if answered:
+        return f"<{fmt.tokens(min(answered))}", FAIL
+    return None
+
+
 def _needle_summary(body: Box, needle: NeedleSummary) -> str:
-    """Legacy runs stored only the totals, so show those plainly."""
+    """Runs without a stored grid show their totals plainly."""
+    errors = needle_errors(needle)
+    if _all_errored(needle):
+        size = min(26.0, body.h * 0.3)
+        cy = body.y + body.h / 2
+        return text(
+            body.x,
+            cy,
+            fit(f"All {errors} cells errored", body.w, size, weight=600),
+            size=size,
+            fill=TEXT_2,
+            weight=600,
+        ) + text(
+            body.x,
+            cy + 28,
+            fit("No needle was answered, so retrieval was not measured.", body.w, 13),
+            size=13,
+            fill=MUTED,
+        )
     size = min(56.0, body.h * 0.45)
     cy = body.y + body.h / 2
     note = "Per-depth grid not stored for this run"
-    if needle.errors > 0:
-        note += f"{MID}{needle.errors} errored"
-    return (
-        text(
-            body.x,
-            cy + size * 0.3,
-            fmt.percent(needle.accuracy),
-            size=size,
-            fill=TEXT,
-            font="display",
-            weight=700,
-        )
-        + text(
-            body.x
-            + text_width(fmt.percent(needle.accuracy), size, font="display", weight=700)
-            + 12,
-            cy + size * 0.3,
-            "of needles found",
-            size=15,
-            fill=TEXT_2,
-        )
-        + text(body.x, body.bottom - 2, fit(note, body.w, 12), size=12, fill=MUTED)
-    )
+    if errors > 0:
+        note += f"{MID}{errors} errored"
+    return runs_text(
+        body.x,
+        cy + size * 0.3,
+        [
+            Run(fmt.percent(needle.accuracy), size, TEXT, "display", 700),
+            Run("of needles found", 15, TEXT_2, gap=12),
+        ],
+    ) + text(body.x, body.bottom - 2, fit(note, body.w, 13), size=13, fill=MUTED)
+
+
+_CELL_MIN = 8.0
+_CELL_MAX = 36.0
 
 
 def _needle_heatmap(body: Box, needle: NeedleSummary) -> str:
+    """The length by depth grid with its axes and legend, centered as one block.
+
+    Both axes come from every cell, errored ones included, so a length where
+    every request failed still has its column. Cells never stretch into a
+    progress bar: width is capped relative to height.
+    """
     contexts = sorted({c.context_tokens for c in needle.cells})
     depths = sorted({c.depth_percent for c in needle.cells})
-    found = {(c.context_tokens, c.depth_percent): c.found for c in needle.cells}
-    label_w = 44.0
-    grid = Box(body.x + label_w, body.y, body.w - label_w, body.h - 50)
-    gap = 4.0 if len(contexts) <= 12 else 2.0
-    cell_w = (grid.w - gap * (len(contexts) - 1)) / len(contexts)
-    cell_h = min((grid.h - gap * (len(depths) - 1)) / len(depths), 36.0)
+    state = {(c.context_tokens, c.depth_percent): c for c in needle.cells}
+    label_w = 52.0
+    block_extra = 52.0  # axis labels and legend below the grid
+    avail_h = body.h - block_extra
+    gap = 4.0 if len(depths) <= 8 else 2.0
+    cell_h = (avail_h - gap * (len(depths) - 1)) / len(depths)
+    if cell_h < _CELL_MIN:
+        gap = 1.0
+        cell_h = max((avail_h - gap * (len(depths) - 1)) / len(depths), 3.0)
+    cell_h = min(cell_h, _CELL_MAX)
+    col_gap = 4.0 if len(contexts) <= 12 else 2.0
+    avail_w = body.w - label_w
+    cell_w = (avail_w - col_gap * (len(contexts) - 1)) / len(contexts)
+    cell_w = min(cell_w, max(cell_h * 4, 56.0), 160.0)
+    used_w = cell_w * len(contexts) + col_gap * (len(contexts) - 1)
     used_h = cell_h * len(depths) + gap * (len(depths) - 1)
-    top = grid.y + max((grid.h - used_h) / 2, 0)
+    grid_x = body.x + label_w + (avail_w - used_w) / 2
+    top = body.y + max((body.h - used_h - block_extra) / 2, 0)
     out = []
-    row_step = 1 if cell_h >= 14 else 2
     radius = max(min(4.0, cell_h / 4, cell_w / 4), 1.0)
+    label_every = max(1, math.ceil(18 / (cell_h + gap)))
+    has_gaps = False
     for r, depth in enumerate(depths):
         y = top + r * (cell_h + gap)
-        if r % row_step == 0 or r == len(depths) - 1:
-            out.append(axis_label(grid.x - 10, y + cell_h / 2 + 4, f"{depth * 100:.0f}%"))
+        if (
+            r % label_every == 0
+            or r == len(depths) - 1
+            and (r % label_every) * (cell_h + gap) >= 18
+        ):
+            out.append(axis_label(grid_x - 10, y + cell_h / 2 + 4, f"{depth * 100:.0f}%"))
         for c, ctx in enumerate(contexts):
-            x = grid.x + c * (cell_w + gap)
-            state = found.get((ctx, depth))
-            if state is None:
-                # No stored result: the request errored, so this is "not measured", not a miss.
+            x = grid_x + c * (cell_w + col_gap)
+            cell = state.get((ctx, depth))
+            if cell is None:
+                has_gaps = True
+                out.append(rect(x, y, cell_w, cell_h, fill=FAINT, rx=radius, opacity=0.5))
+            elif cell.error:
+                # The request failed, so this is "not measured", not a miss.
                 out.append(rect(x, y, cell_w, cell_h, fill="url(#hatch)", rx=radius))
                 out.append(
                     rect(
@@ -1236,18 +1540,19 @@ def _needle_heatmap(body: Box, needle: NeedleSummary) -> str:
                         opacity=0.18,
                     )
                 )
-            elif state:
+            elif cell.found:
                 out.append(rect(x, y, cell_w, cell_h, fill=PASS, rx=radius, opacity=0.72))
             else:
                 out.append(rect(x, y, cell_w, cell_h, fill=FAIL, rx=radius, opacity=0.95))
-                # A cross keeps misses readable without relying on red versus green.
-                m = min(cell_w, cell_h) * 0.2
-                mx, my = x + cell_w / 2, y + cell_h / 2
-                out.append(line(mx - m, my - m, mx + m, my + m, stroke="#2A0E0E", width=2))
-                out.append(line(mx - m, my + m, mx + m, my - m, stroke="#2A0E0E", width=2))
-    centers = [grid.x + c * (cell_w + gap) + cell_w / 2 for c in range(len(contexts))]
+                if min(cell_w, cell_h) >= 9:
+                    # A cross keeps misses readable without relying on red versus green.
+                    m = min(cell_w, cell_h) * 0.2
+                    mx, my = x + cell_w / 2, y + cell_h / 2
+                    out.append(line(mx - m, my - m, mx + m, my + m, stroke="#2A0E0E", width=2))
+                    out.append(line(mx - m, my + m, mx + m, my - m, stroke="#2A0E0E", width=2))
+    centers = [grid_x + c * (cell_w + col_gap) + cell_w / 2 for c in range(len(contexts))]
     labels = [fmt.tokens(ctx) for ctx in contexts]
-    keep = spaced_labels(centers, [text_width(lbl, 12, font="mono") for lbl in labels], gap=6)
+    keep = spaced_labels(centers, [mono_width(lbl) for lbl in labels], gap=6)
     label_y = top + used_h + 22
     out.extend(
         axis_label(cx, label_y, lbl, anchor="middle")
@@ -1257,39 +1562,58 @@ def _needle_heatmap(body: Box, needle: NeedleSummary) -> str:
     if needle.effective_context:
         passing = [i for i, ctx in enumerate(contexts) if ctx <= needle.effective_context]
         if passing:
-            x_end = grid.x + passing[-1] * (cell_w + gap) + cell_w
-            out.append(rect(grid.x, top + used_h + 6, x_end - grid.x, 2, fill=PASS, rx=1))
-    has_gaps = len(found) < len(contexts) * len(depths)
-    out.append(_needle_legend(body, needle, has_gaps=has_gaps))
+            x_end = grid_x + passing[-1] * (cell_w + col_gap) + cell_w
+            out.append(rect(grid_x, top + used_h + 6, x_end - grid_x, 2, fill=PASS, rx=1))
+    legend_y = label_y + 28
+    out.append(_needle_legend(body, legend_y, needle, has_gaps=has_gaps))
     return "".join(out)
 
 
-def _needle_legend(body: Box, needle: NeedleSummary, *, has_gaps: bool) -> str:
-    """Summary on the right, swatches to its left, and the axis hint only if it still fits."""
-    y = body.bottom - 2
-    hits = sum(c.found for c in needle.cells)
-    counts = f"{hits}/{len(needle.cells)} found"
-    errored = f"{MID}{needle.errors} errored" if needle.errors > 0 else ""
-    items = [("found", PASS), ("miss", FAIL)] + ([("not run", "url(#hatch)")] if has_gaps else [])
+def _needle_legend(body: Box, y: float, needle: NeedleSummary, *, has_gaps: bool) -> str:
+    """Summary on the right, swatches to its left, and the axis hint only if it still fits.
 
-    def mono(s: str) -> float:
-        return text_width(s, 12, font="mono")
-
-    items_w = sum(13 + mono(label) + 12 for label, _ in items)
-    summary = f"{counts}{errored}{MID}{fmt.percent(needle.accuracy)}"
-    if mono(summary) + 16 + items_w > body.w:
-        summary = f"{counts}{errored}"
-    out = [text(body.right, y, summary, size=12, fill=TEXT_2, font="mono", anchor="end")]
-    x = body.right - mono(summary) - 16 - items_w
+    The percentage is found over answered cells, so it always agrees with the
+    counts beside it; errored cells are counted separately.
+    """
+    answered = [c for c in needle.cells if not c.error]
+    hits = sum(c.found for c in answered)
+    errors = needle_errors(needle)
+    errored = errors > 0
+    if answered:
+        counts = f"{hits}/{len(answered)} found"
+        pct = fmt.percent(hits / len(answered))
+        summaries = [
+            f"{counts}{MID}{pct}" + (f"{MID}{errors} errored" if errored else ""),
+            counts + (f"{MID}{errors} errored" if errored else ""),
+            counts,
+        ]
+    else:
+        summaries = [f"all {errors} cells errored", f"{errors} errored"]
+    items = []
+    if answered:
+        items += [("found", PASS), ("miss", FAIL)]
+    if errored:
+        items.append(("errored", "url(#hatch)"))
+    if has_gaps:
+        items.append(("not run", FAINT))
+    items_w = sum(13 + mono_width(label) + 12 for label, _ in items)
+    summary = summaries[-1]
+    for option in summaries:
+        if mono_width(option) + 16 + items_w <= body.w:
+            summary = option
+            break
+    summary = fit(summary, body.w, LABEL, font="mono")
+    out = [text(body.right, y, summary, size=LABEL, fill=TEXT_2, font="mono", anchor="end")]
+    x = body.right - mono_width(summary) - 16 - items_w
     if x >= body.x:
         for label, fill in items:
             out.append(rect(x, y - 9, 9, 9, fill=fill, rx=2, opacity=0.8 if fill == PASS else None))
-            if label == "not run":
+            if label == "errored":
                 out.append(rect(x + 0.5, y - 8.5, 8, 8, rx=2, stroke=STROKE, opacity=0.3))
-            out.append(text(x + 13, y, label, size=12, fill=MUTED, font="mono"))
-            x += 13 + mono(label) + 12
+            out.append(text(x + 13, y, label, size=LABEL, fill=MUTED, font="mono"))
+            x += 13 + mono_width(label) + 12
         hint = "depth \u2193  context \u2192"
-        if body.x + mono(hint) + 16 <= body.right - mono(summary) - 16 - items_w:
+        if body.x + mono_width(hint) + 16 <= body.right - mono_width(summary) - 16 - items_w:
             out.append(axis_label(body.x, y, hint, anchor="start"))
     return "".join(out)
 
@@ -1297,24 +1621,18 @@ def _needle_legend(body: Box, needle: NeedleSummary, *, has_gaps: bool) -> str:
 # --------------------------------------------------------------------------- smarts
 
 
-_ACCURACY_FLAGS = ("--gsm8k", "--mmlu", "--ifeval")
-
-
-def _bar_color(percent: float) -> str:
-    if percent >= 85:
-        return PASS
-    if percent >= 60:
-        return DECODE
-    if percent >= 40:
-        return PARTIAL
-    return FAIL
-
-
-ROW_MIN = 21.0
+ROW_FLOOR = 16.0
+ROW_MIN = 20.0
 ROW_MAX = 40.0
 _SMARTS_TOP = PAD + HEADER_H + 12
 _OUTCOME_H = 42.0
+_CAP_H = 38.0
 _CHIPS_H = 40.0
+_SAFETY_CAP = (
+    "\u26a0  Safety cap: a safety-critical category scored below 50%",
+    "\u26a0  Safety cap: a safety category scored below 50%",
+    "\u26a0  Safety-capped",
+)
 
 
 def _category_columns(width: float, count: int) -> int:
@@ -1323,22 +1641,22 @@ def _category_columns(width: float, count: int) -> int:
 
 def smarts_height(
     data: CardData, width: float, *, show_outcome: bool = True, show_chips: bool = True
-) -> tuple[float, float]:
-    """The (smallest, largest) height the smarts panel can use well at ``width``.
+) -> tuple[float, float, float]:
+    """The (floor, comfortable minimum, maximum) height of the smarts panel at ``width``.
 
-    Past the largest height the category rows would spread out and leave dead
-    space, so the layout gives the rest to other panels.
+    Past the maximum the category rows would spread out and leave dead space,
+    so the layout gives the rest to other panels. The floor packs rows as
+    tightly as they stay legible, for cards that are short on room.
     """
     te = data.tool_eval
     if te is None:
-        if data.accuracy and show_chips:
-            return COMPACT_H, accuracy_height(len(data.accuracy)) + 28
-        return COMPACT_H, COMPACT_H + 40
+        return HINT_H, HINT_H, HINT_H
     rows = max(math.ceil(len(te.categories) / _category_columns(width, len(te.categories))), 1)
-    extra = _OUTCOME_H if show_outcome else (36.0 if te.safety_capped else 0.0)
+    extra = _OUTCOME_H if show_outcome else 0.0
+    extra += _CAP_H if te.safety_capped else 0.0
     extra += _CHIPS_H if show_chips else 0.0
     fixed = _SMARTS_TOP + extra + PAD
-    return fixed + rows * ROW_MIN, fixed + rows * ROW_MAX
+    return fixed + rows * ROW_FLOOR, fixed + rows * ROW_MIN, fixed + rows * ROW_MAX
 
 
 def smarts_panel(
@@ -1348,71 +1666,57 @@ def smarts_panel(
 
     ``show_outcome`` is off when a score block elsewhere already shows the
     pass/partial/fail split, and ``show_chips`` is off when an accuracy panel
-    shows the external benchmarks.
+    shows the external benchmarks. The safety cap gets its one explanation here.
     """
     title = "SMARTS"
     te = data.tool_eval
     if te is None:
-        if not data.accuracy or not show_chips:
-            return missing_panel(
-                box,
-                title,
-                TOOL,
-                "Tool calling not scored",
-                ("run without --perf-only",),
-                note="Scores tool selection, chaining, restraint, and recovery",
-                ghost_kind="rows",
-            )
-        hint = "Tool calling not scored. Run without --perf-only."
-        out = [frame(box), panel_header(box, title, TOOL, subtitle="accuracy benchmarks")]
-        body = content_box(box)
-        if box.h >= 200:
-            out.append(_accuracy_rows(Box(body.x, body.y, body.w, body.h - 28), data))
-        else:
-            out.append(accuracy_chips(body.x, body.y, body.w, data, large=True))
-        if body.h > 70:
-            out.append(text(body.x, body.bottom - 2, fit(hint, body.w, 13), size=13, fill=MUTED))
-        return "".join(out)
-    subtitle = scenario_label(te.total, te.suite_size) + (f"{MID}hard mode" if te.hardmode else "")
-    if te.trials > 1:
-        subtitle += f"{MID}mean of {te.trials} trials"
-    out = [frame(box), panel_header(box, title, TOOL, subtitle=subtitle)]
+        return missing_panel(
+            box,
+            title,
+            TOOL,
+            "Tool calling not scored",
+            ("run without --perf-only",),
+            note="Scores tool selection, chaining, restraint, and recovery",
+            ghost_kind="rows",
+        )
+    out = [
+        frame(box),
+        panel_header(
+            box,
+            title,
+            TOOL,
+            subtitle=score_details(te),
+            subtitle_color=WARN if needs_caution(te) else MUTED,
+        ),
+    ]
     x = box.x + PAD
     width = box.w - 2 * PAD
-    y = box.y + _SMARTS_TOP
+    top = box.y + _SMARTS_TOP
+    avail = box.bottom - PAD - top
+    fixed = (_OUTCOME_H if show_outcome else 0.0) + (_CAP_H if te.safety_capped else 0.0)
+    chips = _CHIPS_H if show_chips else 0.0
+    rows = max(math.ceil(len(te.categories) / _category_columns(box.w, len(te.categories))), 1)
+    rows_h = min(ROW_MAX * rows, max(avail - fixed - chips, ROW_FLOOR * rows))
+    if not te.categories:
+        rows_h = 28.0
+    y = top + max((avail - fixed - chips - rows_h) / 2, 0)
     if show_outcome:
         out.append(outcome_bar(Box(x, y, width, 36), te))
         y += _OUTCOME_H
-    elif te.safety_capped:
-        out.append(_safety_pill(x, y - 6, width))
-        y += 36
-    room = box.bottom - PAD - y - (_CHIPS_H if show_chips else 0.0)
-    rows_h = _category_rows(Box(x, y, width, room), te)
-    out.append(rows_h[0])
+    if te.safety_capped:
+        label = first_fit(list(_SAFETY_CAP), width - 24, 13, weight=600)
+        out.append(warn_pill(x, y - 4, label, max_width=width)[0])
+        y += _CAP_H
+    rows_svg, used = _category_rows(Box(x, y, width, rows_h), te)
+    out.append(rows_svg)
     if show_chips:
-        out.append(accuracy_chips(x, y + rows_h[1] + 12, width, data))
+        out.append(accuracy_chips(x, y + used + 12, width, data))
     return "".join(out)
 
 
-def _safety_pill(x: float, y: float, room: float) -> str:
-    return pill(
-        x,
-        y,
-        "\u26a0  Safety cap: a safety-critical category scored below 50%",
-        size=12,
-        font="sans",
-        weight=500,
-        color=WARN,
-        fill=WARN,
-        fill_opacity=0.10,
-        stroke_opacity=0.45,
-        height=26,
-        max_width=room,
-    )[0]
-
-
 def outcome_bar(box: Box, te: ToolEvalSummary) -> str:
-    """A stacked pass/partial/fail bar with counts, plus the safety-cap flag when set."""
+    """A stacked pass/partial/fail bar with counts."""
     total = max(te.passed + te.partial + te.failed, 1)
     out = [rect(box.x, box.y, box.w, 8, fill=FAINT, rx=4)]
     x = box.x
@@ -1433,28 +1737,6 @@ def outcome_bar(box: Box, te: ToolEvalSummary) -> str:
         chunk = f"{count} {label}"
         out.append(text(lx + 14, ly, chunk, size=13, fill=TEXT_2, font="mono"))
         lx += 14 + text_width(chunk, 13, font="mono") + 20
-    if te.safety_capped:
-        room = box.right - lx
-        label = "\u26a0  Safety cap: a safety-critical category scored below 50%"
-        if room < text_width(label, 12, weight=500) + 24:
-            label = "\u26a0  Safety-capped"
-        w = text_width(label, 12, font="sans", weight=500) + 24
-        out.append(
-            pill(
-                box.right - min(w, max(room, 60.0)),
-                ly - 18,
-                label,
-                size=12,
-                font="sans",
-                weight=500,
-                color=WARN,
-                fill=WARN,
-                fill_opacity=0.10,
-                stroke_opacity=0.45,
-                height=26,
-                max_width=max(room, 60.0),
-            )[0]
-        )
     return "".join(out)
 
 
@@ -1470,10 +1752,12 @@ def _category_rows(box: Box, te: ToolEvalSummary) -> tuple[str, float]:
     col_gap = 48.0
     col_w = (box.w - col_gap * (columns - 1)) / columns
     row_h = max(min(ROW_MAX, box.h / rows), 12.0)
-    size = max(11.0, min(15.0, 12 + (row_h - 20) / 6))
+    size = max(12.0, min(15.0, 12 + (row_h - 20) / 6))
     bar_h = max(5.0, min(8.0, row_h / 5))
+    values = [fmt.score(cat.percent) for cat in cats]
+    pct_w = max(text_width(v, size, font="mono", weight=500) for v in [*values, "100"]) + 12
     out = []
-    for i, cat in enumerate(cats):
+    for i, (cat, value) in enumerate(zip(cats, values, strict=True)):
         col, row = divmod(i, rows)
         x = box.x + col * (col_w + col_gap)
         cy = box.y + row * row_h + row_h / 2
@@ -1487,20 +1771,19 @@ def _category_rows(box: Box, te: ToolEvalSummary) -> tuple[str, float]:
                 x + chip / 2,
                 baseline,
                 cat.code,
-                size=size - 1,
+                size=max(12.0, size - 1),
                 fill=TEXT,
                 font="mono",
                 weight=500,
                 anchor="middle",
             )
         )
-        pct_w = text_width("100", size, font="mono", weight=500) + 12
         bar_w = max(min(col_w * 0.36, 240.0), 60.0)
         name_x = x + chip + 10
         name_room = col_w - chip - 10 - bar_w - pct_w - 16
         out.append(text(name_x, baseline, fit(cat.name, name_room, size), size=size, fill=TEXT_2))
         bar_x = x + col_w - pct_w - bar_w
-        pct = max(0.0, min(cat.percent, 100.0))
+        pct = max(0.0, min(cat.percent, 100.0)) if math.isfinite(cat.percent) else 0.0
         out.append(rect(bar_x, cy - bar_h / 2, bar_w, bar_h, fill=FAINT, rx=bar_h / 2))
         if pct > 0:
             out.append(
@@ -1509,7 +1792,7 @@ def _category_rows(box: Box, te: ToolEvalSummary) -> tuple[str, float]:
                     cy - bar_h / 2,
                     max(bar_w * pct / 100, bar_h),
                     bar_h,
-                    fill=_bar_color(pct),
+                    fill=bar_color(pct),
                     rx=bar_h / 2,
                 )
             )
@@ -1517,7 +1800,7 @@ def _category_rows(box: Box, te: ToolEvalSummary) -> tuple[str, float]:
             text(
                 x + col_w,
                 baseline,
-                f"{pct:.0f}",
+                value,
                 size=size,
                 fill=TEXT,
                 font="mono",
@@ -1528,8 +1811,81 @@ def _category_rows(box: Box, te: ToolEvalSummary) -> tuple[str, float]:
     return "".join(out), rows * row_h
 
 
-def _chip_labels(data: CardData) -> list[str]:
-    return [f"{r.name}  {fmt.percent(r.accuracy)}" for r in data.accuracy]
+# --------------------------------------------------------------------------- accuracy chips
+
+
+_CHIP_PAD = 12.0
+_CHIP_GAP = 8.0
+
+
+def _chip_note(result: AccuracyResult, level: int) -> str | None:
+    if result.errors > 0:
+        if level == 0:
+            return accuracy_note(result, detail=False)
+        return f"{result.errors:,} errored" if level == 1 else f"{result.errors:,} err"
+    if accuracy_is_thin(result):
+        return accuracy_note(result, detail=False)
+    return None
+
+
+def _chip_runs(
+    result: AccuracyResult, size: float, level: int, name_cap: float | None = None
+) -> list[Run]:
+    name = result.name
+    if name_cap is not None:
+        name = fit(name, name_cap, size, font="mono", weight=500)
+    finite = math.isfinite(result.accuracy)
+    value_color = bar_color(result.accuracy * 100) if finite else MUTED
+    runs = [
+        Run(name, size, TEXT_2, "mono", 500),
+        Run(fmt.percent(result.accuracy), size, value_color, "mono", 500, gap=size * 0.6),
+    ]
+    note = _chip_note(result, level)
+    if note:
+        runs.append(Run(note, size - 1, WARN if result.errors else MUTED, "sans", 500, gap=8))
+    return runs
+
+
+def _chips_total(chips: list[list[Run]]) -> float:
+    return sum(runs_width(c) + 2 * _CHIP_PAD for c in chips) + _CHIP_GAP * max(len(chips) - 1, 0)
+
+
+def chip_runs_for(
+    results: tuple[AccuracyResult, ...], width: float, size: float
+) -> list[list[Run]]:
+    """Chip contents that fit ``width``: notes shorten, then names, and only then
+    do trailing chips fold into a "+N more" chip, so no result vanishes silently."""
+    for level in (0, 1, 2):
+        chips = [_chip_runs(r, size, level) for r in results]
+        if _chips_total(chips) <= width:
+            return chips
+    longest = max(text_width(r.name, size, font="mono", weight=500) for r in results)
+    floor = text_width("MMLU", size, font="mono", weight=500)
+    if _chips_total([_chip_runs(r, size, 2, floor) for r in results]) <= width:
+        lo, hi = floor, longest
+        for _ in range(20):
+            mid = (lo + hi) / 2
+            if _chips_total([_chip_runs(r, size, 2, mid) for r in results]) <= width:
+                lo = mid
+            else:
+                hi = mid
+        return [_chip_runs(r, size, 2, lo) for r in results]
+    for keep in range(len(results) - 1, -1, -1):
+        chips = [_chip_runs(r, size, 2, floor) for r in results[:keep]]
+        more = [Run(f"+{len(results) - keep} more", size, MUTED, "mono", 500)]
+        if _chips_total([*chips, more]) <= width:
+            return [*chips, more]
+    return [
+        [
+            Run(
+                fit(f"+{len(results)} accuracy", width - 2 * _CHIP_PAD, size, font="mono"),
+                size,
+                MUTED,
+                "mono",
+                500,
+            )
+        ]
+    ]
 
 
 def accuracy_chips(x: float, y: float, width: float, data: CardData, *, large: bool = False) -> str:
@@ -1540,7 +1896,7 @@ def accuracy_chips(x: float, y: float, width: float, data: CardData, *, large: b
             x,
             y,
             label,
-            size=12,
+            size=LABEL,
             color=MUTED,
             fill=STROKE,
             dashed=True,
@@ -1549,19 +1905,13 @@ def accuracy_chips(x: float, y: float, width: float, data: CardData, *, large: b
             pad=10,
             max_width=width,
         )[0]
+    size = 15 if large else 13
+    height = 36 if large else 28
     out = []
     px = x
-    size = 15 if large else 13
-    for label in _chip_labels(data):
-        need = text_width(label, size, font="mono", weight=500) + 24
-        if px + need > x + width:
-            break
-        name, _, value = label.partition("  ")
-        chip, w = pill(px, y, label, size=size, color=TEXT, height=36 if large else 28)
-        # Dim the benchmark name so the number carries the chip.
-        chip = chip.replace(
-            f">{esc(label)}</text>", f">{esc(name)}  {tspan(value, fill=TOOL)}</text>"
-        )
-        out.append(chip)
-        px += w + 8
+    for runs in chip_runs_for(data.accuracy, width, size):
+        w = runs_width(runs) + 2 * _CHIP_PAD
+        out.append(_pill_shape(px, y, w, height, STROKE, 0.05, 0.12))
+        out.append(runs_text(px + _CHIP_PAD, y + height / 2 + size * 0.36, runs))
+        px += w + _CHIP_GAP
     return "".join(out)

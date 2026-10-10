@@ -31,6 +31,9 @@ uv tool install 'tool-eval-bench[web] @ git+https://github.com/SeraphimSerapis/t
 
 # Several extras at once: comma-separate them inside the brackets
 uv tool install 'tool-eval-bench[perf,web] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'
+
+# With PNG export for results cards (resvg-py)
+uv tool install 'tool-eval-bench[card] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'
 ```
 
 Also available via [Docker](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/docker.md) if you would rather not have a local
@@ -380,10 +383,14 @@ tool-eval-bench --seed 42 --perf --perf-preset long --needle --gsm8k --mmlu --if
 tool-eval-bench card --png --hardware "RTX 5090 32GB"
 ```
 
-The card is written to `runs/cards/<model>-<YYYYMMDD>.svg`, plus a `.png` with
-`--png`. PNG export needs the optional renderer, `pip install
-'tool-eval-bench[card]'`; without it the SVG is still written and the command
-exits 1. A section the
+The card is written to `runs/cards/<model>-<YYYYMMDD>-<fingerprint>.svg`, using
+the model name in lowercase with punctuation turned into dashes, the date of the
+newest run on the card, and the first
+8 characters of the configuration fingerprint. Add `--png` for a `.png` beside
+it. PNG export needs the `card` extra, installed as shown under
+[Install](#install) or with
+`pip install 'tool-eval-bench[card] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'`.
+Without it the SVG is still written and the command exits 1. A section the
 session did not measure is marked as such, and the command prints the flags
 that would fill it.
 
@@ -395,9 +402,11 @@ suits a link preview; portrait is the default. Hardware is never detected, so
 pass `--hardware` if you want it on the image.
 
 The card carries no hostname, server URL, session or run id, label, tokenizer
-path, or system prompt. Its short fingerprint names the configuration of the
-scored run, or of the throughput run when there is none, so readers can tell
-whether two cards measured the same setup.
+path, or system prompt, and neither does its filename. A model served from a
+local path is named by its served model id instead of the directory. The short
+fingerprint names a configuration: the scored run's when the card has one,
+otherwise the throughput run's, otherwise the newest run on the card. Readers
+can use it to tell whether two cards measured the same setup.
 
 ## Programmatic API
 

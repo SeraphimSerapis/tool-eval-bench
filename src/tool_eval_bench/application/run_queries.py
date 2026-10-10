@@ -9,9 +9,14 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from contextlib import closing
+from pathlib import Path
 from typing import Any
 
 from tool_eval_bench.storage import db
+
+# The CLI scopes one invocation's session with these; it may not import storage.
+invocation_session = db.invocation_session
+current_session_id = db.current_session_id
 
 
 def _repository() -> db.RunRepository:
@@ -21,6 +26,17 @@ def _repository() -> db.RunRepository:
     ``storage.db.RunRepository`` reaches these queries.
     """
     return db.RunRepository()
+
+
+def database_exists() -> bool:
+    """Whether the run database exists, checked without creating it.
+
+    Opening a repository creates ``data/benchmarks.sqlite``, so a read-only
+    command such as ``card`` checks this first to leave an empty directory
+    empty.  The path resolves as it does for the repository, from the current
+    working directory at call time.
+    """
+    return Path(db._default_db_path()).is_file()
 
 
 def recent_runs(
@@ -132,10 +148,11 @@ def latest_session_id(
 ) -> str | None:
     """Return the newest session with at least one run matching every filter.
 
-    ``model`` filters on the stored ``model`` column, ``run_types`` and
-    ``statuses`` on ``run_type`` and ``status``.  ``None`` skips a filter and an
-    empty collection matches nothing.  Returns ``None`` when no run qualifies,
-    for example in a database written before schema v5.
+    ``model`` matches the stored ``model`` column exactly or as its trailing
+    path segments, so ``Qwen3-32B`` finds ``Qwen/Qwen3-32B``.  ``run_types``
+    and ``statuses`` filter on ``run_type`` and ``status``.  ``None`` skips a
+    filter and an empty collection matches nothing.  Returns ``None`` when no
+    run qualifies, for example in a database written before schema v5.
     """
     with closing(_repository()) as repo:
         return repo.latest_session_id(model=model, run_types=run_types, statuses=statuses)

@@ -13,6 +13,7 @@ The fonts are subsets of upstream Inter 4.1 and JetBrains Mono 2.304 (SIL OFL
 from __future__ import annotations
 
 import struct
+import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
@@ -118,8 +119,8 @@ def _parse(data: bytes) -> _Metrics:
     cmap = _cmap_format4(data, tables[b"cmap"][0])
     last = glyph_advance[-1]
     advances = {code: glyph_advance[g] if g < num_metrics else last for code, g in cmap.items()}
-    # Unknown characters (CJK, emoji) render with a system fallback in a browser
-    # and as a box in resvg; an em-ish width keeps the fit conservative.
+    # Unknown characters (CJK, emoji) render with a system fallback font, whose
+    # widths we cannot know; an em-ish width keeps the fit conservative.
     return _Metrics(units_per_em, advances, int(units_per_em * 0.9))
 
 
@@ -129,10 +130,38 @@ def _metrics(file_name: str) -> _Metrics:
     return _parse(data)
 
 
+def _fallback_units(ch: str, metrics: _Metrics) -> int:
+    # East Asian wide and fullwidth characters are a full em in every CJK font.
+    if unicodedata.east_asian_width(ch) in ("W", "F"):
+        return metrics.units_per_em
+    return metrics.fallback
+
+
 def text_width(
     text: str, size: float, *, font: FontKey = "sans", weight: int = 400, tracking: float = 0.0
 ) -> float:
     """Estimated rendered width of ``text`` in pixels, including letter spacing."""
     metrics = _metrics(_resolve(font, weight))
-    units = sum(metrics.advances.get(ord(ch), metrics.fallback) for ch in text)
+    units = 0
+    for ch in text:
+        advance = metrics.advances.get(ord(ch))
+        units += advance if advance is not None else _fallback_units(ch, metrics)
     return units * size / metrics.units_per_em + tracking * len(text)
+
+
+@lru_cache(maxsize=1)
+def _covered() -> frozenset[int]:
+    codes: set[int] = set()
+    for name in font_file_names():
+        codes.update(_metrics(name).advances)
+    return frozenset(codes)
+
+
+def unsupported_characters(text: str) -> str:
+    """Characters in ``text`` that no bundled font can draw, in first-seen order."""
+    covered = _covered()
+    seen: dict[str, None] = {}
+    for ch in text:
+        if ord(ch) > 0x7E and ord(ch) not in covered and not ch.isspace():
+            seen.setdefault(ch, None)
+    return "".join(seen)

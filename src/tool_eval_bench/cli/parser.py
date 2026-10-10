@@ -258,19 +258,24 @@ def _add_card_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--hardware", metavar="TEXT", help="Hardware line for the card, e.g. 'RTX 5090 32GB'"
     )
-    parser.add_argument("--layout", choices=("portrait", "landscape"), default="portrait")
+    parser.add_argument(
+        "--layout",
+        choices=("portrait", "landscape"),
+        default="portrait",
+        help="Card layout; landscape suits a link preview (default: portrait)",
+    )
     parser.add_argument(
         "-o",
         "--output",
         metavar="PATH",
-        help="Card path; a .png path also writes PNG "
-        "(default: <output-dir>/cards/<model>-<YYYYMMDD>.svg)",
+        help="Card path or directory; a .png path also writes PNG "
+        "(default: <output-dir>/cards/<model>-<YYYYMMDD>-<fingerprint>.svg)",
     )
     parser.add_argument(
         "--png", action="store_true", help="Also write PNG (needs tool-eval-bench[card])"
     )
     parser.add_argument(
-        "--scale", type=float, default=2.0, metavar="N", help="PNG scale (default: 2)"
+        "--scale", type=float, default=2.0, metavar="N", help="PNG scale, 0.25 to 8 (default: 2)"
     )
     # Defined here rather than copied from the flat parser, whose help
     # describes a benchmark run. They translate to the same --model and

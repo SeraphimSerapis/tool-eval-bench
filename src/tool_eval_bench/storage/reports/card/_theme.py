@@ -28,6 +28,9 @@ TTFT = "#FBBF24"
 TTFT_CACHED = "#FDE68A"
 TOOL = "#34D399"
 PASS = "#34D399"
+# Scores between solid and strong; distinct from the decode cyan so a bar never
+# reads as a speed series.
+GOOD = "#A3E635"
 PARTIAL = "#FBBF24"
 FAIL = "#F87171"
 WARN = "#FBBF24"

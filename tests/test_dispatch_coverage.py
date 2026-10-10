@@ -341,11 +341,13 @@ def test_regular_perf_hands_failed_cells_to_the_scored_run(
         api_key=None,
         backend="llamacpp",
     )
+    monkeypatch.setattr(dispatch, "_scored_run_follows", lambda _args: True)
 
     samples, finished = dispatch._run_throughput_mode(target)
 
     assert samples == [good, failed]
     assert finished is False
+    assert target.args._perf_incomplete is False
 
 
 @pytest.mark.parametrize(

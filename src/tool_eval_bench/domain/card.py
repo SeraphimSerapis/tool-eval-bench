@@ -23,6 +23,8 @@ class PerfPoint:
     across all concurrent requests. ``ttft_ms`` is the cold time to first token.
     ``cached_ttft_ms`` is the time to first token when the depth prefix was
     already cached, and is ``None`` unless the sweep measured it.
+    ``tg_estimated`` marks a per-request decode speed derived by dividing the
+    aggregate by the concurrency because the run did not store a measured one.
     """
 
     depth: int
@@ -33,13 +35,17 @@ class PerfPoint:
     ttft_ms: float
     cached_ttft_ms: float | None = None
     pp_estimated: bool = False
+    tg_estimated: bool = False
 
 
 @dataclass(frozen=True)
 class NeedleCell:
+    """One grid cell. An errored cell got no answer and has ``found=False``."""
+
     context_tokens: int
     depth_percent: float
     found: bool
+    error: bool = False
 
 
 @dataclass(frozen=True)
@@ -47,10 +53,12 @@ class NeedleSummary:
     """Needle-in-a-haystack retrieval grid.
 
     ``effective_context`` is the largest haystack retrieved at every depth, or
-    ``None`` when no length passed at every depth. ``cells`` holds only cells
-    that got an answer; a cell whose request errored, for example a context
-    overflow, is left out and counted in ``errors`` so a server failure never
-    reads as a retrieval miss.
+    ``None`` when no length passed at every depth. It is an estimate in
+    tokens. ``cells`` holds every measured cell, including cells whose request
+    errored, for example a context overflow. Those carry ``error=True`` and are
+    counted in ``errors``, so a server failure never reads as a retrieval
+    miss. ``accuracy`` is found cells over answered cells, so errors do not
+    count against it; it is 0.0 when no cell was answered.
     """
 
     cells: tuple[NeedleCell, ...]
@@ -73,9 +81,16 @@ class ToolEvalSummary:
     """Tool-calling quality. ``score`` is 0-100.
 
     With ``trials`` above 1, ``score`` and category percentages are the mean
-    across completed trials and the counts are per trial. ``suite_size`` is the
-    scenario count of the public suite the run drew from, so a card can mark a
-    run with fewer scenarios as a subset; ``None`` means unknown.
+    across completed trials and the counts are per trial, rounded so they still
+    sum to ``total``. ``total`` counts scored scenarios; ``excluded`` counts
+    selected scenarios dropped from scoring after an infrastructure failure.
+
+    ``suite_size`` is the scenario count of the suite the selection is compared
+    against: the public suite, the public suite plus Hard Mode, or Hard Mode
+    alone for ``hardmode_only``. A run is a subset when ``total + excluded`` is
+    below it. ``None`` means unknown, for example a scenario pack or a run from
+    an older registry, and then no subset mark is drawn. ``scenario_pack`` marks
+    scenarios loaded from a ``--scenario-pack`` rather than the public suite.
     """
 
     score: float
@@ -89,15 +104,25 @@ class ToolEvalSummary:
     hardmode: bool = False
     trials: int = 1
     suite_size: int | None = None
+    excluded: int = 0
+    hardmode_only: bool = False
+    scenario_pack: bool = False
 
 
 @dataclass(frozen=True)
 class AccuracyResult:
-    """An external accuracy benchmark such as GSM8K. ``accuracy`` is 0-1."""
+    """An external accuracy benchmark such as GSM8K. ``accuracy`` is 0-1.
+
+    ``accuracy`` is correct answers over answered items. ``errors`` counts items
+    whose request failed and ``items`` the items attempted, when known, so a
+    card can say a score rests on only part of the set.
+    """
 
     name: str
     accuracy: float
     detail: str | None = None
+    errors: int = 0
+    items: int | None = None
 
 
 @dataclass(frozen=True)
@@ -124,3 +149,8 @@ class CardData:
     # cards measured the same configuration. It identifies a configuration, not
     # a person or a machine.
     fingerprint: str | None = None
+    # Grid cells that produced no usable sample, and whether the sweep stopped
+    # before its plan finished, for example an interrupted or failed depth pass.
+    # A partial sweep must not read as a complete one.
+    perf_failed_cells: int = 0
+    perf_incomplete: bool = False

@@ -12,10 +12,12 @@ system prompts off the image.
 
 from __future__ import annotations
 
+import math
+import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from statistics import fmean
-from typing import Any
+from typing import Any, NamedTuple
 
 from tool_eval_bench.application import run_queries
 from tool_eval_bench.domain.card import (
@@ -73,6 +75,12 @@ def build_card_data(runs: Sequence[Mapping[str, Any]], *, hardware: str | None =
         if run is not None
     ]
     if not used:
+        if any(_predates_perf_cells(run) for run in runs):
+            raise CardDataUnavailable(
+                "The selected throughput run predates stored per-cell results, so a card "
+                "cannot draw it. Run --perf again, or add tool-call scenarios, --needle, "
+                "or an accuracy plugin"
+            )
         raise CardDataUnavailable(
             "None of the selected runs has a section a card can show: run tool-call "
             "scenarios, --perf, --needle, or an accuracy plugin first"
@@ -83,6 +91,7 @@ def build_card_data(runs: Sequence[Mapping[str, Any]], *, hardware: str | None =
 
     perf = _perf_points(_perf_rows(perf_run)) if perf_run is not None else ()
     pp, tg = _perf_workload(perf_run) if perf_run is not None else (None, None)
+    failed_cells, incomplete = _perf_state(perf_run) if perf_run is not None else (0, False)
     fingerprint_source = tool_eval_run or perf_run or used[0]
     fingerprint = _config(fingerprint_source).get("config_fingerprint")
 
@@ -106,6 +115,8 @@ def build_card_data(runs: Sequence[Mapping[str, Any]], *, hardware: str | None =
         ),
         seed=_first_int(used, "config", "seed"),
         fingerprint=str(fingerprint)[:_FINGERPRINT_CHARS] if fingerprint else None,
+        perf_failed_cells=failed_cells,
+        perf_incomplete=incomplete,
     )
 
 
@@ -115,20 +126,28 @@ def load_card_data(
     run_ids: Sequence[str] = (),
     model: str | None = None,
     hardware: str | None = None,
+    warn: Callable[[str], None] | None = None,
 ) -> CardData:
     """Load the runs for one card and build it.
 
     Explicit ``run_ids`` win over ``session``, which is how a card is made
-    from runs stored before sessions existed. Otherwise ``session`` names a
-    session id or a unique prefix of one, and ``latest`` or ``None`` picks the
-    newest session holding a run of a kind the card shows, narrowed to
-    ``model`` when given. Raises :class:`CardDataUnavailable` when nothing
-    matches.
+    from runs stored before sessions existed. A repeated id counts once.
+    Otherwise ``session`` names a session id or a unique prefix of one, and
+    ``latest`` or ``None`` picks the newest session holding a run of a kind the
+    card shows, narrowed to ``model`` when given. ``warn`` receives notes about
+    the selection that do not stop the card, such as runs from different tool
+    versions. Raises :class:`CardDataUnavailable` when nothing matches.
     """
+    if not run_queries.database_exists():
+        raise CardDataUnavailable(
+            "No benchmark runs are stored here yet: there is no data/benchmarks.sqlite "
+            "in this directory. Run a benchmark first, or run card from the directory "
+            "that holds the data folder"
+        )
     if run_ids:
         runs: list[dict[str, Any]] = []
         missing: list[str] = []
-        for run_id in run_ids:
+        for run_id in dict.fromkeys(run_ids):
             run = run_queries.get_run(run_id, include_traces=False)
             if run is None:
                 missing.append(run_id)
@@ -144,40 +163,61 @@ def load_card_data(
                 f"The --run ids cover more than one model ({', '.join(models)}). "
                 "A card shows one model; pass runs of a single model"
             )
+        if warn is not None:
+            for note in _version_mismatches(runs):
+                warn(note)
         return build_card_data(runs, hardware=hardware)
 
-    latest = session is None or session.lower() == "latest"
+    latest = session is None or session.strip().lower() == "latest"
     session_id = _latest_session(model) if latest or session is None else _resolve_session(session)
     runs = run_queries.session_runs(session_id)
     if not runs:
         raise CardDataUnavailable(f"No runs found for session {session_id}")
     try:
         return build_card_data(runs, hardware=hardware)
-    except CardDataUnavailable:
+    except CardDataUnavailable as exc:
         if not latest:
             raise
         # The lookup matched on type and status only; a failed scored run or a
         # perf run without cells passes it and still leaves nothing to draw.
         raise CardDataUnavailable(
-            f"The newest session, {session_id[:8]}, has no run a card can show. "
+            f"The newest session, {session_id[:8]}, has no run a card can show: {exc}. "
             "Pass an older session id or --run RUN_ID"
         ) from None
+
+
+def _version_mismatches(runs: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Notes for merged runs that came from different tool or engine versions."""
+    notes: list[str] = []
+    for key, label in (("tool_version", "tool-eval-bench"), ("engine_version", "engine")):
+        versions = sorted(
+            {value for run in runs if (value := _str_or_none(_section(run, "metadata").get(key)))}
+        )
+        if len(versions) > 1:
+            notes.append(
+                f"The runs come from different {label} versions ({', '.join(versions)}); "
+                "the card shows the newest"
+            )
+    return notes
 
 
 def _latest_session(model: str | None) -> str:
     session_id = run_queries.latest_session_id(
         model=model, run_types=sorted(_CARD_KINDS), statuses=_CARD_STATUSES
     )
-    if session_id is None:
-        scope = f" for model {model}" if model else ""
-        raise CardDataUnavailable(
-            f"No benchmark session found{scope}. Runs stored before sessions "
-            "existed can still be carded with --run RUN_ID"
-        )
-    return session_id
+    if session_id is not None:
+        return session_id
+    if not run_queries.recent_runs(limit=1):
+        raise CardDataUnavailable("No benchmark runs are stored yet. Run a benchmark first")
+    scope = f" for model {model}" if model else ""
+    raise CardDataUnavailable(
+        f"No benchmark session with a run a card can show was found{scope}. Runs "
+        "stored before sessions existed can still be carded with --run RUN_ID"
+    )
 
 
 def _resolve_session(prefix: str) -> str:
+    prefix = prefix.strip().lower()
     try:
         session_id = run_queries.resolve_session_prefix(prefix)
     except ValueError as exc:  # ambiguous prefix; the message lists the matches
@@ -289,17 +329,54 @@ def _model_name(runs: Sequence[Mapping[str, Any]]) -> str:
     """The model's display name, without any path.
 
     The server's model root is the most specific name a server reports, so it
-    wins over the requested name. Either can be a local path such as
-    ``/home/someone/models/x``, so only the last component is kept.
+    wins when it is a model id such as ``Qwen/Qwen3-32B``. When it is a local
+    path, its directory names are the user's, not the model's, so the served
+    model id, then the requested name, then the row's model column is used
+    instead. Whatever wins keeps only its last component. If every candidate is
+    a path, the last component of the first one is the best name available,
+    after unwrapping a Hugging Face cache directory.
     """
-    raw = (
-        _first_str(runs, "metadata", "server_model_root")
-        or _first_str(runs, "config", "model")
-        or next((value for run in runs if (value := _str_or_none(run.get("model")))), None)
-        or "unknown model"
-    )
+    column = next((name for run in runs if (name := _str_or_none(run.get("model")))), None)
+    candidates = [
+        value
+        for value in (
+            _first_str(runs, "metadata", "server_model_root"),
+            _first_str(runs, "metadata", "server_model_id"),
+            _first_str(runs, "config", "model"),
+            column,
+        )
+        if value
+    ]
+    raw = next((value for value in candidates if not _is_local_path(value)), None)
+    if raw is None:
+        names = (_path_model_name(value) for value in candidates)
+        return next((name for name in names if name), "unknown model")
     name = raw.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
-    return name or "unknown model"
+    return name.strip() or "unknown model"
+
+
+_HEX_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _is_local_path(value: str) -> bool:
+    """Whether a model name is a filesystem path rather than a model id."""
+    text = value.strip().replace("\\", "/")
+    if text.startswith(("/", "./", "../", "~")) or re.match(r"^[A-Za-z]:/", text):
+        return True
+    parts = [part for part in text.split("/") if part]
+    return any(
+        part == "snapshots" or part.startswith("models--") or _HEX_SHA.match(part) for part in parts
+    )
+
+
+def _path_model_name(value: str) -> str:
+    """The model name inside a path, preferring a Hugging Face cache entry, or ``""``."""
+    parts = [part for part in value.strip().replace("\\", "/").split("/") if part]
+    for part in parts:
+        if part.startswith("models--"):
+            return part.split("--")[-1]
+    named = [part for part in parts if part not in {"snapshots", "~"} and not _HEX_SHA.match(part)]
+    return named[-1] if named else ""
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +398,41 @@ def _perf_rows(run: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     if not isinstance(results, list):
         return []
     return [row for row in results if isinstance(row, Mapping)]
+
+
+def _perf_scores(run: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The scores block that holds a sweep: the run's own, or a scored run's ``throughput``."""
+    scores = _section(run, "scores")
+    if (run.get("run_type") or "tool_eval") == "perf":
+        return scores
+    throughput = scores.get("throughput")
+    return throughput if isinstance(throughput, Mapping) else {}
+
+
+def _perf_state(run: Mapping[str, Any]) -> tuple[int, bool]:
+    """Grid cells without a usable sample, and whether the sweep stopped early.
+
+    ``failed`` counts cells; ``incomplete`` marks a planned pass that was
+    interrupted or failed. Older rows lack both, which reads as zero and
+    complete. A ``failed`` perf run status also counts as incomplete.
+    """
+    scores = _perf_scores(run)
+    failed = _int_or_none(scores.get("failed")) or 0
+    incomplete = scores.get("incomplete") is True or (
+        (run.get("run_type") or "tool_eval") == "perf" and run.get("status") == "failed"
+    )
+    return max(failed, 0), incomplete
+
+
+def _predates_perf_cells(run: Mapping[str, Any]) -> bool:
+    """A perf row from before per-cell results were stored: it has a sample count only."""
+    scores = run.get("scores")
+    return (
+        run.get("run_type") == "perf"
+        and isinstance(scores, Mapping)
+        and "results" not in scores
+        and "samples" in scores
+    )
 
 
 def _row_depth(row: Mapping[str, Any]) -> int:
@@ -384,6 +496,8 @@ def _perf_points(rows: Sequence[Mapping[str, Any]]) -> tuple[PerfPoint, ...]:
                 ttft_ms=_mean(prefill_rows, "ttft_ms"),
                 cached_ttft_ms=_mean(warm, "ttft_ms") if cold and warm else None,
                 pp_estimated=any(row.get("pp_estimated") for row in prefill_rows),
+                # At concurrency 1 the stored rate is already per request.
+                tg_estimated=not measured and concurrency > 1,
             )
         )
     return tuple(points)
@@ -442,7 +556,9 @@ def _trial_summary(run: Mapping[str, Any]) -> ToolEvalSummary:
         ]
         passed, partial, failed = (statuses.count(s) for s in ("pass", "partial", "fail"))
     rating = str(scores.get("rating") or "")
-    hardmode = any(row.get("category") == Category.P.value for row in categories)
+    suite = _suite(
+        run, has_category_p=any(row.get("category") == Category.P.value for row in categories)
+    )
     return ToolEvalSummary(
         score=float(scores.get("final_score") or 0),
         rating=rating,
@@ -461,29 +577,77 @@ def _trial_summary(run: Mapping[str, Any]) -> ToolEvalSummary:
         ),
         # ``rating_for_score`` marks a capped rating; the cap has no field of its own.
         safety_capped="safety-capped" in rating,
-        hardmode=hardmode,
-        suite_size=_suite_size(hardmode),
+        hardmode=suite.hardmode,
+        suite_size=suite.size,
+        excluded=len([item for item in scores.get("excluded_scenarios") or [] if item]),
+        hardmode_only=suite.hardmode_only,
+        scenario_pack=suite.pack,
     )
 
 
-def _suite_size(hardmode: bool) -> int:
-    """The public suite a run with or without Category P is measured against."""
-    # Imported here: loading every scenario module is only worth it for a card.
-    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, ALL_SCENARIOS_WITH_HARDMODE
+class _Suite(NamedTuple):
+    size: int | None
+    hardmode: bool
+    hardmode_only: bool
+    pack: bool
 
-    return len(ALL_SCENARIOS_WITH_HARDMODE if hardmode else ALL_SCENARIOS)
+
+def _suite(run: Mapping[str, Any], *, has_category_p: bool) -> _Suite:
+    """The suite a tool-eval run's selection is compared against.
+
+    The selection comes from ``config.scenario_ids``, not the scored results,
+    so a scenario dropped after an infrastructure failure still counts as
+    selected. The size is ``None`` when it cannot be compared with today's
+    registry: a scenario pack, a row without stored ids, an id today's registry
+    does not know, or a full-suite run (``all (N)``) whose suite has since
+    changed size, such as the 88-scenario Hard Mode runs before TC-89.
+    """
+    # Imported here: loading every scenario module is only worth it for a card.
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, HARDMODE_SCENARIOS
+
+    config = _config(run)
+    pack = bool(config.get("scenario_packs"))
+    stored = config.get("scenario_ids")
+    ids = {item for item in stored if isinstance(item, str)} if isinstance(stored, list) else set()
+    public = {scenario.id for scenario in ALL_SCENARIOS}
+    hard = {scenario.id for scenario in HARDMODE_SCENARIOS}
+    hardmode = bool(ids & hard) or has_category_p
+    hardmode_only = bool(ids) and ids <= hard
+    if pack or not ids or ids - public - hard:
+        return _Suite(None, hardmode, hardmode_only, pack)
+    size = len(hard) if hardmode_only else len(public | hard) if hardmode else len(public)
+    selector = _str_or_none(_section(run, "metadata").get("scenario_selector")) or ""
+    full_suite_then = selector.startswith("all (")
+    # Without a selector the run's intent is unknown; a Hard Mode selection of
+    # another size most likely came from an older, smaller Hard Mode suite.
+    unknown_hardmode = not selector and hardmode and len(ids) != size
+    if (full_suite_then and len(ids) != size) or unknown_hardmode:
+        return _Suite(None, hardmode, hardmode_only, pack)
+    return _Suite(size, hardmode, hardmode_only, pack)
+
+
+def _largest_remainder(means: Sequence[float], total: int) -> list[int]:
+    """Round *means* to integers that sum to *total*, by largest fractional part."""
+    counts = [math.floor(mean) for mean in means]
+    order = sorted(range(len(means)), key=lambda i: means[i] - counts[i], reverse=True)
+    for index in order[: max(total - sum(counts), 0)]:
+        counts[index] += 1
+    return counts
 
 
 def _tool_eval_summary(trials: Sequence[Mapping[str, Any]]) -> ToolEvalSummary:
     """One trial as stored, or the mean of several trials of one invocation.
 
-    Across trials the score and each category percentage are means, the
-    outcome counts are the rounded mean per trial, and the rating is
-    recomputed from the mean score. The rating is capped if any trial was.
+    Across trials the score and each category percentage are means, and the
+    rating is recomputed from the mean score. The rating is capped if any
+    trial was. Outcome counts are mean counts per trial, rounded by largest
+    remainder so they sum to the rounded mean total. The suite comes from the
+    newest trial; every trial of one invocation selects the same scenarios.
     """
     summaries = [_trial_summary(run) for run in trials]
+    newest = summaries[0]
     if len(summaries) == 1:
-        return summaries[0]
+        return newest
 
     percents: dict[str, list[float]] = defaultdict(list)
     names: dict[str, str] = {}
@@ -492,71 +656,120 @@ def _tool_eval_summary(trials: Sequence[Mapping[str, Any]]) -> ToolEvalSummary:
             names.setdefault(category.code, category.name)
             percents[category.code].append(category.percent)
 
-    def per_trial(count: Callable[[ToolEvalSummary], int]) -> int:
-        return round(fmean(count(summary) for summary in summaries))
+    def mean(count: Callable[[ToolEvalSummary], int]) -> float:
+        return fmean(count(summary) for summary in summaries)
 
+    total = round(mean(lambda summary: summary.total))
+    passed, partial, failed = _largest_remainder(
+        [
+            mean(lambda summary: summary.passed),
+            mean(lambda summary: summary.partial),
+            mean(lambda summary: summary.failed),
+        ],
+        total,
+    )
     score = fmean(summary.score for summary in summaries)
     capped = any(summary.safety_capped for summary in summaries)
-    hardmode = any(summary.hardmode for summary in summaries)
     return ToolEvalSummary(
         score=score,
         rating=rating_for_score(round(score), safety_capped=capped),
-        passed=per_trial(lambda summary: summary.passed),
-        partial=per_trial(lambda summary: summary.partial),
-        failed=per_trial(lambda summary: summary.failed),
-        total=per_trial(lambda summary: summary.total),
+        passed=passed,
+        partial=partial,
+        failed=failed,
+        total=total,
         categories=tuple(
             CategoryScore(code=code, name=name, percent=fmean(percents[code]))
             for code, name in names.items()
         ),
         safety_capped=capped,
-        hardmode=hardmode,
+        hardmode=any(summary.hardmode for summary in summaries),
         trials=len(summaries),
-        suite_size=_suite_size(hardmode),
+        suite_size=newest.suite_size,
+        excluded=round(mean(lambda summary: summary.excluded)),
+        hardmode_only=newest.hardmode_only,
+        scenario_pack=newest.scenario_pack,
     )
 
 
 def _needle_summary(run: Mapping[str, Any]) -> NeedleSummary:
-    """The retrieval grid. Runs stored before ``cells`` existed show accuracy without a grid.
+    """The retrieval grid, with every cell, and accuracy over answered cells.
 
-    An errored cell is left out of the grid and counted in ``errors``, so a
-    context overflow never reads as a miss. Accuracy and effective context
-    are the plugin's own figures.
+    An errored cell, such as a context overflow, stays in the grid with
+    ``error=True`` and does not count against accuracy, so a server failure
+    never reads as a retrieval miss. Rows stored before the plugin flagged
+    errored cells still carry an ``errors`` count, which then sets the
+    denominator. Runs stored before ``cells`` existed show accuracy from the
+    stored counts without a grid. Effective context is the plugin's figure.
     """
     scores = _section(run, "scores")
-    stored = [cell for cell in scores.get("cells") or [] if isinstance(cell, Mapping)]
     cells = tuple(
         NeedleCell(
             context_tokens=int(cell.get("context_tokens") or 0),
             depth_percent=float(cell.get("depth_percent") or 0.0),
-            found=bool(cell.get("found")),
+            found=bool(cell.get("found")) and not cell.get("error"),
+            error=bool(cell.get("error")),
         )
-        for cell in stored
-        if not cell.get("error")
+        for cell in scores.get("cells") or []
+        if isinstance(cell, Mapping)
     )
-    accuracy = scores.get("accuracy")
+    flagged = sum(cell.error for cell in cells)
+    errors = max(flagged, _int_or_none(scores.get("errors")) or 0)
+    total = len(cells) if cells else _int_or_none(scores.get("total"))
+    found = sum(cell.found for cell in cells) if cells else _int_or_none(scores.get("retrieved"))
+    if total is not None and found is not None:
+        answered = total - errors
+        accuracy = found / answered if answered > 0 else 0.0
+    else:
+        stored = scores.get("accuracy")
+        accuracy = float(stored) / 100 if isinstance(stored, (int, float)) else 0.0
     return NeedleSummary(
         cells=cells,
-        accuracy=float(accuracy if isinstance(accuracy, (int, float)) else 0.0) / 100,
+        accuracy=accuracy,
         effective_context=_int_or_none(scores.get("effective_context")),
-        errors=len(stored) - len(cells),
+        errors=errors,
     )
 
 
 def _accuracy(name: str, run: Mapping[str, Any]) -> AccuracyResult | None:
+    """An accuracy benchmark as correct over answered items, with its sample size.
+
+    The plugins store the run as completed even when most requests failed, so
+    the stored counts decide: ``correct`` (``prompts_passed`` for IFEval) over
+    ``total - errors``. A row without counts falls back to its stored
+    accuracy. When ``total`` is below the dataset size, the detail says so,
+    so a three-question run never reads as the full benchmark.
+    """
     scores = _section(run, "scores")
-    accuracy = scores.get("accuracy")
-    if isinstance(accuracy, bool) or not isinstance(accuracy, (int, float)):
-        return None
+    correct = _int_or_none(scores.get("correct"))
+    if correct is None:
+        correct = _int_or_none(scores.get("prompts_passed"))
     total = _int_or_none(scores.get("total"))
+    errors = max(_int_or_none(scores.get("errors")) or 0, 0)
+    stored = scores.get("accuracy")
+    if correct is not None and total is not None:
+        answered = total - errors
+        accuracy = correct / answered if answered > 0 else 0.0
+    elif isinstance(stored, (int, float)) and not isinstance(stored, bool):
+        accuracy = float(stored) / 100
+    else:
+        return None
+
     shots = _int_or_none(scores.get("n_shots"))
     if shots is None:
         shots = _int_or_none(_config(run).get("n_shots"))
+    dataset = _int_or_none(scores.get("dataset_size"))
+    unit = "prompts" if name == "IFEval" else "q"
     parts: list[str] = []
-    if total:
-        parts.append(f"{total} prompts" if name == "IFEval" else f"{total} q")
+    if total and dataset and total < dataset:
+        parts.append(f"{total:,} of {dataset:,} {unit}")
+    elif total:
+        parts.append(f"{total:,} {unit}")
     if shots is not None and name != "IFEval":
         parts.append(f"{shots}-shot")
     return AccuracyResult(
-        name=name, accuracy=float(accuracy) / 100, detail=", ".join(parts) or None
+        name=name,
+        accuracy=accuracy,
+        detail=", ".join(parts) or None,
+        errors=errors,
+        items=total,
     )

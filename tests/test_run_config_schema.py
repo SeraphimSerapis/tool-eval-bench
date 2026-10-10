@@ -19,6 +19,7 @@ from tool_eval_bench.application.run_config import (
     Presence,
     RunSettings,
     build_run_config,
+    cohort_config,
     resume_mismatches,
 )
 from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
@@ -85,9 +86,20 @@ PERTURBED: dict[str, Any] = {
 }
 
 
+LONG_PASSES = [
+    {"depths": [0], "concurrency": [1, 2, 4], "prefix_caching": False},
+    {"depths": [16384], "concurrency": [1], "prefix_caching": True},
+]
+
+
 def _build(settings: RunSettings) -> dict[str, Any]:
     return build_run_config(
-        settings, scenarios=SCENARIOS, metadata={}, scenario_packs=PACKS, perf_preset="long"
+        settings,
+        scenarios=SCENARIOS,
+        metadata={},
+        scenario_packs=PACKS,
+        perf_preset="long",
+        perf_passes=LONG_PASSES,
     )
 
 
@@ -135,18 +147,24 @@ def test_cohort_drops_model_identity_and_unfingerprinted_keys() -> None:
         "endpoint_id",
         "decision_judge",
         "perf_preset",
+        "perf_passes",
         CONFIG_FINGERPRINT_KEY,
     }
 
 
-def test_perf_preset_is_stored_without_moving_the_fingerprint() -> None:
+@pytest.mark.parametrize("preset", ["short", "long", "custom"])
+def test_the_perf_plan_is_stored_without_moving_the_fingerprint_or_cohort(preset: str) -> None:
     scenarios = [_scenario("TC-01")]
     without = build_run_config(FULL, scenarios=scenarios, metadata={})
-    with_long = build_run_config(FULL, scenarios=scenarios, metadata={}, perf_preset="long")
+    with_plan = build_run_config(
+        FULL, scenarios=scenarios, metadata={}, perf_preset=preset, perf_passes=LONG_PASSES
+    )
 
     assert "perf_preset" not in without
-    assert with_long["perf_preset"] == "long"
-    assert with_long[CONFIG_FINGERPRINT_KEY] == without[CONFIG_FINGERPRINT_KEY]
+    assert "perf_passes" not in without
+    assert (with_plan["perf_preset"], with_plan["perf_passes"]) == (preset, LONG_PASSES)
+    assert with_plan[CONFIG_FINGERPRINT_KEY] == without[CONFIG_FINGERPRINT_KEY]
+    assert cohort_config(with_plan) == cohort_config(without)
 
 
 def test_perf_preset_never_blocks_a_resume() -> None:
@@ -154,4 +172,5 @@ def test_perf_preset_never_blocks_a_resume() -> None:
     assert resume_mismatches(_build(FULL), {**_build(FULL), "perf_preset": "short"}) == []
     stored = _build(FULL)
     del stored["perf_preset"]
+    del stored["perf_passes"]
     assert resume_mismatches(stored, _build(FULL)) == []

@@ -2,7 +2,9 @@
 
 The SVG is plain, self-contained markup generated with the standard library.
 PNG export needs the optional ``resvg-py`` package (the ``card`` extra) and
-renders with the bundled fonts only, so a PNG looks the same on every machine.
+renders with the bundled fonts, so a PNG looks the same on every machine. Only
+text the bundled fonts cannot draw, such as a CJK model name, falls back to the
+fonts installed on the machine.
 """
 
 from __future__ import annotations
@@ -12,12 +14,18 @@ from contextlib import ExitStack
 from importlib import resources
 
 from tool_eval_bench.domain.card import CardData, CardLayout
-from tool_eval_bench.storage.reports.card._fonts import font_file_names
+from tool_eval_bench.storage.reports.card._fonts import font_file_names, unsupported_characters
 from tool_eval_bench.storage.reports.card._layout import render
 
-__all__ = ["PngExportUnavailable", "render_card_svg", "svg_to_png"]
+__all__ = ["INSTALL_HINT", "PngExportUnavailable", "render_card_svg", "svg_to_png"]
 
-INSTALL_HINT = "pip install 'tool-eval-bench[card]'"
+# The one install hint for PNG export; the CLI and docs reuse it. The PyPI
+# release does not ship the extra yet, so the git install comes first.
+INSTALL_HINT = (
+    "PNG export needs the card extra: uv tool install "
+    "'tool-eval-bench[card] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git' "
+    "(or pip install 'tool-eval-bench[card]' once released)"
+)
 
 
 class PngExportUnavailable(RuntimeError):
@@ -39,9 +47,10 @@ def svg_to_png(svg: str, *, scale: float = 2.0) -> bytes:
     try:
         resvg_py = importlib.import_module("resvg_py")
     except ImportError as exc:
-        raise PngExportUnavailable(
-            f"PNG export needs the optional resvg-py renderer. Install it with: {INSTALL_HINT}"
-        ) from exc
+        raise PngExportUnavailable(INSTALL_HINT) from exc
+    # System fonts are loaded only when the card needs a glyph the bundle lacks,
+    # so ordinary cards stay byte-identical across machines and render fast.
+    needs_fallback = bool(unsupported_characters(svg))
     fonts_dir = resources.files(__name__).joinpath("fonts")
     with ExitStack() as stack:
         paths = [
@@ -52,7 +61,7 @@ def svg_to_png(svg: str, *, scale: float = 2.0) -> bytes:
             svg_string=svg,
             zoom=scale,
             font_files=paths,
-            skip_system_fonts=True,
+            skip_system_fonts=not needs_fallback,
             font_family="Inter",
             sans_serif_family="Inter",
             monospace_family="JetBrains Mono NL",

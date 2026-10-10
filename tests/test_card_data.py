@@ -15,7 +15,7 @@ from tool_eval_bench.application.card_data import (
     build_card_data,
     load_card_data,
 )
-from tool_eval_bench.domain.card import NeedleCell, PerfPoint
+from tool_eval_bench.domain.card import NeedleCell, PerfPoint, ToolEvalSummary
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, ALL_SCENARIOS_WITH_HARDMODE
 
 # Values that must never reach a card. Each one is planted somewhere a careless
@@ -42,7 +42,8 @@ def _metadata(**overrides: Any) -> dict[str, Any]:
         "session_id": PRIVATE["session_id"],
         "label": PRIVATE["label"],
         "system_prompt": PRIVATE["system_prompt"],
-        "server_model_id": "qwen",
+        # The root is a local path, so the served id names the model.
+        "server_model_id": "Qwen/Qwen3-32B-AWQ",
         "server_model_root": f"/home/alice/{PRIVATE['model_dir']}/Qwen3-32B-AWQ",
         "engine_name": "vLLM",
         "engine_version": "0.11.0",
@@ -130,6 +131,7 @@ def _tool_eval_run(created_at: str = "2026-10-10T12:05:00+00:00", **scores: Any)
             "seed": 7,
             "system_prompt": PRIVATE["system_prompt"],
             "config_fingerprint": "0123456789abcdef",
+            "scenario_ids": [f"TC-{number:02d}" for number in range(1, 7)],
         },
         "scores": base_scores,
         "metadata": _metadata(),
@@ -428,6 +430,8 @@ class TestSparseAndLegacy:
                 {"category": "P", "label": "Hard Mode", "percent": 40.0, "pass_count": 1}
             ],
         )
+        run["config"]["scenario_ids"] = ["TC-01", "TC-70"]
+        run["metadata"]["scenario_selector"] = "TC-01, TC-70"
         summary = build_card_data([run]).tool_eval
         assert summary is not None
         assert summary.safety_capped is True
@@ -500,6 +504,77 @@ def test_private_values_never_reach_the_card() -> None:
 
 
 class TestLoader:
+    @pytest.fixture(autouse=True)
+    def _database(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The loader checks for the database first; these tests fake every query.
+        monkeypatch.setattr(card_data.run_queries, "database_exists", lambda: True)
+        monkeypatch.setattr(card_data.run_queries, "recent_runs", lambda **_: [{"run_id": "x"}])
+
+    def test_missing_database_is_reported_without_opening_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def no_query(*_: Any, **__: Any) -> Any:
+            raise AssertionError("a missing database must not be opened")
+
+        monkeypatch.setattr(card_data.run_queries, "database_exists", lambda: False)
+        monkeypatch.setattr(card_data.run_queries, "latest_session_id", no_query)
+        monkeypatch.setattr(card_data.run_queries, "get_run", no_query)
+        with pytest.raises(CardDataUnavailable, match="No benchmark runs are stored here yet"):
+            load_card_data()
+        with pytest.raises(CardDataUnavailable, match="No benchmark runs are stored here yet"):
+            load_card_data(run_ids=["a"])
+
+    def test_an_empty_database_does_not_mention_older_runs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(card_data.run_queries, "latest_session_id", lambda **_: None)
+        monkeypatch.setattr(card_data.run_queries, "recent_runs", lambda **_: [])
+        with pytest.raises(CardDataUnavailable) as exc_info:
+            load_card_data()
+        assert str(exc_info.value) == "No benchmark runs are stored yet. Run a benchmark first"
+
+    def test_session_prefix_is_stripped_and_lowercased(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        asked: list[str] = []
+
+        def resolve(prefix: str) -> str:
+            asked.append(prefix)
+            return "abcdef-full-id"
+
+        monkeypatch.setattr(card_data.run_queries, "resolve_session_prefix", resolve)
+        monkeypatch.setattr(card_data.run_queries, "session_runs", lambda sid: [_needle_run()])
+        load_card_data(session="  ABCDEF ")
+        assert asked == ["abcdef"]
+
+    def test_repeated_run_ids_count_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+        trial = _trial(80, 1)
+
+        def get_run(run_id: str, **_: Any) -> dict:
+            calls.append(run_id)
+            return trial
+
+        monkeypatch.setattr(card_data.run_queries, "get_run", get_run)
+        summary = load_card_data(run_ids=["t1", "t1", "t1"]).tool_eval
+        assert calls == ["t1"]
+        assert summary is not None
+        assert summary.trials == 1
+
+    def test_mixed_versions_are_warned_about(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        older = _plugin_run("gsm8k", 50.0, "2026-01-01")
+        older["metadata"].update(tool_version="2.8.0", engine_version="0.10.0")
+        stored = {"a": _needle_run(), "b": older}
+        monkeypatch.setattr(card_data.run_queries, "get_run", lambda rid, **_: stored[rid])
+        notes: list[str] = []
+        load_card_data(run_ids=["a", "b"], warn=notes.append)
+        assert notes == [
+            "The runs come from different tool-eval-bench versions (2.8.0, 3.1.0); "
+            "the card shows the newest",
+            "The runs come from different engine versions (0.10.0, 0.11.0); "
+            "the card shows the newest",
+        ]
+
     def test_latest_session_for_a_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
         asked: list[tuple[Any, ...]] = []
 
@@ -612,8 +687,8 @@ class TestLoader:
 
     def test_run_ids_across_models_are_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         first, second = _needle_run(), _plugin_run("gsm8k", 50.0, "2026-01-01")
-        first["metadata"]["server_model_root"] = "/models/Qwen3-32B-AWQ"
-        second["metadata"]["server_model_root"] = "/models/Llama-3-8B"
+        first["metadata"]["server_model_root"] = "Qwen/Qwen3-32B-AWQ"
+        second["metadata"]["server_model_root"] = "meta-llama/Llama-3-8B"
         stored = {"a": first, "b": second}
         monkeypatch.setattr(card_data.run_queries, "get_run", lambda rid, **_: stored[rid])
         with pytest.raises(
@@ -621,9 +696,9 @@ class TestLoader:
         ):
             load_card_data(run_ids=["a", "b"])
 
-    def test_a_path_and_its_basename_are_one_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_an_org_and_a_bare_name_are_one_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
         first, second = _needle_run(), _plugin_run("gsm8k", 50.0, "2026-01-01")
-        first["metadata"]["server_model_root"] = "/home/someone/models/Qwen3-32B-AWQ"
+        first["metadata"]["server_model_root"] = "Qwen/Qwen3-32B-AWQ"
         second["metadata"]["server_model_root"] = "Qwen3-32B-AWQ"
         stored = {"a": first, "b": second}
         monkeypatch.setattr(card_data.run_queries, "get_run", lambda rid, **_: stored[rid])
@@ -733,13 +808,250 @@ def test_errored_needle_cells_are_counted_not_missed() -> None:
     needle = build_card_data([run]).needle
     assert needle is not None
     assert needle.errors == 1
-    assert len(needle.cells) == 3
-    assert all(cell.context_tokens != 4096 or cell.depth_percent != 1.0 for cell in needle.cells)
-    # The plugin's own figures pass through unchanged.
-    assert (needle.accuracy, needle.effective_context) == (0.75, 1024)
+    # Every cell stays in the grid; the errored one is marked, not missed.
+    assert len(needle.cells) == 4
+    assert needle.cells[-1] == NeedleCell(4096, 1.0, found=False, error=True)
+    # Three found out of three answered: the error does not count against it.
+    assert needle.accuracy == 1.0
+    assert needle.effective_context == 1024
 
 
 def test_needle_without_errors_counts_zero() -> None:
     needle = build_card_data([_needle_run()]).needle
     assert needle is not None
     assert needle.errors == 0
+
+
+def _hard_ids() -> list[str]:
+    from tool_eval_bench.evals.scenarios import HARDMODE_SCENARIOS
+
+    return [scenario.id for scenario in HARDMODE_SCENARIOS]
+
+
+def _public_ids() -> list[str]:
+    return [scenario.id for scenario in ALL_SCENARIOS]
+
+
+def _selection(ids: list[str], selector: str | None, **config: Any) -> ToolEvalSummary:
+    run = _tool_eval_run()
+    run["config"].update(scenario_ids=ids, **config)
+    if selector is None:
+        run["metadata"].pop("scenario_selector", None)
+    else:
+        run["metadata"]["scenario_selector"] = selector
+    summary = build_card_data([run]).tool_eval
+    assert summary is not None
+    return summary
+
+
+class TestSuite:
+    def test_full_public_run(self) -> None:
+        summary = _selection(_public_ids(), f"all ({len(ALL_SCENARIOS)})")
+        assert (summary.suite_size, summary.hardmode, summary.hardmode_only) == (69, False, False)
+
+    def test_explicit_subset_compares_with_the_public_suite(self) -> None:
+        assert _selection(["TC-01", "TC-02"], "TC-01, TC-02").suite_size == 69
+
+    def test_full_hard_mode_run(self) -> None:
+        ids = _public_ids() + _hard_ids()
+        summary = _selection(ids, f"all ({len(ids)})")
+        assert (summary.suite_size, summary.hardmode) == (len(ALL_SCENARIOS_WITH_HARDMODE), True)
+
+    def test_hard_mode_only_run(self) -> None:
+        summary = _selection(_hard_ids(), f"all ({len(_hard_ids())})")
+        assert (summary.suite_size, summary.hardmode_only) == (len(_hard_ids()), True)
+
+    @pytest.mark.parametrize(
+        ("ids", "selector"),
+        [
+            # The full Hard Mode suite before TC-89 existed.
+            ([f"TC-{n:02d}" for n in range(1, 89)], "all (88)"),
+            # Hard Mode alone when it had fifteen scenarios.
+            ([f"TC-{n:02d}" for n in range(70, 85)], "all (15)"),
+            # A Hard Mode selection of unknown intent from a row without a selector.
+            ([f"TC-{n:02d}" for n in range(1, 89)], None),
+            # An id today's registry does not know.
+            (["TC-01", "TC-999"], "TC-01, TC-999"),
+            ([], "all (0)"),
+        ],
+    )
+    def test_runs_that_cannot_be_compared_with_today_have_no_suite(
+        self, ids: list[str], selector: str | None
+    ) -> None:
+        assert _selection(ids, selector).suite_size is None
+
+    def test_scenario_pack_has_no_suite(self) -> None:
+        summary = _selection(["TC-01"], "all (1)", scenario_packs=[{"name": "held-out"}])
+        assert (summary.suite_size, summary.scenario_pack) == (None, True)
+
+    def test_excluded_scenarios_are_counted(self) -> None:
+        run = _tool_eval_run(excluded_scenarios=["TC-05", "TC-06"])
+        summary = build_card_data([run]).tool_eval
+        assert summary is not None
+        assert summary.excluded == 2
+
+    def test_trial_counts_sum_to_the_total(self) -> None:
+        def trial(passed: int, partial: int, minute: int) -> dict:
+            run = _trial(80, minute, trials=2)
+            run["scores"]["category_scores"] = [
+                {"category": "A", "percent": 50.0, "pass_count": passed, "partial_count": partial}
+            ]
+            return run
+
+        summary = build_card_data([trial(2, 1, 1), trial(1, 2, 2)]).tool_eval
+        assert summary is not None
+        # Means of 1.5 and 1.5 would round to 2 and 2, four of three scenarios.
+        assert (summary.passed, summary.partial, summary.failed, summary.total) == (2, 1, 0, 3)
+
+
+class TestAccuracyCounts:
+    def test_errored_items_are_left_out_of_accuracy(self) -> None:
+        # The stored shape of an IFEval run where 24 of 28 requests failed.
+        run = _plugin_run(
+            "ifeval",
+            75.0,
+            "2026-06-02T09:01:49+00:00",
+            prompts_passed=3,
+            total=28,
+            errors=24,
+            dataset_size=541,
+        )
+        (result,) = build_card_data([run]).accuracy
+        assert result.accuracy == 0.75
+        assert (result.errors, result.items) == (24, 28)
+        assert result.detail == "28 of 541 prompts"
+
+    def test_a_limited_run_says_how_much_of_the_set_it_used(self) -> None:
+        run = _plugin_run(
+            "gsm8k", 66.7, "2026-01-01", correct=2, total=3, errors=0, n_shots=8, dataset_size=1319
+        )
+        (result,) = build_card_data([run]).accuracy
+        assert result.accuracy == pytest.approx(2 / 3)
+        assert result.detail == "3 of 1,319 q, 8-shot"
+
+    def test_the_full_set_has_no_of_clause(self) -> None:
+        run = _plugin_run("mmlu", 50.0, "2026-01-01", correct=7021, total=14042, dataset_size=14042)
+        (result,) = build_card_data([run]).accuracy
+        assert result.detail == "14,042 q"
+
+    def test_every_item_errored(self) -> None:
+        run = _plugin_run("gsm8k", 0.0, "2026-01-01", correct=0, total=5, errors=5)
+        (result,) = build_card_data([run]).accuracy
+        assert (result.accuracy, result.errors, result.items) == (0.0, 5, 5)
+
+
+class TestNeedleCounts:
+    def test_rows_before_error_flags_use_the_stored_error_count(self) -> None:
+        run = _needle_run()
+        run["scores"]["errors"] = 1
+        needle = build_card_data([run]).needle
+        assert needle is not None
+        # Three found; the unflagged errored cell is out of the denominator.
+        assert (needle.errors, needle.accuracy) == (1, 1.0)
+
+    def test_rows_without_cells_use_the_stored_counts(self) -> None:
+        run = _needle_run(cells=False)
+        run["scores"].update(retrieved=3, total=5, errors=1)
+        needle = build_card_data([run]).needle
+        assert needle is not None
+        assert (needle.cells, needle.errors, needle.accuracy) == ((), 1, 0.75)
+
+    def test_rows_without_counts_keep_the_stored_accuracy(self) -> None:
+        run = _needle_run(cells=False)
+        del run["scores"]["retrieved"], run["scores"]["total"]
+        needle = build_card_data([run]).needle
+        assert needle is not None
+        assert needle.accuracy == 0.75
+
+    def test_every_cell_errored(self) -> None:
+        run = _needle_run()
+        for cell in run["scores"]["cells"]:
+            cell.update(found=False, error=True)
+        needle = build_card_data([run]).needle
+        assert needle is not None
+        assert (needle.errors, needle.accuracy, len(needle.cells)) == (4, 0.0, 4)
+
+
+class TestPerfState:
+    def test_failed_cells_and_an_unfinished_pass(self) -> None:
+        run = _perf_run()
+        run["scores"].update(failed=2, incomplete=True)
+        card = build_card_data([run])
+        assert (card.perf_failed_cells, card.perf_incomplete) == (2, True)
+
+    def test_a_scored_run_carries_the_state_in_throughput(self) -> None:
+        run = _tool_eval_run()
+        run["scores"]["throughput"] = {"results": [_perf_row(0, 1)], "failed": 1}
+        card = build_card_data([run])
+        assert (card.perf_failed_cells, card.perf_incomplete) == (1, False)
+
+    def test_a_failed_perf_status_is_incomplete(self) -> None:
+        run = _perf_run()
+        run["status"] = "failed"
+        assert build_card_data([run]).perf_incomplete is True
+
+    def test_older_rows_read_as_complete(self) -> None:
+        card = build_card_data([_perf_run()])
+        assert (card.perf_failed_cells, card.perf_incomplete) == (0, False)
+
+    def test_custom_preset_is_kept(self) -> None:
+        assert build_card_data([_perf_run(perf_preset="custom")]).perf_preset == "custom"
+
+    def test_derived_per_request_decode_is_marked(self) -> None:
+        points = {(p.depth, p.concurrency): p for p in build_card_data([_perf_run()]).perf}
+        assert points[(0, 4)].tg_estimated is True
+        # At concurrency 1 the stored rate is already per request.
+        assert points[(0, 1)].tg_estimated is False
+
+    def test_measured_per_request_decode_is_not_marked(self) -> None:
+        run = _perf_run()
+        run["scores"]["results"] = [{**_perf_row(0, 4, tg_tps=160.0), "tg_req_tps": 41.0}]
+        (point,) = build_card_data([run]).perf
+        assert point.tg_estimated is False
+
+    def test_a_sample_count_only_row_says_it_predates_cells(self) -> None:
+        legacy = {**_perf_run(), "scores": {"samples": 9}}
+        with pytest.raises(CardDataUnavailable, match="predates stored per-cell results"):
+            build_card_data([legacy])
+
+
+class TestModelName:
+    @pytest.mark.parametrize(
+        ("metadata", "config_model", "expected"),
+        [
+            # A local root falls back to the served id.
+            (
+                {"server_model_root": "/srv/private-dir/x", "server_model_id": "org/Qwen3-8B"},
+                None,
+                "Qwen3-8B",
+            ),
+            (
+                {"server_model_root": "~/models/tuned", "server_model_id": "./tuned"},
+                "Qwen3-8B",
+                "Qwen3-8B",
+            ),
+            # Every name is a path: the Hugging Face cache entry names the model.
+            (
+                {
+                    "server_model_root": "/root/.cache/huggingface/hub/models--Qwen--Qwen3-8B/"
+                    "snapshots/0123456789abcdef0123456789abcdef01234567"
+                },
+                None,
+                "Qwen3-8B",
+            ),
+            # A bare snapshot hash is never shown.
+            (
+                {"server_model_root": "snapshots/0123456789abcdef0123456789abcdef01234567"},
+                "D:\\weights\\Mistral-7B",
+                "Mistral-7B",
+            ),
+        ],
+    )
+    def test_local_paths_never_name_the_model(
+        self, metadata: dict[str, str], config_model: str | None, expected: str
+    ) -> None:
+        run = _needle_run()
+        run["metadata"] = metadata
+        run["config"] = {"model": config_model} if config_model else {}
+        run["model"] = None
+        assert build_card_data([run]).model == expected

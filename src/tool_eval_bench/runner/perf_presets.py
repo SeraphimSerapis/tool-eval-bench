@@ -89,6 +89,14 @@ class PerfPlan:
     dropped_depths: tuple[int, ...] = ()
     #: The served per-request context window, when the run context knows it.
     context_window: int | None = None
+    #: Explicit flags changed the preset's pp, tg, depths, or concurrency.
+    #: Window capping and ``--benchy-runs`` do not count.
+    customized: bool = False
+
+    @property
+    def stored_preset(self) -> str:
+        """The preset name runs store: ``custom`` once overrides changed the grid."""
+        return "custom" if self.customized else self.preset
 
     @property
     def request_fits(self) -> bool:
@@ -151,6 +159,12 @@ def plan_perf(
     runs = defaults.runs if runs is None else runs
     depth_list = tuple(defaults.depths if depths is None else depths)
     levels = tuple(defaults.concurrency if concurrency is None else concurrency)
+    customized = (pp, tg, depth_list, levels) != (
+        defaults.pp,
+        defaults.tg,
+        defaults.depths,
+        defaults.concurrency,
+    )
 
     if preset == "short":
         return PerfPlan(
@@ -160,6 +174,7 @@ def plan_perf(
             runs=runs,
             passes=(PerfPass(depth_list, levels),),
             context_window=context_window,
+            customized=customized,
         )
 
     concurrency_pass = PerfPass((0,), levels)
@@ -184,6 +199,23 @@ def plan_perf(
         passes=passes,
         dropped_depths=dropped,
         context_window=context_window,
+        customized=customized,
+    )
+
+
+def failed_cell_count(samples: Iterable[ThroughputSample]) -> int:
+    """How many grid cells have no usable sample, the count every store and message uses.
+
+    A cell is one ``pp x tg x depth x concurrency`` point. Under prefix
+    caching llama-benchy reports two rows per cell, the context load and the
+    inference, and a failure in either marks the cell failed once.
+    """
+    return len(
+        {
+            (sample.pp_tokens, sample.tg_tokens, sample.depth, sample.concurrency)
+            for sample in samples
+            if sample.error
+        }
     )
 
 

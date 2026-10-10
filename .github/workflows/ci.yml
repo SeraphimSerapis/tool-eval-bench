@@ -65,7 +65,8 @@ jobs:
         run: uv run mypy
 
   # The gating test run. One interpreter, with the perf extra installed so the
-  # llama-benchy integration is covered here rather than in its own job.
+  # llama-benchy integration is covered here rather than in its own job, and
+  # the card extra so the PNG export tests run instead of skipping.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -90,7 +91,7 @@ jobs:
       # Installing from it here means CI tests the same versions users get, and
       # an upstream release cannot turn a green branch red with no repo change.
       - name: Install from the committed lock
-        run: uv sync --locked --extra dev --extra perf --python 3.13
+        run: uv sync --locked --extra dev --extra perf --extra card --python 3.13
 
       # The two suites are independent; overlapping the llama-benchy run
       # behind the main suite shortens the job. Both share the venv created by
@@ -181,8 +182,10 @@ jobs:
           # The uv cache is saved by the `test` job; see the comment there.
           save-cache: false
 
+      # The card extra puts the native resvg wheel and the bundled-font loading
+      # through Windows and the 3.11 floor.
       - name: Install from the committed lock
-        run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
+        run: uv sync --locked --extra dev --extra card --python ${{ matrix.python-version }}
 
       # No coverage gate. The keypress reader is POSIX-only and its tests skip
       # on Windows, so coverage there is structurally lower and not comparable
@@ -311,19 +314,28 @@ jobs:
         run: |
           /tmp/tool-eval-wheel-smoke/bin/tool-eval-bench --version
           /tmp/tool-eval-wheel-smoke/bin/tool-eval-bench --help
-          for command in run probe bench spec-live plugin compare history leaderboard export resume serve; do
+          for command in run probe bench spec-live plugin compare history leaderboard export resume serve card; do
             /tmp/tool-eval-wheel-smoke/bin/tool-eval-bench "$command" --help >/dev/null
           done
           /tmp/tool-eval-wheel-smoke/bin/python - <<'PY'
           from importlib.resources import as_file, files
 
           from tool_eval_bench.evals.yaml_loader import load_yaml_scenarios
+          from tool_eval_bench.storage.reports.card._fonts import font_file_names
 
           resource = files("tool_eval_bench.evals.yaml_scenarios").joinpath("weather.yaml")
           assert resource.is_file(), "bundled weather.yaml is missing"
           with as_file(resource) as path:
               scenarios = load_yaml_scenarios(path.parent)
           assert any(scenario.id == "YAML-01" for scenario in scenarios)
+
+          # PNG export loads these fonts by name, and the OFL requires its text
+          # to travel with them.
+          fonts = files("tool_eval_bench.storage.reports.card").joinpath("fonts")
+          licences = ("Inter-OFL.txt", "JetBrainsMono-OFL.txt", "SOURCES.txt")
+          missing = [n for n in (*font_file_names(), *licences) if not fonts.joinpath(n).is_file()]
+          assert font_file_names(), "no bundled card fonts are declared"
+          assert not missing, f"wheel is missing card font files: {missing}"
           PY
 
   live-canary:

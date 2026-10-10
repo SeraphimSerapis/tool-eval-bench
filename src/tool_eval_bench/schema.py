@@ -798,7 +798,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "card_output",
         "type": "string",
         "default": None,
-        "description": "Card file path; a .png path also writes PNG",
+        "description": "Card file path or directory; a .png path also writes PNG",
     },
     {
         "name": "card_png",
@@ -810,7 +810,7 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "name": "card_scale",
         "type": "float",
         "default": 2.0,
-        "description": "PNG pixel scale relative to the SVG size",
+        "description": "PNG pixel scale relative to the SVG size, 0.25 to 8",
     },
     # -- Scoring --
     {

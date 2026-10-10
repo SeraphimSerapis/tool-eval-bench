@@ -8,6 +8,7 @@ same way, so an untrusted model name cannot open a tag or an attribute.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from html import escape
 
 from tool_eval_bench.storage.reports.card._fonts import FAMILIES, FontKey, text_width
@@ -122,13 +123,51 @@ def text(
     anchor: str = "start",
     tracking: float = 0.0,
     opacity: float | None = None,
-    raw: bool = False,
 ) -> str:
-    """A single-line text element. ``raw`` content must already be escaped markup."""
-    body = content if raw else esc(content)
+    """A single-line text element."""
     return (
         f"<text {attrs(x=float(x), y=float(y), font_family=FAMILIES[font], font_size=float(size), font_weight=weight, fill=fill, text_anchor=None if anchor == 'start' else anchor, letter_spacing=float(tracking) if tracking else None, opacity=opacity)}>"
-        f"{body}</text>"
+        f"{esc(content)}</text>"
+    )
+
+
+@dataclass(frozen=True)
+class Run:
+    """One styled stretch of a :func:`runs_text` line. ``gap`` is space before it."""
+
+    content: str
+    size: float
+    fill: str
+    font: FontKey = "sans"
+    weight: int = 400
+    tracking: float = 0.0
+    gap: float = 0.0
+
+    @property
+    def width(self) -> float:
+        return self.gap + text_width(
+            self.content, self.size, font=self.font, weight=self.weight, tracking=self.tracking
+        )
+
+
+def runs_width(runs: list[Run]) -> float:
+    return sum(r.width for r in runs)
+
+
+def runs_text(x: float, y: float, runs: list[Run], *, anchor: str = "start") -> str:
+    """Several styles on one baseline in one ``<text>``, such as a number and its unit.
+
+    The renderer lays the pieces out from real glyph widths, so a unit stays
+    beside its number even when a viewer substitutes a different font.
+    """
+    first, rest = runs[0], runs[1:]
+    spans = "".join(
+        f"<tspan {attrs(dx=float(r.gap) if r.gap else None, font_family=FAMILIES[r.font], font_size=float(r.size), font_weight=r.weight, fill=r.fill, letter_spacing=float(r.tracking) if r.tracking or first.tracking else None)}>{esc(r.content)}</tspan>"
+        for r in rest
+    )
+    return (
+        f"<text {attrs(x=float(x), y=float(y), font_family=FAMILIES[first.font], font_size=float(first.size), font_weight=first.weight, fill=first.fill, text_anchor=None if anchor == 'start' else anchor, letter_spacing=float(first.tracking) if first.tracking else None)}>"
+        f"{esc(first.content)}{spans}</text>"
     )
 
 

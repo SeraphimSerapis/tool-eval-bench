@@ -11,6 +11,7 @@ import sys
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 
 from tool_eval_bench.cli.headless import report_run_failed
 from tool_eval_bench.storage.reports._common import (
@@ -285,9 +286,9 @@ def run_llama_benchy(
     except KeyboardInterrupt:
         raise PerfPassFailed("\n[bold red]Interrupted.[/]", interrupted=True) from None
     except RuntimeError as exc:
-        raise PerfPassFailed(f"\n[bold red]llama-benchy error:[/] {exc}") from exc
+        raise PerfPassFailed(f"\n[bold red]llama-benchy error:[/] {escape(str(exc))}") from exc
     except Exception as exc:
-        raise PerfPassFailed(f"\n[bold red]Error: {exc}[/]") from exc
+        raise PerfPassFailed(f"\n[bold red]Error: {escape(str(exc))}[/]") from exc
 
     if benchy_result is None:
         console.print("[bold red]No results from llama-benchy.[/]")
@@ -348,7 +349,7 @@ def run_llama_benchy(
     if failed_samples:
         console.print("\n[bold red]Failed measurements:[/]")
         for sample in failed_samples:
-            console.print(f"  [red]•[/] {sample.error}")
+            console.print(f"  [red]•[/] {escape(sample.error or '')}")
 
     console.print()
     return benchy_result.samples

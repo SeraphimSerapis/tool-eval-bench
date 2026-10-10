@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.text import Text
 
 from tool_eval_bench.application.mode_runs import FinalizedRun, ModeRun
+from tool_eval_bench.application.run_queries import current_session_id
 from tool_eval_bench.domain.errors import INVALID_ARGUMENTS, RUN_FAILED
 from tool_eval_bench.utils.urls import redact_urls
 
@@ -86,6 +87,7 @@ def report_run_saved(console: Console, run: ModeRun, finalized: FinalizedRun) ->
                 "run_id": finalized.run_id,
                 "status": run.status,
                 "report_path": str(finalized.report_path),
+                "session_id": current_session_id(),
             }
         )
 

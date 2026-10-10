@@ -759,8 +759,8 @@ def _make_parser() -> argparse.ArgumentParser:
         "--card-output",
         default=None,
         metavar="PATH",
-        help="Card file path; a .png path also writes PNG "
-        "(default: <output-dir>/cards/<model>-<YYYYMMDD>.svg)",
+        help="Card file path or directory; a .png path also writes PNG "
+        "(default: <output-dir>/cards/<model>-<YYYYMMDD>-<fingerprint>.svg)",
     )
     card_grp.add_argument(
         "--card-png",
@@ -772,7 +772,7 @@ def _make_parser() -> argparse.ArgumentParser:
         type=float,
         default=2.0,
         metavar="N",
-        help="PNG pixel scale relative to the SVG size (default: 2)",
+        help="PNG pixel scale relative to the SVG size, 0.25 to 8 (default: 2)",
     )
 
     # -- Scoring options ---------------------------------------------------

@@ -6,6 +6,7 @@ id is bookkeeping: it must not move a fingerprint or appear in a report.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import sys
@@ -261,6 +262,76 @@ def test_resolve_session_prefix(tmp_path: Path) -> None:
         repo.resolve_session_prefix("abcdef")
 
 
+def test_resolve_session_prefix_ignores_case_and_surrounding_whitespace(tmp_path: Path) -> None:
+    repo = open_repository(db_path=str(tmp_path / "b.sqlite"))
+    repo.upsert_scenario_run(_run("1", session_id="abcdef0011"))
+
+    assert repo.resolve_session_prefix("  ABCDEF00 \n") == "abcdef0011"
+    assert repo.resolve_session_prefix("ABCDEF0011") == "abcdef0011"
+    assert repo.resolve_session_prefix("   ") is None
+
+
+def test_latest_session_id_matches_a_bare_model_name_on_a_path_boundary(tmp_path: Path) -> None:
+    repo = open_repository(db_path=str(tmp_path / "b.sqlite"))
+    repo.upsert_scenario_run(_run("1", session_id="s-org", model="Qwen/Qwen3-32B"))
+    repo.upsert_scenario_run(_run("2", session_id="s-path", model="/models/Qwen3-32B"))
+    repo.upsert_scenario_run(_run("3", session_id="s-glued", model="MyQwen3-32B"))
+    repo.upsert_scenario_run(_run("4", session_id="s-wild", model="org/a_b%c"))
+
+    assert repo.latest_session_id(model="Qwen3-32B") == "s-path"
+    assert repo.latest_session_id(model="Qwen/Qwen3-32B") == "s-org"
+    assert repo.latest_session_id(model="MyQwen3-32B") == "s-glued"
+    # Case-sensitive like the exact match, and LIKE wildcards are plain text.
+    assert repo.latest_session_id(model="qwen3-32b") is None
+    assert repo.latest_session_id(model="a_b%c") == "s-wild"
+    assert repo.latest_session_id(model="aXbYc") is None
+    assert repo.latest_session_id(model="%") is None
+    assert repo.latest_session_id(model="32B") is None
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_a_blank_session_id_is_stored_as_null(tmp_path: Path, blank: str) -> None:
+    db_path = tmp_path / "b.sqlite"
+    repo = open_repository(db_path=str(db_path))
+    repo.upsert_scenario_run(_run("blank", session_id=blank))
+    repo.upsert_scenario_run(_run("padded", session_id=f"  {SESSION} "))
+
+    with sqlite3.connect(db_path) as conn:
+        rows = dict(conn.execute("SELECT run_id, session_id FROM scenario_runs"))
+    conn.close()
+    assert rows == {"blank": None, "padded": SESSION}
+    assert repo.latest_session_id() == SESSION
+
+
+def test_the_invocation_session_tags_rows_whose_metadata_has_none(tmp_path: Path) -> None:
+    repo = open_repository(db_path=str(tmp_path / "b.sqlite"))
+    assert run_queries.current_session_id() is None
+
+    with run_queries.invocation_session(SESSION):
+        assert run_queries.current_session_id() == SESSION
+        repo.upsert_scenario_run({**_run("no-context", session_id=None), "metadata": None})
+        repo.upsert_scenario_run(_run("blank", session_id=""))
+        repo.upsert_scenario_run(_run("own", session_id="explicit"))
+    repo.upsert_scenario_run(_run("after", session_id=None))
+
+    assert run_queries.current_session_id() is None
+    assert [run["run_id"] for run in repo.list_session(SESSION)] == ["no-context", "blank"]
+    assert repo.get("own")["session_id"] == "explicit"
+    assert repo.get("after")["session_id"] is None
+
+
+def test_database_exists_does_not_create_the_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    assert run_queries.database_exists() is False
+    assert not (tmp_path / "data").exists()
+
+    run_queries.persist_run(_run("a", session_id=SESSION))
+    assert run_queries.database_exists() is True
+
+
 def test_a_write_without_a_session_keeps_the_stored_one(tmp_path: Path) -> None:
     repo = open_repository(db_path=str(tmp_path / "b.sqlite"))
     repo.upsert_scenario_run(_run("r", session_id=SESSION, status="interrupted"))
@@ -472,7 +543,8 @@ def test_runs_from_one_invocation_share_a_session_and_invocations_differ(
     assert run_queries.latest_session_id(model="m") == second
     # Reports are shareable artifacts; the id stays in SQLite.
     for report in (cli_env / "runs").rglob("*.md"):
-        assert first not in report.read_text() and second not in report.read_text()
+        text = report.read_text(encoding="utf-8")
+        assert first not in text and second not in text
 
 
 def test_every_trial_of_a_scored_run_joins_the_session(
@@ -524,3 +596,49 @@ def test_resume_of_a_run_without_a_session_starts_a_fresh_one() -> None:
     assert dispatch._resumed_session_id({"metadata": {}}) is None
     assert dispatch._resumed_session_id({"metadata": None}) is None
     assert dispatch._resumed_session_id({"metadata": {"session_id": ""}}) is None
+
+
+def _session_column(tmp_path: Path) -> list[tuple[str, str | None]]:
+    """``(run_type, session_id)`` per stored run, oldest first, read from the column."""
+    repo = open_repository(db_path=str(tmp_path / "data" / "benchmarks.sqlite"))
+    try:
+        return [(run["run_type"], run["session_id"]) for run in reversed(repo.list(limit=50))]
+    finally:
+        repo.close()
+
+
+def test_runs_without_a_run_context_still_join_the_invocations_session(
+    cli_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def no_context(**_: Any) -> None:
+        return None
+
+    monkeypatch.setattr(dispatch, "build_run_context", no_context)
+
+    _main(monkeypatch, cli_env, "--perf", "--gsm8k", "--skip-tool-eval")
+    _main(monkeypatch, cli_env, "--scenarios", "TC-01")
+    capsys.readouterr()
+
+    (perf_type, first), (gsm8k_type, gsm8k_session), (scored_type, second) = _session_column(
+        cli_env
+    )
+    assert (perf_type, gsm8k_type, scored_type) == ("perf", "gsm8k", "tool_eval")
+    assert first and second and first != second
+    assert gsm8k_session == first
+    # A bare card picks the newest session, which must be the latest invocation.
+    assert run_queries.latest_session_id() == second
+    assert run_queries.current_session_id() is None
+
+
+def test_run_saved_event_carries_the_session_id(
+    cli_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _main(monkeypatch, cli_env, "--perf", "--skip-tool-eval", "--json")
+    err = capsys.readouterr().err
+
+    (saved,) = [
+        event for event in map(json.loads, err.splitlines()) if event["event"] == "run_saved"
+    ]
+    ((run_type, session_id),) = _session_column(cli_env)
+    assert run_type == "perf" and session_id
+    assert saved["session_id"] == session_id

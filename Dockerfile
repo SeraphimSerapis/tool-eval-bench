@@ -16,7 +16,8 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 COPY .git ./.git
 
-# Build with `--build-arg EXTRAS=perf,hf` to bundle the throughput/HF-dataset extras.
+# Build with `--build-arg EXTRAS=perf,hf,card` to bundle the throughput, HF-dataset,
+# and PNG card export extras. Any comma-separated subset works.
 # The static path is intentional: console-script shebangs remain valid after the
 # virtual environment is copied into the final image.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
@@ -25,7 +26,7 @@ ARG BUILD_VERSION=""
 RUN extra_args=""; \
     for extra in $(printf '%s' "$EXTRAS" | tr ',' ' '); do \
         case "$extra" in \
-            perf|hf) extra_args="$extra_args --extra $extra" ;; \
+            perf|hf|card) extra_args="$extra_args --extra $extra" ;; \
             '') ;; \
             *) echo "unsupported EXTRAS value: $extra" >&2; exit 2 ;; \
         esac; \

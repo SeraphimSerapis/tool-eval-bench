@@ -314,14 +314,18 @@ def benchy_tokens_label(sample: Any) -> str:
     """Return the Tokens column: prompt plus observed output when known.
 
     ``tg_tokens`` is the configured limit. A model that stops early generates
-    fewer, and llama-benchy's progress stream reports how many.
+    fewer, and llama-benchy's progress stream reports how many. A context-load
+    row's prompt is the ``depth``-token context, not the ``pp``-token prompt
+    the inference row sends after it.
     """
     observed = getattr(sample, "observed_tg_tokens", None)
     if isinstance(observed, int | float) and not isinstance(observed, bool):
         generated = f"{observed:.0f}" if float(observed).is_integer() else f"{observed:.1f}"
     else:
         generated = str(sample.tg_tokens)
-    return f"{sample.pp_tokens}+{generated}"
+    is_context_load = getattr(sample, "is_context_prefill", False) is True
+    prompt = sample.label_depth if is_context_load else sample.pp_tokens
+    return f"{prompt}+{generated}"
 
 
 def append_benchy_throughput_rows(md: list[str], ok_samples: list[Any]) -> None:

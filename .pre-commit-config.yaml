@@ -16,11 +16,12 @@ repos:
       - id: check-toml
       - id: end-of-file-fixer
         # compare/git/ holds committed generator output; the hook would
-        # fight the generator every time a sample is regenerated.
-        exclude: ^compare/git/
+        # fight the generator every time a sample is regenerated. The font
+        # licence texts stay verbatim copies of upstream.
+        exclude: ^(compare/git/|src/tool_eval_bench/storage/reports/card/fonts/.*\.txt$)
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
-        exclude: ^compare/git/
+        exclude: ^(compare/git/|src/tool_eval_bench/storage/reports/card/fonts/.*\.txt$)
 
   # ── Ruff: lint + format ─────────────────────────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit

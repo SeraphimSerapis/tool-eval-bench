@@ -53,8 +53,8 @@ error event. The one exception to the stderr rule is an error argparse raises
 while parsing, such as an unknown flag or a missing or malformed value: it
 keeps argparse's usage text, because `--json` is not known yet.
 
-`--history`, `--leaderboard`, and `--compare` print tables and exit 2 with
-`invalid_arguments` under `--json`. Use `--export json` for machine-readable
+`--history`, `--leaderboard`, `--compare`, and `card` print tables or write
+files and exit 2 with `invalid_arguments` under `--json`. Use `--export json` for machine-readable
 run data.
 
 When a scored run fails after it starts, stdout (or the `--json-file` path)
@@ -406,39 +406,71 @@ tool-eval-bench card --png --hardware "RTX 5090 32GB"
 
 | Option | Purpose |
 |--------|---------|
-| `SESSION` | Session to render, as a full id or a unique prefix of at least 6 characters (default: `latest`, the newest session holding a run the card can show) |
-| `--run RUN_ID` | Build the card from this run instead of a session, repeatable. Overrides `SESSION` and works for runs stored before sessions existed |
-| `--model NAME` | With `latest`, use the newest session of this model (matched against the stored model name) |
+| `SESSION` | Session to render, as a full id or a unique prefix of at least 6 characters, in any case (default: `latest`, the newest session holding a run the card can show) |
+| `--run RUN_ID` | Build the card from this run instead of a session, repeatable. A repeated id counts once. Cannot be combined with `SESSION`, and works for runs stored before sessions existed |
+| `--model NAME` | With `latest`, use the newest session of this model. Matches the stored model name or its last path segment, case-sensitively, so `Qwen3-32B` matches `Qwen/Qwen3-32B`. Ignored, with a warning, alongside `SESSION` or `--run` |
 | `--hardware TEXT` | Hardware line on the card. Nothing is detected, so it is shown only when given |
-| `--layout portrait\|landscape` | Card layout (default: `portrait`) |
-| `-o`, `--output PATH` | Card path. A `.png` path writes PNG and puts the SVG beside it |
+| `--layout portrait\|landscape` | Card layout (default: `portrait`). Landscape suits a link preview |
+| `-o`, `--output PATH` | Card path. A `.png` path writes PNG and puts the SVG beside it. A directory gets the default filename inside it, a path without a suffix gets `.svg`, and any other suffix exits 2 |
 | `--png` | Also write a PNG beside the SVG |
-| `--scale N` | PNG pixel scale relative to the SVG (default: 2) |
-| `--output-dir DIR` | Root of the default path, `<DIR>/cards/<model>-<YYYYMMDD>.svg` (default: `./runs`) |
+| `--scale N` | PNG pixel scale relative to the SVG, from 0.25 to 8 (default: 2) |
+| `--output-dir DIR` | Root of the default path (default: `./runs`) |
+
+The default path is `<output-dir>/cards/<model>-<YYYYMMDD>-<fingerprint>.svg`:
+the model name lowercased with other punctuation turned into dashes, so
+`Qwen/Qwen3-32B-AWQ` becomes `qwen-qwen3-32b-awq`, then the date of the newest
+run on the card, and the first
+8 characters of the configuration fingerprint, so two configurations of one
+model on one day do not overwrite each other. The date comes from the stored
+run, never from today. When an SVG is rendered again without `--png`, `card`
+warns if an older PNG with the same name sits beside it.
 
 The card uses the newest completed run of each kind in the selection: the
 tool-call run, the throughput sweep (a `--perf-only` row or the samples a scored
 `--perf` run carries), needle, GSM8K, MMLU, and IFEval. A sweep at concurrency
 above 1 stores the batch total, so the card shows that total. The per-request
 rate is the measured one stored with the sweep; for older rows without it, the
-card divides the total by the concurrency. Missing sections render as not
-measured, and the command prints the flags that would fill them.
+card divides the total by the concurrency and marks the value as estimated.
+Failed grid cells and a sweep that stopped before its plan finished are marked
+on the card. Throughput rows saved before per-cell results were stored hold
+only a sample count and cannot be drawn. Missing sections render as not
+measured, and the command prints the flags that would fill them, naming each
+missing accuracy benchmark.
 
 A session run with `--trials N` shows the mean of its trials: the score and
 category percentages are averaged, the pass, partial, and fail counts are the
-rounded mean per trial, and the rating is recomputed from the mean score. It
-is safety-capped if any trial was. A needle cell whose request errored, such as
-a context overflow, is counted as an error rather than drawn as a miss.
+mean per trial rounded so they still add up to the scenario count, and the
+rating is recomputed from the mean score. It is safety-capped if any trial
+was. The card compares the selected scenarios with today's suite (public, public
+plus Hard Mode, or Hard Mode alone) to mark a subset, and counts scenarios
+excluded after an infrastructure failure as selected. A scenario pack, or a run
+from an older registry such as the 88-scenario Hard Mode runs, gets no subset
+mark because it cannot be compared.
 
-PNG export needs `pip install 'tool-eval-bench[card]'`. Without it, a PNG
-request still writes the SVG, prints that command, then exits 1. `card` exits 1 when no stored
-run matches or when `--run` ids belong to more than one model, and does not
-accept `--json`. The flat form is `--card [SESSION]`
-with `--card-run`, `--card-hardware`, `--card-layout`, `--card-output`,
-`--card-png`, and `--card-scale`.
+Accuracy and needle scores count only answered items: an item or needle cell
+whose request errored, such as a context overflow, is shown as an error rather
+than scored as a miss. A limited run says how much of the set it used, for
+example `200 of 1,319 q`.
+
+PNG export needs the `card` extra:
+`uv tool install 'tool-eval-bench[card] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'`,
+or the same requirement with `pip install`. Without it, a PNG request still
+writes the SVG, prints the install command, then exits 1. A PNG the renderer or
+the filesystem rejects also exits 1 after the SVG is written. `card` exits 1
+when no stored run matches, when `--run` ids belong to more than one model, or
+when the SVG cannot be written. It exits 2 for a `--scale` outside 0.25 to 8,
+an unsupported `-o` suffix, or `SESSION` together with `--run`. It does not
+accept `--json`. Run in a directory without `data/benchmarks.sqlite`, it says so
+and creates nothing. The flat form is `--card [SESSION]` with `--card-run`,
+`--card-hardware`, `--card-layout`, `--card-output`, `--card-png`, and
+`--card-scale`.
 
 A card never carries a hostname, server URL, session or run id, label,
-tokenizer path, or system prompt. The model name is stripped of any path.
+tokenizer path, or system prompt, and its filename carries no session id. The
+model name is stripped of any path. A model served from a local directory is
+named by its served model id rather than the directory name. When merged
+`--run` ids come from different tool or engine versions, `card` warns and the
+card shows the newest.
 
 ## Understanding the JSON output
 
@@ -477,14 +509,15 @@ Each line on stderr is a JSON object:
 {"event": "decision_audit_result", ...}
 {"event": "benchmark_complete", "json_file": "results.json", "final_score": 85}   // --json-file only
 {"event": "safety_gate_failed", "safety_warnings": ["..."]}   // --fail-on-safety, before exit 2
-{"event": "run_saved", "run_type": "perf", "run_id": "...", "status": "completed", "report_path": "runs/..."}
+{"event": "run_saved", "run_type": "perf", "run_id": "...", "status": "completed", "report_path": "runs/...", "session_id": "..."}
 {"event": "log", "level": "warning", "logger": "tool_eval_bench...", "message": "..."}
 {"event": "error", "error": "no_server", "message": "..."}
 ```
 
 `run_saved` comes from the modes without a result envelope. Its `run_type` is
 `perf`, `spec-bench`, `context-pressure`, or the plugin name (`gsm8k`, `mmlu`,
-`ifeval`, `needle`, `decision`). `log` carries warnings and errors from logging
+`ifeval`, `needle`, `decision`). Its `session_id` is the session `card` groups
+by, and is null outside a CLI invocation. `log` carries warnings and errors from logging
 and Python warnings, with URLs redacted. URLs in `error` messages are redacted
 too.
 

@@ -127,7 +127,13 @@ def test_run_settings_match_what_the_service_stores(monkeypatch: pytest.MonkeyPa
         pass
 
     def capture(
-        settings: Any, *, scenarios: Any, metadata: Any, scenario_packs: Any, perf_preset: Any
+        settings: Any,
+        *,
+        scenarios: Any,
+        metadata: Any,
+        scenario_packs: Any,
+        perf_preset: Any,
+        perf_passes: Any,
     ) -> None:
         stored.update(settings=settings, scenarios=scenarios, scenario_packs=scenario_packs)
         raise _Stop

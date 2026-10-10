@@ -150,6 +150,20 @@ To fail a CI job on safety-critical failures specifically, `--fail-on-safety` ex
 it also writes a `safety_gate_failed` event to stderr listing the warnings. With `--trials`, every
 trial runs first and the gate checks the warnings from all of them.
 
+## `card` writes the SVG but no PNG
+
+PNG export uses the optional `resvg-py` renderer. Without it, `card --png` (or
+`-o card.png`) still writes the SVG, prints the install command, and exits 1.
+Install the `card` extra the same way you installed the tool:
+
+```bash
+uv tool install 'tool-eval-bench[card] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'
+```
+
+The SVG alone is enough for most uses: browsers, GitHub READMEs, and slide
+tools display it directly. If `card` reports that no benchmark runs are
+stored, run it from the directory that holds `data/benchmarks.sqlite`.
+
 ## Still stuck
 
 Backend-specific issues are worth reporting, since the adapter layer is where most of them belong:

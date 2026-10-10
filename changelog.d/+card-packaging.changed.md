@@ -1,0 +1,1 @@
+**Docker image can export card PNGs**: the Dockerfile accepts `card` in `EXTRAS`, so `docker compose build --build-arg EXTRAS=card` builds an image where `card --png` works. The default image still writes the SVG card but no PNG.

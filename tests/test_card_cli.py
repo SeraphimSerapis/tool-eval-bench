@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,11 @@ FULL_CARD = CardData(
     perf=(PerfPoint(0, 1, 1000.0, 50.0, 50.0, 200.0),),
     tool_eval=ToolEvalSummary(82.0, "★★★★ Good", 4, 1, 1, 6),
     needle=NeedleSummary(cells=(), accuracy=0.75, effective_context=1024),
-    accuracy=(AccuracyResult("GSM8K", 0.9),),
+    accuracy=(
+        AccuracyResult("GSM8K", 0.9),
+        AccuracyResult("MMLU", 0.7),
+        AccuracyResult("IFEval", 0.8),
+    ),
 )
 EMPTY_CARD = CardData(model="M", tool_version="3.1.0", created_at="not a date")
 
@@ -43,9 +48,11 @@ class _Renderer:
     """Stands in for ``storage.reports.card`` so these tests pin the CLI, not the drawing."""
 
     PngExportUnavailable = _PngExportUnavailable
+    INSTALL_HINT = "pip install 'tool-eval-bench[card]'"
 
-    def __init__(self, *, png: bool = True) -> None:
+    def __init__(self, *, png: bool = True, png_error: Exception | None = None) -> None:
         self.png = png
+        self.png_error = png_error
         self.layouts: list[str] = []
         self.scales: list[float] = []
 
@@ -55,6 +62,8 @@ class _Renderer:
 
     def svg_to_png(self, svg: str, *, scale: float = 2.0) -> bytes:
         self.scales.append(scale)
+        if self.png_error is not None:
+            raise self.png_error
         if not self.png:
             raise _PngExportUnavailable("resvg-py is not installed")
         return b"\x89PNG" + svg.encode()
@@ -160,15 +169,64 @@ class TestPaths:
         assert not svg.with_suffix(".png").exists()
         assert str(svg) in text
         assert renderer.layouts == ["portrait"]
-        assert loaded == {"session": "latest", "run_ids": (), "model": None, "hardware": "H100"}
+        assert {key: value for key, value in loaded.items() if key != "warn"} == {
+            "session": "latest",
+            "run_ids": (),
+            "model": None,
+            "hardware": "H100",
+        }
+
+    def test_default_name_carries_the_fingerprint_prefix_not_the_session(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        card = dataclasses.replace(FULL_CARD, fingerprint="0123abcd99")
+        _run(monkeypatch, ["card", "--output-dir", str(tmp_path)], card=card)
+        assert (tmp_path / "cards" / "qwen3-32b-awq-20261010-0123abcd.svg").exists()
 
     def test_default_root_is_runs_under_the_working_directory(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         monkeypatch.chdir(tmp_path)
         _run(monkeypatch, ["card"], card=EMPTY_CARD)
-        # An unparseable timestamp falls back to today's date.
-        assert len(list((tmp_path / "runs" / "cards").glob("m-*.svg"))) == 1
+        # An unparseable timestamp is not replaced by today's date.
+        assert (tmp_path / "runs" / "cards" / "m-undated.svg").exists()
+
+    @pytest.mark.parametrize(
+        ("created_at", "expected"),
+        [
+            ("2026-10-10T12:13:00Z", "20261010"),
+            ("2026-06-02 08:25:16 garbage", "20260602"),
+        ],
+    )
+    def test_card_date_reads_the_run_timestamp(self, created_at: str, expected: str) -> None:
+        card = dataclasses.replace(EMPTY_CARD, created_at=created_at)
+        assert card_cli.card_date(card) == expected
+
+    def test_output_directory_gets_the_default_name(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _run(monkeypatch, ["card", "-o", str(tmp_path)])
+        assert (tmp_path / "qwen3-32b-awq-20261010.svg").exists()
+
+    def test_output_without_a_suffix_becomes_svg(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _run(monkeypatch, ["card", "-o", str(tmp_path / "mycard")])
+        assert (tmp_path / "mycard.svg").exists()
+
+    def test_unknown_suffix_is_a_usage_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            _run(monkeypatch, ["card", "-o", str(tmp_path / "card.jpg")])
+        assert exc_info.value.code == 2
+        assert list(tmp_path.iterdir()) == []
+
+    def test_stale_png_is_flagged(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        (tmp_path / "card.png").write_bytes(b"old")
+        text, _, _ = _run(monkeypatch, ["card", "-o", str(tmp_path / "card.svg")])
+        assert "card.png is left from an earlier render" in text
+        assert (tmp_path / "card.png").read_bytes() == b"old"
 
     def test_png_beside_the_svg(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         out = tmp_path / "share" / "card.svg"
@@ -198,6 +256,42 @@ class TestPaths:
         )
         assert loaded["run_ids"] == ("r1", "r2")
         assert loaded["model"] == "qwen"
+
+    def test_model_is_flagged_when_ignored(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        text, _, _ = _run(
+            monkeypatch, ["card", "--run", "r1", "--model", "qwen", "-o", str(tmp_path / "c")]
+        )
+        assert "--model only narrows the latest session; it is ignored with --run" in text
+
+    def test_loader_warnings_are_printed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def load(*, warn: Any, **_: Any) -> CardData:
+            warn("The runs come from different engine versions [a, b]")
+            return FULL_CARD
+
+        monkeypatch.setattr(card_cli, "load_card_data", load)
+        monkeypatch.setattr(card_cli, "_renderer", _Renderer)
+        console = Console(record=True, width=300)
+        card_cli.run_card_command(_args(["card", "-o", str(tmp_path / "c")]), console)
+        assert "Warning: The runs come from different engine versions [a, b]" in (
+            console.export_text()
+        )
+
+    def test_session_and_run_together_are_a_usage_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def load(**_: Any) -> CardData:
+            raise AssertionError("a conflicting selection must fail before any read")
+
+        monkeypatch.setattr(card_cli, "load_card_data", load)
+        console = Console(record=True, width=300)
+        with pytest.raises(SystemExit) as exc_info:
+            card_cli.run_card_command(_args(["card", "abcdef", "--run", "r1"]), console)
+        assert exc_info.value.code == 2
+        assert "pass one of them" in console.export_text()
 
 
 class TestFallbacksAndErrors:
@@ -232,7 +326,59 @@ class TestFallbacksAndErrors:
         assert "No benchmark session found [here]" in console.export_text()
         assert not (tmp_path / "cards").exists()
 
-    @pytest.mark.parametrize("scale", ["0", "-1", "nan"])
+    @pytest.mark.parametrize(
+        ("png_error", "message"),
+        [
+            (ValueError("scale too large"), "the renderer failed: scale too large"),
+            (RuntimeError("resvg crashed"), "the renderer failed: resvg crashed"),
+        ],
+    )
+    def test_renderer_failure_keeps_the_svg_and_exits_1(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, png_error: Exception, message: str
+    ) -> None:
+        out = tmp_path / "card.svg"
+        with pytest.raises(SystemExit) as exc_info:
+            _run(
+                monkeypatch,
+                ["card", "-o", str(out), "--png"],
+                renderer=_Renderer(png_error=png_error),
+            )
+        assert exc_info.value.code == 1
+        assert out.exists()
+        assert not out.with_suffix(".png").exists()
+
+    def test_unwritable_output_is_a_clean_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        blocker = tmp_path / "file"
+        blocker.write_text("x", encoding="utf-8")
+        monkeypatch.setattr(card_cli, "load_card_data", lambda **_: FULL_CARD)
+        monkeypatch.setattr(card_cli, "_renderer", _Renderer)
+        console = Console(record=True, width=300)
+        with pytest.raises(SystemExit) as exc_info:
+            card_cli.run_card_command(_args(["card", "-o", str(blocker / "card.svg")]), console)
+        assert exc_info.value.code == 1
+        assert "Could not write" in console.export_text()
+
+    def test_unwritable_png_keeps_the_svg_and_exits_1(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        (tmp_path / "card.png").mkdir()
+        with pytest.raises(SystemExit) as exc_info:
+            _run(monkeypatch, ["card", "-o", str(tmp_path / "card.svg"), "--png"])
+        assert exc_info.value.code == 1
+        assert (tmp_path / "card.svg").exists()
+
+    @pytest.mark.parametrize("scale", ["0.25", "8"])
+    def test_scale_bounds_are_inclusive(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scale: str
+    ) -> None:
+        _, renderer, _ = _run(
+            monkeypatch, ["card", "-o", str(tmp_path / "c.svg"), "--png", "--scale", scale]
+        )
+        assert renderer.scales == [float(scale)]
+
+    @pytest.mark.parametrize("scale", ["0", "-1", "nan", "0.2", "8.5", "inf"])
     def test_bad_scale_is_a_usage_error(self, monkeypatch: pytest.MonkeyPatch, scale: str) -> None:
         def load(**_: Any) -> CardData:
             raise AssertionError("a bad scale must fail before any read")
@@ -252,8 +398,14 @@ class TestTip:
         tip = card_cli.fill_tip(EMPTY_CARD)
         assert tip == (
             "To fill the empty sections, add --perf --perf-preset long --needle "
-            "--gsm8k --mmlu --ifeval to the next run and run the tool-call scenarios "
-            "(without --skip-tool-eval or a --*-only flag)."
+            "--gsm8k --mmlu --ifeval to the next run and include the tool-call scenarios."
+        )
+
+    def test_each_missing_accuracy_benchmark_is_named(self) -> None:
+        # GSM8K is on the card, so only the failed or skipped ones are suggested.
+        card = dataclasses.replace(FULL_CARD, accuracy=(AccuracyResult("GSM8K", 0.9),))
+        assert card_cli.fill_tip(card) == (
+            "To fill the empty sections, add --mmlu --ifeval to the next run."
         )
 
     def test_only_tool_eval_missing(self) -> None:
@@ -265,9 +417,9 @@ class TestTip:
             needle=FULL_CARD.needle,
             accuracy=FULL_CARD.accuracy,
         )
-        tip = card_cli.fill_tip(card)
-        assert tip is not None
-        assert tip.startswith("To fill the empty sections, run the tool-call scenarios")
+        assert card_cli.fill_tip(card) == (
+            "To fill the empty sections, include the tool-call scenarios."
+        )
 
     def test_tip_is_printed(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         text, _, _ = _run(monkeypatch, ["card", "-o", str(tmp_path / "c.svg")], card=EMPTY_CARD)
@@ -356,3 +508,17 @@ def test_real_png_export(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     main()
     assert (tmp_path / "c.png").read_bytes().startswith(b"\x89PNG")
     assert (tmp_path / "c.svg").exists()
+
+
+def test_card_in_an_empty_directory_creates_no_database(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tool_eval_bench.cli.dispatch import main
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["tool-eval-bench", "card"])
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+    assert not (tmp_path / "data").exists()
+    assert not (tmp_path / "runs").exists()

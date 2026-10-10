@@ -57,4 +57,27 @@ docker build \
 That version remains commit-identifiable. A normal checkout derives the fuller
 setuptools-scm version from its in-context `.git` directory automatically.
 
-Build with the throughput/HF-dataset extras via `docker compose build --build-arg EXTRAS=perf,hf`.
+## Optional extras
+
+The default image installs no extras. Pass any comma-separated subset of
+`perf`, `hf`, and `card` as `EXTRAS` to bundle them:
+
+```bash
+docker compose build --build-arg EXTRAS=perf,hf,card
+```
+
+`perf` adds throughput benchmarking, `hf` adds HuggingFace dataset downloads,
+and `card` adds PNG export for result cards. Any other value fails the build.
+
+The `card` command works in every image and writes an SVG to `./runs/cards/`
+on the host:
+
+```bash
+docker compose run --rm tool-eval-bench card
+```
+
+`card --png` also needs the image built with `EXTRAS=card`. Without it the SVG
+is still written, but the PNG is skipped and the command exits 1. Installing the
+extra inside a running container does not work, because the container runs as
+an unprivileged user and `--rm` discards the change anyway. Rebuild the image
+instead.

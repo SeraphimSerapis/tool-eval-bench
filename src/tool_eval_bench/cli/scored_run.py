@@ -91,9 +91,14 @@ class ScoredRun:
     resume_prior_results: list[dict[str, Any]] | None
     resume_scenarios: list[ScenarioDefinition] | None
     judge: JudgeConnection | None
-    #: ``--perf-preset`` when ``--perf`` runs first; the service stores it only
-    #: if throughput samples actually reach the run.
+    #: The preset of the throughput plan that ran first under ``--perf``:
+    #: ``short``, ``long``, or ``custom`` when overrides changed the grid. The
+    #: service stores it only if throughput samples actually reach the run.
     perf_preset: str | None = None
+    #: The throughput passes of that plan, or None for a single-pass plan.
+    perf_passes: list[dict[str, Any]] | None = None
+    #: Whether a planned throughput pass was interrupted, failed, or skipped.
+    perf_incomplete: bool = False
 
     @classmethod
     def from_args(
@@ -153,9 +158,7 @@ class ScoredRun:
                 else getattr(args, "_resume_scenarios", None)
             ),
             judge=JudgeConnection.from_args(args),
-            perf_preset=(
-                getattr(args, "perf_preset", None) if getattr(args, "perf", False) else None
-            ),
+            **_perf_fields(args),
         )
 
     @property
@@ -214,6 +217,8 @@ class ScoredRun:
             "extra_headers": self.extra_headers,
             "session_header": self.session_header,
             "perf_preset": self.perf_preset,
+            "perf_passes": self.perf_passes,
+            "perf_incomplete": self.perf_incomplete,
             **(self.judge.service_kwargs() if self.judge is not None else {}),
         }
 
@@ -258,3 +263,19 @@ class ScoredRun:
             ),
             wire_format=self.wire_format,
         )
+
+
+def _perf_fields(args: argparse.Namespace) -> dict[str, Any]:
+    """The throughput plan fields of a ``--perf`` run, or none without ``--perf``.
+
+    ``dispatch`` stashes the plan that actually ran as ``args._perf_*``, so a
+    run whose overrides changed the grid records ``custom`` rather than the
+    flag. Before the throughput mode runs, ``--perf-preset`` stands in.
+    """
+    if not getattr(args, "perf", False):
+        return {}
+    return {
+        "perf_preset": getattr(args, "_perf_preset", getattr(args, "perf_preset", None)),
+        "perf_passes": getattr(args, "_perf_passes", None),
+        "perf_incomplete": bool(getattr(args, "_perf_incomplete", False)),
+    }

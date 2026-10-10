@@ -8,8 +8,10 @@ import logging
 import sqlite3
 import threading
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List
@@ -39,6 +41,38 @@ def _default_db_path() -> str:
 def _json_field(column: str, key: str) -> str:
     """SQL reading one top-level JSON key, NULL when the stored text is not valid JSON."""
     return f"json_extract(CASE WHEN json_valid({column}) THEN {column} END, '$.{key}')"
+
+
+# The CLI invocation's session id, for rows whose metadata carries none. A run
+# whose RunContext could not be built stores no metadata, and would otherwise
+# drop out of its session, so a bare ``card`` would pick the previous session.
+# Unset outside a CLI invocation, so the Python API stores no session.
+_invocation_session: ContextVar[str | None] = ContextVar(
+    "tool_eval_bench_invocation_session", default=None
+)
+
+
+@contextmanager
+def invocation_session(session_id: str | None) -> Iterator[None]:
+    """Tag every run stored inside the block with *session_id*, unless it has one."""
+    token = _invocation_session.set(normalize_session_id(session_id))
+    try:
+        yield
+    finally:
+        _invocation_session.reset(token)
+
+
+def current_session_id() -> str | None:
+    """The session id ``invocation_session`` set, or None outside one."""
+    return _invocation_session.get()
+
+
+def normalize_session_id(value: object) -> str | None:
+    """Return a usable session id, or None for a missing, blank, or non-string one."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
 
 
 def _split_traces(scores: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
@@ -273,13 +307,17 @@ class RunRepository:
 
         ``session_id`` is read from ``run_data["metadata"]`` rather than passed
         separately: every persist path already stores ``RunContext.to_dict()``
-        there, so each one is tagged without its own plumbing.  A write without
-        one keeps the stored id, so resuming a CLI run through the Python API,
-        which sets no session, does not drop the run out of its session.
+        there, so each one is tagged without its own plumbing.  When the
+        metadata has none, the enclosing ``invocation_session`` supplies it.  A
+        blank id is stored as NULL.  A write with neither keeps the stored id,
+        so resuming a CLI run through the Python API, which sets no session,
+        does not drop the run out of its session.
         """
         scores, traces = _split_traces(run_data.get("scores", {}))
         metadata = run_data.get("metadata") or {}
-        session_id = metadata.get("session_id") if isinstance(metadata, dict) else None
+        session_id = (
+            normalize_session_id(metadata.get("session_id")) if isinstance(metadata, dict) else None
+        ) or current_session_id()
         with self._conn as conn:
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
@@ -310,7 +348,7 @@ class RunRepository:
                     json.dumps(run_data.get("metadata", {})),
                     run_data.get("run_type", "tool_eval"),
                     run_data.get("report_path"),
-                    session_id if isinstance(session_id, str) else None,
+                    session_id,
                 ),
             )
             conn.executemany(
@@ -513,17 +551,22 @@ class RunRepository:
 
         A session qualifies when at least one of its rows matches all given
         filters; the newest such row decides which session wins.  ``model``
-        matches the stored ``model`` column exactly.  ``None`` skips a filter,
-        and an empty collection matches nothing.  Rows written before schema
-        v5 have no session id and are skipped.
+        matches the stored ``model`` column exactly, or as its trailing path
+        segments: ``Qwen3-32B`` matches ``Qwen/Qwen3-32B`` and
+        ``/models/Qwen3-32B`` but not ``MyQwen3-32B``.  Both comparisons are
+        case-sensitive.  ``None`` skips a filter, and an empty collection
+        matches nothing.  Rows written before schema v5 have no session id and
+        are skipped.
         """
         if (run_types is not None and not run_types) or (statuses is not None and not statuses):
             return None
         query = "SELECT session_id FROM scenario_runs WHERE session_id IS NOT NULL"
         params: list[str] = []
         if model:
-            query += " AND model = ?"
-            params.append(model)
+            # substr rather than LIKE: LIKE folds ASCII case and would need
+            # its wildcards escaped in the model name.
+            query += " AND (model = ? OR substr(model, -length(?) - 1) = '/' || ?)"
+            params.extend((model, model, model))
         for column, values in (("run_type", run_types), ("status", statuses)):
             if values is not None:
                 ordered = sorted(set(values))
@@ -537,13 +580,18 @@ class RunRepository:
     def resolve_session_prefix(self, prefix: str) -> str | None:
         """Resolve a full session id or a unique prefix of it.
 
-        An exact id always resolves.  Otherwise the prefix needs at least
+        The input is stripped and lowercased first: the CLI's ids are lowercase
+        hex, and a prefix copied from a terminal may carry spaces.  An exact id
+        always resolves.  Otherwise the prefix needs at least
         ``SESSION_PREFIX_MIN_LENGTH`` characters, so a short typo cannot pick a
         session at random.  Returns ``None`` when nothing matches.
 
         Raises:
             ValueError: when the prefix matches more than one session.
         """
+        prefix = prefix.strip().lower()
+        if not prefix:
+            return None
         with self._conn as conn:
             if conn.execute(
                 "SELECT 1 FROM scenario_runs WHERE session_id = ? LIMIT 1", (prefix,)

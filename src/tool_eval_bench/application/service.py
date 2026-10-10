@@ -50,6 +50,7 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 from tool_eval_bench.runner.orchestrator import run_all_scenarios, score_results
+from tool_eval_bench.runner.perf_presets import failed_cell_count
 from tool_eval_bench.runner.throughput import ThroughputSample
 from tool_eval_bench.storage.db import (
     RunRepository,
@@ -61,19 +62,26 @@ from tool_eval_bench.utils.system_prompt import normalize_system_prompt
 logger = logging.getLogger(__name__)
 
 
-def _throughput_scores(samples: Sequence[ThroughputSample]) -> dict[str, Any]:
+def _throughput_scores(
+    samples: Sequence[ThroughputSample], *, incomplete: bool = False
+) -> dict[str, Any]:
     """The throughput measurements a scored ``--perf`` run stores beside its score.
 
-    The same shape as a ``--perf-only`` row: ``samples`` counts every cell and
-    ``results`` holds the successful ones. A failed cell is only counted,
-    because its error text can quote the server URL.
+    The same shape as a ``--perf-only`` row: ``samples`` counts every result
+    row, ``results`` holds the successful ones, and ``failed`` counts the grid
+    cells (depth x concurrency) without a usable sample. A failed cell is only
+    counted, because its error text can quote the server URL. ``incomplete``
+    is present, and True, when a planned throughput pass did not finish.
     """
     ok = [sample for sample in samples if not sample.error]
-    return {
+    scores: dict[str, Any] = {
         "samples": len(samples),
-        "failed": len(samples) - len(ok),
+        "failed": failed_cell_count(samples),
         "results": [sample.to_result() for sample in ok],
     }
+    if incomplete:
+        scores["incomplete"] = True
+    return scores
 
 
 _SUPPORTED_BACKENDS = ACCEPTED_BACKEND_LABELS
@@ -185,6 +193,8 @@ class BenchmarkService:
         on_scenario_turn: OnScenarioTurn | None = None,
         decision_judge: DecisionJudgeSet | None = None,
         perf_preset: str | None = None,
+        perf_passes: list[dict[str, Any]] | None = None,
+        perf_incomplete: bool = False,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
 
@@ -194,11 +204,16 @@ class BenchmarkService:
         summary so the stored run contains the complete result set.
         ``resume_scenarios`` retains definitions that are not in the rerun
         subset, including held-out pack and Hard Mode scenarios.
-        ``perf_preset`` names the ``--perf-preset`` that produced
-        ``throughput_samples``; it is stored only when samples are attached.
+        ``perf_preset`` names the throughput plan that produced
+        ``throughput_samples`` (``short``, ``long``, or ``custom``) and
+        ``perf_passes`` lists its passes; both are stored only when samples
+        are attached. ``perf_incomplete`` marks a plan with a pass that did not
+        finish. Throughput never changes the scored status: a failed cell or
+        an unfinished pass is recorded under ``scores["throughput"]``.
         """
         validate_run_parameters(max_turns=max_turns, error_rate=error_rate, alpha=alpha)
         stored_perf_preset = perf_preset if throughput_samples else None
+        stored_perf_passes = perf_passes if throughput_samples else None
         judge_config = decision_judge_config(
             decision_judge_base_url, decision_judge_model, decision_judge_api_key, decision_judge
         )
@@ -292,6 +307,7 @@ class BenchmarkService:
             metadata=metadata,
             scenario_packs=scenario_packs,
             perf_preset=stored_perf_preset,
+            perf_passes=stored_perf_passes,
         )
 
         # Build run ID (reuse original for resumed runs)
@@ -397,6 +413,7 @@ class BenchmarkService:
                 metadata=metadata,
                 scenario_packs=scenario_packs,
                 perf_preset=stored_perf_preset,
+                perf_passes=stored_perf_passes,
             )
             logger.info(
                 "Resume merge: %d prior + %d new = %d total scenarios (score: %d)",
@@ -472,7 +489,9 @@ class BenchmarkService:
         scores = summary.to_dict()
         if throughput_samples:
             # Additive: readers of the scored row look up their own keys only.
-            scores["throughput"] = _throughput_scores(throughput_samples)
+            scores["throughput"] = _throughput_scores(
+                throughput_samples, incomplete=perf_incomplete
+            )
         run_data = {
             "run_id": run_id,
             "status": "completed",
