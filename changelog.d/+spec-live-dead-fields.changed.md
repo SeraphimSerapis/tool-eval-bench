@@ -1,1 +1,0 @@
-Removed `MetricsSnapshot.has_sglang_metrics` and `SpecLiveDelta.spec_metrics_source` from `runner/spec_live.py`. Nothing outside the tests read either one, and the source label could disagree with `spec_backend` on a mixed scrape. Neither is part of the public Python API. Spec-live output is unchanged.

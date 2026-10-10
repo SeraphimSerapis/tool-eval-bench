@@ -1,1 +1,0 @@
-**Subcommand options may come before the positional.** `tool-eval-bench plugin --base-url URL gsm8k` and `tool-eval-bench resume --label NAME RUN_ID` could misread an option or its value as the plugin name or run ID, so they failed or resumed the wrong run. The positional is now located using each option's arity, in either order.

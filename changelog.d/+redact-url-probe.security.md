@@ -1,1 +1,0 @@
-**`--redact-url` covers the probe and pre-flight errors.** `--probe` printed the full server URL, and the pre-flight "Cannot connect" line and unexpected-error detail did too, even with `--redact-url`. They now show the redacted form. A URL without a host is reported with its credentials masked instead of echoed.

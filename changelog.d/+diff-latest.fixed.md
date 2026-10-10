@@ -1,1 +1,0 @@
-**`--diff latest`.** `--diff` was ignored under `--no-live`, and `latest` was resolved after the run was saved, so it could compare a run with itself or with a perf or interrupted run. The comparison run is now fixed before the run starts, `latest` means the newest completed tool-call run, and the diff prints in both console modes. `--json` ignores `--diff` with a warning.

@@ -1,1 +1,0 @@
-**`export` ranks within cohorts**: the CSV `rank` column was one global sequence across non-comparable cohorts, so the lowest score could be rank 1 because its cohort label sorted first. Ranks now restart per cohort, as on the leaderboard, and CSV and JSON exports include the cohort label and `cohort_fingerprint`.

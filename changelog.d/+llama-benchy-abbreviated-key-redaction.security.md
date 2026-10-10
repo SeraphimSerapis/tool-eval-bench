@@ -1,1 +1,0 @@
-The llama-benchy command line in logs now redacts the API key when `--benchy-args` passes it under an abbreviation llama-benchy accepts, such as `--api` or `--api-k=`, and withholds the value of `--post-run-cmd` and its abbreviations. Only the exact `--api-key` spelling was redacted before.

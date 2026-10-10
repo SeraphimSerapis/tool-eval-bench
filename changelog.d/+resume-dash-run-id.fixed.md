@@ -1,1 +1,0 @@
-`tool-eval-bench resume -- -ID` now resumes a run whose ID starts with `-`. The `--` was dropped, but the ID was then passed on as a separate token, which the parser read as an unknown option and rejected as a usage error. `--resume=-ID` already worked and still does.
