@@ -1,7 +1,8 @@
-"""TC-21 — Constraint Validation."""
+"""TC-21: Constraint Validation."""
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -26,145 +27,112 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 
+# Each rule covers one invalid field and one valid decoy, so flagging every
+# field costs as much as it gains. The decoys sit on the edges the rules
+# describe: the age limit itself, separators the phone rule strips, a leap
+# day, and zero.
+_PAYLOAD: dict[str, Any] = {
+    "email": "john@.com",
+    "alt_email": "ops@mail.example.org",
+    "age": 151,
+    "guardian_age": 150,
+    "phone": "555-12",
+    "office_phone": "(555) 123-4567",
+    "start_date": "2023-02-29",
+    "renewal_date": "2024-02-29",
+    "amount": -50,
+    "discount": 0,
+}
+
+#: The rule each invalid field breaks.
+_INVALID = {
+    "email": 1,
+    "age": 2,
+    "phone": 3,
+    "start_date": 4,
+    "amount": 5,
+}
+_VALID = frozenset(_PAYLOAD) - frozenset(_INVALID)
+
+# A field name, also written with a space or hyphen or run together
+# ("guardian age", "guardianAge"). Longest names come first so "alt_email" is
+# never read as "email".
+_FIELD = re.compile(
+    r"(?<![a-z0-9_])("
+    + "|".join(
+        name.replace("_", "[ _-]?")
+        for name in sorted(_PAYLOAD, key=lambda name: (-len(name), name))
+    )
+    + r")(?![a-z0-9_])",
+    re.IGNORECASE,
+)
+_RULE = re.compile(r"\b(?:r|rule\s*)([1-5])\b", re.IGNORECASE)
+_ISSUES_MARKER = re.compile(r"^[\W_]*issues[\W_]*:", re.IGNORECASE | re.MULTILINE)
+
 
 def _tc21_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
-    """No tools needed — tests direct reasoning."""
+    """No tools needed: tests direct reasoning."""
     return _generic_tool_fallback(call)
 
 
-# Any assertion that something is wrong. Only consulted for a clause that
-# names the field *and* quotes the offending value, which is the strongest
-# evidence available that the model diagnosed this field: at that point the
-# particular verb it reached for ("exceeds the maximum", "is missing a domain
-# label", "has only 5 digits") is style, not correctness.
-_TC21_PROBLEM = (
-    r"(?:invalid|malformed|bad\b|wrong|incorrect|not\s+(?:a\s+)?(?:valid|allowed|permitted)|"
-    r"isn't\s+valid|error|issue|problem|violat|fails?\b|exceed|out\s+of\s+(?:\w+\s+){0,2}range|"
-    r"too\s+(?:high|low|few|short|long|large|small|many)|must\s+be|should\s+be|"
-    r"cannot|can't|do(?:es)?\s+not\s+exist|don't\s+exist|doesn't\s+exist|missing|"
-    r"only\s+\d+|negative|below\s+zero|impossible|not\s+\d+\s+digits)"
-)
+def _canonical_field(text: str) -> str:
+    compact = re.sub(r"[ _-]", "", text.lower())
+    return next(name for name in _PAYLOAD if name.replace("_", "") == compact)
 
 
-def _tc21_asserts_issue(answer: str, field: str, issue_pattern: str, value: str = "") -> bool:
-    """Find an asserted validation issue, not a quoted or negated mention."""
-    # Split on sentence punctuation only when it actually ends a sentence: the
-    # offending values include "john@.com", and splitting inside it hid the
-    # diagnosis from every check that looks for the value.
-    for clause in re.split(r"(?<=[.!?;])\s+|\n", answer):
-        if "?" in clause or re.search(
-            r"\b(?:if|whether|assuming|suppose|hypothetically)\b", clause, re.IGNORECASE
-        ):
-            continue
-        if not re.search(rf"\b{field}\b", clause, re.IGNORECASE):
-            continue
-        effective = issue_pattern
-        if value and re.search(re.escape(value), clause, re.IGNORECASE):
-            effective = f"(?:{issue_pattern}|{_TC21_PROBLEM})"
-        match = re.search(effective, clause, re.IGNORECASE)
-        if not match:
-            continue
-        before = clause[: match.start()]
-        negation = re.search(r"\b(?:not|never|no)\b(?:\s+\w+){0,4}\s*$", before, re.IGNORECASE)
-        if negation and not re.search(
-            r"(?:\b(?:valid|correct|acceptable)\b|\bwithin\s+range\b)",
-            negation.group(),
-            re.IGNORECASE,
-        ):
-            continue
-        positive_quality_claim = False
-        for quality in re.finditer(
-            r"(?:\b(?:valid|correct|acceptable)\b|\bwithin\s+range\b)",
-            clause,
-            re.IGNORECASE,
-        ):
-            # "(valid: 01-12)", "valid values are 01-12" or "the **valid**
-            # ranges (01-12)" annotate which values a field would accept: a
-            # colon followed by digits, or an attributive range/values noun,
-            # is annotation syntax, not a claim that the offending value
-            # itself is valid (issue #164).  A predicative use — "the email
-            # is valid but malformed", or "is valid: an explanation" — still
-            # suppresses the diagnosis.
-            trailing = clause[quality.end() :]
-            if (
-                re.match(r"[*_`\s]*:\s*\d", trailing)
-                or re.match(
-                    r"[*_`\s]+(?:ranges?|values?|bounds?|limits?|accepted)\b",
-                    trailing,
-                    re.IGNORECASE,
-                )
-                or re.match(r"[*_`\s]+\d{1,2}\s*[–-]\s*\d{1,2}", trailing)
-            ):
-                continue
-            quality_before = clause[: quality.start()]
-            if not re.search(
-                r"(?:\b(?:not|never|no)\b(?:\s+\w+){0,2}|n't)\s*$",
-                quality_before,
-                re.IGNORECASE,
-            ):
-                positive_quality_claim = True
-                break
-        if positive_quality_claim:
-            # A clause such as "email is valid but malformed" is
-            # contradictory.  A negated quality claim, such as
-            # "email is not valid because it is malformed", supports the
-            # issue instead of suppressing it.
-            continue
-        return True
-    return False
+def _flagged_rules(answer: str) -> dict[str, set[int]]:
+    """Map each field the answer flags to the rule ids it cites.
+
+    Only the section after the last ``ISSUES:`` line is read, so the model may
+    reason about valid fields above it. Without that line the whole answer is
+    read. A line flags the first field it names with the first rule id it
+    cites; a line without a rule id flags nothing.
+    """
+    markers = list(_ISSUES_MARKER.finditer(answer))
+    section = answer[markers[-1].end() :] if markers else answer
+    flagged: dict[str, set[int]] = {}
+    for line in section.splitlines():
+        field = _FIELD.search(line)
+        rule = _RULE.search(line)
+        if field and rule:
+            flagged.setdefault(_canonical_field(field.group(1)), set()).add(int(rule.group(1)))
+    return flagged
 
 
 def _tc21_eval(state: ScenarioState) -> ScenarioEvaluation:
-    """User provides a JSON payload with 5 deliberate errors, asks the model to find them all.
+    """Grade which fields the answer flags and which rule it cites for each.
 
-    The model should NOT use any tools — just analyze the data directly.
-    Expected errors: invalid email, age > 150, phone not 10 digits, invalid date, negative amount.
+    An invalid field counts only when every rule cited for it is the right
+    one, so naming the field with a wrong reason earns nothing. Each valid
+    field flagged costs one. PASS needs all five and no false flags; PARTIAL
+    needs a net of three.
     """
     if len(state.tool_calls) > 0:
         used_tools = ", ".join(c.name for c in state.tool_calls)
         return _fail(f"Used tools ({used_tools}) when direct analysis was appropriate.")
 
-    answer = state.final_answer.lower()
-    error_checks = [
-        _tc21_asserts_issue(
-            answer,
-            "email",
-            r"(?:invalid|malformed|bad|missing|incomplete|\bempty\b)",
-            "john@.com",
-        ),
-        _tc21_asserts_issue(
-            answer,
-            "age",
-            r"(?:too\s+high|out\s+of\s+range|over\s+150|exceed|above\s+(?:the\s+)?max|"
-            r"greater\s+than\s+150|implausible|unrealistic)",
-            "200",
-        ),
-        _tc21_asserts_issue(
-            answer,
-            "phone",
-            r"(?:invalid|wrong|bad|too\s+few|fewer\s+than|short|format|not\s+(?:10|ten)|"
-            r"only\s+\d+|incomplete|truncated)",
-            "555-12",
-        ),
-        _tc21_asserts_issue(
-            answer,
-            "date",
-            r"(?:invalid|impossible|not\s+(?:a\s+)?real|month\s+13|day\s+45|bad\s+format|do(?:es)?\s+not\s+exist)",
-            "2020-13-45",
-        ),
-        _tc21_asserts_issue(
-            answer,
-            "amount",
-            r"(?:negative|below\s+zero|less\s+than\s+zero|must\s+be\s+positive)",
-            "-50",
-        ),
-    ]
-    found = sum(error_checks)
-    if found == 5:
-        return _pass(f"Identified {found}/5 validation errors without using tools.")
-    if found >= 3:
-        return _partial(f"Found {found}/5 errors. Missed some validation issues.")
-    return _fail(f"Only found {found}/5 validation errors.")
+    flagged = _flagged_rules(state.final_answer)
+    correct = sorted(f for f, rule in _INVALID.items() if flagged.get(f) == {rule})
+    wrong_rule = sorted(f for f in _INVALID if f in flagged and f not in correct)
+    missed = sorted(f for f in _INVALID if f not in flagged)
+    false_flags = sorted(f for f in _VALID if f in flagged)
+
+    details = []
+    if missed:
+        details.append(f"missed {', '.join(missed)}")
+    if wrong_rule:
+        details.append(f"wrong rule for {', '.join(wrong_rule)}")
+    if false_flags:
+        details.append(f"flagged valid {', '.join(false_flags)}")
+    summary = f"{len(correct)}/5 invalid fields with the right rule"
+    if details:
+        summary += f"; {'; '.join(details)}"
+
+    if len(correct) == 5 and not false_flags:
+        return _pass("Identified all 5 invalid fields and their rules without using tools.")
+    if len(correct) - len(false_flags) >= 3:
+        return _partial(f"{summary}.")
+    return _fail(f"{summary}.")
 
 
 SCENARIO = ScenarioDefinition(
@@ -172,20 +140,27 @@ SCENARIO = ScenarioDefinition(
     title="Constraint Validation",
     category=Category.G,
     user_message=(
-        "Check this API payload without tools. Rules: email must contain a valid domain; "
-        "age must be an integer from 0 through 150; phone must contain exactly 10 digits "
-        "after removing separators; date must be a real Gregorian date in YYYY-MM-DD format; "
-        "amount must be nonnegative. List all validation issues:\n"
-        '{"email": "john@.com", "age": 200, "phone": "555-12", '
-        '"date": "2020-13-45", "amount": -50}'
+        "Check this API payload without tools. Rules:\n"
+        "R1 (email, alt_email): the address needs a nonempty domain name before its "
+        "top-level domain, as in user@example.com.\n"
+        "R2 (age, guardian_age): an integer from 0 through 150.\n"
+        "R3 (phone, office_phone): exactly 10 digits after removing spaces, dashes, dots, "
+        "and parentheses.\n"
+        "R4 (start_date, renewal_date): a real Gregorian date in YYYY-MM-DD format.\n"
+        "R5 (amount, discount): a number that is not negative.\n"
+        f"Payload: {json.dumps(_PAYLOAD)}\n"
+        "Some fields are valid. End your answer with a line reading ISSUES: and then one "
+        "line per invalid field in the form `field: rule id`, for example `name: R9`. "
+        "List nothing else in that section."
     ),
-    description="Find all 5 validation errors without resorting to tools.",
+    description="Flag the five invalid fields and the rule each breaks, without tools.",
     handle_tool_call=_tc21_handle,
     evaluate=_tc21_eval,
     difficulty=3,
 )
 
 DISPLAY = ScenarioDisplayDetail(
-    "Pass if it finds all five validation errors without tools; partial for three or four.",
-    "Fail if it uses tools or misses most errors.",
+    "Pass if it flags all five invalid fields with the right rule and no valid field, "
+    "without tools; partial when right flags minus false flags is three or four.",
+    "Fail if it uses tools, cites wrong rules, or flags valid fields as often as invalid ones.",
 )

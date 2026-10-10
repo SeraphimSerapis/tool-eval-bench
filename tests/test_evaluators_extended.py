@@ -698,9 +698,9 @@ class TestTC21:
     def test_pass(self) -> None:
         s = _state(
             final_answer=(
-                "Issues found:\n1. Invalid email format\n2. Age 200 is unrealistic\n"
-                "3. Phone number has too few digits\n4. Date 2020-13-45 has invalid month\n"
-                "5. Amount is negative (-50)"
+                "The email has no domain name, age 151 is above 150, the phone has 5 "
+                "digits, 2023 has no February 29, and the amount is negative.\n"
+                "ISSUES:\nemail: R1\nage: R2\nphone: R3\nstart_date: R4\namount: R5"
             )
         )
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
