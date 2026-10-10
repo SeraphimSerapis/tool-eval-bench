@@ -1,1 +1,0 @@
-Spec-bench stores `goodput` as `null` when the server exposes no acceptance counters (SGLang, a server without `/metrics`, or a proxy). It used to fall back to effective t/s, so the stored figure claimed every output token was an accepted draft. Goodput from servers with counters is unchanged.

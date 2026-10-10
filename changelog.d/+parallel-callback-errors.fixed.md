@@ -1,1 +1,0 @@
-**Progress callback errors under `--parallel`.** An exception raised by a progress callback, such as a closed stderr pipe, used to replace the scenario's graded result with a `model_crash` FAIL that counted against the model. The exception now ends the run, as it already did in sequential mode, and no graded result is rewritten.

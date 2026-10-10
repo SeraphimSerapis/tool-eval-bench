@@ -1,1 +1,0 @@
-`--redact-url` now also masks the auto-discovered localhost URL in the console line that announces it, and the metrics endpoint in the `spec-live` dashboard header. Both used to show the full host. The `server_discovered` event under `--json` keeps the real URL, as documented, because a consumer needs it to connect.

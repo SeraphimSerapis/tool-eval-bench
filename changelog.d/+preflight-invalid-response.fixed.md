@@ -1,1 +1,0 @@
-The pre-flight model check now rejects a 2xx answer whose body is not a JSON object, such as a login page from a proxy or an HTML page from a misrouted path. It used to pass such a body and start a run whose every request then failed to parse. The check exits 2 with `invalid_response`, under `--json` and in the console alike.

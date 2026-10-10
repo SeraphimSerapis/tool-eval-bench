@@ -1,1 +1,0 @@
-**`--trials` with `--resume`.** Trial 2 of a resumed run used to fail with "already completed and immutable", because every trial reused the resumed run ID. Trial 1 now finishes the resumed run, and trials 2..N run the full protocol as new runs with their own IDs. Under `--json` the run no longer loses trial 1's result when this happens.

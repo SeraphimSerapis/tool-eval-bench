@@ -1,1 +1,0 @@
-**Help text matches the CLI.** `run`, `bench`, and `resume --help` now list `--fail-on-safety`, `--scenario-pack`, and `--pack-only`, and `bench --help` lists `--tokenizer`; all four were accepted but missing from the focused help. `--categories` help names A to P and 16 categories. The CLI reference and API docs give the real 120 s request-timeout default instead of 60 s.

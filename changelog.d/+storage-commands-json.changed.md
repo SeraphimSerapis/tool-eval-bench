@@ -1,1 +1,0 @@
-**`--history`, `--leaderboard`, and `--compare` reject `--json`.** They print Rich tables, so under `--json` stdout held a table where a script expected JSON. They now exit 2 with an `invalid_arguments` event that points to `--export json`, which remains the way to read stored runs as JSON.

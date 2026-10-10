@@ -1,1 +1,0 @@
-Engine-specific facts (metrics namespaces, declared identity names, spec-counter rules, and which engines report a per-request context window) are now declared once per engine in `domain/engines.py` instead of in each module that uses them. No behaviour changes.
