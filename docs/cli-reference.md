@@ -134,6 +134,11 @@ Priority order (highest wins):
 5. `.env` file (never overrides existing env vars)
 6. Auto-discovery on localhost
 
+The CLI searches for the nearest `.env` starting in the current working
+folder and walking up through its parents. If none is found, it uses the
+previous lookup starting at the installed CLI module's folder. It loads only
+the selected file, without overriding exported environment variables.
+
 ```bash
 # Explicit URL
 tool-eval-bench --base-url http://192.168.1.5:8000 --json --short

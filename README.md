@@ -154,6 +154,9 @@ TOOL_EVAL_API_KEY=       # optional
 
 Priority order: CLI flags > environment variables > `.env` > auto-discovery.
 Env vars set by a calling process are never overridden by a stale `.env`.
+The CLI loads the nearest `.env` in the current folder or its parents. If none
+is found, it falls back to the previous lookup from the installed CLI module's
+folder and its parents. Only one file is loaded; the two searches are not merged.
 
 To keep several endpoints in one `.env` for A/B runs, scope them by name and
 pick one with `--provider`:

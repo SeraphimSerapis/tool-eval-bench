@@ -11,7 +11,7 @@ import json
 import sys
 from typing import Any
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 # Re-exported: the fingerprint now lives in utils, and CLI callers still import
 # it from here.
@@ -23,8 +23,8 @@ from tool_eval_bench.utils.urls import redact_urls as _redact_urls
 
 
 def load_dotenv_file() -> None:
-    """Load .env file into os.environ (does not overwrite existing vars)."""
-    load_dotenv(override=False)
+    """Prefer a cwd/parent .env, then the legacy lookup; keep existing env vars."""
+    load_dotenv(find_dotenv(usecwd=True) or find_dotenv(), override=False)
 
 
 def redact_url(url: str) -> str:
