@@ -608,8 +608,5 @@ def open_benchmark_service(output_dir: str | None = None) -> Iterator[BenchmarkS
     connection. A long-lived caller such as the web server runs many, so it
     opens the service per run through this instead.
     """
-    repo = RunRepository()
-    try:
+    with RunRepository() as repo:
         yield BenchmarkService(repo=repo, reporter=MarkdownReporter(root=output_dir))
-    finally:
-        repo.close()
