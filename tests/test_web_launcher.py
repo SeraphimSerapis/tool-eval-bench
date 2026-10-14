@@ -397,3 +397,17 @@ async def test_resume_refuses_conditions_only_the_cli_can_rebuild(
     assert resp.status_code == 400
     assert named in resp.json()["error"]
     assert "CLI" in resp.json()["error"]
+
+
+def test_numeric_defaults_have_the_declared_types() -> None:
+    """Omitted fields fall back to defaults of the declared type.
+
+    _number once returned an int default as-is, and _integer then called
+    int.is_integer(), which only exists from Python 3.12. Checking the types
+    catches that on every interpreter, not only on 3.11.
+    """
+    from tool_eval_bench.web.launcher import _integer, _number
+
+    assert type(_number({}, "temperature", 0)) is float
+    assert type(_integer({}, "max_turns", 8, minimum=1)) is int
+    assert _integer({"max_turns": ""}, "max_turns", 8) == 8

@@ -6,4 +6,5 @@ Events (CLI runs too, through their SQLite checkpoints), and stops or resumes th
 prints a sign-in link with a per-process token and refuses requests without it. State-changing
 requests must come from the UI's own origin as JSON, so other websites cannot use the server or
 the API key it holds. The UI stops only runs it launched and resumes only interrupted runs whose
-stored conditions it can rebuild.
+stored conditions it can rebuild. The launcher rejects malformed numeric settings, such as a
+negative temperature or a fractional turn limit, with an error that names the field.
