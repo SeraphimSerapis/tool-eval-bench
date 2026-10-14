@@ -127,21 +127,26 @@ def test_port_zero_lets_the_os_choose(stub_uvicorn: list[dict[str, Any]]) -> Non
 def test_non_loopback_host_prints_the_exposure_warning(
     monkeypatch: pytest.MonkeyPatch, stub_uvicorn: list[dict[str, Any]]
 ) -> None:
-    # Bind loopback for real while the server believes it got 0.0.0.0, so the
-    # test never listens beyond this machine.
+    # 192.0.2.10 is a reserved documentation address (TEST-NET-1). The bind is
+    # redirected to loopback, so the test never listens beyond this machine.
     real_bind = web.bind_web_socket
     monkeypatch.setattr(web, "bind_web_socket", lambda host, port: real_bind("127.0.0.1", 0))
     console = Console(record=True, width=400)
-    run_web_server(console, host="0.0.0.0", port=9000)  # noqa: S104 - testing the warning
+    run_web_server(console, host="192.0.2.10", port=9000)
     output = console.export_text()
-    assert "non-loopback address 0.0.0.0" in output
+    assert "non-loopback address 192.0.2.10" in output
     assert "API keys" in output
-    assert re.search(r"http://0\.0\.0\.0:\d+/\?token=", output)
+    assert re.search(r"http://192\.0\.2\.10:\d+/\?token=", output)
 
 
 @pytest.mark.parametrize(
     ("host", "shown"),
-    [("127.0.0.1", "localhost"), ("::1", "[::1]"), ("[::1]", "[::1]"), ("0.0.0.0", "0.0.0.0")],  # noqa: S104
+    [
+        ("127.0.0.1", "localhost"),
+        ("::1", "[::1]"),
+        ("[::1]", "[::1]"),
+        ("192.0.2.10", "192.0.2.10"),
+    ],
 )
 def test_display_host_brackets_ipv6(host: str, shown: str) -> None:
     assert web._display_host(host) == shown
