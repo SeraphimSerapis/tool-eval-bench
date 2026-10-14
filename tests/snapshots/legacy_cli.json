@@ -1075,6 +1075,36 @@
   },
   {
     "choices": null,
+    "default": false,
+    "dest": "serve",
+    "flags": [
+      "--serve"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": "127.0.0.1",
+    "dest": "serve_host",
+    "flags": [
+      "--serve-host"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "serve_port",
+    "flags": [
+      "--serve-port"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": null,
     "dest": "card",
     "flags": [
@@ -1142,36 +1172,6 @@
     "dest": "card_scale",
     "flags": [
       "--card-scale"
-    ],
-    "nargs": null,
-    "required": false
-  },
-  {
-    "choices": null,
-    "default": false,
-    "dest": "serve",
-    "flags": [
-      "--serve"
-    ],
-    "nargs": 0,
-    "required": false
-  },
-  {
-    "choices": null,
-    "default": "127.0.0.1",
-    "dest": "serve_host",
-    "flags": [
-      "--serve-host"
-    ],
-    "nargs": null,
-    "required": false
-  },
-  {
-    "choices": null,
-    "default": null,
-    "dest": "serve_port",
-    "flags": [
-      "--serve-port"
     ],
     "nargs": null,
     "required": false

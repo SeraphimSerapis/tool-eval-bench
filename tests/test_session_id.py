@@ -21,9 +21,9 @@ from tests.conftest import open_repository
 from tests.test_e2e import SmokeMockAdapter
 from tests.test_scored_perf_scores import OK_CELL
 from tool_eval_bench.application import run_queries
+from tool_eval_bench.application.leaderboard import cohort_fingerprint as _cohort_fingerprint
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.cli import dispatch
-from tool_eval_bench.cli.leaderboard import _cohort_fingerprint
 from tool_eval_bench.cli.plugin_lifecycle import finalize_plugin_run
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.storage.db import _SCHEMA_VERSION

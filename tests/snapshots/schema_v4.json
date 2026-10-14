@@ -705,6 +705,24 @@
       "type": "string"
     },
     {
+      "default": false,
+      "description": "Launch the local web UI and exit when stopped",
+      "name": "serve",
+      "type": "bool"
+    },
+    {
+      "default": "127.0.0.1",
+      "description": "Bind address for --serve (default: 127.0.0.1)",
+      "name": "serve_host",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Bind port for --serve (default: 8765, or the next free port; 0 = any free port)",
+      "name": "serve_port",
+      "type": "int"
+    },
+    {
       "const": "latest",
       "default": null,
       "description": "Render a shareable results card from a stored session and exit",
@@ -750,24 +768,6 @@
       "description": "PNG pixel scale relative to the SVG size, 0.25 to 8",
       "name": "card_scale",
       "type": "float"
-    },
-    {
-      "default": false,
-      "description": "Launch the local web UI and exit when stopped",
-      "name": "serve",
-      "type": "bool"
-    },
-    {
-      "default": "127.0.0.1",
-      "description": "Bind address for --serve (default: 127.0.0.1)",
-      "name": "serve_host",
-      "type": "string"
-    },
-    {
-      "default": null,
-      "description": "Bind port for --serve (default: 8765, or the next free port; 0 = any free port)",
-      "name": "serve_port",
-      "type": "int"
     },
     {
       "default": false,
