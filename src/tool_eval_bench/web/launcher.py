@@ -138,7 +138,9 @@ def _number(
     """Read a finite number from the request, raising ValueError with the field name."""
     raw = payload.get(key)
     if raw is None or raw == "":
-        return default
+        # float(): an int default would reach _integer's is_integer(), which
+        # int only gained in Python 3.12.
+        return float(default)
     if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
         raise ValueError(f"{key} must be a number")
     try:
