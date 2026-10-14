@@ -42,7 +42,7 @@ from tool_eval_bench.web.sanitize import (
     sanitize_run_for_web,
     stored_held_out_ids,
 )
-from tool_eval_bench.web.security import SessionGate
+from tool_eval_bench.web.security import SecurityHeaders, SessionGate
 
 # Matches the CLI leaderboard's window, so both rank the same runs.
 _LEADERBOARD_WINDOW = 500
@@ -566,7 +566,8 @@ def build_starlette_app(
     app = Starlette(
         debug=False,
         routes=routes,
-        middleware=[Middleware(SessionGate, token=token)],
+        # Outermost first: the gate's own 401 and 403 responses get the headers too.
+        middleware=[Middleware(SecurityHeaders), Middleware(SessionGate, token=token)],
     )
     app.state.output_dir = output_dir
     app.state.redact_url = redact_url

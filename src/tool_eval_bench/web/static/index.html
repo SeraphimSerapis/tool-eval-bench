@@ -2,149 +2,109 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>tool-eval-bench — Evaluation Workbench</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>tool-eval-bench workbench</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar" role="banner">
-    <div class="topbar-brand">
-      <svg class="brand-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="4 17 10 11 4 5"></polyline>
-        <line x1="12" y1="19" x2="20" y2="19"></line>
-      </svg>
-      <span class="brand-name">tool-eval-bench</span>
-      <span id="app-version" class="version-pill"></span>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg class="icon" viewBox="0 0 24 24"><polyline points="5 16 10 11 5 6"></polyline><line x1="12" y1="18" x2="19" y2="18"></line></svg>
+      </span>
+      <span class="brand-text">
+        <span class="brand-name">tool-eval-bench</span>
+        <span class="brand-sub">Evaluation workbench</span>
+      </span>
+      <span id="app-version" class="version-pill" hidden></span>
     </div>
 
-    <nav class="topnav" aria-label="Workbench views">
-      <button type="button" class="nav-tab is-active" data-view="history" aria-selected="true">
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
-          <path d="M3 3v5h5"></path>
-          <path d="M12 7v5l4 2"></path>
-        </svg>
-        History &amp; Inspector
+    <nav class="tabs" role="tablist" aria-label="Workbench views">
+      <button type="button" class="tab" role="tab" id="tab-history" data-view="history" title="Runs" aria-controls="view-history" aria-selected="true">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l4 2"></path></svg>
+        <span class="tab-text">Runs</span>
       </button>
-      <button type="button" class="nav-tab" data-view="live" aria-selected="false">
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="5 3 19 12 5 21 5 3"></polygon>
-        </svg>
-        Launch &amp; Live
-        <span id="live-active-badge" class="status-dot is-hidden" title="Active benchmark run"></span>
+      <button type="button" class="tab" role="tab" id="tab-live" data-view="live" title="Launch &amp; Live" aria-controls="view-live" aria-selected="false" tabindex="-1">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
+        <span class="tab-text">Launch &amp; Live</span>
+        <span id="live-active-badge" class="live-dot" hidden><span class="visually-hidden">A run is active</span></span>
       </button>
-      <button type="button" class="nav-tab" data-view="leaderboard" aria-selected="false">
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="20" x2="18" y2="10"></line>
-          <line x1="12" y1="20" x2="12" y2="4"></line>
-          <line x1="6" y1="20" x2="6" y2="14"></line>
-        </svg>
-        Leaderboard
+      <button type="button" class="tab" role="tab" id="tab-leaderboard" data-view="leaderboard" title="Leaderboard" aria-controls="view-leaderboard" aria-selected="false" tabindex="-1">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 21h8"></path><path d="M12 17v4"></path><path d="M7 4h10v5a5 5 0 0 1-10 0V4z"></path><path d="M17 5h3v2a3 3 0 0 1-3 3"></path><path d="M7 5H4v2a3 3 0 0 0 3 3"></path></svg>
+        <span class="tab-text">Leaderboard</span>
       </button>
-      <button type="button" class="nav-tab" data-view="compare" aria-selected="false">
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M16 3h5v5"></path>
-          <path d="M8 3H3v5"></path>
-          <path d="M21 3l-7 7"></path>
-          <path d="M3 3l7 7"></path>
-          <path d="M16 21h5v-5"></path>
-          <path d="M8 21H3v-5"></path>
-          <path d="M21 21l-7-7"></path>
-          <path d="M3 21l7-7"></path>
-        </svg>
-        Compare Runs
+      <button type="button" class="tab" role="tab" id="tab-compare" data-view="compare" title="Compare" aria-controls="view-compare" aria-selected="false" tabindex="-1">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16"></path><path d="M3 8l4-4 4 4"></path><path d="M17 20V4"></path><path d="M21 16l-4 4-4-4"></path></svg>
+        <span class="tab-text">Compare</span>
       </button>
     </nav>
 
     <div class="topbar-actions">
-      <button type="button" id="refresh-all-btn" class="btn btn-secondary" title="Reload stored runs">
-        <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
-          <path d="M3 3v5h5"></path>
-          <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
-          <path d="M16 16h5v5"></path>
-        </svg>
-        Refresh
+      <button type="button" id="refresh-all-btn" class="btn btn-ghost" title="Reload stored runs">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path><path d="M16 16h5v5"></path></svg>
+        <span>Refresh</span>
       </button>
     </div>
   </header>
 
-  <main class="workbench" role="main">
-    <!-- VIEW 1: HISTORY & RUN INSPECTOR -->
-    <section id="view-history" class="view-section is-active" aria-label="Run history and trace inspector">
-      <div class="split-layout">
-        <aside class="runs-rail" aria-label="Stored benchmark runs">
-          <div class="rail-toolbar">
-            <h1 class="pane-title">Stored runs</h1>
-            <div class="filter-bar">
+  <main class="workbench">
+    <section id="view-history" class="view" role="tabpanel" aria-labelledby="tab-history">
+      <div class="split">
+        <aside class="rail" aria-label="Stored benchmark runs">
+          <div class="rail-head">
+            <h1 class="rail-title">Stored runs <span id="runs-count" class="count"></span></h1>
+            <div class="input-with-icon">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
               <label class="visually-hidden" for="history-search">Search runs</label>
-              <input
-                type="search"
-                id="history-search"
-                class="control-input"
-                placeholder="Filter by model, run ID, label, backend..."
-                autocomplete="off"
-              >
-              <div class="filter-row">
-                <label class="visually-hidden" for="history-status-filter">Status filter</label>
-                <select id="history-status-filter" class="control-select">
-                  <option value="">All statuses</option>
-                  <option value="completed">Completed</option>
-                  <option value="running">Running</option>
-                  <option value="interrupted">Interrupted</option>
-                  <option value="failed">Failed</option>
-                </select>
-                <label class="visually-hidden" for="history-type-filter">Run type filter</label>
-                <select id="history-type-filter" class="control-select">
-                  <option value="">All modes</option>
-                  <option value="tool_eval">Tool Eval</option>
-                  <option value="perf">Throughput</option>
-                  <option value="spec_decode">Spec Decode</option>
-                  <option value="context_pressure">Context Pressure</option>
-                  <option value="gsm8k">GSM8K</option>
-                  <option value="mmlu">MMLU</option>
-                  <option value="ifeval">IFEval</option>
-                  <option value="needle">Needle</option>
-                  <option value="decision">Decision</option>
-                </select>
-              </div>
+              <input type="search" id="history-search" class="input" placeholder="Model, run ID, label, backend" autocomplete="off">
+            </div>
+            <div class="grid-2">
+              <label class="visually-hidden" for="history-status-filter">Status</label>
+              <select id="history-status-filter" class="select">
+                <option value="">All statuses</option>
+                <option value="completed">Completed</option>
+                <option value="running">Running</option>
+                <option value="interrupted">Interrupted</option>
+                <option value="failed">Failed</option>
+              </select>
+              <label class="visually-hidden" for="history-type-filter">Run type</label>
+              <select id="history-type-filter" class="select">
+                <option value="">All modes</option>
+                <option value="tool_eval">Tool eval</option>
+                <option value="perf">Throughput</option>
+                <option value="spec_decode">Spec decode</option>
+                <option value="context_pressure">Context pressure</option>
+                <option value="gsm8k">GSM8K</option>
+                <option value="mmlu">MMLU</option>
+                <option value="ifeval">IFEval</option>
+                <option value="needle">Needle</option>
+                <option value="decision">Decision</option>
+              </select>
             </div>
           </div>
-
-          <div id="runs-list-container" class="runs-list" role="region" aria-live="polite">
-            <div class="skeleton-stack">
-              <div class="skeleton-row"></div>
-              <div class="skeleton-row"></div>
-              <div class="skeleton-row"></div>
-            </div>
+          <div id="runs-list-container" class="rail-list" aria-live="polite">
+            <div class="skeleton"></div>
+            <div class="skeleton"></div>
+            <div class="skeleton"></div>
           </div>
         </aside>
-
-        <section id="run-inspector" class="inspector-pane" aria-label="Run inspector">
-          <div class="empty-state">
-            <h2>Select a benchmark run to inspect</h2>
-            <p>Pick any run on the left to examine its score breakdown, category performance, safety gate status, and multi-turn tool-call traces, or switch to Launch &amp; Live to start a new benchmark.</p>
-          </div>
-        </section>
+        <section id="run-inspector" class="pane" aria-label="Run inspector"></section>
       </div>
     </section>
 
-    <!-- VIEW 2: LAUNCH & LIVE OBSERVER -->
-    <section id="view-live" class="view-section" aria-label="Launch and live run observer" hidden>
+    <section id="view-live" class="view" role="tabpanel" aria-labelledby="tab-live" hidden>
       <div id="live-workspace" class="live-layout"></div>
     </section>
 
-    <!-- VIEW 3: LEADERBOARD -->
-    <section id="view-leaderboard" class="view-section" aria-label="Cohort model leaderboard" hidden>
-      <div id="leaderboard-workspace" class="full-pane"></div>
+    <section id="view-leaderboard" class="view" role="tabpanel" aria-labelledby="tab-leaderboard" hidden>
+      <div id="leaderboard-workspace" class="page"></div>
     </section>
 
-    <!-- VIEW 4: COMPARE RUNS -->
-    <section id="view-compare" class="view-section" aria-label="Head-to-head run comparison" hidden>
-      <div id="compare-workspace" class="full-pane"></div>
+    <section id="view-compare" class="view" role="tabpanel" aria-labelledby="tab-compare" hidden>
+      <div id="compare-workspace" class="page"></div>
     </section>
   </main>
-
-  <script src="/static/app.js" defer></script>
 </body>
 </html>

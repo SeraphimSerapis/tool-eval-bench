@@ -23,7 +23,7 @@ from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from starlette.datastructures import Headers, QueryParams
+from starlette.datastructures import Headers, MutableHeaders, QueryParams
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 Scope = MutableMapping[str, Any]
@@ -36,13 +36,73 @@ _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _PUBLIC_PREFIXES = ("/static/",)
 
 _LOGIN_PAGE = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>tool-eval-bench</title></head>
-<body style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto">
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>tool-eval-bench</title>
+<link rel="stylesheet" href="/static/styles.css"></head>
+<body><main class="signin"><div class="card">
+<div class="brand-mark" aria-hidden="true">&gt;_</div>
 <h1>Session link required</h1>
 <p>Open the link that <code>tool-eval-bench serve</code> printed in your terminal.
 It carries a token that changes every time the server starts.</p>
-</body></html>
+</div></main></body></html>
 """
+
+
+# Nothing in the UI is inline or third-party, so the policy can forbid both.
+# connect-src covers fetch and EventSource; img-src allows the data: URLs
+# browsers use for form-control glyphs.
+CONTENT_SECURITY_POLICY = "; ".join(
+    [
+        "default-src 'none'",
+        "script-src 'self'",
+        "style-src 'self'",
+        "img-src 'self' data:",
+        "connect-src 'self'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ]
+)
+
+SECURITY_HEADERS = {
+    "content-security-policy": CONTENT_SECURITY_POLICY,
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    # The sign-in URL carries the token; never leak it in a Referer.
+    "referrer-policy": "no-referrer",
+    "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "cross-origin-opener-policy": "same-origin",
+}
+
+
+class SecurityHeaders:
+    """Pure ASGI middleware adding the hardening headers to every response.
+
+    API responses also get ``Cache-Control: no-store``: they carry traces and
+    run details that should not linger in the browser cache.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        is_api = str(scope.get("path", "")).startswith("/api/")
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for name, value in SECURITY_HEADERS.items():
+                    headers.setdefault(name, value)
+                if is_api:
+                    headers["cache-control"] = "no-store"
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 def generate_token() -> str:

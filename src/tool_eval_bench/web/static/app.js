@@ -1,5 +1,129 @@
+// tool-eval-bench web UI.
+//
+// Every element is built with document.createElement and textContent; no
+// HTML strings are parsed, so stored run data (model output, tool results,
+// labels) can never become markup. Styles live in styles.css; the only
+// dynamic styling is a numeric custom property set through the CSSOM.
 (() => {
   "use strict";
+
+  // ------------------------------------------------------------------ DOM
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  // Stroke icons as [tag, attributes] lists, drawn on a 24x24 grid.
+  const ICONS = {
+    check: [["polyline", { points: "20 6 9 17 4 12" }]],
+    x: [["path", { d: "M18 6 6 18M6 6l12 12" }]],
+    minus: [["path", { d: "M5 12h14" }]],
+    pause: [["path", { d: "M9 5v14M15 5v14" }]],
+    play: [["polygon", { points: "6 4 20 12 6 20 6 4" }]],
+    stop: [["rect", { x: "6", y: "6", width: "12", height: "12", rx: "2" }]],
+    activity: [["polyline", { points: "22 12 18 12 15 21 9 3 6 12 2 12" }]],
+    chevron: [["polyline", { points: "9 6 15 12 9 18" }]],
+    search: [["circle", { cx: "11", cy: "11", r: "7" }], ["path", { d: "M21 21l-4.3-4.3" }]],
+    shield: [["path", { d: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z" }]],
+    alert: [
+      ["path", { d: "M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" }],
+      ["path", { d: "M12 9v4M12 17h.01" }],
+    ],
+    info: [["circle", { cx: "12", cy: "12", r: "9" }], ["path", { d: "M12 11v5M12 8h.01" }]],
+    server: [
+      ["rect", { x: "3", y: "4", width: "18", height: "7", rx: "2" }],
+      ["rect", { x: "3", y: "13", width: "18", height: "7", rx: "2" }],
+      ["path", { d: "M7 7.5h.01M7 16.5h.01" }],
+    ],
+    cpu: [
+      ["rect", { x: "6", y: "6", width: "12", height: "12", rx: "2" }],
+      ["path", { d: "M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" }],
+    ],
+    calendar: [
+      ["rect", { x: "3", y: "5", width: "18", height: "16", rx: "2" }],
+      ["path", { d: "M3 10h18M8 3v4M16 3v4" }],
+    ],
+    tag: [["path", { d: "M20 12l-8 8-9-9V3h8l9 9z" }], ["circle", { cx: "7.5", cy: "7.5", r: "1.5" }]],
+    download: [["path", { d: "M12 3v12M7 10l5 5 5-5M5 21h14" }]],
+    radio: [
+      ["circle", { cx: "12", cy: "12", r: "2" }],
+      ["path", { d: "M16.2 7.8a6 6 0 0 1 0 8.4M7.8 16.2a6 6 0 0 1 0-8.4M19.1 4.9a10 10 0 0 1 0 14.2M4.9 19.1a10 10 0 0 1 0-14.2" }],
+    ],
+    wrench: [
+      ["path", { d: "M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-.5-.5-2.5 2.5-2.5z" }],
+    ],
+    message: [["path", { d: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" }]],
+    clock: [["circle", { cx: "12", cy: "12", r: "9" }], ["polyline", { points: "12 7 12 12 15 14" }]],
+    zap: [["polygon", { points: "13 2 3 14 12 14 11 22 21 10 12 10 13 2" }]],
+    swap: [["path", { d: "M7 4v16M3 8l4-4 4 4M17 20V4M21 16l-4 4-4-4" }]],
+    inbox: [
+      ["path", { d: "M22 12h-6l-2 3h-4l-2-3H2" }],
+      ["path", { d: "M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z" }],
+    ],
+    trophy: [
+      ["path", { d: "M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4zM17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3" }],
+    ],
+    sliders: [["path", { d: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" }]],
+    layers: [["path", { d: "M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" }]],
+    arrowRight: [["path", { d: "M5 12h14M12 5l7 7-7 7" }]],
+    eye: [
+      ["path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" }],
+      ["circle", { cx: "12", cy: "12", r: "3" }],
+    ],
+  };
+
+  function icon(name) {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "icon");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    for (const [tag, attrs] of ICONS[name] || []) {
+      const node = document.createElementNS(SVG_NS, tag);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+      svg.appendChild(node);
+    }
+    return svg;
+  }
+
+  function append(el, children) {
+    for (const child of children.flat(Infinity)) {
+      if (child === null || child === undefined || child === false) continue;
+      el.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+    }
+    return el;
+  }
+
+  // h("div", { class, text, dataset, style, onclick, ...attributes }, ...children)
+  function h(tag, props, ...children) {
+    const el = document.createElement(tag);
+    let value;
+    for (const [key, val] of Object.entries(props || {})) {
+      if (val === null || val === undefined || val === false) continue;
+      if (key === "class") el.className = val;
+      else if (key === "text") el.textContent = String(val);
+      else if (key === "value") value = val;
+      else if (key === "dataset") Object.assign(el.dataset, val);
+      else if (key === "style") {
+        for (const [prop, v] of Object.entries(val)) el.style.setProperty(prop, String(v));
+      } else if (key.startsWith("on") && typeof val === "function") {
+        el.addEventListener(key.slice(2), val);
+      } else el.setAttribute(key, val === true ? "" : String(val));
+    }
+    append(el, children);
+    // Set after the children exist, so a <select> can select its option.
+    if (value !== undefined) el.value = String(value);
+    return el;
+  }
+
+  // replaceChildren() would stringify a null child into the text "null".
+  function setChildren(el, ...children) {
+    if (!el) return null;
+    el.replaceChildren();
+    return append(el, children);
+  }
+
+  const byId = (id) => document.getElementById(id);
+  const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ---------------------------------------------------------------- State
 
   const state = {
     activeView: "history",
@@ -17,7 +141,6 @@
     lastComparison: null,
     launcherSchema: null,
     probedModels: [],
-    probeStatus: null,
     liveRunId: null,
     liveRunStatus: null,
     liveModel: null,
@@ -34,35 +157,74 @@
     compareRuns: [],
   };
 
-  function escapeHtml(value) {
-    if (value === null || value === undefined) return "";
-    return String(value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
+  // ------------------------------------------------------------ Formatting
+
+  function splitModel(model) {
+    const parts = String(model || "unknown").split("/").filter(Boolean);
+    const name = parts.pop() || "unknown";
+    return { org: parts.length ? parts[parts.length - 1] : "", name };
   }
 
-  function statusBadgeClass(status) {
-    const s = String(status || "").toLowerCase();
-    if (s === "pass" || s === "completed") return "badge-pass";
-    if (s === "partial" || s === "interrupted") return "badge-partial";
-    if (s === "fail" || s === "failed") return "badge-fail";
-    if (s === "running") return "badge-info";
-    return "badge-neutral";
+  function tierFor(pct) {
+    if (pct === null || pct === undefined || Number.isNaN(Number(pct))) return "";
+    if (pct >= 75) return "tier-pass";
+    if (pct >= 45) return "tier-partial";
+    return "tier-fail";
   }
 
-  function scoreBarClass(pct) {
-    if (pct >= 75) return "is-pass";
-    if (pct >= 45) return "is-partial";
-    return "is-fail";
+  function heatClass(pct) {
+    if (pct >= 90) return "heat-90";
+    if (pct >= 75) return "heat-75";
+    if (pct >= 60) return "heat-60";
+    return "heat-low";
   }
 
-  function formatDate(iso) {
-    if (!iso) return "—";
-    return String(iso).slice(0, 19).replace("T", " ");
+  function parseDate(iso) {
+    if (!iso) return null;
+    const text = /[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`;
+    const date = new Date(text);
+    return Number.isNaN(date.getTime()) ? null : date;
   }
+
+  const relFormatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
+  function relTime(iso) {
+    const date = parseDate(iso);
+    if (!date) return iso ? String(iso).slice(0, 16).replace("T", " ") : "—";
+    const seconds = (date.getTime() - Date.now()) / 1000;
+    const units = [
+      ["year", 31536000],
+      ["month", 2592000],
+      ["week", 604800],
+      ["day", 86400],
+      ["hour", 3600],
+      ["minute", 60],
+    ];
+    for (const [unit, size] of units) {
+      if (Math.abs(seconds) >= size) return relFormatter.format(Math.round(seconds / size), unit);
+    }
+    return "just now";
+  }
+
+  function absTime(iso) {
+    const date = parseDate(iso);
+    return date ? date.toLocaleString() : String(iso || "");
+  }
+
+  function fmtSeconds(value) {
+    return value === undefined || value === null ? "—" : `${Number(value).toFixed(1)}s`;
+  }
+
+  function fmtTokens(value) {
+    if (!value) return "—";
+    return value >= 1000 ? `${(value / 1000).toFixed(value >= 100000 ? 0 : 1)}k` : String(value);
+  }
+
+  function pctOf(part, whole) {
+    return whole ? Math.round((part / whole) * 100) : 0;
+  }
+
+  // ------------------------------------------------------------------ API
 
   async function fetchJson(url, options) {
     const resp = await fetch(url, options);
@@ -89,59 +251,220 @@
     });
   }
 
-  function switchView(viewName) {
-    state.activeView = viewName;
-    document.querySelectorAll(".nav-tab").forEach((btn) => {
-      const active = btn.dataset.view === viewName;
-      btn.classList.toggle("is-active", active);
-      btn.setAttribute("aria-selected", active ? "true" : "false");
-    });
-    document.querySelectorAll(".view-section").forEach((sec) => {
-      const active = sec.id === `view-${viewName}`;
-      sec.classList.toggle("is-active", active);
-      if (active) {
-        sec.removeAttribute("hidden");
-      } else {
-        sec.setAttribute("hidden", "");
-      }
-    });
-    if (viewName === "leaderboard" && typeof window.loadLeaderboardView === "function") {
-      window.loadLeaderboardView();
-    } else if (viewName === "compare" && typeof window.loadCompareView === "function") {
-      window.loadCompareView();
-    } else if (viewName === "live" && typeof window.loadLiveView === "function") {
-      window.loadLiveView();
-    }
+  async function ensureSchema() {
+    if (!state.launcherSchema) state.launcherSchema = await fetchJson("/api/schema");
+    return state.launcherSchema;
   }
 
+  // ----------------------------------------------------------- Components
+
+  const STATUS_ICONS = {
+    pass: "check",
+    completed: "check",
+    partial: "minus",
+    interrupted: "pause",
+    fail: "x",
+    failed: "x",
+    running: "activity",
+  };
+
+  // Status always pairs a color with an icon and a word, never color alone.
+  function chip(status, label) {
+    const key = String(status || "").toLowerCase();
+    const known = STATUS_ICONS[key];
+    return h(
+      "span",
+      { class: `chip ${known ? `chip-${key}` : "chip-plain"}` },
+      known ? icon(known) : null,
+      label ?? (status || "unknown")
+    );
+  }
+
+  function ring(value, opts = {}) {
+    const hasValue = value !== null && value !== undefined && !Number.isNaN(Number(value));
+    const pct = hasValue ? Math.max(0, Math.min(100, Number(value))) : 0;
+    const tier = opts.tier ?? (hasValue ? tierFor(pct) : "");
+    const el = h(
+      "div",
+      {
+        class: `ring ${tier} ${hasValue ? "" : "ring-empty"} ${opts.cls || ""}`,
+        role: "img",
+        "aria-label": opts.title || (hasValue ? `Score ${Math.round(pct)} of 100` : "No score"),
+        style: { "--value": opts.animate ? 0 : pct },
+      },
+      h("span", { class: "ring-label", text: opts.label ?? (hasValue ? Math.round(pct) : "—") }),
+      opts.sub ? h("span", { class: "ring-sub", text: opts.sub }) : null
+    );
+    if (opts.animate) {
+      // Two frames: the first paints 0, the second lets the transition run.
+      requestAnimationFrame(() => requestAnimationFrame(() => el.style.setProperty("--value", pct)));
+    }
+    return el;
+  }
+
+  function bar(pct, cls = "") {
+    return h("div", { class: `bar ${cls}`, role: "presentation" }, h("span", { style: { "--value": pct } }));
+  }
+
+  function ppfBar(p, q, f) {
+    return h(
+      "div",
+      { class: "ppf", role: "presentation" },
+      h("span", { class: "p", style: { "--value": p } }),
+      h("span", { class: "q", style: { "--value": q } }),
+      h("span", { class: "f", style: { "--value": f } })
+    );
+  }
+
+  function emptyState(iconName, title, text, ...actions) {
+    return h(
+      "div",
+      { class: "empty" },
+      h("div", { class: "empty-icon" }, icon(iconName)),
+      h("h2", { text: title }),
+      text ? h("p", { text }) : null,
+      actions.length ? h("div", { class: "quick-links" }, actions) : null
+    );
+  }
+
+  function stat(label, value, opts = {}) {
+    return h(
+      "div",
+      { class: `card stat ${opts.cls || ""}` },
+      h("div", { class: "stat-label" }, opts.icon ? icon(opts.icon) : null, label),
+      h("div", { class: "stat-value" }, value, opts.small ? h("small", { text: ` ${opts.small}` }) : null),
+      opts.extra || null
+    );
+  }
+
+  function banner(kind, iconName, ...content) {
+    return h("div", { class: `banner banner-${kind}`, role: kind === "danger" ? "alert" : "status" }, icon(iconName), h("div", {}, content));
+  }
+
+  function segmented(options, current, onPick, label) {
+    return h(
+      "div",
+      { class: "segmented", role: "group", "aria-label": label },
+      options.map(([id, text, count]) =>
+        h(
+          "button",
+          { type: "button", "aria-pressed": String(current === id), onclick: () => onPick(id) },
+          text,
+          count !== undefined ? h("span", { class: "count", text: count }) : null
+        )
+      )
+    );
+  }
+
+  function tile(status, title, opts = {}) {
+    return h("button", {
+      type: "button",
+      class: `tile tile-${status}`,
+      title,
+      "aria-label": title,
+      "aria-pressed": opts.pressed ? "true" : null,
+      onclick: opts.onclick,
+      tabindex: opts.onclick ? null : "-1",
+    });
+  }
+
+  function legend() {
+    return h(
+      "div",
+      { class: "legend" },
+      [
+        ["pass", "Pass"],
+        ["partial", "Partial"],
+        ["fail", "Fail"],
+        ["held", "Held out"],
+      ].map(([cls, text]) => h("span", {}, h("i", { class: `tile-${cls}` }), text))
+    );
+  }
+
+  function modelBlock(model, cls) {
+    const { org, name } = splitModel(model);
+    return h(
+      "div",
+      { class: cls, title: model },
+      org ? h("span", { class: cls === "run-model" ? "run-org" : "org", text: org }) : null,
+      h("span", { class: cls === "run-model" ? "run-name" : "name", text: name })
+    );
+  }
+
+  function preserveScroll(container, render) {
+    const top = container.scrollTop;
+    render();
+    container.scrollTop = top;
+  }
+
+  // ----------------------------------------------------------------- Tabs
+
+  const VIEWS = ["history", "live", "leaderboard", "compare"];
+
+  function switchView(viewName) {
+    state.activeView = viewName;
+    for (const tab of document.querySelectorAll(".tab")) {
+      const active = tab.dataset.view === viewName;
+      tab.setAttribute("aria-selected", String(active));
+      tab.tabIndex = active ? 0 : -1;
+    }
+    for (const view of VIEWS) {
+      const section = byId(`view-${view}`);
+      if (section) section.hidden = view !== viewName;
+    }
+    if (viewName === "leaderboard") loadLeaderboardView();
+    else if (viewName === "compare") loadCompareView();
+    else if (viewName === "live") loadLiveView();
+  }
+
+  function onTabKeydown(ev) {
+    const tabs = [...document.querySelectorAll(".tab")];
+    const index = tabs.indexOf(ev.currentTarget);
+    let next = null;
+    if (ev.key === "ArrowRight") next = tabs[(index + 1) % tabs.length];
+    else if (ev.key === "ArrowLeft") next = tabs[(index - 1 + tabs.length) % tabs.length];
+    else if (ev.key === "Home") next = tabs[0];
+    else if (ev.key === "End") next = tabs[tabs.length - 1];
+    if (!next) return;
+    ev.preventDefault();
+    next.focus();
+    switchView(next.dataset.view);
+  }
+
+  // -------------------------------------------------------------- History
+
   async function loadRunsList() {
-    const search = document.getElementById("history-search")?.value || "";
-    const status = document.getElementById("history-status-filter")?.value || "";
-    const runType = document.getElementById("history-type-filter")?.value || "";
+    const search = byId("history-search")?.value || "";
+    const status = byId("history-status-filter")?.value || "";
+    const runType = byId("history-type-filter")?.value || "";
     const params = new URLSearchParams({ limit: "100" });
     if (search) params.set("q", search);
     if (status) params.set("status", status);
     if (runType) params.set("run_type", runType);
 
-    const container = document.getElementById("runs-list-container");
+    const container = byId("runs-list-container");
     const seq = ++state.runsRequestSeq;
     try {
       const data = await fetchJson(`/api/runs?${params.toString()}`);
       if (seq !== state.runsRequestSeq) return;
       if (data.version) {
-        const verEl = document.getElementById("app-version");
-        if (verEl) verEl.textContent = `v${data.version}`;
+        const pill = byId("app-version");
+        if (pill) {
+          pill.textContent = `v${String(data.version).split("+")[0]}`;
+          pill.title = `tool-eval-bench ${data.version}`;
+          pill.hidden = false;
+        }
       }
       state.runs = data.runs || [];
       renderRunsList();
       if (!state.selectedRunId && state.runs.length > 0) {
         selectRun(state.runs[0].run_id);
+      } else if (!state.runs.length && !state.selectedRunId) {
+        renderInspector();
       }
     } catch (err) {
       if (seq !== state.runsRequestSeq) return;
-      if (container) {
-        container.innerHTML = `<div class="empty-state"><h2>Could not load runs</h2><p>${escapeHtml(err.message)}</p></div>`;
-      }
+      setChildren(container, emptyState("alert", "Could not load runs", err.message));
     }
   }
 
@@ -151,459 +474,574 @@
     searchDebounce = setTimeout(loadRunsList, 250);
   }
 
+  function runCard(run) {
+    const selected = run.run_id === state.selectedRunId;
+    const score = run.final_score;
+    return h(
+      "button",
+      {
+        type: "button",
+        class: "run-card run-item",
+        dataset: { runId: run.run_id },
+        "aria-current": selected ? "true" : null,
+        onclick: () => selectRun(run.run_id),
+      },
+      modelBlock(run.model, "run-model"),
+      ring(score, {
+        label: score === null || score === undefined ? null : Math.round(score),
+        title: score === null || score === undefined ? `No score, ${run.status}` : `Score ${score} of 100`,
+      }),
+      h(
+        "div",
+        { class: "run-meta" },
+        chip(run.status),
+        h("span", { text: run.backend || "unknown" }),
+        h("span", { title: absTime(run.created_at), text: relTime(run.created_at) }),
+        run.label ? h("span", { class: "chip chip-accent" }, icon("tag"), run.label) : null,
+        run.safety_warnings_count > 0
+          ? h("span", { class: "chip chip-fail", title: "Safety warnings" }, icon("shield"), run.safety_warnings_count)
+          : null
+      )
+    );
+  }
+
   function renderRunsList() {
-    const container = document.getElementById("runs-list-container");
+    const container = byId("runs-list-container");
     if (!container) return;
+    const count = byId("runs-count");
+    if (count) count.textContent = state.runs.length ? String(state.runs.length) : "";
     if (!state.runs.length) {
-      container.innerHTML = `
-        <div class="empty-state">
-          <h2>No matching benchmark runs</h2>
-          <p>Run a benchmark from the CLI or switch to Launch &amp; Live to start a new run.</p>
-        </div>`;
+      setChildren(container,
+        emptyState("inbox", "No matching runs", "Run a benchmark from the CLI, or start one from Launch & Live.")
+      );
       return;
     }
-
-    container.innerHTML = state.runs
-      .map((run) => {
-        const selected = run.run_id === state.selectedRunId ? "is-selected" : "";
-        const score =
-          run.final_score !== null && run.final_score !== undefined
-            ? `${run.final_score}/100`
-            : run.status;
-        const labelHtml = run.label
-          ? `<span class="badge badge-neutral">${escapeHtml(run.label)}</span>`
-          : "";
-        const safetyHtml =
-          run.safety_warnings_count > 0
-            ? `<span class="badge badge-fail">safety:${run.safety_warnings_count}</span>`
-            : "";
-        return `
-          <button type="button" class="run-item ${selected}" data-run-id="${escapeHtml(run.run_id)}">
-            <div class="run-item-top">
-              <span class="run-item-model">${escapeHtml(run.model)}</span>
-              <span class="run-item-score">${escapeHtml(score)}</span>
-            </div>
-            <div class="run-item-meta">
-              <span class="badge ${statusBadgeClass(run.status)}">${escapeHtml(run.status)}</span>
-              <span class="mono">${escapeHtml(run.run_type)}</span>
-              <span>${escapeHtml(run.backend || "unknown")}</span>
-              <span>${escapeHtml(formatDate(run.created_at))}</span>
-              ${labelHtml}
-              ${safetyHtml}
-            </div>
-          </button>`;
-      })
-      .join("");
-
-    container.querySelectorAll(".run-item").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const runId = btn.getAttribute("data-run-id");
-        if (runId) selectRun(runId);
-      });
-    });
+    setChildren(container, ...state.runs.map(runCard));
   }
 
   async function selectRun(runId) {
     state.selectedRunId = runId;
     state.expandedScenarios.clear();
+    state.scenarioFilter = "all";
     renderRunsList();
-    const pane = document.getElementById("run-inspector");
+    const pane = byId("run-inspector");
     if (!pane) return;
     const seq = ++state.selectRunSeq;
     try {
       const run = await fetchJson(`/api/runs/${encodeURIComponent(runId)}`);
       if (seq !== state.selectRunSeq) return;
       state.selectedRun = run;
-      renderInspector();
+      pane.scrollTop = 0;
+      renderInspector({ animate: true });
     } catch (err) {
       if (seq !== state.selectRunSeq) return;
-      pane.innerHTML = `<div class="empty-state"><h2>Could not load run ${escapeHtml(runId)}</h2><p>${escapeHtml(err.message)}</p></div>`;
+      setChildren(pane, emptyState("alert", `Could not load run ${runId}`, err.message));
     }
   }
 
-  function renderInspector() {
-    const pane = document.getElementById("run-inspector");
-    const run = state.selectedRun;
-    if (!pane || !run) return;
+  const SCENARIO_FILTERS = [
+    ["all", "All", () => true],
+    ["fail", "Fail", (r) => r.status === "fail"],
+    ["partial", "Partial", (r) => r.status === "partial"],
+    ["pass", "Pass", (r) => r.status === "pass"],
+    ["safety", "Safety", (r) => Boolean(r.safety_critical || r.safety_violation)],
+    ["audited", "Audited", (r) => Boolean(r.decision_audit)],
+  ];
 
+  function toggleScenario(sid) {
+    if (state.expandedScenarios.has(sid)) state.expandedScenarios.delete(sid);
+    else state.expandedScenarios.add(sid);
+    const pane = byId("run-inspector");
+    if (pane) preserveScroll(pane, () => renderInspector());
+  }
+
+  function revealScenario(sid) {
+    state.scenarioFilter = "all";
+    state.expandedScenarios.add(sid);
+    const pane = byId("run-inspector");
+    if (!pane) return;
+    preserveScroll(pane, () => renderInspector());
+    const row = pane.querySelector(`[data-scenario-id="${CSS.escape(sid)}"]`);
+    row?.scrollIntoView({ block: "center", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    row?.querySelector(".disclosure")?.focus({ preventScroll: true });
+  }
+
+  function scenarioDetail(r, colspan) {
+    const calls = r.tool_calls_made || [];
+    const audit = r.decision_audit;
+    const meta = [
+      ["Expected", r.expected_behavior || "—"],
+      ["Tool calls", calls.length ? calls.join(", ") : "None"],
+      ["Turns", r.turn_count ?? 1],
+      ["Tokens", (r.prompt_tokens || 0) + (r.completion_tokens || 0)],
+      ["Time to first token", r.ttft_ms ? `${Math.round(r.ttft_ms)} ms` : "—"],
+      r.safety_violation ? ["Safety violation", r.safety_violation] : null,
+      audit ? ["Decision audit", `${audit.choice || audit.status}${audit.disagreement ? " (disagrees)" : ""}`] : null,
+    ].filter(Boolean);
+    return h(
+      "tr",
+      { class: "detail-row" },
+      h(
+        "td",
+        { colspan },
+        h(
+          "div",
+          { class: "detail" },
+          h("dl", { class: "detail-meta" }, meta.map(([k, v]) => h("div", {}, h("dt", { text: k }), h("dd", { text: v })))),
+          h("pre", { class: "trace", tabindex: "0", "aria-label": `Trace for ${r.scenario_id}`, text: r.raw_log || "No raw trace available." })
+        )
+      )
+    );
+  }
+
+  function scenarioRows(results) {
+    const rows = [];
+    for (const r of results) {
+      const sid = r.scenario_id;
+      const open = state.expandedScenarios.has(sid);
+      rows.push(
+        h(
+          "tr",
+          {
+            class: `scenario-summary-row row-click ${open ? "row-open" : ""}`,
+            dataset: { scenarioId: sid },
+            onclick: (ev) => {
+              if (!ev.target.closest("button")) toggleScenario(sid);
+            },
+          },
+          h(
+            "td",
+            {},
+            h(
+              "button",
+              {
+                type: "button",
+                class: "disclosure",
+                "aria-expanded": String(open),
+                onclick: () => toggleScenario(sid),
+              },
+              icon("chevron"),
+              h("span", { class: "mono muted", text: sid })
+            )
+          ),
+          h(
+            "td",
+            {},
+            h("span", { class: "cell-title", text: r.title || sid }),
+            r.held_out ? [" ", h("span", { class: "chip chip-plain", text: "held out" })] : null,
+            r.decision_audit
+              ? [" ", h("span", { class: `chip ${r.decision_audit.disagreement ? "chip-partial" : "chip-info"}`, text: `audit: ${r.decision_audit.choice || r.decision_audit.status}` })]
+              : null
+          ),
+          h("td", {}, h("span", { class: "cat-letter", title: r.category_label || r.category, text: r.category || "?" })),
+          h("td", { class: "nowrap" }, chip(r.status), r.safety_violation ? [" ", h("span", { class: "chip chip-fail", title: r.safety_violation }, icon("shield"))] : null),
+          h("td", { class: "num", text: `${r.points ?? 0}/2` }),
+          h("td", { class: "num nowrap" }, fmtSeconds(r.duration_seconds), r.ttft_ms ? h("span", { class: "muted", text: ` · ${Math.round(r.ttft_ms)}ms` }) : null),
+          h("td", { class: "cell-summary", text: r.summary || "" })
+        )
+      );
+      if (open) rows.push(scenarioDetail(r, 7));
+    }
+    return rows;
+  }
+
+  function median(values) {
+    const sorted = values.filter((v) => typeof v === "number" && !Number.isNaN(v)).sort((a, b) => a - b);
+    if (!sorted.length) return null;
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  function mapStats(results) {
+    const latency = median(results.map((r) => r.duration_seconds));
+    const ttft = median(results.map((r) => r.ttft_ms));
+    const turns = results.reduce((sum, r) => sum + (r.turn_count || 1), 0) / Math.max(results.length, 1);
+    const item = (label, value) => h("div", {}, h("dt", { text: label }), h("dd", { class: "mono", text: value }));
+    return h(
+      "dl",
+      { class: "detail-meta map-stats" },
+      item("Median scenario time", latency === null ? "—" : fmtSeconds(latency)),
+      item("Median time to first token", ttft === null ? "—" : `${Math.round(ttft)} ms`),
+      item("Average turns", turns.toFixed(1))
+    );
+  }
+
+  function renderInspector(opts = {}) {
+    const pane = byId("run-inspector");
+    if (!pane) return;
+    const run = state.selectedRun;
+    if (!run) {
+      setChildren(pane,
+        emptyState("layers", "Pick a run to inspect", "Scores, category breakdowns, and full multi-turn traces appear here.")
+      );
+      return;
+    }
     const scores = run.scores || {};
     const meta = run.metadata || {};
     const warnings = scores.safety_warnings || [];
     const categories = scores.category_scores || [];
     const results = scores.scenario_results || [];
+    const total = results.length;
+    const { org, name } = splitModel(run.model);
 
-    const safetyHtml = warnings.length
-      ? `<div class="safety-banner" role="alert">
-          <h3>Safety gate warnings (${warnings.length})</h3>
-          <ul>${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul>
-        </div>`
-      : "";
+    const actions = [
+      h(
+        "button",
+        {
+          type: "button",
+          class: "btn",
+          id: "inspect-compare-btn",
+          onclick: () => {
+            state.compareLeftId = run.run_id;
+            switchView("compare");
+          },
+        },
+        icon("swap"),
+        "Compare"
+      ),
+      run.status === "running"
+        ? h("button", { type: "button", class: "btn btn-primary", id: "inspect-watch-live-btn", onclick: () => openLiveRun(run.run_id) }, icon("eye"), "Watch live")
+        : null,
+      run.status === "interrupted"
+        ? h("button", { type: "button", class: "btn btn-primary", id: "inspect-resume-btn", onclick: () => resumeInterruptedRun(run.run_id) }, icon("play"), "Resume")
+        : null,
+    ];
 
-    const categoryRows = categories
-      .map((cs) => {
-        const pct = Number(cs.percent || 0);
-        return `
-          <tr>
-            <td><span class="mono">${escapeHtml(cs.category)}</span> · ${escapeHtml(cs.label)}</td>
-            <td class="num">${pct}%</td>
-            <td>
-              <div class="bar-track" aria-hidden="true">
-                <div class="bar-fill ${scoreBarClass(pct)}" style="width: ${Math.min(100, Math.max(0, pct))}%"></div>
-              </div>
-            </td>
-            <td class="num">${escapeHtml(cs.earned)}/${escapeHtml(cs.max_points)}</td>
-          </tr>`;
-      })
-      .join("");
+    const hero = h(
+      "div",
+      { class: "card hero" },
+      ring(run.final_score, { cls: "ring-lg", animate: opts.animate, sub: run.final_score !== null && run.final_score !== undefined ? "of 100" : null }),
+      h(
+        "div",
+        { class: "hero-title" },
+        org ? h("span", { class: "hero-org", text: org }) : null,
+        h("h1", { class: "hero-name", text: name, title: run.model }),
+        h(
+          "div",
+          { class: "hero-meta" },
+          chip(run.status),
+          run.rating ? h("span", { class: "meta-item", text: run.rating }) : null,
+          h("span", { class: "meta-item mono", title: "Run ID", text: run.run_id }),
+          h("span", { class: "meta-item" }, icon("server"), run.backend || "unknown"),
+          meta.engine_name ? h("span", { class: "meta-item" }, icon("cpu"), `${meta.engine_name} ${meta.engine_version || ""}`.trim()) : null,
+          meta.quantization ? h("span", { class: "meta-item mono", text: meta.quantization }) : null,
+          h("span", { class: "meta-item", title: absTime(run.created_at) }, icon("calendar"), relTime(run.created_at)),
+          run.label ? h("span", { class: "chip chip-accent" }, icon("tag"), run.label) : null,
+          run.held_out_count ? h("span", { class: "chip chip-plain", text: `${run.held_out_count} held out` }) : null
+        )
+      ),
+      h("div", { class: "hero-actions" }, actions)
+    );
 
-    const filteredResults = results.filter((r) => {
-      if (state.scenarioFilter === "fail") return r.status === "fail";
-      if (state.scenarioFilter === "partial") return r.status === "partial";
-      if (state.scenarioFilter === "pass") return r.status === "pass";
-      if (state.scenarioFilter === "safety") return Boolean(r.safety_critical || r.safety_violation);
-      if (state.scenarioFilter === "audited") return Boolean(r.decision_audit);
-      return true;
-    });
+    const p = run.passes || 0;
+    const q = run.partials || 0;
+    const f = run.fails || 0;
+    const stats = h(
+      "div",
+      { class: "stats" },
+      stat("Pass / partial / fail", h("span", {}, h("span", { class: "delta-pos", text: p }), " / ", h("span", { text: q }), " / ", h("span", { class: "delta-neg", text: f })), {
+        extra: ppfBar(p, q, f),
+      }),
+      stat("Points", run.total_points ?? 0, { small: `/ ${run.max_points ?? 0}`, extra: bar(pctOf(run.total_points || 0, run.max_points || 0), tierFor(pctOf(run.total_points || 0, run.max_points || 0))) }),
+      stat("Deployability", run.deployability ?? "—", { icon: "zap", small: run.deployability !== null && run.deployability !== undefined ? "/ 100" : null }),
+      stat("Responsiveness", run.responsiveness ?? "—", { icon: "clock", small: run.responsiveness !== null && run.responsiveness !== undefined ? "/ 100" : null }),
+      scores.total_tokens ? stat("Tokens", fmtTokens(scores.total_tokens), { icon: "message" }) : null,
+      warnings.length ? stat("Safety warnings", warnings.length, { cls: "stat-fail", icon: "shield" }) : null
+    );
 
-    const scenarioRows = filteredResults
-      .map((r) => {
-        const sid = r.scenario_id;
-        const expanded = state.expandedScenarios.has(sid);
-        const dur = r.duration_seconds !== undefined ? `${Number(r.duration_seconds).toFixed(1)}s` : "—";
-        const ttft = r.ttft_ms ? `${Math.round(r.ttft_ms)}ms` : "—";
-        const audit = r.decision_audit;
-        const auditBadge = audit
-          ? `<span class="badge ${audit.disagreement ? "badge-partial" : "badge-info"}">audit:${escapeHtml(audit.choice || audit.status)}</span>`
-          : "";
-        const heldOutBadge = r.held_out
-          ? `<span class="badge badge-neutral">held-out</span>`
-          : "";
+    const safety = warnings.length
+      ? h("div", { class: "section-spacer" }, banner("danger", "shield", h("strong", { text: `Safety gate warnings (${warnings.length})` }), h("ul", {}, warnings.map((w) => h("li", { text: String(w) })))))
+      : null;
 
-        let detailRow = "";
-        if (expanded) {
-          const callsList = (r.tool_calls_made || []).length
-            ? r.tool_calls_made.map((c) => `<code>${escapeHtml(c)}</code>`).join(", ")
-            : "None";
-          detailRow = `
-            <tr class="trace-row">
-              <td colspan="7">
-                <div class="trace-meta-grid">
-                  <div><strong>Expected:</strong> ${escapeHtml(r.expected_behavior || "—")}</div>
-                  <div><strong>Tool calls:</strong> ${callsList}</div>
-                  <div><strong>Turns:</strong> <span class="mono">${escapeHtml(r.turn_count ?? 1)}</span> · <strong>Tokens:</strong> <span class="mono">${escapeHtml((r.prompt_tokens || 0) + (r.completion_tokens || 0))}</span></div>
-                </div>
-                <div class="trace-box">${escapeHtml(r.raw_log || "No raw trace available.")}</div>
-              </td>
-            </tr>`;
-        }
+    const catCard = categories.length
+      ? h(
+          "div",
+          { class: "card card-pad" },
+          h("div", { class: "eyebrow", text: "Category breakdown" }),
+          h(
+            "ul",
+            { class: "cat-list", "aria-label": "Category scores" },
+            categories.map((cs) => {
+              const pct = Number(cs.percent || 0);
+              return h(
+                "li",
+                { class: `cat-row ${tierFor(pct)}` },
+                h("span", { class: "cat-letter", text: cs.category }),
+                h("span", { class: "cat-name" }, h("span", { text: cs.label || cs.category }), bar(pct, tierFor(pct))),
+                h("span", { class: "cat-pct", text: `${Math.round(pct)}%` }),
+                h("span", { class: "cat-pts", text: `${cs.earned}/${cs.max_points}` })
+              );
+            })
+          )
+        )
+      : null;
 
-        return `
-          <tr class="is-clickable scenario-summary-row" data-scenario-id="${escapeHtml(sid)}">
-            <td class="mono">${escapeHtml(sid)}</td>
-            <td>${escapeHtml(r.title || sid)} ${heldOutBadge} ${auditBadge}</td>
-            <td class="mono">${escapeHtml(r.category || "—")}</td>
-            <td><span class="badge ${statusBadgeClass(r.status)}">${escapeHtml(r.status)}</span></td>
-            <td class="num">${escapeHtml(r.points)}/2</td>
-            <td class="num">${escapeHtml(dur)} <span class="mono" style="color:var(--text-muted)">(${escapeHtml(ttft)})</span></td>
-            <td>${escapeHtml(r.summary || "")}</td>
-          </tr>
-          ${detailRow}`;
-      })
-      .join("");
+    const mapCard = total
+      ? h(
+          "div",
+          { class: "card card-pad" },
+          h("div", { class: "eyebrow", text: `Scenario map · ${total}` }),
+          h(
+            "div",
+            { class: "tile-grid", role: "group", "aria-label": "Scenario outcomes; select one to open its trace" },
+            results.map((r) =>
+              tile(r.held_out ? "held" : r.status, `${r.scenario_id} · ${r.title || ""} · ${r.status}`, {
+                pressed: state.expandedScenarios.has(r.scenario_id),
+                onclick: () => revealScenario(r.scenario_id),
+              })
+            )
+          ),
+          legend(),
+          mapStats(results)
+        )
+      : null;
 
-    pane.innerHTML = `
-      <div class="inspector-header">
-        <div>
-          <h2 class="inspector-title">${escapeHtml(run.model)}</h2>
-          <div class="inspector-subtitle">
-            <span class="mono">${escapeHtml(run.run_id)}</span>
-            <span class="badge ${statusBadgeClass(run.status)}">${escapeHtml(run.status)}</span>
-            <span>Backend: <strong>${escapeHtml(run.backend)}</strong></span>
-            <span>Date: <span class="mono">${escapeHtml(formatDate(run.created_at))}</span></span>
-            ${meta.engine_name ? `<span>Engine: <strong>${escapeHtml(meta.engine_name)} ${escapeHtml(meta.engine_version || "")}</strong></span>` : ""}
-            ${meta.quantization ? `<span>Quant: <span class="mono">${escapeHtml(meta.quantization)}</span></span>` : ""}
-            ${run.label ? `<span class="badge badge-neutral">${escapeHtml(run.label)}</span>` : ""}
-          </div>
-        </div>
-        <div class="topbar-actions">
-          <button type="button" class="btn" id="inspect-compare-btn">Compare Run</button>
-          ${
-            run.status === "running" && typeof window.openLiveRun === "function"
-              ? `<button type="button" class="btn btn-primary" id="inspect-watch-live-btn">Watch Live</button>`
-              : ""
-          }
-          ${
-            run.status === "interrupted" && typeof window.resumeInterruptedRun === "function"
-              ? `<button type="button" class="btn btn-primary" id="inspect-resume-btn">Resume Run</button>`
-              : ""
-          }
-        </div>
-      </div>
+    const filterDef = SCENARIO_FILTERS.find(([id]) => id === state.scenarioFilter) || SCENARIO_FILTERS[0];
+    const filtered = results.filter(filterDef[2]);
+    const filterOptions = SCENARIO_FILTERS.filter(([id, , test]) => id !== "audited" || results.some(test)).map(([id, label, test]) => [
+      id,
+      label,
+      results.filter(test).length,
+    ]);
 
-      ${safetyHtml}
+    const traces = total
+      ? [
+          h("h2", { class: "section-title" }, "Scenario traces", h("span", { class: "count", text: `${filtered.length} of ${total}` })),
+          h(
+            "div",
+            { class: "toolbar" },
+            segmented(filterOptions, state.scenarioFilter, (id) => {
+              state.scenarioFilter = id;
+              preserveScroll(pane, () => renderInspector());
+            }, "Filter scenarios"),
+            h("span", { class: "muted", text: "Select a row to open its multi-turn trace." })
+          ),
+          h(
+            "div",
+            { class: "table-wrap" },
+            h(
+              "table",
+              { class: "table" },
+              h("thead", {}, h("tr", {}, ["Scenario", "Title", "Cat", "Verdict", "Pts", "Latency", "Summary"].map((t, i) => h("th", { class: i === 4 || i === 5 ? "num" : null, scope: "col", text: t })))),
+              h("tbody", {}, filtered.length ? scenarioRows(filtered) : h("tr", {}, h("td", { colspan: 7, class: "muted", text: "No scenarios match this filter." })))
+            )
+          ),
+        ]
+      : [h("div", { class: "section-spacer" }, banner("info", "info", "This run has no per-scenario results to show."))];
 
-      <div class="summary-strip">
-        <div class="metric-cell">
-          <span class="metric-label">Final score</span>
-          <span class="metric-value">${escapeHtml(run.final_score ?? "—")}${run.final_score !== null && run.final_score !== undefined ? "/100" : ""}</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Rating</span>
-          <span class="metric-value" style="font-size:1rem">${escapeHtml(run.rating || "—")}</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Deployability</span>
-          <span class="metric-value">${escapeHtml(run.deployability ?? "—")}</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Responsiveness</span>
-          <span class="metric-value">${escapeHtml(run.responsiveness ?? "—")}</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Pass / Partial / Fail</span>
-          <span class="metric-value">${run.passes} / ${run.partials} / ${run.fails}</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Points earned</span>
-          <span class="metric-value">${escapeHtml(run.total_points ?? 0)}/${escapeHtml(run.max_points ?? 0)}</span>
-        </div>
-      </div>
-
-      ${
-        categories.length
-          ? `<h3 class="section-heading">Category breakdown</h3>
-            <div class="data-table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Category</th>
-                    <th>Score</th>
-                    <th>Distribution</th>
-                    <th>Points</th>
-                  </tr>
-                </thead>
-                <tbody>${categoryRows}</tbody>
-              </table>
-            </div>`
-          : ""
-      }
-
-      ${
-        results.length
-          ? `<h3 class="section-heading">Scenario traces (${filteredResults.length} of ${results.length})</h3>
-            <div class="scenario-toolbar">
-              <div class="pill-group" role="group" aria-label="Filter scenarios">
-                ${["all", "fail", "partial", "pass", "safety", "audited"]
-                  .map(
-                    (f) =>
-                      `<button type="button" class="filter-pill ${state.scenarioFilter === f ? "is-active" : ""}" data-filter="${f}">${f.toUpperCase()}</button>`
-                  )
-                  .join("")}
-              </div>
-              <span style="color:var(--text-muted);font-size:0.75rem">Click any scenario row to inspect its multi-turn conversation trace</span>
-            </div>
-            <div class="data-table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Scenario</th>
-                    <th>Cat</th>
-                    <th>Verdict</th>
-                    <th>Pts</th>
-                    <th>Latency</th>
-                    <th>Summary</th>
-                  </tr>
-                </thead>
-                <tbody>${scenarioRows}</tbody>
-              </table>
-            </div>`
-          : ""
-      }
-    `;
-
-    pane.querySelectorAll(".filter-pill").forEach((pill) => {
-      pill.addEventListener("click", () => {
-        state.scenarioFilter = pill.getAttribute("data-filter") || "all";
-        renderInspector();
-      });
-    });
-
-    pane.querySelectorAll(".scenario-summary-row").forEach((row) => {
-      row.addEventListener("click", () => {
-        const sid = row.getAttribute("data-scenario-id");
-        if (!sid) return;
-        if (state.expandedScenarios.has(sid)) {
-          state.expandedScenarios.delete(sid);
-        } else {
-          state.expandedScenarios.add(sid);
-        }
-        renderInspector();
-      });
-    });
-
-    const compareBtn = document.getElementById("inspect-compare-btn");
-    if (compareBtn) {
-      compareBtn.addEventListener("click", () => {
-        state.compareLeftId = run.run_id;
-        switchView("compare");
-      });
-    }
-    const watchBtn = document.getElementById("inspect-watch-live-btn");
-    if (watchBtn && typeof window.openLiveRun === "function") {
-      watchBtn.addEventListener("click", () => window.openLiveRun(run.run_id));
-    }
-    const resumeBtn = document.getElementById("inspect-resume-btn");
-    if (resumeBtn && typeof window.resumeInterruptedRun === "function") {
-      resumeBtn.addEventListener("click", () => window.resumeInterruptedRun(run.run_id));
-    }
+    setChildren(pane,
+      hero,
+      safety,
+      stats,
+      catCard || mapCard ? h("div", { class: "two-col" }, catCard, mapCard) : null,
+      ...traces
+    );
   }
 
-  function heatClass(pct) {
-    if (pct >= 90) return "heat-90";
-    if (pct >= 75) return "heat-75";
-    if (pct >= 60) return "heat-60";
-    return "heat-low";
-  }
+  // ---------------------------------------------------------- Leaderboard
+
+  let leaderboardDebounce = null;
 
   async function loadLeaderboardView() {
-    const workspace = document.getElementById("leaderboard-workspace");
+    const workspace = byId("leaderboard-workspace");
     if (!workspace) return;
-    const params = new URLSearchParams({ limit: "100" });
+    const params = new URLSearchParams({ limit: "200" });
     if (state.leaderboardCohort) params.set("cohort", state.leaderboardCohort);
     if (state.leaderboardQuery) params.set("q", state.leaderboardQuery);
-
     try {
-      const data = await fetchJson(`/api/leaderboard?${params.toString()}`);
-      renderLeaderboardView(data);
+      const [data, schema] = await Promise.all([
+        fetchJson(`/api/leaderboard?${params.toString()}`),
+        ensureSchema().catch(() => null),
+      ]);
+      renderLeaderboardView(data, schema);
     } catch (err) {
-      workspace.innerHTML = `<div class="empty-state"><h2>Could not load leaderboard</h2><p>${escapeHtml(err.message)}</p></div>`;
+      setChildren(workspace, emptyState("alert", "Could not load the leaderboard", err.message));
     }
   }
 
-  function renderLeaderboardView(data) {
-    const workspace = document.getElementById("leaderboard-workspace");
+  function leaderboardRow(row, categories) {
+    const total = (row.passes || 0) + (row.partials || 0) + (row.fails || 0);
+    const open = () => {
+      switchView("history");
+      selectRun(row.run_id);
+    };
+    return h(
+      "tr",
+      {
+        class: "lb-row row-click",
+        dataset: { runId: row.run_id },
+        tabindex: "0",
+        onclick: open,
+        onkeydown: (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            open();
+          }
+        },
+      },
+      h("td", { class: "sticky-col sticky-rank" }, h("span", { class: `rank ${row.cohort_rank <= 3 ? `rank-${row.cohort_rank}` : ""}`, text: row.cohort_rank })),
+      h("td", { class: "sticky-col sticky-model" }, modelBlock(row.model, "model-cell")),
+      h(
+        "td",
+        {},
+        h("div", { class: `score-cell ${tierFor(row.final_score)}` }, h("span", { text: row.final_score }), bar(row.final_score, tierFor(row.final_score))),
+        row.rating ? h("div", { class: "rating", text: row.rating }) : null
+      ),
+      h(
+        "td",
+        {},
+        h("div", { class: "mono", text: `${row.passes}/${row.partials}/${row.fails}` }),
+        total ? ppfBar(row.passes || 0, row.partials || 0, row.fails || 0) : null
+      ),
+      categories.map((cat) => {
+        const pct = row.cat_scores?.[cat];
+        return h(
+          "td",
+          { class: "heat-col" },
+          pct === undefined || pct === null
+            ? h("span", { class: "heat heat-none", text: "—" })
+            : h("span", { class: `heat ${heatClass(pct)}`, text: Math.round(pct) })
+        );
+      }),
+      h("td", { class: "num", text: fmtTokens(row.total_tokens) }),
+      h("td", { class: "num", text: row.num_runs })
+    );
+  }
+
+  function renderLeaderboardView(data, schema) {
+    const workspace = byId("leaderboard-workspace");
     if (!workspace) return;
     const rows = data.rows || [];
     const cohorts = data.cohorts || [];
     const categories = data.categories || [];
+    const labels = Object.fromEntries((schema?.categories || []).map((c) => [c.id, c.label]));
 
-    const cohortOptions = [
-      `<option value="">All comparable cohorts (${cohorts.length})</option>`,
-      ...cohorts.map(
-        (c) =>
-          `<option value="${escapeHtml(c.cohort_fingerprint)}" ${
-            state.leaderboardCohort === c.cohort_fingerprint ? "selected" : ""
-          }>${escapeHtml(c.cohort_label)} (${c.count})</option>`
+    const head = h(
+      "div",
+      { class: "page-head" },
+      h(
+        "div",
+        {},
+        h("h1", { class: "page-title", text: "Leaderboard" }),
+        h("p", { class: "page-sub", text: "Runs rank only against others with the same benchmark conditions. Each cohort below is one comparable set." })
       ),
-    ].join("");
+      h(
+        "div",
+        { class: "topbar-actions" },
+        h("a", { class: "btn", href: "/api/export?format=csv", download: "tool-eval-leaderboard.csv" }, icon("download"), "CSV"),
+        h("a", { class: "btn", href: "/api/export?format=json", download: "tool-eval-leaderboard.json" }, icon("download"), "JSON")
+      )
+    );
 
-    const catHeaders = categories.map((cat) => `<th class="mono">${escapeHtml(cat)}</th>`).join("");
-    const tableRows = rows
-      .map((row) => {
-        const catCells = categories
-          .map((cat) => {
-            const pct = row.cat_scores?.[cat];
-            if (pct === undefined || pct === null) {
-              return `<td class="mono" style="color:var(--text-muted)">—</td>`;
-            }
-            return `<td><span class="heat-cell ${heatClass(pct)}">${Math.round(pct)}</span></td>`;
-          })
-          .join("");
-        const tokens = row.total_tokens ? `${Math.round(row.total_tokens / 1000)}K` : "—";
-        return `
-          <tr class="is-clickable lb-row" data-run-id="${escapeHtml(row.run_id)}">
-            <td class="num">#${escapeHtml(row.cohort_rank)}</td>
-            <td><strong>${escapeHtml(row.display_model || row.model)}</strong></td>
-            <td class="mono" style="font-size:0.75rem;color:var(--text-secondary)">${escapeHtml(row.cohort_label)}</td>
-            <td class="num"><strong>${escapeHtml(row.final_score)}</strong></td>
-            <td>${escapeHtml(row.rating)}</td>
-            <td class="num">${row.passes}/${row.partials}/${row.fails} <span style="color:var(--text-muted)">(${row.completion_count}/${row.scenario_count})</span></td>
-            ${catCells}
-            <td class="num">${escapeHtml(tokens)}</td>
-            <td class="num">${escapeHtml(row.num_runs)}</td>
-          </tr>`;
-      })
-      .join("");
+    const toolbar = h(
+      "div",
+      { class: "toolbar" },
+      h("label", { class: "visually-hidden", for: "lb-cohort-select", text: "Cohort" }),
+      h(
+        "select",
+        {
+          id: "lb-cohort-select",
+          class: "select",
+          value: state.leaderboardCohort,
+          onchange: (ev) => {
+            state.leaderboardCohort = ev.target.value;
+            loadLeaderboardView();
+          },
+        },
+        h("option", { value: "", text: `All cohorts (${cohorts.length})` }),
+        cohorts.map((c) => h("option", { value: c.cohort_fingerprint, text: `${c.cohort_label} · ${c.count}` }))
+      ),
+      h(
+        "div",
+        { class: "input-with-icon grow" },
+        icon("search"),
+        h("label", { class: "visually-hidden", for: "lb-search-input", text: "Filter models" }),
+        h("input", {
+          type: "search",
+          id: "lb-search-input",
+          class: "input",
+          placeholder: "Filter models",
+          value: state.leaderboardQuery,
+          oninput: (ev) => {
+            state.leaderboardQuery = ev.target.value;
+            clearTimeout(leaderboardDebounce);
+            leaderboardDebounce = setTimeout(async () => {
+              await loadLeaderboardView();
+              const input = byId("lb-search-input");
+              if (input) {
+                input.focus();
+                input.setSelectionRange(input.value.length, input.value.length);
+              }
+            }, 250);
+          },
+        })
+      )
+    );
 
-    workspace.innerHTML = `
-      <div class="inspector-header" style="margin-bottom:1rem">
-        <div>
-          <h1 class="inspector-title">Model leaderboard</h1>
-          <div class="inspector-subtitle">
-            <span>Models are grouped by deterministic configuration fingerprint so only comparable runs are ranked together.</span>
-          </div>
-        </div>
-        <div class="topbar-actions">
-          <a class="btn" href="/api/export?format=csv" download="tool-eval-leaderboard.csv">Export CSV</a>
-          <a class="btn" href="/api/export?format=json" download="tool-eval-leaderboard.json">Export JSON</a>
-        </div>
-      </div>
+    if (!rows.length) {
+      setChildren(workspace,
+        head,
+        toolbar,
+        emptyState("trophy", "No ranked runs yet", "Completed tool-call runs that finished every scenario appear here.")
+      );
+      return;
+    }
 
-      <div class="toolbar-strip">
-        <div class="toolbar-controls">
-          <label class="visually-hidden" for="lb-cohort-select">Cohort filter</label>
-          <select id="lb-cohort-select" class="control-select" style="width:auto;min-width:260px">
-            ${cohortOptions}
-          </select>
-          <label class="visually-hidden" for="lb-search-input">Search models</label>
-          <input
-            type="search"
-            id="lb-search-input"
-            class="control-input"
-            style="width:240px"
-            placeholder="Filter model..."
-            value="${escapeHtml(state.leaderboardQuery)}"
-          >
-        </div>
-        <span style="color:var(--text-muted);font-size:0.75rem">Click any row to open its full trace in the Run Inspector</span>
-      </div>
+    const groups = new Map();
+    for (const row of rows) {
+      if (!groups.has(row.cohort_fingerprint)) groups.set(row.cohort_fingerprint, []);
+      groups.get(row.cohort_fingerprint).push(row);
+    }
 
-      ${
-        rows.length
-          ? `<div class="data-table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Rank</th>
-                    <th>Model</th>
-                    <th>Cohort</th>
-                    <th>Score</th>
-                    <th>Rating</th>
-                    <th>P/Pt/F</th>
-                    ${catHeaders}
-                    <th>Tokens</th>
-                    <th>Runs</th>
-                  </tr>
-                </thead>
-                <tbody>${tableRows}</tbody>
-              </table>
-            </div>`
-          : `<div class="empty-state"><h2>No eligible completed runs</h2><p>Only completed tool-call runs with 100% scenario completion appear on the leaderboard.</p></div>`
-      }
-    `;
+    const tables = [...groups.values()].map((group) =>
+      h(
+        "section",
+        { class: "cohort", "aria-label": `Cohort ${group[0].cohort_label}` },
+        h(
+          "div",
+          { class: "cohort-head" },
+          icon("layers"),
+          h("h2", { text: group[0].cohort_label }),
+          h("span", { class: "chip chip-plain", text: `${group.length} model${group.length === 1 ? "" : "s"}` })
+        ),
+        h(
+          "div",
+          { class: "table-wrap" },
+          h(
+            "table",
+            { class: "table" },
+            h(
+              "thead",
+              {},
+              h(
+                "tr",
+                {},
+                h("th", { scope: "col", class: "sticky-col sticky-rank", text: "#" }),
+                h("th", { scope: "col", class: "sticky-col sticky-model", text: "Model" }),
+                h("th", { scope: "col", class: "col-score", text: "Score" }),
+                h("th", { scope: "col", class: "col-ppf", text: "P/Pt/F" }),
+                categories.map((cat) => h("th", { scope: "col", class: "heat-col", title: labels[cat] || cat }, h("abbr", { title: labels[cat] || cat, text: cat }))),
+                h("th", { scope: "col", class: "num", text: "Tokens" }),
+                h("th", { scope: "col", class: "num", text: "Runs" })
+              )
+            ),
+            h("tbody", {}, group.map((row) => leaderboardRow(row, categories)))
+          )
+        )
+      )
+    );
 
-    document.getElementById("lb-cohort-select")?.addEventListener("change", (ev) => {
-      state.leaderboardCohort = ev.target.value;
-      loadLeaderboardView();
-    });
-    document.getElementById("lb-search-input")?.addEventListener("change", (ev) => {
-      state.leaderboardQuery = ev.target.value;
-      loadLeaderboardView();
-    });
-    workspace.querySelectorAll(".lb-row").forEach((tr) => {
-      tr.addEventListener("click", () => {
-        const runId = tr.getAttribute("data-run-id");
-        if (runId) {
-          switchView("history");
-          selectRun(runId);
-        }
-      });
-    });
+    const catLegend = categories.length
+      ? h("div", { class: "cat-legend" }, categories.map((cat) => h("span", {}, h("b", { text: cat }), ` ${labels[cat] || ""}`)))
+      : null;
+
+    setChildren(workspace, head, toolbar, ...tables, catLegend);
   }
 
+  // -------------------------------------------------------------- Compare
+
   async function loadCompareView() {
-    const workspace = document.getElementById("compare-workspace");
+    const workspace = byId("compare-workspace");
     if (!workspace) return;
     // Independent of the History filters, which would otherwise decide what
     // the pickers can offer.
@@ -615,14 +1053,9 @@
     }
     const toolRuns = state.compareRuns.filter((r) => r.scenario_count > 0);
     const completed = toolRuns.filter((r) => r.status === "completed");
-    if (!state.compareLeftId && completed.length >= 2) {
-      state.compareLeftId = completed[1].run_id;
-    } else if (!state.compareLeftId && completed.length === 1) {
-      state.compareLeftId = completed[0].run_id;
-    }
-    if (!state.compareRightId && completed.length >= 1) {
-      state.compareRightId = completed[0].run_id;
-    }
+    if (!state.compareLeftId && completed.length >= 2) state.compareLeftId = completed[1].run_id;
+    else if (!state.compareLeftId && completed.length === 1) state.compareLeftId = completed[0].run_id;
+    if (!state.compareRightId && completed.length >= 1) state.compareRightId = completed[0].run_id;
 
     if (state.compareLeftId && state.compareRightId) {
       try {
@@ -636,227 +1069,247 @@
     renderCompareView(toolRuns);
   }
 
-  function renderCompareView(toolRuns) {
-    const workspace = document.getElementById("compare-workspace");
-    if (!workspace) return;
-
-    const buildOptions = (selectedId) =>
-      toolRuns
-        .map(
-          (r) =>
-            `<option value="${escapeHtml(r.run_id)}" ${r.run_id === selectedId ? "selected" : ""}>${escapeHtml(
-              r.model
-            )} — ${escapeHtml(r.final_score ?? "?")}/100 (${escapeHtml(r.run_id.slice(0, 22))})</option>`
-        )
-        .join("");
-
-    const cmp = state.lastComparison;
-    let bodyHtml = "";
-    if (!toolRuns.length) {
-      bodyHtml = `<div class="empty-state"><h2>No runs available for comparison</h2><p>Complete at least two tool-call benchmark runs to compare scenario deltas and statistical significance.</p></div>`;
-    } else if (cmp && cmp.error) {
-      bodyHtml = `<div class="empty-state"><h2>Comparison unavailable</h2><p>${escapeHtml(cmp.error)}</p></div>`;
-    } else if (cmp && cmp.summary) {
-      const s = cmp.summary;
-      const mc = cmp.mcnemar || {};
-      const mismatchHtml = cmp.config_mismatch
-        ? `<div class="warning-banner" role="alert">
-            <strong>Configuration mismatch:</strong> ${escapeHtml((cmp.config_diffs || []).join(", "))}. McNemar test results may reflect configuration differences rather than model capability.
-          </div>`
-        : "";
-      const mcnemarText =
-        mc.discordant_pairs === 0
-          ? "Identical pass/fail outcomes (0 discordant pairs)"
-          : `${mc.significant ? `Significant (${mc.direction} better)` : "Not significant"} · p=${mc.p_value} · χ²=${mc.chi2} (${mc.discordant_pairs} discordant pairs: A-only=${mc.a_only_pass}, B-only=${mc.b_only_pass})`;
-
-      const deltas = (cmp.deltas || []).filter((d) => {
-        if (state.compareFilter === "regressed") return d.outcome === "regressed";
-        if (state.compareFilter === "improved") return d.outcome === "improved";
-        if (state.compareFilter === "changed") return d.outcome !== "unchanged";
-        return true;
-      });
-
-      const deltaRows = deltas
-        .map((d) => {
-          const sid = d.scenario_id;
-          const expanded = state.expandedCompareScenarios.has(sid);
-          const pDelta =
-            d.points_delta === null || d.points_delta === undefined
-              ? d.outcome
-              : d.points_delta > 0
-                ? `+${d.points_delta}`
-                : d.points_delta === 0
-                  ? "="
-                  : `${d.points_delta}`;
-          const badgeCls =
-            d.outcome === "improved"
-              ? "badge-pass"
-              : d.outcome === "regressed"
-                ? "badge-fail"
-                : "badge-neutral";
-          const durDelta =
-            d.duration_delta !== null && d.duration_delta !== undefined
-              ? `${d.duration_delta >= 0 ? "+" : ""}${d.duration_delta}s`
-              : "—";
-
-          const expandedHtml = expanded
-            ? `<tr class="trace-row">
-                <td colspan="7">
-                  <div class="compare-trace-split">
-                    <div>
-                      <div style="margin-bottom:0.375rem;font-weight:600">Baseline A (${escapeHtml(cmp.run_a.model)})</div>
-                      <div class="trace-box">${escapeHtml(d.a?.raw_log || "Not present in Run A")}</div>
-                    </div>
-                    <div>
-                      <div style="margin-bottom:0.375rem;font-weight:600">Candidate B (${escapeHtml(cmp.run_b.model)})</div>
-                      <div class="trace-box">${escapeHtml(d.b?.raw_log || "Not present in Run B")}</div>
-                    </div>
-                  </div>
-                </td>
-              </tr>`
-            : "";
-
-          return `
-            <tr class="is-clickable cmp-scenario-row" data-scenario-id="${escapeHtml(sid)}">
-              <td class="mono">${escapeHtml(sid)}</td>
-              <td>${escapeHtml(d.title)}</td>
-              <td class="num">${d.a ? `${escapeHtml(d.a.status)} (${d.a.points}/2)` : "—"}</td>
-              <td class="num">${d.b ? `${escapeHtml(d.b.status)} (${d.b.points}/2)` : "—"}</td>
-              <td><span class="badge ${badgeCls}">${escapeHtml(pDelta)}</span></td>
-              <td class="num">${escapeHtml(durDelta)}</td>
-              <td>${escapeHtml(d.b?.summary || d.a?.summary || "")}</td>
-            </tr>
-            ${expandedHtml}`;
-        })
-        .join("");
-
-      bodyHtml = `
-        ${mismatchHtml}
-        <div class="summary-strip">
-          <div class="metric-cell">
-            <span class="metric-label">Score A → B</span>
-            <span class="metric-value">${escapeHtml(s.score_a ?? "?")} → ${escapeHtml(s.score_b ?? "?")}</span>
-          </div>
-          <div class="metric-cell">
-            <span class="metric-label">Points delta</span>
-            <span class="metric-value">${s.total_points_a} → ${s.total_points_b} (${s.total_delta >= 0 ? `+${s.total_delta}` : s.total_delta})</span>
-          </div>
-          <div class="metric-cell">
-            <span class="metric-label">Improved / Regressed / Same</span>
-            <span class="metric-value">${s.improved} / ${s.regressed} / ${s.unchanged}</span>
-          </div>
-          <div class="metric-cell" style="grid-column: span 2">
-            <span class="metric-label">McNemar's paired test</span>
-            <span class="metric-value" style="font-size:0.875rem">${escapeHtml(mcnemarText)}</span>
-          </div>
-        </div>
-
-        <div class="scenario-toolbar">
-          <div class="pill-group" role="group" aria-label="Filter scenario diffs">
-            ${["all", "changed", "regressed", "improved"]
-              .map(
-                (f) =>
-                  `<button type="button" class="filter-pill cmp-filter-pill ${state.compareFilter === f ? "is-active" : ""}" data-filter="${f}">${f.toUpperCase()}</button>`
-              )
-              .join("")}
-          </div>
-          <span style="color:var(--text-muted);font-size:0.75rem">Click any row to compare side-by-side traces</span>
-        </div>
-
-        <div class="data-table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Scenario</th>
-                <th>Baseline (A)</th>
-                <th>Candidate (B)</th>
-                <th>Delta</th>
-                <th>Time Δ</th>
-                <th>Candidate Summary</th>
-              </tr>
-            </thead>
-            <tbody>${deltaRows}</tbody>
-          </table>
-        </div>
-      `;
-    }
-
-    workspace.innerHTML = `
-      <div class="inspector-header" style="margin-bottom:1rem">
-        <div>
-          <h1 class="inspector-title">Head-to-head run comparison</h1>
-          <div class="inspector-subtitle">
-            <span>Compare scenario verdicts, latency shifts, and paired McNemar statistical significance between any two runs.</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="toolbar-strip">
-        <div class="toolbar-controls">
-          <label for="cmp-left-select" style="font-size:0.75rem;color:var(--text-secondary)">Baseline (A):</label>
-          <select id="cmp-left-select" class="control-select" style="width:auto;min-width:260px">
-            ${buildOptions(state.compareLeftId)}
-          </select>
-          <button type="button" id="cmp-swap-btn" class="btn">Swap A ↔ B</button>
-          <label for="cmp-right-select" style="font-size:0.75rem;color:var(--text-secondary)">Candidate (B):</label>
-          <select id="cmp-right-select" class="control-select" style="width:auto;min-width:260px">
-            ${buildOptions(state.compareRightId)}
-          </select>
-        </div>
-      </div>
-
-      ${bodyHtml}
-    `;
-
-    document.getElementById("cmp-left-select")?.addEventListener("change", (ev) => {
-      state.compareLeftId = ev.target.value;
-      loadCompareView();
-    });
-    document.getElementById("cmp-right-select")?.addEventListener("change", (ev) => {
-      state.compareRightId = ev.target.value;
-      loadCompareView();
-    });
-    document.getElementById("cmp-swap-btn")?.addEventListener("click", () => {
-      const tmp = state.compareLeftId;
-      state.compareLeftId = state.compareRightId;
-      state.compareRightId = tmp;
-      loadCompareView();
-    });
-    workspace.querySelectorAll(".cmp-filter-pill").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        state.compareFilter = btn.getAttribute("data-filter") || "all";
-        renderCompareView(toolRuns);
-      });
-    });
-    workspace.querySelectorAll(".cmp-scenario-row").forEach((tr) => {
-      tr.addEventListener("click", () => {
-        const sid = tr.getAttribute("data-scenario-id");
-        if (!sid) return;
-        if (state.expandedCompareScenarios.has(sid)) {
-          state.expandedCompareScenarios.delete(sid);
-        } else {
-          state.expandedCompareScenarios.add(sid);
-        }
-        renderCompareView(toolRuns);
-      });
-    });
+  function runPicker(id, selectedId, toolRuns, onPick) {
+    return h(
+      "select",
+      { id, class: "select", value: selectedId, onchange: (ev) => onPick(ev.target.value) },
+      toolRuns.map((r) => {
+        const { name } = splitModel(r.model);
+        const score = r.final_score ?? "—";
+        return h("option", { value: r.run_id, text: `${name} · ${score} · ${relTime(r.created_at)} · ${r.run_id.slice(0, 15)}` });
+      })
+    );
   }
 
-  window.loadLeaderboardView = loadLeaderboardView;
-  window.loadCompareView = loadCompareView;
+  function vsCard(side, run, selectId, selectedId, toolRuns, onPick) {
+    return h(
+      "div",
+      { class: "card vs-card" },
+      ring(run?.final_score),
+      h(
+        "div",
+        { class: "hero-title" },
+        h("span", { class: "eyebrow", text: side }),
+        h("label", { class: "visually-hidden", for: selectId, text: side }),
+        run ? h("strong", { text: splitModel(run.model).name, title: run.model }) : null,
+        runPicker(selectId, selectedId, toolRuns, onPick)
+      )
+    );
+  }
+
+  function compareRows(deltas, cmp) {
+    const rows = [];
+    for (const d of deltas) {
+      const sid = d.scenario_id;
+      const open = state.expandedCompareScenarios.has(sid);
+      const toggle = () => {
+        if (open) state.expandedCompareScenarios.delete(sid);
+        else state.expandedCompareScenarios.add(sid);
+        const ws = byId("compare-workspace");
+        const scroller = document.scrollingElement;
+        const top = scroller.scrollTop;
+        renderCompareView(state.compareRuns.filter((r) => r.scenario_count > 0));
+        scroller.scrollTop = top;
+        ws?.querySelector(`[data-scenario-id="${CSS.escape(sid)}"] .disclosure`)?.focus({ preventScroll: true });
+      };
+      const pDelta = d.points_delta;
+      rows.push(
+        h(
+          "tr",
+          {
+            class: `cmp-scenario-row row-click ${open ? "row-open" : ""}`,
+            dataset: { scenarioId: sid },
+            onclick: (ev) => {
+              if (!ev.target.closest("button")) toggle();
+            },
+          },
+          h("td", {}, h("button", { type: "button", class: "disclosure", "aria-expanded": String(open), onclick: toggle }, icon("chevron"), h("span", { class: "mono muted", text: sid }))),
+          h("td", { class: "cell-title", text: d.title }),
+          h("td", { class: "nowrap" }, d.a ? [chip(d.a.status), h("span", { class: "muted mono", text: ` ${d.a.points}/2` })] : h("span", { class: "muted", text: "—" })),
+          h("td", { class: "nowrap" }, d.b ? [chip(d.b.status), h("span", { class: "muted mono", text: ` ${d.b.points}/2` })] : h("span", { class: "muted", text: "—" })),
+          h(
+            "td",
+            {},
+            pDelta === null || pDelta === undefined
+              ? h("span", { class: "chip chip-plain", text: d.outcome })
+              : h("span", { class: `delta-chip ${pDelta > 0 ? "up" : pDelta < 0 ? "down" : ""}`, text: pDelta > 0 ? `+${pDelta}` : pDelta === 0 ? "=" : String(pDelta) })
+          ),
+          h("td", { class: "num", text: d.duration_delta === null || d.duration_delta === undefined ? "—" : `${d.duration_delta > 0 ? "+" : ""}${d.duration_delta}s` }),
+          h("td", { class: "cell-summary", text: d.b?.summary || d.a?.summary || "" })
+        )
+      );
+      if (open) {
+        rows.push(
+          h(
+            "tr",
+            { class: "detail-row" },
+            h(
+              "td",
+              { colspan: 7 },
+              h(
+                "div",
+                { class: "detail trace-pair" },
+                h("div", {}, h("div", { class: "eyebrow", text: `A · ${splitModel(cmp.run_a.model).name}` }), h("pre", { class: "trace", tabindex: "0", text: d.a?.raw_log || "Not present in run A" })),
+                h("div", {}, h("div", { class: "eyebrow", text: `B · ${splitModel(cmp.run_b.model).name}` }), h("pre", { class: "trace", tabindex: "0", text: d.b?.raw_log || "Not present in run B" }))
+              )
+            )
+          )
+        );
+      }
+    }
+    return rows;
+  }
+
+  function renderCompareView(toolRuns) {
+    const workspace = byId("compare-workspace");
+    if (!workspace) return;
+    const head = h(
+      "div",
+      { class: "page-head" },
+      h(
+        "div",
+        {},
+        h("h1", { class: "page-title", text: "Compare runs" }),
+        h("p", { class: "page-sub", text: "Scenario-by-scenario verdicts, latency shifts, and McNemar's paired test for any two tool-call runs." })
+      )
+    );
+    if (!toolRuns.length) {
+      setChildren(workspace, head, emptyState("swap", "Nothing to compare yet", "Complete at least two tool-call runs to compare them."));
+      return;
+    }
+
+    const cmp = state.lastComparison;
+    const runA = cmp?.run_a;
+    const runB = cmp?.run_b;
+    const versus = h(
+      "div",
+      { class: "versus" },
+      vsCard("Baseline A", runA, "cmp-left-select", state.compareLeftId, toolRuns, (id) => {
+        state.compareLeftId = id;
+        loadCompareView();
+      }),
+      h(
+        "div",
+        { class: "vs-badge" },
+        h("span", { text: "VS" }),
+        h(
+          "button",
+          {
+            type: "button",
+            id: "cmp-swap-btn",
+            class: "btn btn-ghost",
+            title: "Swap A and B",
+            onclick: () => {
+              [state.compareLeftId, state.compareRightId] = [state.compareRightId, state.compareLeftId];
+              loadCompareView();
+            },
+          },
+          icon("swap"),
+          h("span", { class: "visually-hidden", text: "Swap A and B" })
+        )
+      ),
+      vsCard("Candidate B", runB, "cmp-right-select", state.compareRightId, toolRuns, (id) => {
+        state.compareRightId = id;
+        loadCompareView();
+      })
+    );
+
+    const body = [];
+    if (cmp?.error) {
+      body.push(h("div", { class: "section-spacer" }, banner("danger", "alert", cmp.error)));
+    } else if (cmp?.summary) {
+      const s = cmp.summary;
+      const mc = cmp.mcnemar || {};
+      if (cmp.config_mismatch) {
+        body.push(
+          h(
+            "div",
+            { class: "section-spacer" },
+            banner("warn", "alert", h("strong", { text: "Configuration mismatch: " }), (cmp.config_diffs || []).join(", "), ". McNemar's result may reflect the setup rather than the models.")
+          )
+        );
+      }
+      const scoreDelta = s.score_delta;
+      const verdict =
+        mc.discordant_pairs === 0
+          ? ["info", "info", "Identical pass/fail outcomes", "No discordant pairs, so there is nothing to test."]
+          : mc.significant
+            ? ["pass", "check", `Significant: ${mc.direction === "B" ? "candidate B" : "baseline A"} is better`, `p = ${mc.p_value} · χ² = ${mc.chi2} · ${mc.discordant_pairs} discordant pairs (A only ${mc.a_only_pass}, B only ${mc.b_only_pass})`]
+            : ["plain", "minus", "Not significant", `p = ${mc.p_value} · χ² = ${mc.chi2} · ${mc.discordant_pairs} discordant pairs (A only ${mc.a_only_pass}, B only ${mc.b_only_pass})`];
+      body.push(
+        h(
+          "div",
+          { class: "stats" },
+          stat("Score A → B", `${s.score_a ?? "?"} → ${s.score_b ?? "?"}`, {
+            extra: scoreDelta === null || scoreDelta === undefined ? null : h("div", { class: scoreDelta >= 0 ? "delta-pos" : "delta-neg", text: `${scoreDelta >= 0 ? "+" : ""}${scoreDelta} points of score` }),
+          }),
+          stat("Points", `${s.total_points_a} → ${s.total_points_b}`, { small: `(${s.total_delta >= 0 ? "+" : ""}${s.total_delta})` }),
+          stat("Improved", s.improved, { cls: "stat-pass", icon: "check" }),
+          stat("Regressed", s.regressed, { cls: "stat-fail", icon: "x" }),
+          stat("Unchanged", s.unchanged, { icon: "minus" })
+        ),
+        h(
+          "div",
+          { class: "card card-pad section-spacer" },
+          h("div", { class: "eyebrow", text: "McNemar's paired test" }),
+          h("div", { class: "verdict" }, h("span", { class: `chip chip-${verdict[0]}` }, icon(verdict[1]), verdict[2]), h("span", { class: "muted mono", text: verdict[3] }))
+        )
+      );
+
+      const all = cmp.deltas || [];
+      const filters = [
+        ["all", "All", () => true],
+        ["changed", "Changed", (d) => d.outcome !== "unchanged"],
+        ["regressed", "Regressed", (d) => d.outcome === "regressed"],
+        ["improved", "Improved", (d) => d.outcome === "improved"],
+      ];
+      const active = filters.find(([id]) => id === state.compareFilter) || filters[0];
+      const deltas = all.filter(active[2]);
+      body.push(
+        h("h2", { class: "section-title" }, "Scenario deltas", h("span", { class: "count", text: `${deltas.length} of ${all.length}` })),
+        h(
+          "div",
+          { class: "toolbar" },
+          segmented(
+            filters.map(([id, label, test]) => [id, label, all.filter(test).length]),
+            state.compareFilter,
+            (id) => {
+              state.compareFilter = id;
+              renderCompareView(toolRuns);
+            },
+            "Filter scenario deltas"
+          ),
+          h("span", { class: "muted", text: "Select a row to compare both traces side by side." })
+        ),
+        h(
+          "div",
+          { class: "table-wrap" },
+          h(
+            "table",
+            { class: "table" },
+            h("thead", {}, h("tr", {}, ["Scenario", "Title", "Baseline A", "Candidate B", "Δ pts", "Δ time", "Summary"].map((t, i) => h("th", { scope: "col", class: i === 5 ? "num" : null, text: t })))),
+            h("tbody", {}, deltas.length ? compareRows(deltas, cmp) : h("tr", {}, h("td", { colspan: 7, class: "muted", text: "No scenarios match this filter." })))
+          )
+        )
+      );
+    }
+
+    setChildren(workspace, head, versus, ...body);
+  }
+
+  // ----------------------------------------------------------------- Live
 
   // Builds the launcher form once. Later calls only refresh the observer pane,
   // so switching tabs or resuming never resets what the user typed.
   function loadLiveView() {
     if (!state.liveViewReady) {
       state.liveViewReady = (async () => {
-        const workspace = document.getElementById("live-workspace");
+        const workspace = byId("live-workspace");
         if (!workspace) return false;
         try {
-          state.launcherSchema = await fetchJson("/api/schema");
+          await ensureSchema();
         } catch (err) {
-          workspace.innerHTML = `<div class="empty-state"><h2>Could not load launcher schema</h2><p>${escapeHtml(err.message)}</p></div>`;
+          setChildren(workspace, emptyState("alert", "Could not load the launcher", err.message));
           state.liveViewReady = null; // allow a retry on the next visit
           return false;
         }
@@ -871,452 +1324,394 @@
     });
   }
 
-  function renderLiveWorkspace() {
-    const workspace = document.getElementById("live-workspace");
-    if (!workspace || !state.launcherSchema) return;
+  function field(label, control, hint) {
+    return h("div", { class: "field" }, h("label", { class: "field-label", for: control.id, text: label }), control, hint ? h("span", { class: "field-hint", text: hint }) : null);
+  }
 
-    const schema = state.launcherSchema;
-    const defaults = schema.defaults || {};
-    const presets = schema.presets || [];
-    const categories = schema.categories || [];
-    const backends = schema.backends || [];
+  function setProbeStatus(kind, text) {
+    const el = byId("probe-feedback");
+    if (!el) return;
+    el.className = `probe-status ${kind ? `is-${kind}` : ""}`;
+    el.textContent = text;
+  }
 
-    const presetOptions = presets
-      .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`)
-      .join("");
-    const backendOptions = backends
-      .map(
-        (b) =>
-          `<option value="${escapeHtml(b)}" ${b === defaults.backend ? "selected" : ""}>${escapeHtml(b)}</option>`
-      )
-      .join("");
-    const categoryCheckboxes = categories
-      .map(
-        (cat) => `
-        <label style="display:inline-flex;align-items:center;gap:0.25rem;margin-right:0.625rem;font-weight:400">
-          <input type="checkbox" class="launch-cat-cb" value="${escapeHtml(cat.id)}">
-          <span class="mono">${escapeHtml(cat.id)}</span> (${escapeHtml(cat.count)})
-        </label>`
-      )
-      .join("");
-
-    const modelOptions = state.probedModels.length
-      ? state.probedModels
-          .map(
-            (m) =>
-              `<option value="${escapeHtml(m.id)}">${escapeHtml(m.display_name || m.id)}</option>`
-          )
-          .join("")
-      : "";
-
-    workspace.innerHTML = `
-      <aside class="launcher-pane" aria-label="Benchmark run launcher">
-        <h1 class="pane-title">Launch benchmark run</h1>
-        <form id="launch-run-form">
-          <div class="form-field">
-            <label for="launch-base-url">Inference endpoint Base URL</label>
-            <div style="display:flex;gap:0.5rem">
-              <input
-                type="text"
-                id="launch-base-url"
-                class="control-input mono"
-                placeholder="http://localhost:8000"
-                value="${escapeHtml(defaults.base_url || "")}"
-              >
-              <button type="button" id="probe-server-btn" class="btn">Probe</button>
-            </div>
-            <div id="probe-feedback" style="margin-top:0.375rem;font-size:0.75rem;color:var(--text-secondary)"></div>
-          </div>
-
-          <div class="form-field">
-            <label for="launch-model">Model name or ID</label>
-            <input
-              type="text"
-              id="launch-model"
-              class="control-input mono"
-              list="probed-models-datalist"
-              placeholder="e.g. Qwen/Qwen3-8B"
-              value="${escapeHtml(defaults.model || "")}"
-              required
-            >
-            <datalist id="probed-models-datalist">${modelOptions}</datalist>
-          </div>
-
-          <div class="form-row-2">
-            <div class="form-field">
-              <label for="launch-backend">Backend label</label>
-              <select id="launch-backend" class="control-select">${backendOptions}</select>
-            </div>
-            <div class="form-field">
-              <label for="launch-wire-format">Wire format</label>
-              <select id="launch-wire-format" class="control-select">
-                <option value="auto">auto</option>
-                <option value="openai">openai</option>
-                <option value="gemini">gemini</option>
-                <option value="anthropic">anthropic</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="form-field">
-            <label for="launch-api-key">API key (optional, never stored)</label>
-            <input
-              type="password"
-              id="launch-api-key"
-              class="control-input mono"
-              placeholder="Uses TOOL_EVAL_API_KEY if blank"
-              autocomplete="off"
-            >
-          </div>
-
-          <div class="form-field">
-            <label for="launch-preset">Scenario suite</label>
-            <select id="launch-preset" class="control-select">${presetOptions}</select>
-          </div>
-
-          <div id="custom-selection-fields" class="is-hidden">
-            <div class="form-field">
-              <label>Filter by categories</label>
-              <div style="padding:0.5rem;border:1px solid var(--border-subtle);border-radius:6px;background:var(--bg-canvas)">
-                ${categoryCheckboxes}
-              </div>
-            </div>
-            <div class="form-field">
-              <label for="launch-scenarios">Explicit scenario IDs (optional)</label>
-              <input
-                type="text"
-                id="launch-scenarios"
-                class="control-input mono"
-                placeholder="TC-01, TC-12, TC-46"
-              >
-            </div>
-          </div>
-
-          <div class="form-row-2">
-            <div class="form-field">
-              <label for="launch-temperature">Temperature</label>
-              <input type="number" id="launch-temperature" class="control-input mono" step="0.05" min="0" max="2" value="${escapeHtml(defaults.temperature ?? 0.0)}">
-            </div>
-            <div class="form-field">
-              <label for="launch-parallel">Concurrency (--parallel)</label>
-              <input type="number" id="launch-parallel" class="control-input mono" step="1" min="1" max="32" value="${escapeHtml(defaults.concurrency ?? 1)}">
-            </div>
-          </div>
-
-          <div class="form-row-2">
-            <div class="form-field">
-              <label for="launch-max-turns">Max turns</label>
-              <input type="number" id="launch-max-turns" class="control-input mono" step="1" min="1" max="25" value="${escapeHtml(defaults.max_turns ?? 8)}">
-            </div>
-            <div class="form-field">
-              <label for="launch-timeout">Timeout (sec)</label>
-              <input type="number" id="launch-timeout" class="control-input mono" step="5" min="5" max="1800" value="${escapeHtml(defaults.timeout_seconds ?? 120)}">
-            </div>
-          </div>
-
-          <div class="form-field">
-            <label for="launch-label">Run label (optional)</label>
-            <input type="text" id="launch-label" class="control-input" placeholder="e.g. vllm-0.8.4-fp8-baseline">
-          </div>
-
-          <div id="launch-error-msg" class="safety-banner is-hidden" role="alert"></div>
-
-          <button type="submit" id="launch-submit-btn" class="btn btn-primary" style="width:100%;padding:0.625rem">
-            Start Benchmark Run
-          </button>
-        </form>
-      </aside>
-
-      <section id="live-observer-pane" class="observer-pane" aria-label="Live run progress">
-      </section>
-    `;
-
-    renderLiveObserverPane();
-
-    document.getElementById("launch-preset")?.addEventListener("change", (ev) => {
-      const customBox = document.getElementById("custom-selection-fields");
-      if (customBox) {
-        customBox.classList.toggle("is-hidden", ev.target.value !== "custom");
-      }
-    });
-
-    document.getElementById("probe-server-btn")?.addEventListener("click", async () => {
-      const urlInput = document.getElementById("launch-base-url");
-      const keyInput = document.getElementById("launch-api-key");
-      const fmtInput = document.getElementById("launch-wire-format");
-      const feedback = document.getElementById("probe-feedback");
-      if (feedback) feedback.textContent = "Probing server...";
-
-      const probeBody = {
+  async function probeServer() {
+    const urlInput = byId("launch-base-url");
+    setProbeStatus("busy", "Probing server…");
+    try {
+      const res = await postJson("/api/probe", {
         base_url: urlInput?.value.trim() || undefined,
-        wire_format: fmtInput?.value || "auto",
-        api_key: keyInput?.value.trim() || undefined,
-      };
-
-      try {
-        const res = await postJson("/api/probe", probeBody);
-        if (!res.reachable) {
-          if (feedback) feedback.innerHTML = `<span style="color:var(--fail)">${escapeHtml(res.error || "Unreachable")}</span>`;
-          return;
-        }
-        state.probedModels = res.models || [];
-        if (urlInput && !urlInput.value.trim() && res.resolved_base_url) {
-          urlInput.value = res.resolved_base_url;
-        }
-        const backendSel = document.getElementById("launch-backend");
-        if (backendSel && res.backend && res.backend !== "unknown") {
-          backendSel.value = res.backend;
-        }
-        const modelInput = document.getElementById("launch-model");
-        if (modelInput && !modelInput.value.trim() && state.probedModels.length > 0) {
-          modelInput.value = state.probedModels[0].id;
-        }
-        const datalist = document.getElementById("probed-models-datalist");
-        if (datalist) {
-          datalist.innerHTML = state.probedModels
-            .map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.display_name || m.id)}</option>`)
-            .join("");
-        }
-        if (feedback) {
-          feedback.innerHTML = `<span style="color:var(--pass)">Connected (${escapeHtml(res.backend || "server")}) · ${state.probedModels.length} model(s) found</span>`;
-        }
-      } catch (err) {
-        if (feedback) feedback.innerHTML = `<span style="color:var(--fail)">${escapeHtml(err.message)}</span>`;
+        wire_format: byId("launch-wire-format")?.value || "auto",
+        api_key: byId("launch-api-key")?.value.trim() || undefined,
+      });
+      if (!res.reachable) {
+        setProbeStatus("error", res.error || "Unreachable");
+        return;
       }
-    });
-
-    document.getElementById("launch-run-form")?.addEventListener("submit", async (ev) => {
-      ev.preventDefault();
-      const errBox = document.getElementById("launch-error-msg");
-      if (errBox) errBox.classList.add("is-hidden");
-
-      const preset = document.getElementById("launch-preset")?.value || "short";
-      const categoriesChecked = Array.from(document.querySelectorAll(".launch-cat-cb:checked")).map(
-        (cb) => cb.value
+      state.probedModels = res.models || [];
+      if (urlInput && !urlInput.value.trim() && res.resolved_base_url) urlInput.value = res.resolved_base_url;
+      const backendSel = byId("launch-backend");
+      if (backendSel && res.backend && res.backend !== "unknown") backendSel.value = res.backend;
+      const modelInput = byId("launch-model");
+      if (modelInput && !modelInput.value.trim() && state.probedModels.length) modelInput.value = state.probedModels[0].id;
+      byId("probed-models-datalist")?.replaceChildren(
+        ...state.probedModels.map((m) => h("option", { value: m.id, text: m.display_name || m.id }))
       );
-      const explicitScenarios = document.getElementById("launch-scenarios")?.value || "";
+      setProbeStatus("ok", `Connected to ${res.server_name || res.backend || "server"} · ${state.probedModels.length} model${state.probedModels.length === 1 ? "" : "s"}`);
+    } catch (err) {
+      setProbeStatus("error", err.message);
+    }
+  }
 
-      const payload = {
-        base_url: document.getElementById("launch-base-url")?.value || "",
-        model: document.getElementById("launch-model")?.value || "",
-        backend: document.getElementById("launch-backend")?.value || "unknown",
-        wire_format: document.getElementById("launch-wire-format")?.value || "auto",
-        api_key: document.getElementById("launch-api-key")?.value || undefined,
-        preset,
-        categories: preset === "custom" && categoriesChecked.length ? categoriesChecked : undefined,
-        scenarios: preset === "custom" && explicitScenarios.trim() ? explicitScenarios : undefined,
-        temperature: Number(document.getElementById("launch-temperature")?.value || 0),
-        concurrency: Number(document.getElementById("launch-parallel")?.value || 1),
-        max_turns: Number(document.getElementById("launch-max-turns")?.value || 8),
-        timeout_seconds: Number(document.getElementById("launch-timeout")?.value || 120),
-        label: document.getElementById("launch-label")?.value || undefined,
-      };
+  function renderLiveWorkspace() {
+    const workspace = byId("live-workspace");
+    const schema = state.launcherSchema;
+    if (!workspace || !schema) return;
+    const defaults = schema.defaults || {};
 
-      try {
-        const started = await postJson("/api/runs", payload);
-        connectLiveStream(started.run_id, {
-          model: started.model,
-          total: started.total_scenarios,
-        });
-        loadRunsList();
-      } catch (err) {
-        if (errBox) {
-          errBox.textContent = err.message;
-          errBox.classList.remove("is-hidden");
-        }
-      }
-    });
+    const input = (id, props = {}) => h("input", { id, class: "input", ...props });
+    const select = (id, options, value) =>
+      h("select", { id, class: "select", value }, options.map(([v, t]) => h("option", { value: v, text: t })));
+
+    const endpoint = h(
+      "div",
+      { class: "card launcher-section" },
+      h("div", { class: "eyebrow" }, icon("server"), "Endpoint"),
+      h(
+        "div",
+        { class: "field" },
+        h("label", { class: "field-label", for: "launch-base-url", text: "Base URL" }),
+        h(
+          "div",
+          { class: "input-row" },
+          input("launch-base-url", { class: "input mono", placeholder: "http://localhost:8000", value: defaults.base_url || "", autocomplete: "off" }),
+          h("button", { type: "button", id: "probe-server-btn", class: "btn", onclick: probeServer }, icon("radio"), "Probe")
+        ),
+        h("div", { id: "probe-feedback", class: "probe-status", role: "status", text: "Leave empty to auto-discover a local server." })
+      ),
+      field(
+        "Model",
+        input("launch-model", { class: "input mono", list: "probed-models-datalist", placeholder: "e.g. Qwen/Qwen3-8B", value: defaults.model || "", required: true, autocomplete: "off" })
+      ),
+      h("datalist", { id: "probed-models-datalist" }, state.probedModels.map((m) => h("option", { value: m.id, text: m.display_name || m.id }))),
+      h(
+        "div",
+        { class: "grid-2" },
+        field("Backend", select("launch-backend", (schema.backends || []).map((b) => [b, b]), defaults.backend || "unknown")),
+        field("Wire format", select("launch-wire-format", (schema.wire_formats || ["auto"]).map((w) => [w, w]), "auto"))
+      ),
+      field("API key", input("launch-api-key", { type: "password", class: "input mono", placeholder: "Uses TOOL_EVAL_API_KEY if blank", autocomplete: "off" }), "Sent to the endpoint only; never stored.")
+    );
+
+    const presetSelect = h(
+      "select",
+      {
+        id: "launch-preset",
+        class: "select",
+        onchange: (ev) => {
+          const box = byId("custom-selection-fields");
+          if (box) box.hidden = ev.target.value !== "custom";
+        },
+      },
+      (schema.presets || []).map((p) => h("option", { value: p.id, text: p.label }))
+    );
+
+    const suite = h(
+      "div",
+      { class: "card launcher-section" },
+      h("div", { class: "eyebrow" }, icon("layers"), "Scenarios"),
+      field("Suite", presetSelect),
+      h(
+        "div",
+        { id: "custom-selection-fields", class: "field", hidden: true },
+        h("span", { class: "field-label", text: "Categories" }),
+        h(
+          "div",
+          { class: "checks", role: "group", "aria-label": "Categories" },
+          (schema.categories || []).map((cat) =>
+            h(
+              "label",
+              { class: "check-chip", title: cat.label },
+              h("input", { type: "checkbox", class: "launch-cat-cb", value: cat.id }),
+              h("span", {}, h("b", { class: "mono", text: cat.id }), h("span", { class: "count", text: cat.count }))
+            )
+          )
+        ),
+        field("Scenario IDs", input("launch-scenarios", { class: "input mono", placeholder: "TC-01, TC-12, TC-46" }), "Optional; overrides the categories.")
+      )
+    );
+
+    const advanced = h(
+      "details",
+      { class: "card launcher-section advanced" },
+      h("summary", {}, icon("chevron"), icon("sliders"), "Advanced settings"),
+      h(
+        "div",
+        { class: "grid-2" },
+        field("Temperature", input("launch-temperature", { type: "number", class: "input mono", step: "0.05", min: "0", max: "2", value: defaults.temperature ?? 0 })),
+        field("Concurrency", input("launch-parallel", { type: "number", class: "input mono", step: "1", min: "1", max: "32", value: defaults.concurrency ?? 1 })),
+        field("Max turns", input("launch-max-turns", { type: "number", class: "input mono", step: "1", min: "1", max: "25", value: defaults.max_turns ?? 8 })),
+        field("Timeout (s)", input("launch-timeout", { type: "number", class: "input mono", step: "5", min: "5", max: "1800", value: defaults.timeout_seconds ?? 120 }))
+      ),
+      h("div", { class: "section-spacer" }, field("Run label", input("launch-label", { placeholder: "e.g. vllm-0.11-fp8-baseline" })))
+    );
+
+    const form = h(
+      "form",
+      { id: "launch-run-form", onsubmit: submitLaunch, novalidate: true },
+      endpoint,
+      suite,
+      advanced,
+      h("div", { id: "launch-error-msg", class: "banner banner-danger", role: "alert", hidden: true }),
+      h("button", { type: "submit", id: "launch-submit-btn", class: "btn btn-primary btn-block" }, icon("play"), "Start benchmark run")
+    );
+
+    setChildren(workspace,
+      h("aside", { class: "launcher", "aria-label": "Launch a benchmark run" }, h("h1", { class: "rail-title", text: "Launch a run" }), h("div", { class: "section-spacer" }, form)),
+      h("section", { id: "live-observer-pane", class: "observer", "aria-label": "Live run progress", "aria-live": "polite" })
+    );
+    renderLiveObserverPane();
+  }
+
+  function showLaunchError(message) {
+    const box = byId("launch-error-msg");
+    if (!box) return;
+    box.replaceChildren(icon("alert"), h("div", { text: message }));
+    box.hidden = false;
+  }
+
+  async function submitLaunch(ev) {
+    ev.preventDefault();
+    const box = byId("launch-error-msg");
+    if (box) box.hidden = true;
+    const preset = byId("launch-preset")?.value || "short";
+    const categoriesChecked = [...document.querySelectorAll(".launch-cat-cb:checked")].map((cb) => cb.value);
+    const explicitScenarios = byId("launch-scenarios")?.value || "";
+    const payload = {
+      base_url: byId("launch-base-url")?.value || "",
+      model: byId("launch-model")?.value || "",
+      backend: byId("launch-backend")?.value || "unknown",
+      wire_format: byId("launch-wire-format")?.value || "auto",
+      api_key: byId("launch-api-key")?.value || undefined,
+      preset,
+      categories: preset === "custom" && categoriesChecked.length ? categoriesChecked : undefined,
+      scenarios: preset === "custom" && explicitScenarios.trim() ? explicitScenarios : undefined,
+      temperature: Number(byId("launch-temperature")?.value || 0),
+      concurrency: Number(byId("launch-parallel")?.value || 1),
+      max_turns: Number(byId("launch-max-turns")?.value || 8),
+      timeout_seconds: Number(byId("launch-timeout")?.value || 120),
+      label: byId("launch-label")?.value || undefined,
+    };
+    const button = byId("launch-submit-btn");
+    if (button) button.disabled = true;
+    try {
+      const started = await postJson("/api/runs", payload);
+      connectLiveStream(started.run_id, { model: started.model, total: started.total_scenarios });
+      loadRunsList();
+    } catch (err) {
+      showLaunchError(err.message);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  function turnRow(t) {
+    const calls = (t.tool_calls || []).map((c) => `${c.name}(${JSON.stringify(c.arguments || {})})`).join(", ");
+    const text = calls || t.content || "[completed]";
+    return h(
+      "li",
+      { class: "turn" },
+      icon(calls ? "wrench" : "message"),
+      h("span", { class: "mono muted", text: `T${t.turn}` }),
+      h("span", { class: "turn-text", text: text.length > 400 ? `${text.slice(0, 400)}…` : text }),
+      h("span", { class: "mono muted", text: t.latency_ms !== undefined && t.latency_ms !== null ? `${Math.round(t.latency_ms)}ms` : "" })
+    );
   }
 
   function renderLiveObserverPane() {
-    const pane = document.getElementById("live-observer-pane");
+    const pane = byId("live-observer-pane");
     if (!pane) return;
 
     if (!state.liveRunId) {
-      const runningRuns = state.runs.filter((r) => r.status === "running" || r.status === "interrupted");
-      const quickLinks = runningRuns.length
-        ? `<div style="margin-top:1rem">
-            <strong style="display:block;margin-bottom:0.5rem">Active or resumable runs in SQLite:</strong>
-            ${runningRuns
-              .map(
-                (r) =>
-                  `<button type="button" class="btn watch-existing-btn" data-run-id="${escapeHtml(r.run_id)}" style="margin-right:0.5rem;margin-bottom:0.5rem">
-                    ${escapeHtml(r.model)} (${escapeHtml(r.status)} · ${escapeHtml(r.run_id.slice(0, 18))})
-                  </button>`
-              )
-              .join("")}
-          </div>`
-        : "";
-
-      pane.innerHTML = `
-        <div class="empty-state">
-          <h2>Live run observer</h2>
-          <p>Start a benchmark run on the left, or select an in-progress CLI run to watch scenario execution, turn-by-turn tool calls, and live score updates in real time.</p>
-          ${quickLinks}
-        </div>
-      `;
-      pane.querySelectorAll(".watch-existing-btn").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const rid = btn.getAttribute("data-run-id");
-          if (rid) connectLiveStream(rid);
-        });
-      });
+      const watchable = state.runs.filter((r) => r.status === "running" || r.status === "interrupted");
+      setChildren(pane,
+        emptyState(
+          "activity",
+          "Live run observer",
+          "Start a run on the left, or follow one that is already going, including runs started from the CLI.",
+          ...watchable.map((r) =>
+            h(
+              "button",
+              { type: "button", class: "btn watch-existing-btn", dataset: { runId: r.run_id }, onclick: () => connectLiveStream(r.run_id) },
+              r.status === "running" ? icon("eye") : icon("pause"),
+              `${splitModel(r.model).name} · ${r.status}`
+            )
+          )
+        )
+      );
       return;
     }
 
-    const done = state.liveResults.length;
+    const results = state.liveResults;
+    const done = results.length;
     const total = state.liveTotal || done || 1;
     const pct = Math.min(100, Math.round((done / Math.max(total, 1)) * 100));
-    const passes = state.liveResults.filter((r) => r.status === "pass").length;
-    const partials = state.liveResults.filter((r) => r.status === "partial").length;
-    const fails = state.liveResults.filter((r) => r.status === "fail").length;
+    const passes = results.filter((r) => r.status === "pass").length;
+    const partials = results.filter((r) => r.status === "partial").length;
+    const fails = results.filter((r) => r.status === "fail").length;
+    const running = state.liveRunStatus === "running";
+    const { org, name } = splitModel(state.liveModel || state.liveRunId);
 
-    const activeHtml = state.liveActiveScenario
-      ? `<div class="summary-strip" style="border-color:var(--accent-strong)">
-          <div class="metric-cell" style="grid-column: 1 / -1">
-            <span class="metric-label">Currently executing scenario (${done + 1} of ${total})</span>
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
-              <span class="mono" style="font-size:1rem;font-weight:600">${escapeHtml(state.liveActiveScenario.scenario_id)} · ${escapeHtml(state.liveActiveScenario.title)}</span>
-              <span class="badge badge-info">Category ${escapeHtml(state.liveActiveScenario.category)}</span>
-            </div>
-            ${
-              state.liveTurns.length
-                ? `<div class="trace-box" style="margin-top:0.5rem;max-height:180px">${state.liveTurns
-                    .map((t) => {
-                      const calls = (t.tool_calls || [])
-                        .map((c) => `${c.name}(${JSON.stringify(c.arguments || {})})`)
-                        .join(", ");
-                      return `Turn ${t.turn}/${t.max_turns} (${t.latency_ms}ms): ${
-                        calls ? `calls -> ${calls}` : t.content || "[completed]"
-                      }`;
-                    })
-                    .map(escapeHtml)
-                    .join("\n")}</div>`
-                : `<div style="margin-top:0.375rem;font-size:0.75rem;color:var(--text-muted)">Waiting for turn 1 completion...</div>`
-            }
-          </div>
-        </div>`
-      : "";
+    const actions = [
+      running && state.liveManaged
+        ? h("button", { type: "button", id: "live-stop-btn", class: "btn btn-danger", onclick: stopLiveRun }, icon("stop"), "Stop")
+        : null,
+      state.liveRunStatus === "interrupted"
+        ? h("button", { type: "button", id: "live-resume-btn", class: "btn btn-primary", onclick: () => resumeInterruptedRun(state.liveRunId) }, icon("play"), "Resume")
+        : null,
+      state.liveRunStatus === "completed"
+        ? h(
+            "button",
+            {
+              type: "button",
+              id: "live-inspect-btn",
+              class: "btn btn-primary",
+              onclick: () => {
+                const rid = state.liveRunId;
+                switchView("history");
+                selectRun(rid);
+              },
+            },
+            icon("arrowRight"),
+            "Open in inspector"
+          )
+        : null,
+    ];
 
-    const rowsHtml = state.liveResults
-      .slice()
-      .reverse()
-      .map((r) => {
-        const dur = r.duration_seconds !== undefined ? `${Number(r.duration_seconds).toFixed(1)}s` : "—";
-        return `
-          <tr>
-            <td class="mono">${escapeHtml(r.scenario_id)}</td>
-            <td>${escapeHtml(r.title || r.scenario_id)}</td>
-            <td><span class="badge ${statusBadgeClass(r.status)}">${escapeHtml(r.status)}</span></td>
-            <td class="num">${escapeHtml(r.points)}/2</td>
-            <td class="num">${escapeHtml(dur)}</td>
-            <td>${escapeHtml(r.summary || "")}</td>
-          </tr>`;
-      })
-      .join("");
+    const hero = h(
+      "div",
+      { class: "card live-hero" },
+      ring(pct, { tier: "tier-info", label: `${pct}%`, title: `${done} of ${total} scenarios done` }),
+      h(
+        "div",
+        { class: "hero-title" },
+        org ? h("span", { class: "hero-org", text: org }) : null,
+        h("h2", { class: "hero-name", text: name }),
+        h(
+          "div",
+          { class: "hero-meta" },
+          running ? h("span", { class: "live-dot", "aria-hidden": "true" }) : null,
+          chip(state.liveRunStatus),
+          h("span", { class: "meta-item mono", text: state.liveRunId }),
+          h("span", { class: "meta-item progress-text", dataset: { progress: "" }, text: `${done}/${total} (${pct}%)` }),
+          state.liveManaged ? null : h("span", { class: "chip chip-plain", text: "started by another process" })
+        ),
+        h("progress", { class: "visually-hidden", value: done, max: total, "aria-label": "Scenarios completed" }),
+        bar(pct, `bar-live ${running ? "is-running" : ""}`)
+      ),
+      h("div", { class: "hero-actions" }, actions)
+    );
 
-    pane.innerHTML = `
-      <div class="inspector-header">
-        <div>
-          <h2 class="inspector-title">${escapeHtml(state.liveModel || "Live benchmark run")}</h2>
-          <div class="inspector-subtitle">
-            <span class="mono">${escapeHtml(state.liveRunId)}</span>
-            <span class="badge ${statusBadgeClass(state.liveRunStatus)}">${escapeHtml(state.liveRunStatus)}</span>
-            <span>Progress: <strong class="mono">${done}/${total} (${pct}%)</strong></span>
-            ${state.liveManaged ? "" : `<span class="badge badge-neutral">started by another process</span>`}
-          </div>
-          ${state.liveNote ? `<div class="warning-banner" role="status" style="margin-top:0.5rem">${escapeHtml(state.liveNote)}</div>` : ""}
-        </div>
-        <div class="topbar-actions">
-          ${
-            state.liveRunStatus === "running" && state.liveManaged
-              ? `<button type="button" id="live-stop-btn" class="btn btn-danger">Stop (Save Checkpoints)</button>`
-              : ""
-          }
-          ${
-            state.liveRunStatus === "interrupted"
-              ? `<button type="button" id="live-resume-btn" class="btn btn-primary">Resume From Checkpoints</button>`
-              : ""
-          }
-          ${
-            state.liveRunStatus === "completed"
-              ? `<button type="button" id="live-inspect-btn" class="btn btn-primary">Open in Run Inspector</button>`
-              : ""
-          }
-        </div>
-      </div>
+    const active = state.liveActiveScenario;
+    const now = active
+      ? h(
+          "div",
+          { class: "card now-running" },
+          h(
+            "div",
+            { class: "now-head" },
+            h("span", { class: "eyebrow" }, "Now running"),
+            h("span", { class: "mono muted", text: active.scenario_id }),
+            h("strong", { text: active.title }),
+            h("span", { class: "chip chip-info", text: `Category ${active.category}` }),
+            h("span", { class: "muted", text: `scenario ${done + 1} of ${total}` })
+          ),
+          state.liveTurns.length
+            ? h("ol", { class: "turns" }, state.liveTurns.map(turnRow))
+            : h("p", { class: "muted", text: "Waiting for the first turn…" })
+        )
+      : null;
 
-      <div style="margin: 1rem 0">
-        <div class="bar-track" style="max-width:none;height:10px">
-          <div class="bar-fill" style="width:${pct}%"></div>
-        </div>
-      </div>
+    const pending = Math.max(0, total - done - (active ? 1 : 0));
+    const map = h(
+      "div",
+      { class: "card card-pad section-spacer" },
+      h("div", { class: "eyebrow", text: "Scenario map" }),
+      h(
+        "div",
+        { class: "tile-grid", role: "group", "aria-label": "Scenario outcomes so far" },
+        results.map((r) => tile(r.held_out ? "held" : r.status, `${r.scenario_id} · ${r.title || ""} · ${r.status}`)),
+        active ? tile("active", `${active.scenario_id} · running`) : null,
+        Array.from({ length: pending }, () => tile("pending", "Not started"))
+      ),
+      legend()
+    );
 
-      <div class="summary-strip">
-        <div class="metric-cell">
-          <span class="metric-label">Completed scenarios</span>
-          <span class="metric-value">${done}/${total}</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Passed</span>
-          <span class="metric-value" style="color:var(--pass)">${passes}</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Partial</span>
-          <span class="metric-value" style="color:var(--partial)">${partials}</span>
-        </div>
-        <div class="metric-cell">
-          <span class="metric-label">Failed</span>
-          <span class="metric-value" style="color:var(--fail)">${fails}</span>
-        </div>
-      </div>
+    const recent = results.slice().reverse();
+    const table = h(
+      "div",
+      { class: "table-wrap" },
+      h(
+        "table",
+        { class: "table" },
+        h("thead", {}, h("tr", {}, ["Scenario", "Title", "Verdict", "Pts", "Duration", "Summary"].map((t, i) => h("th", { scope: "col", class: i === 3 || i === 4 ? "num" : null, text: t })))),
+        h(
+          "tbody",
+          {},
+          recent.length
+            ? recent.map((r) =>
+                h(
+                  "tr",
+                  {},
+                  h("td", { class: "mono muted", text: r.scenario_id }),
+                  h("td", {}, h("span", { class: "cell-title", text: r.title || r.scenario_id }), r.preserved ? [" ", h("span", { class: "chip chip-plain", text: "kept" })] : null),
+                  h("td", {}, chip(r.status)),
+                  h("td", { class: "num", text: `${r.points ?? 0}/2` }),
+                  h("td", { class: "num", text: fmtSeconds(r.duration_seconds) }),
+                  h("td", { class: "cell-summary", text: r.summary || "" })
+                )
+              )
+            : h("tr", {}, h("td", { colspan: 6, class: "muted", text: "Waiting for the first scenario to finish…" }))
+        )
+      )
+    );
 
-      ${activeHtml}
+    setChildren(pane,
+      hero,
+      state.liveNote ? h("div", { class: "section-spacer" }, banner("warn", "info", state.liveNote)) : null,
+      h(
+        "div",
+        { class: "stats" },
+        stat("Passed", passes, { cls: "stat-pass", icon: "check" }),
+        stat("Partial", partials, { cls: "stat-partial", icon: "minus" }),
+        stat("Failed", fails, { cls: "stat-fail", icon: "x" }),
+        stat("Remaining", Math.max(0, total - done), { icon: "clock" })
+      ),
+      now,
+      map,
+      h("h2", { class: "section-title" }, "Finished scenarios", h("span", { class: "count", text: "newest first" })),
+      table
+    );
+  }
 
-      <h3 class="section-heading">Completed scenarios (newest first)</h3>
-      <div class="data-table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Scenario</th>
-              <th>Verdict</th>
-              <th>Pts</th>
-              <th>Duration</th>
-              <th>Summary</th>
-            </tr>
-          </thead>
-          <tbody>${rowsHtml || `<tr><td colspan="6" style="color:var(--text-muted)">Waiting for first scenario to complete...</td></tr>`}</tbody>
-        </table>
-      </div>
-    `;
-
-    document.getElementById("live-stop-btn")?.addEventListener("click", async () => {
-      if (!state.liveRunId) return;
-      try {
-        await postJson(`/api/runs/${encodeURIComponent(state.liveRunId)}/stop`);
-      } catch (err) {
-        state.liveNote = `Could not stop the run: ${err.message}`;
-        renderLiveObserverPane();
-        return;
-      }
-      state.liveRunStatus = "interrupted";
-      state.liveActiveScenario = null;
+  async function stopLiveRun() {
+    if (!state.liveRunId) return;
+    try {
+      await postJson(`/api/runs/${encodeURIComponent(state.liveRunId)}/stop`);
+    } catch (err) {
+      state.liveNote = `Could not stop the run: ${err.message}`;
       renderLiveObserverPane();
-      loadRunsList();
-    });
+      return;
+    }
+    state.liveRunStatus = "interrupted";
+    state.liveActiveScenario = null;
+    renderLiveObserverPane();
+    loadRunsList();
+  }
 
-    document.getElementById("live-resume-btn")?.addEventListener("click", () => {
-      if (state.liveRunId) resumeInterruptedRun(state.liveRunId);
-    });
-
-    document.getElementById("live-inspect-btn")?.addEventListener("click", () => {
-      const rid = state.liveRunId;
-      if (rid) {
-        switchView("history");
-        selectRun(rid);
-      }
-    });
+  function setLiveBadge(on) {
+    const badge = byId("live-active-badge");
+    if (badge) badge.hidden = !on;
   }
 
   function connectLiveStream(runId, initialMeta) {
@@ -1333,10 +1728,7 @@
     state.liveResults = [];
     state.liveManaged = true;
     state.liveNote = null;
-
-    const badge = document.getElementById("live-active-badge");
-    if (badge) badge.classList.remove("is-hidden");
-
+    setLiveBadge(true);
     renderLiveObserverPane();
 
     const es = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
@@ -1346,7 +1738,7 @@
       if (status) state.liveRunStatus = status;
       state.liveActiveScenario = null;
       state.liveNote = note || null;
-      if (badge) badge.classList.add("is-hidden");
+      setLiveBadge(false);
       es.close();
       if (state.eventSource === es) state.eventSource = null;
       renderLiveObserverPane();
@@ -1372,8 +1764,7 @@
     });
 
     es.addEventListener("scenario_turn", (ev) => {
-      const data = JSON.parse(ev.data);
-      state.liveTurns.push(data);
+      state.liveTurns.push(JSON.parse(ev.data));
       renderLiveObserverPane();
     });
 
@@ -1384,11 +1775,8 @@
         state.liveActiveScenario = null;
         state.liveTurns = [];
       }
-      if (data.result) {
-        const exists = state.liveResults.some((r) => r.scenario_id === data.result.scenario_id);
-        if (!exists) {
-          state.liveResults.push(data.result);
-        }
+      if (data.result && !state.liveResults.some((r) => r.scenario_id === data.result.scenario_id)) {
+        state.liveResults.push(data.preserved ? { ...data.result, preserved: true } : data.result);
       }
       renderLiveObserverPane();
     });
@@ -1404,13 +1792,11 @@
     // Named stream_error rather than "error", which EventSource reserves for
     // connection failures.
     es.addEventListener("stream_error", (ev) => {
-      const data = JSON.parse(ev.data);
-      finish(null, data.error || "The live stream reported an error.");
+      finish(null, JSON.parse(ev.data).error || "The live stream reported an error.");
     });
 
     es.addEventListener("stream_idle", (ev) => {
-      const data = JSON.parse(ev.data);
-      finish(null, data.message || "The live stream stopped after a long idle period.");
+      finish(null, JSON.parse(ev.data).message || "The live stream stopped after a long idle period.");
     });
 
     // EventSource reconnects on its own after a dropped connection, and the
@@ -1419,12 +1805,12 @@
       if (es.readyState === EventSource.CLOSED) {
         finish(null, "Live stream closed. Reopen the run to keep watching.");
       } else {
-        state.liveNote = "Connection lost, reconnecting...";
+        state.liveNote = "Connection lost, reconnecting…";
         renderLiveObserverPane();
       }
     };
     es.onopen = () => {
-      if (state.liveNote === "Connection lost, reconnecting...") {
+      if (state.liveNote === "Connection lost, reconnecting…") {
         state.liveNote = null;
         renderLiveObserverPane();
       }
@@ -1433,70 +1819,47 @@
 
   async function resumeInterruptedRun(runId) {
     switchView("live");
-    // loadLiveView renders the form only once, so the values typed earlier
-    // are still there to read.
+    // loadLiveView renders the form only once, so values typed earlier are
+    // still there to read.
     await loadLiveView();
-    const baseUrl = document.getElementById("launch-base-url")?.value.trim() || "";
-    const apiKey = document.getElementById("launch-api-key")?.value.trim() || "";
-    const wireFormat = document.getElementById("launch-wire-format")?.value || "auto";
+    const baseUrl = byId("launch-base-url")?.value.trim() || "";
+    const apiKey = byId("launch-api-key")?.value.trim() || "";
+    const wireFormat = byId("launch-wire-format")?.value || "auto";
     try {
       const res = await postJson(`/api/runs/${encodeURIComponent(runId)}/resume`, {
         base_url: baseUrl || undefined,
         api_key: apiKey || undefined,
         wire_format: wireFormat,
       });
-      connectLiveStream(res.run_id, {
-        model: res.model,
-        total: res.total_scenarios,
-      });
+      connectLiveStream(res.run_id, { model: res.model, total: res.total_scenarios });
     } catch (err) {
-      const errBox = document.getElementById("launch-error-msg");
-      if (errBox) {
-        errBox.textContent = err.message;
-        errBox.classList.remove("is-hidden");
-      }
+      showLaunchError(err.message);
     }
   }
 
-  window.loadLiveView = loadLiveView;
-  window.openLiveRun = (runId) => {
+  function openLiveRun(runId) {
     switchView("live");
     loadLiveView().then(() => connectLiveStream(runId));
-  };
-  window.resumeInterruptedRun = resumeInterruptedRun;
+  }
 
-  window.webWorkbench = {
-    state,
-    escapeHtml,
-    statusBadgeClass,
-    scoreBarClass,
-    formatDate,
-    fetchJson,
-    switchView,
-    loadRunsList,
-    selectRun,
-  };
+  // ----------------------------------------------------------------- Boot
+
+  window.webWorkbench = { state, switchView, loadRunsList, selectRun, fetchJson };
 
   document.addEventListener("DOMContentLoaded", () => {
-    document.querySelectorAll(".nav-tab").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const view = btn.getAttribute("data-view");
-        if (view) switchView(view);
-      });
-    });
-
-    document.getElementById("refresh-all-btn")?.addEventListener("click", () => {
+    for (const tab of document.querySelectorAll(".tab")) {
+      tab.addEventListener("click", () => switchView(tab.dataset.view));
+      tab.addEventListener("keydown", onTabKeydown);
+    }
+    byId("refresh-all-btn")?.addEventListener("click", () => {
       loadRunsList();
+      if (state.activeView === "leaderboard") loadLeaderboardView();
+      else if (state.activeView === "compare") loadCompareView();
     });
-
-    document.getElementById("history-search")?.addEventListener("input", scheduleRunsListLoad);
-    document.getElementById("history-status-filter")?.addEventListener("change", () => {
-      loadRunsList();
-    });
-    document.getElementById("history-type-filter")?.addEventListener("change", () => {
-      loadRunsList();
-    });
-
+    byId("history-search")?.addEventListener("input", scheduleRunsListLoad);
+    byId("history-status-filter")?.addEventListener("change", loadRunsList);
+    byId("history-type-filter")?.addEventListener("change", loadRunsList);
+    renderInspector();
     loadRunsList();
   });
 })();

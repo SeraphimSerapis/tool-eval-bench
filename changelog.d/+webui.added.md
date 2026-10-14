@@ -9,4 +9,6 @@ prints a sign-in link with a per-process token and refuses requests without it. 
 requests must come from the UI's own origin as JSON, so other websites cannot use the server or
 the API key it holds. The UI stops only runs it launched and resumes only interrupted runs whose
 stored conditions it can rebuild. The launcher rejects malformed numeric settings, such as a
-negative temperature or a fractional turn limit, with an error that names the field.
+negative temperature or a fractional turn limit, with an error that names the field. The UI
+follows the system's light or dark preference, and its pages are served with a strict Content
+Security Policy that allows no inline or third-party scripts or styles.

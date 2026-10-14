@@ -160,3 +160,58 @@ def test_sanitize_keeps_benchmark_token_settings() -> None:
 
 def test_auth_headers_match_token() -> None:
     assert AUTH_HEADERS["Authorization"].endswith(TEST_TOKEN)
+
+
+@pytest.mark.asyncio
+async def test_every_response_carries_the_hardening_headers(empty_db: str) -> None:
+    from tool_eval_bench.web.security import CONTENT_SECURITY_POLICY
+
+    app = create_app(token=TEST_TOKEN)
+    async with web_client(app) as client:
+        responses = {
+            "index": await client.get("/"),
+            "api": await client.get("/api/runs"),
+            "static": await client.get("/static/app.js"),
+        }
+    async with web_client(app, authenticated=False) as anonymous:
+        responses["denied_api"] = await anonymous.get("/api/runs")
+        responses["signin"] = await anonymous.get("/")
+
+    for name, resp in responses.items():
+        headers = resp.headers
+        assert headers["content-security-policy"] == CONTENT_SECURITY_POLICY, name
+        assert headers["x-content-type-options"] == "nosniff", name
+        assert headers["x-frame-options"] == "DENY", name
+        assert headers["referrer-policy"] == "no-referrer", name
+    assert responses["api"].headers["cache-control"] == "no-store"
+    assert responses["denied_api"].headers["cache-control"] == "no-store"
+    assert "cache-control" not in responses["static"].headers
+
+
+def test_policy_forbids_inline_code_and_framing() -> None:
+    from tool_eval_bench.web.security import CONTENT_SECURITY_POLICY
+
+    directives = dict(part.split(" ", 1) for part in CONTENT_SECURITY_POLICY.split("; "))
+    assert directives["script-src"] == "'self'"
+    assert directives["style-src"] == "'self'"
+    assert directives["frame-ancestors"] == "'none'"
+    assert "unsafe" not in CONTENT_SECURITY_POLICY
+
+
+@pytest.mark.asyncio
+async def test_ui_assets_need_no_inline_code(empty_db: str) -> None:
+    """The CSP forbids inline scripts and styles, so the shipped pages must not use them."""
+    app = create_app(token=TEST_TOKEN)
+    async with web_client(app) as client:
+        index = (await client.get("/")).text
+        script = (await client.get("/static/app.js")).text
+    async with web_client(app, authenticated=False) as anonymous:
+        signin = (await anonymous.get("/")).text
+    for page in (index, signin):
+        assert "style=" not in page
+        assert "<script>" not in page
+        assert " on" + "click=" not in page
+    assert '<link rel="stylesheet" href="/static/styles.css">' in signin
+    # The frontend builds DOM nodes; it never parses HTML strings.
+    for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+        assert sink not in script, sink
