@@ -27,6 +27,7 @@ DOCUMENTED_SOURCES = (
 CATEGORY_COUNT = len(list(Category))
 STANDARD_COUNT = len(ALL_SCENARIOS)
 HARDMODE_COUNT = len(ALL_SCENARIOS_WITH_HARDMODE) - len(ALL_SCENARIOS)
+TOTAL_COUNT = len(ALL_SCENARIOS_WITH_HARDMODE)
 
 
 def _existing_sources() -> list[Path]:
@@ -44,6 +45,7 @@ def test_documented_sources_are_present() -> None:
         (r"(\d+)\s+Hard Mode scenarios", HARDMODE_COUNT, "Hard Mode scenario count"),
         (r"(\d+)\s+standard deterministic scenarios", STANDARD_COUNT, "standard scenario count"),
         (r"(\d+)\s+deterministic\s+scenarios", STANDARD_COUNT, "standard scenario count"),
+        (r"(\d+)\s+scenarios\s+in\s+total", TOTAL_COUNT, "total scenario count"),
     ],
 )
 def test_prose_counts_match_the_registry(pattern: str, expected: int, label: str) -> None:

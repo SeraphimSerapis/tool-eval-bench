@@ -6,8 +6,9 @@ agent. If you are running the benchmark by hand for the first time, start with t
 
 ## What this tool does
 
-`tool-eval-bench` evaluates LLM tool-calling quality using 69 deterministic
-scenarios across 16 categories.  It produces a 0–100 score with per-category
+`tool-eval-bench` evaluates LLM tool-calling quality using 97 scenarios in total
+across 16 categories: 69 standard deterministic scenarios in categories A–O and
+28 Hard Mode scenarios in category P, which are opt-in. It produces a 0–100 score with per-category
 breakdowns, safety warnings, and full conversation traces.
 
 ## Quick start (zero-config)
