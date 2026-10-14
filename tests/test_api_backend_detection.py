@@ -308,7 +308,8 @@ def test_cli_and_api_record_the_same_metadata(monkeypatch, capsys, server, cli_a
     api = asyncio.run(_run(**api_kwargs))["metadata"]
 
     # Only the CLI groups its runs into sessions; the API stores none.
-    assert re.fullmatch(r"[0-9a-f]{32}", cli.pop("session_id"))
+    session_id = cli.pop("session_id")
+    assert re.fullmatch(r"[0-9a-f]{32}", session_id)
     assert "session_id" not in api
     assert api == cli
     stderr_events = [json.loads(line) for line in capsys.readouterr().err.splitlines() if line]

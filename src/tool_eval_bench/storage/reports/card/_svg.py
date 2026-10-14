@@ -7,20 +7,32 @@ same way, so an untrusted model name cannot open a tag or an attribute.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from html import escape
 
 from tool_eval_bench.storage.reports.card._fonts import FAMILIES, FontKey, text_width
 
-# Control characters and lone surrogates make a document unparseable.
-_INVALID_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff\ufffe\uffff]")
+# Control characters and lone surrogates make a document unparseable. A
+# translate table rather than a regex class, whose control-character ranges
+# static analysis reads as accidental.
+_INVALID_XML = dict.fromkeys(
+    [
+        *range(0x00, 0x09),
+        0x0B,
+        0x0C,
+        *range(0x0E, 0x20),
+        0x7F,
+        *range(0xD800, 0xE000),
+        0xFFFE,
+        0xFFFF,
+    ]
+)
 ELLIPSIS = "\u2026"
 
 
 def clean(text: str) -> str:
     """Drop characters XML cannot represent and collapse whitespace runs."""
-    return " ".join(_INVALID_XML.sub("", text).split())
+    return " ".join(text.translate(_INVALID_XML).split())
 
 
 def esc(text: str) -> str:

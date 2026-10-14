@@ -600,11 +600,8 @@ def test_resume_of_a_run_without_a_session_starts_a_fresh_one() -> None:
 
 def _session_column(tmp_path: Path) -> list[tuple[str, str | None]]:
     """``(run_type, session_id)`` per stored run, oldest first, read from the column."""
-    repo = open_repository(db_path=str(tmp_path / "data" / "benchmarks.sqlite"))
-    try:
+    with open_repository(db_path=str(tmp_path / "data" / "benchmarks.sqlite")) as repo:
         return [(run["run_type"], run["session_id"]) for run in reversed(repo.list(limit=50))]
-    finally:
-        repo.close()
 
 
 def test_runs_without_a_run_context_still_join_the_invocations_session(
