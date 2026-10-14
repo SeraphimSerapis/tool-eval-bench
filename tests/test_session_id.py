@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import sys
 from dataclasses import replace
@@ -367,14 +368,15 @@ def test_history_shows_a_short_session_prefix(
     print_history(Console(file=out, width=200, no_color=True))
 
     text = out.getvalue()
+
+    # Rich draws the header with a heavy bar, which it swaps for a light one on
+    # legacy Windows consoles, so split on either.
+    def cells(line: str) -> list[str]:
+        return [cell.strip() for cell in re.split("[\u2502\u2503]", line)]
+
     header = next(line for line in text.splitlines() if "Run ID" in line)
-    rows = {
-        cells[1]: cells[2]
-        for line in text.splitlines()
-        if "-run" in line
-        for cells in [[cell.strip() for cell in line.split("│")]]
-    }
-    assert [cell.strip() for cell in header.split("┃")][2] == "Session"
+    rows = {row[1]: row[2] for line in text.splitlines() if "-run" in line for row in [cells(line)]}
+    assert cells(header)[2] == "Session"
     assert rows == {"tagged-run": SESSION[:8], "untagged-run": "—"}
 
 
