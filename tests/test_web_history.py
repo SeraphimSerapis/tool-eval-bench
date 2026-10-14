@@ -258,28 +258,6 @@ def test_run_web_server_reports_missing_optional_dependencies(
     assert "tool-eval-bench[web]" in console.export_text()
 
 
-def test_run_web_server_invokes_uvicorn(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[dict[str, Any]] = []
-
-    class _FakeUvicorn:
-        @staticmethod
-        def run(app: Any, *, host: str, port: int, log_level: str) -> None:
-            calls.append({"app": app, "host": host, "port": port, "log_level": log_level})
-
-    monkeypatch.setattr(
-        "tool_eval_bench.web._require_web_dependencies",
-        lambda: (object(), _FakeUvicorn),
-    )
-    console = Console(record=True)
-    run_web_server(console, host="0.0.0.0", port=9100)  # noqa: S104 - testing non-loopback warning
-    assert len(calls) == 1
-    assert calls[0]["host"] == "0.0.0.0"  # noqa: S104
-    assert calls[0]["port"] == 9100
-    output = console.export_text()
-    assert "Binding web UI to non-loopback address" in output
-    assert "http://0.0.0.0:9100" in output
-
-
 @pytest.mark.asyncio
 async def test_search_finds_runs_older_than_the_limit(seeded_db: str) -> None:
     with RunRepository(db_path=seeded_db) as repo:

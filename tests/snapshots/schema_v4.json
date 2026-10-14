@@ -707,8 +707,8 @@
       "type": "string"
     },
     {
-      "default": 8080,
-      "description": "Bind port for --serve (default: 8080)",
+      "default": null,
+      "description": "Bind port for --serve (default: 8765, or the next free port; 0 = any free port)",
       "name": "serve_port",
       "type": "int"
     },

@@ -355,14 +355,14 @@ See [needle.md](needle.md) for the retrieval grid and how to read it, and
 the CLI writes. It needs the `[web]` extra (Starlette and Uvicorn).
 
 ```bash
-tool-eval-bench serve                    # http://localhost:8080
+tool-eval-bench serve                    # http://localhost:8765, or the next free port
 tool-eval-bench serve --serve-port 9090
 ```
 
 | Flag | Purpose |
 |------|---------|
-| `--serve-host HOST` | Bind address (default: `127.0.0.1`) |
-| `--serve-port PORT` | Bind port, 1-65535 (default: `8080`) |
+| `--serve-host HOST` | Bind address (default: `127.0.0.1`; `0.0.0.0` listens on every interface) |
+| `--serve-port PORT` | Bind port (default: `8765`, or the next free port up to 8774). An explicit port that is busy is an error rather than a silent move; `0` asks the OS for any free port |
 | `--output-dir DIR` | Where runs launched from the browser write their Markdown reports |
 | `--redact-url` | Keep the probe from echoing endpoint URLs back to the browser |
 
@@ -381,7 +381,7 @@ server holds `TOOL_EVAL_API_KEY` and can start runs that spend it.
 
 **Binding beyond loopback.** Anyone with the link can read stored traces and
 start runs with this machine's keys, over plain HTTP. Prefer the default bind
-address and SSH port forwarding (`ssh -L 8080:localhost:8080 host`).
+address and SSH port forwarding (`ssh -L 8765:localhost:8765 host`).
 
 **Stop and resume.** The UI stops only runs it launched; stop a CLI run with
 Ctrl+C in its terminal. It resumes only runs marked `interrupted`, using the

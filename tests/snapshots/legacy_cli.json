@@ -1082,7 +1082,7 @@
   },
   {
     "choices": null,
-    "default": 8080,
+    "default": null,
     "dest": "serve_port",
     "flags": [
       "--serve-port"

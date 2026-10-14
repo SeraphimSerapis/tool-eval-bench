@@ -534,7 +534,7 @@ def test_categories_help_names_every_category() -> None:
     assert f"Letters A–P map to the {len(list(Category))} benchmark categories" in text
 
 
-@pytest.mark.parametrize("port", ["0", "70000", "http"])
+@pytest.mark.parametrize("port", ["-1", "70000", "http"])
 def test_serve_port_must_be_a_tcp_port(port: str) -> None:
     from tool_eval_bench.cli.legacy_parser import make_parser
 
@@ -546,3 +546,11 @@ def test_serve_port_accepts_the_top_of_the_range() -> None:
     from tool_eval_bench.cli.legacy_parser import make_parser
 
     assert make_parser().parse_args(["--serve", "--serve-port", "65535"]).serve_port == 65535
+
+
+def test_serve_port_defaults_to_none_and_accepts_zero() -> None:
+    from tool_eval_bench.cli.legacy_parser import make_parser
+
+    # None lets the server pick its default port or the next free one.
+    assert make_parser().parse_args(["--serve"]).serve_port is None
+    assert make_parser().parse_args(["--serve", "--serve-port", "0"]).serve_port == 0

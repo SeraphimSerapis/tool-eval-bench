@@ -25,10 +25,13 @@ def _positive_int(value: str) -> int:
 
 
 def _tcp_port(value: str) -> int:
-    """Parse a TCP port number for --serve-port."""
-    parsed = _positive_int(value)
-    if parsed > 65535:
-        raise argparse.ArgumentTypeError(f"must be a TCP port (1-65535), got {parsed}")
+    """Parse a TCP port for --serve-port; 0 asks the OS for any free port."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected a port number, got {value!r}") from exc
+    if not 0 <= parsed <= 65535:
+        raise argparse.ArgumentTypeError(f"must be a TCP port (0-65535), got {parsed}")
     return parsed
 
 
@@ -705,9 +708,9 @@ def _make_parser() -> argparse.ArgumentParser:
     hist_grp.add_argument(
         "--serve-port",
         type=_tcp_port,
-        default=8080,
+        default=None,
         metavar="PORT",
-        help="Bind port for --serve (default: 8080)",
+        help="Bind port for --serve (default: 8765, or the next free port; 0 = any free port)",
     )
 
     # -- Scoring options ---------------------------------------------------

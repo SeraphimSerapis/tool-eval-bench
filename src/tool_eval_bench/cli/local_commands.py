@@ -141,7 +141,7 @@ def handle_local_command(
         run_web_server(
             console,
             host=getattr(args, "serve_host", "127.0.0.1"),
-            port=getattr(args, "serve_port", 8080),
+            port=getattr(args, "serve_port", None),
             output_dir=getattr(args, "output_dir", None),
             redact_url=bool(getattr(args, "redact_url", False)),
         )

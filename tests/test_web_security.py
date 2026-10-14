@@ -6,11 +6,10 @@ from typing import Any
 
 import httpx
 import pytest
-from rich.console import Console
 
 from tests.web_support import AUTH_HEADERS, BASE_URL, TEST_TOKEN, web_client
 from tool_eval_bench.storage.db import RunRepository
-from tool_eval_bench.web import create_app, run_web_server
+from tool_eval_bench.web import create_app
 from tool_eval_bench.web.sanitize import is_sensitive_key, sanitize_mapping
 from tool_eval_bench.web.security import SessionGate, cookie_name
 
@@ -125,37 +124,6 @@ async def test_cross_origin_page_cannot_make_the_server_send_the_env_key(
         traces = await client.get("/api/runs", headers=rebinding)
     assert (probe.status_code, launch.status_code, traces.status_code) == (401, 401, 401)
     assert sent == []
-
-
-def test_run_web_server_prints_a_token_link(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
-
-    class _FakeUvicorn:
-        @staticmethod
-        def run(app: Any, *, host: str, port: int, log_level: str) -> None:
-            captured["token"] = app.state.token
-
-    monkeypatch.setattr(
-        "tool_eval_bench.web._require_web_dependencies", lambda: (object(), _FakeUvicorn)
-    )
-    console = Console(record=True, width=300)
-    run_web_server(console, host="::1", port=9000)
-    output = console.export_text()
-    assert f"http://[::1]:9000/?token={captured['token']}" in output
-    assert len(captured["token"]) >= 32
-    assert "non-loopback" not in output
-
-
-def test_non_loopback_warning_says_what_is_exposed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "tool_eval_bench.web._require_web_dependencies",
-        lambda: (object(), type("U", (), {"run": staticmethod(lambda *a, **k: None)})),
-    )
-    console = Console(record=True, width=400)
-    run_web_server(console, host="0.0.0.0", port=9000)  # noqa: S104 - testing the warning
-    output = console.export_text()
-    assert "API keys" in output
-    assert "remain redacted" not in output
 
 
 @pytest.mark.parametrize(

@@ -748,8 +748,8 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
     {
         "name": "serve_port",
         "type": "int",
-        "default": 8080,
-        "description": "Bind port for --serve (default: 8080)",
+        "default": None,
+        "description": "Bind port for --serve (default: 8765, or the next free port; 0 = any free port)",
     },
     # -- Scoring --
     {
