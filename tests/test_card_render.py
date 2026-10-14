@@ -16,6 +16,7 @@ import pytest
 
 from tests.card_fixtures import (
     ALL,
+    accuracy_only,
     all_errored_needle,
     compact_smarts,
     excluded_scenarios,
@@ -56,6 +57,7 @@ from tool_eval_bench.storage.reports.card import _format as fmt
 from tool_eval_bench.storage.reports.card._data import (
     accuracy_note,
     cached_ttft_label,
+    concurrency_series,
     engine_label,
     is_subset,
     needs_caution,
@@ -268,7 +270,7 @@ EXPECTED_TEXT: dict[str, tuple[str, ...]] = {
         "--perf --perf-preset long",
         "The long preset charts decode and TTFT to 128K.",
         "--needle",
-        "run without --perf-only",
+        "drop --perf-only",
     ),
     "d_extreme": (
         "Per-depth grid not stored for this run \u00b7 1 errored",
@@ -297,6 +299,46 @@ def test_fixture_shows_expected_labels_and_hints(name: str, layout: CardLayout) 
     text = _all_text(render_card_svg(ALL[name](), layout=layout)).casefold()
     for expected in EXPECTED_TEXT[name]:
         assert expected.casefold() in text, expected
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_perf_card_says_tool_calling_is_missing_once(layout: CardLayout) -> None:
+    for data in (perf_short(), replace(perf_short(), accuracy=accuracy_only().accuracy)):
+        text = _all_text(render_card_svg(data, layout=layout))
+        assert "drop --perf-only" in text
+        assert "Tool calling not scored" not in text
+        assert text.count("TOOL CALLING") == 1
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_plugin_only_card_names_the_only_flag(layout: CardLayout) -> None:
+    text = _all_text(render_card_svg(accuracy_only(), layout=layout))
+    assert "drop --*-only" in text
+    assert "--perf-only" not in text
+
+
+def test_narrow_hint_strip_shortens_its_message_instead_of_truncating() -> None:
+    texts = _texts(render_card_svg(accuracy_only()))
+    assert any(t == "Not scored" for t in texts)
+    assert not any(t.endswith("\u2026") and "not" in t.casefold() for t in texts)
+
+
+def test_roomy_accuracy_panel_draws_one_ring_per_benchmark() -> None:
+    svg = render_card_svg(accuracy_only())
+    texts = _texts(svg)
+    for result in accuracy_only().accuracy:
+        assert result.name in texts
+        assert fmt.percent(result.accuracy) in texts
+    # Each ring is a track plus an arc; the rows layout draws no circles.
+    rows = render_card_svg(accuracy_only(), layout="landscape")
+    assert svg.count("<circle") >= rows.count("<circle") + 2 * len(accuracy_only().accuracy)
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_concurrency_legend_names_the_per_request_rate_at_peak(layout: CardLayout) -> None:
+    text = _all_text(render_card_svg(full_long(), layout=layout))
+    peak = max(concurrency_series(plottable(full_long())), key=lambda p: p.tg_tps_total)
+    assert f"per request {fmt.rate(peak.tg_tps)}" in text
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
@@ -882,6 +924,52 @@ def test_window_capped_long_preset_says_so_without_suggesting_long(layout: CardL
     assert "--perf-preset long" not in text
     deep = _all_text(render_card_svg(window_capped_deep(), layout=layout))
     assert "capped at 64K by the 96K window" in deep
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        pytest.param({"perf_failed_cells": 1}, id="a-cell-failed"),
+        pytest.param({"max_context": 256 * 1024}, id="128k-fits-the-window"),
+    ],
+)
+def test_short_long_sweep_is_not_blamed_on_the_window(changes: dict[str, int]) -> None:
+    data = replace(window_capped_long(), **changes)
+    assert not window_capped(plottable(data))
+    assert "capped at" not in _all_text(render_card_svg(data))
+
+
+def test_window_cap_headroom_matches_the_planner() -> None:
+    from tool_eval_bench.runner import perf_presets
+    from tool_eval_bench.storage.reports.card import _data
+
+    assert _data.CHAT_TEMPLATE_HEADROOM == perf_presets.CHAT_TEMPLATE_HEADROOM
+    assert _data.LONG_PRESET_DEPTH == max(perf_presets.PRESET_DEFAULTS["long"].depths)
+
+
+def test_window_that_barely_misses_128k_is_still_a_cap() -> None:
+    data = replace(window_capped_long(), max_context=128 * 1024)
+    assert window_capped(plottable(data))
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_all_errored_accuracy_is_not_a_zero_score(layout: CardLayout) -> None:
+    def zeros(text: str) -> int:
+        return len(re.findall(r"(?<![\d.])0%", text))
+
+    for base in (full_long(), accuracy_only()):
+        unmeasured, zero = (
+            _all_text(
+                render_card_svg(
+                    replace(base, accuracy=(AccuracyResult("GSM8K", value, errors=5, items=5),)),
+                    layout=layout,
+                )
+            )
+            for value in (math.nan, 0.0)
+        )
+        assert "n/a" in unmeasured and "errored" in unmeasured
+        # Axis ticks elsewhere can read 0%; the accuracy value must not add one.
+        assert zeros(unmeasured) == zeros(zero) - 1
 
 
 def test_short_window_capped_long_preset_uses_depth_strip_without_long_flag() -> None:

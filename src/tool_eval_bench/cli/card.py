@@ -19,7 +19,12 @@ from tool_eval_bench.storage.reports import _default_reports_root, slugify_label
 _RENDERER_MODULE = "tool_eval_bench.storage.reports.card"
 MIN_SCALE = 0.25
 MAX_SCALE = 8.0
-_CARD_SUFFIXES = (".svg", ".png")
+# File types a user might plausibly ask for that a card cannot be written as.
+# Any other "suffix" is part of the name, as in ``Qwen3.5-27B``.
+_OTHER_FILE_SUFFIXES = frozenset(
+    {".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".tif", ".tiff", ".heic", ".ico"}
+    | {".pdf", ".eps", ".ps", ".html", ".htm", ".md", ".txt", ".json"}
+)
 # The fingerprint prefix in the default filename: enough to keep two
 # configurations of one model on one day apart. It names a configuration, not
 # a session, so the filename is as safe to share as the card.
@@ -63,23 +68,24 @@ def output_paths(
 
     An ``-o`` path ending in ``.png`` asks for PNG by itself; the SVG goes
     beside it. An ``-o`` directory, or a path ending in a separator, gets the
-    default filename inside it. A path without a suffix gets ``.svg``. Any
-    other suffix raises :class:`CardOutputError`. Without ``-o`` the card lands
-    in ``<output-dir>/cards/``.
+    default filename inside it. A suffix naming another image or document type
+    raises :class:`CardOutputError`. Any other name gets ``.svg`` appended, so a
+    dotted model name such as ``Qwen3.5-27B`` keeps every character. Without
+    ``-o`` the card lands in ``<output-dir>/cards/``.
     """
     if output:
         target = Path(output)
         if target.is_dir() or output.endswith(("/", "\\")):
             target = target / default_filename(card)
         suffix = target.suffix.lower()
-        if suffix and suffix not in _CARD_SUFFIXES:
+        if suffix in _OTHER_FILE_SUFFIXES:
             raise CardOutputError(
                 f"-o {output}: a card is written as .svg or .png, not {target.suffix}"
             )
         if suffix == ".png":
             return target.with_suffix(".svg"), target
-        if not suffix:
-            target = target.with_suffix(".svg")
+        if suffix != ".svg":
+            target = target.with_name(target.name + ".svg")
         return target, target.with_suffix(".png") if png else None
     svg = Path(output_dir or _default_reports_root()) / "cards" / default_filename(card)
     return svg, svg.with_suffix(".png") if png else None

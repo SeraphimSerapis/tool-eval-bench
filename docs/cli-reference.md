@@ -411,7 +411,7 @@ tool-eval-bench card --png --hardware "RTX 5090 32GB"
 | `--model NAME` | With `latest`, use the newest session of this model. Matches the stored model name or its last path segment, case-sensitively, so `Qwen3-32B` matches `Qwen/Qwen3-32B`. Ignored, with a warning, alongside `SESSION` or `--run` |
 | `--hardware TEXT` | Hardware line on the card. Nothing is detected, so it is shown only when given |
 | `--layout portrait\|landscape` | Card layout (default: `portrait`). Landscape suits a link preview |
-| `-o`, `--output PATH` | Card path. A `.png` path writes PNG and puts the SVG beside it. A directory gets the default filename inside it, a path without a suffix gets `.svg`, and any other suffix exits 2 |
+| `-o`, `--output PATH` | Card path. A `.png` path writes PNG and puts the SVG beside it. A directory gets the default filename inside it. Another image or document suffix, such as `.jpg` or `.pdf`, exits 2. Any other name gets `.svg` appended, so `-o Qwen3.5-27B` writes `Qwen3.5-27B.svg` |
 | `--png` | Also write a PNG beside the SVG |
 | `--scale N` | PNG pixel scale relative to the SVG, from 0.25 to 8 (default: 2) |
 | `--output-dir DIR` | Root of the default path (default: `./runs`) |

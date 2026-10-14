@@ -1995,12 +1995,14 @@ def _resumed_session_id(prev_run: Mapping[str, Any]) -> str | None:
     """The session a ``--resume`` invocation joins, or None to start a new one.
 
     A resume finishes the interrupted invocation's scored run under its
-    original run ID, so it keeps that invocation's session id too. The perf,
-    plugin, and other rows written before the interruption then share a session
-    with the completed scored run, and a card of that session shows the whole
-    run rather than a scored run cut off from its throughput numbers. Any rows
-    the resume invocation writes join the same session. A run stored before
-    session ids existed has none, so the resume starts a fresh session.
+    original run ID, so it keeps that invocation's session id too. The plugin,
+    standalone perf, and other rows written before the interruption then share
+    a session with the completed scored run, and a card of that session shows
+    them together. Throughput from ``--perf`` alongside scenarios is the
+    exception: those samples ride in memory until the scored run is saved, so
+    an interruption loses them. Any rows the resume invocation writes join the
+    same session. A run stored before session ids existed has none, so the
+    resume starts a fresh session.
 
     The column wins over the metadata copy: a write without a session, such as
     a Python API resume, replaces the metadata but keeps the column.

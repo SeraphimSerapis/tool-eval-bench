@@ -214,6 +214,26 @@ class TestPaths:
         _run(monkeypatch, ["card", "-o", str(tmp_path / "mycard")])
         assert (tmp_path / "mycard.svg").exists()
 
+    @pytest.mark.parametrize("name", ["Qwen3.5-27B", "qwen3.5", "card.v2"])
+    def test_dotted_name_keeps_every_character(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
+    ) -> None:
+        _run(monkeypatch, ["card", "-o", str(tmp_path / name)])
+        assert [p.name for p in tmp_path.iterdir()] == [f"{name}.svg"]
+
+    def test_dotted_png_name_puts_the_svg_beside_it(self, tmp_path: Path) -> None:
+        svg, png = card_cli.output_paths(
+            EMPTY_CARD, output=str(tmp_path / "Qwen3.5-27B.png"), output_dir=None, png=False
+        )
+        assert (svg.name, png) == ("Qwen3.5-27B.svg", tmp_path / "Qwen3.5-27B.png")
+
+    @pytest.mark.parametrize("name", ["card.PDF", "card.jpeg", "card.html"])
+    def test_other_file_types_are_rejected(self, tmp_path: Path, name: str) -> None:
+        with pytest.raises(card_cli.CardOutputError):
+            card_cli.output_paths(
+                EMPTY_CARD, output=str(tmp_path / name), output_dir=None, png=False
+            )
+
     def test_unknown_suffix_is_a_usage_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

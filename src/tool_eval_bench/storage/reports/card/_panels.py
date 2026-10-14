@@ -392,9 +392,13 @@ def missing_panel(
 def hint_strip(box: Box, title: str, color: str, message: str, flags: tuple[str, ...]) -> str:
     """A compact hint: what was not measured and the flag that measures it.
 
-    Wide strips use one row; narrow ones put the flags on a second row.
+    Wide strips use one row; narrow ones put the flags on a second row. The
+    title already names the section, so a message too long for its room gives
+    way to a short "Not measured" rather than an ellipsis.
     """
     out = [frame(box, dashed=True, radius=min(RADIUS, box.h / 3))]
+    short = "Not scored" if message.lower().endswith("not scored") else "Not measured"
+    wordings = [message, short]
     x = box.x + PAD
     room = box.w - 2 * PAD
     title_text = fit(title, room - 16, 13, weight=600, tracking=1.6)
@@ -411,7 +415,7 @@ def hint_strip(box: Box, title: str, color: str, message: str, flags: tuple[str,
             text(
                 x + title_w + 16,
                 base,
-                fit(message, msg_room, 15, weight=500),
+                first_fit(wordings, msg_room, 15, weight=500),
                 size=15,
                 fill=TEXT_2,
                 weight=500,
@@ -427,7 +431,7 @@ def hint_strip(box: Box, title: str, color: str, message: str, flags: tuple[str,
             text(
                 x + title_w + 12,
                 base,
-                fit(message, msg_room, 14, weight=500),
+                first_fit(wordings, msg_room, 14, weight=500),
                 size=14,
                 fill=TEXT_2,
                 weight=500,
@@ -802,7 +806,83 @@ def accuracy_panel(box: Box, data: CardData) -> str:
             ghost_kind="bars",
         )
     out = [frame(box), panel_header(box, title, PREFILL)]
-    out.append(_accuracy_rows(content_box(box), data.accuracy))
+    body = content_box(box)
+    if _rings_fit(body, len(data.accuracy)):
+        out.append(_accuracy_rings(body, data.accuracy))
+    else:
+        out.append(_accuracy_rows(body, data.accuracy))
+    return "".join(out)
+
+
+# A ring gauge per benchmark needs this much room; below it the rows read better.
+_RING_MIN_COL_W = 200.0
+_RING_MIN_H = 300.0
+_RING_MAX_R = 112.0
+
+
+def _rings_fit(body: Box, count: int) -> bool:
+    return 0 < count <= 4 and body.h >= _RING_MIN_H and body.w / count >= _RING_MIN_COL_W
+
+
+def _accuracy_rings(body: Box, results: tuple[AccuracyResult, ...]) -> str:
+    """One ring gauge per benchmark, the score inside, the name and any caveat below."""
+    col_w = body.w / len(results)
+    label_h = 64.0
+    r = min(col_w * 0.36, (body.h - label_h) / 2 - 12, _RING_MAX_R)
+    width = max(10.0, r * 0.12)
+    cy = body.y + (body.h - 2 * r - label_h) / 2 + r
+    out = []
+    for i, result in enumerate(results):
+        cx = body.x + col_w * (i + 0.5)
+        finite = math.isfinite(result.accuracy)
+        frac = max(0.0, min(result.accuracy, 1.0)) if finite else 0.0
+        out.append(circle(cx, cy, r, fill="none", stroke=FAINT, stroke_width=width))
+        if frac > 0:
+            circumference = 2 * math.pi * r
+            out.append(
+                f"<circle {attrs(cx=float(cx), cy=float(cy), r=float(r), fill='none', stroke=bar_color(frac * 100), stroke_width=width, stroke_dasharray=f'{circumference * frac:.2f} {circumference:.2f}', transform=f'rotate(-90 {cx:.2f} {cy:.2f})')}/>"
+            )
+        value = fmt.percent(result.accuracy)
+        inside = 2 * (r - width) - 16
+        size = r * 0.46
+        while size > 16 and text_width(value, size, font="display", weight=700) > inside:
+            size -= 1
+        out.append(
+            text(
+                cx,
+                cy + size * 0.36,
+                value,
+                size=size,
+                fill=TEXT if finite else MUTED,
+                font="display",
+                weight=700,
+                anchor="middle",
+            )
+        )
+        name_y = cy + r + 34
+        out.append(
+            text(
+                cx,
+                name_y,
+                fit(result.name, col_w - 16, 17, weight=600),
+                size=17,
+                fill=TEXT_2,
+                weight=600,
+                anchor="middle",
+            )
+        )
+        notes = [n for n in (accuracy_note(result), accuracy_note(result, detail=False)) if n]
+        if notes:
+            out.append(
+                text(
+                    cx,
+                    name_y + 22,
+                    first_fit(notes, col_w - 16, 13),
+                    size=13,
+                    fill=WARN if result.errors > 0 else MUTED,
+                    anchor="middle",
+                )
+            )
     return "".join(out)
 
 
@@ -836,7 +916,7 @@ def _accuracy_rows(body: Box, results: tuple[AccuracyResult, ...]) -> str:
                 base,
                 value,
                 size=size,
-                fill=TEXT,
+                fill=TEXT if math.isfinite(result.accuracy) else MUTED,
                 font="display",
                 weight=700,
                 anchor="end",
@@ -1297,9 +1377,8 @@ def concurrency_panel(box: Box, data: CardData) -> str:
     out.append(text(body.x + 16, legend_y, "aggregate", size=LABEL, fill=MUTED, font="mono"))
     lx = body.x + 16 + mono_width("aggregate") + 16
     out.append(circle(lx + 4, legend_y - 4, 4, fill=TEXT))
-    out.append(text(lx + 14, legend_y, per_request, size=LABEL, fill=MUTED, font="mono"))
-    legend_right = lx + 14 + mono_width(per_request)
     speedup = peak.tg_tps_total / single.tg_tps_total if single.tg_tps_total > 0 else 0.0
+    speedup_label = ""
     if speedup > 0 and peak.concurrency != single.concurrency:
         options = (
             [f"{speedup:.1f}\u00d7 at c={peak.concurrency}"]
@@ -1309,9 +1388,10 @@ def concurrency_panel(box: Box, data: CardData) -> str:
                 f"{speedup:.1f}\u00d7",
             ]
         )
-        room = body.right - legend_right - 16
+        room = body.right - (lx + 14 + mono_width(per_request)) - 16
         label = first_fit(options, room, LABEL, font="mono", weight=500)
         if mono_width(label) <= room:
+            speedup_label = label
             out.append(
                 text(
                     body.right,
@@ -1324,6 +1404,17 @@ def concurrency_panel(box: Box, data: CardData) -> str:
                     anchor="end",
                 )
             )
+    # On the aggregate scale the per-request dots hug the baseline, so the
+    # legend names the per-request rate at the peak when it fits.
+    legend_room = body.right - (lx + 14) - (mono_width(speedup_label) + 16 if speedup_label else 0)
+    per_request_label = per_request
+    if math.isfinite(peak.tg_tps) and peak.tg_tps > 0:
+        rate = fmt.rate(peak.tg_tps)
+        candidates = [f"{per_request} {rate} at c={peak.concurrency}", f"{per_request} {rate}"]
+        per_request_label = next(
+            (c for c in candidates if mono_width(c) <= legend_room), per_request
+        )
+    out.append(text(lx + 14, legend_y, per_request_label, size=LABEL, fill=MUTED, font="mono"))
     # Room above the plot for the value label over the tallest bar.
     plot = Box(body.x + 40, body.y + 40, body.w - 40, body.h - 40 - 24)
     # Scale to just above the peak, not to the next round tick, so the bars

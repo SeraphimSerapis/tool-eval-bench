@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 from collections.abc import Collection
 from typing import Any
 
@@ -937,7 +938,13 @@ class TestAccuracyCounts:
     def test_every_item_errored(self) -> None:
         run = _plugin_run("gsm8k", 0.0, "2026-01-01", correct=0, total=5, errors=5)
         (result,) = build_card_data([run]).accuracy
-        assert (result.accuracy, result.errors, result.items) == (0.0, 5, 5)
+        assert math.isnan(result.accuracy)
+        assert (result.errors, result.items) == (5, 5)
+
+    def test_non_finite_counts_fall_back_to_the_stored_accuracy(self) -> None:
+        run = _plugin_run("gsm8k", 42.0, "2026-01-01", correct=3, total=math.nan, errors=math.inf)
+        (result,) = build_card_data([run]).accuracy
+        assert (result.accuracy, result.errors, result.items) == (0.42, 0, None)
 
 
 class TestNeedleCounts:
@@ -985,10 +992,18 @@ class TestPerfState:
         card = build_card_data([run])
         assert (card.perf_failed_cells, card.perf_incomplete) == (1, False)
 
-    def test_a_failed_perf_status_is_incomplete(self) -> None:
+    def test_an_unexplained_failed_perf_status_is_incomplete(self) -> None:
         run = _perf_run()
         run["status"] = "failed"
         assert build_card_data([run]).perf_incomplete is True
+
+    def test_a_failed_cell_alone_does_not_make_a_perf_run_incomplete(self) -> None:
+        # The writer marks a perf run failed for any failed cell, even when every pass finished.
+        run = _perf_run()
+        run["status"] = "failed"
+        run["scores"]["failed"] = 1
+        card = build_card_data([run])
+        assert (card.perf_failed_cells, card.perf_incomplete) == (1, False)
 
     def test_older_rows_read_as_complete(self) -> None:
         card = build_card_data([_perf_run()])

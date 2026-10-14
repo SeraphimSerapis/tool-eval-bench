@@ -261,11 +261,13 @@ NEEDLE_HINT = Hint(
     "A fact hidden at every depth",
     "heatmap",
 )
+# Only cards without speed numbers show this hint; with them, the tool-calling
+# hero tile says it instead. Those cards come from a ``--gsm8k-only``-style run.
 TOOL_HINT = Hint(
     "TOOL CALLING",
     TOOL,
     "Tool calling not scored",
-    ("run without --perf-only",),
+    ("drop --*-only",),
     "Tool choice, chaining, recovery",
     "rows",
 )
@@ -374,12 +376,12 @@ def _evidence(data: CardData, width: float, hints: list[Hint]) -> Slot | None:
     """Tool calling and accuracy below the speed panels.
 
     With tool eval, the smarts panel carries accuracy as chips (or a hint chip
-    naming the flags). Without it, accuracy gets its own panel and tool
-    calling becomes a hint.
+    naming the flags). Without it, accuracy gets its own panel; the tool-calling
+    hero tile already says the scenarios were not run, so no second placeholder
+    repeats it.
     """
     if data.tool_eval is not None:
         return _smarts_slot(data, width)
-    hints.append(TOOL_HINT)
     if data.accuracy:
         return _accuracy_slot(data)
     hints.append(ACCURACY_HINT)
@@ -766,7 +768,7 @@ def _portrait(data: CardData, width: int, height: int) -> str:
             # would only take width from the accuracy bars.
             slots.append(_accuracy_slot(data))
         else:
-            hints += [TOOL_HINT, ACCURACY_HINT]
+            hints.append(ACCURACY_HINT)
     else:
         # Without speed numbers the score leads, and accuracy gets its own panel.
         top = 188

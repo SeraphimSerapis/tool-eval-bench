@@ -113,9 +113,10 @@ class ToolEvalSummary:
 class AccuracyResult:
     """An external accuracy benchmark such as GSM8K. ``accuracy`` is 0-1.
 
-    ``accuracy`` is correct answers over answered items. ``errors`` counts items
-    whose request failed and ``items`` the items attempted, when known, so a
-    card can say a score rests on only part of the set.
+    ``accuracy`` is correct answers over answered items, or NaN when every item
+    errored. ``errors`` counts items whose request failed and ``items`` the
+    items attempted, when known, so a card can say a score rests on only part
+    of the set.
     """
 
     name: str

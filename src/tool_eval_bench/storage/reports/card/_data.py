@@ -18,6 +18,9 @@ LONG_CONTEXT_MIN_DEPTH = 8192
 # The deepest depth the long preset plans. A long run that stops short of it
 # without being interrupted was capped by the served context window.
 LONG_PRESET_DEPTH = 131072
+# The chat-template allowance the planner adds when it fits a depth into the
+# window. Storage cannot import runner.perf_presets, so a test keeps the two equal.
+CHAT_TEMPLATE_HEADROOM = 256
 # Accuracy results from fewer items than this show their sample size.
 SMALL_SAMPLE = 100
 
@@ -105,13 +108,24 @@ def deepest_depth(data: CardData) -> int:
 
 
 def window_capped(data: CardData) -> bool:
-    """A long preset that finished but stopped short of 128K: the context window capped it."""
-    return (
+    """A long preset that finished but stopped short of 128K because the window capped it.
+
+    A failed cell can also leave the sweep short, so any failed cell rules the
+    claim out. When the window is known, the 128K request must also not fit it,
+    by the same test the planner uses to drop depths.
+    """
+    if not (
         data.perf_preset == "long"
         and not data.perf_incomplete
-        and bool(data.perf)
+        and data.perf_failed_cells == 0
+        and data.perf
         and deepest_depth(data) < LONG_PRESET_DEPTH
-    )
+    ):
+        return False
+    if data.max_context is None:
+        return True
+    request = LONG_PRESET_DEPTH + (data.perf_pp or 0) + (data.perf_tg or 0)
+    return request + CHAT_TEMPLATE_HEADROOM > data.max_context
 
 
 def cap_note(data: CardData) -> str:

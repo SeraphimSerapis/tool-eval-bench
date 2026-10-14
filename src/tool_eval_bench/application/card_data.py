@@ -303,7 +303,8 @@ def _is_number(value: Any) -> bool:
 
 
 def _int_or_none(value: Any) -> int | None:
-    if not _is_number(value):
+    # json.loads accepts NaN and Infinity, which int() rejects.
+    if not _is_number(value) or not math.isfinite(value):
         return None
     return int(value)
 
@@ -413,15 +414,20 @@ def _perf_state(run: Mapping[str, Any]) -> tuple[int, bool]:
     """Grid cells without a usable sample, and whether the sweep stopped early.
 
     ``failed`` counts cells; ``incomplete`` marks a planned pass that was
-    interrupted or failed. Older rows lack both, which reads as zero and
-    complete. A ``failed`` perf run status also counts as incomplete.
+    interrupted or failed. A perf run is stored as ``failed`` when any cell
+    failed, even if every pass finished, so a failed status means incomplete
+    only when no failed cell count explains it. Rows that lack all three read
+    as zero and complete.
     """
     scores = _perf_scores(run)
-    failed = _int_or_none(scores.get("failed")) or 0
-    incomplete = scores.get("incomplete") is True or (
-        (run.get("run_type") or "tool_eval") == "perf" and run.get("status") == "failed"
+    failed = max(_int_or_none(scores.get("failed")) or 0, 0)
+    unexplained_failure = (
+        (run.get("run_type") or "tool_eval") == "perf"
+        and run.get("status") == "failed"
+        and failed == 0
     )
-    return max(failed, 0), incomplete
+    incomplete = scores.get("incomplete") is True or unexplained_failure
+    return failed, incomplete
 
 
 def _predates_perf_cells(run: Mapping[str, Any]) -> bool:
@@ -736,8 +742,10 @@ def _accuracy(name: str, run: Mapping[str, Any]) -> AccuracyResult | None:
     The plugins store the run as completed even when most requests failed, so
     the stored counts decide: ``correct`` (``prompts_passed`` for IFEval) over
     ``total - errors``. A row without counts falls back to its stored
-    accuracy. When ``total`` is below the dataset size, the detail says so,
-    so a three-question run never reads as the full benchmark.
+    accuracy. When every item errored, accuracy is NaN, which renders as not
+    measured rather than as a 0% score. When ``total`` is below the dataset
+    size, the detail says so, so a three-question run never reads as the full
+    benchmark.
     """
     scores = _section(run, "scores")
     correct = _int_or_none(scores.get("correct"))
@@ -748,7 +756,7 @@ def _accuracy(name: str, run: Mapping[str, Any]) -> AccuracyResult | None:
     stored = scores.get("accuracy")
     if correct is not None and total is not None:
         answered = total - errors
-        accuracy = correct / answered if answered > 0 else 0.0
+        accuracy = correct / answered if answered > 0 else math.nan
     elif isinstance(stored, (int, float)) and not isinstance(stored, bool):
         accuracy = float(stored) / 100
     else:
