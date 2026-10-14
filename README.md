@@ -28,6 +28,9 @@ uv tool install 'tool-eval-bench[perf] @ git+https://github.com/SeraphimSerapis/
 
 # With the optional local web UI (bundles Starlette and Uvicorn)
 uv tool install 'tool-eval-bench[web] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'
+
+# Several extras at once: comma-separate them inside the brackets
+uv tool install 'tool-eval-bench[perf,web] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'
 ```
 
 Also available via [Docker](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/docker.md) if you would rather not have a local
