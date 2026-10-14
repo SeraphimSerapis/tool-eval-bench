@@ -853,7 +853,7 @@ def test_reporter_facade_forwards_interruption_and_stop_reason(tmp_path: Path) -
 
 
 def test_leaderboard_cohort_ignores_the_calibrated_fill() -> None:
-    from tool_eval_bench.cli.leaderboard import _cohort_fingerprint
+    from tool_eval_bench.application.leaderboard import cohort_fingerprint as _cohort_fingerprint
 
     # Different tokenizers calibrate the same target to different counts.
     base = _pressure_config()

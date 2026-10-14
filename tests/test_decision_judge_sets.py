@@ -16,10 +16,10 @@ from tool_eval_bench.application.decision_audit import (
     selected_audit,
     with_selected_checks,
 )
+from tool_eval_bench.application.leaderboard import cohort_fingerprint as _cohort_fingerprint
 from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.cli.bench import _make_parser
 from tool_eval_bench.cli.dispatch import _resume_config_mismatches, main
-from tool_eval_bench.cli.leaderboard import _cohort_fingerprint
 from tool_eval_bench.cli.legacy_parser import make_parser
 from tool_eval_bench.cli.parser import parse_cli_args
 from tool_eval_bench.domain.scenarios import (

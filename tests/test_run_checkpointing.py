@@ -14,8 +14,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from tests.conftest import open_repository
+from tool_eval_bench.application.resume import prior_results_for_resume
 from tool_eval_bench.application.service import BenchmarkService
-from tool_eval_bench.cli.helpers import prior_results_for_resume
 from tool_eval_bench.domain.models import (
     RUN_STATUS_COMPLETED,
     RUN_STATUS_INTERRUPTED,

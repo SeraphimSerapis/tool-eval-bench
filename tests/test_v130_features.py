@@ -59,7 +59,9 @@ class TestLeaderboardExtraction:
         }
 
     def test_single_model(self) -> None:
-        from tool_eval_bench.cli.leaderboard import _extract_leaderboard_rows
+        from tool_eval_bench.application.leaderboard import (
+            extract_leaderboard_rows as _extract_leaderboard_rows,
+        )
 
         runs = [self._make_run()]
         rows = _extract_leaderboard_rows(runs)
@@ -72,7 +74,9 @@ class TestLeaderboardExtraction:
         assert rows[0]["num_runs"] == 1
 
     def test_multiple_models_sorted_by_score(self) -> None:
-        from tool_eval_bench.cli.leaderboard import _extract_leaderboard_rows
+        from tool_eval_bench.application.leaderboard import (
+            extract_leaderboard_rows as _extract_leaderboard_rows,
+        )
 
         runs = [
             self._make_run(model="weak", final_score=40),
@@ -86,7 +90,9 @@ class TestLeaderboardExtraction:
         assert rows[2]["model"] == "weak"
 
     def test_deduplicates_by_best_run(self) -> None:
-        from tool_eval_bench.cli.leaderboard import _extract_leaderboard_rows
+        from tool_eval_bench.application.leaderboard import (
+            extract_leaderboard_rows as _extract_leaderboard_rows,
+        )
 
         runs = [
             self._make_run(model="test", final_score=60),
@@ -99,7 +105,9 @@ class TestLeaderboardExtraction:
         assert rows[0]["num_runs"] == 3
 
     def test_category_scores_extracted(self) -> None:
-        from tool_eval_bench.cli.leaderboard import _extract_leaderboard_rows
+        from tool_eval_bench.application.leaderboard import (
+            extract_leaderboard_rows as _extract_leaderboard_rows,
+        )
 
         runs = [
             self._make_run(
@@ -116,13 +124,17 @@ class TestLeaderboardExtraction:
         assert rows[0]["cat_scores"]["O"] == 83
 
     def test_empty_runs(self) -> None:
-        from tool_eval_bench.cli.leaderboard import _extract_leaderboard_rows
+        from tool_eval_bench.application.leaderboard import (
+            extract_leaderboard_rows as _extract_leaderboard_rows,
+        )
 
         rows = _extract_leaderboard_rows([])
         assert rows == []
 
     def test_separates_runs_with_different_config_fingerprints(self) -> None:
-        from tool_eval_bench.cli.leaderboard import _extract_leaderboard_rows
+        from tool_eval_bench.application.leaderboard import (
+            extract_leaderboard_rows as _extract_leaderboard_rows,
+        )
 
         first = self._make_run(model="same", final_score=90)
         first["config"]["config_fingerprint"] = "first"
@@ -187,7 +199,9 @@ class TestExportCSV:
     """Tests for CSV export logic."""
 
     def test_csv_output(self) -> None:
-        from tool_eval_bench.cli.leaderboard import _extract_leaderboard_rows
+        from tool_eval_bench.application.leaderboard import (
+            extract_leaderboard_rows as _extract_leaderboard_rows,
+        )
 
         runs = [
             {

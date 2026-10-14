@@ -45,6 +45,10 @@ perf = [
 hf = [
   "datasets>=3.0.0",
 ]
+web = [
+  "starlette>=0.40.0",
+  "uvicorn>=0.30.0",
+]
 dev = [
   "mypy>=1.15.0",
   "types-PyYAML>=6.0.12",
@@ -56,6 +60,8 @@ dev = [
   "ruff>=0.12.0",
   "pre-commit>=4.0.0",
   "towncrier>=24.8.0",
+  "starlette>=0.40.0",
+  "uvicorn>=0.30.0",
 ]
 
 [tool.towncrier]
@@ -136,6 +142,7 @@ package-dir = {"" = "src"}
 tool_eval_bench = [
   "evals/yaml_scenarios/*.yaml",
   "plugins/decision/vendor/typed_decisions/*",
+  "web/static/*",
   "py.typed",
 ]
 

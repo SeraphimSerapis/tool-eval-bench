@@ -21,6 +21,7 @@ RUNNER_OWNED = {
     "on_scenario_start",
     "on_scenario_result",
     "on_scenario_audit",
+    "on_scenario_turn",
     "rate_limit_observer",
     "throughput_samples",
 }

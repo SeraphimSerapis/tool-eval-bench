@@ -14,12 +14,14 @@ from unittest.mock import MagicMock, patch
 
 from rich.console import Console
 
+from tool_eval_bench.application.leaderboard import (
+    extract_leaderboard_rows as _extract_leaderboard_rows,
+)
+from tool_eval_bench.application.leaderboard import shorten_model_name as _shorten_model_name
 from tool_eval_bench.cli.leaderboard import (
-    _extract_leaderboard_rows,
     _rating_short,
     _score_bg,
     _score_color,
-    _shorten_model_name,
     export_runs,
     print_leaderboard,
 )

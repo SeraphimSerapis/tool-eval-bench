@@ -29,3 +29,19 @@ scores would stop being comparable with its published figures. The hand-written 
 dropped rather than kept beside the dataset, because they gave no external reference point.
 
 Revisit when the pinned dataset revision changes or the card publishes its ECE definition.
+
+## Web UI access control
+
+`tool-eval-bench serve` requires a per-process session token, printed as a sign-in link and
+exchanged for an `HttpOnly`, `SameSite=Strict` cookie. Requests that change state must also
+come from the UI's origin and send `application/json`. The server holds `TOOL_EVAL_API_KEY`
+and can start runs that spend it, so a page in another tab must not be able to drive it.
+
+Origin and `Host` checks alone were rejected: they stop cross-site forgery but not a DNS
+rebinding page, which runs on its own origin with a matching `Host`. Scoping the environment
+key to `TOOL_EVAL_BASE_URL` was rejected too, because the CLI sends it to any `--base-url` and
+the two entry points would disagree. The token closes both paths for every bind address.
+
+The UI stops only runs it launched and resumes only `interrupted` runs whose stored config it
+can rebuild, refusing the rest with a pointer to `tool-eval-bench resume`. Revisit if the UI
+gains multi-user access, which would need real accounts instead of one shared token.

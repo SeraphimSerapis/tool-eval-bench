@@ -51,9 +51,10 @@ graph TD
 | `application/` | domain, evals, runner, adapters, storage, utils | cli |
 | `adapters/` | domain ports, utils | storage, application, runner, cli, evals |
 | `cli/` | everything else (delivery layer) | `storage.db` |
+| `web/` | everything else (delivery layer) | `storage.db` |
 | `utils/` | stdlib, domain | storage, adapters, runner, cli, evals |
 
-`cli/` may format reports through `storage.reports`, which is a renderer, but must not open the
+`cli/` and `web/` may format reports through `storage.reports`, which is a renderer, but must not open the
 database. Connection lifetime, query shape, and the write-then-persist ordering belong to
 `application/`; `application/run_queries.py` holds the reads the delivery layer needs.
 

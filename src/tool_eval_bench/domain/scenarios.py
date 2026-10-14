@@ -717,6 +717,9 @@ OnScenarioStart = Callable[[ScenarioDefinition, int, int], Awaitable[None]]
 OnScenarioResult = Callable[[ScenarioDefinition, ScenarioResult, int, int], Awaitable[None]]
 """(scenario, result, index, total) → called after each scenario completes."""
 
+OnScenarioTurn = Callable[[ScenarioDefinition, int, dict[str, Any]], Awaitable[None]]
+"""(scenario, turn, turn_payload) → called after each turn completes."""
+
 OnScenarioEvaluated = Callable[[ScenarioDefinition, ScenarioState, ScenarioResult], Awaitable[None]]
 """Capture structured evidence after evaluation, before the state is discarded."""
 

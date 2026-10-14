@@ -22,10 +22,31 @@ def _repository() -> db.RunRepository:
     return db.RunRepository()
 
 
-def recent_runs(limit: int = 15) -> list[dict[str, Any]]:
-    """Return the most recent runs, newest first."""
+def recent_runs(
+    limit: int = 15,
+    *,
+    model: str | None = None,
+    run_type: str | None = None,
+    status: str | None = None,
+    search: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return the most recent runs, newest first.
+
+    The filters narrow the query before ``limit`` applies, so a search finds an
+    old run rather than only matches among the newest ``limit`` rows.
+    """
+    filters = {
+        key: value
+        for key, value in (
+            ("model", model),
+            ("run_type", run_type),
+            ("status", status),
+            ("search", search),
+        )
+        if value
+    }
     with closing(_repository()) as repo:
-        return repo.list(limit=limit)
+        return repo.list(limit=limit, **filters)
 
 
 def get_run(run_id: str, *, include_traces: bool = True) -> dict[str, Any] | None:
@@ -66,6 +87,21 @@ def resume_state(run_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]] | N
     """Return a run and its checkpoints, for deciding whether it can resume."""
     with closing(_repository()) as repo:
         run = repo.get(run_id)
+        if run is None:
+            return None
+        return run, repo.get_checkpoints(run_id)
+
+
+def run_progress(
+    run_id: str, *, include_traces: bool = False
+) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    """Return a run row and its checkpoints, for watching a run in progress.
+
+    Traces are off by default because a live view polls this every second and
+    needs only statuses and points.
+    """
+    with closing(_repository()) as repo:
+        run = repo.get(run_id, include_traces=include_traces)
         if run is None:
             return None
         return run, repo.get_checkpoints(run_id)

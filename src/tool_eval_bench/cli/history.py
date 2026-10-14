@@ -514,40 +514,15 @@ def _print_mcnemar(
     map_b: dict[str, dict],
     all_ids: list[str],
 ) -> None:
-    """Compute and display McNemar's test for statistical significance.
+    """Display McNemar's test for statistical significance.
 
-    Uses a 2×2 contingency table of pass/not-pass outcomes for scenarios
-    present in both runs.  The chi-squared statistic (with continuity
-    correction) is computed without scipy — only stdlib math is needed.
-
-    Interpretation:
-        p < 0.05  → statistically significant difference
-        p >= 0.05 → no significant difference (could be noise)
+    The statistic lives in :func:`application.leaderboard.compute_mcnemar_stats`,
+    shared with the web UI; this only formats it.
     """
-    import math
+    from tool_eval_bench.application.leaderboard import compute_mcnemar_stats
 
-    # Build contingency table
-    # b = A pass, B fail (B regressed)
-    # c = A fail, B pass (B improved)
-    b = 0  # A pass & B not-pass
-    c = 0  # A not-pass & B pass
-
-    for sc_id in all_ids:
-        ra = map_a.get(sc_id)
-        rb = map_b.get(sc_id)
-        if not ra or not rb:
-            continue  # skip scenarios not in both runs
-
-        a_pass = ra.get("status") == "pass"
-        b_pass = rb.get("status") == "pass"
-
-        if a_pass and not b_pass:
-            b += 1
-        elif not a_pass and b_pass:
-            c += 1
-
-    n_discordant = b + c
-
+    stats = compute_mcnemar_stats(map_a, map_b, all_ids)
+    n_discordant = stats["discordant_pairs"]
     if n_discordant == 0:
         console.print(
             "  [dim]McNemar: no discordant pairs — runs are identical "
@@ -555,26 +530,12 @@ def _print_mcnemar(
         )
         return
 
-    # The exact two-sided binomial test is reliable for the small paired
-    # samples common in targeted scenario runs. For larger runs, use the
-    # continuity-corrected chi-squared approximation. Clamp the correction at
-    # zero so balanced discordance produces chi²=0 and p=1.
-    corrected_difference = max(0, abs(b - c) - 1)
-    chi2 = corrected_difference**2 / n_discordant
-    if n_discordant <= 25:
-        smaller_side = min(b, c)
-        p_value = min(
-            1.0,
-            2
-            * sum(math.comb(n_discordant, idx) for idx in range(smaller_side + 1))
-            / 2**n_discordant,
-        )
-    else:
-        # Survival function for chi-squared with df=1 (no scipy needed).
-        p_value = math.erfc(math.sqrt(chi2 / 2)) if chi2 > 0 else 1.0
-
-    sig = p_value < 0.05
-    direction = "B" if c > b else "A" if b > c else "neither"
+    b = stats["a_only_pass"]
+    c = stats["b_only_pass"]
+    chi2 = stats["chi2"]
+    p_value = stats["p_value"]
+    sig = stats["significant"]
+    direction = stats["direction"]
 
     # Format output
     sig_str = (

@@ -15,9 +15,12 @@ from typing import Any
 import pytest
 
 import tool_eval_bench
+from tool_eval_bench.application.leaderboard import cohort_fingerprint as _cohort_fingerprint
+from tool_eval_bench.application.leaderboard import (
+    extract_leaderboard_rows as _extract_leaderboard_rows,
+)
 from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.cli.dispatch import _resume_config_mismatches
-from tool_eval_bench.cli.leaderboard import _cohort_fingerprint, _extract_leaderboard_rows
 from tool_eval_bench.cli.legacy_parser import _make_parser
 from tool_eval_bench.domain.scenarios import Category, ScenarioDefinition
 

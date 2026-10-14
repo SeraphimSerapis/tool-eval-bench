@@ -42,6 +42,10 @@ from tool_eval_bench.application.decision_audit import (
     with_selected_checks,  # noqa: F401  (cli.bench name)
 )
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
+from tool_eval_bench.application.resume import prior_results_for_resume
+from tool_eval_bench.application.resume import (
+    result_requires_rerun as _resume_result_requires_rerun,
+)
 from tool_eval_bench.application.run_config import (
     RunSettings,  # noqa: F401  (cli.bench name)
     build_run_config,
@@ -76,7 +80,6 @@ from tool_eval_bench.cli.helpers import (
 from tool_eval_bench.cli.helpers import (
     persist_plugin_run as _persist_plugin_run,  # noqa: F401  (cli.bench name)
 )
-from tool_eval_bench.cli.helpers import prior_results_for_resume
 from tool_eval_bench.cli.helpers import (
     safety_gate_failed as _safety_gate_failed,  # noqa: F401  (cli.bench name)
 )
@@ -189,27 +192,6 @@ logger = logging.getLogger(__name__)
 
 # Valid category letters for --categories
 _VALID_CATEGORIES = {c.value for c in Category}
-
-
-def _resume_result_requires_rerun(result: dict[str, Any]) -> bool:
-    """Return whether a checkpoint is missing, corrupt, or infrastructure-only.
-
-    A model outcome is evidence, including ordinary failures and partials.  It
-    must not be silently retried into a better score under the same run ID.
-    """
-    if not result.get("scenario_id"):
-        return True
-    if result.get("status") not in {status.value for status in ScenarioStatus}:
-        return True
-    if not isinstance(result.get("points"), int) or not isinstance(result.get("summary"), str):
-        return True
-    if not isinstance(result.get("raw_log"), str) or not result["raw_log"].strip():
-        return True
-    return result.get("status") == ScenarioStatus.FAIL.value and result.get("failure_kind") in {
-        "timeout",
-        "connection_error",
-        "server_error",
-    }
 
 
 def _resume_config_mismatches(

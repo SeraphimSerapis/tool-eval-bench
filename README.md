@@ -25,6 +25,9 @@ uv tool install git+https://github.com/SeraphimSerapis/tool-eval-bench.git
 
 # With throughput benchmarking (bundles llama-benchy)
 uv tool install 'tool-eval-bench[perf] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'
+
+# With the optional local web UI (bundles Starlette and Uvicorn)
+uv tool install 'tool-eval-bench[web] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'
 ```
 
 Also available via [Docker](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/docker.md) if you would rather not have a local
@@ -262,6 +265,7 @@ design: [docs/methodology.md](https://github.com/SeraphimSerapis/tool-eval-bench
 | `compare` | Compare stored runs or Markdown reports |
 | `history`, `leaderboard`, `export` | Inspect or export persisted results |
 | `resume` | Continue an incomplete run |
+| `serve` | Launch the local web UI for browsing, live runs, comparisons, and launching benchmarks; open the sign-in link it prints ([details](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/cli-reference.md#web-ui-serve)) |
 
 ```bash
 # Smoke test — 5 scenarios

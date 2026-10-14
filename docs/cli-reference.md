@@ -349,6 +349,48 @@ and cached locally. Install the `[hf]` extra for rate-limit-free downloads
 See [needle.md](needle.md) for the retrieval grid and how to read it, and
 [decision-models.md](decision-models.md) for the decision-model report.
 
+## Web UI (`serve`)
+
+`tool-eval-bench serve` starts a local browser UI over the same SQLite history
+the CLI writes. It needs the `[web]` extra (Starlette and Uvicorn).
+
+```bash
+tool-eval-bench serve                    # http://localhost:8080
+tool-eval-bench serve --serve-port 9090
+```
+
+| Flag | Purpose |
+|------|---------|
+| `--serve-host HOST` | Bind address (default: `127.0.0.1`) |
+| `--serve-port PORT` | Bind port, 1-65535 (default: `8080`) |
+| `--output-dir DIR` | Where runs launched from the browser write their Markdown reports |
+| `--redact-url` | Keep the probe from echoing endpoint URLs back to the browser |
+
+The UI shows run history with full traces, cohort leaderboards with CSV and JSON
+export, and two-run comparisons with McNemar's test. It also launches runs,
+streams them live over Server-Sent Events, and stops or resumes them. CLI runs
+can be watched too: the UI follows their SQLite checkpoints.
+
+**Sign-in.** On startup the server prints a link ending in `?token=...`. The token
+changes on every start. Opening the link sets a session cookie
+(`HttpOnly`, `SameSite=Strict`), and every request except static assets must
+carry it, or `Authorization: Bearer <token>` for scripts. State-changing
+requests must also come from the UI's own origin and send `application/json`.
+This is what stops another website you visit from using the server: the
+server holds `TOOL_EVAL_API_KEY` and can start runs that spend it.
+
+**Binding beyond loopback.** Anyone with the link can read stored traces and
+start runs with this machine's keys, over plain HTTP. Prefer the default bind
+address and SSH port forwarding (`ssh -L 8080:localhost:8080 host`).
+
+**Stop and resume.** The UI stops only runs it launched; stop a CLI run with
+Ctrl+C in its terminal. It resumes only runs marked `interrupted`, using the
+conditions stored with the run. Because the stored URL is redacted, enter the
+endpoint again (or set `TOOL_EVAL_BASE_URL`); a different endpoint is refused.
+Runs that used context pressure, a decision judge, scenario variants, or a
+held-out pack need options only the CLI has, so resume those with
+`tool-eval-bench resume RUN_ID` and the original flags.
+
 ## Understanding the JSON output
 
 ```jsonc

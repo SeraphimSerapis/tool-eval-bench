@@ -17,7 +17,9 @@ The public scenario registry covers TC-01 through TC-69. Category P adds TC-70 t
 `--scenarios` can select Hard Mode scenarios without the flag.
 
 The `tool-eval-bench` CLI is the primary interface. A public Python API supports headless
-integrations. There is no web server or TUI.
+integrations, and an optional local web UI (`tool-eval-bench serve`, installed with the `[web]`
+extra) provides browser-based run inspection, cohort leaderboards, comparisons, live SSE
+observation, and run launching.
 
 ## Architectural guardrails
 
@@ -27,9 +29,9 @@ integrations. There is no web server or TUI.
   - `runner` orchestrates scenarios using adapter interfaces.
   - `plugins` contains pluggable benchmark modules (GSM8K, MMLU, IFEval). Each plugin implements `domain.plugin.BenchmarkPlugin` and owns its own orchestration.
   - `application` composes concrete adapters, orchestration, storage, and reporting.
-  - `cli` is the delivery layer that calls `application.service` and plugin runners.
+  - `cli` and `web` are the delivery layers that call `application.service`, `application.run_queries`, and plugin runners.
     `runner.service` remains a compatibility re-export only.
-  - `cli` MUST NOT import `storage.db`. It may format reports through `storage.reports`, which is
+  - `cli` and `web` MUST NOT import `storage.db`. They may format reports through `storage.reports`, which is
     a renderer. Database reads go through `application.run_queries`, which owns each repository's
     lifetime; `tests/test_architecture_boundaries.py` enforces this.
 - Prefer composition over global state.

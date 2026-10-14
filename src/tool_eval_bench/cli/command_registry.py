@@ -249,6 +249,13 @@ COMMAND_SPECS = (
         + SAFETY_GATE,
         legacy_flags=("resume",),
     ),
+    CommandSpec(
+        "serve",
+        "Launch the local web UI for browsing, live runs, and launching benchmarks",
+        legacy_prefix=("--serve",),
+        help_dests=("serve_host", "serve_port", "output_dir", "redact_url"),
+        legacy_flags=("serve",),
+    ),
 )
 
 COMMAND_REGISTRY = {spec.name: spec for spec in COMMAND_SPECS}

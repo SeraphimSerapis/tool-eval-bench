@@ -27,6 +27,7 @@ from tool_eval_bench.schema import COMMANDS_SCHEMA, get_schema
         (["history"], ["--history"]),
         (["leaderboard"], ["--leaderboard"]),
         (["resume", "run-123", "--json"], ["--resume=run-123", "--json"]),
+        (["serve", "--serve-port", "9090"], ["--serve", "--serve-port", "9090"]),
     ],
 )
 def test_simple_subcommands_translate_to_legacy(subcommand: list[str], legacy: list[str]) -> None:
@@ -234,6 +235,7 @@ def test_plugin_only_lifecycle_stops_before_tool_scenarios() -> None:
         ("leaderboard", "model leaderboard", "--base-url"),
         ("export", "--format", "--base-url"),
         ("resume", "run_id", "--perf-only"),
+        ("serve", "--serve-port", "--short"),
     ],
 )
 def test_subprocess_help_is_command_specific(command: str, included: str, excluded: str) -> None:
@@ -530,3 +532,17 @@ def test_categories_help_names_every_category() -> None:
 
     text = " ".join(make_flat_parser().format_help().split())
     assert f"Letters A–P map to the {len(list(Category))} benchmark categories" in text
+
+
+@pytest.mark.parametrize("port", ["0", "70000", "http"])
+def test_serve_port_must_be_a_tcp_port(port: str) -> None:
+    from tool_eval_bench.cli.legacy_parser import make_parser
+
+    with pytest.raises(SystemExit):
+        make_parser().parse_args(["--serve", "--serve-port", port])
+
+
+def test_serve_port_accepts_the_top_of_the_range() -> None:
+    from tool_eval_bench.cli.legacy_parser import make_parser
+
+    assert make_parser().parse_args(["--serve", "--serve-port", "65535"]).serve_port == 65535

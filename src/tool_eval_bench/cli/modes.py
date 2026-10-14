@@ -33,7 +33,7 @@ def sends_system_prompt(args: argparse.Namespace) -> bool:
     nothing, so an unused flag is inert, and they already accept the rest of
     the run-control group in silence.
     """
-    if args.spec_live or args.decision_live or args.perf_only:
+    if args.spec_live or args.decision_live or args.perf_only or getattr(args, "serve", False):
         return False
     other_benchmarks = args.perf or any_plugin_selected(args)
     if args.spec_bench and (args.skip_tool_eval or not other_benchmarks):
@@ -70,6 +70,7 @@ def mode_conflict(args: argparse.Namespace) -> str | None:
         for flag, selected in (
             ("--spec-live", args.spec_live),
             ("--decision-live", args.decision_live),
+            ("--serve", getattr(args, "serve", False)),
         )
         if selected
     ]

@@ -45,6 +45,7 @@ from tool_eval_bench.domain.scenarios import (
     OnScenarioEvaluated,
     OnScenarioResult,
     OnScenarioStart,
+    OnScenarioTurn,
     ScenarioDefinition,
     ScenarioEvaluation,
     ScenarioResult,
@@ -372,6 +373,26 @@ def _format_trace(
 # ---------------------------------------------------------------------------
 
 
+async def _notify_turn(
+    callback: OnScenarioTurn,
+    scenario: ScenarioDefinition,
+    turn: int,
+    payload: dict[str, Any],
+) -> None:
+    """Deliver a turn to an observer without letting it touch the outcome.
+
+    The call sits inside run_scenario's error handling, which turns any
+    exception into a scenario failure. A live view that raises must not be
+    recorded as the model failing, so its errors are logged and dropped.
+    """
+    try:
+        await callback(scenario, turn, payload)
+    except Exception:
+        logger.warning(
+            "on_scenario_turn observer failed for %s turn %d", scenario.id, turn, exc_info=True
+        )
+
+
 async def run_scenario(
     adapter: BackendAdapter,
     *,
@@ -390,6 +411,7 @@ async def run_scenario(
     context_pressure_messages: list[ChatMessage] | None = None,
     system_prompt: str | None = None,
     on_scenario_evaluated: OnScenarioEvaluated | None = None,
+    on_scenario_turn: OnScenarioTurn | None = None,
 ) -> ScenarioResult:
     """Run a single scenario through the multi-turn orchestration loop."""
     t0 = time.perf_counter()
@@ -610,6 +632,23 @@ async def run_scenario(
 
             # No tool calls → model finished this conversational phase
             if not result.tool_calls:
+                if on_scenario_turn is not None:
+                    await _notify_turn(
+                        on_scenario_turn,
+                        scenario,
+                        turn,
+                        {
+                            "turn": turn,
+                            "max_turns": max_turns,
+                            "latency_ms": round(turn_ms, 1),
+                            "ttft_ms": round(result.ttft_ms, 1)
+                            if result.ttft_ms is not None
+                            else None,
+                            "content": "" if scenario.held_out else (result.content or ""),
+                            "tool_calls": [],
+                            "tool_results": [],
+                        },
+                    )
                 # If there are follow-up user messages, inject the next one
                 if follow_ups:
                     follow_up = follow_ups.pop(0)
@@ -712,6 +751,28 @@ async def run_scenario(
                         trace_lines.append(f"state_checkpoint={diagnostic}")
 
             recent_turn_signatures.append(_turn_signature(result.tool_calls, turn_results))
+            if on_scenario_turn is not None:
+                await _notify_turn(
+                    on_scenario_turn,
+                    scenario,
+                    turn,
+                    {
+                        "turn": turn,
+                        "max_turns": max_turns,
+                        "latency_ms": round(turn_ms, 1),
+                        "ttft_ms": round(result.ttft_ms, 1) if result.ttft_ms is not None else None,
+                        "content": "" if scenario.held_out else (result.content or ""),
+                        "tool_calls": (
+                            []
+                            if scenario.held_out
+                            else [
+                                {"name": tc.name, "arguments": tc.arguments}
+                                for tc in result.tool_calls
+                            ]
+                        ),
+                        "tool_results": [] if scenario.held_out else list(turn_results),
+                    },
+                )
             del recent_turn_signatures[:-_LOOP_GUARD_TURNS]
             if (
                 len(recent_turn_signatures) == _LOOP_GUARD_TURNS
@@ -1097,6 +1158,7 @@ async def run_all_scenarios(
     weight_by_difficulty: bool = False,
     system_prompt: str | None = None,
     on_scenario_evaluated: OnScenarioEvaluated | None = None,
+    on_scenario_turn: OnScenarioTurn | None = None,
 ) -> ModelScoreSummary:
     """Run every scenario and produce an aggregate score summary.
 
@@ -1141,6 +1203,9 @@ async def run_all_scenarios(
 
     if concurrency <= 1:
         # Sequential path — original behavior, preserves ordering guarantees
+        turn_kwargs: dict[str, Any] = (
+            {"on_scenario_turn": on_scenario_turn} if on_scenario_turn is not None else {}
+        )
         results: list[ScenarioResult] = []
         for idx, scenario in enumerate(target_scenarios):
             if on_scenario_start:
@@ -1165,6 +1230,7 @@ async def run_all_scenarios(
                     context_pressure_messages=context_pressure_messages,
                     system_prompt=system_prompt,
                     on_scenario_evaluated=on_scenario_evaluated,
+                    **turn_kwargs,
                 )
             results.append(_attach_probe(result))
             if on_scenario_result:
@@ -1196,6 +1262,11 @@ async def run_all_scenarios(
     start_cb = _tag_errors(on_scenario_start) if on_scenario_start else None
     result_cb = _tag_errors(on_scenario_result) if on_scenario_result else None
     evaluated_cb = _tag_errors(on_scenario_evaluated) if on_scenario_evaluated else None
+    # Not tagged like the callbacks above: run_scenario already isolates the
+    # turn observer, so its failures never abort or fail a scenario.
+    parallel_turn_kwargs: dict[str, Any] = (
+        {"on_scenario_turn": on_scenario_turn} if on_scenario_turn is not None else {}
+    )
 
     async def _run_one(idx: int, scenario: ScenarioDefinition) -> None:
         nonlocal progress_counter
@@ -1222,6 +1293,7 @@ async def run_all_scenarios(
                     context_pressure_messages=context_pressure_messages,
                     system_prompt=system_prompt,
                     on_scenario_evaluated=evaluated_cb,
+                    **parallel_turn_kwargs,
                 )
             ordered_results[idx] = _attach_probe(result)
             if result_cb:

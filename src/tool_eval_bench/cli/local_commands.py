@@ -134,6 +134,17 @@ def handle_local_command(
     elif args.compare:
         _reject_json(args, "--compare")
         compare_runs(console, args.compare[0], args.compare[1])
+    elif getattr(args, "serve", False):
+        _reject_json(args, "--serve")
+        from tool_eval_bench.web import run_web_server
+
+        run_web_server(
+            console,
+            host=getattr(args, "serve_host", "127.0.0.1"),
+            port=getattr(args, "serve_port", 8080),
+            output_dir=getattr(args, "output_dir", None),
+            redact_url=bool(getattr(args, "redact_url", False)),
+        )
     elif args.dry_run:
         _render_dry_run(args, console, resolve_scenarios)
     else:

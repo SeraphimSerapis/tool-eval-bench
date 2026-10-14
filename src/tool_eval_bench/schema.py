@@ -733,6 +733,24 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "default": None,
         "description": "Resume an interrupted run, preserving completed outcomes",
     },
+    {
+        "name": "serve",
+        "type": "bool",
+        "default": False,
+        "description": "Launch the local web UI and exit when stopped",
+    },
+    {
+        "name": "serve_host",
+        "type": "string",
+        "default": "127.0.0.1",
+        "description": "Bind address for --serve (default: 127.0.0.1)",
+    },
+    {
+        "name": "serve_port",
+        "type": "int",
+        "default": 8080,
+        "description": "Bind port for --serve (default: 8080)",
+    },
     # -- Scoring --
     {
         "name": "weight_by_difficulty",

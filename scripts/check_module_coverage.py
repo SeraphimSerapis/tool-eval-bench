@@ -20,6 +20,11 @@ MODULE_FLOORS = {
     "src/tool_eval_bench/plugins/hf_utils.py": 85.0,
     "src/tool_eval_bench/runner/speculative.py": 90.0,
     "src/tool_eval_bench/runner/throughput.py": 80.0,
+    "src/tool_eval_bench/web/app.py": 80.0,
+    "src/tool_eval_bench/web/launcher.py": 80.0,
+    "src/tool_eval_bench/web/live.py": 80.0,
+    "src/tool_eval_bench/web/sanitize.py": 80.0,
+    "src/tool_eval_bench/web/security.py": 90.0,
 }
 
 

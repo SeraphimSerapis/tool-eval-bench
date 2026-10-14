@@ -24,6 +24,14 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _tcp_port(value: str) -> int:
+    """Parse a TCP port number for --serve-port."""
+    parsed = _positive_int(value)
+    if parsed > 65535:
+        raise argparse.ArgumentTypeError(f"must be a TCP port (1-65535), got {parsed}")
+    return parsed
+
+
 def _make_parser() -> argparse.ArgumentParser:
     """Build and return the CLI argument parser.
 
@@ -682,6 +690,24 @@ def _make_parser() -> argparse.ArgumentParser:
         metavar="RUN_ID",
         default=None,
         help="Resume an interrupted run, preserving completed outcomes",
+    )
+    hist_grp.add_argument(
+        "--serve",
+        action="store_true",
+        help="Launch the local web UI and exit when stopped",
+    )
+    hist_grp.add_argument(
+        "--serve-host",
+        default="127.0.0.1",
+        metavar="HOST",
+        help="Bind address for --serve (default: 127.0.0.1)",
+    )
+    hist_grp.add_argument(
+        "--serve-port",
+        type=_tcp_port,
+        default=8080,
+        metavar="PORT",
+        help="Bind port for --serve (default: 8080)",
     )
 
     # -- Scoring options ---------------------------------------------------

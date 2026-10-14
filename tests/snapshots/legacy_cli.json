@@ -1063,6 +1063,36 @@
   {
     "choices": null,
     "default": false,
+    "dest": "serve",
+    "flags": [
+      "--serve"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": "127.0.0.1",
+    "dest": "serve_host",
+    "flags": [
+      "--serve-host"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 8080,
+    "dest": "serve_port",
+    "flags": [
+      "--serve-port"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
     "dest": "weight_by_difficulty",
     "flags": [
       "--weight-by-difficulty"

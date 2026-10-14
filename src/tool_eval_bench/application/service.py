@@ -7,7 +7,8 @@ scenario benchmark system.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import datetime
 from functools import partial
 from typing import Any, cast
@@ -41,6 +42,7 @@ from tool_eval_bench.domain.scenarios import (
     OnScenarioAudit,
     OnScenarioResult,
     OnScenarioStart,
+    OnScenarioTurn,
     ScenarioDefinition,
     ScenarioResult,
     ScenarioState,
@@ -180,6 +182,7 @@ class BenchmarkService:
         decision_judge_model: str | None = None,
         decision_judge_api_key: str | None = None,
         on_scenario_audit: OnScenarioAudit | None = None,
+        on_scenario_turn: OnScenarioTurn | None = None,
         decision_judge: DecisionJudgeSet | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
@@ -304,6 +307,8 @@ class BenchmarkService:
                 capture_decision_audit(scenario, state, result, judge_set=judge_set)
 
             evaluated_hook["on_scenario_evaluated"] = capture_audit
+        if on_scenario_turn is not None:
+            evaluated_hook["on_scenario_turn"] = on_scenario_turn
 
         # Run all scenarios (close adapter connection pool when done)
         try:
@@ -593,3 +598,18 @@ async def _collect_metadata_safe(
     except (httpx.HTTPError, OSError, ValueError, RuntimeError) as exc:
         logger.warning("Failed to collect metadata: %s", exc)
         return {"error": str(exc)}
+
+
+@contextmanager
+def open_benchmark_service(output_dir: str | None = None) -> Iterator[BenchmarkService]:
+    """Yield a persisting service whose SQLite connection closes on exit.
+
+    The CLI runs one benchmark per process and lets exit release the
+    connection. A long-lived caller such as the web server runs many, so it
+    opens the service per run through this instead.
+    """
+    repo = RunRepository()
+    try:
+        yield BenchmarkService(repo=repo, reporter=MarkdownReporter(root=output_dir))
+    finally:
+        repo.close()

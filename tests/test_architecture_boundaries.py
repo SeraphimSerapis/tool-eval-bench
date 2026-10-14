@@ -52,6 +52,24 @@ LAYER_IMPORT_RULES: dict[str, frozenset[str]] = {
             "runner",
             "storage",
             "utils",
+            "web",
+        }
+    ),
+    "web": frozenset(
+        {
+            "adapters",
+            "api",
+            "application",
+            "cli",
+            "compare_reports",
+            "domain",
+            "evals",
+            "plugins",
+            "runner",
+            "schema",
+            "storage",
+            "utils",
+            "web",
         }
     ),
 }
@@ -65,6 +83,7 @@ FORBIDDEN_MODULES: dict[str, frozenset[str]] = {
     # module that opens its own repository leaks a WAL connection on every
     # early return, which is exactly how it went wrong before.
     "cli": frozenset({"tool_eval_bench.storage.db"}),
+    "web": frozenset({"tool_eval_bench.storage.db"}),
 }
 
 # Compatibility modules may deliberately point against the normal dependency

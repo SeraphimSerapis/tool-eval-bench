@@ -35,6 +35,11 @@ def _default_db_path() -> str:
     return str(Path.cwd() / "data" / "benchmarks.sqlite")
 
 
+def _json_field(column: str, key: str) -> str:
+    """SQL reading one top-level JSON key, NULL when the stored text is not valid JSON."""
+    return f"json_extract(CASE WHEN json_valid({column}) THEN {column} END, '$.{key}')"
+
+
 def _split_traces(scores: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """Return *scores* with per-scenario traces removed, plus the traces.
 
@@ -389,8 +394,12 @@ class RunRepository:
         *,
         run_type: str | None = None,
         status: str | None = None,
+        search: str | None = None,
     ) -> List[dict[str, Any]]:
-        """List recent runs, optionally filtered by model, run type, and status.
+        """List recent runs, optionally filtered by model, run type, status, and search text.
+
+        ``search`` is a case-insensitive substring match on the run id, model,
+        run label, and backend, applied before ``limit``.
 
         Scenario results come back without ``raw_log``; listing is used by
         ``history``, ``leaderboard``, and ``export``, none of which read traces.
@@ -407,6 +416,22 @@ class RunRepository:
             if value:
                 conditions.append(f"{column} = ?")
                 params.append(value)
+        if search:
+            # instr() rather than LIKE, so % and _ in the search text match literally.
+            needle = search.lower()
+            searched = (
+                "run_id",
+                "model",
+                _json_field("metadata_json", "label"),
+                _json_field("metadata_json", "backend"),
+                _json_field("config_json", "backend"),
+            )
+            conditions.append(
+                "("
+                + " OR ".join(f"instr(lower(coalesce({col}, '')), ?) > 0" for col in searched)
+                + ")"
+            )
+            params.extend([needle] * len(searched))
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         query += " ORDER BY created_at DESC LIMIT ?"

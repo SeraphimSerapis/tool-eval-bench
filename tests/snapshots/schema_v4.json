@@ -696,6 +696,24 @@
     },
     {
       "default": false,
+      "description": "Launch the local web UI and exit when stopped",
+      "name": "serve",
+      "type": "bool"
+    },
+    {
+      "default": "127.0.0.1",
+      "description": "Bind address for --serve (default: 127.0.0.1)",
+      "name": "serve_host",
+      "type": "string"
+    },
+    {
+      "default": 8080,
+      "description": "Bind port for --serve (default: 8080)",
+      "name": "serve_port",
+      "type": "int"
+    },
+    {
+      "default": false,
       "description": "Weight scenario scores by difficulty tier (1\u00d7trivial \u2026 5\u00d7very hard)",
       "name": "weight_by_difficulty",
       "type": "bool"
@@ -781,6 +799,12 @@
     "run": {
       "description": "Run tool-call scenarios",
       "legacy_flags": []
+    },
+    "serve": {
+      "description": "Launch the local web UI for browsing, live runs, and launching benchmarks",
+      "legacy_flags": [
+        "serve"
+      ]
     },
     "spec-live": {
       "description": "Live-monitor speculative decoding metrics",
