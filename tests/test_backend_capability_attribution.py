@@ -443,6 +443,14 @@ async def test_repeated_probe_truncation_is_inconclusive(concurrency: int, caplo
             ChatCompletionResult(content=" \n\t", finish_reason="stop"),
             "inconclusive; probe returned no tool call or answer",
         ),
+        (
+            ChatCompletionResult(content="", finish_reason="length"),
+            "exhausted both token budgets without a tool call;",
+        ),
+        (
+            ChatCompletionResult(content="Well, the word is", finish_reason="length"),
+            "exhausted both token budgets without a tool call, leaving partial text;",
+        ),
         (ChatCompletionResult(content="", transport_error_status=400), "HTTP 400"),
         (ChatCompletionResult(content="", malformed=True), "not valid JSON"),
         (RuntimeError("connection reset"), "inconclusive; probe request failed"),

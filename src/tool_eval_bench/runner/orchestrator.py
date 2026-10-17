@@ -1105,6 +1105,10 @@ async def probe_tool_choice_required(
     elif not result.tool_calls:
         if result.finish_reason == "length":
             detail = "inconclusive; probe exhausted both token budgets without a tool call"
+            # Truncated text may be prose or a call cut off before it parsed,
+            # so it is reported, not read as non-enforcement.
+            if result.content.strip():
+                detail += ", leaving partial text"
         elif result.content.strip():
             detail = "not enforced; the endpoint answered in prose when told not to call"
         else:
