@@ -77,10 +77,12 @@ tool-eval-bench bench --context-pressure-sweep 0.5-1.0 --categories O
 The sweep runs each selected scenario at every pressure level, displays a compact summary panel with pass/fail status per level, and reports the **breaking point** (highest pressure where all scenarios still pass). It early-stops after 2 consecutive all-fail levels.
 
 Infrastructure failures are left out of the score, as they are in scored runs:
-timeouts, connection errors, 5xx responses, and TC-45 on an endpoint that does
-not enforce `tool_choice='required'`. They do not count against a level's pass
-rate, the breaking point, the first degradation, or the all-fail early stop. A
-level that fails as a whole, before any scenario is scored, counts the same way.
+timeouts, connection errors, 5xx responses, and TC-45 when the probe does not
+establish that the endpoint enforces `tool_choice='required'`, whether the
+endpoint ignores it or the probe is inconclusive. They do not count against a
+level's pass rate, the breaking point, the first degradation, or the all-fail
+early stop. A level that fails as a whole, before any scenario is scored, counts
+the same way.
 Each level stores `excluded_count` and the `excluded_scenarios` IDs, and the
 report marks each excluded scenario. A level where every scenario was excluded
 shows no pass rate, and two such levels in a row stop the sweep, because the

@@ -259,9 +259,10 @@ def run_pressure_sweep(
                 for sr in summary.scenario_results:
                     results_map[sr.scenario_id] = sr.status.value
                 # Infrastructure failures (timeouts, connection errors, 5xx, and
-                # TC-45's exclusion on an endpoint that ignores tool_choice) say
-                # nothing about the model at this fill. As in scored runs they
-                # leave the pass rate, the breaking point, and the early stop.
+                # TC-45's exclusion when the probe does not establish that
+                # tool_choice is enforced) say nothing about the model at this
+                # fill. As in scored runs they leave the pass rate, the breaking
+                # point, and the early stop.
                 excluded = {
                     sr.scenario_id
                     for sr in summary.scenario_results
