@@ -439,6 +439,10 @@ async def test_repeated_probe_truncation_is_inconclusive(concurrency: int, caplo
     [
         (ChatCompletionResult(content="OK", finish_reason="stop"), "not enforced"),
         (ChatCompletionResult(content="", finish_reason="stop"), "inconclusive"),
+        (
+            ChatCompletionResult(content=" \n\t", finish_reason="stop"),
+            "inconclusive; probe returned no tool call or answer",
+        ),
         (ChatCompletionResult(content="", transport_error_status=400), "HTTP 400"),
         (ChatCompletionResult(content="", malformed=True), "not valid JSON"),
         (RuntimeError("connection reset"), "inconclusive; probe request failed"),
@@ -457,6 +461,21 @@ async def test_probe_retry_classifies_final_reply(
     assert adapter.calls == 2
     assert expected in probe.detail
     assert "retry" in probe.detail
+
+
+@pytest.mark.asyncio
+async def test_probe_does_not_retry_after_a_first_attempt_exception() -> None:
+    adapter = ScriptedAdapter([RuntimeError("connection reset")])
+
+    probe = await probe_tool_choice_required(
+        adapter, model="m", base_url="http://x", api_key=None, timeout_seconds=5
+    )
+
+    assert not probe.enforced
+    assert adapter.calls == 1
+    assert probe.detail.startswith("inconclusive; probe request failed (connection reset)")
+    assert "probe(max_tokens=256, request failed)" in probe.detail
+    assert "retry" not in probe.detail
 
 
 @pytest.mark.asyncio
