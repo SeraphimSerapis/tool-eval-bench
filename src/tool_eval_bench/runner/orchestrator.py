@@ -1004,9 +1004,10 @@ _TOOL_CHOICE_PROBE_TOOLS: list[dict[str, Any]] = [
 
 @dataclass(frozen=True)
 class ToolChoiceProbe:
-    """What one forced call told us about the endpoint.
+    """What the forced-call probe established about the endpoint.
 
-    ``enforced`` is whether a tool call came back at all. ``arguments_intact``
+    ``enforced`` is whether a tool call came back at all. False also covers
+    inconclusive probes; ``detail`` explains why. ``arguments_intact``
     is whether that call carried the schema's required argument: an endpoint
     whose tool parser drops arguments under a forced call produces ``{}``,
     which a scenario would otherwise grade as the model sending an empty
@@ -1040,55 +1041,81 @@ async def probe_tool_choice_required(
     prompt on an enforcing endpoint still produces a call, because the grammar
     leaves it no other output; on a non-enforcing endpoint it answers in prose.
     Asking the model to call the tool would only prove it was willing to.
+    A reasoning model can exhaust the initial budget before reaching the call.
+    Retry that case once with more tokens before drawing a conclusion.
     """
-    try:
-        result = await adapter.chat_completion(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": "Reply with the single word OK. Do not call any tools.",
-                }
-            ],
-            tools=_TOOL_CHOICE_PROBE_TOOLS,
-            tool_choice="required",
-            temperature=0.0,
-            max_tokens=256,
-            timeout_seconds=timeout_seconds,
-            api_key=api_key,
-            base_url=base_url,
-            extra_params=extra_params,
-            stream=False,
+    # The probe owns its budget. Adapter extras otherwise override max_tokens,
+    # which could silently cap the retry at the same low ceiling.
+    probe_extra = dict(extra_params or {})
+    probe_extra.pop("max_tokens", None)
+    probe_extra.pop("max_completion_tokens", None)
+    attempts: list[str] = []
+    for max_tokens in (256, 4096):
+        label = "probe" if not attempts else "retry"
+        try:
+            result = await adapter.chat_completion(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": "Reply with the single word OK. Do not call any tools.",
+                    }
+                ],
+                tools=_TOOL_CHOICE_PROBE_TOOLS,
+                tool_choice="required",
+                temperature=0.0,
+                max_tokens=max_tokens,
+                timeout_seconds=timeout_seconds,
+                api_key=api_key,
+                base_url=base_url,
+                extra_params=probe_extra or None,
+                stream=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed probe cannot establish enforcement
+            logger.warning("tool_choice=required %s failed (%s); probe inconclusive", label, exc)
+            attempts.append(f"{label}(max_tokens={max_tokens}, request failed)")
+            return ToolChoiceProbe(
+                False, False, f"inconclusive; probe request failed ({exc}); " + "; ".join(attempts)
+            )
+        attempts.append(
+            f"{label}(max_tokens={max_tokens}, finish_reason={result.finish_reason}, "
+            f"completion_tokens={result.completion_tokens})"
         )
-    except Exception as exc:  # noqa: BLE001 - any failure means "cannot rely on it"
-        logger.warning("tool_choice=required probe failed (%s); treating as unsupported", exc)
-        return ToolChoiceProbe(False, False, f"probe request failed ({exc})")
+        if (
+            result.transport_error_status is not None
+            or result.malformed
+            or result.tool_calls
+            or result.finish_reason != "length"
+        ):
+            break
+
+    enforced = False
+    arguments_intact = False
     if result.transport_error_status is not None:
-        logger.warning(
-            "Endpoint rejected tool_choice=required with HTTP %d; treating as unsupported",
-            result.transport_error_status,
+        detail = f"probe request rejected with HTTP {result.transport_error_status}"
+    elif result.malformed:
+        detail = "inconclusive; probe response was not valid JSON"
+    elif not result.tool_calls:
+        if result.finish_reason == "length":
+            detail = "inconclusive; probe exhausted both token budgets without a tool call"
+        elif result.content.strip():
+            detail = "not enforced; the endpoint answered in prose when told not to call"
+        else:
+            detail = "inconclusive; probe returned no tool call or answer"
+    else:
+        enforced = True
+        call = result.tool_calls[0]
+        arguments_intact = call.name == "probe_ping" and bool(
+            str(call.arguments.get("value", "")).strip()
         )
-        return ToolChoiceProbe(
-            False,
-            False,
-            f"endpoint rejected the parameter with HTTP {result.transport_error_status}",
-        )
-    if result.malformed:
-        logger.warning("tool_choice=required probe returned invalid JSON; treating as unsupported")
-        return ToolChoiceProbe(False, False, "probe response was not valid JSON")
-    if not result.tool_calls:
-        return ToolChoiceProbe(
-            False, False, "not enforced; the endpoint answered in prose when told not to call"
-        )
-    call = result.tool_calls[0]
-    if call.name == "probe_ping" and str(call.arguments.get("value", "")).strip():
-        return ToolChoiceProbe(True, True, "enforced by the endpoint; probe call carried arguments")
-    return ToolChoiceProbe(
-        True,
-        False,
-        "enforced by the endpoint, but the probe call arrived with empty arguments; "
-        "empty-argument calls in this scenario may be the tool parser rather than the model",
-    )
+        if arguments_intact:
+            detail = "enforced by the endpoint; probe call carried arguments"
+        else:
+            detail = (
+                "enforced by the endpoint, but the probe call arrived with empty arguments; "
+                "empty-argument calls in this scenario may be the tool parser rather than the model"
+            )
+    return ToolChoiceProbe(enforced, arguments_intact, f"{detail}; " + "; ".join(attempts))
 
 
 async def supports_tool_choice_required(
@@ -1113,9 +1140,9 @@ async def supports_tool_choice_required(
 
 
 def _unsupported_tool_choice_result(scenario: ScenarioDefinition) -> ScenarioResult:
-    """Build the excluded result for a scenario the endpoint cannot host."""
+    """Build the excluded result when the probe did not establish enforcement."""
     summary = (
-        "Endpoint does not enforce tool_choice='required', so this scenario "
+        "The probe did not establish enforcement of tool_choice='required', so this scenario "
         "cannot distinguish a model that ignored the constraint from one that "
         "never received it. Excluded from scoring."
     )
@@ -1239,8 +1266,8 @@ async def run_all_scenarios(
     total = len(target_scenarios)
 
     # Scenarios that force a tool call only mean something on an endpoint that
-    # enforces the constraint. Probe once, and only when such a scenario was
-    # actually selected, so an ordinary run pays nothing.
+    # enforces the constraint. Probe only when such a scenario was selected,
+    # with one retry on truncation, so an ordinary run pays nothing.
     forced_tool_choice = [s for s in target_scenarios if s.tool_choice_override == "required"]
     unsupported_ids: set[str] = set()
     probe: ToolChoiceProbe | None = None
@@ -1256,8 +1283,9 @@ async def run_all_scenarios(
         if not probe.enforced:
             unsupported_ids = {s.id for s in forced_tool_choice}
             logger.warning(
-                "Excluding %s from scoring: the endpoint does not enforce tool_choice='required'.",
+                "Excluding %s from scoring: tool_choice='required' probe: %s",
                 ", ".join(sorted(unsupported_ids)),
+                probe.detail,
             )
     forced_ids = {s.id for s in forced_tool_choice}
 

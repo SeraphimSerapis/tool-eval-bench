@@ -18,9 +18,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import httpx
 import pytest
 
 from tool_eval_bench.adapters.base import BackendAdapter, ChatCompletionResult, ProviderToolCall
+from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
 from tool_eval_bench.domain.scenarios import (
     Category,
     FailureKind,
@@ -48,9 +50,9 @@ BY_ID = {s.id: s for s in ALL_SCENARIOS_WITH_HARDMODE}
 
 
 class ScriptedAdapter(BackendAdapter):
-    """Returns queued results, recording the tool_choice each request carried."""
+    """Returns queued results or raises, recording each request's tool_choice."""
 
-    def __init__(self, results: list[ChatCompletionResult]) -> None:
+    def __init__(self, results: list[ChatCompletionResult | Exception]) -> None:
         self._results = list(results)
         self.tool_choices: list[Any] = []
         self.calls = 0
@@ -60,7 +62,10 @@ class ScriptedAdapter(BackendAdapter):
         self.calls += 1
         if not self._results:
             return ChatCompletionResult(content="[exhausted]")
-        return self._results.pop(0)
+        result = self._results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class RaisingAdapter(BackendAdapter):
@@ -244,11 +249,180 @@ async def test_probe_reports_support_when_a_tool_call_comes_back() -> None:
 @pytest.mark.asyncio
 async def test_probe_reports_no_support_when_the_parameter_is_silently_dropped() -> None:
     """The failure mode nothing else can detect: accepted, then ignored."""
-    adapter = ScriptedAdapter([ChatCompletionResult(content="56", tool_calls=[])])
+    adapter = ScriptedAdapter(
+        [ChatCompletionResult(content="56", finish_reason="stop", completion_tokens=1)]
+    )
 
-    assert not await supports_tool_choice_required(
+    probe = await probe_tool_choice_required(
         adapter, model="m", base_url="http://x", api_key=None, timeout_seconds=5
     )
+
+    assert not probe.enforced
+    assert adapter.calls == 1
+    assert "not enforced" in probe.detail
+    assert "finish_reason=stop" in probe.detail
+    assert "completion_tokens=1" in probe.detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "token_overrides",
+    [
+        {},
+        {"max_tokens": 1},
+        {"max_completion_tokens": 1},
+        {"max_tokens": 1, "max_completion_tokens": 1},
+    ],
+)
+async def test_truncated_probe_retries_with_larger_wire_budget(token_overrides: dict) -> None:
+    payloads: list[dict] = []
+    extra = {**token_overrides, "top_p": 0.9}
+    original = extra.copy()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        if len(payloads) == 1:
+            message = {"content": "", "reasoning_content": "Still thinking about the constraint"}
+            finish, tokens = "length", 256
+        else:
+            message = {
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "probe",
+                        "type": "function",
+                        "function": {"name": "probe_ping", "arguments": '{"value":"ok"}'},
+                    }
+                ],
+            }
+            finish, tokens = "tool_calls", 42
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": message, "finish_reason": finish}],
+                "usage": {"completion_tokens": tokens},
+            },
+        )
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    try:
+        probe = await probe_tool_choice_required(
+            adapter,
+            model="m",
+            base_url="http://x",
+            api_key=None,
+            timeout_seconds=5,
+            extra_params=extra,
+        )
+    finally:
+        await adapter.aclose()
+
+    assert probe.enforced and probe.arguments_intact
+    assert [p["max_tokens"] for p in payloads] == [256, 4096]
+    assert all("max_completion_tokens" not in p for p in payloads)
+    assert all(p["top_p"] == 0.9 and p["tool_choice"] == "required" for p in payloads)
+    assert extra == original
+    assert "finish_reason=length" in probe.detail
+    assert "completion_tokens=256" in probe.detail
+    assert "retry" in probe.detail
+    assert "finish_reason=tool_calls" in probe.detail
+    assert "completion_tokens=42" in probe.detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("concurrency", [1, 2])
+async def test_truncated_probe_recovery_keeps_forced_scenario_in_score(concurrency: int) -> None:
+    adapter = ScriptedAdapter(
+        [
+            ChatCompletionResult(content="", finish_reason="length", completion_tokens=256),
+            ChatCompletionResult(content="", tool_calls=[_tool_call()], finish_reason="tool_calls"),
+            ChatCompletionResult(content="56"),
+        ]
+    )
+    summary = await run_all_scenarios(
+        adapter,
+        model="m",
+        base_url="http://x",
+        scenarios=[_trivial_scenario("TC-45", tool_choice_override="required")],
+        concurrency=concurrency,
+    )
+
+    assert adapter.calls == 3
+    assert summary.excluded_scenarios == []
+    assert summary.max_points == summary.total_points == 2
+    assert summary.completion_rate == 100.0
+    assert "retry" in summary.scenario_results[0].diagnostics["tool_choice"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("concurrency", [1, 2])
+async def test_repeated_probe_truncation_is_inconclusive(concurrency: int, caplog) -> None:
+    adapter = ScriptedAdapter(
+        [
+            ChatCompletionResult(content="", finish_reason="length", completion_tokens=256),
+            ChatCompletionResult(
+                content="unfinished", finish_reason="length", completion_tokens=4096
+            ),
+        ]
+    )
+    summary = await run_all_scenarios(
+        adapter,
+        model="m",
+        base_url="http://x",
+        scenarios=[_trivial_scenario("TC-45", tool_choice_override="required")],
+        concurrency=concurrency,
+    )
+
+    assert adapter.calls == 2
+    assert summary.excluded_scenarios == ["TC-45"]
+    assert summary.max_points == 0
+    result = summary.scenario_results[0]
+    assert "inconclusive" in result.diagnostics["tool_choice"]
+    assert "completion_tokens=4096" in result.diagnostics["tool_choice"]
+    assert "does not enforce" not in result.summary
+    assert "does not enforce" not in caplog.text
+    assert "inconclusive" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        (ChatCompletionResult(content="OK", finish_reason="stop"), "not enforced"),
+        (ChatCompletionResult(content="", finish_reason="stop"), "inconclusive"),
+        (ChatCompletionResult(content="", transport_error_status=400), "HTTP 400"),
+        (ChatCompletionResult(content="", malformed=True), "not valid JSON"),
+        (RuntimeError("connection reset"), "inconclusive; probe request failed"),
+    ],
+)
+async def test_probe_retry_classifies_final_reply(
+    reply: ChatCompletionResult | Exception, expected: str
+) -> None:
+    adapter = ScriptedAdapter([ChatCompletionResult(content="", finish_reason="length"), reply])
+
+    probe = await probe_tool_choice_required(
+        adapter, model="m", base_url="http://x", api_key=None, timeout_seconds=5
+    )
+
+    assert not probe.enforced
+    assert adapter.calls == 2
+    assert expected in probe.detail
+    assert "retry" in probe.detail
+
+
+@pytest.mark.asyncio
+async def test_probe_does_not_retry_when_truncated_reply_contains_a_call() -> None:
+    adapter = ScriptedAdapter(
+        [ChatCompletionResult(content="", tool_calls=[_tool_call()], finish_reason="length")]
+    )
+
+    probe = await probe_tool_choice_required(
+        adapter, model="m", base_url="http://x", api_key=None, timeout_seconds=5
+    )
+
+    assert probe.enforced
+    assert adapter.calls == 1
 
 
 @pytest.mark.asyncio

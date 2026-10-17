@@ -432,4 +432,5 @@ async def test_tool_choice_probe_reports_an_unreadable_response() -> None:
     )
 
     assert probe.enforced is False
-    assert probe.detail == "probe response was not valid JSON"
+    assert "inconclusive; probe response was not valid JSON" in probe.detail
+    assert "finish_reason=None" in probe.detail
