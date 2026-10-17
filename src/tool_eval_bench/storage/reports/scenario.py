@@ -209,9 +209,14 @@ def write_scenario_report(
             if context_pressure_config.get("fill_tokens_estimated")
             else ""
         )
+        setting = (
+            f"{context_pressure_config['fill_tokens_requested']:,} tokens"
+            if context_pressure_config.get("fill_tokens_requested") is not None
+            else f"{pct}%"
+        )
         md.insert(
             -1,
-            f"- **Context Pressure**: {pct}% (~{fill_tokens:,} tokens prefilled of "
+            f"- **Context Pressure**: {setting} (~{fill_tokens:,} tokens prefilled of "
             f"{ctx_size:,} context{estimate_note})",
         )
 

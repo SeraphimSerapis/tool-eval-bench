@@ -8,7 +8,7 @@ Covers:
   - KV capacity capping in prepare_context_pressure
   - ContextPressureConfig summary string
   - Integration with the orchestrator (_initial_messages)
-  - Per-scenario nonce injection for prefix cache isolation
+  - Filler prefix shared across scenarios for prefix caching
   - Reservation constant (12K headroom for ratio=1.0)
   - Sweep range parsing and level generation
   - Sweep runner integration (mocked orchestrator, early stop, redact-url)
@@ -671,6 +671,37 @@ class TestPrepareContextPressure:
                 )
 
     @pytest.mark.asyncio
+    async def test_fill_tokens_fills_exactly_that_many(self) -> None:
+        """--context-fill-tokens is not scaled by the window or quantised to chunks."""
+        cfg = await prepare_context_pressure(
+            "http://localhost:8080",
+            "test-model",
+            None,
+            ratio=0.0,
+            context_size_override=262_144,
+            client_factory=_unused_measurement_client_factory,
+            fill_tokens=140_000,
+        )
+        available = 262_144 - _RESERVED_FOR_OUTPUT - _RESERVED_FOR_SCENARIO
+        assert cfg.fill_tokens == cfg.fill_tokens_requested == 140_000
+        assert cfg.ratio == round(140_000 / available, 4)
+        assert cfg.summary().startswith("~137K tokens prefilled in 256K context")
+
+    @pytest.mark.asyncio
+    async def test_fill_tokens_that_leave_no_room_are_refused(self) -> None:
+        available = 131_072 - _RESERVED_FOR_OUTPUT - _RESERVED_FOR_SCENARIO
+        with pytest.raises(ValueError, match=f"at most {available:,} can be filled"):
+            await prepare_context_pressure(
+                "http://localhost:8080",
+                "test-model",
+                None,
+                ratio=0.0,
+                context_size_override=131_072,
+                client_factory=_unused_measurement_client_factory,
+                fill_tokens=available + 1,
+            )
+
+    @pytest.mark.asyncio
     async def test_kv_capacity_caps_context_size(self) -> None:
         """When KV cache capacity < max_model_len (standard model), context should be capped."""
         kv_info = KvCapacityInfo(capacity=117408, num_blocks=7338, block_size=16, is_hybrid=False)
@@ -847,31 +878,8 @@ class TestOrchestratorIntegration:
         assert msgs[4]["content"] == "ack_2"
         assert msgs[5]["content"] == "Real question"
 
-    def test_scenario_nonce_injected_into_first_filler(self) -> None:
-        """When scenario_id is provided, a unique nonce prefix should be
-        injected into the first filler user message to defeat prefix caching.
-        (Regression test for #4.)"""
-        from tool_eval_bench.runner.orchestrator import _initial_messages
-
-        pressure = [
-            {"role": "user", "content": "Background filler text..."},
-            {"role": "assistant", "content": "Understood."},
-        ]
-
-        msgs = _initial_messages(
-            "What's the weather?",
-            context_pressure_messages=pressure,
-            scenario_id="TC-64",
-        )
-
-        assert len(msgs) == 4
-        # The first filler message should contain the scenario nonce
-        assert msgs[1]["content"].startswith("[scenario:TC-64]")
-        assert "Background filler text" in msgs[1]["content"]
-
-    def test_scenario_nonce_does_not_mutate_original(self) -> None:
-        """The original pressure_messages list must not be mutated when a
-        scenario nonce is injected."""
+    def test_filler_does_not_mutate_original(self) -> None:
+        """A scenario editing its messages must not reach the filler shared by the run."""
         from tool_eval_bench.runner.orchestrator import _initial_messages
 
         pressure = [
@@ -879,18 +887,14 @@ class TestOrchestratorIntegration:
             {"role": "assistant", "content": "Understood."},
         ]
 
-        _initial_messages(
-            "Question 1",
-            context_pressure_messages=pressure,
-            scenario_id="TC-01",
-        )
+        msgs = _initial_messages("Question 1", context_pressure_messages=pressure)
+        msgs[1]["content"] = "edited"
 
-        # Original should be unmodified
         assert pressure[0]["content"] == "Original filler text"
 
-    def test_different_scenarios_get_different_prefixes(self) -> None:
-        """Two scenarios with different IDs should produce different filler
-        message prefixes — ensuring prefix caching can't help either one."""
+    def test_scenarios_share_the_filler_prefix(self) -> None:
+        """Every scenario sends the same system prompt and filler, so a server with
+        prefix caching prefills the filler once per run, not once per scenario."""
         from tool_eval_bench.runner.orchestrator import _initial_messages
 
         pressure = [
@@ -898,21 +902,11 @@ class TestOrchestratorIntegration:
             {"role": "assistant", "content": "OK."},
         ]
 
-        msgs_a = _initial_messages(
-            "Question A",
-            context_pressure_messages=pressure,
-            scenario_id="TC-61",
-        )
-        msgs_b = _initial_messages(
-            "Question B",
-            context_pressure_messages=pressure,
-            scenario_id="TC-64",
-        )
+        msgs_a = _initial_messages("Question A", context_pressure_messages=pressure)
+        msgs_b = _initial_messages("Question B", context_pressure_messages=pressure)
 
-        # First filler message should differ between scenarios
-        assert msgs_a[1]["content"] != msgs_b[1]["content"]
-        assert "[scenario:TC-61]" in msgs_a[1]["content"]
-        assert "[scenario:TC-64]" in msgs_b[1]["content"]
+        assert msgs_a[:-1] == msgs_b[:-1]
+        assert msgs_a[-1] != msgs_b[-1]
 
 
 # ---------------------------------------------------------------------------

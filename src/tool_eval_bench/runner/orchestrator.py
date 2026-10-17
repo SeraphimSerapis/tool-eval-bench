@@ -188,7 +188,6 @@ def _initial_messages(
     reference_date: str | None = None,
     reference_day: str | None = None,
     context_pressure_messages: list[ChatMessage] | None = None,
-    scenario_id: str | None = None,
     system_prompt: str | None = None,
 ) -> list[ChatMessage]:
     ref_date = reference_date or BENCHMARK_REFERENCE_DATE
@@ -209,22 +208,12 @@ def _initial_messages(
     ]
     # Inject context pressure filler turns (if any) between system prompt
     # and the real user message to simulate a busy conversation history.
+    # Every scenario gets the same filler, so a server with prefix caching
+    # prefills it once per run instead of once per scenario. A cached prefix
+    # yields the same KV as a cold one; only latency differs, and the timeout
+    # is scaled to the fill. Copied so a scenario cannot mutate the shared list.
     if context_pressure_messages:
-        # Deep-copy and inject a per-scenario nonce into the first user
-        # filler message.  Without this, the server's prefix cache (enabled
-        # by default in vLLM) recognises the identical filler prefix from
-        # an earlier scenario and reuses cached KV entries — giving later
-        # scenarios an unfair performance boost while the first scenario
-        # (which must compute from scratch) consistently fails.  The nonce
-        # makes every scenario's token prefix unique, ensuring consistent
-        # evaluation conditions across all scenarios.  (Fixes #4)
-        if scenario_id:
-            patched = copy.deepcopy(context_pressure_messages)
-            if patched and patched[0]["role"] == "user":
-                patched[0]["content"] = f"[scenario:{scenario_id}] " + (patched[0]["content"] or "")
-            msgs.extend(patched)
-        else:
-            msgs.extend(context_pressure_messages)
+        msgs.extend(copy.deepcopy(context_pressure_messages))
     msgs.append({"role": "user", "content": user_message})
     return msgs
 
@@ -429,7 +418,6 @@ async def run_scenario(
         reference_date=reference_date,
         reference_day=reference_day,
         context_pressure_messages=context_pressure_messages,
-        scenario_id=scenario.id,
         system_prompt=system_prompt,
     )
     # None → use defaults; [] → explicitly no tools
@@ -1135,6 +1123,58 @@ def _tag_errors(callback: Callable[..., Awaitable[None]]) -> Callable[..., Await
     return call
 
 
+async def _warm_pressure_cache(
+    adapter: BackendAdapter,
+    *,
+    model: str,
+    base_url: str,
+    api_key: str | None,
+    timeout_seconds: float,
+    temperature: float,
+    reference_date: str | None,
+    reference_day: str | None,
+    extra_params: dict[str, Any] | None,
+    context_pressure_messages: list[ChatMessage],
+    system_prompt: str | None,
+) -> None:
+    """Prefill the shared filler once, unscored, so no scenario pays the cold prefill.
+
+    Sends the prefix every default-toolset scenario starts with: the same tools,
+    system prompt, and filler. Best effort: a failure only means the first
+    scenario prefills cold, as it would without the warm-up.
+    """
+    # ponytail: warms the default toolset only; scenarios with tools_override
+    # still prefill cold. Warm each distinct toolset if that cost shows up.
+    try:
+        result = await adapter.chat_completion(
+            model=model,
+            messages=_initial_messages(
+                "Reply with the single word OK.",
+                reference_date=reference_date,
+                reference_day=reference_day,
+                context_pressure_messages=context_pressure_messages,
+                system_prompt=system_prompt,
+            ),
+            tools=UNIVERSAL_TOOLS,
+            tool_choice="auto",
+            temperature=temperature,
+            max_tokens=1,
+            timeout_seconds=timeout_seconds,
+            api_key=api_key,
+            base_url=base_url,
+            extra_params=extra_params,
+            stream=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - the warm-up must never fail the run
+        logger.warning("Prefix-cache warm-up failed (%s); the first scenario prefills cold", exc)
+        return
+    if result.transport_error_status is not None:
+        logger.warning(
+            "Prefix-cache warm-up got HTTP %d; the first scenario prefills cold",
+            result.transport_error_status,
+        )
+
+
 async def run_all_scenarios(
     adapter: BackendAdapter,
     *,
@@ -1191,6 +1231,21 @@ async def run_all_scenarios(
                 ", ".join(sorted(unsupported_ids)),
             )
     forced_ids = {s.id for s in forced_tool_choice}
+
+    if context_pressure_messages:
+        await _warm_pressure_cache(
+            adapter,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+            temperature=temperature,
+            reference_date=reference_date,
+            reference_day=reference_day,
+            extra_params=extra_params,
+            context_pressure_messages=context_pressure_messages,
+            system_prompt=system_prompt,
+        )
 
     def _attach_probe(result: ScenarioResult) -> ScenarioResult:
         # The verdict stays the model's; the diagnostic tells the reader what

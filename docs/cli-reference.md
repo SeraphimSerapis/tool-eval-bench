@@ -232,6 +232,7 @@ These run alongside the tool-call scenarios, or on their own with `--skip-tool-e
 | `--spec-live` | Live dashboard of speculative-decoding metrics (also the `spec-live` subcommand) |
 | `--spec-live-interval S` | Seconds between scrapes (default: 1.0) |
 | `--context-pressure R` | Fill the context to ratio R (0–1) before each scenario |
+| `--context-fill-tokens N` | Fill exactly N tokens before each scenario, whatever the window (instead of `--context-pressure`) |
 | `--context-pressure-sweep A-B` | Sweep pressure from A to B in `--sweep-steps` levels (default: 5) |
 | `--context-size N` | Override the detected context window (`/v1/models`, TensorFold `/health`, or llama.cpp or Strata `/props`) |
 

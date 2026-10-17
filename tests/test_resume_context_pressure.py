@@ -194,3 +194,39 @@ def test_cli_resume_continues_under_the_same_pressure(monkeypatch: pytest.Monkey
 
     assert calls[0]["resume_run_id"] == "r"
     assert calls[0]["context_pressure_config"]["ratio"] == 0.5
+
+
+def _fixed(fill: int, context_size: int = CONTEXT, ratio: float = 0.5) -> dict:
+    return {
+        "ratio": ratio,
+        "fill_tokens": fill + 7,
+        "fill_tokens_target": fill,
+        "fill_tokens_requested": fill,
+        "context_size": context_size,
+    }
+
+
+@pytest.mark.parametrize(
+    ("previous", "current", "expected"),
+    [
+        (
+            _fixed(10_000),
+            _fixed(12_000),
+            "context_pressure fill (was 10,000 tokens, now 12,000 tokens)",
+        ),
+        (HALF, _fixed(10_000), "context_pressure fill (was 0.5, now 10,000 tokens)"),
+        ({}, _fixed(10_000), "context_pressure (was off, now 10,000 tokens)"),
+    ],
+    ids=["count-differs", "ratio-to-count", "added"],
+)
+def test_resume_refuses_a_fixed_fill_change(
+    previous: dict[str, Any], current: dict[str, Any], expected: str
+) -> None:
+    assert _mismatches({"context_pressure": previous} if previous else {}, current) == [expected]
+
+
+def test_resume_accepts_a_fixed_fill_on_a_different_window() -> None:
+    """The ratio a fixed fill records is derived from the window; it is not the setting."""
+    restarted = _fixed(10_000, context_size=CONTEXT * 2, ratio=0.25)
+
+    assert _mismatches({"context_pressure": _fixed(10_000)}, restarted) == []

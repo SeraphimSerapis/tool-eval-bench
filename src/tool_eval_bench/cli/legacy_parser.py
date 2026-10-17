@@ -644,6 +644,13 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Fill context to RATIO (0.0–1.0) before each scenario",
     )
     pressure.add_argument(
+        "--context-fill-tokens",
+        type=int,
+        default=None,
+        metavar="TOKENS",
+        help="Fill exactly TOKENS of context before each scenario (instead of --context-pressure)",
+    )
+    pressure.add_argument(
         "--context-size",
         type=int,
         default=None,

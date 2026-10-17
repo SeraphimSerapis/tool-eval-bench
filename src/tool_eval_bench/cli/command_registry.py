@@ -84,7 +84,13 @@ SPEC = (
     "spec_runs",
     "metrics_url",
 )
-PRESSURE = ("context_pressure", "context_size", "context_pressure_sweep", "sweep_steps")
+PRESSURE = (
+    "context_pressure",
+    "context_fill_tokens",
+    "context_size",
+    "context_pressure_sweep",
+    "sweep_steps",
+)
 PLUGIN_LEGACY = (
     "gsm8k",
     "gsm8k_only",

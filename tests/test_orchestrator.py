@@ -1575,3 +1575,31 @@ async def test_run_all_scenarios_forwards_the_override(concurrency: int) -> None
     ]
     assert len(systems) == len(scenarios)
     assert all("OVERRIDE-MARKER" in message["content"] for message in systems)
+
+
+@pytest.mark.parametrize("warmup_fails", [False, True], ids=["warm", "warmup-fails"])
+@pytest.mark.asyncio
+async def test_context_pressure_warms_the_shared_prefix_unscored(warmup_fails: bool) -> None:
+    """One unscored request prefills the filler, then every scenario reuses its prefix."""
+    filler = [
+        {"role": "user", "content": "filler chunk"},
+        {"role": "assistant", "content": "Understood."},
+    ]
+    warmup = ChatCompletionResult(content="", transport_error_status=503 if warmup_fails else None)
+    adapter = MockAdapter([warmup, {"content": "sunny"}])
+
+    summary = await run_all_scenarios(
+        adapter,
+        model="test",
+        base_url="http://localhost:8000",
+        scenarios=[MOCK_SCENARIO],
+        context_pressure_messages=filler,
+    )
+
+    warm, scored = adapter.captured_payloads
+    assert warm["max_tokens"] == 1
+    assert warm["tools"] == scored["tools"]
+    assert warm["messages"][:-1] == scored["messages"][:-1]
+    assert scored["messages"][-1]["content"] == MOCK_SCENARIO.user_message
+    assert [r.scenario_id for r in summary.scenario_results] == ["TEST-01"]
+    assert summary.scenario_results[0].turn_count == 1

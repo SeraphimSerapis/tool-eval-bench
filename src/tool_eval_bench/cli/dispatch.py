@@ -1438,6 +1438,14 @@ def _validate_run_ranges(args: argparse.Namespace, parser: argparse.ArgumentPars
         value = getattr(args, attr, None)
         if value is not None and not (0.0 <= value <= 1.0):
             parser.error(f"{flag} must be between 0 and 1, got {value}")
+    fill_tokens = getattr(args, "context_fill_tokens", None)
+    if fill_tokens is not None:
+        if fill_tokens < 1:
+            parser.error(f"--context-fill-tokens must be at least 1, got {fill_tokens}")
+        if getattr(args, "context_pressure", None) is not None:
+            parser.error("--context-fill-tokens cannot be combined with --context-pressure")
+        if getattr(args, "context_pressure_sweep", None) is not None:
+            parser.error("--context-fill-tokens cannot be combined with --context-pressure-sweep")
 
 
 def _validate_explicit_scenarios(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -1765,14 +1773,15 @@ def _ready_target(target: _Target, probe_headers: Mapping[str, str]) -> _Target:
 
 
 def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
-    """Build the ``--context-pressure`` filler.
+    """Build the ``--context-pressure`` or ``--context-fill-tokens`` filler.
 
     Scales ``args.timeout`` for a large fill; that must happen before the
     resume check and the run read it.
     """
     args, console = target.args, target.console
     base_url, model, api_key = target.base_url, target.model, target.api_key
-    if args.context_pressure is None:
+    fill_tokens_requested = getattr(args, "context_fill_tokens", None)
+    if args.context_pressure is None and fill_tokens_requested is None:
         return None
 
     from rich.progress import BarColumn, Progress, TextColumn
@@ -1786,7 +1795,7 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
         reported_context_window,
     )
 
-    ratio = max(0.0, min(1.0, args.context_pressure))
+    ratio = max(0.0, min(1.0, args.context_pressure or 0.0))
     try:
         pressure_cfg = asyncio.run(
             prepare_context_pressure(
@@ -1798,6 +1807,7 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
                 metrics_url=args.metrics_url,
                 client_factory=HTTPMeasurementClient,
                 reported_context=reported_context_window(target.run_context),
+                fill_tokens=fill_tokens_requested,
             )
         )
         if ratio > 0 and pressure_cfg.fill_tokens == 0:
@@ -1858,6 +1868,8 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
             "fill_tokens_target": pressure_cfg.fill_tokens,
             "context_size": pressure_cfg.detected_context,
         }
+        if fill_tokens_requested is not None:
+            pressure_config_dict["fill_tokens_requested"] = fill_tokens_requested
         if estimated:
             # No usable /tokenize: fill_tokens is the 4 chars/token estimate,
             # which runs well above real counts on common tokenizers.
@@ -1889,7 +1901,11 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
                 f"  [dim]  Budget: [bold]{fill_k:.0f}K[/] fill │ "
                 f"~{tool_k:.0f}K tools ({num_tools} loaded) │ "
                 f"{out_k:.0f}K output │ "
-                f"{head_k:.0f}K scenario headroom[/]\n"
+                f"{head_k:.0f}K scenario headroom[/]"
+            )
+            console.print(
+                "  [dim]  An unscored warm-up request prefills the filler once so every "
+                "scenario starts from the server's prefix cache[/]\n"
             )
         # Auto-scale timeout for context pressure: large fills need
         # significant prefill time.  Without this, a 182K fill at the
