@@ -126,8 +126,9 @@ runs:
   not have. TC-45 forces a tool call, so it is excluded when a probe cannot
   establish enforcement of `tool_choice="required"`. The probe starts with a
   256-token budget and retries once at 4096 tokens if it is truncated without
-  a tool call. These budgets are independent of `max_tokens` and
-  `max_completion_tokens` in backend kwargs. Repeated truncation is reported
+  a tool call. These budgets are independent of `max_tokens`,
+  `max_completion_tokens`, and Gemini's `maxOutputTokens` (top level or in
+  `generationConfig`) in backend kwargs. Repeated truncation is reported
   as inconclusive, not non-enforcement. The `tool_choice` diagnostic records
   each attempt's finish reason, completion tokens, and retry outcome. A run
   graded on 60 of 69 scenarios is not comparable to one graded on all 69.

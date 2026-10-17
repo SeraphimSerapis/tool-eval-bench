@@ -15,6 +15,7 @@ the result as model quality:
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any
 
@@ -22,6 +23,7 @@ import httpx
 import pytest
 
 from tool_eval_bench.adapters.base import BackendAdapter, ChatCompletionResult, ProviderToolCall
+from tool_eval_bench.adapters.gemini import GeminiAdapter
 from tool_eval_bench.adapters.openai_compat import OpenAICompatibleAdapter
 from tool_eval_bench.domain.scenarios import (
     Category,
@@ -328,6 +330,52 @@ async def test_truncated_probe_retries_with_larger_wire_budget(token_overrides: 
     assert "retry" in probe.detail
     assert "finish_reason=tool_calls" in probe.detail
     assert "completion_tokens=42" in probe.detail
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "token_overrides",
+    [
+        {},
+        {"maxOutputTokens": 1},
+        {"generationConfig": {"maxOutputTokens": 1, "topP": 0.9}},
+        {"max_tokens": 1, "generationConfig": {"maxOutputTokens": 1}},
+    ],
+)
+async def test_gemini_truncated_probe_retries_with_larger_wire_budget(
+    token_overrides: dict,
+) -> None:
+    configs: list[dict] = []
+    original = copy.deepcopy(token_overrides)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        configs.append(json.loads(request.content)["generationConfig"])
+        if len(configs) == 1:
+            candidate = {"content": {"parts": []}, "finishReason": "MAX_TOKENS"}
+        else:
+            call = {"functionCall": {"name": "probe_ping", "args": {"value": "ok"}}}
+            candidate = {"content": {"parts": [call]}, "finishReason": "STOP"}
+        return httpx.Response(200, json={"candidates": [candidate]})
+
+    adapter = GeminiAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    try:
+        probe = await probe_tool_choice_required(
+            adapter,
+            model="gemini-test",
+            base_url="http://x",
+            api_key=None,
+            timeout_seconds=5,
+            extra_params=token_overrides,
+        )
+    finally:
+        await adapter.aclose()
+
+    assert probe.enforced and probe.arguments_intact
+    assert [c["maxOutputTokens"] for c in configs] == [256, 4096]
+    assert token_overrides == original
+    if "topP" in original.get("generationConfig", {}):
+        assert all(c["topP"] == 0.9 for c in configs)
 
 
 @pytest.mark.asyncio

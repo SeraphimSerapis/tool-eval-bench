@@ -1045,10 +1045,17 @@ async def probe_tool_choice_required(
     Retry that case once with more tokens before drawing a conclusion.
     """
     # The probe owns its budget. Adapter extras otherwise override max_tokens,
-    # which could silently cap the retry at the same low ceiling.
+    # which could silently cap the retry at the same low ceiling. The Gemini
+    # adapter also reads maxOutputTokens, at the top level or nested in
+    # generationConfig.
     probe_extra = dict(extra_params or {})
-    probe_extra.pop("max_tokens", None)
-    probe_extra.pop("max_completion_tokens", None)
+    for key in ("max_tokens", "max_completion_tokens", "maxOutputTokens"):
+        probe_extra.pop(key, None)
+    generation_config = probe_extra.get("generationConfig")
+    if isinstance(generation_config, dict) and "maxOutputTokens" in generation_config:
+        probe_extra["generationConfig"] = {
+            k: v for k, v in generation_config.items() if k != "maxOutputTokens"
+        }
     attempts: list[str] = []
     for max_tokens in (256, 4096):
         label = "probe" if not attempts else "retry"
