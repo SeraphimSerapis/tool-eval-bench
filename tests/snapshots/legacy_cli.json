@@ -973,6 +973,16 @@
   {
     "choices": null,
     "default": null,
+    "dest": "context_fill_tokens",
+    "flags": [
+      "--context-fill-tokens"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
     "dest": "context_size",
     "flags": [
       "--context-size"

@@ -24,6 +24,7 @@ tool-eval-bench compare <baseline_id> <pressure_id>
 | Context Pressure Flag | Default | Purpose |
 |---|---|---|
 | `--context-pressure` | off | Fill ratio (0.0–1.0) of available context |
+| `--context-fill-tokens` | off | Fill exactly this many tokens instead of a ratio |
 | `--context-size` | auto | Override context window size (tokens) |
 | `--context-pressure-sweep` | off | Sweep range (e.g. `0.5-1.0`) — find the breaking point |
 | `--sweep-steps` | 5 | Number of pressure levels to test (minimum 2) |
@@ -34,6 +35,29 @@ the stored run, so pass the same `--context-pressure`, and the same
 an added or dropped `--context-pressure`, and a context size that changes the
 fill target. Context drift that leaves the fill target alone, such as a
 restarted server reporting a slightly different KV capacity, is accepted.
+
+## Filling a fixed number of tokens
+
+A ratio means a different depth on every model: 0.5 is about 57K tokens of
+filler in a 131K window and 123K in a 262K one. When a failure appears at a
+known depth, such as tool calls breaking above about 135K tokens, use
+`--context-fill-tokens` to put every model at the same depth:
+
+```bash
+tool-eval-bench run --seed 42 --context-fill-tokens 140000
+```
+
+The filler is calibrated to exactly that count where the server has
+`/tokenize`, and is not rounded to whole filler chunks. The scenario's own
+system prompt, tools, and messages come on top of it. The window is still
+detected, only to refuse a fill that would leave less than the 16,096 tokens
+reserved for output and the scenario. The run records the requested count as
+`fill_tokens_requested`, and `ratio` as the share of the fill budget it took.
+
+Resume compares the token count rather than the ratio, so a fixed-fill run
+resumes on a server that reports a different window. Runs with the same count
+share a config fingerprint whatever the window. `--context-fill-tokens` cannot
+be combined with `--context-pressure` or `--context-pressure-sweep`.
 
 ## Finding the breaking point
 
@@ -115,12 +139,21 @@ vLLM's KV cache capacity on `/metrics` then caps the result, except for hybrid
 attention models. If auto-detection fails, use `--context-size` to specify it
 manually.
 
-The filler is designed to defeat server-side prefix caching (vLLM, llama.cpp):
+The filler is designed to defeat server-side prefix caching across runs (vLLM, llama.cpp):
 - **Diverse content**: 12 distinct paragraph styles (tech docs, meeting notes, code reviews, incident reports, API docs, etc.)
 - **Shuffled order**: paragraph order is randomized per run
 - **Noise injection**: random ticket IDs, timestamps, IP addresses, and version strings are sprinkled throughout the text at sentence boundaries
 - **Unique nonces**: each chunk gets a unique session/chunk identifier prefix
-- **Per-scenario isolation**: each scenario gets a unique nonce injected into the filler to prevent cross-scenario prefix cache reuse
+
+Within a run, every scenario sends the same filler right after the same system
+prompt, so a server with prefix caching prefills it once and reuses it. Before
+the first scenario, one unscored warm-up request sends that prefix with
+`max_tokens=1`, so no scenario pays the cold prefill. A failed warm-up is logged
+and the run continues; the timeout is scaled to the fill size, so the first
+scenario can still absorb the cold prefill. A cached prefix gives the model the
+same KV as a cold one, so this changes latency, not results. Chat templates usually render tool
+definitions ahead of the messages, so a scenario with its own toolset still
+prefills the filler cold.
 
 Filler is sized at about 4 characters per token, then calibrated against the
 server's `/tokenize` endpoint (vLLM). On a server without a compatible

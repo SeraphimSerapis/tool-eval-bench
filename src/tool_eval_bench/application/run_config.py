@@ -164,9 +164,19 @@ def _pressure_mismatch(previous: Any, current: dict[str, Any] | None) -> str | N
     if not previous and not current:
         return None
     if not previous or not current:
-        was = previous["ratio"] if previous else "off"
-        now = current["ratio"] if current else "off"
-        return f"context_pressure (was {was}, now {now})"
+        return (
+            f"context_pressure (was {_pressure_setting(previous)}, "
+            f"now {_pressure_setting(current)})"
+        )
+    # A --context-fill-tokens run is identified by its token count; its
+    # ratio is derived from the window and drifts with it.
+    if previous.get("fill_tokens_requested") != current.get("fill_tokens_requested"):
+        return (
+            f"context_pressure fill (was {_pressure_setting(previous)}, "
+            f"now {_pressure_setting(current)})"
+        )
+    if "fill_tokens_requested" in current:
+        return None
     if previous.get("ratio") != current["ratio"]:
         return f"context_pressure ratio (was {previous.get('ratio')}, now {current['ratio']})"
     # Runs from before tokenizer calibration recorded no target.
@@ -179,6 +189,14 @@ def _pressure_mismatch(previous: Any, current: dict[str, Any] | None) -> str | N
     return None
 
 
+def _pressure_setting(value: dict[str, Any] | None) -> str:
+    """The pressure a run asked for: a ratio, a token count, or off."""
+    if not value:
+        return "off"
+    requested = value.get("fill_tokens_requested")
+    return f"{requested:,} tokens" if requested is not None else str(value["ratio"])
+
+
 def _pressure_fingerprint(value: dict[str, Any]) -> dict[str, Any]:
     """The context-pressure block without its calibrated ``fill_tokens``.
 
@@ -187,7 +205,12 @@ def _pressure_fingerprint(value: dict[str, Any]) -> dict[str, Any]:
     :func:`_pressure_mismatch`), so hashing it would put two otherwise identical
     pressure runs in separate cohorts.
     """
-    return {key: item for key, item in value.items() if key != "fill_tokens"}
+    dropped = {"fill_tokens"}
+    if "fill_tokens_requested" in value:
+        # A fixed fill sends the same filler whatever the window; the window
+        # and the ratio derived from it do not change what the model sees.
+        dropped |= {"ratio", "context_size"}
+    return {key: item for key, item in value.items() if key not in dropped}
 
 
 def _canonical_judge(config: Any) -> Any:

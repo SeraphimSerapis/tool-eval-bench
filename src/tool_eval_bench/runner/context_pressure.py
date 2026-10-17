@@ -77,12 +77,17 @@ class ContextPressureConfig:
     context_size: int | None = None  # Override auto-detected context size
     fill_tokens: int = 0  # Computed: actual tokens to fill
     detected_context: int = 0  # Actual context size used
+    fill_tokens_requested: int | None = None  # --context-fill-tokens; ratio is then derived
 
     def summary(self) -> str:
         """Human-readable summary for display."""
         pct = int(self.ratio * 100)
         fill_k = self.fill_tokens / 1024
         ctx_k = self.detected_context / 1024
+        if self.fill_tokens_requested is not None:
+            return (
+                f"~{fill_k:.0f}K tokens prefilled in {ctx_k:.0f}K context ({pct}% of fill budget)"
+            )
         return (
             f"{pct}% of available fill budget "
             f"(~{fill_k:.0f}K tokens prefilled in {ctx_k:.0f}K context)"
@@ -693,8 +698,15 @@ async def prepare_context_pressure(
     *,
     client_factory: MeasurementClientFactory,
     reported_context: int | None = None,
+    fill_tokens: int | None = None,
 ) -> ContextPressureConfig:
     """Detect context size and build the pressure config.
+
+    ``fill_tokens`` (``--context-fill-tokens``) fills exactly that many tokens
+    instead of a share of the window, so the same depth can be compared across
+    models with different windows. ``ratio`` is ignored and recorded as the
+    share of the fill budget the fill takes. The window is still detected, to
+    refuse a fill that leaves no room for the scenario and the output.
 
     Uses ``min(max_model_len, kv_cache_capacity)`` as the effective context
     size so that pressure targets what the server can actually hold in KV
@@ -766,12 +778,28 @@ async def prepare_context_pressure(
                 kv_info.capacity,
             )
 
-    fill_tokens = compute_fill_budget(ctx_size, ratio)
+    if fill_tokens is not None:
+        available = ctx_size - _RESERVED_FOR_OUTPUT - _RESERVED_FOR_SCENARIO
+        if fill_tokens > available:
+            raise ValueError(
+                f"--context-fill-tokens {fill_tokens:,} does not fit a {ctx_size:,}-token "
+                f"context window: {_RESERVED_FOR_OUTPUT + _RESERVED_FOR_SCENARIO:,} tokens are "
+                f"reserved for output and the scenario, so at most {max(0, available):,} can be "
+                "filled. Check --context-size; on llama.cpp the window is per slot (-c divided "
+                "by --parallel)."
+            )
+        return ContextPressureConfig(
+            ratio=round(fill_tokens / available, 4),
+            context_size=context_size_override,
+            fill_tokens=fill_tokens,
+            detected_context=ctx_size,
+            fill_tokens_requested=fill_tokens,
+        )
 
     config = ContextPressureConfig(
         ratio=ratio,
         context_size=context_size_override,
-        fill_tokens=fill_tokens,
+        fill_tokens=compute_fill_budget(ctx_size, ratio),
         detected_context=ctx_size,
     )
     return config

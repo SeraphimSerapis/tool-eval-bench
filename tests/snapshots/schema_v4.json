@@ -516,6 +516,13 @@
     },
     {
       "default": null,
+      "description": "Fill exactly this many tokens of context before each scenario",
+      "min": 1,
+      "name": "context_fill_tokens",
+      "type": "int"
+    },
+    {
+      "default": null,
       "description": "Override auto-detected context window size (tokens)",
       "name": "context_size",
       "type": "int"

@@ -764,6 +764,41 @@ def test_context_pressure_reaches_the_scored_run(cli: Cli, mode_flags: list[str]
     assert run["timeout_seconds"] == pytest.approx(129.9264)
 
 
+def test_context_fill_tokens_reaches_the_scored_run(cli: Cli) -> None:
+    async def calibrate(messages: Any, target: int, *args: Any, **kwargs: Any) -> Any:
+        return messages, target - 10
+
+    _patch_everywhere(
+        cli.monkeypatch,
+        "tool_eval_bench.runner.context_pressure",
+        "calibrate_pressure_messages",
+        calibrate,
+    )
+
+    outcome = cli.run(
+        *CONNECTION,
+        "--scenarios",
+        "TC-01",
+        "--seed",
+        "1",
+        "--context-fill-tokens",
+        "10000",
+        "--context-size",
+        "32768",
+        "--json",
+    )
+
+    assert outcome.code == 0
+    (run,) = cli.run_kwargs
+    assert run["context_pressure_config"] == {
+        "ratio": round(10_000 / (32_768 - 16_096), 4),
+        "fill_tokens": 9990,
+        "fill_tokens_target": 10_000,
+        "context_size": 32768,
+        "fill_tokens_requested": 10_000,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Resume
 # ---------------------------------------------------------------------------
@@ -1035,6 +1070,15 @@ def test_diff_is_ignored_with_json(cli: Cli, caplog: pytest.LogCaptureFixture) -
         (["--error-rate", "1.5"], "--error-rate must be between 0 and 1"),
         (["--alpha", "2"], "--alpha must be between 0 and 1"),
         (["--context-pressure", "1.5"], "--context-pressure must be between 0 and 1"),
+        (["--context-fill-tokens", "0"], "--context-fill-tokens must be at least 1"),
+        (
+            ["--context-fill-tokens", "1000", "--context-pressure", "0.5"],
+            "--context-fill-tokens cannot be combined with --context-pressure",
+        ),
+        (
+            ["--context-fill-tokens", "1000", "--context-pressure-sweep", "0.5-1.0"],
+            "--context-fill-tokens cannot be combined with --context-pressure-sweep",
+        ),
     ],
 )
 def test_out_of_range_run_settings_are_invalid_arguments(

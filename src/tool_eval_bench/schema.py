@@ -554,6 +554,13 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Fill context to this ratio before each scenario",
     },
     {
+        "name": "context_fill_tokens",
+        "type": "int",
+        "default": None,
+        "min": 1,
+        "description": "Fill exactly this many tokens of context before each scenario",
+    },
+    {
         "name": "context_size",
         "type": "int",
         "default": None,
