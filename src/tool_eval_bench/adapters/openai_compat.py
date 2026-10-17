@@ -41,6 +41,13 @@ from tool_eval_bench.utils.urls import redact_url as _redact_url
 logger = logging.getLogger(__name__)
 
 
+def _rejection_log_level(payload: dict[str, Any], status: int) -> int:
+    """Quiet the rejection the orchestrator answers by retrying a weaker response_format."""
+    if "response_format" in payload and status in (400, 422):
+        return logging.DEBUG
+    return logging.WARNING
+
+
 def _is_pre_inference_backend_error(body: str) -> bool:
     """Return whether a 4xx body names a known failure before inference."""
     return "failed to initialize samplers" in body.lower()
@@ -297,7 +304,8 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                 self._max_completion_tokens_endpoints.add((url, str(payload.get("model", ""))))
                 logger.info("Endpoint rejected max_tokens; retrying with max_completion_tokens")
                 return await self._non_stream_request(client, url, payload, headers, timeout)
-            logger.warning(
+            logger.log(
+                _rejection_log_level(payload, exc.response.status_code),
                 "Server returned %d for %s: %s",
                 exc.response.status_code,
                 _redact_url(url),
@@ -379,7 +387,8 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     self._max_completion_tokens_endpoints.add((url, str(payload.get("model", ""))))
                     logger.info("Endpoint rejected max_tokens; retrying with max_completion_tokens")
                     return await self._stream_request(client, url, payload, headers, timeout)
-                logger.warning(
+                logger.log(
+                    _rejection_log_level(payload, exc.response.status_code),
                     "Stream request returned %d for %s: %s",
                     exc.response.status_code,
                     _redact_url(url),

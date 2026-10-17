@@ -531,6 +531,32 @@ async def test_response_format_included_in_payload() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_rejected_response_format_is_not_a_warning(caplog, stream: bool) -> None:
+    """The orchestrator retries a rejected response_format, so it must not warn."""
+
+    def reject(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"message": "response_format unavailable"}})
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(reject))
+    with caplog.at_level("DEBUG", logger="tool_eval_bench.adapters.openai_compat"):
+        for response_format in ({"type": "json_object"}, None):
+            result = await adapter.chat_completion(
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                base_url="http://localhost:8000",
+                stream=stream,
+                response_format=response_format,
+            )
+            assert result.transport_error_status == 400
+    await adapter.aclose()
+
+    levels = [r.levelname for r in caplog.records if "returned 400" in r.getMessage()]
+    assert levels == ["DEBUG", "WARNING"]
+
+
+@pytest.mark.asyncio
 async def test_retries_with_max_completion_tokens_and_caches_capability() -> None:
     bodies: list[dict] = []
 

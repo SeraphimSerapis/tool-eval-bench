@@ -495,6 +495,10 @@ async def run_scenario(
     # model spent the whole ceiling thinking and never reached an answer.
     truncated_stop: str | None = None
     max_tokens = default_max_tokens(extra)
+    # Stepped down when the endpoint rejects the requested response_format,
+    # so later turns of the scenario do not repeat the rejected request.
+    active_response_format = scenario.response_format_override
+    response_format_fallback: str | None = None
 
     try:
         for turn in range(1, max_turns + 1):
@@ -510,7 +514,7 @@ async def run_scenario(
             # turns).  Many backends (llama.cpp, older vLLM) reject
             # response_format + tools in the same request.  When tools is
             # empty, response_format can be sent on turn 1 safely.
-            response_format = scenario.response_format_override
+            response_format = active_response_format
             if response_format and scenario_tools and turn == 1 and not state.tool_calls:
                 # First turn with tools — let the model make tool calls without
                 # response_format constraint (re-applied on the content turn).
@@ -520,21 +524,41 @@ async def run_scenario(
             if state.tool_calls and scenario.tool_choice_after_first_call is not None:
                 active_tool_choice = scenario.tool_choice_after_first_call
 
-            result = await adapter.chat_completion(
-                model=model,
-                messages=messages,
-                tools=scenario_tools or None,  # Don't send empty list
-                tool_choice=active_tool_choice if scenario_tools else None,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout_seconds=timeout_seconds,
-                api_key=api_key,
-                base_url=base_url,
-                extra_params=extra,
-                stream=use_stream,
-                response_format=response_format,
-                conversation_id=conversation_id,
-            )
+            while True:
+                result = await adapter.chat_completion(
+                    model=model,
+                    messages=messages,
+                    tools=scenario_tools or None,  # Don't send empty list
+                    tool_choice=active_tool_choice if scenario_tools else None,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout_seconds=timeout_seconds,
+                    api_key=api_key,
+                    base_url=base_url,
+                    extra_params=extra,
+                    stream=use_stream,
+                    response_format=response_format,
+                    conversation_id=conversation_id,
+                )
+                # Some endpoints (DeepSeek) accept json_object but reject
+                # json_schema; others accept neither. Every structured prompt
+                # already embeds the schema, so step down and grade the model
+                # against it instead of failing on a parameter we chose.
+                if (
+                    not response_format
+                    or result.transport_error_status not in (400, 422)
+                    or result.transport_error_is_infrastructure
+                ):
+                    break
+                rejected = str(response_format.get("type"))
+                downgraded = {"type": "json_object"} if rejected == "json_schema" else None
+                accepted = downgraded["type"] if downgraded else "none"
+                response_format_fallback = f"{rejected} -> {accepted}"
+                trace_lines.append(
+                    f"response_format_fallback={response_format_fallback} "
+                    f"(HTTP {result.transport_error_status})"
+                )
+                active_response_format = response_format = downgraded
             turn_ms = (time.perf_counter() - turn_start) * 1000
             turn_latencies.append(turn_ms)
 
@@ -840,7 +864,12 @@ async def run_scenario(
         harness_stop = truncated_stop or loop_stop
         if harness_stop is not None and evaluation.status != ScenarioStatus.PASS:
             evaluation.note = f"{harness_stop} {evaluation.note or ''}".strip()
-        if scenario.response_format_override is not None:
+        if response_format_fallback is not None:
+            evaluation.diagnostics["response_format"] = (
+                f"endpoint rejected it; fell back {response_format_fallback}, "
+                "schema enforced only by the prompt"
+            )
+        elif scenario.response_format_override is not None:
             evaluation.diagnostics["response_format"] = (
                 "requested; backend enforcement is not independently measured"
             )
