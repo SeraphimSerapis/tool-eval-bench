@@ -70,7 +70,7 @@ def test_detect_model_falls_back_and_reprompts_for_valid_selection(
     expected_headers = {"User-Agent": USER_AGENT, "Authorization": "Bearer api-key"}
     assert client.requested == [
         ("https://user:password@secret.example/v1/models", expected_headers),
-        ("https://user:password@secret.example/v1/models", expected_headers),
+        ("https://user:password@secret.example/models", expected_headers),
     ]
     output = console.export_text()
     assert "used /models fallback" in output
