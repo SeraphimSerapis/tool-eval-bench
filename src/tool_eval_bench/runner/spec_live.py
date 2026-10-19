@@ -44,6 +44,8 @@ from tool_eval_bench.runner.spec_detection import (
     _parse_labels,
 )
 from tool_eval_bench.utils.urls import metrics_url as _metrics_url_from_base
+from tool_eval_bench.utils.urls import models_url as _models_url_from_base
+from tool_eval_bench.utils.urls import root_endpoint_url
 
 logger = logging.getLogger(__name__)
 
@@ -952,14 +954,10 @@ async def probe_server_spec_info(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    b = base_url.rstrip("/")
-    if not b.endswith("/v1"):
-        b = f"{b}/v1"
-
     async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
         # --- 1. Probe /v1/models ---
         try:
-            resp = await client.get(f"{b}/models", headers=headers)
+            resp = await client.get(_models_url_from_base(base_url), headers=headers)
             if resp.status_code == 200:
                 body = resp.json()
                 model_ids: list[str] = []
@@ -985,11 +983,9 @@ async def probe_server_spec_info(
             logger.debug("/v1/models probe failed: %s", exc)
 
         # --- 2. Probe /version (vLLM-specific) ---
-        version_url = base_url.rstrip("/")
-        if version_url.endswith("/v1"):
-            version_url = version_url[:-3]
+        version_url = root_endpoint_url(base_url, "/version")
         try:
-            resp = await client.get(f"{version_url}/version", headers=headers)
+            resp = await client.get(version_url, headers=headers)
             if resp.status_code == 200:
                 body = resp.json()
                 if isinstance(body, dict):

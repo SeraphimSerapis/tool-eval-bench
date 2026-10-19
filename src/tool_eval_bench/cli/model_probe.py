@@ -23,8 +23,10 @@ from tool_eval_bench.domain.errors import (
     NO_MODELS,
 )
 from tool_eval_bench.utils.headers import USER_AGENT, merge_headers
+from tool_eval_bench.utils.urls import models_url as _openai_models_url
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 from tool_eval_bench.utils.urls import redact_urls as _redact_urls
+from tool_eval_bench.utils.urls import root_endpoint_url
 
 
 def _models_request(
@@ -55,12 +57,9 @@ def _models_url_and_auth(
             headers["x-api-key"] = api_key
             headers["Authorization"] = f"Bearer {api_key}"
         return anthropic_models_url(base_url), headers
-    url = base_url.rstrip("/")
-    # Handle base_url that already ends with /v1
-    endpoint = f"{url}/models" if url.endswith("/v1") else f"{url}/v1/models"
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    return endpoint, headers
+    return _openai_models_url(base_url), headers
 
 
 def _detect_model(
@@ -91,7 +90,6 @@ def _detect_model(
 
     gemini = wire_format == "gemini"
     anthropic = wire_format == "anthropic"
-    url = base_url.rstrip("/")
     models_endpoint, request_headers = _models_request(base_url, api_key, wire_format, headers)
 
     # Build a display-safe endpoint URL for console output
@@ -107,7 +105,7 @@ def _detect_model(
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(models_endpoint, headers=request_headers)
             if resp.status_code == 404 and not (gemini or anthropic):
-                fallback_url = f"{url}/models"
+                fallback_url = root_endpoint_url(base_url, "/models")
                 resp = await client.get(fallback_url, headers=request_headers)
                 used_fallback = True
             return resp, used_fallback

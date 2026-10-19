@@ -47,12 +47,24 @@ def is_same_origin(a: str, b: str) -> bool:
     return (pa.scheme, pa.hostname.lower(), port_a) == (pb.scheme, pb.hostname.lower(), port_b)
 
 
-def _normalize_base(base_url: str) -> str:
-    """Strip trailing slash; ensure URL ends with /v1."""
-    b = base_url.rstrip("/")
-    if not b.endswith("/v1"):
-        b = f"{b}/v1"
-    return b
+def append_url_path(base_url: str, path: str) -> str:
+    """Append a path component without moving a URL's query string."""
+    parts = urlsplit(base_url)
+    base_path = parts.path.rstrip("/")
+    endpoint_path = f"{base_path}/{path.lstrip('/')}" if base_path else f"/{path.lstrip('/')}"
+    return urlunsplit(parts._replace(path=endpoint_path, fragment=""))
+
+
+def versioned_base_url(base_url: str) -> str:
+    parts = urlsplit(base_url)
+    base_path = parts.path.rstrip("/")
+    if not base_path.endswith("/v1"):
+        base_path = f"{base_path}/v1"
+    return urlunsplit(parts._replace(path=base_path, fragment=""))
+
+
+def _versioned_endpoint_url(base_url: str, path: str) -> str:
+    return append_url_path(versioned_base_url(base_url), path)
 
 
 def chat_completions_url(base_url: str) -> str:
@@ -60,7 +72,7 @@ def chat_completions_url(base_url: str) -> str:
 
     Handles both ``http://host:port`` and ``http://host:port/v1`` forms.
     """
-    return f"{_normalize_base(base_url)}/chat/completions"
+    return _versioned_endpoint_url(base_url, "/chat/completions")
 
 
 def models_url(base_url: str) -> str:
@@ -68,12 +80,12 @@ def models_url(base_url: str) -> str:
 
     Handles both ``http://host:port`` and ``http://host:port/v1`` forms.
     """
-    return f"{_normalize_base(base_url)}/models"
+    return _versioned_endpoint_url(base_url, "/models")
 
 
 def systemone_url(base_url: str) -> str:
     """Build the /v1/systemone URL that llama.cpp serves decision models on."""
-    return f"{_normalize_base(base_url)}/systemone"
+    return _versioned_endpoint_url(base_url, "/systemone")
 
 
 def root_url(base_url: str) -> str:
@@ -85,15 +97,21 @@ def root_url(base_url: str) -> str:
     whenever the user passes the ``http://host:port/v1`` form, silently
     losing engine version metadata.
     """
-    b = base_url.rstrip("/")
-    if b.endswith("/v1"):
-        b = b[:-3]
-    return b
+    parts = urlsplit(base_url)
+    path = parts.path.rstrip("/")
+    if path.endswith("/v1"):
+        path = path[:-3]
+    return urlunsplit(parts._replace(path=path, fragment=""))
+
+
+def root_endpoint_url(base_url: str, path: str) -> str:
+    """Build a root-level endpoint while preserving base URL query parameters."""
+    return append_url_path(root_url(base_url), path)
 
 
 def metrics_url(base_url: str) -> str:
     """Build the Prometheus /metrics URL from a base URL (not under /v1)."""
-    return f"{root_url(base_url)}/metrics"
+    return root_endpoint_url(base_url, "/metrics")
 
 
 # Strata answers /metrics with JSON unless Accept names text/plain or

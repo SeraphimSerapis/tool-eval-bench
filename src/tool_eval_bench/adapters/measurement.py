@@ -25,7 +25,7 @@ from tool_eval_bench.utils.urls import (
     metrics_request_target,
     models_url,
     redact_urls,
-    root_url,
+    root_endpoint_url,
 )
 
 
@@ -92,13 +92,10 @@ class _ConfiguredMeasurementClient:
         ``/tokenize`` sits at the server root rather than under ``/v1``, so a
         base URL ending in ``/v1`` has it stripped.
         """
-        root = self._base_url.rstrip("/")
-        if root.endswith("/v1"):
-            root = root[:-3]
         return cast(
             MeasurementResponse,
             await self._client.post(
-                f"{root}/tokenize",
+                root_endpoint_url(self._base_url, "/tokenize"),
                 json={"model": model, "prompt": text},
                 headers=self._json_headers(self._api_key),
             ),
@@ -118,7 +115,8 @@ class _ConfiguredMeasurementClient:
         return cast(
             MeasurementResponse,
             await self._client.get(
-                f"{root_url(self._base_url)}/health", headers=self._json_headers(self._api_key)
+                root_endpoint_url(self._base_url, "/health"),
+                headers=self._json_headers(self._api_key),
             ),
         )
 

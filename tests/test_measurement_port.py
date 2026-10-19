@@ -132,6 +132,34 @@ async def test_adapter_owns_routes_auth_and_cross_origin_metrics_auth() -> None:
 
 
 @pytest.mark.asyncio
+async def test_adapter_preserves_base_query_parameters_on_every_route() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": [], "count": 3})
+
+    async with HTTPMeasurementClient(
+        base_url="https://api.example/proxy/v1?tenant=research",
+        api_key="test-key",
+        timeout=1.0,
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        await client.models()
+        await client.tokenize(model="model", text="abc")
+        await client.health()
+        await client.metrics()
+
+    assert [request.url.path for request in seen] == [
+        "/proxy/v1/models",
+        "/proxy/tokenize",
+        "/proxy/health",
+        "/proxy/metrics",
+    ]
+    assert [request.url.query.decode() for request in seen] == ["tenant=research"] * 4
+
+
+@pytest.mark.asyncio
 async def test_adapter_preserves_explicit_empty_completion_headers() -> None:
     """Custom wire formats can intentionally opt out of bearer auth headers."""
     seen: list[httpx.Request] = []

@@ -91,6 +91,17 @@ class TestGeminiUrls:
     def test_models_listing_url(self) -> None:
         assert gemini_models_url(NATIVE_URL) == f"{NATIVE_URL}/v1beta/models"
 
+    def test_query_parameters_stay_after_generated_endpoint(self) -> None:
+        base_url = f"{NATIVE_URL}?key=secret"
+
+        assert gemini_generate_url(base_url, "m") == (
+            f"{NATIVE_URL}/v1beta/models/m:generateContent?key=secret"
+        )
+        assert gemini_generate_url(base_url, "m", stream=True) == (
+            f"{NATIVE_URL}/v1beta/models/m:streamGenerateContent?key=secret&alt=sse"
+        )
+        assert gemini_models_url(base_url) == f"{NATIVE_URL}/v1beta/models?key=secret"
+
 
 class TestAdapterSelection:
     def test_native_url_builds_gemini_adapter(self) -> None:

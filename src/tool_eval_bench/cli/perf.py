@@ -20,6 +20,7 @@ from tool_eval_bench.storage.reports._common import (
     benchy_tokens_label,
     sample_pp_estimated,
 )
+from tool_eval_bench.utils.urls import root_endpoint_url
 
 
 class PerfPassFailed(Exception):
@@ -106,7 +107,7 @@ def _probe_llamacpp_model_path(base_url: str) -> str | None:
     """Best-effort read of llama.cpp ``/props.model_path`` (the loaded GGUF)."""
     import httpx
 
-    url = f"{base_url.rstrip('/').removesuffix('/v1')}/props"
+    url = root_endpoint_url(base_url, "/props")
     try:
         resp = httpx.get(url, timeout=3.0)
         if resp.status_code != 200:

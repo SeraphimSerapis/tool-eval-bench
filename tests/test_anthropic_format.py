@@ -80,6 +80,16 @@ class TestAnthropicUrls:
         assert anthropic_models_url(ZEN_URL) == "https://opencode.ai/zen/go/v1/models"
         assert anthropic_models_url(ANTHROPIC_URL) == f"{ANTHROPIC_URL}/v1/models"
 
+    def test_query_parameters_stay_after_generated_endpoint(self) -> None:
+        base_url = "https://opencode.ai/zen/go/v1?tenant=research"
+
+        assert anthropic_messages_url(base_url) == (
+            "https://opencode.ai/zen/go/v1/messages?tenant=research"
+        )
+        assert (
+            anthropic_models_url(base_url) == "https://opencode.ai/zen/go/v1/models?tenant=research"
+        )
+
 
 class TestAdapterSelection:
     def test_native_url_builds_anthropic_adapter(self) -> None:
@@ -778,3 +788,7 @@ class TestModelListing:
         assert headers == {"User-Agent": USER_AGENT, "x-goog-api-key": "k"}
         url, headers = _models_request("http://localhost:8000/v1", None, "openai")
         assert (url, headers) == ("http://localhost:8000/v1/models", {"User-Agent": USER_AGENT})
+        url, _ = _models_request(
+            "https://proxy.example/inference/v1?tenant=research", None, "openai"
+        )
+        assert url == "https://proxy.example/inference/v1/models?tenant=research"

@@ -32,7 +32,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from tool_eval_bench.runner.throughput import ThroughputSample
-from tool_eval_bench.utils.urls import redact_urls
+from tool_eval_bench.utils.urls import redact_urls, versioned_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -254,9 +254,7 @@ def _build_command(
     cmd = prefix.split()
 
     # Normalise base URL — llama-benchy wants the base WITHOUT /v1
-    url = base_url.rstrip("/")
-    if not url.endswith("/v1"):
-        url = f"{url}/v1"
+    url = versioned_base_url(base_url)
     cmd.extend(["--base-url", url])
     cmd.extend(["--model", model])
 

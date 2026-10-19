@@ -1,0 +1,1 @@
+**Endpoint URLs with query parameters** now place each route before the query string and retain the parameters. OpenAI-compatible, Gemini, Anthropic, model-discovery, metadata, and measurement requests no longer turn a base URL such as `...?token=...` into a malformed route.

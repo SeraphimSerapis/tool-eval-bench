@@ -47,7 +47,7 @@ from tool_eval_bench.domain.models import (
 )
 from tool_eval_bench.utils.urls import metrics_request_target
 from tool_eval_bench.utils.urls import models_url as _models_url
-from tool_eval_bench.utils.urls import root_url as _root_url
+from tool_eval_bench.utils.urls import root_endpoint_url as _root_endpoint_url
 
 logger = logging.getLogger(__name__)
 
@@ -345,7 +345,7 @@ async def _probe_vllm_version(
     async with _probe_session(session) as active:
         resp = await _probe_get(
             active,
-            f"{_root_url(base_url)}/version",
+            _root_endpoint_url(base_url, "/version"),
             headers=_auth_headers(api_key),
             what="vLLM /version",
         )
@@ -373,7 +373,10 @@ async def _probe_props(
     async with _probe_session(session) as active:
         for path in ("/props", "/health"):
             resp = await _probe_get(
-                active, f"{_root_url(base_url)}{path}", headers=_auth_headers(api_key), what=path
+                active,
+                _root_endpoint_url(base_url, path),
+                headers=_auth_headers(api_key),
+                what=path,
             )
             if resp is None or resp.status_code != 200:
                 continue
@@ -420,7 +423,7 @@ async def _probe_litellm(
     async with _probe_session(session) as active:
         resp = await _probe_get(
             active,
-            f"{_root_url(base_url)}/health",
+            _root_endpoint_url(base_url, "/health"),
             headers=_auth_headers(api_key),
             what="LiteLLM /health",
         )
@@ -535,10 +538,12 @@ async def _probe_declared_identity(
     ``/.well-known/serviceinfo`` and ``/health`` answer without a key on
     TabbyAPI and Strata, so identity survives a missing ``--api-key``.
     """
-    root = _root_url(base_url)
     for path in ("/v1/models", *_DECLARED_FIELDS):
         resp = await _probe_get(
-            session, f"{root}{path}", headers=_auth_headers(api_key), what=f"identity {path}"
+            session,
+            _root_endpoint_url(base_url, path),
+            headers=_auth_headers(api_key),
+            what=f"identity {path}",
         )
         identity = _endpoint_identity(path, resp)
         if identity:
@@ -723,7 +728,7 @@ async def _probe_tensorfold(
     result: dict[str, Any] = {"engine_name": TENSORFOLD.display_name}
     resp = await _probe_get(
         session,
-        f"{_root_url(base_url)}/health",
+        _root_endpoint_url(base_url, "/health"),
         headers=_auth_headers(api_key),
         what="TensorFold /health",
     )
@@ -763,9 +768,10 @@ async def _probe_strata(
 ) -> dict[str, Any]:
     """Read Strata's version and capacity; ``/props`` carries the version only when known."""
     result: dict[str, Any] = {"engine_name": STRATA.display_name}
-    root = _root_url(base_url)
     headers = _auth_headers(api_key)
-    props = await _probe_json(session, f"{root}/props", headers=headers, what="Strata /props")
+    props = await _probe_json(
+        session, _root_endpoint_url(base_url, "/props"), headers=headers, what="Strata /props"
+    )
     if props:
         build = props.get("build_info")
         parts = build.split(maxsplit=1) if isinstance(build, str) else []
@@ -774,7 +780,10 @@ async def _probe_strata(
         result.update(_props_capacity(props))
     if "max_model_len" not in result:
         health = await _probe_json(
-            session, f"{root}/health", headers=headers, what="Strata /health"
+            session,
+            _root_endpoint_url(base_url, "/health"),
+            headers=headers,
+            what="Strata /health",
         )
         window = _positive_int(health.get("max_context")) if health else None
         if window:
@@ -796,17 +805,21 @@ async def _probe_tabbyapi(
     ``engine_version`` stays unknown rather than borrowed from elsewhere.
     """
     result: dict[str, Any] = {"engine_name": TABBYAPI.display_name}
-    root = _root_url(base_url)
     headers = _auth_headers(api_key)
     loaded = await _probe_json(
-        session, f"{root}/v1/model", headers=headers, what="TabbyAPI /v1/model"
+        session,
+        _root_endpoint_url(base_url, "/v1/model"),
+        headers=headers,
+        what="TabbyAPI /v1/model",
     )
     model_id = loaded.get("id") if loaded else None
     if isinstance(model_id, str) and model_id.strip():
         result["server_model_id"] = model_id
         # Any root came from the same list entry the loaded ID replaces.
         result["server_model_root"] = None
-    props = await _probe_json(session, f"{root}/props", headers=headers, what="TabbyAPI /props")
+    props = await _probe_json(
+        session, _root_endpoint_url(base_url, "/props"), headers=headers, what="TabbyAPI /props"
+    )
     if props:
         result.update(_props_capacity(props))
     return result
@@ -819,7 +832,7 @@ async def _probe_tandemllm(
     result: dict[str, Any] = {"engine_name": TANDEMLLM.display_name}
     health = await _probe_json(
         session,
-        f"{_root_url(base_url)}/health",
+        _root_endpoint_url(base_url, "/health"),
         headers=_auth_headers(api_key),
         what="TandemLLM /health",
     )

@@ -23,7 +23,9 @@ otherwise.  ``--format`` overrides the guess.
 from __future__ import annotations
 
 from typing import Literal
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
+
+from tool_eval_bench.utils.urls import append_url_path
 
 WireFormat = Literal["openai", "gemini", "anthropic"]
 
@@ -84,11 +86,13 @@ def gemini_base_url(base_url: str) -> str:
     Accepts the bare host (``https://generativelanguage.googleapis.com``) as
     well as an already-versioned URL, and tolerates a trailing slash.
     """
-    trimmed = base_url.rstrip("/")
-    segments = [seg for seg in urlparse(trimmed).path.split("/") if seg]
+    parts = urlsplit(base_url)
+    path = parts.path.rstrip("/")
+    segments = [seg for seg in path.split("/") if seg]
     if segments and segments[-1] in _GEMINI_API_VERSIONS:
-        return trimmed
-    return f"{trimmed}/{DEFAULT_GEMINI_API_VERSION}"
+        return urlunsplit(parts._replace(path=path, fragment=""))
+    path = f"{path}/{DEFAULT_GEMINI_API_VERSION}" if path else f"/{DEFAULT_GEMINI_API_VERSION}"
+    return urlunsplit(parts._replace(path=path, fragment=""))
 
 
 def gemini_model_path(model: str) -> str:
@@ -101,13 +105,19 @@ def gemini_model_path(model: str) -> str:
 
 def gemini_generate_url(base_url: str, model: str, *, stream: bool = False) -> str:
     """Build the generateContent / streamGenerateContent URL for a model."""
-    method = "streamGenerateContent?alt=sse" if stream else "generateContent"
-    return f"{gemini_base_url(base_url)}/{gemini_model_path(model)}:{method}"
+    method = "streamGenerateContent" if stream else "generateContent"
+    url = append_url_path(gemini_base_url(base_url), f"{gemini_model_path(model)}:{method}")
+    if stream:
+        parts = urlsplit(url)
+        query = parse_qsl(parts.query, keep_blank_values=True)
+        query.append(("alt", "sse"))
+        url = urlunsplit(parts._replace(query=urlencode(query)))
+    return url
 
 
 def gemini_models_url(base_url: str) -> str:
     """Build the model-listing URL for the native API."""
-    return f"{gemini_base_url(base_url)}/models"
+    return append_url_path(gemini_base_url(base_url), "/models")
 
 
 def anthropic_base_url(base_url: str) -> str:
@@ -116,19 +126,20 @@ def anthropic_base_url(base_url: str) -> str:
     Accepts the bare host, ``…/v1``, and a full ``…/v1/messages`` URL, and
     tolerates a trailing slash, so a pasted endpoint works as-is.
     """
-    trimmed = base_url.rstrip("/")
-    if trimmed.endswith("/messages"):
-        trimmed = trimmed[: -len("/messages")]
-    if not trimmed.endswith("/v1"):
-        trimmed = f"{trimmed}/v1"
-    return trimmed
+    parts = urlsplit(base_url)
+    path = parts.path.rstrip("/")
+    if path.endswith("/messages"):
+        path = path[: -len("/messages")]
+    if not path.endswith("/v1"):
+        path = f"{path}/v1"
+    return urlunsplit(parts._replace(path=path, fragment=""))
 
 
 def anthropic_messages_url(base_url: str) -> str:
     """Build the ``/v1/messages`` URL from a base URL."""
-    return f"{anthropic_base_url(base_url)}/messages"
+    return append_url_path(anthropic_base_url(base_url), "/messages")
 
 
 def anthropic_models_url(base_url: str) -> str:
     """Build the model-listing URL; the Messages API lists under ``/v1/models``."""
-    return f"{anthropic_base_url(base_url)}/models"
+    return append_url_path(anthropic_base_url(base_url), "/models")
