@@ -8,6 +8,7 @@ hosted endpoint with per-minute quotas.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import httpx
@@ -133,6 +134,44 @@ class TestRateLimitBackoff:
     def test_header_wins_over_body_when_both_present(self) -> None:
         resp = httpx.Response(429, headers={"Retry-After": "5"}, json=_PER_MINUTE_QUOTA_BODY)
         assert _retry_after_seconds(resp, cap=60.0) == 5.0
+
+    def test_http_date_retry_after_is_honored(self, monkeypatch) -> None:
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 10, 19, 12, 0, 0, tzinfo=timezone.utc)
+
+        monkeypatch.setattr(http_retry, "datetime", FixedDateTime)
+        response = httpx.Response(
+            429,
+            headers={"Retry-After": "Mon, 19 Oct 2026 12:00:30 GMT"},
+            json=_PER_MINUTE_QUOTA_BODY,
+        )
+
+        assert _retry_after_seconds(response, cap=60.0) == 30.0
+        assert _rate_limit_delay(0, response) == 30.0
+
+    def test_expired_http_date_does_not_add_backoff(self, monkeypatch) -> None:
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 10, 19, 12, 0, 0, tzinfo=timezone.utc)
+
+        monkeypatch.setattr(http_retry, "datetime", FixedDateTime)
+        response = httpx.Response(429, headers={"Retry-After": "Sun, 18 Oct 2026 12:00:00 GMT"})
+
+        assert _retry_after_seconds(response, cap=60.0) == 0.0
+
+    def test_http_date_beyond_cap_falls_back_to_exponential_backoff(self, monkeypatch) -> None:
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 10, 19, 12, 0, 0, tzinfo=timezone.utc)
+
+        monkeypatch.setattr(http_retry, "datetime", FixedDateTime)
+        response = httpx.Response(429, headers={"Retry-After": "Mon, 19 Oct 2026 12:05:00 GMT"})
+
+        assert _retry_after_seconds(response, cap=60.0) is None
 
     def test_malformed_body_does_not_crash_retry_parsing(self) -> None:
         resp = httpx.Response(429, content=b"not json")

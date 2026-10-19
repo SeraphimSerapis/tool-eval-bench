@@ -17,6 +17,8 @@ import random
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, TypeVar
 
 import httpx
@@ -118,7 +120,14 @@ def _retry_after_seconds(
         try:
             delay = float(raw.strip())
         except ValueError:
-            delay = None  # HTTP-date form; fall back to computed backoff
+            try:
+                retry_at = parsedate_to_datetime(raw)
+            except (TypeError, ValueError, OverflowError):
+                retry_at = None
+            if retry_at is not None:
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
     if delay is None:
         delay = _retry_delay_from_body(response)
     if delay is None:
