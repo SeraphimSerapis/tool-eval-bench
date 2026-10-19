@@ -277,6 +277,7 @@ class RateLimitCoordinator:
         self._pause_until = 0.0
         self._min_interval = 0.0
         self._next_slot = 0.0
+        self._pressure_generation = 0
         self._successes = 0
         self._retries = 0
         self._total_wait = 0.0
@@ -306,22 +307,33 @@ class RateLimitCoordinator:
 
     async def acquire(self) -> None:
         """Wait for this request's turn under the current pacing and pause."""
-        async with self._lock:
-            now = time.monotonic()
-            start = max(now, self._pause_until, self._next_slot)
-            self._next_slot = start + self._min_interval
-        delay = start - time.monotonic()
-        if delay > 0:
-            await asyncio.sleep(delay)
-        # A pause may have been declared after this request reserved its slot.
-        while (remaining := self._pause_until - time.monotonic()) > 0:
-            await asyncio.sleep(remaining)
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                start = max(now, self._pause_until, self._next_slot)
+                self._next_slot = start + self._min_interval
+                generation = self._pressure_generation
+
+            delay = start - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+
+            async with self._lock:
+                now = time.monotonic()
+                if generation != self._pressure_generation:
+                    # A newer 429 changed the pause and pacing after this slot
+                    # was reserved. Re-enter the queue under the new settings.
+                    continue
+                if now < self._pause_until or now < start:
+                    continue
+                return
 
     async def on_rate_limited(self, delay: float) -> None:
         """Record a 429: pause everyone and widen the spacing."""
         async with self._lock:
             self._pause_until = max(self._pause_until, time.monotonic() + delay)
             self._min_interval = min(max(self._min_interval * 2, self._step), self._max_interval)
+            self._pressure_generation += 1
             self._successes = 0
             self._retries += 1
             self._total_wait += delay

@@ -389,12 +389,15 @@ class _VirtualClock:
         self._start = 1_000.0
         self._now = self._start
         self.requested: list[float] = []
+        self.sleep_gate: asyncio.Event | None = None
 
     def monotonic(self) -> float:
         return self._now
 
     async def sleep(self, delay: float) -> None:
         self.requested.append(delay)
+        if self.sleep_gate is not None:
+            await self.sleep_gate.wait()
         self._now += max(0.0, delay)
         await _REAL_SLEEP(0)  # yield, so gathered acquirers interleave
 
@@ -470,6 +473,25 @@ class TestAdaptivePacing:
         assert len(virtual_clock.requested) == 4
         assert virtual_clock.requested[0] == pytest.approx(0.25)
         assert virtual_clock.requested[1:] == pytest.approx([coordinator.min_interval] * 3)
+
+    @pytest.mark.asyncio
+    async def test_new_rate_limit_reschedules_requests_already_waiting(self, virtual_clock) -> None:
+        coordinator = RateLimitCoordinator(step_seconds=0.1, max_interval_seconds=1.0)
+        await coordinator.on_rate_limited(0.25)
+
+        virtual_clock.sleep_gate = asyncio.Event()
+        waiters = [asyncio.create_task(coordinator.acquire()) for _ in range(3)]
+        while len(virtual_clock.requested) < 3:
+            await _REAL_SLEEP(0)
+
+        # These requests reserved slots under the first pause. A later 429
+        # extends that pause and doubles the spacing while they are asleep.
+        await coordinator.on_rate_limited(0.5)
+        virtual_clock.sleep_gate.set()
+        await asyncio.gather(*waiters)
+
+        assert coordinator.min_interval == pytest.approx(0.2)
+        assert virtual_clock.requested[-2:] == pytest.approx([0.2, 0.2])
 
     @pytest.mark.asyncio
     async def test_paced_requests_are_spaced_out(self, virtual_clock) -> None:
