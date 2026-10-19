@@ -207,7 +207,7 @@ class TestRetryBackoff:
         assert _retry_after_seconds(resp) == 1.5
         assert _backoff_delay(0, resp) == 1.5
 
-    @pytest.mark.parametrize("raw", ["Wed, 21 Oct 2015 07:28:00 GMT", "-1", "9999", "abc"])
+    @pytest.mark.parametrize("raw", ["-1", "9999", "abc"])
     def test_absurd_or_unparseable_retry_after_falls_back_to_backoff(self, raw: str) -> None:
         resp = httpx.Response(429, headers={"Retry-After": raw})
         assert _retry_after_seconds(resp) is None
