@@ -43,6 +43,7 @@ from tool_eval_bench.evals.scenarios import (
 from tool_eval_bench.schema import ARGS_SCHEMA, get_schema
 from tool_eval_bench.utils.ids import build_run_id
 from tool_eval_bench.utils.system_prompt import normalize_system_prompt
+from tool_eval_bench.utils.urls import root_endpoint_url
 from tool_eval_bench.web.live import LiveRunHub, LiveRunSession
 from tool_eval_bench.web.sanitize import sanitize_result
 
@@ -185,7 +186,7 @@ async def _fetch_models_json(
     async with httpx.AsyncClient(timeout=6.0) as client:
         resp = await client.get(models_endpoint, headers=headers)
         if resp.status_code == 404 and resolved_format == "openai":
-            fallback = f"{resolved_url.rstrip('/')}/models"
+            fallback = root_endpoint_url(resolved_url, "/models")
             resp = await client.get(fallback, headers=headers)
         resp.raise_for_status()
         return resp.json()

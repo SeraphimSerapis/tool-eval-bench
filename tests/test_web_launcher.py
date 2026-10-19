@@ -14,6 +14,7 @@ from tool_eval_bench.domain.adapters import ChatCompletionResult
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 from tool_eval_bench.storage.db import RunRepository
 from tool_eval_bench.web import create_app
+from tool_eval_bench.web.launcher import _fetch_models_json
 
 _BASE_URL = "http://localhost:8000"
 _LAUNCH = {
@@ -65,6 +66,36 @@ def _use_adapter(monkeypatch: pytest.MonkeyPatch, adapter: Any) -> None:
         "tool_eval_bench.application.service.BenchmarkService._adapter_for",
         lambda self, *args, **kwargs: adapter,
     )
+
+
+@pytest.mark.asyncio
+async def test_web_model_fallback_preserves_query_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested: list[httpx.URL] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url)
+        status = 404 if request.url.path == "/proxy/v1/models" else 200
+        return httpx.Response(status, request=request, json={"data": []})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    monkeypatch.setattr("tool_eval_bench.web.launcher.httpx.AsyncClient", lambda **kwargs: client)
+    try:
+        body = await _fetch_models_json(
+            "https://proxy.example/proxy/v1?tenant=research",
+            "https://proxy.example/proxy/v1/models?tenant=research",
+            {},
+            "openai",
+        )
+    finally:
+        await client.aclose()
+
+    assert body == {"data": []}
+    assert [(url.path, url.query) for url in requested] == [
+        ("/proxy/v1/models", b"tenant=research"),
+        ("/proxy/models", b"tenant=research"),
+    ]
 
 
 @pytest.fixture()
