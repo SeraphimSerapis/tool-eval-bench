@@ -1,0 +1,1 @@
+Bot-authored pull requests are now exempt from the contributor policy's tests and changelog-fragment rules, so Dependabot dependency bumps no longer fail the `contributor-policy` check or need a maintainer to attach the `skip-changelog` label. The fork rule still applies to bots.

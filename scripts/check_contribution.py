@@ -50,6 +50,17 @@ def _repo_name(ref: object) -> str | None:
     return name if isinstance(name, str) else None
 
 
+def _is_bot(pull_request: dict[str, Any]) -> bool:
+    # Dependency bots cannot write changelog fragments, and pushing one onto
+    # their branch only invites rebase churn. Login covers non-GitHub events
+    # that omit the type field.
+    user = pull_request.get("user")
+    if not isinstance(user, dict):
+        return False
+    login = user.get("login")
+    return user.get("type") == "Bot" or (isinstance(login, str) and login.endswith("[bot]"))
+
+
 def _is_runtime_file(path: str) -> bool:
     return path.startswith("src/") or path in RUNTIME_FILES
 
@@ -100,49 +111,70 @@ def evaluate_policy(
                 "the pull request sidebar, then rerun this check."
             )
 
-    if "tests-not-needed" not in labels:
-        production_changed = any(_is_production_python(path) for path in changed_files)
-        tests_changed = any(_is_test_file(path) for path in changed_files)
-        if production_changed and not tests_changed:
-            errors.append(
-                "Production Python changed without a tests/** change. Add regression coverage "
-                "or ask a maintainer to apply the tests-not-needed label."
-            )
-
-    if "skip-changelog" not in labels:
-        if "CHANGELOG.md" in changed_files:
-            errors.append(
-                "CHANGELOG.md is generated. Revert that edit and add a changelog.d/ fragment "
-                "instead."
-            )
-
-        for path in sorted(released_fragments or ()):
-            errors.append(
-                f"Changelog fragment {path} was already released. Rebase, drop that edit, and "
-                "add a new fragment instead."
-            )
-
-        fragments = _written_fragments(written_files)
-        for path in fragments:
-            name = Path(path).name
-            if not FRAGMENT_NAME.fullmatch(name):
+    if not _is_bot(pull_request):
+        if "tests-not-needed" not in labels:
+            production_changed = any(_is_production_python(path) for path in changed_files)
+            tests_changed = any(_is_test_file(path) for path in changed_files)
+            if production_changed and not tests_changed:
                 errors.append(
-                    f"Invalid changelog fragment name: {path}. Use "
-                    "<issue-or-PR-number>.<type>.md or +<slug>.<type>.md."
+                    "Production Python changed without a tests/** change. Add regression "
+                    "coverage or ask a maintainer to apply the tests-not-needed label."
                 )
-                continue
-            content = fragment_contents.get(path)
-            if content is None or not content.strip():
-                errors.append(f"Changelog fragment is empty: {path}.")
 
-        runtime_changed = any(_is_runtime_file(path) for path in changed_files)
-        valid_fragments = [path for path in fragments if FRAGMENT_NAME.fullmatch(Path(path).name)]
-        if runtime_changed and not valid_fragments:
-            errors.append(
-                "Runtime or packaging files changed without a changelog fragment. Add "
-                "changelog.d/<issue-or-+slug>.<type>.md, update the unreleased fragment "
-                "this change amends, or ask a maintainer to apply the skip-changelog label."
+        if "skip-changelog" not in labels:
+            errors.extend(
+                _changelog_errors(
+                    changed_files=changed_files,
+                    written_files=written_files,
+                    fragment_contents=fragment_contents,
+                    released_fragments=released_fragments,
+                )
             )
+
+    return errors
+
+
+def _changelog_errors(
+    *,
+    changed_files: set[str],
+    written_files: set[str],
+    fragment_contents: dict[str, str | None],
+    released_fragments: set[str] | None,
+) -> list[str]:
+    errors: list[str] = []
+
+    if "CHANGELOG.md" in changed_files:
+        errors.append(
+            "CHANGELOG.md is generated. Revert that edit and add a changelog.d/ fragment instead."
+        )
+
+    for path in sorted(released_fragments or ()):
+        errors.append(
+            f"Changelog fragment {path} was already released. Rebase, drop that edit, and "
+            "add a new fragment instead."
+        )
+
+    fragments = _written_fragments(written_files)
+    for path in fragments:
+        name = Path(path).name
+        if not FRAGMENT_NAME.fullmatch(name):
+            errors.append(
+                f"Invalid changelog fragment name: {path}. Use "
+                "<issue-or-PR-number>.<type>.md or +<slug>.<type>.md."
+            )
+            continue
+        content = fragment_contents.get(path)
+        if content is None or not content.strip():
+            errors.append(f"Changelog fragment is empty: {path}.")
+
+    runtime_changed = any(_is_runtime_file(path) for path in changed_files)
+    valid_fragments = [path for path in fragments if FRAGMENT_NAME.fullmatch(Path(path).name)]
+    if runtime_changed and not valid_fragments:
+        errors.append(
+            "Runtime or packaging files changed without a changelog fragment. Add "
+            "changelog.d/<issue-or-+slug>.<type>.md, update the unreleased fragment "
+            "this change amends, or ask a maintainer to apply the skip-changelog label."
+        )
 
     return errors
 

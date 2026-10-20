@@ -157,6 +157,51 @@ def test_packaging_change_requires_changelog_but_not_python_test() -> None:
     assert errors == [MISSING_FRAGMENT]
 
 
+def test_bot_pull_request_is_exempt_from_mechanical_rules() -> None:
+    event = _event()
+    event["pull_request"]["user"] = {"login": "dependabot[bot]", "type": "Bot"}
+
+    errors = evaluate_policy(
+        event=event,
+        changed_files={"uv.lock", "src/tool_eval_bench/runner/service.py"},
+        written_files=set(),
+        fragment_contents={},
+    )
+
+    assert errors == []
+
+
+def test_bot_login_fallback_when_type_is_missing() -> None:
+    event = _event()
+    event["pull_request"]["user"] = {"login": "renovate[bot]"}
+
+    errors = evaluate_policy(
+        event=event,
+        changed_files={"uv.lock"},
+        written_files=set(),
+        fragment_contents={},
+    )
+
+    assert errors == []
+
+
+def test_bot_pull_request_still_needs_maintainer_edits_on_forks() -> None:
+    event = _event(fork=True, maintainer_can_modify=False)
+    event["pull_request"]["user"] = {"login": "dependabot[bot]", "type": "Bot"}
+
+    errors = evaluate_policy(
+        event=event,
+        changed_files={"uv.lock"},
+        written_files=set(),
+        fragment_contents={},
+    )
+
+    assert errors == [
+        "Fork pull requests must enable 'Allow edits from maintainers'. Enable it in the pull "
+        "request sidebar, then rerun this check."
+    ]
+
+
 def test_closed_pull_request_skips_diff(tmp_path, capsys) -> None:
     event_path = tmp_path / "event.json"
     event_path.write_text(

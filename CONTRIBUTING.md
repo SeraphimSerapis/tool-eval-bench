@@ -107,6 +107,10 @@ review:
   follow-up may correct. The edit has to change the text. Deleting a fragment or
   changing only whitespace or line endings does not count. If a release removed
   the fragment after your branch started, rebase and add a new fragment instead.
+- Bot-authored pull requests, such as Dependabot dependency bumps, are exempt
+  from the two rules above: dependency bots cannot author fragments, and a
+  maintainer-pushed fragment would be lost on the next bot rebase. The fork
+  rule below still applies to bots.
 - `CHANGELOG.md` must not be edited directly because towncrier generates it.
 - Pull requests from forks must enable **Allow edits from maintainers**.
 
