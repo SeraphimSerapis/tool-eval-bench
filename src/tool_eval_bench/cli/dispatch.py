@@ -428,6 +428,11 @@ STATUS_STYLE = {
 }
 
 
+def _plain_verdict(result: ScenarioResult) -> str:
+    style = STATUS_STYLE.get(result.status, "?")
+    return f"{style}  ({result.points}/2) {DIM}{result.summary}{RESET}"
+
+
 async def _plain_on_start(scenario: ScenarioDefinition, idx: int, total: int) -> None:
     print(
         f"  {DIM}[{idx + 1}/{total}]{RESET} {scenario.id} {scenario.title}... ", end="", flush=True
@@ -437,8 +442,20 @@ async def _plain_on_start(scenario: ScenarioDefinition, idx: int, total: int) ->
 async def _plain_on_result(
     scenario: ScenarioDefinition, result: ScenarioResult, idx: int, total: int
 ) -> None:
-    style = STATUS_STYLE.get(result.status, "?")
-    print(f"{style}  ({result.points}/2) {DIM}{result.summary}{RESET}")
+    print(_plain_verdict(result))
+
+
+async def _plain_on_parallel_result(
+    scenario: ScenarioDefinition, result: ScenarioResult, done: int, total: int
+) -> None:
+    # Parallel scenarios finish out of start order, so a verdict appended to an
+    # open start line lands next to another scenario's title (#311). Print the
+    # whole line on completion instead; ``done`` counts finished scenarios.
+    print(
+        f"  {DIM}[{done + 1}/{total}]{RESET} {scenario.id} {scenario.title}... "
+        f"{_plain_verdict(result)}",
+        flush=True,
+    )
 
 
 async def _plain_on_audit(
@@ -2555,7 +2572,9 @@ def _run_plain(
         callbacks: dict = {}
         if request.audits_answers:
             callbacks["on_scenario_audit"] = _plain_on_audit
-        if show:
+        if show and args.parallel > 1:
+            callbacks["on_scenario_result"] = _plain_on_parallel_result
+        elif show:
             callbacks["on_scenario_start"] = _plain_on_start
             callbacks["on_scenario_result"] = _plain_on_result
         return await service.run_benchmark(
