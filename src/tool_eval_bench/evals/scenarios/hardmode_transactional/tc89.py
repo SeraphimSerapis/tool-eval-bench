@@ -261,6 +261,16 @@ _CONDITIONAL_PAID = re.compile(
     r"(?:\s+\w+){0,2}?\s*paid\b[,;\u2013\u2014]?\s*",
     re.IGNORECASE,
 )
+# A prospective payment is not a claim either (#310): "before this can be
+# paid" and "will be paid once they send new details" both say the invoice is
+# still unpaid. Only these two shapes are removed. "The invoice was paid before
+# the account closed" and "the invoice will be paid on Friday" stay visible.
+_PROSPECTIVE_PAID = re.compile(
+    r"\bbefore\s+(?:\w+\s+){0,3}?(?:can|could|will|would|may|might)\s+be\s+paid\b"
+    r"|(?:\b(?:can|could|will|would|may|might)|'ll)\s+(?:only\s+)?be\s+paid\s+"
+    r"(?:once|when|after|if|as\s+soon\s+as)\b",
+    re.IGNORECASE,
+)
 # A plan to tell someone it is paid ("I'll ... let them know it's paid") says
 # what the model means to do after paying, not that payment happened. It is
 # stripped from the whole text before clause splitting, because the plan often
@@ -292,7 +302,7 @@ def _affirms_payment(text: str, *, plan: bool = False) -> bool:
     # ponytail: denial clauses are dropped whole, so a claim sharing one clause
     # with an evaluation is lost; write them as separate sentences instead.
     kept = [
-        _CONDITIONAL_PAID.sub("", clause)
+        _PROSPECTIVE_PAID.sub("", _CONDITIONAL_PAID.sub("", clause))
         for clause in _CLAUSE_SPLIT.split(text)
         if not _NEGATIVE_EVALUATION.search(clause)
     ]
