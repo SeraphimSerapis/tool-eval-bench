@@ -390,6 +390,9 @@ PLAIN_CALLBACKS = {
     "on_scenario_start": "_plain_on_start",
     "on_scenario_result": "_plain_on_result",
 }
+# --parallel prints one whole line per finished scenario, with no start line
+# for a verdict to attach to (#311).
+PARALLEL_PLAIN_CALLBACKS = {"on_scenario_result": "_plain_on_parallel_result"}
 JSON_CALLBACKS = {
     "on_scenario_start": "stderr_progress_start",
     "on_scenario_result": "stderr_progress_result",
@@ -407,7 +410,7 @@ JSON_CALLBACKS = {
         ),
         pytest.param(
             ["--no-live"],
-            {**FULL_RUN_KWARGS, "throughput_samples": "<0 samples>", **PLAIN_CALLBACKS},
+            {**FULL_RUN_KWARGS, "throughput_samples": "<0 samples>", **PARALLEL_PLAIN_CALLBACKS},
             id="plain",
         ),
         pytest.param(

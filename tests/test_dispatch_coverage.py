@@ -157,6 +157,80 @@ def test_dispatch_json_and_plain_execution_paths(monkeypatch: pytest.MonkeyPatch
     assert "Weighted Score" in console.export_text()
 
 
+@pytest.mark.parametrize("parallel", [1, 4])
+def test_plain_progress_pairs_each_verdict_with_its_scenario(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], parallel: int
+) -> None:
+    """Parallel scenarios finish out of order; each line must still name its own result (#311)."""
+    import re
+
+    from tool_eval_bench.cli import dispatch
+    from tool_eval_bench.domain.scenarios import (
+        Category,
+        ScenarioDefinition,
+        ScenarioEvaluation,
+        ScenarioResult,
+        ScenarioStatus,
+    )
+
+    scenarios = [
+        ScenarioDefinition(
+            id=f"TC-{n}",
+            title=f"title {n}",
+            category=Category.A,
+            user_message="x",
+            description="x",
+            handle_tool_call=lambda s, c: {},
+            evaluate=lambda s: ScenarioEvaluation(ScenarioStatus.PASS, 2, "ok"),
+        )
+        for n in (1, 2, 3)
+    ]
+
+    class Service:
+        async def run_benchmark(
+            self, *, concurrency, on_scenario_result, on_scenario_start=None, **kwargs
+        ):
+            # Mirrors the orchestrator. Sequentially, each start is followed by
+            # its result. In parallel, every scenario starts before any
+            # finishes, results arrive in completion order (reversed here), and
+            # the index passed with a result counts completions.
+            total = len(scenarios)
+
+            def verdict(scenario):
+                return ScenarioResult(
+                    scenario.id, ScenarioStatus.PASS, 2, f"verdict for {scenario.id}"
+                )
+
+            if concurrency <= 1:
+                for idx, scenario in enumerate(scenarios):
+                    if on_scenario_start:
+                        await on_scenario_start(scenario, idx, total)
+                    await on_scenario_result(scenario, verdict(scenario), idx, total)
+            else:
+                if on_scenario_start:
+                    for idx, scenario in enumerate(scenarios):
+                        await on_scenario_start(scenario, idx, total)
+                for done, scenario in enumerate(reversed(scenarios)):
+                    await on_scenario_result(scenario, verdict(scenario), done, total)
+            return {"scores": {"final_score": 100, "rating": "Great"}}
+
+    monkeypatch.setattr(dispatch, "_resolve_scenarios", lambda args: scenarios)
+    dispatch._run_plain(
+        Service(), Console(), "m", "Display", "vllm", "url", None, _dispatch_args(parallel=parallel)
+    )
+
+    lines = [
+        re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+        for line in capsys.readouterr().out.splitlines()
+        if "verdict for" in line
+    ]
+    order = ["TC-1", "TC-2", "TC-3"] if parallel == 1 else ["TC-3", "TC-2", "TC-1"]
+    assert lines == [
+        f"[{n}/3] {sid} title {sid[3:]}... ✅ PASS  (2/2) verdict for {sid}"
+        for n, sid in enumerate(order, start=1)
+    ]
+
+
 def test_dispatch_json_safety_gate_returns_status_two(monkeypatch: pytest.MonkeyPatch) -> None:
     from tool_eval_bench.cli import dispatch
     from tool_eval_bench.domain.scenarios import (
