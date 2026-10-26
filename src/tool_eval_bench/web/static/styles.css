@@ -459,6 +459,12 @@ pre,
   gap: 0.5rem;
 }
 
+.model-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
 .grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;

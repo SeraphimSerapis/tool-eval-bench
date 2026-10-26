@@ -125,6 +125,9 @@
 
   // ---------------------------------------------------------------- State
 
+  // Sentinel option in the model picker for "type an id the probe did not list".
+  const MODEL_CUSTOM = "__custom__";
+
   const state = {
     activeView: "history",
     runs: [],
@@ -141,6 +144,7 @@
     lastComparison: null,
     launcherSchema: null,
     probedModels: [],
+    probeAttempted: false,
     liveRunId: null,
     liveRunStatus: null,
     liveModel: null,
@@ -1335,6 +1339,60 @@
     el.textContent = text;
   }
 
+  // The probe fills a <select> rather than a <datalist>: browsers filter
+  // datalist options by the input's current value, so auto-filling the first
+  // model hid every other entry and made the list look unclickable. A free
+  // text field stays available behind the "Custom model ID…" entry for
+  // servers that advertise nothing or report names only the user knows.
+  function syncModelPicker(options = {}) {
+    const selectEl = byId("launch-model-select");
+    const customInput = byId("launch-model");
+    if (!selectEl || !customInput) return;
+    const customSelected = selectEl.value === MODEL_CUSTOM || selectEl.value === "";
+    customInput.hidden = !customSelected;
+    if (options.focus && customSelected) customInput.focus();
+  }
+
+  function readModelField() {
+    const selectEl = byId("launch-model-select");
+    if (!selectEl || selectEl.value === MODEL_CUSTOM) return (byId("launch-model")?.value || "").trim();
+    return selectEl.value;
+  }
+
+  function fillModelPicker(models, preferred = "") {
+    const selectEl = byId("launch-model-select");
+    const customInput = byId("launch-model");
+    if (!selectEl || !customInput) return;
+    const list = (models || []).filter((m) => m && m.id);
+    const typed = customInput.value.trim();
+    const wasCustom = selectEl.value === MODEL_CUSTOM;
+    const wanted = (preferred || (wasCustom ? typed : selectEl.value) || "").trim();
+
+    const options = list.length
+      ? list.map((m) => h("option", { value: m.id, text: m.display_name || m.id }))
+      : [
+          h("option", {
+            value: "",
+            text: state.probeAttempted ? "Endpoint reported no models" : "Probe the endpoint to list models",
+            disabled: true,
+          }),
+        ];
+    options.push(h("option", { value: MODEL_CUSTOM, text: "Custom model ID…" }));
+    selectEl.replaceChildren(...options);
+
+    if (list.some((m) => m.id === wanted)) {
+      selectEl.value = wanted;
+    } else if (wasCustom && typed) {
+      selectEl.value = MODEL_CUSTOM;
+    } else if (list.length) {
+      selectEl.value = list[0].id;
+    } else {
+      selectEl.value = MODEL_CUSTOM;
+      if (wanted) customInput.value = wanted;
+    }
+    syncModelPicker();
+  }
+
   async function probeServer() {
     const urlInput = byId("launch-base-url");
     setProbeStatus("busy", "Probing server…");
@@ -1349,14 +1407,11 @@
         return;
       }
       state.probedModels = res.models || [];
+      state.probeAttempted = true;
       if (urlInput && !urlInput.value.trim() && res.resolved_base_url) urlInput.value = res.resolved_base_url;
       const backendSel = byId("launch-backend");
       if (backendSel && res.backend && res.backend !== "unknown") backendSel.value = res.backend;
-      const modelInput = byId("launch-model");
-      if (modelInput && !modelInput.value.trim() && state.probedModels.length) modelInput.value = state.probedModels[0].id;
-      byId("probed-models-datalist")?.replaceChildren(
-        ...state.probedModels.map((m) => h("option", { value: m.id, text: m.display_name || m.id }))
-      );
+      fillModelPicker(state.probedModels);
       setProbeStatus("ok", `Connected to ${res.server_name || res.backend || "server"} · ${state.probedModels.length} model${state.probedModels.length === 1 ? "" : "s"}`);
     } catch (err) {
       setProbeStatus("error", err.message);
@@ -1389,11 +1444,18 @@
         ),
         h("div", { id: "probe-feedback", class: "probe-status", role: "status", text: "Leave empty to auto-discover a local server." })
       ),
-      field(
-        "Model",
-        input("launch-model", { class: "input mono", list: "probed-models-datalist", placeholder: "e.g. Qwen/Qwen3-8B", value: defaults.model || "", required: true, autocomplete: "off" })
+      h(
+        "div",
+        { class: "field" },
+        h("label", { class: "field-label", for: "launch-model-select", text: "Model" }),
+        h(
+          "div",
+          { class: "model-picker" },
+          h("select", { id: "launch-model-select", class: "select", onchange: () => syncModelPicker({ focus: true }) }),
+          input("launch-model", { class: "input mono", placeholder: "e.g. Qwen/Qwen3-8B", autocomplete: "off", hidden: true })
+        ),
+        h("span", { class: "field-hint", text: "Probe the endpoint to fill this list, or pick Custom model ID." })
       ),
-      h("datalist", { id: "probed-models-datalist" }, state.probedModels.map((m) => h("option", { value: m.id, text: m.display_name || m.id }))),
       h(
         "div",
         { class: "grid-2" },
@@ -1470,6 +1532,7 @@
       h("aside", { class: "launcher", "aria-label": "Launch a benchmark run" }, h("h1", { class: "rail-title", text: "Launch a run" }), h("div", { class: "section-spacer" }, form)),
       h("section", { id: "live-observer-pane", class: "observer", "aria-label": "Live run progress", "aria-live": "polite" })
     );
+    fillModelPicker(state.probedModels, defaults.model || "");
     renderLiveObserverPane();
   }
 
@@ -1489,7 +1552,7 @@
     const explicitScenarios = byId("launch-scenarios")?.value || "";
     const payload = {
       base_url: byId("launch-base-url")?.value || "",
-      model: byId("launch-model")?.value || "",
+      model: readModelField(),
       backend: byId("launch-backend")?.value || "unknown",
       wire_format: byId("launch-wire-format")?.value || "auto",
       api_key: byId("launch-api-key")?.value || undefined,
@@ -1502,6 +1565,10 @@
       timeout_seconds: Number(byId("launch-timeout")?.value || 120),
       label: byId("launch-label")?.value || undefined,
     };
+    if (!payload.model) {
+      showLaunchError("Pick a probed model or enter a custom model ID.");
+      return;
+    }
     const button = byId("launch-submit-btn");
     if (button) button.disabled = true;
     try {
