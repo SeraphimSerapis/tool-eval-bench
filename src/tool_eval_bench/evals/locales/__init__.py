@@ -156,19 +156,27 @@ _DOT_GROUPED = re.compile(r"(?<![\d.,])(\d{1,3}(?:\.\d{3})+)(?:,(\d+))?(?!\d|[.,
 # left for the shared helpers, which read it as a thousands separator.
 _DECIMAL_COMMA = re.compile(r"(?<![\d.,])(\d+),(\d{1,2}|\d{4,})(?!\d|[.,]\d)")
 # 1020 $ or 1.020 € -> $1020: the shared helpers expect a leading symbol.
-_TRAILING_DOLLAR = re.compile(r"(\d[\d.,]*)\s?(?:\$|US-?\$|USD)(?![A-Za-z])")
+_TRAILING_DOLLAR = re.compile(r"(\d[\d.,]*)\s?(?:\$|US-?\$|USD|美元|美金|ドル)(?![A-Za-z])")
 
 _NEGATORS: dict[str, re.Pattern[str]] = {
-    "de": re.compile(
-        r"\b(?:nicht|kein(?:e|en|em|er|es)?|nie(?:mals)?|weder|ohne)\b", re.IGNORECASE
+    "de": re.compile(r"\b(?:nicht|kein(?:e|en|em|er|es)?|nie(?:mals)?|weder)\b", re.IGNORECASE),
+    "es": re.compile(r"\b(?:no|nunca|jamás|ningun[oa]?|ningún|ni|tampoco)\b", re.IGNORECASE),
+    # Chinese negation precedes what it negates, as English does. Guard against
+    # compound words ("无理数", "无限不循环", "不需要", "非幂等", "不再", "不超过", "非常").
+    "zh": re.compile(
+        r"不是|并不是|并非|不等于|没到|不到"
+        r"|没有(?![别其任何问题错])"
+        r"|(?<![毫绝并])不(?![同用需要断过错仅但只论管妨久再可相符含超满少低于足能会是限循环难])"
+        r"|(?<![毫绝])没(?![有事错问题法])"
     ),
-    "es": re.compile(r"\b(?:nunca|jamás|ningun[oa]?|ningún|ni|sin|tampoco)\b", re.IGNORECASE),
-    # Chinese negation precedes what it negates, as English does.
-    "zh": re.compile(r"不是|没有|不|没|未|非|无"),
     # Japanese negation follows the value ("30ではありません"), so the guard's
     # look-back cannot see it; only the short look-ahead some helpers use can.
     # docs/locales.md records the limit.
     "ja": re.compile(r"ではありません|じゃない|ではない|ません|ない"),
+}
+_CONSTITUENT_NEGATORS: dict[str, re.Pattern[str]] = {
+    "de": re.compile(r"\bohne\b", re.IGNORECASE),
+    "es": re.compile(r"\bsin\b(?!\s+(?:duda|embargo)\b)", re.IGNORECASE),
 }
 _COMMA_DECIMAL_LOCALES = frozenset({"de", "es"})
 
@@ -183,6 +191,9 @@ def normalize_answer(text: str, locale: str) -> str:
         )
         text = _DECIMAL_COMMA.sub(r"\1.\2", text)
     text = _TRAILING_DOLLAR.sub(r"$\1", text)
+    constituent = _CONSTITUENT_NEGATORS.get(locale)
+    if constituent is not None:
+        text = constituent.sub(" without ", text)
     negator = _NEGATORS.get(locale)
     if negator is not None:
         text = negator.sub(" not ", text)
@@ -200,7 +211,11 @@ def localized_state(state: ScenarioState, locale: str) -> ScenarioState:
 
 _KANA = re.compile(r"[\u3040-\u30ff]")
 _HAN = re.compile(r"[\u4e00-\u9fff]")
-_STRIP = re.compile(r"```.*?```|`[^`]*`|https?://\S+|\S+@\S+|\b[\w./-]*\d[\w./-]*\b", re.DOTALL)
+_STRIP = re.compile(
+    r"```.*?```|`[^`]*`|https?://\S+|[A-Za-z0-9_.+-]+@[A-Za-z0-9.-]+"
+    r"|(?<![A-Za-z0-9_])[A-Za-z0-9_./-]*\d[A-Za-z0-9_./-]*(?![A-Za-z0-9_])",
+    re.DOTALL,
+)
 _STOPWORDS: dict[str, frozenset[str]] = {
     "en": frozenset(
         "the and is are of to in it for with that this you your was were be have has on".split()

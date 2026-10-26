@@ -66,8 +66,8 @@ _FIELD = re.compile(
     + r")(?![a-z0-9_])",
     re.IGNORECASE,
 )
-_RULE = re.compile(r"\b(?:r|rule\s*)([1-5])\b", re.IGNORECASE)
-_ISSUES_MARKER = re.compile(r"^[\W_]*issues[\W_]*:", re.IGNORECASE | re.MULTILINE)
+_RULE = re.compile(r"(?<![a-z0-9_])(?:r|rule\s*|regla\s*)([1-5])(?![a-z0-9_])", re.IGNORECASE)
+_ISSUES_MARKER = re.compile(r"^[\W_]*issues[\W_]*[:：]", re.IGNORECASE | re.MULTILINE)
 
 
 def _tc21_handle(state: ScenarioState, call: ToolCallRecord) -> Any:

@@ -92,7 +92,7 @@ _TC28_DISCOVERY_TOOLS = frozenset({"search_files"})
 
 # One lookup for *this* file earns its keep. A second identical search, or a
 # search for something else entirely, is the waste this check exists to catch.
-_TC28_DISCOVERY_QUERY = re.compile(r"\bconfig\b", re.IGNORECASE)
+_TC28_DISCOVERY_QUERY = re.compile(r"(?<![a-z0-9_])config(?![a-z0-9_])", re.IGNORECASE)
 
 
 def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:

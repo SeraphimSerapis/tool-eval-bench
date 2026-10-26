@@ -35,7 +35,7 @@
       "follow_up_messages": []
     },
     "TC-28": {
-      "user_message": "In der Datei config.yaml ist beim Datenbank-Host ein Tippfehler. Finde und beschreibe die Korrektur.",
+      "user_message": "In der Datei config.yaml ist beim Datenbank-Host ein Tippfehler. Finde den fehlerhaften Wert und beschreibe die Korrektur.",
       "follow_up_messages": []
     },
     "TC-30": {
@@ -81,7 +81,7 @@
       "follow_up_messages": []
     },
     "TC-88": {
-      "user_message": "Konstruiere im Stillen drei verschiedene 20-stellige Zahlen ohne führende Null. Ihre Quersummen müssen in dieser Reihenfolge 73, 91 und 109 betragen. Die letzten sechs Ziffern der zweiten Zahl müssen der Umkehrung der ersten sechs Ziffern der ersten Zahl entsprechen. Die letzten sechs Ziffern der dritten Zahl müssen der Umkehrung der ersten sechs Ziffern der zweiten Zahl entsprechen. Überprüfe in deinen Überlegungen jede Länge, jede Summe und jede Umkehrung. Verwende keine Tools. Antworte nur mit der ersten Zahl und sonst nichts.",
+      "user_message": "Konstruiere im Stillen drei verschiedene 20-stellige Zahlen ohne führende Null. Ihre Quersummen müssen in dieser Reihenfolge 73, 91 und 109 betragen. Die letzten sechs Ziffern der zweiten Zahl müssen der Umkehrung der ersten sechs Ziffern der ersten Zahl entsprechen. Die letzten sechs Ziffern der dritten Zahl müssen der Umkehrung der ersten sechs Ziffern der zweiten Zahl entsprechen. Überprüfe in deinen Überlegungen jede Länge, jede Quersumme und jede Umkehrung. Verwende keine Tools. Antworte nur mit der ersten Zahl und sonst nichts.",
       "follow_up_messages": [
         "Antworte jetzt nur mit der zweiten Zahl, die du konstruiert hast, und sonst nichts.",
         "Antworte jetzt nur mit der dritten Zahl, die du konstruiert hast, und sonst nichts."
@@ -142,7 +142,7 @@
     "Get shipping and tracking details for a shipment": "Liefert Versand- und Tracking-Details zu einer Sendung",
     "Initiate a return/refund for an order": "Leitet eine Rücksendung/Erstattung für eine Bestellung ein",
     "List open support tickets, optionally filtered by customer or priority": "Listet offene Support-Tickets auf, optional gefiltert nach Kunde oder Priorität",
-    "Filter by customer ID": "Nach Kunden-ID filtern",
+    "Filter by customer ID": "Filtert nach Kunden-ID",
     "Retrieve an invoice by invoice ID": "Ruft eine Rechnung anhand der Rechnungs-ID ab",
     "Create a new invoice for a customer": "Erstellt eine neue Rechnung für einen Kunden",
     "Process a payment against an invoice": "Verbucht eine Zahlung auf eine Rechnung",

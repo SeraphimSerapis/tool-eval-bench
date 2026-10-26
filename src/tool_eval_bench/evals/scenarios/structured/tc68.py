@@ -127,10 +127,30 @@ def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     if not isinstance(data.get("task_id"), str) or not isinstance(data.get("assignee"), str):
         return _violation("task_id and assignee must be strings.")
+    _self_assignees = {
+        "me",
+        "myself",
+        "current user",
+        "ich",
+        "mir",
+        "aktueller benutzer",
+        "aktueller nutzer",
+        "yo",
+        "mí",
+        "mi",
+        "a mí",
+        "usuario actual",
+        "我",
+        "本人",
+        "当前用户",
+        "私",
+        "自分",
+        "現在のユーザー",
+    }
     if (
         data.get("task_id") != "PROJ-127"
         or data.get("status") != "in_progress"
-        or normalize(as_str(data.get("assignee"))) not in {"me", "myself", "current user"}
+        or normalize(as_str(data.get("assignee"))) not in _self_assignees
     ):
         return _violation("Structured task status does not match the requested task update.")
 

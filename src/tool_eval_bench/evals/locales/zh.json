@@ -35,7 +35,7 @@
       "follow_up_messages": []
     },
     "TC-28": {
-      "user_message": "config.yaml 文件里数据库主机名有个拼写错误。找出来并说明怎么改。",
+      "user_message": "config.yaml 文件里数据库主机名有个拼写错误。找出拼写错误的内容并说明应该怎么改。",
       "follow_up_messages": []
     },
     "TC-30": {

@@ -26,10 +26,11 @@ def substitute(value: Any, replacements: dict[str, str]) -> Any:
         if not replacements:
             return value
         normalized = unicodedata.normalize("NFC", value)
+        boundary = r"[0-9A-Za-z_]" if all(k.isascii() for k in replacements) else r"\w"
         pattern = (
-            r"(?<![\w])(?:"
+            rf"(?<!{boundary})(?:"
             + "|".join(re.escape(k) for k in sorted(replacements, key=len, reverse=True))
-            + r")(?![\w])"
+            + rf")(?!{boundary})"
         )
         return re.sub(pattern, lambda match: replacements[match.group()], normalized)
     if isinstance(value, list):

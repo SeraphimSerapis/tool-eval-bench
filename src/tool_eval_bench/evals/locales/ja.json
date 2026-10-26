@@ -35,7 +35,7 @@
       "follow_up_messages": []
     },
     "TC-28": {
-      "user_message": "config.yamlのデータベースホストにタイポがあります。見つけて、修正内容を説明してください。",
+      "user_message": "config.yamlのデータベースホストにタイポがあります。誤っている箇所を見つけて、修正内容を説明してください。",
       "follow_up_messages": []
     },
     "TC-30": {
@@ -141,7 +141,7 @@
     "Order ID or customer name": "注文IDまたは顧客名",
     "Get shipping and tracking details for a shipment": "出荷の配送情報と追跡情報を取得します",
     "Initiate a return/refund for an order": "注文の返品・返金を開始します",
-    "List open support tickets, optionally filtered by customer or priority": "未解決のサポートチケットを一覧表示します。顧客または優先度で絞り込むこともできます",
+    "List open support tickets, optionally filtered by customer or priority": "顧客または優先度で任意に絞り込み、未解決のサポートチケットを一覧表示します",
     "Filter by customer ID": "顧客IDで絞り込みます",
     "Retrieve an invoice by invoice ID": "請求書IDで請求書を取得します",
     "Create a new invoice for a customer": "顧客向けの新しい請求書を作成します",

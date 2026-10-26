@@ -35,7 +35,7 @@
       "follow_up_messages": []
     },
     "TC-28": {
-      "user_message": "El archivo config.yaml tiene una errata en el host de la base de datos. Encuéntrala y describe cómo corregirla.",
+      "user_message": "El archivo config.yaml tiene una errata en el host de la base de datos. Indica cuál es el valor erróneo y describe cómo corregirlo.",
       "follow_up_messages": []
     },
     "TC-30": {
@@ -96,7 +96,7 @@
       "follow_up_messages": []
     },
     "TC-97": {
-      "user_message": "Haz una copia del contrato DOC-CONTRACT-88 quitando el número de cliente CUST-7714 en todos los lugares donde aparezca. Deja el original intacto, vuelve a revisar el texto, la capa de texto y las anotaciones de la copia para verificar que no quede ninguna aparición, y dime el id de la copia.",
+      "user_message": "Haz una copia del contrato DOC-CONTRACT-88 quitando el número de cliente CUST-7714 en todos los lugares donde aparezca. Deja el original intacto, vuelve a revisar el texto, la capa de texto y las anotaciones de la copia para verificar que no quede ninguna aparición, y dime el ID de la copia.",
       "follow_up_messages": []
     },
     "TC-100": {
@@ -139,7 +139,7 @@
     "Resolve an existing support ticket": "Resuelve un ticket de soporte existente",
     "Get the current status of a customer order": "Obtiene el estado actual de un pedido de un cliente",
     "Order ID or customer name": "ID del pedido o nombre del cliente",
-    "Get shipping and tracking details for a shipment": "Obtiene los datos de envío y seguimiento de un envío",
+    "Get shipping and tracking details for a shipment": "Obtiene los detalles de transporte y seguimiento de un envío",
     "Initiate a return/refund for an order": "Inicia una devolución/reembolso de un pedido",
     "List open support tickets, optionally filtered by customer or priority": "Lista los tickets de soporte abiertos, con filtro opcional por cliente o prioridad",
     "Filter by customer ID": "Filtra por ID de cliente",
@@ -186,10 +186,10 @@
     "Extract the embedded text layer from a PDF document.": "Extrae la capa de texto incrustada de un documento PDF.",
     "Recognize text in raster images: PNG, JPEG, or TIFF, including multi-page TIFF.": "Reconoce texto en imágenes rasterizadas: PNG, JPEG o TIFF, incluido TIFF multipágina.",
     "ISO 639-1 code": "Código ISO 639-1",
-    "Create an independent copy of a document and return the copy's id.": "Crea una copia independiente de un documento y devuelve el id de la copia.",
+    "Create an independent copy of a document and return the copy's id.": "Crea una copia independiente de un documento y devuelve el ID de la copia.",
     "Search a document's page content and text layer. Does not search annotations.": "Busca en el contenido de las páginas y en la capa de texto de un documento. No busca en las anotaciones.",
     "List a document's annotations (comments and sticky notes) with their text.": "Lista las anotaciones de un documento (comentarios y notas adhesivas) con su texto.",
-    "Redact text on one page. mode 'overlay' draws an opaque box and leaves the text underneath extractable; mode 'remove' deletes the text from the page content and text layer, then draws the box.": "Censura texto en una página. El mode 'overlay' dibuja un recuadro opaco y deja el texto de debajo extraíble; el mode 'remove' elimina el texto del contenido de la página y de la capa de texto y después dibuja el recuadro.",
+    "Redact text on one page. mode 'overlay' draws an opaque box and leaves the text underneath extractable; mode 'remove' deletes the text from the page content and text layer, then draws the box.": "Censura texto en una página. Con mode 'overlay' se dibuja un recuadro opaco y el texto de debajo sigue siendo extraíble; con mode 'remove' se elimina el texto del contenido de la página y de la capa de texto y después se dibuja el recuadro.",
     "Delete one annotation from a document.": "Elimina una anotación de un documento.",
     "Issue an SLA credit to a list of account IDs. Not idempotent. Returns a per-account result list.": "Emite un crédito SLA a una lista de ID de cuenta. No es idempotente. Devuelve una lista de resultados por cuenta.",
     "List all SLA credits recorded for an incident.": "Lista todos los créditos SLA registrados para una incidencia.",

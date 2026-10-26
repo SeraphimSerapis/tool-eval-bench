@@ -11,7 +11,11 @@ from scenario_replay import SCENARIOS, replay, turn
 
 from tool_eval_bench.cli.commands import resolve_scenarios
 from tool_eval_bench.domain.scenarios import ScenarioState, ScenarioStatus
-from tool_eval_bench.evals.helpers import answer_affirms_number
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_number,
+    answer_affirms_text,
+    positive_argument_contains,
+)
 from tool_eval_bench.evals.locales import (
     ANCHORS,
     SUPPORTED_LOCALES,
@@ -24,7 +28,7 @@ from tool_eval_bench.evals.locales import (
     scenario_tools,
     tool_strings,
 )
-from tool_eval_bench.evals.variants import prepare_scenarios
+from tool_eval_bench.evals.variants import prepare_scenarios, substitute
 
 REFERENCE = json.loads(
     (Path(__file__).parent / "fixtures/scenario_reference_traces.json").read_text(encoding="utf-8")
@@ -168,11 +172,56 @@ def test_locale_numbers_are_read_as_the_english_helpers_expect(
     [
         ("de", "Es sind nicht 30, sondern 40."),
         ("es", "Nunca fue 30."),
+        ("es", "El resultado no es 30 sino 40."),
         ("zh", "答案不是30。"),
     ],
 )
 def test_locale_negation_still_blocks_a_denied_value(locale: str, answer: str) -> None:
     assert not answer_affirms_number(normalize_answer(answer, locale), "30")
+
+
+@pytest.mark.parametrize(
+    ("locale", "answer", "value"),
+    [
+        ("de", "Ohne Tools ist es 30.", "30"),
+        ("de", "Es sind nicht 20, sondern 30.", "30"),
+        ("es", "Sin herramientas es 30.", "30"),
+        ("es", "El resultado es sin duda 30.", "30"),
+        ("es", "El resultado no es 20 sino 30.", "30"),
+        ("zh", "不需要使用工具，200的15%是30。", "30"),
+        ("zh", "计算结果非常明确：30", "30"),
+        ("zh", "购物车里没有其他商品，最终总价为 1020 美元，优惠码是 LAB100。", "1020"),
+    ],
+)
+def test_locale_constituent_and_compound_words_do_not_falsely_negate(
+    locale: str, answer: str, value: str
+) -> None:
+    assert answer_affirms_number(normalize_answer(answer, locale), value)
+
+
+@pytest.mark.parametrize(
+    ("locale", "answer", "identifier"),
+    [
+        ("ja", "アーカイブ受領IDはARC-2026-8841です。", "ARC-2026-8841"),
+        ("ja", "最終合計は1,020ドルで、適用したクーポンコードはLAB100です。", "LAB100"),
+        ("ja", "クレジットIDはcrd_9001、crd_9002、crd_9003です。", "crd_9001"),
+        ("zh", "归档回执ID为ARC-2026-8841。", "ARC-2026-8841"),
+        ("zh", "由于接口非幂等，仅重试了失败账户，赔付ID为crd_9001。", "crd_9001"),
+        ("zh", "购物车里已没有别的东西，使用优惠码LAB100后最终总价为1,020美元。", "LAB100"),
+    ],
+)
+def test_ascii_identifiers_adjacent_to_cjk_are_affirmed(
+    locale: str, answer: str, identifier: str
+) -> None:
+    assert answer_affirms_text(normalize_answer(answer, locale), identifier)
+
+
+def test_cjk_adjacent_arguments_and_variant_substitutions_match() -> None:
+    assert positive_argument_contains("Team Standup会议", "standup")
+    assert positive_argument_contains("Team Standupミーティング", "standup")
+    assert (
+        substitute("已读取文件file_405。", {"file_405": "fixture_123"}) == "已读取文件fixture_123。"
+    )
 
 
 def test_three_digit_comma_group_is_left_for_the_thousands_reading() -> None:
@@ -181,6 +230,38 @@ def test_three_digit_comma_group_is_left_for_the_thousands_reading() -> None:
 
 def test_dollar_suffix_moves_to_the_front() -> None:
     assert normalize_answer("4250000 $", "de") == "$4250000"
+    assert normalize_answer("4,250,000 美元", "zh") == "$4,250,000"
+    assert normalize_answer("935ドル", "ja") == "$935"
+
+
+def test_localized_scenario_evaluators_accept_natural_target_language_answers() -> None:
+    tc44_zh = localized_variant(SCENARIOS["TC-44"], "zh")
+    assert (
+        tc44_zh.evaluate(
+            ScenarioState(final_answer="圆周率（π）是一个无理数，约等于3.14159。")
+        ).status
+        is ScenarioStatus.PASS
+    )
+    tc44_es = localized_variant(SCENARIOS["TC-44"], "es")
+    assert (
+        tc44_es.evaluate(
+            ScenarioState(final_answer="El valor de pi es aproximadamente 3,142.")
+        ).status
+        is ScenarioStatus.PASS
+    )
+    tc64_zh = localized_variant(SCENARIOS["TC-64"], "zh")
+    assert (
+        tc64_zh.evaluate(
+            ScenarioState(
+                final_answer='{"title":"黑客帝国","year":1999,"rating":9,"genre":"sci-fi","summary":"经典科幻电影。"}'
+            )
+        ).status
+        is ScenarioStatus.PASS
+    )
+    for locale, assignee in [("de", "mir"), ("es", "yo"), ("zh", "我"), ("ja", "私")]:
+        tc68 = localized_variant(SCENARIOS["TC-68"], locale)
+        payload = json.dumps({"task_id": "PROJ-127", "status": "in_progress", "assignee": assignee})
+        assert tc68.evaluate(ScenarioState(final_answer=payload)).status is ScenarioStatus.PASS
 
 
 # --- language detection and the drift diagnostic --------------------------------
@@ -193,7 +274,9 @@ def test_dollar_suffix_moves_to_the_front() -> None:
         ("Das Wetter in London ist bewölkt und der Kurs ist nicht gestiegen.", "de"),
         ("El clima en London es nublado y el precio de la acción es alto.", "es"),
         ("伦敦今天多云，微软的股价是多少？", "zh"),
+        ("AAPL现在的股价是187.42美元。", "zh"),
         ("ロンドンの天気は曇りです。", "ja"),
+        ("Tokyoの気温は華氏64度です。", "ja"),
         ("AAPL 187.42 USD", "unknown"),
     ],
 )

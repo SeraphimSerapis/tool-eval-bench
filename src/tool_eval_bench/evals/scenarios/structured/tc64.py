@@ -111,7 +111,8 @@ def _tc64_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial(f"Valid JSON with schema violations: {'; '.join(errors)}.")
 
     # Check that it's about The Matrix (the requested movie)
-    if not includes_text(data.get("title", ""), "matrix"):
+    title_val = data.get("title", "")
+    if not any(includes_text(title_val, t) for t in ("matrix", "黑客帝国", "マトリックス")):
         return _partial("Valid schema-compliant JSON but not about the requested movie.")
 
     return _pass("Produced valid, schema-compliant JSON for the requested movie review.")
