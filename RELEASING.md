@@ -93,8 +93,9 @@ a changelog (upgrade instructions, a known-issues note, coverage gaps recorded
 in step 4), then publish it. Nothing is public until you do. Leave
 `CHANGELOG.md` as the generated record.
 
-Publishing the release does not upload to PyPI unless the repository variable
-`PYPI_PUBLISH_ON_RELEASE` is `true`, which the next section's setup turns on.
+Publishing the release starts the PyPI workflow when the repository variable
+`PYPI_PUBLISH_ON_RELEASE` is `true`. It is enabled for this repository; the upload
+still waits for approval in the `pypi` environment.
 
 To produce the notes locally, or if the workflow is unavailable:
 
@@ -105,11 +106,11 @@ gh release create vX.Y.Z --title "vX.Y.Z" --notes-file /tmp/notes.md
 
 ## Publishing to PyPI
 
-`tool-eval-bench` is not on PyPI yet. `.github/workflows/publish-pypi.yml` is
-ready to upload it, but **nothing reaches PyPI until the one-time setup below is
-done and a person triggers the workflow.** It never runs on push. A published
-release triggers an upload only after step 4 below; until then, a release event
-starts the workflow but every job skips.
+`tool-eval-bench` is available on [PyPI](https://pypi.org/project/tool-eval-bench/).
+`.github/workflows/publish-pypi.yml` builds a tagged release when a person
+dispatches it or publishes a GitHub release with `PYPI_PUBLISH_ON_RELEASE=true`.
+It never runs on push. This repository has release-triggered publishing enabled
+and requires approval in the `pypi` environment before upload.
 
 The workflow uses
 [Trusted Publishing](https://docs.pypi.org/trusted-publishers/): PyPI accepts an
@@ -123,6 +124,10 @@ These are separate builds from the files `release.yml` attaches to the GitHub
 release, so their hashes will not match the PyPI files.
 
 ### One-time setup
+
+Production PyPI publishing is already configured for this repository. These steps
+are for a new repository or for restoring the configuration. TestPyPI is optional
+and must be configured separately before dispatching an upload to it.
 
 1. **Create the GitHub environments.** Under Settings, Environments, add
    `pypi` and `testpypi`. On `pypi`, enable **Required reviewers** and add
@@ -176,27 +181,30 @@ If the release was published before step 4, or the variable is not set, run
 **Publish to PyPI** by hand with the tag and target `pypi` instead. PyPI files
 cannot be replaced: a broken upload needs a new version, or a yank.
 
-Before the first upload, note that the PyPI page renders `README.md` as is.
-Relative links and the screenshot path (`docs/...`) resolve against PyPI, not
-GitHub, so they break there unless the README uses absolute URLs.
+The PyPI page renders `README.md` as is. Keep its links and screenshot URLs
+absolute so they resolve on PyPI as well as GitHub.
 
 ## Post-release
 
 - `changelog.d/` is already empty; `towncrier build` deleted the fragments it
   consumed. There is no `## [Unreleased]` section to recreate.
 
-## Live Certification (required before major releases)
+## Live certification (required before major releases)
 
-Run the full benchmark against at least one backend to verify deployment
-compatibility:
+Run the full benchmark against at least one authorized test backend to verify
+deployment compatibility. A skipped live canary or a mock-backed run does not
+satisfy this gate. Record the tool commit, backend and model versions, command,
+and run ID in the release notes, without credentials or private endpoint URLs.
+
+Include Hard Mode so all 97 public scenarios exercise the deployment:
 
 ```bash
 # vLLM
-tool-eval-bench --backend vllm --base-url http://localhost:8000
+tool-eval-bench run --backend vllm --base-url http://localhost:8000 --hardmode --seed 42
 
 # llama.cpp
-tool-eval-bench --backend llamacpp --base-url http://localhost:8080
+tool-eval-bench run --backend llamacpp --base-url http://localhost:8080 --hardmode --seed 42
 
 # LiteLLM
-tool-eval-bench --backend litellm --base-url http://localhost:4000
+tool-eval-bench run --backend litellm --base-url http://localhost:4000 --hardmode --seed 42
 ```

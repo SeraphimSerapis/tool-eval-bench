@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +59,7 @@ def repo(tmp_path: Path):
 
 
 def _stored_blob(repo: RunRepository, run_id: str) -> str:
-    with sqlite3.connect(repo.db_path) as conn:
+    with closing(sqlite3.connect(repo.db_path)) as conn:
         row = conn.execute(
             "SELECT scores_json FROM scenario_runs WHERE run_id=?", (run_id,)
         ).fetchone()
@@ -150,7 +151,7 @@ class TestBackwardCompatibility:
     ) -> None:
         # Rows written before the split keep raw_log inside scores_json and have
         # no scenario_traces entries at all.
-        with sqlite3.connect(repo.db_path) as conn:
+        with closing(sqlite3.connect(repo.db_path)) as conn, conn:
             conn.execute(
                 "INSERT INTO scenario_runs(run_id, created_at, status, model, config_json, "
                 "scores_json, metadata_json, run_type) VALUES(?,?,?,?,?,?,?,?)",

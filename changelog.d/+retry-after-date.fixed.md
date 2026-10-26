@@ -1,1 +1,0 @@
-**HTTP-date `Retry-After` hints** are now honored alongside numeric delays. Rate-limited servers that send the standard date form no longer fall back to a shorter exponential retry; expired dates do not add an unnecessary wait, and future hints beyond the configured cap still use the bounded backoff.
