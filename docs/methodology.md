@@ -906,7 +906,8 @@ independent axes, using a 272-tool catalog whose domain, family, and variant
 structure defines the similarity tiers. Each item is one request graded on the
 first tool call's name. Each tool has a literal query that names its
 distinguishing qualifier and an implied one that only implies it, sent with the
-identical tool list. Contrasts are paired by target, fillers are shared across
+identical tool list. An opt-in crowded condition draws the fillers as whole
+near-duplicate families. Contrasts are paired by target, fillers are shared across
 tiers and nested across N, and each wrong pick is classified as a neighbour or
 a filler, which attributes the miss to similarity or to count. The headline
 reports accuracy when a tool was called apart from the call rate, because a

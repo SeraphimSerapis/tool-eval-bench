@@ -103,5 +103,9 @@ control and leave nothing to separate keyword matching from understanding. In ca
 neither cue produced measurable confusion in two models up to 64 tools, so the next difficulty
 axes are description quality, crowded fillers, and larger N rather than harder queries.
 
-Revisit if labs need a continuous similarity axis, or a crowded-filler axis where the fillers are
-near-duplicates of each other.
+Crowded fillers draw whole families instead of one tool per family, walking the same family
+order, so the target's neighbours and slot layout are unchanged and sparse minus crowded is
+paired. Crowded stays opt-in because it adds 75% to an already doubled grid, and in calibration it
+changed nothing for two models.
+
+Revisit if labs need a continuous similarity axis, or crowding inside the target's own domain.

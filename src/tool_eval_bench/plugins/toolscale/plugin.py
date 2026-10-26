@@ -30,6 +30,7 @@ from tool_eval_bench.plugins.toolscale.grid import (
     CONTROL,
     CORRECT,
     CUES,
+    DENSITIES,
     ERROR,
     OUTCOMES,
     SIMILARITY_LEVELS,
@@ -144,6 +145,7 @@ class ToolscalePlugin(BenchmarkPlugin):
                 "count": item.count,
                 "similarity": item.similarity,
                 "cue": item.cue,
+                "density": item.density,
                 "trial": item.trial,
                 "position": round(item.position, 4),
                 "query": item.query,
@@ -277,30 +279,48 @@ def summarize(
     counts = sorted({r["count"] for r in results if r["similarity"] != CONTROL})
     levels = [lvl for lvl in SIMILARITY_LEVELS if any(r["similarity"] == lvl for r in results)]
     cues = [cue for cue in CUES if any(r["cue"] == cue for r in results)]
+    densities = [d for d in DENSITIES if any(r["density"] == d for r in results)]
+    slices = [(cue, density) for cue in cues for density in densities]
     trials = sorted({r["trial"] for r in results})
     grid_rows = [r for r in results if r["similarity"] != CONTROL]
     control_rows = [r for r in results if r["similarity"] == CONTROL]
 
-    by_cell: dict[tuple[int, str, str], list[dict[str, Any]]] = defaultdict(list)
+    by_cell: dict[tuple[int, str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for r in grid_rows:
-        by_cell[(r["count"], r["similarity"], r["cue"])].append(r)
+        by_cell[(r["count"], r["similarity"], r["cue"], r["density"])].append(r)
 
     cells: list[dict[str, Any]] = []
-    for cue in cues:
+    for cue, density in slices:
         for count in counts:
             for level in levels:
-                rows = by_cell.get((count, level, cue), [])
+                rows = by_cell.get((count, level, cue, density), [])
                 if rows:
                     cells.append(
-                        _cell_summary(rows, trials, count=count, similarity=level, cue=cue)
+                        _cell_summary(
+                            rows,
+                            trials,
+                            count=count,
+                            similarity=level,
+                            cue=cue,
+                            density=density,
+                        )
                     )
 
     errors = sum(1 for r in results if r["outcome"] == ERROR)
     total = len(results)
     targets = sorted({(r["target_rank"], r["target"]) for r in results})
-    # Compact per-item outcomes: [target_rank, count, similarity, cue, trial, outcome].
+    # Compact per-item outcomes:
+    # [target_rank, count, similarity, cue, density, trial, outcome].
     compact = [
-        [r["target_rank"], r["count"], r["similarity"], r["cue"], r["trial"], r["outcome"]]
+        [
+            r["target_rank"],
+            r["count"],
+            r["similarity"],
+            r["cue"],
+            r["density"],
+            r["trial"],
+            r["outcome"],
+        ]
         for r in results
     ]
 
@@ -314,9 +334,14 @@ def summarize(
         "incomplete": errors > 0,
         **_headline(grid_rows),
         "by_cue": {cue: _headline([r for r in grid_rows if r["cue"] == cue]) for cue in cues},
+        "by_density": {
+            density: _headline([r for r in grid_rows if r["density"] == density])
+            for density in densities
+        },
         "counts": counts,
         "similarities": levels,
         "cues": cues,
+        "densities": densities,
         "trials": len(trials),
         "cells": cells,
         "control": {
@@ -324,9 +349,10 @@ def summarize(
             for cue in cues
             if any(r["cue"] == cue for r in control_rows)
         },
-        "similarity_effects": _similarity_effects(grid_rows, counts, levels, cues),
-        "count_effects": _count_effects(grid_rows, cells, counts, levels, cues),
-        "cue_effects": _cue_effects(grid_rows, counts, levels, cues),
+        "similarity_effects": _similarity_effects(grid_rows, counts, levels, slices),
+        "count_effects": _count_effects(grid_rows, cells, counts, levels, slices),
+        "cue_effects": _cue_effects(grid_rows, counts, levels, cues, densities),
+        "density_effects": _density_effects(grid_rows, counts, levels, cues, densities),
         "by_position": _by_position(grid_rows),
         "similarity_check": similarity_check(items, catalog),
         "query_check": query_check(items, catalog),
@@ -416,29 +442,53 @@ def _paired_effect(
 
 
 def _select(
-    rows: list[dict[str, Any]], *, count: int, similarity: str, cue: str
+    rows: list[dict[str, Any]],
+    *,
+    count: int,
+    similarity: str,
+    cue: str,
+    density: str = "sparse",
 ) -> list[dict[str, Any]]:
     return [
-        r for r in rows if r["count"] == count and r["similarity"] == similarity and r["cue"] == cue
+        r
+        for r in rows
+        if r["count"] == count
+        and r["similarity"] == similarity
+        and r["cue"] == cue
+        and r["density"] == density
     ]
 
 
 def _similarity_effects(
-    rows: list[dict[str, Any]], counts: list[int], levels: list[str], cues: list[str]
+    rows: list[dict[str, Any]],
+    counts: list[int],
+    levels: list[str],
+    slices: list[tuple[str, str]],
 ) -> list[dict[str, Any]]:
-    """At each N and cue, distinct minus each more similar tier: the cost of similarity."""
+    """At each N and slice, distinct minus each more similar tier: the cost of similarity."""
     if "distinct" not in levels:
         return []
     effects = []
-    for cue in cues:
+    for cue, density in slices:
         for count in counts:
-            base = _select(rows, count=count, similarity="distinct", cue=cue)
+            base = _select(rows, count=count, similarity="distinct", cue=cue, density=density)
             for level in levels:
                 if level == "distinct":
                     continue
-                effect = _paired_effect(base, _select(rows, count=count, similarity=level, cue=cue))
+                effect = _paired_effect(
+                    base,
+                    _select(rows, count=count, similarity=level, cue=cue, density=density),
+                )
                 if effect is not None:
-                    effects.append({"cue": cue, "count": count, "versus": level, **effect})
+                    effects.append(
+                        {
+                            "cue": cue,
+                            "density": density,
+                            "count": count,
+                            "versus": level,
+                            **effect,
+                        }
+                    )
     return effects
 
 
@@ -447,30 +497,38 @@ def _count_effects(
     cells: list[dict[str, Any]],
     counts: list[int],
     levels: list[str],
-    cues: list[str],
+    slices: list[tuple[str, str]],
 ) -> list[dict[str, Any]]:
-    """For each tier and cue, smallest N minus largest N, and the slope per doubling."""
-    if len(counts) < 2:
-        return []
-    low_n, high_n = counts[0], counts[-1]
+    """For each tier and slice, smallest N minus largest N, and the slope per doubling.
+
+    Crowded slices have no N=4 cell, so their range starts at the smallest
+    count they were measured at.
+    """
     effects = []
-    for cue in cues:
+    for cue, density in slices:
+        measured = sorted(
+            {c["count"] for c in cells if c["cue"] == cue and c["density"] == density}
+        )
+        if len(measured) < 2:
+            continue
+        low_n, high_n = measured[0], measured[-1]
         for level in levels:
             effect = _paired_effect(
-                _select(rows, count=low_n, similarity=level, cue=cue),
-                _select(rows, count=high_n, similarity=level, cue=cue),
+                _select(rows, count=low_n, similarity=level, cue=cue, density=density),
+                _select(rows, count=high_n, similarity=level, cue=cue, density=density),
             )
             slope = slope_per_doubling(
                 [
                     (c["count"], c["accuracy"])
                     for c in cells
-                    if c["similarity"] == level and c["cue"] == cue
+                    if c["similarity"] == level and c["cue"] == cue and c["density"] == density
                 ]
             )
             if effect is not None:
                 effects.append(
                     {
                         "cue": cue,
+                        "density": density,
                         "similarity": level,
                         "from_count": low_n,
                         "to_count": high_n,
@@ -482,20 +540,50 @@ def _count_effects(
 
 
 def _cue_effects(
-    rows: list[dict[str, Any]], counts: list[int], levels: list[str], cues: list[str]
+    rows: list[dict[str, Any]],
+    counts: list[int],
+    levels: list[str],
+    cues: list[str],
+    densities: list[str],
 ) -> list[dict[str, Any]]:
     """Literal minus implied at each (N, tier): what naming the qualifier was worth."""
     if not {"literal", "implied"} <= set(cues):
         return []
     effects = []
-    for count in counts:
-        for level in levels:
-            effect = _paired_effect(
-                _select(rows, count=count, similarity=level, cue="literal"),
-                _select(rows, count=count, similarity=level, cue="implied"),
-            )
-            if effect is not None:
-                effects.append({"count": count, "similarity": level, **effect})
+    for density in densities:
+        for count in counts:
+            for level in levels:
+                effect = _paired_effect(
+                    _select(rows, count=count, similarity=level, cue="literal", density=density),
+                    _select(rows, count=count, similarity=level, cue="implied", density=density),
+                )
+                if effect is not None:
+                    effects.append(
+                        {"density": density, "count": count, "similarity": level, **effect}
+                    )
+    return effects
+
+
+def _density_effects(
+    rows: list[dict[str, Any]],
+    counts: list[int],
+    levels: list[str],
+    cues: list[str],
+    densities: list[str],
+) -> list[dict[str, Any]]:
+    """Sparse minus crowded at each (N, tier, cue): the cost of a crowded catalog."""
+    if not {"sparse", "crowded"} <= set(densities):
+        return []
+    effects = []
+    for cue in cues:
+        for count in counts:
+            for level in levels:
+                effect = _paired_effect(
+                    _select(rows, count=count, similarity=level, cue=cue, density="sparse"),
+                    _select(rows, count=count, similarity=level, cue=cue, density="crowded"),
+                )
+                if effect is not None:
+                    effects.append({"cue": cue, "count": count, "similarity": level, **effect})
     return effects
 
 
@@ -564,8 +652,38 @@ def similarity_check(items: list[ToolscaleItem], catalog: Catalog) -> dict[str, 
             )
         ],
     }
+    check["filler_crowding"] = _filler_crowding(items, sim, defs)
     check["category_l_reference"] = _category_l_reference(sim)
     return check
+
+
+def _filler_crowding(
+    items: list[ToolscaleItem], sim: ToolSimilarity, defs: dict[str, dict[str, Any]]
+) -> dict[str, float]:
+    """Mean similarity of each filler to its closest other filler, per density.
+
+    Measured on the largest tool list of each target and trial, once per
+    density, so the crowded axis is shown to be denser rather than assumed.
+    """
+    if not items:
+        return {}
+    largest = max(item.count for item in items)
+    first_level = next((i.similarity for i in items if i.similarity != CONTROL), None)
+    seen: set[tuple[str, int, str]] = set()
+    scores: dict[str, list[float]] = defaultdict(list)
+    for item in items:
+        key = (item.target.name, item.trial, item.density)
+        if item.count != largest or item.similarity != first_level or key in seen:
+            continue
+        seen.add(key)
+        fillers = [defs[name] for name, role in item.roles if role == "filler"]
+        if len(fillers) < 2:
+            continue
+        for i, a in enumerate(fillers):
+            scores[item.density].append(
+                max(sim.between(a, b) for j, b in enumerate(fillers) if j != i)
+            )
+    return {density: round(fmean(v), 3) for density, v in scores.items() if v}
 
 
 def _category_l_reference(sim: ToolSimilarity) -> dict[str, Any]:
@@ -633,11 +751,23 @@ def query_check(items: list[ToolscaleItem], catalog: Catalog) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _cell(details: dict[str, Any], count: int, level: str, cue: str) -> dict[str, Any] | None:
+def _cell(
+    details: dict[str, Any], count: int, level: str, cue: str, density: str = "sparse"
+) -> dict[str, Any] | None:
     for cell in details.get("cells", []):
-        if cell["count"] == count and cell["similarity"] == level and cell.get("cue") == cue:
+        if (
+            cell["count"] == count
+            and cell["similarity"] == level
+            and cell.get("cue") == cue
+            and cell.get("density", "sparse") == density
+        ):
             return cell
     return None
+
+
+def _slice_label(cue: str, density: str, densities: list[str]) -> str:
+    """``implied`` alone, or ``implied, crowded`` when the run swept densities."""
+    return cue if len(densities) < 2 else f"{cue}, {density}"
 
 
 def _signed(value: float) -> str:
@@ -645,7 +775,12 @@ def _signed(value: float) -> str:
 
 
 def _grid_table(
-    d: dict[str, Any], counts: list[int], levels: list[str], cue: str, render: Any
+    d: dict[str, Any],
+    counts: list[int],
+    levels: list[str],
+    cue: str,
+    render: Any,
+    density: str = "sparse",
 ) -> list[str]:
     lines = [
         "| Similarity | " + " | ".join(f"N={n}" for n in counts) + " |",
@@ -654,7 +789,7 @@ def _grid_table(
     for level in levels:
         row = []
         for count in counts:
-            cell = _cell(d, count, level, cue)
+            cell = _cell(d, count, level, cue, density)
             row.append("" if cell is None else render(cell))
         lines.append(f"| {level} | " + " | ".join(row) + " |")
     lines.append("")
@@ -667,6 +802,8 @@ def render_report(result: BenchmarkResult) -> list[str]:
     counts: list[int] = d.get("counts", [])
     levels: list[str] = d.get("similarities", [])
     cues: list[str] = d.get("cues", ["literal"])
+    densities: list[str] = d.get("densities", ["sparse"])
+    slices = [(cue, density) for cue in cues for density in densities]
     catalog = d.get("catalog", {})
     trials = d.get("trials", 1)
 
@@ -681,7 +818,7 @@ def render_report(result: BenchmarkResult) -> list[str]:
         f"**Rating:** {result.rating}",
         f"**Catalog:** v{catalog.get('version', '?')} ({catalog.get('source', '?')}, "
         f"{catalog.get('tools', 0)} tools, sha256 `{str(catalog.get('sha256', ''))[:12]}`)",
-        f"**Cues:** {', '.join(cues)} · **Trials:** {trials}",
+        f"**Cues:** {', '.join(cues)} · **Fillers:** {', '.join(densities)} · **Trials:** {trials}",
         f"**Duration:** {result.duration_seconds:.1f}s",
         f"**Tokens:** {result.total_tokens:,}",
         "",
@@ -693,45 +830,53 @@ def render_report(result: BenchmarkResult) -> list[str]:
         "",
     ]
 
-    by_cue = d.get("by_cue", {})
-    if len(cues) > 1 and by_cue:
+    for axis, title, axis_values in (
+        ("by_cue", "Cue", cues),
+        ("by_density", "Fillers", densities),
+    ):
+        breakdown = d.get(axis, {})
+        if len(axis_values) < 2 or not breakdown:
+            continue
         lines.extend(
             [
-                "### Headline by Cue",
+                f"### Headline by {title}",
                 "",
-                "| Cue | Accuracy when called | Call rate | Combined accuracy |",
+                f"| {title} | Accuracy when called | Call rate | Combined accuracy |",
                 "|---|---:|---:|---:|",
             ]
         )
-        for cue in cues:
-            h = by_cue.get(cue, {})
+        for value in axis_values:
+            h = breakdown.get(value, {})
             lines.append(
-                f"| {cue} | {h.get('accuracy_when_called', 0):.1f}% "
+                f"| {value} | {h.get('accuracy_when_called', 0):.1f}% "
                 f"({h.get('grid_correct', 0)}/{h.get('grid_called', 0)}) | "
                 f"{h.get('call_rate', 0):.1f}% | {h.get('accuracy', 0):.1f}% |"
             )
         lines.append("")
 
     if counts and levels:
-        for cue in cues:
+        for cue, density in slices:
+            suffix = f"{cue} cue" + (f", {density} fillers" if len(densities) > 1 else "")
             lines.extend(
-                [f"### Accuracy When a Tool Was Called ({cue} cue)", ""]
+                [f"### Accuracy When a Tool Was Called ({suffix})", ""]
                 + _grid_table(
                     d,
                     counts,
                     levels,
                     cue,
                     lambda c: f"{c['accuracy_when_called']:.1f}% ({c['correct']}/{c['called']})",
+                    density,
                 )
             )
             lines.extend(
-                [f"### Call Rate ({cue} cue)", ""]
+                [f"### Call Rate ({suffix})", ""]
                 + _grid_table(
                     d,
                     counts,
                     levels,
                     cue,
                     lambda c: f"{c['call_rate']:.1f}% ({c['called']}/{c['items']})",
+                    density,
                 )
             )
 
@@ -742,8 +887,8 @@ def render_report(result: BenchmarkResult) -> list[str]:
                 return text
 
             lines.extend(
-                [f"### Combined Accuracy ({cue} cue)", ""]
-                + _grid_table(d, counts, levels, cue, combined)
+                [f"### Combined Accuracy ({suffix})", ""]
+                + _grid_table(d, counts, levels, cue, combined, density)
             )
         if trials > 1:
             lines.extend(["*± is the standard deviation of cell accuracy across trials.*", ""])
@@ -769,13 +914,35 @@ def render_report(result: BenchmarkResult) -> list[str]:
                 "identical tool list, paired by target. Positive means the model relied on the "
                 "query naming the distinguishing word.",
                 "",
-                "| N | Similarity | Delta (pts) | 95% CI | Targets |",
-                "|---:|---|---:|---|---:|",
+                "| Fillers | N | Similarity | Delta (pts) | 95% CI | Targets |",
+                "|---|---:|---|---:|---|---:|",
             ]
         )
         for e in cue_effects:
             lines.append(
-                f"| {e['count']} | {e['similarity']} | {_signed(e['delta'])} | "
+                f"| {e.get('density', 'sparse')} | {e['count']} | {e['similarity']} | "
+                f"{_signed(e['delta'])} | {_signed(e['ci_low'])} to {_signed(e['ci_high'])} | "
+                f"{e['targets']} |"
+            )
+        lines.append("")
+
+    density_effects = d.get("density_effects", [])
+    if density_effects:
+        lines.extend(
+            [
+                "### Density Effect",
+                "",
+                "Accuracy with sparse fillers minus accuracy with crowded fillers, with the "
+                "same target, neighbours, and slot layout, paired by target. Positive means a "
+                "catalog dense with near-duplicate clusters costs accuracy.",
+                "",
+                "| Cue | N | Similarity | Delta (pts) | 95% CI | Targets |",
+                "|---|---:|---|---:|---|---:|",
+            ]
+        )
+        for e in density_effects:
+            lines.append(
+                f"| {e['cue']} | {e['count']} | {e['similarity']} | {_signed(e['delta'])} | "
                 f"{_signed(e['ci_low'])} to {_signed(e['ci_high'])} | {e['targets']} |"
             )
         lines.append("")
@@ -789,13 +956,14 @@ def render_report(result: BenchmarkResult) -> list[str]:
                 "Accuracy with distinct neighbours minus accuracy with more similar neighbours, "
                 "paired by target. Positive means similarity costs accuracy.",
                 "",
-                "| Cue | N | Versus | Delta (pts) | 95% CI | Targets |",
+                "| Slice | N | Versus | Delta (pts) | 95% CI | Targets |",
                 "|---|---:|---|---:|---|---:|",
             ]
         )
         for e in sim_effects:
+            label = _slice_label(e["cue"], e.get("density", "sparse"), densities)
             lines.append(
-                f"| {e['cue']} | {e['count']} | {e['versus']} | {_signed(e['delta'])} | "
+                f"| {label} | {e['count']} | {e['versus']} | {_signed(e['delta'])} | "
                 f"{_signed(e['ci_low'])} to {_signed(e['ci_high'])} | {e['targets']} |"
             )
         lines.append("")
@@ -810,14 +978,15 @@ def render_report(result: BenchmarkResult) -> list[str]:
                 "Positive means more tools cost accuracy. The slope is a least-squares fit of "
                 "cell accuracy against log2(N).",
                 "",
-                "| Cue | Similarity | From N | To N | Delta (pts) | 95% CI | Slope per doubling |",
+                "| Slice | Similarity | From N | To N | Delta (pts) | 95% CI | Slope per doubling |",
                 "|---|---|---:|---:|---:|---|---:|",
             ]
         )
         for e in count_effects:
             slope = e.get("slope_per_doubling")
+            label = _slice_label(e["cue"], e.get("density", "sparse"), densities)
             lines.append(
-                f"| {e['cue']} | {e['similarity']} | {e['from_count']} | {e['to_count']} | "
+                f"| {label} | {e['similarity']} | {e['from_count']} | {e['to_count']} | "
                 f"{_signed(e['delta'])} | {_signed(e['ci_low'])} to {_signed(e['ci_high'])} | "
                 f"{'' if slope is None else _signed(slope)} |"
             )
@@ -833,7 +1002,7 @@ def render_report(result: BenchmarkResult) -> list[str]:
                 "count or attention failure. In the distinct tier both are unrelated tools, so "
                 "their rates are the baseline.",
                 "",
-                "| Cue | N | Similarity | Correct | Wrong neighbour | Wrong filler | "
+                "| Slice | N | Similarity | Correct | Wrong neighbour | Wrong filler | "
                 "Hallucinated | No call | Truncated | Error | Prompt tokens |",
                 "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|",
             ]
@@ -841,8 +1010,9 @@ def render_report(result: BenchmarkResult) -> list[str]:
         for c in cells:
             o = c["outcomes"]
             tokens = c.get("mean_prompt_tokens")
+            label = _slice_label(c.get("cue", "literal"), c.get("density", "sparse"), densities)
             lines.append(
-                f"| {c.get('cue', 'literal')} | {c['count']} | {c['similarity']} | "
+                f"| {label} | {c['count']} | {c['similarity']} | "
                 f"{o['correct']} | {o['wrong_neighbour']} | {o['wrong_filler']} | "
                 f"{o['hallucinated']} | {o['no_call']} | {o['truncated']} | {o['error']} | "
                 f"{'' if tokens is None else f'{tokens:,}'} |"
@@ -888,6 +1058,19 @@ def render_report(result: BenchmarkResult) -> list[str]:
         if check.get("target_to_fillers") is not None:
             lines.append(f"| fillers | {check['target_to_fillers']:.3f} |")
         lines.append("")
+        crowding = check.get("filler_crowding") or {}
+        if crowding:
+            lines.extend(
+                [
+                    "Filler crowding, each filler's similarity to its closest other filler "
+                    "on the largest list:",
+                    "",
+                    "| Fillers | Closest-filler similarity |",
+                    "|---|---:|",
+                    *(f"| {density} | {value:.3f} |" for density, value in crowding.items()),
+                    "",
+                ]
+            )
         nearest = check.get("nearest_by_count", [])
         if nearest:
             lines.extend(

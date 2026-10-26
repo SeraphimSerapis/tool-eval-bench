@@ -726,6 +726,12 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Query cues: literal names the target's qualifier, implied only implies it",
     },
     {
+        "name": "toolscale_fillers",
+        "type": "string",
+        "default": "sparse",
+        "description": "Filler density: sparse (one tool per family) or crowded (whole families)",
+    },
+    {
         "name": "toolscale_limit",
         "type": "int",
         "default": 0,

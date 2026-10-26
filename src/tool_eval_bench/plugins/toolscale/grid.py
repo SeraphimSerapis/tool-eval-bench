@@ -23,6 +23,13 @@ A third axis, the cue, picks the user message: the literal query names the
 target's qualifier, the implied query only implies it. Both cues see the
 identical tool list, so literal minus implied is paired as well, and isolates
 keyword matching from understanding.
+
+A fourth axis, filler density, picks how the fillers are drawn. Sparse fillers
+take one tool from each unrelated family, so no two fillers are alike.
+Crowded fillers take whole families, so the list is dense with near-duplicate
+clusters everywhere except around the target. Both keep the target's
+neighbours, the family order, and the slot layout, so sparse minus crowded is
+paired too. The control and N=4 have no fillers, so crowded skips them.
 """
 
 from __future__ import annotations
@@ -48,6 +55,9 @@ CONTROL = "control"
 
 CUES: tuple[str, ...] = ("literal", "implied")
 """How the query signals the target: naming its qualifier, or implying it."""
+
+DENSITIES: tuple[str, ...] = ("sparse", "crowded")
+"""How fillers are drawn: one tool per unrelated family, or whole families."""
 
 NEIGHBOURS = 3
 DEFAULT_COUNTS: tuple[int, ...] = (1, 4, 8, 16, 32, 64)
@@ -89,11 +99,19 @@ class ToolscaleItem:
     tools: tuple[CatalogTool, ...]  # presentation order
     roles: tuple[tuple[str, str], ...]  # (tool name, "target" | "neighbour" | "filler")
     cue: str = "literal"
+    density: str = "sparse"
 
     @property
     def item_id(self) -> str:
-        """Stable identifier, for example ``list_draft_invoices@N16/near/implied/t0``."""
-        return f"{self.target.name}@N{self.count}/{self.similarity}/{self.cue}/t{self.trial}"
+        """Stable identifier, for example ``list_draft_invoices@N16/near/implied/t0``.
+
+        Crowded items carry a ``/crowded`` segment; sparse ones keep the
+        shorter form.
+        """
+        density = "" if self.density == "sparse" else f"/{self.density}"
+        return (
+            f"{self.target.name}@N{self.count}/{self.similarity}/{self.cue}{density}/t{self.trial}"
+        )
 
     @property
     def query(self) -> str:
@@ -179,6 +197,16 @@ def validate_cues(cues: list[str], catalog: Catalog) -> list[str]:
     return [cue for cue in CUES if cue in cues]
 
 
+def validate_densities(densities: list[str]) -> list[str]:
+    """Known filler densities in canonical order, or :class:`GridError`."""
+    unknown = [d for d in densities if d not in DENSITIES]
+    if unknown:
+        raise GridError(f"unknown filler density {unknown}; choose from {list(DENSITIES)}")
+    if not densities:
+        raise GridError("at least one filler density is needed")
+    return [d for d in DENSITIES if d in densities]
+
+
 def select_targets(catalog: Catalog, limit: int | None, seed: int) -> list[CatalogTool]:
     """Targets balanced across domains, then families, then variants.
 
@@ -216,6 +244,7 @@ class _Draw:
     neighbours: dict[str, tuple[CatalogTool, ...]]
     fillers: tuple[CatalogTool, ...]
     position: float
+    crowded: tuple[CatalogTool, ...] = ()
 
 
 def _draw(catalog: Catalog, target: CatalogTool, seed: int, trial: int) -> _Draw:
@@ -237,6 +266,17 @@ def _draw(catalog: Catalog, target: CatalogTool, seed: int, trial: int) -> _Draw
     distinct = pool[-NEIGHBOURS:]
     fillers = pool[:-NEIGHBOURS]
 
+    position = rng.random()
+    # Crowded fillers walk the same family order as the sparse ones but take
+    # every variant of each family. A separate generator keeps the sparse draw
+    # identical whether or not the crowded axis runs.
+    crowded_rng = random.Random(f"toolscale-crowded:{seed}:{trial}:{target.name}")
+    crowded = [
+        tool
+        for f in outside[:-NEIGHBOURS]
+        for tool in crowded_rng.sample(f.variants, len(f.variants))
+    ]
+
     return _Draw(
         neighbours={
             "near": tuple(near[:NEIGHBOURS]),
@@ -244,7 +284,8 @@ def _draw(catalog: Catalog, target: CatalogTool, seed: int, trial: int) -> _Draw
             "distinct": tuple(distinct),
         },
         fillers=tuple(fillers),
-        position=rng.random(),
+        position=position,
+        crowded=tuple(crowded),
     )
 
 
@@ -281,15 +322,18 @@ def build_items(
     trials: int = 1,
     seed: int = 0,
     cues: list[str] | None = None,
+    densities: list[str] | None = None,
 ) -> list[ToolscaleItem]:
     """Every item of the grid, deterministic for a given catalog and seed.
 
-    ``cues`` defaults to the literal cue alone. Adding a cue never changes the
-    tool lists, only the user message.
+    ``cues`` defaults to the literal cue alone, ``densities`` to sparse
+    fillers alone. Adding a cue never changes the tool lists, only the user
+    message; adding a density never changes the sparse items.
     """
     counts = validate_counts(counts, catalog)
     similarities = validate_similarities(similarities)
     cues = validate_cues(cues or ["literal"], catalog)
+    densities = validate_densities(densities or ["sparse"])
     if trials < 1:
         raise GridError("trials must be at least 1")
     targets = select_targets(catalog, limit, seed)
@@ -314,29 +358,37 @@ def build_items(
                         for cue in cues
                     )
                     continue
-                fillers = draw.fillers[: count - 1 - NEIGHBOURS]
+                wanted = count - 1 - NEIGHBOURS
                 order_seed = f"toolscale-order:{seed}:{trial}:{target.name}:{count}"
-                for level in similarities:
-                    tools, roles = _arrange(
-                        target,
-                        draw.neighbours[level],
-                        fillers,
-                        position=draw.position,
-                        order_seed=order_seed,
-                    )
-                    items.extend(
-                        ToolscaleItem(
-                            target=target,
-                            target_rank=rank,
-                            count=count,
-                            similarity=level,
-                            trial=trial,
-                            tools=tools,
-                            roles=roles,
-                            cue=cue,
+                for density in densities:
+                    if density == "crowded" and wanted == 0:
+                        continue  # no fillers: identical to the sparse item
+                    pool = draw.crowded if density == "crowded" else draw.fillers
+                    if wanted > len(pool):
+                        raise GridError(f"tool count {count} needs more {density} fillers")
+                    fillers = pool[:wanted]
+                    for level in similarities:
+                        tools, roles = _arrange(
+                            target,
+                            draw.neighbours[level],
+                            fillers,
+                            position=draw.position,
+                            order_seed=order_seed,
                         )
-                        for cue in cues
-                    )
+                        items.extend(
+                            ToolscaleItem(
+                                target=target,
+                                target_rank=rank,
+                                count=count,
+                                similarity=level,
+                                trial=trial,
+                                tools=tools,
+                                roles=roles,
+                                cue=cue,
+                                density=density,
+                            )
+                            for cue in cues
+                        )
     return items
 
 

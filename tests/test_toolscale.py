@@ -405,6 +405,60 @@ class TestGridConstruction:
         with pytest.raises(GridError, match="1 lack one"):
             _items(catalog, cues=["implied"])
 
+    def test_crowded_fillers_are_whole_families(self) -> None:
+        catalog = _catalog()
+        tools = _by_name(catalog)
+        items = _items(catalog, counts=[1, 4, 8, 16], densities=["sparse", "crowded"])
+        crowded = [i for i in items if i.density == "crowded"]
+        # The control and N=4 have no fillers, so crowded skips them.
+        assert {i.count for i in crowded} == {8, 16}
+        for item in crowded:
+            fillers = [tools[n] for n, r in item.roles if r == "filler"]
+            families: dict[tuple[str, str], int] = {}
+            for f in fillers:
+                assert f.domain != item.target.domain
+                families[(f.domain, f.family)] = families.get((f.domain, f.family), 0) + 1
+            assert set(families.values()) == {4}  # N-4 is a multiple of 4 here
+            neighbour_families = {
+                (tools[n].domain, tools[n].family) for n, r in item.roles if r == "neighbour"
+            }
+            assert not neighbour_families & set(families)
+
+    def test_crowded_and_sparse_share_neighbours_and_slots(self) -> None:
+        items = _items(counts=[8, 16], densities=["sparse", "crowded"])
+        groups: dict[tuple, dict[str, ToolscaleItem]] = {}
+        for item in items:
+            key = (item.target.name, item.trial, item.count, item.similarity)
+            groups.setdefault(key, {})[item.density] = item
+        for pair in groups.values():
+            sparse, crowded = pair["sparse"], pair["crowded"]
+            layout = [[dict(i.roles)[t.name] for t in i.tools] for i in (sparse, crowded)]
+            assert layout[0] == layout[1]
+            neighbours = [
+                [t.name for t in i.tools if dict(i.roles)[t.name] != "filler"]
+                for i in (sparse, crowded)
+            ]
+            assert neighbours[0] == neighbours[1]
+            assert crowded.item_id.endswith("/crowded/t0")
+
+    def test_crowded_fillers_are_nested_and_leave_sparse_unchanged(self) -> None:
+        both = _items(counts=[8, 16], densities=["sparse", "crowded"])
+        sparse_only = _items(counts=[8, 16])
+        assert [(i.item_id, i.tools) for i in both if i.density == "sparse"] == [
+            (i.item_id, i.tools) for i in sparse_only
+        ]
+        for target in {i.target.name for i in both}:
+            by_count = {
+                i.count: {n for n, r in i.roles if r == "filler"}
+                for i in both
+                if i.target.name == target and i.density == "crowded" and i.similarity == "near"
+            }
+            assert by_count[8] <= by_count[16]
+
+    def test_unknown_density_is_rejected(self) -> None:
+        with pytest.raises(GridError, match="unknown filler density"):
+            _items(densities=["packed"])
+
     def test_trials_must_be_positive(self) -> None:
         with pytest.raises(GridError):
             _items(trials=0)
@@ -571,6 +625,31 @@ class TestToolscalePlugin:
         assert q["literal"]["margin_over_sibling"] > q["implied"]["margin_over_sibling"]
         report = "\n".join(plugin.render_report_section(result))
         for heading in ("Headline by Cue", "Cue Effect", "Query Check", "(implied cue)"):
+            assert heading in report
+
+    async def test_density_effect_isolates_crowding(self) -> None:
+        """A model that loses the target only when the list holds whole clusters."""
+        catalog = _catalog()
+        items = _items(catalog, counts=[4, 8, 16], densities=["sparse", "crowded"])
+
+        def crowd_victim(query: str, names: list[str]) -> str:
+            target = next(n for n in names if _matches(query, n))
+            families = [n.rsplit("_", 1)[0] for n in names if n != target]
+            clustered = [n for n in names if families.count(n.rsplit("_", 1)[0]) >= 4]
+            return clustered[0] if clustered else target
+
+        plugin = ToolscalePlugin()
+        result = await _run(items, _StubAdapter(crowd_victim), catalog)
+        d = result.details
+        assert d["by_density"]["sparse"]["accuracy_when_called"] == 100.0
+        assert d["by_density"]["crowded"]["accuracy_when_called"] == 0.0
+        assert d["density_effects"] and all(e["delta"] == 100 for e in d["density_effects"])
+        crowded_cells = [c for c in d["cells"] if c["density"] == "crowded"]
+        assert all(c["outcomes"]["wrong_filler"] == c["items"] for c in crowded_cells)
+        crowding = d["similarity_check"]["filler_crowding"]
+        assert crowding["crowded"] > crowding["sparse"]
+        report = "\n".join(plugin.render_report_section(result))
+        for heading in ("Density Effect", "Headline by Fillers", "(literal cue, crowded fillers)"):
             assert heading in report
 
     async def test_requests_carry_the_item_tool_list(self) -> None:
@@ -769,6 +848,7 @@ class TestCliWiring:
         assert args.toolscale_counts == "1,4,8,16,32,64"
         assert args.toolscale_similarity == "near,related,distinct"
         assert args.toolscale_cues == "literal,implied"
+        assert args.toolscale_fillers == "sparse"
         assert args.toolscale_limit == 0
         assert args.toolscale_catalog is None
 
@@ -783,6 +863,8 @@ class TestCliWiring:
                 "near",
                 "--cues",
                 "implied",
+                "--fillers",
+                "sparse,crowded",
                 "--limit",
                 "3",
                 "--catalog",
@@ -794,6 +876,7 @@ class TestCliWiring:
         assert args.toolscale_only is True
         assert (args.toolscale_counts, args.toolscale_similarity) == ("1,4", "near")
         assert args.toolscale_cues == "implied"
+        assert args.toolscale_fillers == "sparse,crowded"
         assert (args.toolscale_limit, args.toolscale_catalog, args.trials) == (
             3,
             "private.json",
@@ -830,6 +913,7 @@ def _runner_args(**overrides: Any) -> argparse.Namespace:
         "toolscale_counts": "1,4,8",
         "toolscale_similarity": "near,distinct",
         "toolscale_cues": "literal,implied",
+        "toolscale_fillers": "sparse,crowded",
         "toolscale_limit": 4,
         "toolscale_catalog": None,
         "trials": 1,
@@ -879,6 +963,7 @@ class TestToolscaleRunner:
         assert len(config["catalog_sha256"]) == 64
         assert config["counts"] == [1, 4, 8]
         assert config["cues"] == ["literal", "implied"]
+        assert config["densities"] == ["sparse", "crowded"]
         assert "Accuracy when called" in output and "Call rate" in output
         assert "Accuracy when called / call rate (%)" in output
         reports = list(tmp_path.rglob("*.md"))

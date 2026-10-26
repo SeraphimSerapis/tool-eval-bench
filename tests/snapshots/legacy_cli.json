@@ -881,6 +881,16 @@
   },
   {
     "choices": null,
+    "default": "sparse",
+    "dest": "toolscale_fillers",
+    "flags": [
+      "--toolscale-fillers"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": 0,
     "dest": "toolscale_limit",
     "flags": [

@@ -563,6 +563,13 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Query cues (default: literal,implied)",
     )
     toolscale_grp.add_argument(
+        "--toolscale-fillers",
+        type=str,
+        default="sparse",
+        metavar="LIST",
+        help="Filler density: sparse, crowded (default: sparse)",
+    )
+    toolscale_grp.add_argument(
         "--toolscale-limit",
         type=int,
         default=0,

@@ -56,8 +56,22 @@ family: 272 tools. That structure defines the tiers.
 | `related` | one variant from each of the 3 other families in the target's domain | `issue_card_refund`, `get_sales_tax_rate`, `schedule_sms_payment_reminder` |
 | `distinct` | other domains | weather, shipping, music |
 
-Fillers always come from other domains, at most one tool per family, so the
-fillers never add a near-duplicate of the target or of each other.
+Fillers always come from other domains, so they never add a near-duplicate of
+the target.
+
+### Filler density: sparse and crowded
+
+| Density | Fillers are... | At N=64 |
+|---|---|---|
+| `sparse` (default) | one tool from each of N-4 unrelated families, so no two fillers are alike | 60 tools from 60 families |
+| `crowded` | whole families, so the list is dense with near-duplicate clusters | 60 tools from 15 families, 4 near-duplicates each |
+
+This is the enterprise-catalog condition: plenty of tools that look alike, just
+not like the target. Both densities walk the same family order and keep the
+target's neighbours and the slot layout, so sparse minus crowded is paired.
+The control and N=4 have no fillers, so crowded skips them. The report
+confirms the axis by measuring each filler's similarity to its closest other
+filler.
 
 ### The control cell
 
@@ -90,13 +104,15 @@ noise.
 | `--toolscale-counts LIST` | `1,4,8,16,32,64` | Tool counts. `1` is the control; other values must be at least 4 |
 | `--toolscale-similarity LIST` | `near,related,distinct` | Tiers to sweep |
 | `--toolscale-cues LIST` | `literal,implied` | Query cues to sweep |
+| `--toolscale-fillers LIST` | `sparse` | Filler densities to sweep: `sparse`, `crowded` |
 | `--toolscale-limit N` | 0 (one per family, 68) | Targets per cell, spread across domains first |
 | `--toolscale-catalog PATH` | built-in | A private catalog with the same schema |
 | `--trials N` | 1 | Repetitions inside one run; 3 or more gives a spread per cell |
 
 `--seed`, `--parallel`, `--temperature`, and `--timeout` behave as they do
 everywhere else. Under the `plugin toolscale` subcommand the grid flags are
-spelled `--counts`, `--similarity`, `--cues`, `--limit`, and `--catalog`.
+spelled `--counts`, `--similarity`, `--cues`, `--fillers`, `--limit`, and
+`--catalog`.
 
 Unlike the tool-call scenarios, where `--trials N` stores N separate runs, a
 toolscale run keeps all its trials in one stored run.
@@ -104,8 +120,9 @@ toolscale run keeps all its trials in one stored run.
 ### Cost
 
 The default grid is 68 targets × (1 control + 5 counts × 3 tiers) × 2 cues =
-2,176 requests per trial. `--toolscale-cues literal` halves that. Prompts run from a few hundred tokens at N=1 to roughly
-6K at N=64. The report shows the measured mean prompt size per cell. Each list
+2,176 requests per trial. `--toolscale-cues literal` halves that. Adding
+`--toolscale-fillers sparse,crowded` adds 68 × 4 counts × 3 tiers per cue.
+Prompts run from a few hundred tokens at N=1 to roughly 6K at N=64. The report shows the measured mean prompt size per cell. Each list
 is shuffled, so prefix caching helps little. A quick smoke run:
 
 ```bash
@@ -142,6 +159,9 @@ effect and the controls. The Markdown report adds:
 - **Cue effect.** Literal minus implied accuracy at each N and tier, paired by
   target. Positive means the model relied on the query naming the
   distinguishing word.
+- **Density effect.** Sparse minus crowded accuracy at each N, tier, and cue,
+  paired by target, when the run swept both densities. Positive means a
+  catalog dense with near-duplicate clusters costs accuracy.
 - **Similarity effect at fixed N.** Distinct accuracy minus near (or related)
   accuracy, paired by target, with a bootstrap interval. Positive means
   similarity costs accuracy.
@@ -262,6 +282,15 @@ What it showed:
 - **Neighbours changed willingness to act.** Gemma called more often when the
   three neighbours were near-duplicates of the target than when they were
   unrelated: on the literal cue, 91% against 84% at N=4.
+- **Crowding did not matter.** On the implied cue at N=8 to 64, crowded lists
+  were far denser than sparse ones (closest-filler similarity 0.605 against
+  0.174), yet accuracy when called stayed at 99.7% or better for both models
+  in both conditions, and no density effect excluded zero. Gemma's only wrong
+  picks in that run were near-tier siblings at N=32 and N=64 ("since
+  midnight" read as this month, walk-in collection read as drive-through), in
+  sparse and crowded lists alike. Four misses in about 1,400 calls are too few
+  to call a count-by-similarity interaction, but that cell is where to look
+  with weaker models or more trials.
 - **Calibration fixes.** One literal query that fit three tools ("premium
   cabin"), one implied query that a faster service also satisfied, and one
   production-deploy variant that the strong model refused even when it was
@@ -269,14 +298,12 @@ What it showed:
 
 The published drops this benchmark set out to separate come from conditions it
 holds clean on purpose: hundreds of tools, inconsistent or terse descriptions,
-crowded catalogs where the distractors are also near-duplicates of each other,
-and selection deep in a conversation. Those are the next axes to add.
+and selection deep in a conversation. Crowded catalogs are now an axis and,
+for these two models, made no difference. Description quality, larger N, and
+conversation depth are the next to add.
 
 ## Limits
 
-- Fillers are unrelated to each other. A realistic enterprise catalog, where
-  the fillers are also near-duplicates of one another, is a separate axis this
-  version does not sweep.
 - Argument correctness is not graded.
 - N stops at 64 with the built-in catalog. Larger lists need a larger catalog,
   and several providers cap the number of tools per request.
@@ -286,10 +313,5 @@ and selection deep in a conversation. Those are the next axes to add.
 - Implied queries need a short, common-sense inference that the target's
   description supports. Lint can check that they do not give the answer away,
   not that the inference is fair; that rests on review and calibration.
-- The catalog was calibrated against one strong model. Every target ran at
-  N=4 and N=64 with near and distinct neighbours. The one query that model
-  found ambiguous was rewritten. A production-deploy variant that the model
-  declined even when it was the only tool offered was replaced with a
-  low-risk sibling, because an item a model will not act on measures safety
-  tuning, not selection. Some abstention on other side-effecting tools remains;
-  the "when called" grid separates it.
+- Crowded fillers stay outside the target's domain. Crowding the target's own
+  neighbourhood beyond its three neighbours would need larger families.
