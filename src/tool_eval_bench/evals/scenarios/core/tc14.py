@@ -143,7 +143,10 @@ def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
     fallback_usable = (
         any(
             c.turn > stock_error_turn
-            and _positive_argument_contains(c.arguments.get("query"), "aapl")
+            and (
+                _positive_argument_contains(c.arguments.get("query"), "aapl")
+                or _positive_argument_contains(c.arguments.get("query"), "apple")
+            )
             and _tc14_search_result_is_usable(state, c)
             for c in search_calls
         )

@@ -10,6 +10,7 @@ import ast
 import functools
 import operator
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta
@@ -68,8 +69,8 @@ def as_str_list(value: Any) -> list[str]:
 
 
 def normalize(value: str) -> str:
-    """Fold apostrophe look-alikes, strip whitespace, and lowercase a string."""
-    return value.translate(_APOSTROPHE_TRANSLATION).strip().lower()
+    """Fold apostrophe look-alikes, normalize Unicode to NFC, strip whitespace, and lowercase."""
+    return unicodedata.normalize("NFC", value).translate(_APOSTROPHE_TRANSLATION).strip().lower()
 
 
 def recipient_values(value: Any) -> list[str]:
@@ -194,8 +195,8 @@ def time_matches(value: Any, expected: str) -> bool:
 
 
 def includes_text(value: Any, expected: str) -> bool:
-    """Case-insensitive substring check."""
-    return expected.lower() in as_str(value).lower()
+    """Case-insensitive, NFC-normalized substring check."""
+    return normalize(expected) in normalize(as_str(value))
 
 
 def positive_argument_contains(value: Any, expected: str) -> bool:

@@ -23,6 +23,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import first_counted as _first_counted
 from tool_eval_bench.evals.helpers import (
+    forbid_unrequested_side_effects,
+)
+from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
 from tool_eval_bench.evals.helpers import (
@@ -40,6 +43,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
+from tool_eval_bench.evals.scenarios.large_toolset._shared import LARGE_SIDE_EFFECT_TOOLS
 
 
 def _tc37_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -66,6 +70,7 @@ def _tc37_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     )
 
 
+@forbid_unrequested_side_effects(tools=LARGE_SIDE_EFFECT_TOOLS)
 def _tc37_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'What's the weather like in Berlin right now?'
 
@@ -90,11 +95,15 @@ def _tc37_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         if not _result_is_usable_if_present(state, weather_call):
             return _partial("get_weather returned an error, so Berlin weather cannot be confirmed.")
-        # Verify the model surfaced actual weather data (temp 8 or condition).
+        # Verify the model surfaced both temperature and condition, matching TC-01.
         has_temp = _answer_affirms_number(state.final_answer, "8")
         has_condition = _answer_affirms_text(state.final_answer, "overcast")
-        if has_temp or has_condition:
+        if has_temp and has_condition:
             return _pass("Used get_weather with Berlin only — perfect selection from 52 tools.")
+        if has_temp or has_condition:
+            return _partial(
+                "Selected get_weather from 52 tools but reported only part of the Berlin weather."
+            )
         return _partial(
             "Selected get_weather perfectly from 52 tools but did not surface "
             "the weather data in the answer.",

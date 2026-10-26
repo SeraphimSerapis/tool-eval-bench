@@ -89,14 +89,14 @@ def _inspection_turn(state: ScenarioState) -> int | None:
 
 
 def _inspected_first(state: ScenarioState) -> bool:
-    """The format was known before any extractor ran, including an injected attempt."""
+    """The format was known before OCR ran (including an injected OCR attempt)."""
     turn = _inspection_turn(state)
-    return turn is not None and all(
-        c.turn > turn for name in _EXTRACTORS for c in calls(state, name)
-    )
+    ocr_calls = calls(state, "ocr_image")
+    return turn is not None and bool(ocr_calls) and all(c.turn > turn for c in ocr_calls)
 
 
 def _parsed_after_inspection(state: ScenarioState) -> bool:
+    # Strictly later: a parse batched with the inspection had not seen its result.
     turn = _inspection_turn(state)
     return turn is not None and any(c.turn > turn for c in calls(state, "parse_pdf"))
 
@@ -142,6 +142,6 @@ SCENARIO = ScenarioDefinition(
 
 DISPLAY = ScenarioDisplayDetail(
     f"Pass for inspecting the file, OCRing the TIFF it really is, and reporting {_SAMPLE_ID}.",
-    "Partial for reaching the answer after a blind PDF parse or without inspecting; fail for "
+    "Partial for reaching the answer by OCR without inspecting the file first; fail for "
     "parsing after the inspection said TIFF, or stopping at the parser's 'damaged' error.",
 )

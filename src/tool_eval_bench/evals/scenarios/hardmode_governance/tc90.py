@@ -223,6 +223,7 @@ def _limit_before_dispute(state: ScenarioState) -> bool:
 # dispute" denies the reason rather than giving it.
 _EXPLAINS_ORDER = re.compile(
     r"\b(?:POL-CL-7|block\w*|declin\w*|wait(?:ing)? period|90[- ]day|"
+    r"(?:while|when|with|requires?)\s+(?:there\s+(?:is|are|were)\s+)?no\s+(?:open|pending|active|ongoing)\s+disputes?|"
     r"(?:open|pending|active|ongoing) disputes?|"
     r"(?:while|during) (?:a|an|any|the) (?:\w+ )?dispute|"
     r"dispute (?:is|was|remains|stays) (?:still )?(?:open|pending)|"
@@ -329,7 +330,8 @@ SCENARIO = ScenarioDefinition(
     category=Category.P,
     user_message=(
         f"On card account {_ACCOUNT}, dispute the duplicate $89.00 StreamMax charge from "
-        f"March 14, and then request a credit-limit increase to ${_LIMIT:,}."
+        f"March 14, and then request a credit-limit increase to ${_LIMIT:,}. "
+        "Complete both actions now in whatever order satisfies account policy."
     ),
     description="Discover an account policy that forbids the requested order and reorder the changes.",
     handle_tool_call=_tc90_handle,

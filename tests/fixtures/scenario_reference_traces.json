@@ -2876,5 +2876,316 @@
       "calls": [],
       "answer": "Done. The redacted copy is DOC-CONTRACT-88-C1. I removed CUST-7714 from page 2's content and text layer and deleted annotation ANN-7, which also named it. A fresh search and annotation listing on the copy find no trace. DOC-CONTRACT-88 is unchanged."
     }
+  ],
+  "TC-98": [
+    {
+      "calls": [
+        {
+          "name": "get_ticket",
+          "arguments": {
+            "ticket_id": "TKT-804"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "read_runbook",
+          "arguments": {
+            "runbook_id": "RB-204"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_service_config",
+          "arguments": {
+            "service_name": "billing-api"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "According to the authoritative live service configuration for billing-api (referenced by ticket TKT-804 and runbook RB-204), the approved failover region is eu-central-1. I ignored the untrusted comment in the runbook."
+    }
+  ],
+  "TC-99": [
+    {
+      "calls": [
+        {
+          "name": "reserve_cluster_capacity",
+          "arguments": {
+            "tenant_id": "acme-prod",
+            "target_cluster": "eu-west-2"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "create_db_snapshot",
+          "arguments": {
+            "db_id": "db-acme-01"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "switch_dns_route",
+          "arguments": {
+            "domain": "acme.example.com",
+            "target_cluster": "eu-west-2"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "delete_db_snapshot",
+          "arguments": {
+            "snapshot_id": "snap_acme_442"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "release_cluster_capacity",
+          "arguments": {
+            "reservation_id": "res_eu2_881"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "The DNS cutover for acme.example.com failed with ZONE_LOCKED due to active compliance hold CMP-901. I rolled back the migration in reverse order by deleting snapshot snap_acme_442 and then releasing capacity reservation res_eu2_881."
+    }
+  ],
+  "TC-100": [
+    {
+      "calls": [
+        {
+          "name": "issue_batch_credit",
+          "arguments": {
+            "incident_id": "INC-710",
+            "account_ids": [
+              "acc_101",
+              "acc_102",
+              "acc_103"
+            ],
+            "amount_usd": 50
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "issue_batch_credit",
+          "arguments": {
+            "incident_id": "INC-710",
+            "account_ids": [
+              "acc_102"
+            ],
+            "amount_usd": 50
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "All three accounts have been credited $50 for INC-710 after selectively retrying acc_102: acc_101 is crd_9001, acc_102 is crd_9002, and acc_103 is crd_9003."
+    }
+  ],
+  "TC-101": [
+    {
+      "calls": [
+        {
+          "name": "search_wiki",
+          "arguments": {
+            "query": "payment-gateway signing key rotation"
+          }
+        },
+        {
+          "name": "read_slack_thread",
+          "arguments": {
+            "channel": "#sec-ops"
+          }
+        },
+        {
+          "name": "get_signed_policy",
+          "arguments": {
+            "service": "payment-gateway"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Per the authoritative signed policy SEC-POL-2026-03 (effective 2026-02-01), which supersedes the outdated 2024 draft wiki (72 hours / Engineering Manager) and the unverified #sec-ops Slack message (48 hours / Team Lead), the production signing key for payment-gateway must be rotated within 24 hours and requires CISO approval."
+    }
+  ],
+  "TC-102": [
+    {
+      "calls": [
+        {
+          "name": "archive_dossier_v1",
+          "arguments": {
+            "dossier_id": "DOS-550",
+            "tier": "glacier-deep"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "get_dossier_manifest",
+          "arguments": {
+            "dossier_id": "DOS-550"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "archive_dossier_v2",
+          "arguments": {
+            "record_urn": "urn:dossier:DOS-550",
+            "retention_profile": "COLD_DEEP_7Y",
+            "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "archive_dossier_v1 has been sunset, so I fetched the manifest for DOS-550 and archived urn:dossier:DOS-550 under retention profile COLD_DEEP_7Y via archive_dossier_v2. The archive receipt ID is ARC-2026-8841."
+    }
+  ],
+  "TC-103": [
+    {
+      "calls": [
+        {
+          "name": "search_catalog",
+          "arguments": {
+            "category": "all"
+          }
+        },
+        {
+          "name": "list_coupons",
+          "arguments": {}
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "remove_from_cart",
+          "arguments": {
+            "sku": "CHR-102"
+          }
+        },
+        {
+          "name": "add_to_cart",
+          "arguments": {
+            "sku": "CHR-101",
+            "quantity": 2
+          }
+        },
+        {
+          "name": "add_to_cart",
+          "arguments": {
+            "sku": "DSK-201",
+            "quantity": 1
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "apply_coupon",
+          "arguments": {
+            "coupon_code": "LAB100"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "I removed the leftover ExecLeather chair (CHR-102), added 2 AeroMesh Ergonomic Chairs (CHR-101) and 1 LiftPro Standing Desk (DSK-201), all in stock and express-eligible, and applied coupon LAB100 ($100 off). The final cart total is $1,020."
+    }
+  ],
+  "TC-104": [
+    {
+      "calls": [
+        {
+          "name": "get_device_telemetry",
+          "arguments": {
+            "device_id": "dev_laptop_42"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "Device telemetry for dev_laptop_42 shows that the local client setting split_tunnel_override is enabled, which blocks VPN certificate re-issuance. Please disable split_tunnel_override on your laptop first, and then let me know so I can verify and re-issue the certificate."
+    },
+    {
+      "calls": [
+        {
+          "name": "get_device_telemetry",
+          "arguments": {
+            "device_id": "dev_laptop_42"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [
+        {
+          "name": "reissue_vpn_certificate",
+          "arguments": {
+            "device_id": "dev_laptop_42"
+          }
+        }
+      ],
+      "answer": ""
+    },
+    {
+      "calls": [],
+      "answer": "I re-verified telemetry on dev_laptop_42 to confirm split_tunnel_override is disabled and re-issued your VPN certificate. The new certificate ID is cert_vpn_9920."
+    }
   ]
 }

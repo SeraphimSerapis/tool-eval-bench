@@ -124,9 +124,9 @@ different helpers under the same name.
 | `scenarios/structured/` | O | TC-64 – TC-69 |
 | `scenarios/hardmode/` | P (opt-in) | TC-70 – TC-74 |
 | `scenarios/hardmode_expanded/` | P (opt-in expansion) | TC-75 – TC-84 |
-| `scenarios/hardmode_transactional/` | P (transactional and reasoning continuity) | TC-85 – TC-89 |
-| `scenarios/hardmode_governance/` | P (policy, authorization, and tenancy) | TC-90 – TC-92 |
-| `scenarios/hardmode_documents/` | P (document pages, formats, and layers) | TC-93 – TC-97 |
+| `scenarios/hardmode_transactional/` | P (transactional and reasoning continuity) | TC-85 – TC-89, TC-99, TC-100, TC-103 |
+| `scenarios/hardmode_governance/` | P (policy, authorization, and tenancy) | TC-90 – TC-92, TC-98, TC-101, TC-104 |
+| `scenarios/hardmode_documents/` | P (document pages, formats, and layers) | TC-93 – TC-97, TC-102 |
 | `packs.py` | none | Held-out YAML scenario-pack loading and content attestations |
 | `yaml_loader.py` | none | The declarative scenario format, used by held-out packs |
 | `yaml_scenarios/` | none | Three worked YAML examples: a single call, a chain, and restraint |
@@ -136,14 +136,14 @@ different helpers under the same name.
 Registries, all built by `evals/scenarios/__init__.py`:
 - `SCENARIOS` — core 15 (used by `--short`)
 - `ALL_SCENARIOS` — full 69
-- `ALL_SCENARIOS_WITH_HARDMODE` — full 97
+- `ALL_SCENARIOS_WITH_HARDMODE` — full 104
 
 The CLI's public scenario selection follows these rules:
 
 - The default pool is the standard 69 scenarios.
-- `--hardmode` adds all 28 Category P scenarios. `--hardmode-only` selects
+- `--hardmode` adds all 35 Category P scenarios. `--hardmode-only` selects
   Category P alone.
-- Explicit IDs resolve against all 97 public scenarios, so
+- Explicit IDs resolve against all 104 public scenarios, so
   `--scenarios TC-85` selects a Hard Mode scenario without `--hardmode`.
   Explicit IDs take precedence over `--short` and `--categories`.
   Unknown IDs fail before model discovery.

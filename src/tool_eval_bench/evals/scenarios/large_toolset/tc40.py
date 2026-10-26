@@ -23,6 +23,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import first_counted as _first_counted
 from tool_eval_bench.evals.helpers import (
+    forbid_unrequested_side_effects,
+)
+from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
 from tool_eval_bench.evals.helpers import (
@@ -43,6 +46,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
+from tool_eval_bench.evals.scenarios.large_toolset._shared import LARGE_SIDE_EFFECT_TOOLS
 
 
 def _tc40_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -134,6 +138,7 @@ def _tc40_order_id_reaches_sarah(state: ScenarioState, call: ToolCallRecord) -> 
     )
 
 
+@forbid_unrequested_side_effects(tools=LARGE_SIDE_EFFECT_TOOLS)
 def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Get the current status of the order for customer Sarah Chen.'
 

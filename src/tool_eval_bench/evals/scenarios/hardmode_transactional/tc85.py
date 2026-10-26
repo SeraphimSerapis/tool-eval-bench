@@ -318,7 +318,8 @@ def _tc85_eval(state: ScenarioState) -> ScenarioEvaluation:
         if call.arguments.get("service_id") == "svc_prod_analytics"
         and service_lookups
         and call.turn > service_lookups[0].turn
-        and call.turn < earliest_create_turn
+        and bool(notify_attempts)
+        and call.turn < min(n.turn for n in notify_attempts)
         and _has_result(state, call, lambda payload: payload.get("email") == _TC85_OWNER)
     ]
     listings = [

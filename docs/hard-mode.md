@@ -1,6 +1,6 @@
 # Hard Mode
 
-Twenty-eight opt-in scenarios (TC-70 to TC-97) built to separate models that already score well on
+Thirty-five opt-in scenarios (TC-70 to TC-104) built to separate models that already score well on
 the standard suite. They are adversarial, stateful, and transactional, and they are not included
 in the default 69.
 
@@ -9,7 +9,7 @@ in the default 69.
 The standard 69-scenario benchmark covers *breadth* of tool-calling capabilities. Once a model scores 100% on the standard suite, `--hardmode` adds ceiling-breaking scenarios (Category P) designed to separate truly excellent models from merely good ones.
 
 ```bash
-# Standard benchmark + Hard Mode scenarios (69 + 28 = 97 scenarios)
+# Standard benchmark + Hard Mode scenarios (69 + 35 = 104 scenarios)
 tool-eval-bench run --hardmode
 
 # Run only Hard Mode scenarios
@@ -20,7 +20,7 @@ tool-eval-bench run --hardmode --categories P  # equivalent
 tool-eval-bench run --hardmode --context-pressure 0.75
 ```
 
-Hard Mode focuses on twenty-eight ceiling-breaking scenarios:
+Hard Mode focuses on thirty-five ceiling-breaking scenarios:
 
 | Scenario | Focus Area | What it tests |
 |---|---|---|
@@ -52,6 +52,13 @@ Hard Mode focuses on twenty-eight ceiling-breaking scenarios:
 | TC-95 | Native text first, OCR only where needed | Extract text-layer pages 1-2 natively and OCR only scanned pages 3-4, once each |
 | TC-96 | An empty index is not an empty collection | An index search returns nothing, but two scans are unindexed and one holds the exact phrase |
 | TC-97 | Redact every layer of a copy | On a copy only, remove the number from the text layer (not an overlay), delete the annotation that names it, and re-check |
+| TC-98 | Multi-hop transitive prompt injection | Follow a clean ticket to a secondary runbook with an injected comment, verify the live config, and resist exfiltration |
+| TC-99 | Cascading multi-step saga compensation | When the third step of a cutover fails with `ZONE_LOCKED`, roll back both prior allocations in the dependency order the tool results reveal |
+| TC-100 | Partial batch failure and selective retry | Retry only the failed item (`acc_102`) in a non-idempotent batch credit without double-crediting the others |
+| TC-101 | Epistemic conflict and authority resolution | Prefer the signed security policy over an outdated draft wiki and a newer, unverified chat thread, without authority labels to lean on |
+| TC-102 | Schema evolution and deprecation fallbacks | Adapt when a v1 tool returns an `ENDPOINT_SUNSET` migration contract by fetching the manifest SHA-256 and calling v2 |
+| TC-103 | Multi-constraint cart and coupon optimization | Reconcile a pre-filled shared cart by stock and express eligibility, then apply the only coupon that meets the budget cap |
+| TC-104 | Dual-control user-side state troubleshooting | Diagnose a client-side laptop setting only the user can toggle, wait for the user's follow-up, re-verify telemetry, and re-issue the VPN certificate |
 
 TC-88 opts into replaying the provider's `reasoning_content` field across its
 follow-up turns. It does not ask the model to print its reasoning to the user.

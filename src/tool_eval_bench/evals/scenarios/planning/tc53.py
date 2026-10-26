@@ -126,8 +126,8 @@ def _tc53_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         return _noise(
             {
                 "results": [
-                    {"name": "Team Lead", "email": "lead@company.com"},
-                    {"name": "Dev Team", "email": "dev-team@company.com"},
+                    {"name": "Team Lead", "email": "lead@company.com", "role": "Team Lead"},
+                    {"name": "Dev Team", "email": "dev-team@company.com", "role": "Engineering"},
                 ]
             },
             "get_contacts",

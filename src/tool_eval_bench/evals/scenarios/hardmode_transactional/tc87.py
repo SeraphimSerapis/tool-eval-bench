@@ -383,7 +383,7 @@ SCENARIO = ScenarioDefinition(
     _tc87_eval,
     tools_override=_TC87_TOOLS,
     difficulty=5,
-    max_turns_override=8,
+    max_turns_override=12,
     dependencies=(("list_incidents", "send_email"), ("get_oncall_route", "send_email")),
     variant_literals=(
         "p2",

@@ -9,7 +9,37 @@ import re
 from typing import Any
 
 from tool_eval_bench.evals.helpers import (
+    UNIVERSAL_SIDE_EFFECT_TOOLS,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
+)
+
+LARGE_SIDE_EFFECT_TOOLS: frozenset[str] = UNIVERSAL_SIDE_EFFECT_TOOLS | frozenset(
+    {
+        "update_customer",
+        "create_ticket",
+        "resolve_ticket",
+        "create_return",
+        "create_invoice",
+        "process_payment",
+        "transfer_funds",
+        "deploy_service",
+        "rollback_deploy",
+        "scale_service",
+        "restart_service",
+        "submit_timesheet",
+        "request_leave",
+        "export_csv",
+        "create_dashboard",
+        "send_slack_message",
+        "create_channel",
+        "schedule_meeting",
+        "post_announcement",
+        "publish_page",
+        "draft_blog_post",
+        "upload_asset",
+    }
 )
 
 

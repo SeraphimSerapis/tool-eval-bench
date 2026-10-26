@@ -9,8 +9,8 @@ measure independent agents, delegation, or inter-agent handoffs. Localization
 coverage is currently German-focused. Difficulty tiers are author estimates,
 not calibrated model rankings.
 
-It runs 97 scenarios in total across 16 categories: 69 standard deterministic
-scenarios in categories A–O, plus 28 Hard Mode scenarios in category P that run
+It runs 104 scenarios in total across 16 categories: 69 standard deterministic
+scenarios in categories A–O, plus 35 Hard Mode scenarios in category P that run
 only on request. Requests go
 through OpenAI-compatible `/v1/chat/completions` endpoints or the native Gemini
 and Anthropic APIs. Each scenario scores pass, partial, or fail, with a full
@@ -74,7 +74,7 @@ llama.cpp, TensorFold, SGLang, LiteLLM, Ollama, and TGI. `tool-eval-bench probe`
 endpoint is reachable before you commit to a full run.
 
 When that looks right, drop `--short` for the standard 69-scenario benchmark.
-Pass `--seed` so the run is reproducible, and add `--hardmode` for all 97:
+Pass `--seed` so the run is reproducible, and add `--hardmode` for all 104:
 
 ```bash
 tool-eval-bench run --seed 42
@@ -232,7 +232,7 @@ anthropic` pins it for a gateway root that serves several formats.
 | | What it tests | More |
 |---|---|---|
 | **Tool-call quality** | 69 standard scenarios across categories A–O: tool selection, parameter precision, multi-step chains, refusal, error recovery, localization, instruction following, safety and prompt injection, 52-tool namespaces, autonomous planning, structured output | [methodology](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/methodology.md) |
-| **Hard Mode** | 28 opt-in adversarial, stateful, and transactional scenarios in category P, for models that already score well, broken down by capability in reports | [hard-mode](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/hard-mode.md) |
+| **Hard Mode** | 35 opt-in adversarial, stateful, and transactional scenarios in category P, for models that already score well, broken down by capability in reports | [hard-mode](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/hard-mode.md) |
 | **Throughput** | llama-bench-style prefill and generation speed, with depth and concurrency sweeps; `--perf-preset long` sweeps depth to 128K | [benchmarks](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/benchmarks.md) |
 | **Long-context retrieval** | Needle-in-a-haystack across a grid of context lengths and depths, reporting effective context | [needle](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/needle.md) |
 | **Context pressure** | Pre-fill a share of the window, or a fixed token count, before each scenario to find where quality slips | [context-pressure](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/context-pressure.md) |
@@ -294,7 +294,7 @@ design, and per-scenario acceptance notes: [docs/methodology.md](https://github.
 # Smoke test: 5 scenarios
 tool-eval-bench run --scenarios TC-01 TC-02 TC-03 TC-04 TC-05
 
-# Full 97: standard suite plus Hard Mode
+# Full 104: standard suite plus Hard Mode
 tool-eval-bench run --seed 42 --hardmode
 
 # Quality plus speed
@@ -320,7 +320,7 @@ tool-eval-bench run --label "nightly qwen3 2026-08" --trials 3
 code is in [docs/cli-reference.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/cli-reference.md). Flat invocations
 (`tool-eval-bench --short`, `--history`) remain supported.
 
-Scenario IDs passed to `--scenarios` resolve against all 97, so `--scenarios
+Scenario IDs passed to `--scenarios` resolve against all 104, so `--scenarios
 TC-85` works without `--hardmode` and takes precedence over `--short` and
 `--categories`. Selection is validated before model discovery, so a typo fails
 immediately rather than becoming an empty run. So does a filter that matches

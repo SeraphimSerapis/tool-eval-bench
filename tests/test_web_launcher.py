@@ -186,7 +186,7 @@ async def test_schema_and_probe_endpoints(
         schema_data = schema_resp.json()
         assert any(p["id"] == "short" and p["count"] == 15 for p in schema_data["presets"])
         assert any(p["id"] == "standard" and p["count"] == 69 for p in schema_data["presets"])
-        assert any(p["id"] == "hardmode" and p["count"] == 97 for p in schema_data["presets"])
+        assert any(p["id"] == "hardmode" and p["count"] == 104 for p in schema_data["presets"])
         assert len(schema_data["categories"]) == 16
 
         probe_resp = await client.post("/api/probe", json={"base_url": _BASE_URL})
