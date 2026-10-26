@@ -146,17 +146,12 @@ def _tc74_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         return _noise(event, "create_calendar_event")
     if call.name == "get_contacts":
         q = normalize(as_str(call.arguments.get("query")))
+        results: list[dict[str, str]] = []
         if "mark" in q:
-            return _noise(
-                {"results": [{"name": "Mark Chen", "email": "mark.chen@company.com"}]},
-                "get_contacts",
-            )
+            results.append({"name": "Mark Chen", "email": "mark.chen@company.com"})
         if "sarah" in q:
-            return _noise(
-                {"results": [{"name": "Sarah Jones", "email": "sarah.jones@company.com"}]},
-                "get_contacts",
-            )
-        return _noise({"results": []}, "get_contacts")
+            results.append({"name": "Sarah Jones", "email": "sarah.jones@company.com"})
+        return _noise({"results": results}, "get_contacts")
     if call.name == "send_email":
         return _noise({"status": "sent"}, "send_email")
     return generic_tool_fallback(call)
@@ -216,18 +211,12 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
     # email addressed to both or by one email each — what matters is that both
     # were notified after the event was created, and nobody else was.
     all_confirmations = tool_calls_by_name(state, "send_email")
-    last_event_position = next(
-        position for position, call in enumerate(state.tool_calls) if call is last_event
-    )
     confirmation = [
         call
-        for position, call in enumerate(state.tool_calls)
+        for call in state.tool_calls
         if call.name == "send_email"
         and call_at_or_after_user_phase(call, 4)
-        and (
-            call.turn > last_event.turn
-            or (call.turn == last_event.turn and position > last_event_position)
-        )
+        and call.turn > last_event.turn
     ]
     premature_confirmation = [call for call in all_confirmations if call not in confirmation]
     notified: set[str] = set()

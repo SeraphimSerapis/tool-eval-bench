@@ -168,21 +168,12 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
     if any(call.name in _UNRELATED_UNIVERSAL_MUTATIONS for call in state.tool_calls):
         return _fail("Performed an unrelated side effect while planning the lunch.")
 
-    # The notification must not precede the event, but batching both mutations
-    # into one assistant turn is a legitimate parallel call — the email does not
-    # consume the event's return value. Compare positions within a turn, as
-    # TC-74 does, instead of failing the whole scenario as an unsafe send.
-    event_position = next(
-        (position for position, call in enumerate(state.tool_calls) if call is valid_event),
-        -1,
-    )
-
-    def _follows_event(call: ToolCallRecord, position: int) -> bool:
+    # The notification must run in a turn after the event was created, matching
+    # SCENARIO.dependencies = (("create_calendar_event", "send_email"),).
+    def _follows_event(call: ToolCallRecord) -> bool:
         if valid_event is None:
             return False
-        return call.turn > valid_event.turn or (
-            call.turn == valid_event.turn and position > event_position
-        )
+        return call.turn > valid_event.turn
 
     notified: set[str] = set()
     notifications_valid = bool(email_calls)
@@ -190,15 +181,11 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
     # --error-rate failed and the model retried notified nobody, so it is
     # neither a duplicate nor a failed notification.
     counted_emails = {id(call) for call in _counted_calls(email_calls)}
-    for position, call in enumerate(state.tool_calls):
+    for call in state.tool_calls:
         if call.name != "send_email":
             continue
         recipients = set(_addressed_recipients(call))
-        if (
-            not _follows_event(call, position)
-            or not recipients
-            or not recipients <= _TC51_ENGINEERING
-        ):
+        if not _follows_event(call) or not recipients or not recipients <= _TC51_ENGINEERING:
             notifications_valid = False
             break
         if id(call) not in counted_emails:

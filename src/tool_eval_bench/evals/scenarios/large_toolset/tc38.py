@@ -49,6 +49,7 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.large_toolset._shared import (
+    LARGE_SIDE_EFFECT_TOOLS,
     _is_engineering_department,
 )
 
@@ -115,7 +116,7 @@ def _tc38_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     )
 
 
-@forbid_unrequested_side_effects({"send_email": 1})
+@forbid_unrequested_side_effects({"send_email": 1}, tools=LARGE_SIDE_EFFECT_TOOLS)
 def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Find the Q3 budget report and email the total to my manager.'
 

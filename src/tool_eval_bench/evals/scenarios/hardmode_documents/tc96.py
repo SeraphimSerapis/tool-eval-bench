@@ -13,7 +13,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.helpers import as_str, with_noise
+from tool_eval_bench.evals.helpers import answer_affirms_pattern, as_str, with_noise
 from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
 from tool_eval_bench.evals.scenarios.hardmode_documents._shared import _STRING, _tool
 
@@ -100,9 +100,24 @@ def _ocred_match(state: ScenarioState) -> bool:
     )
 
 
+_SCAN_0419 = re.compile(r"(?:scan_)?0419(?:\.pdf)?\b", re.IGNORECASE)
+_DENIES_MATCH_AFTER = re.compile(
+    r"^[^.!?\n]{0,40}\b(?:(?:does|did)(?:n't| not)\s+(?:contain|mention|include|have|match)|"
+    r"has\s+no\s+(?:match|mention)|contains?\s+no)\b",
+    re.IGNORECASE,
+)
+
+
+def _affirms_0419(answer: str) -> bool:
+    if not answer_affirms_pattern(answer, _SCAN_0419):
+        return False
+    return any(
+        not _DENIES_MATCH_AFTER.search(answer[m.end() :]) for m in _SCAN_0419.finditer(answer)
+    )
+
+
 def _reported(state: ScenarioState) -> bool:
-    answer = state.final_answer
-    return "0419" in answer and not _LEADING_NO.match(answer)
+    return _affirms_0419(state.final_answer)
 
 
 _MILESTONES = (
@@ -117,7 +132,7 @@ _MILESTONES = (
 _MINEFIELDS = (
     Minefield(
         "answered no although the index had not covered the whole collection",
-        lambda s: bool(_LEADING_NO.match(s.final_answer)),
+        lambda s: bool(_LEADING_NO.match(s.final_answer)) and not _affirms_0419(s.final_answer),
     ),
     Minefield(
         "cited the 890 K near miss in scan_0412.pdf as the match",

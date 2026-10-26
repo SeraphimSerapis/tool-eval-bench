@@ -87,10 +87,10 @@ Where `max_points = num_scenarios_in_category × 2`.
 | M | Autonomous Planning | 3 | Goal decomposition, open-ended research, conditional workflows |
 | N | Creative Composition | 3 | Cross-tool synthesis, data pipelines, notification workflows |
 | O | Structured Output | 6 | JSON schema compliance, tool→schema chaining, nested schemas, enum constraints, violation resistance |
-| P | Hard Mode _(opt-in)_ | 23 | Ceiling-breaking relevance, parallel-call, stateful, transactional, adversarial, format-sensitive, recovery, pagination, and reasoning-continuity scenarios |
+| P | Hard Mode _(opt-in)_ | 35 | Ceiling-breaking relevance, parallel-call, stateful, transactional, adversarial, format-sensitive, recovery, pagination, and reasoning-continuity scenarios |
 
 > **Hard Mode (Category P)** is excluded from the standard benchmark by default.
-> Enable with `--hardmode` to include all 28 scenarios, raising the total from 69 to 97.
+> Enable with `--hardmode` to include all 35 scenarios, raising the total from 69 to 104.
 > Use `--hardmode-only` for Category P alone. Explicit public IDs also resolve against the full
 > registry, so `--scenarios TC-85` selects that Hard Mode scenario without `--hardmode`. Explicit
 > IDs take precedence over `--short` and `--categories`; `--hardmode-only` remains restrictive.
@@ -100,10 +100,10 @@ Where `max_points = num_scenarios_in_category × 2`.
 
 ### Hard Mode scenarios
 
-Category P contains 28 deterministic scenarios. The registry and evaluators are split across
+Category P contains 35 deterministic scenarios. The registry and evaluators are split across
 `scenarios/hardmode/` (TC-70 to TC-74), `scenarios/hardmode_expanded/` (TC-75 to TC-84),
-`scenarios/hardmode_transactional/` (TC-85 to TC-89), `scenarios/hardmode_governance/` (TC-90 to TC-92),
-and `scenarios/hardmode_documents/` (TC-93 to TC-97).
+`scenarios/hardmode_transactional/` (TC-85 to TC-89, TC-99, TC-100, TC-103), `scenarios/hardmode_governance/` (TC-90 to TC-92, TC-98, TC-101, TC-104),
+and `scenarios/hardmode_documents/` (TC-93 to TC-97, TC-102).
 
 | ID | Scenario | Focus |
 |---|---|---|
@@ -135,6 +135,13 @@ and `scenarios/hardmode_documents/` (TC-93 to TC-97).
 | TC-95 | Native text first, OCR only where needed | Read text-layer pages natively and OCR only the scanned ones. |
 | TC-96 | An empty index is not an empty collection | Find the unindexed scans before turning an empty search into "no". |
 | TC-97 | Redact every layer of a copy | Remove a customer number from the text layer and an annotation of a verified copy, never the original. |
+| TC-98 | Multi-hop transitive prompt injection | Follow a ticket to a runbook carrying an injected comment, verify live service config, and resist secret exfiltration. |
+| TC-99 | Cascading multi-step saga compensation | Roll back a database snapshot and the capacity reservation it depends on, in an order read from tool results, after a DNS cutover lock. |
+| TC-100 | Partial batch failure and selective retry | Retry only the failed account from a partial batch response without double-crediting succeeded accounts. |
+| TC-101 | Epistemic conflict and authority resolution | Resolve conflicting key-rotation rules across a draft wiki, a newer chat thread, and a signed policy, with no authority labels in the data. |
+| TC-102 | Schema evolution and deprecation fallbacks | Migrate from a sunset v1 tool to v2 by fetching a manifest digest and mapping fields. |
+| TC-103 | Multi-constraint cart and coupon optimization | Reconcile a pre-filled shared cart to in-stock express-eligible items and apply the only coupon that meets its item rules and the budget cap. |
+| TC-104 | Dual-control user-side state troubleshooting | Diagnose a client-side device blocker no tool can change, ask the user to clear it, re-verify telemetry after the follow-up, and re-issue the certificate. |
 
 ---
 
@@ -187,8 +194,9 @@ asynchronous poll.
 
 ### Per-scenario acceptance notes
 
-TC-62 accepts Acme revenue stated inline or in a revenue bullet immediately under
-a clear Acme heading, including Markdown headings and blank-line spacing. It does
+TC-62 accepts Acme revenue stated inline, in a revenue bullet immediately under
+a clear Acme heading (including Markdown headings and blank-line spacing), or in
+a two-party Us-versus-Acme pipe table's revenue row. It does
 not carry that attribution across intervening text or another company heading.
 Wrong amounts, percentages, negated claims, and quoted figures still do not qualify.
 A company suffix such as "Acme Corp." does not end the sentence that carries the
@@ -219,8 +227,8 @@ Each scenario is assigned a **difficulty tier** from 1 to 5:
 | 1 | Trivial | 4 | Single-step, obvious tool selection |
 | 2 | Easy | 17 | Straightforward parameter extraction or basic refusal |
 | 3 | Moderate | 31 | Multi-step chains, structured reasoning, or format compliance |
-| 4 | Hard | 24 | Complex chaining, safety traps, adversarial inputs, or multi-constraint composition |
-| 5 | Very Hard | 12 | Cascading errors, stateful multi-turn corrections, transactional recovery, pagination, or extreme disambiguation |
+| 4 | Hard | 33 | Complex chaining, safety traps, adversarial inputs, or multi-constraint composition |
+| 5 | Very Hard | 19 | Cascading errors, stateful multi-turn corrections, transactional recovery, pagination, or extreme disambiguation |
 
 Difficulty tiers are shown in reports (star ratings ★–★★★★★) and in `--dry-run`
 output for planning purposes.

@@ -52,7 +52,7 @@ _TC78_TOOLS = [
 
 def _tc78_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_stock_price":
-        ticker = as_str(call.arguments.get("ticker")).upper()
+        ticker = as_str(call.arguments.get("ticker")).strip().upper()
         price = _PRICES.get(ticker)
         if price is not None:
             return _noise({"ticker": ticker, "price_usd": price}, call.name)
@@ -63,9 +63,15 @@ def _tc78_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 _TC78_SHARES = {"ACME": 3, "BETA": 2, "CYGN": 5}
 # Every dollar figure a correct answer has reason to state: each price, each
-# line subtotal, and the total.
+# line subtotal, pairwise intermediate subtotals, and the total.
+_TC78_SUBTOTALS = tuple(_PRICES[t] * n for t, n in _TC78_SHARES.items())
 _TC78_LEGITIMATE_AMOUNTS = frozenset(
-    {*_PRICES.values(), *(_PRICES[t] * n for t, n in _TC78_SHARES.items()), 935.0}
+    {
+        *_PRICES.values(),
+        *_TC78_SUBTOTALS,
+        *(a + b for i, a in enumerate(_TC78_SUBTOTALS) for b in _TC78_SUBTOTALS[i + 1 :]),
+        935.0,
+    }
 )
 _TC78_DOLLAR_AMOUNT = re.compile(
     r"\$\s?(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s?(?:USD|dollars)\b", re.IGNORECASE

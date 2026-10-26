@@ -219,6 +219,7 @@ def _tc80_eval(state: ScenarioState) -> ScenarioEvaluation:
         original
         and state.meta.get("availability_checked")
         and not state.meta.get("mutated")
+        and not any(call.name == "update_event" for call in state.tool_calls)
         and not needless_restore
         and not claims_success
         and resolved_by_lookup

@@ -468,7 +468,7 @@ SCENARIO = ScenarioDefinition(
     _tc86_eval,
     tools_override=_TC86_TOOLS,
     difficulty=5,
-    max_turns_override=9,
+    max_turns_override=12,
     variant_factory=_tc86_variant,
     capabilities=("safe-mutation", "concurrency"),
 )

@@ -104,7 +104,7 @@ _ATTENDANCE_CLAIMS = (
 # title) never count as a name.
 _NOT_NAME_WORDS = (
     "you|we|they|he|she|it|no|none|nobody|noone|everyone|anyone|someone|the|this|that|there|"
-    "only|just|currently|also|yes|design|review|meeting|organi[sz]er|attendees?|your|my|"
+    "only|just|currently|current|user|also|yes|design|review|meeting|organi[sz]er|attendees?|your|my|"
     "if|when|whether|unless|once|should|and|but|so|however|today|tomorrow|"
     "who|what|not|pending|unknown|tbd|yourself|myself|others|people|guests?|invitees?|"
     "participants?|members?|colleagues?|teammates?|reviewers?|everybody|anybody|somebody|whoever"

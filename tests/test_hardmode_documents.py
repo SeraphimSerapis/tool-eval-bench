@@ -15,8 +15,8 @@ def _run(sid: str, *steps, answer: str):
     return replay(sid, *turns, turn(answer=answer))
 
 
-def test_group_registers_five_tagged_scenarios() -> None:
-    ids = ["TC-93", "TC-94", "TC-95", "TC-96", "TC-97"]
+def test_group_registers_six_tagged_scenarios() -> None:
+    ids = ["TC-93", "TC-94", "TC-95", "TC-96", "TC-97", "TC-102"]
     assert [s.id for s in SCENARIOS] == ids
     assert set(DISPLAY_DETAILS) == set(ids)
     assert all(s.capabilities for s in SCENARIOS)
@@ -88,8 +88,18 @@ def test_tc94_inspect_then_ocr_passes() -> None:
     assert result.status is ScenarioStatus.PASS, result.summary
 
 
-def test_tc94_recovering_from_a_blind_parse_is_partial() -> None:
+def test_tc94_recovering_from_a_blind_parse_via_inspect_passes() -> None:
     result = _run("TC-94", _PARSE, _INSPECT, _OCR, answer=_TC94_ANSWER)
+    assert result.status is ScenarioStatus.PASS, result.summary
+
+
+def test_tc94_parse_batched_with_inspection_is_not_a_post_inspection_parse() -> None:
+    result = _run("TC-94", (_PARSE, _INSPECT), _OCR, answer=_TC94_ANSWER)
+    assert result.status is ScenarioStatus.PASS, result.summary
+
+
+def test_tc94_ocr_without_inspecting_is_partial() -> None:
+    result = _run("TC-94", _PARSE, _OCR, answer=_TC94_ANSWER)
     assert result.status is ScenarioStatus.PARTIAL
     assert "inspected the file's format" in result.summary
 
@@ -273,3 +283,26 @@ def test_tc97_deleting_the_unrelated_annotation_fails() -> None:
     result = _tc97(_redact("remove"), _DELETE, other)
     assert result.status is ScenarioStatus.FAIL
     assert result.summary == "Deleted the unrelated annotation ANN-8."
+
+
+# ---------------------------------------------------------------------------
+# TC-102: schema evolution and deprecation fallbacks
+# ---------------------------------------------------------------------------
+
+
+def test_tc102_v1_sunset_migration_to_v2_passes() -> None:
+    v1 = ("archive_dossier_v1", {"dossier_id": "DOS-550", "tier": "glacier-deep"})
+    manifest = ("get_dossier_manifest", {"dossier_id": "DOS-550"})
+    v2 = (
+        "archive_dossier_v2",
+        {
+            "record_urn": "urn:dossier:DOS-550",
+            "retention_profile": "COLD_DEEP_7Y",
+            "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        },
+    )
+    passed = _run("TC-102", v1, manifest, v2, answer="Archived; receipt ID is ARC-2026-8841.")
+    assert passed.status is ScenarioStatus.PASS, passed.summary
+
+    guessed = _run("TC-102", v2, answer="Archived; receipt ID is ARC-2026-8841.")
+    assert guessed.status is ScenarioStatus.FAIL

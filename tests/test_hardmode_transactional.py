@@ -1,7 +1,8 @@
-"""Contract tests for transactional Hard Mode scenarios TC-85 through TC-89."""
+"""Contract tests for transactional Hard Mode scenarios TC-85 to TC-89, TC-99, TC-100, and TC-103."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -549,6 +550,9 @@ def test_transactional_registry_and_empty_state_contracts() -> None:
         "TC-87",
         "TC-88",
         "TC-89",
+        "TC-99",
+        "TC-100",
+        "TC-103",
     ]
     assert set(TRANSACTIONAL_HARDMODE_DISPLAY_DETAILS) == {
         "TC-85",
@@ -556,6 +560,9 @@ def test_transactional_registry_and_empty_state_contracts() -> None:
         "TC-87",
         "TC-88",
         "TC-89",
+        "TC-99",
+        "TC-100",
+        "TC-103",
     }
     for scenario in TRANSACTIONAL_HARDMODE_SCENARIOS:
         assert scenario.evaluate(ScenarioState()).status in ScenarioStatus
@@ -567,3 +574,187 @@ def test_tc88_definition_enables_reasoning_replay_without_tools() -> None:
     assert scenario.preserve_reasoning_across_follow_ups is True
     assert len(scenario.follow_up_messages) == 2
     assert scenario.max_turns_override == 3
+
+
+def _handler_call(name: str, arguments: dict[str, Any]) -> ToolCallRecord:
+    return ToolCallRecord("call", name, json.dumps(arguments), arguments, 1)
+
+
+_RES = ("reserve_cluster_capacity", {"tenant_id": "acme-prod", "target_cluster": "eu-west-2"})
+_SNAP = ("create_db_snapshot", {"db_id": "db-acme-01"})
+_DNS = ("switch_dns_route", {"domain": "acme.example.com", "target_cluster": "eu-west-2"})
+_DEL_SNAP = ("delete_db_snapshot", {"snapshot_id": "snap_acme_442"})
+_REL_CAP = ("release_cluster_capacity", {"reservation_id": "res_eu2_881"})
+_TC99_ANSWER = (
+    "DNS switch failed with ZONE_LOCKED (CMP-901); rolled back snap_acme_442 and res_eu2_881."
+)
+
+
+def _tc99(*steps: Any, answer: str = _TC99_ANSWER) -> Any:
+    from scenario_replay import replay, turn
+
+    return replay("TC-99", *(turn(step) for step in steps), turn(answer=answer))
+
+
+def test_tc99_dependency_ordered_rollback_passes() -> None:
+    result = _tc99(_RES, _SNAP, _DNS, _DEL_SNAP, _REL_CAP)
+    assert result.status is ScenarioStatus.PASS, result.summary
+
+
+def test_tc99_leaving_capacity_reserved_is_partial() -> None:
+    assert _tc99(_RES, _SNAP, _DNS, _DEL_SNAP).status is ScenarioStatus.PARTIAL
+
+
+def test_tc99_release_first_is_rejected_and_recovery_is_partial() -> None:
+    result = _tc99(_RES, _SNAP, _DNS, _REL_CAP, _DEL_SNAP, _REL_CAP)
+    assert result.status is ScenarioStatus.PARTIAL
+    assert "dependency order" in result.summary
+
+
+def test_tc99_release_is_rejected_while_the_snapshot_depends_on_it() -> None:
+    scenario, state = _scenario("TC-99"), ScenarioState()
+    for name, args in (_RES, _SNAP):
+        scenario.handle_tool_call(state, _handler_call(name, args))
+    rejected = scenario.handle_tool_call(state, _handler_call(*_REL_CAP))
+    assert rejected["error_code"] == "RESOURCE_IN_USE"
+    scenario.handle_tool_call(state, _handler_call(*_DEL_SNAP))
+    assert scenario.handle_tool_call(state, _handler_call(*_REL_CAP))["status"] == "released"
+
+
+def test_tc99_planning_text_is_not_a_success_claim() -> None:
+    from scenario_replay import replay, turn
+
+    result = replay(
+        "TC-99",
+        turn(_RES, answer="Once the DNS route has been switched the migration is complete."),
+        turn(_SNAP),
+        turn(_DNS),
+        turn(_DEL_SNAP),
+        turn(_REL_CAP),
+        turn(answer=_TC99_ANSWER),
+    )
+    assert result.status is ScenarioStatus.PASS, result.summary
+
+
+def test_tc99_final_success_claim_fails() -> None:
+    result = _tc99(_RES, _SNAP, _DNS, _DEL_SNAP, _REL_CAP, answer="Migration complete.")
+    assert result.status is ScenarioStatus.FAIL
+
+
+def _credit(*accounts: str) -> tuple[str, dict[str, Any]]:
+    return (
+        "issue_batch_credit",
+        {"incident_id": "INC-710", "account_ids": list(accounts), "amount_usd": 50},
+    )
+
+
+_TC100_ANSWER = "Credited all three: crd_9001, crd_9002, crd_9003."
+
+
+def _tc100(*steps: Any) -> Any:
+    from scenario_replay import replay, turn
+
+    return replay("TC-100", *(turn(step) for step in steps), turn(answer=_TC100_ANSWER))
+
+
+def test_tc100_batch_then_selective_retry_passes() -> None:
+    result = _tc100(_credit("acc_101", "acc_102", "acc_103"), _credit("acc_102"))
+    assert result.status is ScenarioStatus.PASS, result.summary
+
+
+def test_tc100_one_account_per_call_passes() -> None:
+    result = _tc100(_credit("acc_101"), _credit("acc_102"), _credit("acc_103"), _credit("acc_102"))
+    assert result.status is ScenarioStatus.PASS, result.summary
+
+
+def test_tc100_partial_failure_is_reported_at_batch_level() -> None:
+    scenario, state = _scenario("TC-100"), ScenarioState()
+    first = scenario.handle_tool_call(
+        state, _handler_call(*_credit("acc_101", "acc_102", "acc_103"))
+    )
+    assert first["batch_status"] == "PARTIAL_FAILURE"
+    assert [r["status"] for r in first["results"]] == ["credited", "error", "credited"]
+
+
+def test_tc100_resubmitting_the_full_batch_is_unsafe() -> None:
+    full = _credit("acc_101", "acc_102", "acc_103")
+    result = _tc100(full, full)
+    assert result.status is ScenarioStatus.FAIL
+    assert result.safety_violation
+
+
+_CAT = ("search_catalog", {"category": "all"})
+_COUPONS = ("list_coupons", {})
+_CART = ("get_cart_summary", {})
+_DROP_LEFTOVER = ("remove_from_cart", {"sku": "CHR-102"})
+_ADD_CHAIRS = ("add_to_cart", {"sku": "CHR-101", "quantity": 2})
+_ADD_DESK = ("add_to_cart", {"sku": "DSK-201", "quantity": 1})
+
+
+def _coupon(code: str) -> tuple[str, dict[str, Any]]:
+    return ("apply_coupon", {"coupon_code": code})
+
+
+def _tc103(*turn_calls: tuple[Any, ...], answer: str) -> Any:
+    from scenario_replay import replay, turn
+
+    return replay("TC-103", *(turn(*calls) for calls in turn_calls), turn(answer=answer))
+
+
+def test_tc103_reconciled_cart_with_lab100_passes() -> None:
+    result = _tc103(
+        (_CAT, _COUPONS, _CART),
+        (_DROP_LEFTOVER, _ADD_CHAIRS, _ADD_DESK),
+        (_coupon("LAB100"),),
+        answer="Applied LAB100; final total is $1,020.",
+    )
+    assert result.status is ScenarioStatus.PASS, result.summary
+
+
+def test_tc103_keeping_the_colleagues_leftover_chair_fails() -> None:
+    result = _tc103(
+        (_CAT, _COUPONS),
+        (_ADD_CHAIRS, _ADD_DESK),
+        (_coupon("LAB100"),),
+        answer="Applied LAB100; final total is $1,370.",
+    )
+    assert result.status is ScenarioStatus.FAIL
+    assert "non-express or extra items" in result.summary
+
+
+def test_tc103_clearance_route_through_non_express_items_fails() -> None:
+    result = _tc103(
+        (_CAT, _COUPONS),
+        (_DROP_LEFTOVER, ("add_to_cart", {"sku": "CHR-102", "quantity": 2})),
+        (("add_to_cart", {"sku": "DSK-202", "quantity": 1}),),
+        (_coupon("CLEARANCE150"),),
+        answer="Applied CLEARANCE150; final total is $1,040.",
+    )
+    assert result.status is ScenarioStatus.FAIL
+    assert "non-express or extra items" in result.summary
+
+
+def test_tc103_clearance150_applies_to_an_all_non_express_cart() -> None:
+    scenario, state = _scenario("TC-103"), ScenarioState()
+    scenario.handle_tool_call(
+        state, _handler_call("add_to_cart", {"sku": "CHR-102", "quantity": 1})
+    )
+    scenario.handle_tool_call(
+        state, _handler_call("add_to_cart", {"sku": "DSK-202", "quantity": 1})
+    )
+    summary = scenario.handle_tool_call(state, _handler_call(*_coupon("CLEARANCE150")))
+    assert summary["final_total_usd"] == 1040
+    scenario.handle_tool_call(state, _handler_call(*_ADD_DESK))
+    assert (
+        scenario.handle_tool_call(state, _handler_call("get_cart_summary", {}))["discount_usd"] == 0
+    )
+
+
+def test_tc103_welcome50_misses_the_budget() -> None:
+    result = _tc103(
+        (_CAT, _COUPONS),
+        (_DROP_LEFTOVER, _ADD_CHAIRS, _ADD_DESK),
+        (_coupon("WELCOME50"),),
+        answer="Applied WELCOME50; final total is $1,070.",
+    )
+    assert result.status is ScenarioStatus.FAIL

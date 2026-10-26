@@ -27,7 +27,7 @@ class TestHardmodeRegistry:
     """Registry-level checks."""
 
     def test_scenario_count(self):
-        assert len(HARDMODE_SCENARIOS) == 28
+        assert len(HARDMODE_SCENARIOS) == 35
 
     def test_all_category_p(self):
         for s in HARDMODE_SCENARIOS:
@@ -36,7 +36,7 @@ class TestHardmodeRegistry:
     def test_ids_start_at_70(self):
         ids = [int(s.id.split("-")[1]) for s in HARDMODE_SCENARIOS]
         assert min(ids) == 70
-        assert max(ids) == 97
+        assert max(ids) == 104
 
     def test_unique_ids(self):
         ids = [s.id for s in HARDMODE_SCENARIOS]
@@ -133,7 +133,7 @@ def _tc74_confirmation_state(
         "body": "The Product Review is scheduled for 2026-03-25 at 14:00.",
     }
     email_args.update(email_overrides or {})
-    email = _make_call("send_email", email_args, turn=7, user_phase=4)
+    email = _make_call("send_email", email_args, turn=7 if email_before_event else 8, user_phase=4)
     ordered_calls = (
         [mark, contact, email, event] if email_before_event else [mark, contact, event, email]
     )
@@ -610,9 +610,44 @@ class TestTC74StatefulCorrections:
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PASS
 
-    def test_pass_email_cc_same_turn_as_event(self):
-        """Both Mark and Sarah are notified via to+cc even when the email is
-        issued in the same parallel turn as the event creation."""
+    def test_pass_email_cc_after_event(self):
+        """Both Mark and Sarah are notified via to+cc in a turn after event creation."""
+        sc = _get_scenario("TC-74")
+        state = ScenarioState()
+        mark = _make_call("get_contacts", {"query": "mark"}, turn=1)
+        _record(state, sc, mark)
+        c1 = _make_call("get_contacts", {"query": "sarah"}, turn=3, user_phase=3)
+        _record(state, sc, c1)
+        c2 = _make_call(
+            "create_calendar_event",
+            {
+                "title": "Product Review",
+                "date": "2026-03-25",
+                "time": "14:00",
+                "duration_minutes": 45,
+                "attendees": ["mark.chen@company.com", "sarah.jones@company.com"],
+            },
+            turn=7,
+            user_phase=4,
+        )
+        _record(state, sc, c2)
+        c3 = _make_call(
+            "send_email",
+            {
+                "to": "mark.chen@company.com",
+                "cc": "sarah.jones@company.com",
+                "subject": "Product Review",
+                "body": "The Product Review is scheduled for 2026-03-25 at 14:00.",
+            },
+            turn=8,
+            user_phase=4,
+        )
+        _record(state, sc, c3)
+        result = sc.evaluate(state)
+        assert result.status == ScenarioStatus.PASS
+
+    def test_fail_email_same_turn_as_event(self):
+        """Issuing send_email in the same turn as create_calendar_event fails."""
         sc = _get_scenario("TC-74")
         state = ScenarioState()
         mark = _make_call("get_contacts", {"query": "mark"}, turn=1)
@@ -645,7 +680,7 @@ class TestTC74StatefulCorrections:
         )
         _record(state, sc, c3)
         result = sc.evaluate(state)
-        assert result.status == ScenarioStatus.PASS
+        assert result.status == ScenarioStatus.FAIL
 
     def test_fail_email_before_event_is_premature(self):
         """An email sent before the event exists is still a premature confirmation."""

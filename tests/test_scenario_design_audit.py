@@ -314,8 +314,13 @@ _TC51_EMAIL = {
 }
 
 
-@pytest.mark.parametrize("email_turn", [2, 3])
-def test_tc51_accepts_a_parallel_or_sequential_notification(email_turn: int) -> None:
+@pytest.mark.parametrize(
+    ("email_turn", "expected"),
+    [(2, ScenarioStatus.FAIL), (3, ScenarioStatus.PASS)],
+)
+def test_tc51_requires_sequential_notification_after_event(
+    email_turn: int, expected: ScenarioStatus
+) -> None:
     result = replay(
         "TC-51",
         [
@@ -325,7 +330,7 @@ def test_tc51_accepts_a_parallel_or_sequential_notification(email_turn: int) -> 
         ],
         ["Booked the lunch and notified the team."],
     )
-    assert result.status is ScenarioStatus.PASS
+    assert result.status is expected
 
 
 def test_tc51_still_rejects_a_notification_sent_before_the_event() -> None:
@@ -884,4 +889,18 @@ def test_registry_still_resolves_the_documented_scenario_counts() -> None:
     from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 
     assert len(ALL_SCENARIOS) == 69
-    assert len(ALL_SCENARIOS_WITH_HARDMODE) == 97
+    assert len(ALL_SCENARIOS_WITH_HARDMODE) == 104
+
+
+def test_methodology_difficulty_table_matches_the_registry() -> None:
+    import re
+    from collections import Counter
+    from pathlib import Path
+
+    doc = (Path(__file__).parents[1] / "docs" / "methodology.md").read_text(encoding="utf-8")
+    documented = {
+        int(tier): int(count)
+        for tier, count in re.findall(r"^\| ([1-5]) \| [A-Za-z ]+ \| (\d+) \|", doc, re.MULTILINE)
+    }
+    actual = Counter(s.difficulty for s in ALL_SCENARIOS_WITH_HARDMODE)
+    assert documented == dict(actual)

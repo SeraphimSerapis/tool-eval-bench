@@ -42,7 +42,9 @@ def _tc11_eval(state: ScenarioState) -> ScenarioEvaluation:
     contextual = bool(
         re.search(r"15\s*%|\b200\b|percent|dollars?|answer|result", state.final_answer, re.I)
     )
-    terse_answer = bool(re.fullmatch(r"30[.!]?", state.final_answer.strip()))
+    # A short reply such as "It's 30." or "**30**" answers the question as
+    # directly as a sentence that restates it.
+    terse_answer = len(re.sub(r"[*_`]", "", state.final_answer).strip()) <= 40
     if len(state.tool_calls) == 0 and correct and (contextual or terse_answer):
         return _pass("Did the math directly — good restraint.")
     if _has_tool_call(state, "calculator") and correct and not _has_tool_call(state, "web_search"):

@@ -69,7 +69,11 @@ def _tc50_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             return _noise(
                 {
                     "results": [
-                        {"name": "Tom Chen", "email": "tom.chen@company.com"},
+                        {
+                            "name": "Tom Chen",
+                            "email": "tom.chen@company.com",
+                            "role": "Product Manager",
+                        },
                     ]
                 },
                 "get_contacts",
@@ -114,18 +118,26 @@ def _tc50_is_ask_message(message: str) -> bool:
         ):
             continue
         if (
-            re.search(r"\bwho(?:'s| is)\b.{0,60}\b(?:pm|person)\b", clause)
+            re.search(
+                r"\bwho(?:'s| is)\b.{0,60}\b(?:pm|(?:product|project) manager|person|recipient)\b",
+                clause,
+            )
             # The inverted form is just as common: "let me know who the new PM is".
-            or re.search(r"\bwho\s+(?:the|our|your)\b.{0,40}\b(?:pm|person)\b.{0,20}\bis\b", clause)
             or re.search(
-                r"\bwhich(?:\s+(?:person|name|identity|pm))?\s+"
-                r"(?:is|was|would be|will be)\b.{0,60}\b(?:pm|person|name|identity)\b",
+                r"\bwho\s+(?:the|our|your)\b.{0,40}"
+                r"\b(?:pm|(?:product|project) manager|person|recipient)\b.{0,20}\bis\b",
+                clause,
+            )
+            or re.search(
+                r"\bwhich(?:\s+(?:person|name|identity|pm|(?:product|project) manager|recipient))?\s+"
+                r"(?:is|was|would be|will be)\b.{0,60}"
+                r"\b(?:pm|(?:product|project) manager|person|name|identity|recipient)\b",
                 clause,
             )
             or re.search(
                 r"\b(?:please|tell me|let me know|provide|share|give me|i need(?: to know)?|"
                 r"(?:could|can) you (?:tell me|let me know|provide|share|give me))\b"
-                r".{0,60}\b(?:name|identity|pm|person)\b",
+                r".{0,60}\b(?:name|identity|pm|(?:product|project) manager|person|recipient|email(?:\s+address)?)\b",
                 clause,
             )
             or re.search(
@@ -134,7 +146,7 @@ def _tc50_is_ask_message(message: str) -> bool:
             )
             or re.search(
                 r"\bwhat(?:'s| is)\s+(?:their|the)\b"
-                r".{0,40}\b(?:identity|name(?!['\u2019]s))\b",
+                r".{0,40}\b(?:identity|name(?!['\u2019]s)|email(?:\s+address)?)\b",
                 clause,
             )
         ):

@@ -246,7 +246,8 @@ SCENARIO = ScenarioDefinition(
     category=Category.P,
     user_message=(
         f"Make a copy of contract {_ORIGINAL} with customer number {_NUMBER} removed "
-        "everywhere it appears. Leave the original untouched, and tell me the copy's id."
+        "everywhere it appears. Leave the original untouched, re-check the copy's text, "
+        "text layer, and annotations to verify no occurrences remain, and tell me the copy's id."
     ),
     description="Redact text, text layer, and annotations on a copy, then verify the result.",
     handle_tool_call=_tc97_handle,
@@ -254,7 +255,7 @@ SCENARIO = ScenarioDefinition(
     tools_override=_TC97_TOOLS,
     difficulty=5,
     capabilities=("safe-mutation", "completeness", "tool-contracts"),
-    max_turns_override=10,
+    max_turns_override=12,
 )
 
 DISPLAY = ScenarioDisplayDetail(

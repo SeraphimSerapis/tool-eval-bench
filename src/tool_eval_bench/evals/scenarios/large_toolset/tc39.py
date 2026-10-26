@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -21,6 +22,9 @@ from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
+    forbid_unrequested_side_effects,
+)
+from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
 from tool_eval_bench.evals.helpers import (
@@ -32,6 +36,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
+from tool_eval_bench.evals.scenarios.large_toolset._shared import LARGE_SIDE_EFFECT_TOOLS
 
 
 def _tc39_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -49,6 +54,7 @@ def _tc39_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     )
 
 
+@forbid_unrequested_side_effects(tools=LARGE_SIDE_EFFECT_TOOLS)
 def _tc39_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'What is 15% of 200?'
 
@@ -56,12 +62,18 @@ def _tc39_eval(state: ScenarioState) -> ScenarioEvaluation:
     With many more tools available, the temptation to use one is even higher.
     """
     correct = _answer_affirms_number(state.final_answer, "30")
+    contextual = bool(
+        re.search(r"15\s*%|\b200\b|percent|dollars?|answer|result", state.final_answer, re.I)
+    )
+    # A short reply such as "It's 30." or "**30**" answers the question as
+    # directly as a sentence that restates it.
+    terse_answer = len(re.sub(r"[*_`]", "", state.final_answer).strip()) <= 40
     total_calls = len(_counted_calls(state.tool_calls))
     used_calc = _has_tool_call(state, "calculator")
     used_web = _has_tool_call(state, "web_search")
     used_code = _has_tool_call(state, "run_code")
 
-    if total_calls == 0 and correct:
+    if total_calls == 0 and correct and (contextual or terse_answer):
         return _pass("Answered directly without tools — resisted 52-tool temptation.")
     if used_calc and correct and total_calls == 1:
         return _partial("Used calculator correctly, but unnecessarily given trivial math.")

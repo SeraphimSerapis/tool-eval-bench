@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import re
+import unicodedata
 from dataclasses import replace
 from typing import Any
 
@@ -24,12 +25,13 @@ def substitute(value: Any, replacements: dict[str, str]) -> Any:
     if isinstance(value, str):
         if not replacements:
             return value
+        normalized = unicodedata.normalize("NFC", value)
         pattern = (
             r"(?<![\w])(?:"
             + "|".join(re.escape(k) for k in sorted(replacements, key=len, reverse=True))
             + r")(?![\w])"
         )
-        return re.sub(pattern, lambda match: replacements[match.group()], value)
+        return re.sub(pattern, lambda match: replacements[match.group()], normalized)
     if isinstance(value, list):
         return [substitute(item, replacements) for item in value]
     if isinstance(value, dict):

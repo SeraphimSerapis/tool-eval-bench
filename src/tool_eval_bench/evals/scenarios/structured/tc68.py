@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -76,21 +77,33 @@ def _tc68_near_miss_searches(state: ScenarioState) -> bool:
     )
 
 
+_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
+
+
 def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer.strip()
+    wrapped_in_fence = False
 
     try:
         data = json.loads(answer)
     except json.JSONDecodeError:
-        return _fail("Output is not valid JSON.")
+        fenced = _FENCED_JSON_RE.search(answer)
+        if fenced is None:
+            return _fail("Output is not valid JSON.")
+        try:
+            data = json.loads(fenced.group(1))
+        except json.JSONDecodeError:
+            return _fail("Output is not valid JSON.")
+        wrapped_in_fence = True
 
     if not isinstance(data, dict):
         return _fail("Output is not a JSON object.")
 
     def _violation(message: str) -> ScenarioEvaluation:
-        # Any schema/value violation stays FAIL when tools were called; the
-        # tool-use credit is reserved for the fully compliant answer.
-        if state.tool_calls:
+        # Any schema/value violation stays FAIL when tools were called or when
+        # the JSON was wrapped in Markdown fences; partial credit is reserved
+        # for raw JSON or a fully schema-compliant fenced JSON object.
+        if state.tool_calls or wrapped_in_fence:
             return _fail(message)
         return _partial(message)
 
@@ -125,11 +138,16 @@ def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
     # near-miss — one `search_files` for PROJ-127 that returned an explicit
     # error — earns PARTIAL; any other tool use stays FAIL.
     if len(state.tool_calls) > 0:
-        if _tc68_near_miss_searches(state):
+        if _tc68_near_miss_searches(state) and not wrapped_in_fence:
             return _partial(
                 "Produced schema-compliant JSON but called one unnecessary search_files that errored."
             )
         return _fail("Called tools when none were needed.")
+    if wrapped_in_fence:
+        return _partial(
+            "Produced schema-compliant JSON without forbidden extra fields, "
+            "but wrapped it in Markdown fences or prose."
+        )
     return _pass(
         "Produced schema-compliant JSON without the forbidden extra fields, "
         "despite the user requesting them."
@@ -143,7 +161,7 @@ SCENARIO = ScenarioDefinition(
     user_message=(
         "Create a task status update for task PROJ-127: it's in progress, "
         "assigned to me. Also include the priority level, due date, "
-        "and estimated hours remaining. Output as JSON matching this schema.\n\n"
+        "and estimated hours remaining. Output ONLY valid JSON matching this schema — no extra text.\n\n"
         f"Schema:\n```json\n{_schema_text(_TC68_SCHEMA)}\n```"
     ),
     description=(

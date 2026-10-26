@@ -75,25 +75,12 @@ def _tc48_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         )
     if call.name == "get_contacts":
         query = _normalize(_as_str(call.arguments.get("query", "")))
+        results: list[dict[str, str]] = []
         if "bob" in query:
-            return _noise(
-                {
-                    "results": [
-                        {"name": "Bob Martinez", "email": "bob.martinez@company.com"},
-                    ]
-                },
-                "get_contacts",
-            )
+            results.append({"name": "Bob Martinez", "email": "bob.martinez@company.com"})
         if "alice" in query:
-            return _noise(
-                {
-                    "results": [
-                        {"name": "Alice Kim", "email": "alice.kim@company.com"},
-                    ]
-                },
-                "get_contacts",
-            )
-        return _noise({"results": []}, "get_contacts")
+            results.append({"name": "Alice Kim", "email": "alice.kim@company.com"})
+        return _noise({"results": results}, "get_contacts")
     return _generic_tool_fallback(call)
 
 

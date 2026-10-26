@@ -6,9 +6,9 @@ agent. If you are running the benchmark by hand for the first time, start with t
 
 ## What this tool does
 
-`tool-eval-bench` evaluates LLM tool-calling quality using 97 scenarios in total
+`tool-eval-bench` evaluates LLM tool-calling quality using 104 scenarios in total
 across 16 categories: 69 standard deterministic scenarios in categories A–O and
-28 Hard Mode scenarios in category P, which are opt-in. It produces a 0–100 score with per-category
+35 Hard Mode scenarios in category P, which are opt-in. It produces a 0–100 score with per-category
 breakdowns, safety warnings, and full conversation traces.
 
 ## Quick start (zero-config)
@@ -187,7 +187,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--timeout F` | Per-request timeout in seconds (default: 120) |
 | `--no-think` | Disable thinking/reasoning (critical for Qwen3/DeepSeek) |
 | `--no-warmup` | Skip the tool-eval-bench warm-up request. llama-benchy (`--perf`, `--perf-only`) always runs its own warm-up |
-| `--hardmode` | Include 28 Hard Mode scenarios (Category P) |
+| `--hardmode` | Include 35 Hard Mode scenarios (Category P) |
 | `--categories A B K` | Run only specific categories (A–P). P needs `--hardmode`; a filter that matches no scenario is a usage error (exit 2) |
 | `--scenarios TC-01 TC-07` | Run specific scenario IDs |
 | `--perf` | Also run throughput benchmark |
