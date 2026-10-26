@@ -224,6 +224,24 @@ async def test_probe_redacts_urls_in_errors_and_withholds_them_when_redacting(
 
 
 @pytest.mark.asyncio
+async def test_model_picker_uses_a_select_instead_of_a_datalist(
+    launcher_env: dict[str, str],
+) -> None:
+    """A datalist filters its options by the input's value, hiding probed models.
+
+    The launcher bound the model input to a <datalist> and auto-filled the
+    first probed model, so browsers filtered every other entry out of the list
+    and the models looked unselectable. The picker must stay a <select> fed by
+    /api/probe, with the free-text field only behind the custom entry.
+    """
+    app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
+    async with web_client(app) as client:
+        script = (await client.get("/static/app.js")).text
+    assert "launch-model-select" in script
+    assert "probed-models-datalist" not in script
+
+
+@pytest.mark.asyncio
 async def test_launch_run_executes_and_persists_results(
     launcher_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
