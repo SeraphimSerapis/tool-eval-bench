@@ -215,7 +215,8 @@ def positive_argument_contains(value: Any, expected: str) -> bool:
     """
     text = as_str(value).strip().lower()
     target = expected.strip().lower()
-    if not text or not re.search(rf"(?<!\w){re.escape(target)}(?!\w)", text):
+    boundary = r"[a-z0-9_]" if target.isascii() else r"\w"
+    if not text or not re.search(rf"(?<!{boundary}){re.escape(target)}(?!{boundary})", text):
         return False
     return not re.search(
         rf"\b(?:not|no|without|except|exclude|excluding)\s+(?:the\s+)?{re.escape(target)}\b",
@@ -236,8 +237,8 @@ def answer_contains_number(answer: str, value: str) -> bool:
 # the few words immediately before the value.  A wider window rejects correct
 # answers, which is exactly as damaging as accepting negated ones.
 _CLAUSE_BOUNDARY = re.compile(
-    r"[.!?;:,()\[\]\n–—]|\s-\s|"
-    r"\b(?:but|however|instead|and|or|while|whereas|though|although|yet)\b"
+    r"[.!?;:,()\[\]\n–—，。！？；：、（）【】「」『』]|\s-\s|"
+    r"\b(?:but|however|instead|and|or|while|whereas|though|although|yet|sondern|aber|pero|sino)\b"
 )
 _NEGATION = re.compile(r"\b(?:not|never|no|neither|nor|without)\b|n't\b")
 # Function words carry no distance ("could not find a price of 187" is still a
@@ -258,7 +259,7 @@ _CONSTITUENT_NEGATION = frozenset({"no", "neither", "nor", "without"})
 _SCOPE_BREAKERS = frozenset(
     "at in on for to from by with near around before after until past over under into onto than as "
     "is are was were be been being am has have had will would shall should can could may might must "
-    "do does did".split()
+    "do does did ist sind war waren es son fue fueron".split()
 )
 
 
@@ -397,7 +398,10 @@ def answer_affirms_pattern(
 
 def answer_affirms_text(answer: str, value: str) -> bool:
     """Return whether a textual value is asserted rather than negated."""
-    return answer_affirms_pattern(answer, re.compile(rf"\b{re.escape(value)}\b", re.IGNORECASE))
+    boundary = r"[a-z0-9_]" if value.isascii() else r"\w"
+    return answer_affirms_pattern(
+        answer, re.compile(rf"(?<!{boundary}){re.escape(value)}(?!{boundary})", re.IGNORECASE)
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -201,6 +201,13 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Use versioned deterministic fixture variants; unchanged scenarios remain controls.",
     )
     select.add_argument(
+        "--locale",
+        choices=("de", "es", "zh", "ja"),
+        default=None,
+        metavar="LANG",
+        help="Prompt language: de, es, zh, ja (language-neutral scenarios only)",
+    )
+    select.add_argument(
         "--hardmode",
         action="store_true",
         help="Include Hard Mode scenarios (Category P) — ceiling-breaking difficulty "

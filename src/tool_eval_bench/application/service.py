@@ -165,6 +165,7 @@ class BenchmarkService:
         max_turns: int = 8,
         seed: int | None = None,
         variant_seed: int | None = None,
+        locale: str | None = None,
         reference_date: str | None = None,
         on_scenario_start: OnScenarioStart | None = None,
         on_scenario_result: OnScenarioResult | None = None,
@@ -260,11 +261,16 @@ class BenchmarkService:
         # real score of 0.  A resume may legitimately have nothing left to run.
         if not resolved and resume_run_id is None:
             raise ValueError("No scenarios to run")
-        from tool_eval_bench.evals.variants import apply_variants
+        from tool_eval_bench.evals.variants import prepare_scenarios
 
-        resolved = apply_variants(resolved, variant_seed)
+        before_locale = resolved
+        resolved = prepare_scenarios(resolved, variant_seed=variant_seed, locale=locale)
+        if locale is not None and before_locale and not resolved:
+            raise ValueError(f"None of the selected scenarios support --locale {locale}.")
         if resume_scenarios is not None:
-            resume_scenarios = apply_variants(resume_scenarios, variant_seed)
+            resume_scenarios = prepare_scenarios(
+                resume_scenarios, variant_seed=variant_seed, locale=locale
+            )
         report_scenarios = resolved
 
         # Build metadata from RunContext (preferred) or legacy probe
@@ -383,7 +389,7 @@ class BenchmarkService:
             # resume_scenarios. It ranks below the run's own definitions and
             # gets the run's variants, or preserved outcomes would be recorded
             # as unvarianted and move the run's fingerprint.
-            registry = apply_variants(ALL_SCENARIOS, variant_seed)
+            registry = prepare_scenarios(ALL_SCENARIOS, variant_seed=variant_seed, locale=locale)
             scenario_by_id = {s.id: s for s in [*registry, *(resume_scenarios or []), *resolved]}
             missing_ids = {r.scenario_id for r in merged_results} - scenario_by_id.keys()
             if missing_ids:

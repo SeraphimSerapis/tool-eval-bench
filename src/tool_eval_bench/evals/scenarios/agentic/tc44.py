@@ -49,9 +49,9 @@ def _tc44_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     answer = state.final_answer.lower()
     has_pi_value = any(
-        3.139 <= float(match.group(0)) <= 3.143
+        3.139 <= float(match.group(0).replace(",", ".")) <= 3.143
         and not _is_negated(answer[max(0, match.start() - 120) : match.start()])
-        for match in re.finditer(r"3\.14\d*", answer)
+        for match in re.finditer(r"3[.,]14\d*", answer)
     )
     exact_four = bool(
         re.search(r"(?:pi|π).{0,20}(?:exactly|equals?|is)\s*4\b", answer)

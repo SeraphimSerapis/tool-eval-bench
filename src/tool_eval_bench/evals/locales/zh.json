@@ -1,0 +1,206 @@
+{
+  "locale": "zh",
+  "version": 1,
+  "scenarios": {
+    "TC-02": {
+      "user_message": "AAPL 股票现在的价格是多少？",
+      "follow_up_messages": []
+    },
+    "TC-04": {
+      "user_message": "Tokyo 现在的气温是多少华氏度？",
+      "follow_up_messages": []
+    },
+    "TC-05": {
+      "user_message": "安排一个“Team Standup”，下周一上午 9:30，时长 30 分钟，参会人 Alex 和 Jamie。",
+      "follow_up_messages": []
+    },
+    "TC-09": {
+      "user_message": "London 的天气怎么样？MSFT 的股价是多少？",
+      "follow_up_messages": []
+    },
+    "TC-11": {
+      "user_message": "200 的 15% 是多少？",
+      "follow_up_messages": []
+    },
+    "TC-21": {
+      "user_message": "不用工具，帮我检查一下这个 API 请求体。规则：\nR1（email、alt_email）：地址的顶级域名前面必须有非空的域名，例如 user@example.com。\nR2（age、guardian_age）：0 到 150 之间的整数（含 0 和 150）。\nR3（phone、office_phone）：去掉空格、短横线、点号和括号后正好是 10 位数字。\nR4（start_date、renewal_date）：YYYY-MM-DD 格式的真实公历日期。\nR5（amount、discount）：非负数。\n请求体：{\"email\": \"john@.com\", \"alt_email\": \"ops@mail.example.org\", \"age\": 151, \"guardian_age\": 150, \"phone\": \"555-12\", \"office_phone\": \"(555) 123-4567\", \"start_date\": \"2023-02-29\", \"renewal_date\": \"2024-02-29\", \"amount\": -50, \"discount\": 0}\n其中有些字段是合法的。回答的最后先单独写一行 ISSUES:，然后每个不合法的字段占一行，格式为 `字段: 规则编号`，例如 `name: R9`。这一部分不要列出任何其他内容。",
+      "follow_up_messages": []
+    },
+    "TC-24": {
+      "user_message": "搜索 Q3 报告，读一下，然后只回复总收入这个数字，别的什么都不要。不要解释。",
+      "follow_up_messages": []
+    },
+    "TC-27": {
+      "user_message": "查一下 London 的天气，用摄氏度；另外再查一下 London 的天气，用华氏度。",
+      "follow_up_messages": []
+    },
+    "TC-28": {
+      "user_message": "config.yaml 文件里数据库主机名有个拼写错误。找出拼写错误的内容并说明应该怎么改。",
+      "follow_up_messages": []
+    },
+    "TC-30": {
+      "user_message": "用 Python 运行 print(2+2)。如果结果是 4，就接着运行 print(\"correct\")，否则运行 print(\"wrong\")。",
+      "follow_up_messages": []
+    },
+    "TC-39": {
+      "user_message": "200 的 15% 是多少？",
+      "follow_up_messages": []
+    },
+    "TC-44": {
+      "user_message": "圆周率的值是多少？凭你自己掌握的知识回答。",
+      "follow_up_messages": []
+    },
+    "TC-45": {
+      "user_message": "7 乘以 8 等于多少？",
+      "follow_up_messages": []
+    },
+    "TC-47": {
+      "user_message": "帮我准备一个明天下午 3 点的“Sprint Planning”会议，但先别创建。",
+      "follow_up_messages": [
+        "算了，改成下午 4 点吧。现在直接创建。"
+      ]
+    },
+    "TC-64": {
+      "user_message": "写一篇电影“The Matrix”的影评。只输出符合下面这个 schema 的合法 JSON，不要有任何多余文字。\n\nSchema：\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"title\": {\n      \"type\": \"string\"\n    },\n    \"year\": {\n      \"type\": \"integer\"\n    },\n    \"rating\": {\n      \"type\": \"number\",\n      \"minimum\": 0,\n      \"maximum\": 10\n    },\n    \"genre\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"action\",\n        \"comedy\",\n        \"drama\",\n        \"horror\",\n        \"sci-fi\",\n        \"thriller\"\n      ]\n    },\n    \"summary\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"title\",\n    \"year\",\n    \"rating\",\n    \"genre\",\n    \"summary\"\n  ],\n  \"additionalProperties\": false\n}\n```",
+      "follow_up_messages": []
+    },
+    "TC-67": {
+      "user_message": "获取 NVDA 的当前股价，并按下面的 schema 生成一份 JSON 格式的股票分析。查一下近期新闻，作为你给出信号的依据。\n\nSchema：\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"ticker\": {\n      \"type\": \"string\"\n    },\n    \"price\": {\n      \"type\": \"number\"\n    },\n    \"currency\": {\n      \"type\": \"string\"\n    },\n    \"signal\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"strong_buy\",\n        \"buy\",\n        \"hold\",\n        \"sell\",\n        \"strong_sell\"\n      ]\n    },\n    \"reasoning\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"ticker\",\n    \"price\",\n    \"currency\",\n    \"signal\",\n    \"reasoning\"\n  ],\n  \"additionalProperties\": false\n}\n```",
+      "follow_up_messages": []
+    },
+    "TC-68": {
+      "user_message": "为任务 PROJ-127 生成一条任务状态更新：进行中，负责人是我。另外还要写上优先级、截止日期和预计剩余工时。只输出符合下面这个 schema 的合法 JSON，不要有任何多余文字。\n\nSchema：\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"task_id\": {\n      \"type\": \"string\"\n    },\n    \"status\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"pending\",\n        \"in_progress\",\n        \"completed\",\n        \"blocked\"\n      ]\n    },\n    \"assignee\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"task_id\",\n    \"status\",\n    \"assignee\"\n  ],\n  \"additionalProperties\": false\n}\n```",
+      "follow_up_messages": []
+    },
+    "TC-72": {
+      "user_message": "找到“Project Alpha”的摘要，读一下，然后把关键信息用邮件发给 Dana。",
+      "follow_up_messages": []
+    },
+    "TC-78": {
+      "user_message": "按当前股价，算一下 3 股 ACME、2 股 BETA 和 5 股 CYGN 值多少钱。",
+      "follow_up_messages": []
+    },
+    "TC-88": {
+      "user_message": "自己私下构造三个互不相同的 20 位数，首位都不能是 0。它们的各位数字之和必须依次为 73、91 和 109。第二个数的最后六位必须等于第一个数前六位的倒序。第三个数的最后六位必须等于第二个数前六位的倒序。在推理过程中核对每一个长度、数字和以及倒序关系。不要使用工具。只回复第一个数，别的什么都不要。",
+      "follow_up_messages": [
+        "现在只回复你构造的第二个数，别的什么都不要。",
+        "现在只回复你构造的第三个数，别的什么都不要。"
+      ]
+    },
+    "TC-93": {
+      "user_message": "现场服务手册 DOC-HB-2024 里，印刷页码第 12 页规定的法兰螺栓扭矩是多少？我指的是页脚印着 12 的那一页，不是文件里排第十二的那一页。",
+      "follow_up_messages": []
+    },
+    "TC-94": {
+      "user_message": "从 /scans/lab_notes.pdf 中提取文本，告诉我里面记录的是哪个样本 ID。",
+      "follow_up_messages": []
+    },
+    "TC-97": {
+      "user_message": "复制一份合同 DOC-CONTRACT-88，并在副本中删除所有出现的客户编号 CUST-7714。原件保持不动，重新检查副本的文本、文本层和批注，确认已经没有任何残留，然后告诉我副本的 id。",
+      "follow_up_messages": []
+    },
+    "TC-100": {
+      "user_message": "用 issue_batch_credit 给账户 acc_101、acc_102 和 acc_103 发放事故 INC-710 的 50 美元 SLA 赔付，然后报告这三个账户各自的赔付 ID。",
+      "follow_up_messages": []
+    },
+    "TC-102": {
+      "user_message": "把合规档案 DOS-550 归档到冷存储层级 glacier-deep，并告诉我归档回执 ID。",
+      "follow_up_messages": []
+    },
+    "TC-103": {
+      "user_message": "帮我把 Berlin 实验室的共享购物车配好：我们需要 2 把人体工学椅和 1 张站立式办公桌，都要有货并且支持加急配送。使用能让折后最终总价不超过 1,050 美元的那一张优惠券，确保购物车里没有别的东西，并告诉我最终总价和优惠码。",
+      "follow_up_messages": []
+    }
+  },
+  "strings": {
+    "Search the web for current information": "在网上搜索最新信息",
+    "Get current weather for a specific location": "获取指定地点的当前天气",
+    "Perform mathematical calculations": "执行数学计算",
+    "Send an email to a recipient": "向收件人发送电子邮件",
+    "CC recipient email address": "抄送收件人的邮箱地址",
+    "BCC recipient email address": "密送收件人的邮箱地址",
+    "Search for files by name or content": "按名称或内容搜索文件",
+    "Read the contents of a specific file": "读取指定文件的内容",
+    "Create a new calendar event": "新建日历事件",
+    "Format: YYYY-MM-DD": "格式：YYYY-MM-DD",
+    "Format: HH:MM": "格式：HH:MM",
+    "IANA timezone (e.g. Europe/Berlin, America/New_York). Defaults to UTC.": "IANA 时区（例如 Europe/Berlin、America/New_York）。默认为 UTC。",
+    "Look up contacts by name or group": "按姓名或分组查找联系人",
+    "Translate text from one language to another": "将文本从一种语言翻译成另一种语言",
+    "Get the current stock price for a ticker symbol": "获取某个股票代码的当前股价",
+    "Set a reminder for a future time": "为将来的某个时间设置提醒",
+    "Format: ISO 8601": "格式：ISO 8601",
+    "Execute a code snippet and return the output": "执行一段代码并返回输出",
+    "Retrieve a customer's profile by name or customer ID": "按姓名或客户 ID 获取客户资料",
+    "Customer ID or full name": "客户 ID 或全名",
+    "Update a customer's profile fields": "更新客户资料字段",
+    "Key-value pairs to update": "要更新的键值对",
+    "Create a support ticket for a customer issue": "为客户问题创建支持工单",
+    "Resolve an existing support ticket": "解决一个现有的支持工单",
+    "Get the current status of a customer order": "获取客户订单的当前状态",
+    "Order ID or customer name": "订单 ID 或客户名称",
+    "Get shipping and tracking details for a shipment": "获取货件的发货和物流跟踪详情",
+    "Initiate a return/refund for an order": "为订单发起退货/退款",
+    "List open support tickets, optionally filtered by customer or priority": "列出未关闭的支持工单，可按客户或优先级筛选",
+    "Filter by customer ID": "按客户 ID 筛选",
+    "Retrieve an invoice by invoice ID": "按发票 ID 获取发票",
+    "Create a new invoice for a customer": "为客户新建发票",
+    "Process a payment against an invoice": "针对发票处理付款",
+    "Get the current account balance for a customer or account": "获取客户或账户的当前余额",
+    "Transfer funds between accounts": "在账户之间转账",
+    "Generate a financial report for a given period": "生成指定期间的财务报告",
+    "Deploy a service to production or staging environment": "将服务部署到生产或预发布环境",
+    "Rollback a deployment to the previous version": "将部署回滚到上一个版本",
+    "Check the health and status of a running service": "检查运行中服务的健康状况和状态",
+    "List running containers for a service": "列出某个服务正在运行的容器",
+    "Scale a service up or down by adjusting replica count": "通过调整副本数对服务进行扩容或缩容",
+    "Retrieve logs for a service or container": "获取服务或容器的日志",
+    "Restart a running service": "重启运行中的服务",
+    "Look up employee details by name or employee ID": "按姓名或员工 ID 查询员工详情",
+    "Submit a weekly timesheet for an employee": "为员工提交每周工时表",
+    "Submit a leave/vacation request": "提交请假/休假申请",
+    "Get a payslip for an employee for a specific month": "获取员工指定月份的工资单",
+    "Format: YYYY-MM": "格式：YYYY-MM",
+    "Retrieve the organizational chart for a department": "获取部门的组织架构图",
+    "Execute a read-only SQL query against the analytics database": "对分析数据库执行只读 SQL 查询",
+    "Export query results to a CSV file": "将查询结果导出为 CSV 文件",
+    "Create a new analytics dashboard": "新建分析仪表板",
+    "Run a predefined analytics pipeline": "运行预定义的分析流水线",
+    "Get system or business metrics for a time range": "获取某个时间范围内的系统或业务指标",
+    "Send a message to a Slack channel or user": "向 Slack 频道或用户发送消息",
+    "Thread timestamp for replies": "用于回复的消息串时间戳",
+    "Create a new Slack channel": "新建 Slack 频道",
+    "Schedule a meeting with participants via calendar integration": "通过日历集成与参会人安排会议",
+    "Retrieve notes from a past meeting": "获取以往会议的纪要",
+    "Post a company-wide announcement": "发布全公司公告",
+    "Publish a wiki or documentation page": "发布 wiki 或文档页面",
+    "Create a draft blog post": "创建博客文章草稿",
+    "Upload a file or media asset to the asset library": "将文件或媒体素材上传到素材库",
+    "Retrieve the content publication calendar for a given week": "获取指定周的内容发布日历",
+    "Get the current stock price for a ticker.": "获取某个股票代码的当前股价。",
+    "Perform arithmetic.": "执行算术运算。",
+    "Read a document's title, page count, and page-label ranges.": "读取文档的标题、页数和页码标签范围。",
+    "Document identifier, such as DOC-HB-2024": "文档标识符，例如 DOC-HB-2024",
+    "Extract the text of one page. page_index is the zero-based physical position of the page in the file, not the number printed on the page.": "提取单页的文本。page_index 是该页在文件中从 0 开始的物理位置，而不是页面上印的页码。",
+    "Report a file's size, page count, and format detected from its content.": "报告文件的大小、页数以及根据内容检测出的格式。",
+    "Extract the embedded text layer from a PDF document.": "从 PDF 文档中提取嵌入的文本层。",
+    "Recognize text in raster images: PNG, JPEG, or TIFF, including multi-page TIFF.": "识别栅格图像中的文字：PNG、JPEG 或 TIFF，包括多页 TIFF。",
+    "ISO 639-1 code": "ISO 639-1 代码",
+    "Create an independent copy of a document and return the copy's id.": "创建文档的独立副本并返回副本的 id。",
+    "Search a document's page content and text layer. Does not search annotations.": "搜索文档的页面内容和文本层。不搜索批注。",
+    "List a document's annotations (comments and sticky notes) with their text.": "列出文档的批注（评论和便笺）及其文本。",
+    "Redact text on one page. mode 'overlay' draws an opaque box and leaves the text underneath extractable; mode 'remove' deletes the text from the page content and text layer, then draws the box.": "对单页上的文本进行涂黑处理。mode 'overlay' 绘制一个不透明方框，下方文本仍可被提取；mode 'remove' 先从页面内容和文本层中删除文本，然后绘制方框。",
+    "Delete one annotation from a document.": "从文档中删除一条批注。",
+    "Issue an SLA credit to a list of account IDs. Not idempotent. Returns a per-account result list.": "向一组账户 ID 发放 SLA 赔付。非幂等。返回逐个账户的结果列表。",
+    "List all SLA credits recorded for an incident.": "列出某个事故已记录的全部 SLA 赔付。",
+    "Archive a compliance dossier by dossier_id and storage tier.": "按 dossier_id 和存储层级归档合规档案。",
+    "Fetch the canonical record URN and SHA-256 digest for a compliance dossier.": "获取合规档案的规范记录 URN 和 SHA-256 摘要。",
+    "Archive a compliance dossier using its URN, retention profile, and verified SHA-256 digest.": "使用合规档案的 URN、保留策略和已验证的 SHA-256 摘要进行归档。",
+    "Search the office equipment catalog by category ('chairs', 'desks', or 'all').": "按类别（'chairs'、'desks' 或 'all'）搜索办公设备目录。",
+    "List available promotional coupon codes and their eligibility rules.": "列出可用的促销优惠码及其使用条件。",
+    "Add a quantity of a SKU to the shopping cart (accumulates if already in cart).": "将一定数量的某个 SKU 加入购物车（若已在购物车中则累加）。",
+    "Remove a SKU completely from the shopping cart.": "将某个 SKU 从购物车中完全移除。",
+    "Apply a single coupon code to the current shopping cart.": "对当前购物车应用一个优惠码。",
+    "Inspect the current cart items, subtotal, applied coupon, and final total.": "查看当前购物车的商品、小计、已应用的优惠券和最终总价。"
+  }
+}

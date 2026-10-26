@@ -26,10 +26,11 @@ def substitute(value: Any, replacements: dict[str, str]) -> Any:
         if not replacements:
             return value
         normalized = unicodedata.normalize("NFC", value)
+        boundary = r"[0-9A-Za-z_]" if all(k.isascii() for k in replacements) else r"\w"
         pattern = (
-            r"(?<![\w])(?:"
+            rf"(?<!{boundary})(?:"
             + "|".join(re.escape(k) for k in sorted(replacements, key=len, reverse=True))
-            + r")(?![\w])"
+            + rf")(?!{boundary})"
         )
         return re.sub(pattern, lambda match: replacements[match.group()], normalized)
     if isinstance(value, list):
@@ -113,7 +114,7 @@ def apply_variants(
         return scenarios
     result = []
     for scenario in scenarios:
-        if scenario.variant_metadata:
+        if "seed" in scenario.variant_metadata:
             if scenario.variant_metadata.get("seed") != seed:
                 raise ValueError(
                     "Select variants from the original scenario definitions when changing the seed."
@@ -122,9 +123,29 @@ def apply_variants(
         elif scenario.held_out:
             result.append(scenario)
         elif scenario.variant_factory:
-            result.append(scenario.variant_factory(scenario, seed))
+            result.append(_keep_metadata(scenario, scenario.variant_factory(scenario, seed)))
         elif scenario.variant_literals:
-            result.append(identity_variant(scenario, seed))
+            result.append(_keep_metadata(scenario, identity_variant(scenario, seed)))
         else:
             result.append(scenario)
     return result
+
+
+def _keep_metadata(base: ScenarioDefinition, variant: ScenarioDefinition) -> ScenarioDefinition:
+    """Carry metadata from earlier transforms (such as a locale) into the variant."""
+    if not base.variant_metadata:
+        return variant
+    return replace(variant, variant_metadata={**base.variant_metadata, **variant.variant_metadata})
+
+
+def prepare_scenarios(
+    scenarios: list[ScenarioDefinition], *, variant_seed: int | None, locale: str | None = None
+) -> list[ScenarioDefinition]:
+    """Apply a run's locale, then its fixture variants.
+
+    The locale goes first so seeded fixtures rewrite the translated prompt.
+    Scenarios that do not support the locale are dropped.
+    """
+    from tool_eval_bench.evals.locales import apply_locale
+
+    return apply_variants(apply_locale(scenarios, locale), variant_seed)

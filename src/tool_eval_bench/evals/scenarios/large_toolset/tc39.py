@@ -63,7 +63,12 @@ def _tc39_eval(state: ScenarioState) -> ScenarioEvaluation:
     """
     correct = _answer_affirms_number(state.final_answer, "30")
     contextual = bool(
-        re.search(r"15\s*%|\b200\b|percent|dollars?|answer|result", state.final_answer, re.I)
+        re.search(
+            r"15\s*%|(?<!\d)200(?!\d)|percent|prozent|por\s+ciento|porcentaje|百分之|パーセント"
+            r"|dollars?|answer|antwort|respuesta|答案|答え|result|ergebnis|resultado|结果|結果",
+            state.final_answer,
+            re.I,
+        )
     )
     # A short reply such as "It's 30." or "**30**" answers the question as
     # directly as a sentence that restates it.

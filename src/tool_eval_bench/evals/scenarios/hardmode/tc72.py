@@ -110,10 +110,24 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
     tried_404 = bool(read_404_calls)
     tried_405 = bool(read_405_calls)
-    email_has_budget = email_call and (
-        includes_text(email_call.arguments.get("body"), "1.2m")
-        or includes_text(email_call.arguments.get("body"), "$1.2")
-        or includes_text(email_call.arguments.get("body"), "750")
+    email_body = email_call.arguments.get("body") if email_call else None
+    email_has_budget = email_call is not None and any(
+        includes_text(email_body, token)
+        for token in (
+            "1.2m",
+            "$1.2",
+            "1,2",
+            "1200000",
+            "1,200,000",
+            "1.200.000",
+            "120万",
+            "120 万",
+            "1.2 百万",
+            "1.2百万",
+            "750",
+            "75万",
+            "75 万",
+        )
     )
 
     valid_searches = [

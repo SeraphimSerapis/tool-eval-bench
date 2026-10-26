@@ -1,0 +1,206 @@
+{
+  "locale": "ja",
+  "version": 1,
+  "scenarios": {
+    "TC-02": {
+      "user_message": "AAPLの現在の株価はいくらですか？",
+      "follow_up_messages": []
+    },
+    "TC-04": {
+      "user_message": "Tokyoの気温は華氏で何度ですか？",
+      "follow_up_messages": []
+    },
+    "TC-05": {
+      "user_message": "来週の月曜日、午前9:30から30分間、AlexとJamieを入れて「Team Standup」を設定してください。",
+      "follow_up_messages": []
+    },
+    "TC-09": {
+      "user_message": "Londonの天気とMSFTの株価を教えてください。",
+      "follow_up_messages": []
+    },
+    "TC-11": {
+      "user_message": "200の15%はいくつですか？",
+      "follow_up_messages": []
+    },
+    "TC-21": {
+      "user_message": "ツールを使わずに、このAPIペイロードをチェックしてください。ルール：\nR1 (email, alt_email): アドレスには、トップレベルドメインの前に空でないドメイン名が必要です（例: user@example.com）。\nR2 (age, guardian_age): 0以上150以下の整数。\nR3 (phone, office_phone): スペース、ハイフン、ドット、括弧を取り除いた後、ちょうど10桁の数字。\nR4 (start_date, renewal_date): YYYY-MM-DD形式で、グレゴリオ暦に実在する日付。\nR5 (amount, discount): 負でない数値。\nペイロード: {\"email\": \"john@.com\", \"alt_email\": \"ops@mail.example.org\", \"age\": 151, \"guardian_age\": 150, \"phone\": \"555-12\", \"office_phone\": \"(555) 123-4567\", \"start_date\": \"2023-02-29\", \"renewal_date\": \"2024-02-29\", \"amount\": -50, \"discount\": 0}\n有効なフィールドも含まれています。回答の最後に ISSUES: という行を置き、その後に無効なフィールドを1行に1つずつ `field: rule id` の形式で書いてください（例: `name: R9`）。このセクションには他に何も書かないでください。",
+      "follow_up_messages": []
+    },
+    "TC-24": {
+      "user_message": "Q3レポートを検索して読み、総売上高の数値だけを答えてください。それ以外は一切不要です。説明もいりません。",
+      "follow_up_messages": []
+    },
+    "TC-27": {
+      "user_message": "Londonの天気を摂氏で取得し、さらにLondonの天気を華氏でも取得してください。",
+      "follow_up_messages": []
+    },
+    "TC-28": {
+      "user_message": "config.yamlのデータベースホストにタイポがあります。誤っている箇所を見つけて、修正内容を説明してください。",
+      "follow_up_messages": []
+    },
+    "TC-30": {
+      "user_message": "Pythonでprint(2+2)を実行してください。結果が4なら、次にprint(\"correct\")を実行してください。そうでなければprint(\"wrong\")を実行してください。",
+      "follow_up_messages": []
+    },
+    "TC-39": {
+      "user_message": "200の15%はいくつですか？",
+      "follow_up_messages": []
+    },
+    "TC-44": {
+      "user_message": "円周率の値はいくつですか？自分の知識で答えてください。",
+      "follow_up_messages": []
+    },
+    "TC-45": {
+      "user_message": "7かける8はいくつですか？",
+      "follow_up_messages": []
+    },
+    "TC-47": {
+      "user_message": "明日の午後3時に「Sprint Planning」ミーティングを準備してください。ただし、まだ作成はしないでください。",
+      "follow_up_messages": [
+        "やっぱり午後4時に変更してください。もう作成してしまって大丈夫です。"
+      ]
+    },
+    "TC-64": {
+      "user_message": "映画『The Matrix』のレビューを書いてください。このスキーマに一致する有効なJSONのみを出力し、余計なテキストは一切付けないでください。\n\nスキーマ：\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"title\": {\n      \"type\": \"string\"\n    },\n    \"year\": {\n      \"type\": \"integer\"\n    },\n    \"rating\": {\n      \"type\": \"number\",\n      \"minimum\": 0,\n      \"maximum\": 10\n    },\n    \"genre\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"action\",\n        \"comedy\",\n        \"drama\",\n        \"horror\",\n        \"sci-fi\",\n        \"thriller\"\n      ]\n    },\n    \"summary\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"title\",\n    \"year\",\n    \"rating\",\n    \"genre\",\n    \"summary\"\n  ],\n  \"additionalProperties\": false\n}\n```",
+      "follow_up_messages": []
+    },
+    "TC-67": {
+      "user_message": "NVDAの現在の株価を取得し、このスキーマに一致するJSONで株式分析を作成してください。シグナルの判断材料として、最近のニュースを調べてください。\n\nスキーマ：\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"ticker\": {\n      \"type\": \"string\"\n    },\n    \"price\": {\n      \"type\": \"number\"\n    },\n    \"currency\": {\n      \"type\": \"string\"\n    },\n    \"signal\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"strong_buy\",\n        \"buy\",\n        \"hold\",\n        \"sell\",\n        \"strong_sell\"\n      ]\n    },\n    \"reasoning\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"ticker\",\n    \"price\",\n    \"currency\",\n    \"signal\",\n    \"reasoning\"\n  ],\n  \"additionalProperties\": false\n}\n```",
+      "follow_up_messages": []
+    },
+    "TC-68": {
+      "user_message": "タスクPROJ-127のステータス更新を作成してください。進行中で、担当は私です。優先度、期日、残りの見積もり時間も含めてください。このスキーマに一致する有効なJSONのみを出力し、余計なテキストは一切付けないでください。\n\nスキーマ：\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"task_id\": {\n      \"type\": \"string\"\n    },\n    \"status\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"pending\",\n        \"in_progress\",\n        \"completed\",\n        \"blocked\"\n      ]\n    },\n    \"assignee\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"task_id\",\n    \"status\",\n    \"assignee\"\n  ],\n  \"additionalProperties\": false\n}\n```",
+      "follow_up_messages": []
+    },
+    "TC-72": {
+      "user_message": "Project Alphaの概要を探して読み、主な内容をDanaにメールで送ってください。",
+      "follow_up_messages": []
+    },
+    "TC-78": {
+      "user_message": "現在の株価を使って、ACME株3株、BETA株2株、CYGN株5株の評価額を計算してください。",
+      "follow_up_messages": []
+    },
+    "TC-88": {
+      "user_message": "先頭が0でない、互いに異なる20桁の数を3つ、表に出さずに作ってください。各桁の数字の和は、この順に73、91、109でなければなりません。2つ目の数の末尾6桁は、1つ目の数の先頭6桁を逆順にしたものと一致しなければなりません。3つ目の数の末尾6桁は、2つ目の数の先頭6桁を逆順にしたものと一致しなければなりません。桁数、和、逆順のすべてを推論の中で検証してください。ツールは使わないでください。1つ目の数だけを返信し、それ以外は何も書かないでください。",
+      "follow_up_messages": [
+        "では、作成した2つ目の数だけを返信し、それ以外は何も書かないでください。",
+        "では、作成した3つ目の数だけを返信し、それ以外は何も書かないでください。"
+      ]
+    },
+    "TC-93": {
+      "user_message": "フィールドサービスハンドブックDOC-HB-2024で、印刷ページ12に記載されているフランジボルトの締付トルクはいくつですか？フッターに12と書かれたページのことで、ファイル内の12枚目のページではありません。",
+      "follow_up_messages": []
+    },
+    "TC-94": {
+      "user_message": "/scans/lab_notes.pdfからテキストを抽出して、記録されているサンプルIDを教えてください。",
+      "follow_up_messages": []
+    },
+    "TC-97": {
+      "user_message": "契約書DOC-CONTRACT-88のコピーを作成し、顧客番号CUST-7714を出現箇所すべてから削除してください。原本には手を加えず、コピーのテキスト、テキストレイヤー、注釈を再確認して出現箇所が残っていないことを検証し、コピーのIDを教えてください。",
+      "follow_up_messages": []
+    },
+    "TC-100": {
+      "user_message": "インシデントINC-710の50ドルのSLAクレジットを、issue_batch_creditを使ってアカウントacc_101、acc_102、acc_103に発行し、その後3つのアカウントすべてのクレジットIDを報告してください。",
+      "follow_up_messages": []
+    },
+    "TC-102": {
+      "user_message": "コンプライアンス・ドシエDOS-550をコールドストレージ階層glacier-deepにアーカイブし、アーカイブ受領IDを教えてください。",
+      "follow_up_messages": []
+    },
+    "TC-103": {
+      "user_message": "Berlinのラボ用に共有カートを準備してください。エルゴノミクスチェア2脚とスタンディングデスク1台が必要で、いずれも在庫があり、速達配送の対象であるものにしてください。割引後の最終合計が1,050ドル以下になるクーポンを1つ適用し、カートに他のものが何も入っていないことを確認したうえで、最終合計とクーポンコードを教えてください。",
+      "follow_up_messages": []
+    }
+  },
+  "strings": {
+    "Search the web for current information": "Webで最新の情報を検索します",
+    "Get current weather for a specific location": "指定した場所の現在の天気を取得します",
+    "Perform mathematical calculations": "数学的な計算を行います",
+    "Send an email to a recipient": "受信者にメールを送信します",
+    "CC recipient email address": "CC受信者のメールアドレス",
+    "BCC recipient email address": "BCC受信者のメールアドレス",
+    "Search for files by name or content": "ファイル名または内容でファイルを検索します",
+    "Read the contents of a specific file": "指定したファイルの内容を読み取ります",
+    "Create a new calendar event": "新しいカレンダーイベントを作成します",
+    "Format: YYYY-MM-DD": "形式: YYYY-MM-DD",
+    "Format: HH:MM": "形式: HH:MM",
+    "IANA timezone (e.g. Europe/Berlin, America/New_York). Defaults to UTC.": "IANAタイムゾーン（例: Europe/Berlin、America/New_York）。デフォルトはUTCです。",
+    "Look up contacts by name or group": "名前またはグループで連絡先を検索します",
+    "Translate text from one language to another": "テキストをある言語から別の言語に翻訳します",
+    "Get the current stock price for a ticker symbol": "ティッカーシンボルの現在の株価を取得します",
+    "Set a reminder for a future time": "将来の時刻にリマインダーを設定します",
+    "Format: ISO 8601": "形式: ISO 8601",
+    "Execute a code snippet and return the output": "コードスニペットを実行し、出力を返します",
+    "Retrieve a customer's profile by name or customer ID": "名前または顧客IDで顧客プロフィールを取得します",
+    "Customer ID or full name": "顧客IDまたはフルネーム",
+    "Update a customer's profile fields": "顧客プロフィールのフィールドを更新します",
+    "Key-value pairs to update": "更新するキーと値のペア",
+    "Create a support ticket for a customer issue": "顧客の問題についてサポートチケットを作成します",
+    "Resolve an existing support ticket": "既存のサポートチケットを解決済みにします",
+    "Get the current status of a customer order": "顧客の注文の現在のステータスを取得します",
+    "Order ID or customer name": "注文IDまたは顧客名",
+    "Get shipping and tracking details for a shipment": "出荷の配送情報と追跡情報を取得します",
+    "Initiate a return/refund for an order": "注文の返品・返金を開始します",
+    "List open support tickets, optionally filtered by customer or priority": "顧客または優先度で任意に絞り込み、未解決のサポートチケットを一覧表示します",
+    "Filter by customer ID": "顧客IDで絞り込みます",
+    "Retrieve an invoice by invoice ID": "請求書IDで請求書を取得します",
+    "Create a new invoice for a customer": "顧客向けの新しい請求書を作成します",
+    "Process a payment against an invoice": "請求書に対する支払いを処理します",
+    "Get the current account balance for a customer or account": "顧客またはアカウントの現在の残高を取得します",
+    "Transfer funds between accounts": "アカウント間で資金を振り替えます",
+    "Generate a financial report for a given period": "指定した期間の財務レポートを生成します",
+    "Deploy a service to production or staging environment": "サービスを本番環境またはステージング環境にデプロイします",
+    "Rollback a deployment to the previous version": "デプロイを前のバージョンにロールバックします",
+    "Check the health and status of a running service": "稼働中のサービスのヘルスとステータスを確認します",
+    "List running containers for a service": "サービスの実行中のコンテナを一覧表示します",
+    "Scale a service up or down by adjusting replica count": "レプリカ数を調整してサービスをスケールアップまたはスケールダウンします",
+    "Retrieve logs for a service or container": "サービスまたはコンテナのログを取得します",
+    "Restart a running service": "稼働中のサービスを再起動します",
+    "Look up employee details by name or employee ID": "名前または従業員IDで従業員の詳細を検索します",
+    "Submit a weekly timesheet for an employee": "従業員の週次タイムシートを提出します",
+    "Submit a leave/vacation request": "休暇申請を提出します",
+    "Get a payslip for an employee for a specific month": "指定した月の従業員の給与明細を取得します",
+    "Format: YYYY-MM": "形式: YYYY-MM",
+    "Retrieve the organizational chart for a department": "部署の組織図を取得します",
+    "Execute a read-only SQL query against the analytics database": "分析データベースに対して読み取り専用のSQLクエリを実行します",
+    "Export query results to a CSV file": "クエリ結果をCSVファイルにエクスポートします",
+    "Create a new analytics dashboard": "新しい分析ダッシュボードを作成します",
+    "Run a predefined analytics pipeline": "定義済みの分析パイプラインを実行します",
+    "Get system or business metrics for a time range": "指定した期間のシステム指標またはビジネス指標を取得します",
+    "Send a message to a Slack channel or user": "Slackのチャンネルまたはユーザーにメッセージを送信します",
+    "Thread timestamp for replies": "返信先スレッドのタイムスタンプ",
+    "Create a new Slack channel": "新しいSlackチャンネルを作成します",
+    "Schedule a meeting with participants via calendar integration": "カレンダー連携を使って参加者とのミーティングを設定します",
+    "Retrieve notes from a past meeting": "過去のミーティングの議事メモを取得します",
+    "Post a company-wide announcement": "全社向けのお知らせを投稿します",
+    "Publish a wiki or documentation page": "Wikiまたはドキュメントページを公開します",
+    "Create a draft blog post": "ブログ記事の下書きを作成します",
+    "Upload a file or media asset to the asset library": "ファイルまたはメディアアセットをアセットライブラリにアップロードします",
+    "Retrieve the content publication calendar for a given week": "指定した週のコンテンツ公開カレンダーを取得します",
+    "Get the current stock price for a ticker.": "ティッカーの現在の株価を取得します。",
+    "Perform arithmetic.": "算術計算を行います。",
+    "Read a document's title, page count, and page-label ranges.": "ドキュメントのタイトル、ページ数、ページラベルの範囲を読み取ります。",
+    "Document identifier, such as DOC-HB-2024": "ドキュメント識別子（例: DOC-HB-2024）",
+    "Extract the text of one page. page_index is the zero-based physical position of the page in the file, not the number printed on the page.": "1ページ分のテキストを抽出します。page_index はファイル内でのページの物理的な位置（0始まり）で、ページに印刷された番号ではありません。",
+    "Report a file's size, page count, and format detected from its content.": "ファイルのサイズ、ページ数、および内容から判定した形式を報告します。",
+    "Extract the embedded text layer from a PDF document.": "PDFドキュメントから埋め込みテキストレイヤーを抽出します。",
+    "Recognize text in raster images: PNG, JPEG, or TIFF, including multi-page TIFF.": "ラスター画像（PNG、JPEG、TIFF。複数ページのTIFFを含む）内のテキストを認識します。",
+    "ISO 639-1 code": "ISO 639-1コード",
+    "Create an independent copy of a document and return the copy's id.": "ドキュメントの独立したコピーを作成し、コピーのidを返します。",
+    "Search a document's page content and text layer. Does not search annotations.": "ドキュメントのページ内容とテキストレイヤーを検索します。注釈は検索しません。",
+    "List a document's annotations (comments and sticky notes) with their text.": "ドキュメントの注釈（コメントと付箋）をそのテキストとともに一覧表示します。",
+    "Redact text on one page. mode 'overlay' draws an opaque box and leaves the text underneath extractable; mode 'remove' deletes the text from the page content and text layer, then draws the box.": "1ページ上のテキストを墨消しします。mode 'overlay' は不透明なボックスを描画し、下のテキストは抽出可能なまま残ります。mode 'remove' はページ内容とテキストレイヤーからテキストを削除してから、ボックスを描画します。",
+    "Delete one annotation from a document.": "ドキュメントから注釈を1つ削除します。",
+    "Issue an SLA credit to a list of account IDs. Not idempotent. Returns a per-account result list.": "アカウントIDのリストに対してSLAクレジットを発行します。冪等ではありません。アカウントごとの結果リストを返します。",
+    "List all SLA credits recorded for an incident.": "インシデントについて記録されたすべてのSLAクレジットを一覧表示します。",
+    "Archive a compliance dossier by dossier_id and storage tier.": "dossier_id とストレージ階層を指定して、コンプライアンス・ドシエをアーカイブします。",
+    "Fetch the canonical record URN and SHA-256 digest for a compliance dossier.": "コンプライアンス・ドシエの正規レコードURNとSHA-256ダイジェストを取得します。",
+    "Archive a compliance dossier using its URN, retention profile, and verified SHA-256 digest.": "URN、保持プロファイル、検証済みのSHA-256ダイジェストを使って、コンプライアンス・ドシエをアーカイブします。",
+    "Search the office equipment catalog by category ('chairs', 'desks', or 'all').": "オフィス用品カタログをカテゴリ（'chairs'、'desks'、または 'all'）で検索します。",
+    "List available promotional coupon codes and their eligibility rules.": "利用可能なプロモーションクーポンコードとその適用条件を一覧表示します。",
+    "Add a quantity of a SKU to the shopping cart (accumulates if already in cart).": "SKUを指定した数量だけショッピングカートに追加します（すでにカートにある場合は数量が加算されます）。",
+    "Remove a SKU completely from the shopping cart.": "SKUをショッピングカートから完全に削除します。",
+    "Apply a single coupon code to the current shopping cart.": "現在のショッピングカートにクーポンコードを1つ適用します。",
+    "Inspect the current cart items, subtotal, applied coupon, and final total.": "現在のカートの商品、小計、適用中のクーポン、最終合計を確認します。"
+  }
+}

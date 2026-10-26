@@ -77,6 +77,7 @@ class ScoredRun:
     reference_date: str | None
     seed: int | None
     variant_seed: int | None
+    locale: str | None
     concurrency: int
     error_rate: float
     alpha: float
@@ -140,6 +141,7 @@ class ScoredRun:
             reference_date=args.reference_date,
             seed=args.seed,
             variant_seed=getattr(args, "variant_seed", None),
+            locale=getattr(args, "locale", None),
             concurrency=args.parallel,
             error_rate=args.error_rate,
             alpha=args.alpha,
@@ -200,6 +202,7 @@ class ScoredRun:
             "reference_date": self.reference_date,
             "system_prompt": self.system_prompt,
             "variant_seed": self.variant_seed,
+            "locale": self.locale,
             "seed": self.seed,
             "concurrency": self.concurrency,
             "error_rate": self.error_rate,
@@ -228,9 +231,13 @@ class ScoredRun:
         A resumed run records its complete original protocol, not the rerun
         subset, with the run's variants applied, exactly as the service does.
         """
-        from tool_eval_bench.evals.variants import apply_variants
+        from tool_eval_bench.evals.variants import prepare_scenarios
 
-        return apply_variants(self.resume_scenarios or self.scenarios, self.variant_seed)
+        return prepare_scenarios(
+            self.resume_scenarios or self.scenarios,
+            variant_seed=self.variant_seed,
+            locale=self.locale,
+        )
 
     def run_settings(self) -> RunSettings:
         """The persisted-config view of this run; resume compares it with the stored one."""

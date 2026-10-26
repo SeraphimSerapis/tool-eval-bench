@@ -144,6 +144,7 @@ package-dir = {"" = "src"}
 # glob keeps them together.
 tool_eval_bench = [
   "evals/yaml_scenarios/*.yaml",
+  "evals/locales/*.json",
   "plugins/decision/vendor/typed_decisions/*",
   "web/static/*",
   "py.typed",

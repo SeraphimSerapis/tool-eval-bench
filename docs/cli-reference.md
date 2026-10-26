@@ -609,3 +609,11 @@ else:
 of the sampling `--seed`. Unvaried scenarios remain controls. Variants are persisted in
 run configuration and comparison fingerprints; resume requires the same variant seed
 for affected scenarios. See [variant coverage](methodology.md#controlled-fixture-variants).
+
+### Locale runs
+
+`--locale {de,es,zh,ja}` translates the user messages and tool descriptions and runs only the 26
+scenarios whose grading is language-neutral; the rest are skipped. Identifiers, code, schemas, and
+each scenario's invariant anchors stay unchanged, and mock tool results stay in English. The locale
+is part of the run's fingerprint, and each result records first-reply and final-reply language as a
+diagnostic. See [locale runs](locales.md).
