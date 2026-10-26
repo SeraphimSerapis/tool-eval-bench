@@ -29,6 +29,7 @@ from tool_eval_bench.plugins.toolscale.catalog import Catalog
 from tool_eval_bench.plugins.toolscale.grid import (
     CONTROL,
     CORRECT,
+    CUES,
     ERROR,
     OUTCOMES,
     SIMILARITY_LEVELS,
@@ -37,7 +38,7 @@ from tool_eval_bench.plugins.toolscale.grid import (
     grade,
     openai_tools,
 )
-from tool_eval_bench.plugins.toolscale.similarity import ToolSimilarity, tool_tokens
+from tool_eval_bench.plugins.toolscale.similarity import ToolSimilarity, text_tokens, tool_tokens
 from tool_eval_bench.plugins.toolscale.stats import (
     bootstrap_mean_interval,
     sample_stddev,
@@ -142,9 +143,10 @@ class ToolscalePlugin(BenchmarkPlugin):
                 "domain": item.target.domain,
                 "count": item.count,
                 "similarity": item.similarity,
+                "cue": item.cue,
                 "trial": item.trial,
                 "position": round(item.position, 4),
-                "query": item.target.query,
+                "query": item.query,
                 "outcome": outcome,
                 "picked": picked,
                 "correct": outcome == CORRECT,
@@ -220,8 +222,8 @@ class ToolscalePlugin(BenchmarkPlugin):
             plugin_name="toolscale",
             score=accuracy,
             score_label=(
-                f"{accuracy:.1f}% selection accuracy "
-                f"({details['grid_correct']}/{details['grid_items']} grid items)"
+                f"{details['accuracy_when_called']:.1f}% accurate when called · "
+                f"{details['call_rate']:.1f}% call rate"
             ),
             rating=_rating_for_accuracy(accuracy),
             details=details,
@@ -261,99 +263,73 @@ def summarize(
 ) -> dict[str, Any]:
     """Everything the report and storage need, from per-item rows.
 
+    The headline is two numbers, never one blend: the **call rate** (did the
+    model act at all) and **accuracy when called** (did it pick the right
+    tool). A model that asks for an optional parameter instead of calling is
+    abstaining, not confusing tools, and a single accuracy figure cannot tell
+    the two apart. ``accuracy`` (correct over all items) is kept as the stored
+    score so runs still sort.
+
     The stored run keeps ``details`` but not ``item_results``, so the per-item
     outcomes are also kept here in a compact form for later paired analysis.
     A private catalog's tool names and queries never enter ``details``.
     """
     counts = sorted({r["count"] for r in results if r["similarity"] != CONTROL})
     levels = [lvl for lvl in SIMILARITY_LEVELS if any(r["similarity"] == lvl for r in results)]
+    cues = [cue for cue in CUES if any(r["cue"] == cue for r in results)]
     trials = sorted({r["trial"] for r in results})
     grid_rows = [r for r in results if r["similarity"] != CONTROL]
     control_rows = [r for r in results if r["similarity"] == CONTROL]
 
-    by_cell: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
+    by_cell: dict[tuple[int, str, str], list[dict[str, Any]]] = defaultdict(list)
     for r in grid_rows:
-        by_cell[(r["count"], r["similarity"])].append(r)
+        by_cell[(r["count"], r["similarity"], r["cue"])].append(r)
 
     cells: list[dict[str, Any]] = []
-    for count in counts:
-        for level in levels:
-            rows = by_cell.get((count, level), [])
-            if not rows:
-                continue
-            correct, n = _accuracy(rows)
-            per_trial = []
-            for trial in trials:
-                tc, tg = _accuracy(r for r in rows if r["trial"] == trial)
-                if tg:
-                    per_trial.append(_pct(tc, tg))
-            prompt_tokens = [r["prompt_tokens"] for r in rows if r.get("prompt_tokens")]
-            called = [r for r in rows if r["picked"] is not None]
-            low, high = wilson_interval(correct, n)
-            cells.append(
-                {
-                    "count": count,
-                    "similarity": level,
-                    "items": n,
-                    "correct": correct,
-                    "accuracy": _pct(correct, n),
-                    "ci_low": low,
-                    "ci_high": high,
-                    "trial_accuracy": per_trial,
-                    "trial_stddev": round(sample_stddev(per_trial), 2),
-                    "outcomes": {o: sum(1 for r in rows if r["outcome"] == o) for o in OUTCOMES},
-                    # Selection among items where the model did call a tool. A
-                    # model that declines to act (no call) is not confusing
-                    # tools, so this isolates confusion from abstention.
-                    "called": len(called),
-                    "accuracy_when_called": _pct(correct, len(called)),
-                    "mean_prompt_tokens": round(fmean(prompt_tokens)) if prompt_tokens else None,
-                }
-            )
+    for cue in cues:
+        for count in counts:
+            for level in levels:
+                rows = by_cell.get((count, level, cue), [])
+                if rows:
+                    cells.append(
+                        _cell_summary(rows, trials, count=count, similarity=level, cue=cue)
+                    )
 
-    grid_correct, grid_items = _accuracy(grid_rows)
-    control_correct, control_items = _accuracy(control_rows)
     errors = sum(1 for r in results if r["outcome"] == ERROR)
     total = len(results)
-
-    control = None
-    if control_rows:
-        low, high = wilson_interval(control_correct, control_items)
-        control = {
-            "items": control_items,
-            "correct": control_correct,
-            "accuracy": _pct(control_correct, control_items),
-            "ci_low": low,
-            "ci_high": high,
-            "outcomes": {o: sum(1 for r in control_rows if r["outcome"] == o) for o in OUTCOMES},
-        }
-
     targets = sorted({(r["target_rank"], r["target"]) for r in results})
-    # Compact per-item outcomes: [target_rank, count, similarity, trial, outcome].
+    # Compact per-item outcomes: [target_rank, count, similarity, cue, trial, outcome].
     compact = [
-        [r["target_rank"], r["count"], r["similarity"], r["trial"], r["outcome"]] for r in results
+        [r["target_rank"], r["count"], r["similarity"], r["cue"], r["trial"], r["outcome"]]
+        for r in results
     ]
 
     return {
         "total": total,
-        "correct": grid_correct + control_correct,
+        "correct": sum(1 for r in results if r["correct"]),
         "errors": errors,
         "answered": total - errors,
         "completion_rate": round((total - errors) / total * 100, 2) if total else 0.0,
         "status": "incomplete" if errors else "completed",
         "incomplete": errors > 0,
-        "accuracy": _pct(grid_correct, grid_items),
-        "grid_correct": grid_correct,
-        "grid_items": grid_items,
+        **_headline(grid_rows),
+        "by_cue": {cue: _headline([r for r in grid_rows if r["cue"] == cue]) for cue in cues},
         "counts": counts,
         "similarities": levels,
+        "cues": cues,
         "trials": len(trials),
         "cells": cells,
-        "control": control,
-        "similarity_effects": _similarity_effects(grid_rows, counts, levels),
-        "count_effects": _count_effects(grid_rows, cells, counts, levels),
+        "control": {
+            cue: _cell_summary([r for r in control_rows if r["cue"] == cue], trials, cue=cue)
+            for cue in cues
+            if any(r["cue"] == cue for r in control_rows)
+        },
+        "similarity_effects": _similarity_effects(grid_rows, counts, levels, cues),
+        "count_effects": _count_effects(grid_rows, cells, counts, levels, cues),
+        "cue_effects": _cue_effects(grid_rows, counts, levels, cues),
         "by_position": _by_position(grid_rows),
         "similarity_check": similarity_check(items, catalog),
+        "query_check": query_check(items, catalog),
         "catalog": {
             "version": catalog.version,
             "source": catalog.source,
@@ -364,6 +340,52 @@ def summarize(
         },
         "targets": [name if not catalog.is_custom else f"target-{rank}" for rank, name in targets],
         "item_outcomes": compact,
+    }
+
+
+def _headline(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Call rate, accuracy when called, and the combined accuracy over *rows*."""
+    correct, n = _accuracy(rows)
+    called = sum(1 for r in rows if r["picked"] is not None)
+    return {
+        "grid_items": n,
+        "grid_correct": correct,
+        "grid_called": called,
+        "accuracy": _pct(correct, n),
+        "call_rate": _pct(called, n),
+        "accuracy_when_called": _pct(correct, called),
+    }
+
+
+def _cell_summary(
+    rows: list[dict[str, Any]], trials: list[int], **coordinates: Any
+) -> dict[str, Any]:
+    correct, n = _accuracy(rows)
+    per_trial = []
+    for trial in trials:
+        tc, tn = _accuracy(r for r in rows if r["trial"] == trial)
+        if tn:
+            per_trial.append(_pct(tc, tn))
+    prompt_tokens = [r["prompt_tokens"] for r in rows if r.get("prompt_tokens")]
+    called = sum(1 for r in rows if r["picked"] is not None)
+    low, high = wilson_interval(correct, n)
+    return {
+        **coordinates,
+        "items": n,
+        "correct": correct,
+        "accuracy": _pct(correct, n),
+        "ci_low": low,
+        "ci_high": high,
+        "trial_accuracy": per_trial,
+        "trial_stddev": round(sample_stddev(per_trial), 2),
+        "outcomes": {o: sum(1 for r in rows if r["outcome"] == o) for o in OUTCOMES},
+        # Selection among items where the model did call a tool. A model that
+        # declines to act (no call) is not confusing tools, so this isolates
+        # confusion from abstention.
+        "called": called,
+        "call_rate": _pct(called, n),
+        "accuracy_when_called": _pct(correct, called),
+        "mean_prompt_tokens": round(fmean(prompt_tokens)) if prompt_tokens else None,
     }
 
 
@@ -393,50 +415,87 @@ def _paired_effect(
     }
 
 
-def _similarity_effects(
-    rows: list[dict[str, Any]], counts: list[int], levels: list[str]
+def _select(
+    rows: list[dict[str, Any]], *, count: int, similarity: str, cue: str
 ) -> list[dict[str, Any]]:
-    """At each N, distinct minus each more similar tier: the cost of similarity."""
+    return [
+        r for r in rows if r["count"] == count and r["similarity"] == similarity and r["cue"] == cue
+    ]
+
+
+def _similarity_effects(
+    rows: list[dict[str, Any]], counts: list[int], levels: list[str], cues: list[str]
+) -> list[dict[str, Any]]:
+    """At each N and cue, distinct minus each more similar tier: the cost of similarity."""
     if "distinct" not in levels:
         return []
     effects = []
-    for count in counts:
-        base = [r for r in rows if r["count"] == count and r["similarity"] == "distinct"]
-        for level in levels:
-            if level == "distinct":
-                continue
-            other = [r for r in rows if r["count"] == count and r["similarity"] == level]
-            effect = _paired_effect(base, other)
-            if effect is not None:
-                effects.append({"count": count, "versus": level, **effect})
+    for cue in cues:
+        for count in counts:
+            base = _select(rows, count=count, similarity="distinct", cue=cue)
+            for level in levels:
+                if level == "distinct":
+                    continue
+                effect = _paired_effect(base, _select(rows, count=count, similarity=level, cue=cue))
+                if effect is not None:
+                    effects.append({"cue": cue, "count": count, "versus": level, **effect})
     return effects
 
 
 def _count_effects(
-    rows: list[dict[str, Any]], cells: list[dict[str, Any]], counts: list[int], levels: list[str]
+    rows: list[dict[str, Any]],
+    cells: list[dict[str, Any]],
+    counts: list[int],
+    levels: list[str],
+    cues: list[str],
 ) -> list[dict[str, Any]]:
-    """For each tier, smallest N minus largest N, and the slope per doubling."""
+    """For each tier and cue, smallest N minus largest N, and the slope per doubling."""
     if len(counts) < 2:
         return []
     low_n, high_n = counts[0], counts[-1]
     effects = []
-    for level in levels:
-        small = [r for r in rows if r["count"] == low_n and r["similarity"] == level]
-        large = [r for r in rows if r["count"] == high_n and r["similarity"] == level]
-        effect = _paired_effect(small, large)
-        slope = slope_per_doubling(
-            [(c["count"], c["accuracy"]) for c in cells if c["similarity"] == level]
-        )
-        if effect is not None:
-            effects.append(
-                {
-                    "similarity": level,
-                    "from_count": low_n,
-                    "to_count": high_n,
-                    **effect,
-                    "slope_per_doubling": None if slope is None else round(slope, 2),
-                }
+    for cue in cues:
+        for level in levels:
+            effect = _paired_effect(
+                _select(rows, count=low_n, similarity=level, cue=cue),
+                _select(rows, count=high_n, similarity=level, cue=cue),
             )
+            slope = slope_per_doubling(
+                [
+                    (c["count"], c["accuracy"])
+                    for c in cells
+                    if c["similarity"] == level and c["cue"] == cue
+                ]
+            )
+            if effect is not None:
+                effects.append(
+                    {
+                        "cue": cue,
+                        "similarity": level,
+                        "from_count": low_n,
+                        "to_count": high_n,
+                        **effect,
+                        "slope_per_doubling": None if slope is None else round(slope, 2),
+                    }
+                )
+    return effects
+
+
+def _cue_effects(
+    rows: list[dict[str, Any]], counts: list[int], levels: list[str], cues: list[str]
+) -> list[dict[str, Any]]:
+    """Literal minus implied at each (N, tier): what naming the qualifier was worth."""
+    if not {"literal", "implied"} <= set(cues):
+        return []
+    effects = []
+    for count in counts:
+        for level in levels:
+            effect = _paired_effect(
+                _select(rows, count=count, similarity=level, cue="literal"),
+                _select(rows, count=count, similarity=level, cue="implied"),
+            )
+            if effect is not None:
+                effects.append({"count": count, "similarity": level, **effect})
     return effects
 
 
@@ -534,14 +593,49 @@ def _category_l_reference(sim: ToolSimilarity) -> dict[str, Any]:
     }
 
 
+def query_check(items: list[ToolscaleItem], catalog: Catalog) -> dict[str, Any]:
+    """How much each cue's queries give the answer away, by word overlap.
+
+    For every target in the run, compare its query with the target's own
+    definition and with its closest family sibling. A literal query should
+    lean clearly toward the target; an implied one should not, which is the
+    point: the model has to infer, not match words. ``sibling_wins`` is the
+    share of queries whose best-overlapping tool in the family is a sibling.
+    """
+    sim = ToolSimilarity(tool.to_openai_tool() for tool in catalog.tools)
+    targets = {item.target.name: item.target for item in items}
+    cues = [cue for cue in CUES if any(item.cue == cue for item in items)]
+    out: dict[str, Any] = {}
+    for cue in cues:
+        margins: list[float] = []
+        target_scores: list[float] = []
+        for tool in targets.values():
+            query = sim.space.vector(text_tokens(tool.query_for(cue)))
+            own = sim.space.cosine(query, sim.vector_of(tool.to_openai_tool()))
+            siblings = [
+                sim.space.cosine(query, sim.vector_of(other.to_openai_tool()))
+                for other in catalog.family_of(tool).variants
+                if other.name != tool.name
+            ]
+            target_scores.append(own)
+            margins.append(own - max(siblings))
+        if margins:
+            out[cue] = {
+                "query_to_target": round(fmean(target_scores), 3),
+                "margin_over_sibling": round(fmean(margins), 3),
+                "sibling_wins": _pct(sum(1 for m in margins if m < 0), len(margins)),
+            }
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 
 
-def _cell(details: dict[str, Any], count: int, level: str) -> dict[str, Any] | None:
+def _cell(details: dict[str, Any], count: int, level: str, cue: str) -> dict[str, Any] | None:
     for cell in details.get("cells", []):
-        if cell["count"] == count and cell["similarity"] == level:
+        if cell["count"] == count and cell["similarity"] == level and cell.get("cue") == cue:
             return cell
     return None
 
@@ -550,92 +644,141 @@ def _signed(value: float) -> str:
     return f"{value:+.1f}"
 
 
+def _grid_table(
+    d: dict[str, Any], counts: list[int], levels: list[str], cue: str, render: Any
+) -> list[str]:
+    lines = [
+        "| Similarity | " + " | ".join(f"N={n}" for n in counts) + " |",
+        "|---" + "|---:" * len(counts) + "|",
+    ]
+    for level in levels:
+        row = []
+        for count in counts:
+            cell = _cell(d, count, level, cue)
+            row.append("" if cell is None else render(cell))
+        lines.append(f"| {level} | " + " | ".join(row) + " |")
+    lines.append("")
+    return lines
+
+
 def render_report(result: BenchmarkResult) -> list[str]:
     """Markdown for the run report."""
     d = result.details
     counts: list[int] = d.get("counts", [])
     levels: list[str] = d.get("similarities", [])
+    cues: list[str] = d.get("cues", ["literal"])
     catalog = d.get("catalog", {})
     trials = d.get("trials", 1)
 
     lines = [
         "## Toolscale: Tool Count x Description Similarity",
         "",
-        f"**Selection Accuracy (grid):** {d.get('accuracy', 0):.1f}% "
-        f"({d.get('grid_correct', 0)}/{d.get('grid_items', 0)})",
+        f"**Accuracy when a tool was called:** {d.get('accuracy_when_called', 0):.1f}% "
+        f"({d.get('grid_correct', 0)}/{d.get('grid_called', 0)})",
+        f"**Call rate:** {d.get('call_rate', 0):.1f}% "
+        f"({d.get('grid_called', 0)}/{d.get('grid_items', 0)})",
+        f"**Combined accuracy (stored score):** {d.get('accuracy', 0):.1f}%",
         f"**Rating:** {result.rating}",
         f"**Catalog:** v{catalog.get('version', '?')} ({catalog.get('source', '?')}, "
         f"{catalog.get('tools', 0)} tools, sha256 `{str(catalog.get('sha256', ''))[:12]}`)",
-        f"**Trials:** {trials}",
+        f"**Cues:** {', '.join(cues)} · **Trials:** {trials}",
         f"**Duration:** {result.duration_seconds:.1f}s",
         f"**Tokens:** {result.total_tokens:,}",
         "",
         "Each item offers the target tool, 3 neighbours from one similarity tier, and unrelated "
-        "fillers up to N tools. Only the first tool call's name is graded. Request errors "
-        "count as misses and appear in the error mix; the 95% interval is Wilson.",
+        "fillers up to N tools. Only the first tool call's name is graded. The two headline "
+        "numbers are reported apart on purpose: accuracy when called measures tool confusion, "
+        "the call rate measures whether the model acted at all (a clarifying question counts "
+        "as no call). Request errors count as misses; intervals are 95% Wilson.",
         "",
     ]
 
-    if counts and levels:
+    by_cue = d.get("by_cue", {})
+    if len(cues) > 1 and by_cue:
         lines.extend(
             [
-                "### Accuracy Grid",
+                "### Headline by Cue",
                 "",
-                "| Similarity | " + " | ".join(f"N={n}" for n in counts) + " |",
-                "|---" + "|---:" * len(counts) + "|",
+                "| Cue | Accuracy when called | Call rate | Combined accuracy |",
+                "|---|---:|---:|---:|",
             ]
         )
-        for level in levels:
-            row = []
-            for count in counts:
-                cell = _cell(d, count, level)
-                if cell is None:
-                    row.append("")
-                    continue
-                text = f"{cell['accuracy']:.1f}% ({cell['ci_low']:.0f}-{cell['ci_high']:.0f})"
-                if trials > 1:
-                    text += f" ±{cell['trial_stddev']:.1f}"
-                row.append(text)
-            lines.append(f"| {level} | " + " | ".join(row) + " |")
+        for cue in cues:
+            h = by_cue.get(cue, {})
+            lines.append(
+                f"| {cue} | {h.get('accuracy_when_called', 0):.1f}% "
+                f"({h.get('grid_correct', 0)}/{h.get('grid_called', 0)}) | "
+                f"{h.get('call_rate', 0):.1f}% | {h.get('accuracy', 0):.1f}% |"
+            )
         lines.append("")
+
+    if counts and levels:
+        for cue in cues:
+            lines.extend(
+                [f"### Accuracy When a Tool Was Called ({cue} cue)", ""]
+                + _grid_table(
+                    d,
+                    counts,
+                    levels,
+                    cue,
+                    lambda c: f"{c['accuracy_when_called']:.1f}% ({c['correct']}/{c['called']})",
+                )
+            )
+            lines.extend(
+                [f"### Call Rate ({cue} cue)", ""]
+                + _grid_table(
+                    d,
+                    counts,
+                    levels,
+                    cue,
+                    lambda c: f"{c['call_rate']:.1f}% ({c['called']}/{c['items']})",
+                )
+            )
+
+            def combined(c: dict[str, Any]) -> str:
+                text = f"{c['accuracy']:.1f}% ({c['ci_low']:.0f}-{c['ci_high']:.0f})"
+                if trials > 1:
+                    text += f" ±{c['trial_stddev']:.1f}"
+                return text
+
+            lines.extend(
+                [f"### Combined Accuracy ({cue} cue)", ""]
+                + _grid_table(d, counts, levels, cue, combined)
+            )
         if trials > 1:
             lines.extend(["*± is the standard deviation of cell accuracy across trials.*", ""])
 
-    if counts and levels and d.get("cells") and "called" in d["cells"][0]:
+    controls = d.get("control") or {}
+    for cue, control in controls.items():
         lines.extend(
             [
-                "### Accuracy When a Tool Was Called",
+                f"**Control (N=1, target only, {cue} cue):** {control['accuracy']:.1f}% "
+                f"({control['correct']}/{control['items']}); call rate "
+                f"{control['call_rate']:.1f}%, truncated {control['outcomes'].get('truncated', 0)}",
                 "",
-                "The same cells, counting only items where the model called a tool. A gap "
-                "between this grid and the one above is abstention (no call), not confusion.",
-                "",
-                "| Similarity | " + " | ".join(f"N={n}" for n in counts) + " |",
-                "|---" + "|---:" * len(counts) + "|",
             ]
         )
-        for level in levels:
-            row = []
-            for count in counts:
-                cell = _cell(d, count, level)
-                row.append(
-                    ""
-                    if cell is None
-                    else f"{cell['accuracy_when_called']:.1f}% ({cell['called']}/{cell['items']})"
-                )
-            lines.append(f"| {level} | " + " | ".join(row) + " |")
-        lines.append("")
 
-    control = d.get("control")
-    if control:
+    cue_effects = d.get("cue_effects", [])
+    if cue_effects:
         lines.extend(
             [
-                f"**Control (N=1, target only):** {control['accuracy']:.1f}% "
-                f"({control['correct']}/{control['items']}); "
-                f"no call {control['outcomes'].get('no_call', 0)}, "
-                f"truncated {control['outcomes'].get('truncated', 0)}",
+                "### Cue Effect",
                 "",
+                "Accuracy with the literal query minus accuracy with the implied query, on the "
+                "identical tool list, paired by target. Positive means the model relied on the "
+                "query naming the distinguishing word.",
+                "",
+                "| N | Similarity | Delta (pts) | 95% CI | Targets |",
+                "|---:|---|---:|---|---:|",
             ]
         )
+        for e in cue_effects:
+            lines.append(
+                f"| {e['count']} | {e['similarity']} | {_signed(e['delta'])} | "
+                f"{_signed(e['ci_low'])} to {_signed(e['ci_high'])} | {e['targets']} |"
+            )
+        lines.append("")
 
     sim_effects = d.get("similarity_effects", [])
     if sim_effects:
@@ -646,13 +789,13 @@ def render_report(result: BenchmarkResult) -> list[str]:
                 "Accuracy with distinct neighbours minus accuracy with more similar neighbours, "
                 "paired by target. Positive means similarity costs accuracy.",
                 "",
-                "| N | Versus | Delta (pts) | 95% CI | Targets |",
-                "|---:|---|---:|---|---:|",
+                "| Cue | N | Versus | Delta (pts) | 95% CI | Targets |",
+                "|---|---:|---|---:|---|---:|",
             ]
         )
         for e in sim_effects:
             lines.append(
-                f"| {e['count']} | {e['versus']} | {_signed(e['delta'])} | "
+                f"| {e['cue']} | {e['count']} | {e['versus']} | {_signed(e['delta'])} | "
                 f"{_signed(e['ci_low'])} to {_signed(e['ci_high'])} | {e['targets']} |"
             )
         lines.append("")
@@ -667,14 +810,14 @@ def render_report(result: BenchmarkResult) -> list[str]:
                 "Positive means more tools cost accuracy. The slope is a least-squares fit of "
                 "cell accuracy against log2(N).",
                 "",
-                "| Similarity | From N | To N | Delta (pts) | 95% CI | Slope per doubling |",
-                "|---|---:|---:|---:|---|---:|",
+                "| Cue | Similarity | From N | To N | Delta (pts) | 95% CI | Slope per doubling |",
+                "|---|---|---:|---:|---:|---|---:|",
             ]
         )
         for e in count_effects:
             slope = e.get("slope_per_doubling")
             lines.append(
-                f"| {e['similarity']} | {e['from_count']} | {e['to_count']} | "
+                f"| {e['cue']} | {e['similarity']} | {e['from_count']} | {e['to_count']} | "
                 f"{_signed(e['delta'])} | {_signed(e['ci_low'])} to {_signed(e['ci_high'])} | "
                 f"{'' if slope is None else _signed(slope)} |"
             )
@@ -690,18 +833,40 @@ def render_report(result: BenchmarkResult) -> list[str]:
                 "count or attention failure. In the distinct tier both are unrelated tools, so "
                 "their rates are the baseline.",
                 "",
-                "| N | Similarity | Correct | Wrong neighbour | Wrong filler | Hallucinated "
-                "| No call | Truncated | Error | Prompt tokens |",
-                "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+                "| Cue | N | Similarity | Correct | Wrong neighbour | Wrong filler | "
+                "Hallucinated | No call | Truncated | Error | Prompt tokens |",
+                "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|",
             ]
         )
         for c in cells:
             o = c["outcomes"]
             tokens = c.get("mean_prompt_tokens")
             lines.append(
-                f"| {c['count']} | {c['similarity']} | {o['correct']} | {o['wrong_neighbour']} "
-                f"| {o['wrong_filler']} | {o['hallucinated']} | {o['no_call']} "
-                f"| {o['truncated']} | {o['error']} | {'' if tokens is None else f'{tokens:,}'} |"
+                f"| {c.get('cue', 'literal')} | {c['count']} | {c['similarity']} | "
+                f"{o['correct']} | {o['wrong_neighbour']} | {o['wrong_filler']} | "
+                f"{o['hallucinated']} | {o['no_call']} | {o['truncated']} | {o['error']} | "
+                f"{'' if tokens is None else f'{tokens:,}'} |"
+            )
+        lines.append("")
+
+    queries = d.get("query_check") or {}
+    if queries:
+        lines.extend(
+            [
+                "### Query Check",
+                "",
+                "Word overlap (TF-IDF cosine) between each target's query and its own definition, "
+                "and the margin over its closest family sibling. A literal query should lean "
+                "toward the target; an implied query should not, so the model has to infer.",
+                "",
+                "| Cue | Query to target | Margin over closest sibling | Sibling overlaps more |",
+                "|---|---:|---:|---:|",
+            ]
+        )
+        for cue, q in queries.items():
+            lines.append(
+                f"| {cue} | {q['query_to_target']:.3f} | {q['margin_over_sibling']:+.3f} | "
+                f"{q['sibling_wins']:.1f}% |"
             )
         lines.append("")
 
@@ -781,6 +946,9 @@ def render_report(result: BenchmarkResult) -> list[str]:
                 ]
             )
             return lines
+        # Wrong picks first: they are the confusion signal, and a long run of
+        # clarifying questions would otherwise push them past the listing cap.
+        failures.sort(key=lambda f: (f.get("picked") is None, f["item_id"]))
         lines.extend(["| Item | Query | Picked | Outcome |", "|---|---|---|---|"])
         for f in failures[:_MAX_LISTED_FAILURES]:
             query = str(f.get("query", "")).replace("|", "\\|").replace("\n", " ")

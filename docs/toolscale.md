@@ -26,9 +26,24 @@ target  +  3 neighbours from one similarity tier  +  (N - 4) unrelated fillers
 - **Count (N)** grows by adding fillers only. The target's neighbourhood stays
   fixed.
 
-The user message is the target's query, which names the target unambiguously.
-The model sees the same system prompt the tool-call scenarios use. Only the
-first tool call's **name** is graded; arguments are recorded but not scored.
+The user message is one of the target's two queries (the **cue**, below). The
+model sees the same system prompt the tool-call scenarios use. Only the first
+tool call's **name** is graded; arguments are recorded but not scored.
+
+### Cues: literal and implied
+
+Every tool has two queries with exactly one defensible answer each:
+
+| Cue | The query... | Example for `list_draft_invoices` |
+|---|---|---|
+| `literal` | names the qualifier that tells the target from its siblings | "Show me the draft invoices on billing account AC-4471 that haven't gone out yet." |
+| `implied` | describes the situation, so the qualifier has to be inferred | "Which invoices on billing account AC-4471 have I prepared but not sent to the customer yet?" |
+
+Both cues see the identical tool list, so literal minus implied is paired too.
+The literal cue is the clean control. The implied cue removes the keyword
+shortcut, so a model has to understand the descriptions rather than match a
+word. Lint rules keep each implied query free of its own qualifier and every
+sibling's.
 
 ### Similarity tiers
 
@@ -74,26 +89,27 @@ noise.
 | `--toolscale-only` | off | Run only this benchmark |
 | `--toolscale-counts LIST` | `1,4,8,16,32,64` | Tool counts. `1` is the control; other values must be at least 4 |
 | `--toolscale-similarity LIST` | `near,related,distinct` | Tiers to sweep |
+| `--toolscale-cues LIST` | `literal,implied` | Query cues to sweep |
 | `--toolscale-limit N` | 0 (one per family, 68) | Targets per cell, spread across domains first |
 | `--toolscale-catalog PATH` | built-in | A private catalog with the same schema |
 | `--trials N` | 1 | Repetitions inside one run; 3 or more gives a spread per cell |
 
 `--seed`, `--parallel`, `--temperature`, and `--timeout` behave as they do
 everywhere else. Under the `plugin toolscale` subcommand the grid flags are
-spelled `--counts`, `--similarity`, `--limit`, and `--catalog`.
+spelled `--counts`, `--similarity`, `--cues`, `--limit`, and `--catalog`.
 
 Unlike the tool-call scenarios, where `--trials N` stores N separate runs, a
 toolscale run keeps all its trials in one stored run.
 
 ### Cost
 
-The default grid is 68 targets × (1 control + 5 counts × 3 tiers) = 1,088
-requests per trial. Prompts run from a few hundred tokens at N=1 to roughly
+The default grid is 68 targets × (1 control + 5 counts × 3 tiers) × 2 cues =
+2,176 requests per trial. `--toolscale-cues literal` halves that. Prompts run from a few hundred tokens at N=1 to roughly
 6K at N=64. The report shows the measured mean prompt size per cell. Each list
 is shuffled, so prefix caching helps little. A quick smoke run:
 
 ```bash
-tool-eval-bench plugin toolscale --limit 17 --counts 1,4,16,64 --parallel 4
+tool-eval-bench plugin toolscale --limit 17 --counts 1,4,16,64 --cues implied --parallel 4
 ```
 
 The token budget per request follows the scenario suite's default, which
@@ -102,16 +118,30 @@ the budget with no call is recorded as `truncated`.
 
 ## Reading the result
 
-The terminal prints the accuracy grid, the control, and the count effect per
-tier. The Markdown report adds:
+The headline is two numbers, reported apart on purpose:
 
-- **Accuracy grid.** Accuracy per cell with a 95% Wilson interval, and the
-  standard deviation across trials when there is more than one.
-- **Accuracy when a tool was called.** The same cells, counting only items
-  where the model called a tool. Safety-tuned models sometimes decline a
-  high-impact action, such as sharing an editable link, and ask for confirmation
-  instead. That is abstention, not confusion, and the gap between the two grids
-  shows how much of the headline drop it explains.
+- **Accuracy when called.** Of the items where the model called a tool, the
+  share where it called the right one. This is the tool-confusion measure.
+- **Call rate.** The share of items where the model called any tool. A model
+  that asks a clarifying question, often about an optional parameter, or
+  declines a high-impact action, is abstaining, not confusing tools.
+
+A single blended accuracy hid this in calibration. A mid-sized model scored 83%
+combined, and every miss was a clarifying question; it never picked a wrong
+tool. The combined accuracy (correct over all items) is still stored as the
+run's score so runs sort, but it is not the headline. Read the two together:
+accuracy when called alone can be gamed by declining hard items.
+
+The terminal prints both per cell, one row per tier and cue, plus the cue
+effect and the controls. The Markdown report adds:
+
+- **Headline by cue.** Both numbers for each cue.
+- **Grids per cue.** Accuracy when called, call rate, and combined accuracy for
+  every cell, with a 95% Wilson interval and the standard deviation across
+  trials when there is more than one.
+- **Cue effect.** Literal minus implied accuracy at each N and tier, paired by
+  target. Positive means the model relied on the query naming the
+  distinguishing word.
 - **Similarity effect at fixed N.** Distinct accuracy minus near (or related)
   accuracy, paired by target, with a bootstrap interval. Positive means
   similarity costs accuracy.
@@ -123,6 +153,10 @@ tier. The Markdown report adds:
   is a count or attention failure. In the distinct tier both are unrelated
   tools, so their rates are the baseline. `hallucinated` means a name that was
   not offered; `no_call` means the model answered in text.
+- **Query check.** Word overlap between each target's query and its own
+  definition, and the margin over its closest sibling, per cue. Literal queries
+  lean toward the target; implied ones should not. This confirms the implied
+  cue really removes the keyword shortcut.
 - **Similarity check.** The measured similarity of each tier (below).
 - **Accuracy by target position.** First, middle, and last third of the list.
 - **Failed items.** Query, the tool picked (or the start of the model's reply
@@ -176,7 +210,8 @@ private catalog with the same JSON schema as
               "description": "List draft invoices on one billing account that have been prepared but not yet sent ...",
               "parameters": {"account_id": {"type": "string", "description": "Billing account identifier"}},
               "required": ["account_id"],
-              "query": "Show me the draft invoices on billing account AC-4471 that haven't gone out yet."
+              "query": "Show me the draft invoices on billing account AC-4471 that haven't gone out yet.",
+              "query_implied": "Which invoices on billing account AC-4471 have I prepared but not sent yet?"
             }
           ]
         }
@@ -187,7 +222,8 @@ private catalog with the same JSON schema as
 ```
 
 A catalog needs at least two domains, four families per domain, and four
-variants per family. The largest N it supports is the number of families
+variants per family. `query_implied` is optional per tool, but the implied cue
+needs it on every tool; run a catalog without it with `--toolscale-cues literal`. The largest N it supports is the number of families
 outside the smallest domain, plus one. With a private catalog:
 
 - the report keeps every table but withholds tool names and queries;
@@ -198,8 +234,43 @@ outside the smallest domain, plus one. With a private catalog:
 
 `lint_catalog()` in `plugins/toolscale/catalog.py` checks the authoring rules
 that keep items unambiguous: every variant name carries its qualifier, each
-query names its own qualifier and no sibling's, and no query contains a tool
-name. A private catalog that breaks them still runs, with a warning.
+literal query names its own qualifier and no sibling's, each implied query
+names neither, and no query contains a tool name. A private catalog that breaks them still runs, with a warning.
+
+## Calibration
+
+Two local models ran the full default grid (68 targets, both cues, seed 42) in
+October 2026. A strong model also ran every one of the 272 tools as a target,
+with each cue, at N=4 and N=64.
+
+| Model | Accuracy when called (literal / implied) | Call rate (literal / implied) | Wrong picks |
+|---|---:|---:|---:|
+| DeepSeek V4.1 Flash | 100.0% / 99.7% | 97.8% / 98.7% | 3 of 2,004 |
+| Gemma 4 | 100.0% / 99.9% | 83.2% / 86.4% | 1 of 1,730 |
+
+What it showed:
+
+- **Tool confusion was nearly absent.** No similarity tier, cue, or count up to
+  64 produced a measurable drop in accuracy when called. The paired effects are
+  computed on combined accuracy, and the two whose intervals excluded zero
+  (DeepSeek, distinct tier at N=4) came from extra clarifying questions, not
+  wrong picks. Two of the four wrong picks traced to one ambiguous implied
+  query, since rewritten.
+- **Abstention separated the models.** Gemma asked a clarifying question,
+  usually about an optional parameter, on about one item in six. The call rate
+  carried the whole difference in combined accuracy.
+- **Neighbours changed willingness to act.** Gemma called more often when the
+  three neighbours were near-duplicates of the target than when they were
+  unrelated: on the literal cue, 91% against 84% at N=4.
+- **Calibration fixes.** One literal query that fit three tools ("premium
+  cabin"), one implied query that a faster service also satisfied, and one
+  production-deploy variant that the strong model refused even when it was
+  the only tool offered (replaced with a low-risk sibling) were rewritten.
+
+The published drops this benchmark set out to separate come from conditions it
+holds clean on purpose: hundreds of tools, inconsistent or terse descriptions,
+crowded catalogs where the distractors are also near-duplicates of each other,
+and selection deep in a conversation. Those are the next axes to add.
 
 ## Limits
 
@@ -209,10 +280,12 @@ name. A private catalog that breaks them still runs, with a warning.
 - Argument correctness is not graded.
 - N stops at 64 with the built-in catalog. Larger lists need a larger catalog,
   and several providers cap the number of tools per request.
-- Queries name their qualifier literally, so every item has exactly one
-  defensible answer. That trades some difficulty for an axis you can audit.
-  A strong model can come close to saturating the grid. The signal then is in
-  the slopes, the error mix, and weaker or smaller models, not the headline.
+- With clean, well-written descriptions and at most 64 tools, current models
+  rarely confuse tools on either cue (see Calibration). Expect the call rate to
+  separate models before accuracy when called does.
+- Implied queries need a short, common-sense inference that the target's
+  description supports. Lint can check that they do not give the answer away,
+  not that the inference is fair; that rests on review and calibration.
 - The catalog was calibrated against one strong model. Every target ran at
   N=4 and N=64 with near and distinct neighbours. The one query that model
   found ambiguous was rewritten. A production-deploy variant that the model

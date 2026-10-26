@@ -985,6 +985,7 @@ def _run_toolscale_benchmark(
     try:
         counts = [int(c) for c in _toolscale_list(args.toolscale_counts, "--toolscale-counts")]
         levels = _toolscale_list(args.toolscale_similarity, "--toolscale-similarity")
+        cues = _toolscale_list(args.toolscale_cues, "--toolscale-cues")
         catalog = load_catalog_file(catalog_path) if catalog_path else load_builtin_catalog()
         items = build_items(
             catalog,
@@ -993,6 +994,7 @@ def _run_toolscale_benchmark(
             limit=limit,
             trials=trials,
             seed=seed if seed is not None else 0,
+            cues=cues,
         )
     except (CatalogError, GridError, ValueError) as exc:
         report_run_failed(console, f"\n[bold red]Toolscale error:[/] {escape(str(exc))}")
@@ -1013,6 +1015,7 @@ def _run_toolscale_benchmark(
     levels = [
         lvl for lvl in ("near", "related", "distinct") if any(i.similarity == lvl for i in items)
     ]
+    cues = [cue for cue in ("literal", "implied") if any(i.cue == cue for i in items)]
     targets = len({item.target_rank for item in items})
     parallel = args.parallel
     parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
@@ -1020,8 +1023,9 @@ def _run_toolscale_benchmark(
     console.print(
         Panel(
             f"[bold]{display_name}[/]\n"
-            f"[dim]N = {', '.join(map(str, counts))} × {', '.join(levels)} · "
-            f"{targets} targets · {trials} trial(s) = {len(items)} requests · "
+            f"[dim]N = {', '.join(map(str, counts))} × {', '.join(levels)} × "
+            f"{', '.join(cues)} cue · {targets} targets · {trials} trial(s) = "
+            f"{len(items)} requests · "
             f"catalog v{catalog.version} ({catalog.source}){parallel_label}[/]",
             title="[bold]🧰 Toolscale — Tool Count × Similarity[/]",
             border_style="bright_blue",
@@ -1038,7 +1042,8 @@ def _run_toolscale_benchmark(
             async def on_progress(current: int, total: int, item_info: dict) -> None:
                 display.tally.record(item_info)
                 label = (
-                    f"N{item_info.get('count')}/{item_info.get('similarity')}"
+                    f"N{item_info.get('count')}/{item_info.get('similarity')}/"
+                    f"{item_info.get('cue')}"
                     if catalog.is_custom
                     else item_info.get("item_id")
                 )
@@ -1103,24 +1108,31 @@ def _run_toolscale_benchmark(
     _print_toolscale_grid(console, result)
     console.print()
     console.print(
-        f"  [bold]Selection Accuracy (grid):[/] [bold green]{details['accuracy']:.1f}%[/] "
-        f"({details['grid_correct']}/{details['grid_items']})"
+        f"  [bold]Accuracy when called:[/] [bold green]{details['accuracy_when_called']:.1f}%[/] "
+        f"({details['grid_correct']}/{details['grid_called']})  ·  "
+        f"[bold]Call rate:[/] [bold cyan]{details['call_rate']:.1f}%[/] "
+        f"({details['grid_called']}/{details['grid_items']})"
     )
-    control = details.get("control")
-    if control:
+    by_cue = details.get("by_cue", {})
+    if len(by_cue) > 1:
+        for cue, h in by_cue.items():
+            console.print(
+                f"    [dim]{cue}:[/] {h['accuracy_when_called']:.1f}% when called · "
+                f"{h['call_rate']:.1f}% call rate"
+            )
+    for effect in details.get("cue_effects", []):
+        if effect["similarity"] == "near" and effect["count"] in (counts[1:2] + counts[-1:]):
+            console.print(
+                f"  [bold]Cue effect[/] (near, N={effect['count']}): {effect['delta']:+.1f} pts "
+                f"[dim](literal minus implied; 95% CI {effect['ci_low']:+.1f} to "
+                f"{effect['ci_high']:+.1f})[/]"
+            )
+    for cue, control in (details.get("control") or {}).items():
         console.print(
-            f"  [bold]Control (N=1):[/] {control['accuracy']:.1f}% "
+            f"  [bold]Control (N=1, {cue}):[/] {control['accuracy']:.1f}% "
             f"({control['correct']}/{control['items']})"
         )
-    for effect in details.get("count_effects", []):
-        slope = effect.get("slope_per_doubling")
-        console.print(
-            f"  [bold]Count effect[/] ({effect['similarity']}, N={effect['from_count']}→"
-            f"{effect['to_count']}): {effect['delta']:+.1f} pts "
-            f"[dim](95% CI {effect['ci_low']:+.1f} to {effect['ci_high']:+.1f}"
-            + ("" if slope is None else f"; {slope:+.1f} per doubling")
-            + ")[/]"
-        )
+    console.print(f"  [dim]Combined accuracy (stored score): {details['accuracy']:.1f}%[/]")
     errs = details.get("errors", 0)
     if errs > 0:
         console.print(f"  [bold yellow]⚠ {errs} errors[/] (counted as misses)")
@@ -1146,6 +1158,7 @@ def _run_toolscale_benchmark(
             "catalog_sha256": catalog.sha256,
             "counts": counts,
             "similarities": levels,
+            "cues": cues,
             "targets": targets,
             "trials": trials,
             "temperature": args.temperature,
@@ -1153,8 +1166,9 @@ def _run_toolscale_benchmark(
             "extra_params": extra_params or None,
         },
         report_metrics=[
-            f"- **Selection Accuracy (grid)**: **{details['accuracy']:.1f}%**",
-            *([f"- **Control (N=1)**: {control['accuracy']:.1f}%"] if control else []),
+            f"- **Accuracy when called**: **{details['accuracy_when_called']:.1f}%**",
+            f"- **Call rate**: **{details['call_rate']:.1f}%**",
+            f"- **Combined accuracy**: {details['accuracy']:.1f}%",
             f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
         ],
         report_lines=plugin.render_report_section(result),
@@ -1165,31 +1179,40 @@ def _run_toolscale_benchmark(
 
 
 def _print_toolscale_grid(console: Console, result: Any) -> None:
-    """Print accuracy per cell as similarity rows against tool-count columns."""
+    """Print accuracy-when-called and call rate per cell, one row per tier and cue."""
     from rich.table import Table
 
     details = result.details
     counts: list[int] = details.get("counts", [])
     levels: list[str] = details.get("similarities", [])
+    cues: list[str] = details.get("cues", ["literal"])
     if not counts or not levels:
         return
-    cells = {(c["count"], c["similarity"]): c for c in details.get("cells", [])}
+    cells = {(c["count"], c["similarity"], c["cue"]): c for c in details.get("cells", [])}
 
-    table = Table(title="Selection accuracy", title_style="bold", border_style="bright_blue")
-    table.add_column("Similarity", style="dim")
+    # Two numbers per cell in an 80-column terminal: keep them bare and say
+    # what they are once, in the title.
+    table = Table(
+        title="Accuracy when called / call rate (%)",
+        title_style="bold",
+        border_style="bright_blue",
+    )
+    table.add_column("Cue", style="dim")
+    table.add_column("Tier", style="dim")
     for count in counts:
         table.add_column(f"N={count}", justify="right")
-    for level in levels:
-        row = []
-        for count in counts:
-            cell = cells.get((count, level))
-            if cell is None:
-                row.append("")
-                continue
-            acc = cell["accuracy"]
-            colour = "green" if acc >= 90 else "yellow" if acc >= 70 else "red"
-            row.append(f"[{colour}]{acc:.1f}%[/]")
-        table.add_row(level, *row)
+    for cue in cues:
+        for level in levels:
+            row = []
+            for count in counts:
+                cell = cells.get((count, level, cue))
+                if cell is None:
+                    row.append("")
+                    continue
+                acc = cell["accuracy_when_called"]
+                colour = "green" if acc >= 90 else "yellow" if acc >= 70 else "red"
+                row.append(f"[{colour}]{acc:.0f}[/][dim]/{cell['call_rate']:.0f}[/]")
+            table.add_row(cue, level, *row)
     console.print(table)
 
 

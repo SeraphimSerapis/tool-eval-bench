@@ -28,7 +28,8 @@
               "required": [
                 "location"
               ],
-              "query": "Give me the hourly forecast for Lisbon for the rest of today."
+              "query": "Give me the hourly forecast for Lisbon for the rest of today.",
+              "query_implied": "I'm cycling in Lisbon this afternoon; how will the rain chance change from one hour to the next?"
             },
             {
               "name": "get_forecast_daily",
@@ -51,7 +52,8 @@
               "required": [
                 "location"
               ],
-              "query": "What does the daily forecast look like for Denver over the next week?"
+              "query": "What does the daily forecast look like for Denver over the next week?",
+              "query_implied": "What will the highs and lows be in Denver for each of the next seven days?"
             },
             {
               "name": "get_forecast_weekend",
@@ -74,7 +76,8 @@
               "required": [
                 "location"
               ],
-              "query": "What's the weekend forecast for Porto?"
+              "query": "What's the weekend forecast for Porto?",
+              "query_implied": "Will it rain in Porto this Saturday or Sunday?"
             },
             {
               "name": "get_forecast_extended",
@@ -97,7 +100,8 @@
               "required": [
                 "location"
               ],
-              "query": "Show me the extended forecast for Calgary for next month."
+              "query": "Show me the extended forecast for Calgary for next month.",
+              "query_implied": "Will Calgary be warmer or colder than normal about three weeks out? I want the forecast trend."
             }
           ]
         },
@@ -121,7 +125,8 @@
               "required": [
                 "location"
               ],
-              "query": "What's the ozone level in Fresno right now?"
+              "query": "What's the ozone level in Fresno right now?",
+              "query_implied": "How many parts per billion of ground level O3 are in the air in Fresno right now?"
             },
             {
               "name": "get_air_particulate_level",
@@ -140,7 +145,8 @@
               "required": [
                 "location"
               ],
-              "query": "How bad is the particulate pollution in Krakow at the moment?"
+              "query": "How bad is the particulate pollution in Krakow at the moment?",
+              "query_implied": "What are the PM2.5 and PM10 readings in Krakow at the moment?"
             },
             {
               "name": "get_air_pollen_level",
@@ -159,7 +165,8 @@
               "required": [
                 "location"
               ],
-              "query": "Is the pollen count high in Atlanta today?"
+              "query": "Is the pollen count high in Atlanta today?",
+              "query_implied": "My hay fever is acting up; are the tree and grass counts high in Atlanta today?"
             },
             {
               "name": "get_air_smoke_level",
@@ -178,7 +185,8 @@
               "required": [
                 "location"
               ],
-              "query": "Is there wildfire smoke over Boise right now, and how thick is it?"
+              "query": "Is there wildfire smoke over Boise right now, and how thick is it?",
+              "query_implied": "Wildfires are burning upwind of Boise; how hazy is the air there right now?"
             }
           ]
         },
@@ -207,7 +215,8 @@
               "required": [
                 "location"
               ],
-              "query": "Are there any flood warnings in effect for Savannah?"
+              "query": "Are there any flood warnings in effect for Savannah?",
+              "query_implied": "Is the river expected to burst its banks in Savannah? Are there official warnings?"
             },
             {
               "name": "list_heat_alerts",
@@ -231,7 +240,8 @@
               "required": [
                 "location"
               ],
-              "query": "Is there a heat warning for Phoenix this week?"
+              "query": "Is there a heat warning for Phoenix this week?",
+              "query_implied": "Are there official warnings about dangerously high temperatures in Phoenix this week?"
             },
             {
               "name": "list_storm_alerts",
@@ -255,7 +265,8 @@
               "required": [
                 "location"
               ],
-              "query": "Any storm warnings for Omaha tonight?"
+              "query": "Any storm warnings for Omaha tonight?",
+              "query_implied": "Should I expect thunder, hail or damaging gusts in Omaha tonight? Check the official warnings."
             },
             {
               "name": "list_frost_alerts",
@@ -279,7 +290,8 @@
               "required": [
                 "location"
               ],
-              "query": "Are there frost warnings out for Yakima tonight?"
+              "query": "Are there frost warnings out for Yakima tonight?",
+              "query_implied": "Do I need to cover my tomato plants in Yakima tonight? Is there a freeze warning?"
             }
           ]
         },
@@ -309,7 +321,8 @@
                 "from_date",
                 "to_date"
               ],
-              "query": "How much rainfall did Leeds get between 2026-03-01 and 2026-03-07?"
+              "query": "How much rainfall did Leeds get between 2026-03-01 and 2026-03-07?",
+              "query_implied": "How many millimetres of rain fell in Leeds between 2026-03-01 and 2026-03-07?"
             },
             {
               "name": "get_observed_temperature",
@@ -334,7 +347,8 @@
                 "from_date",
                 "to_date"
               ],
-              "query": "What were the temperature highs and lows in Turin from 2026-01-10 to 2026-01-20?"
+              "query": "What were the temperature highs and lows in Turin from 2026-01-10 to 2026-01-20?",
+              "query_implied": "How hot and how cold did it get in Turin each day from 2026-01-10 to 2026-01-20?"
             },
             {
               "name": "get_observed_wind",
@@ -359,7 +373,8 @@
                 "from_date",
                 "to_date"
               ],
-              "query": "What were the wind speeds in Galway between 2026-02-01 and 2026-02-14?"
+              "query": "What were the wind speeds in Galway between 2026-02-01 and 2026-02-14?",
+              "query_implied": "How gusty was it in Galway between 2026-02-01 and 2026-02-14?"
             },
             {
               "name": "get_observed_snowfall",
@@ -384,7 +399,8 @@
                 "from_date",
                 "to_date"
               ],
-              "query": "How much snowfall did Salt Lake City record from 2025-12-20 to 2025-12-31?"
+              "query": "How much snowfall did Salt Lake City record from 2025-12-20 to 2025-12-31?",
+              "query_implied": "How many centimetres of snow came down in Salt Lake City from 2025-12-20 to 2025-12-31?"
             }
           ]
         }
@@ -413,7 +429,8 @@
               "required": [
                 "account_id"
               ],
-              "query": "Show me the draft invoices on billing account AC-4471 that haven't gone out yet."
+              "query": "Show me the draft invoices on billing account AC-4471 that haven't gone out yet.",
+              "query_implied": "Which invoices on billing account AC-4471 have I prepared but not sent to the customer yet?"
             },
             {
               "name": "list_overdue_invoices",
@@ -432,7 +449,8 @@
               "required": [
                 "account_id"
               ],
-              "query": "Which invoices on billing account AC-2290 are overdue?"
+              "query": "Which invoices on billing account AC-2290 are overdue?",
+              "query_implied": "Which invoices on billing account AC-2290 are past their due date and still unpaid?"
             },
             {
               "name": "list_paid_invoices",
@@ -451,7 +469,8 @@
               "required": [
                 "account_id"
               ],
-              "query": "List the paid invoices for billing account AC-7015 so I can reconcile them."
+              "query": "List the paid invoices for billing account AC-7015 so I can reconcile them.",
+              "query_implied": "Which invoices on billing account AC-7015 has the customer settled in full?"
             },
             {
               "name": "list_voided_invoices",
@@ -470,7 +489,8 @@
               "required": [
                 "account_id"
               ],
-              "query": "Pull up the voided invoices for billing account AC-3318."
+              "query": "Pull up the voided invoices for billing account AC-3318.",
+              "query_implied": "Which invoices on billing account AC-3318 did we cancel after issuing them, so they no longer count toward the balance?"
             }
           ]
         },
@@ -504,7 +524,8 @@
                 "invoice_number",
                 "amount"
               ],
-              "query": "Refund 40.00 from invoice INV-20931 on billing account AC-4471 back to the customer's card."
+              "query": "Refund 40.00 from invoice INV-20931 on billing account AC-4471 back to the customer's card.",
+              "query_implied": "Refund 40.00 from invoice INV-20931 on billing account AC-4471; the customer swiped at checkout, so reverse it to that same payment method."
             },
             {
               "name": "issue_bank_refund",
@@ -533,7 +554,8 @@
                 "invoice_number",
                 "amount"
               ],
-              "query": "Send a 120.00 bank refund for invoice INV-18820 on billing account AC-6620."
+              "query": "Send a 120.00 bank refund for invoice INV-18820 on billing account AC-6620.",
+              "query_implied": "Wire 120.00 back to the account holder for invoice INV-18820 on billing account AC-6620, to their registered account number."
             },
             {
               "name": "issue_ledger_refund",
@@ -562,7 +584,8 @@
                 "invoice_number",
                 "amount"
               ],
-              "query": "Refund 25.50 from invoice INV-11884 as a ledger credit on billing account AC-5102."
+              "query": "Refund 25.50 from invoice INV-11884 as a ledger credit on billing account AC-5102.",
+              "query_implied": "Don't pay any money out: keep 25.50 from invoice INV-11884 on billing account AC-5102 as a credit to offset against their future invoices."
             },
             {
               "name": "issue_wallet_refund",
@@ -591,7 +614,8 @@
                 "invoice_number",
                 "amount"
               ],
-              "query": "Refund 15.00 from invoice INV-30417 on billing account AC-2290 to the customer's wallet."
+              "query": "Refund 15.00 from invoice INV-30417 on billing account AC-2290 to the customer's wallet.",
+              "query_implied": "The customer wants 15.00 from invoice INV-30417 on billing account AC-2290 returned to their phone payment app balance."
             }
           ]
         },
@@ -601,7 +625,7 @@
             {
               "name": "get_sales_tax_rate",
               "qualifier": "sales",
-              "description": "Look up the combined sales tax rate for a tax jurisdiction and optional product category, as applied to invoice lines at checkout.",
+              "description": "Look up the combined state and local sales tax rate for a tax jurisdiction and optional product category, as applied to invoice lines at checkout.",
               "parameters": {
                 "jurisdiction_code": {
                   "type": "string",
@@ -619,7 +643,8 @@
               "required": [
                 "jurisdiction_code"
               ],
-              "query": "What sales tax rate applies to software in jurisdiction JX-104?"
+              "query": "What sales tax rate applies to software in jurisdiction JX-104?",
+              "query_implied": "What's the combined state and local rate charged at checkout on software in jurisdiction JX-104?"
             },
             {
               "name": "get_value_added_tax_rate",
@@ -642,7 +667,8 @@
               "required": [
                 "jurisdiction_code"
               ],
-              "query": "What's the value added tax rate for printed books in jurisdiction JX-220?"
+              "query": "What's the value added tax rate for printed books in jurisdiction JX-220?",
+              "query_implied": "Do printed books get a reduced rate band in jurisdiction JX-220, and what's the rate?"
             },
             {
               "name": "get_excise_tax_rate",
@@ -665,7 +691,8 @@
               "required": [
                 "jurisdiction_code"
               ],
-              "query": "What excise rate applies to fuel in jurisdiction JX-318?"
+              "query": "What excise rate applies to fuel in jurisdiction JX-318?",
+              "query_implied": "What duty do we owe on fuel in jurisdiction JX-318?"
             },
             {
               "name": "get_withholding_tax_rate",
@@ -688,7 +715,8 @@
               "required": [
                 "jurisdiction_code"
               ],
-              "query": "What withholding tax rate do we deduct for consulting services in jurisdiction JX-415?"
+              "query": "What withholding tax rate do we deduct for consulting services in jurisdiction JX-415?",
+              "query_implied": "How much must we hold back from a payment for consulting services in jurisdiction JX-415 and pass to the tax office?"
             }
           ]
         },
@@ -718,7 +746,8 @@
                 "invoice_number",
                 "send_date"
               ],
-              "query": "Schedule an SMS reminder for invoice INV-3302 on billing account AC-4471 for 2026-11-05."
+              "query": "Schedule an SMS reminder for invoice INV-3302 on billing account AC-4471 for 2026-11-05.",
+              "query_implied": "Text the billing phone number on billing account AC-4471 a payment reminder for invoice INV-3302 on 2026-11-05."
             },
             {
               "name": "schedule_postal_payment_reminder",
@@ -743,7 +772,8 @@
                 "invoice_number",
                 "send_date"
               ],
-              "query": "Schedule a postal reminder for invoice INV-2817 on billing account AC-6620 to go out on 2026-11-12."
+              "query": "Schedule a postal reminder for invoice INV-2817 on billing account AC-6620 to go out on 2026-11-12.",
+              "query_implied": "Send a paper reminder letter about invoice INV-2817 on billing account AC-6620 by post on 2026-11-12."
             },
             {
               "name": "schedule_voice_payment_reminder",
@@ -768,7 +798,8 @@
                 "invoice_number",
                 "send_date"
               ],
-              "query": "Set up an automated voice reminder for invoice INV-4410 on billing account AC-7015 on 2026-11-20."
+              "query": "Set up an automated voice reminder for invoice INV-4410 on billing account AC-7015 on 2026-11-20.",
+              "query_implied": "Have an automated phone call remind billing account AC-7015 about invoice INV-4410 on 2026-11-20."
             },
             {
               "name": "schedule_portal_payment_reminder",
@@ -793,7 +824,8 @@
                 "invoice_number",
                 "send_date"
               ],
-              "query": "Put a portal reminder about invoice INV-5093 on billing account AC-3318 starting 2026-12-01."
+              "query": "Put a portal reminder about invoice INV-5093 on billing account AC-3318 starting 2026-12-01.",
+              "query_implied": "Show a banner in the customer's self service billing site reminding billing account AC-3318 about invoice INV-5093 from 2026-12-01."
             }
           ]
         }
@@ -822,7 +854,8 @@
               "required": [
                 "employee_number"
               ],
-              "query": "How many vacation days does employee EMP-5521 have left?"
+              "query": "How many vacation days does employee EMP-5521 have left?",
+              "query_implied": "Employee EMP-5521 is planning a beach trip next summer; how many paid days off for that do they have left?"
             },
             {
               "name": "get_sick_leave_balance",
@@ -841,7 +874,8 @@
               "required": [
                 "employee_number"
               ],
-              "query": "How many sick days has employee EMP-3390 got remaining this year?"
+              "query": "How many sick days has employee EMP-3390 got remaining this year?",
+              "query_implied": "Employee EMP-3390 has the flu again; how many paid days for illness do they have left this year?"
             },
             {
               "name": "get_parental_leave_balance",
@@ -860,7 +894,8 @@
               "required": [
                 "employee_number"
               ],
-              "query": "How much parental leave does employee EMP-1184 have left?"
+              "query": "How much parental leave does employee EMP-1184 have left?",
+              "query_implied": "Employee EMP-1184 is expecting a baby; how many weeks of leave for that remain?"
             },
             {
               "name": "get_bereavement_leave_balance",
@@ -879,7 +914,8 @@
               "required": [
                 "employee_number"
               ],
-              "query": "How many bereavement days are left for employee EMP-2047?"
+              "query": "How many bereavement days are left for employee EMP-2047?",
+              "query_implied": "Employee EMP-2047's grandmother passed away; how many compassionate days do they have left?"
             }
           ]
         },
@@ -912,7 +948,8 @@
                 "employee_number",
                 "first_day"
               ],
-              "query": "Book a full day off for employee EMP-5521 on 2026-12-03."
+              "query": "Book a full day off for employee EMP-5521 on 2026-12-03.",
+              "query_implied": "Book employee EMP-5521 off work for the whole of 2026-12-03."
             },
             {
               "name": "submit_half_day_leave",
@@ -940,7 +977,8 @@
                 "employee_number",
                 "first_day"
               ],
-              "query": "Request a half day off for employee EMP-3390 on the afternoon of 2026-11-14."
+              "query": "Request a half day off for employee EMP-3390 on the afternoon of 2026-11-14.",
+              "query_implied": "Employee EMP-3390 wants just the afternoon of 2026-11-14 off; please submit it."
             },
             {
               "name": "submit_hourly_leave",
@@ -969,7 +1007,8 @@
                 "first_day",
                 "hours"
               ],
-              "query": "Employee EMP-1184 needs 3 hours off on 2026-11-21, please file it as hourly leave."
+              "query": "Employee EMP-1184 needs 3 hours off on 2026-11-21, please file it as hourly leave.",
+              "query_implied": "Employee EMP-1184 needs to step out for 3 hours on 2026-11-21; please file that leave."
             },
             {
               "name": "submit_multi_day_leave",
@@ -998,7 +1037,8 @@
                 "first_day",
                 "last_day"
               ],
-              "query": "File a multi day leave request for employee EMP-2047 from 2026-12-21 to 2026-12-24."
+              "query": "File a multi day leave request for employee EMP-2047 from 2026-12-21 to 2026-12-24.",
+              "query_implied": "Submit leave for employee EMP-2047 covering 2026-12-21 through 2026-12-24."
             }
           ]
         },
@@ -1022,7 +1062,8 @@
               "required": [
                 "employee_number"
               ],
-              "query": "Which leave requests from employee EMP-5521 are still pending?"
+              "query": "Which leave requests from employee EMP-5521 are still pending?",
+              "query_implied": "Which of employee EMP-5521's leave requests is the manager still sitting on?"
             },
             {
               "name": "list_approved_leave_requests",
@@ -1041,7 +1082,8 @@
               "required": [
                 "employee_number"
               ],
-              "query": "Show me the approved leave requests for employee EMP-3390."
+              "query": "Show me the approved leave requests for employee EMP-3390.",
+              "query_implied": "Which leave requests for employee EMP-3390 has the manager signed off on?"
             },
             {
               "name": "list_rejected_leave_requests",
@@ -1060,7 +1102,8 @@
               "required": [
                 "employee_number"
               ],
-              "query": "Which of employee EMP-1184's leave requests were rejected this year?"
+              "query": "Which of employee EMP-1184's leave requests were rejected this year?",
+              "query_implied": "Which of employee EMP-1184's leave requests were turned down this year, and why?"
             },
             {
               "name": "list_withdrawn_leave_requests",
@@ -1079,7 +1122,8 @@
               "required": [
                 "employee_number"
               ],
-              "query": "List the withdrawn leave requests for employee EMP-2047."
+              "query": "List the withdrawn leave requests for employee EMP-2047.",
+              "query_implied": "Which leave requests did employee EMP-2047 retract on their own?"
             }
           ]
         },
@@ -1104,7 +1148,8 @@
                 "office_code",
                 "holiday_year"
               ],
-              "query": "Which national holidays does office OF-12 observe in 2027?"
+              "query": "Which national holidays does office OF-12 observe in 2027?",
+              "query_implied": "Which statutory public holidays set for the whole country does office OF-12 observe in 2027?"
             },
             {
               "name": "list_regional_holidays",
@@ -1124,7 +1169,8 @@
                 "office_code",
                 "holiday_year"
               ],
-              "query": "List the regional holidays for office OF-31 in 2027."
+              "query": "List the regional holidays for office OF-31 in 2027.",
+              "query_implied": "Which public holidays specific to the state or province does office OF-31 observe in 2027?"
             },
             {
               "name": "list_company_holidays",
@@ -1144,7 +1190,8 @@
                 "office_code",
                 "holiday_year"
               ],
-              "query": "What company holidays does office OF-07 get in 2027?"
+              "query": "What company holidays does office OF-07 get in 2027?",
+              "query_implied": "Which extra closure days does the employer give staff at office OF-07 in 2027, on top of public holidays?"
             },
             {
               "name": "list_floating_holidays",
@@ -1164,7 +1211,8 @@
                 "office_code",
                 "holiday_year"
               ],
-              "query": "Which floating holidays can employees at office OF-19 pick from in 2027?"
+              "query": "Which floating holidays can employees at office OF-19 pick from in 2027?",
+              "query_implied": "Which optional holidays can employees at office OF-19 choose to take or skip in 2027?"
             }
           ]
         }
@@ -1199,7 +1247,8 @@
                 "destination_postcode",
                 "weight_kg"
               ],
-              "query": "How much would same day delivery cost for a 2 kg parcel from postcode 10115 to 10437?"
+              "query": "How much would same day delivery cost for a 2 kg parcel from postcode 10115 to 10437?",
+              "query_implied": "How much to have a 2 kg parcel picked up and delivered across town by this evening, from postcode 10115 to 10437?"
             },
             {
               "name": "quote_overnight_shipping",
@@ -1224,7 +1273,8 @@
                 "destination_postcode",
                 "weight_kg"
               ],
-              "query": "Quote overnight shipping for a 4.5 kg parcel from postcode 80331 to 20095."
+              "query": "Quote overnight shipping for a 4.5 kg parcel from postcode 80331 to 20095.",
+              "query_implied": "What does it cost to get a 4.5 kg parcel from postcode 80331 to 20095 by 10am tomorrow?"
             },
             {
               "name": "quote_two_day_shipping",
@@ -1249,7 +1299,8 @@
                 "destination_postcode",
                 "weight_kg"
               ],
-              "query": "What does two day shipping cost for a 1.2 kg parcel from postcode 50667 to 01067?"
+              "query": "What does two day shipping cost for a 1.2 kg parcel from postcode 50667 to 01067?",
+              "query_implied": "Quote a 1.2 kg parcel from postcode 50667 to 01067. I do not need it tomorrow, so skip next-morning delivery, but it must be guaranteed there the day after tomorrow."
             },
             {
               "name": "quote_ground_shipping",
@@ -1274,7 +1325,8 @@
                 "destination_postcode",
                 "weight_kg"
               ],
-              "query": "Give me a ground shipping quote for a 12 kg parcel from postcode 70173 to 24103."
+              "query": "Give me a ground shipping quote for a 12 kg parcel from postcode 70173 to 24103.",
+              "query_implied": "What's the cheapest way to send a 12 kg parcel by road from postcode 70173 to 24103? I'm fine waiting a week."
             }
           ]
         },
@@ -1294,7 +1346,8 @@
               "required": [
                 "tracking_number"
               ],
-              "query": "Where was parcel TRK-88213 at its latest scan?"
+              "query": "Where was parcel TRK-88213 at its latest scan?",
+              "query_implied": "Where is parcel TRK-88213 right now? I only need the most recent event."
             },
             {
               "name": "get_parcel_scan_history",
@@ -1309,7 +1362,8 @@
               "required": [
                 "tracking_number"
               ],
-              "query": "Show the full scan history for parcel TRK-40177."
+              "query": "Show the full scan history for parcel TRK-40177.",
+              "query_implied": "Show me every stop parcel TRK-40177 has made since the label was created."
             },
             {
               "name": "get_parcel_delivery_estimate",
@@ -1324,7 +1378,8 @@
               "required": [
                 "tracking_number"
               ],
-              "query": "What's the delivery estimate for parcel TRK-66012?"
+              "query": "What's the delivery estimate for parcel TRK-66012?",
+              "query_implied": "When should I expect parcel TRK-66012 to arrive?"
             },
             {
               "name": "get_parcel_proof_of_delivery",
@@ -1339,7 +1394,8 @@
               "required": [
                 "tracking_number"
               ],
-              "query": "Get the proof of delivery for parcel TRK-12950."
+              "query": "Get the proof of delivery for parcel TRK-12950.",
+              "query_implied": "Who signed for parcel TRK-12950, and when?"
             }
           ]
         },
@@ -1368,7 +1424,8 @@
                 "pickup_postcode",
                 "pickup_date"
               ],
-              "query": "Book a residential pickup at postcode 10115 on 2026-11-09 for 2 parcels."
+              "query": "Book a residential pickup at postcode 10115 on 2026-11-09 for 2 parcels.",
+              "query_implied": "Have a courier collect 2 parcels from my house at postcode 10115 on 2026-11-09."
             },
             {
               "name": "schedule_commercial_pickup",
@@ -1392,7 +1449,8 @@
                 "pickup_postcode",
                 "pickup_date"
               ],
-              "query": "Arrange a commercial pickup of 6 parcels at postcode 80331 on 2026-11-10."
+              "query": "Arrange a commercial pickup of 6 parcels at postcode 80331 on 2026-11-10.",
+              "query_implied": "Send a courier to our office at postcode 80331 on 2026-11-10 to collect 6 parcels."
             },
             {
               "name": "schedule_locker_pickup",
@@ -1416,7 +1474,8 @@
                 "pickup_postcode",
                 "pickup_date"
               ],
-              "query": "Schedule a locker pickup at postcode 50667 on 2026-11-11 for 1 parcel."
+              "query": "Schedule a locker pickup at postcode 50667 on 2026-11-11 for 1 parcel.",
+              "query_implied": "I dropped 1 parcel into the self service box at postcode 50667; book a courier collection for 2026-11-11."
             },
             {
               "name": "schedule_depot_pickup",
@@ -1440,7 +1499,8 @@
                 "pickup_postcode",
                 "pickup_date"
               ],
-              "query": "Book a depot pickup at postcode 70173 on 2026-11-12 for 14 parcels."
+              "query": "Book a depot pickup at postcode 70173 on 2026-11-12 for 14 parcels.",
+              "query_implied": "I handed 14 parcels in at the carrier's counter at postcode 70173; book a truck to collect them on 2026-11-12."
             }
           ]
         },
@@ -1464,7 +1524,8 @@
               "required": [
                 "tracking_number"
               ],
-              "query": "Create a return label for shipment TRK-55102; the item arrived damaged."
+              "query": "Create a return label for shipment TRK-55102; the item arrived damaged.",
+              "query_implied": "The vase from shipment TRK-55102 showed up smashed; I need a prepaid label to send it back."
             },
             {
               "name": "create_wrong_item_return_label",
@@ -1483,7 +1544,8 @@
               "required": [
                 "tracking_number"
               ],
-              "query": "We were sent the wrong item in shipment TRK-30984, I need a return label."
+              "query": "We were sent the wrong item in shipment TRK-30984, I need a return label.",
+              "query_implied": "I ordered a blue kettle but shipment TRK-30984 contained a toaster; I need a label to send it back."
             },
             {
               "name": "create_unwanted_return_label",
@@ -1502,7 +1564,8 @@
               "required": [
                 "tracking_number"
               ],
-              "query": "Create a return label for an unwanted item from shipment TRK-77421."
+              "query": "Create a return label for an unwanted item from shipment TRK-77421.",
+              "query_implied": "I changed my mind about the jacket from shipment TRK-77421; nothing is broken, I just don't want it. Make me a return label."
             },
             {
               "name": "create_warranty_return_label",
@@ -1521,7 +1584,8 @@
               "required": [
                 "tracking_number"
               ],
-              "query": "Create a warranty return label for the faulty blender from shipment TRK-61230."
+              "query": "Create a warranty return label for the faulty blender from shipment TRK-61230.",
+              "query_implied": "The blender from shipment TRK-61230 stopped working after a month; I need a label to send it to the manufacturer for repair."
             }
           ]
         }
@@ -1551,7 +1615,8 @@
                 "service_name",
                 "build_tag"
               ],
-              "query": "Deploy build 4512 of checkout-api to staging."
+              "query": "Deploy build 4512 of checkout-api to staging.",
+              "query_implied": "Put build 4512 of checkout-api into the shared environment we use for final pre release checks."
             },
             {
               "name": "deploy_to_qa",
@@ -1571,7 +1636,8 @@
                 "service_name",
                 "build_tag"
               ],
-              "query": "Put build 4511 of checkout-api on the QA environment for the testers."
+              "query": "Put build 4511 of checkout-api on the QA environment for the testers.",
+              "query_implied": "Deploy build 4511 of checkout-api to the environment where the test team runs its manual checks."
             },
             {
               "name": "deploy_canary_release",
@@ -1591,7 +1657,8 @@
                 "service_name",
                 "build_tag"
               ],
-              "query": "Roll out build 4513 of checkout-api as a canary."
+              "query": "Roll out build 4513 of checkout-api as a canary.",
+              "query_implied": "Release build 4513 of checkout-api next to the current version so only a small slice of live traffic hits it first."
             },
             {
               "name": "deploy_preview_environment",
@@ -1611,7 +1678,8 @@
                 "service_name",
                 "build_tag"
               ],
-              "query": "Spin up a preview environment of search-indexer with build pr-882."
+              "query": "Spin up a preview environment of search-indexer with build pr-882.",
+              "query_implied": "Spin up a throwaway environment with its own URL for build pr-882 of search-indexer so I can share it in code review."
             }
           ]
         },
@@ -1639,7 +1707,8 @@
               "required": [
                 "pipeline_run_id"
               ],
-              "query": "Show me the compile logs for pipeline run RUN-77310."
+              "query": "Show me the compile logs for pipeline run RUN-77310.",
+              "query_implied": "Pipeline run RUN-77310 broke while building the code; show me the compiler errors."
             },
             {
               "name": "get_test_logs",
@@ -1662,7 +1731,8 @@
               "required": [
                 "pipeline_run_id"
               ],
-              "query": "Pull the test logs for pipeline run RUN-77311."
+              "query": "Pull the test logs for pipeline run RUN-77311.",
+              "query_implied": "Which unit checks broke in pipeline run RUN-77311? Show me the stack traces."
             },
             {
               "name": "get_lint_logs",
@@ -1685,7 +1755,8 @@
               "required": [
                 "pipeline_run_id"
               ],
-              "query": "Get the lint logs from pipeline run RUN-77312."
+              "query": "Get the lint logs from pipeline run RUN-77312.",
+              "query_implied": "Show the style and static analysis violations from pipeline run RUN-77312."
             },
             {
               "name": "get_package_logs",
@@ -1708,7 +1779,8 @@
               "required": [
                 "pipeline_run_id"
               ],
-              "query": "Pull the package stage logs for pipeline run RUN-77313."
+              "query": "Pull the package stage logs for pipeline run RUN-77313.",
+              "query_implied": "The container image push broke in pipeline run RUN-77313; show me that stage's log output."
             }
           ]
         },
@@ -1732,7 +1804,8 @@
               "required": [
                 "service_name"
               ],
-              "query": "List the failed pipeline runs for notify-worker."
+              "query": "List the failed pipeline runs for notify-worker.",
+              "query_implied": "Which recent pipeline runs for notify-worker broke, and at which stage?"
             },
             {
               "name": "list_succeeded_pipeline_runs",
@@ -1751,7 +1824,8 @@
               "required": [
                 "service_name"
               ],
-              "query": "Which pipeline runs for report-builder succeeded recently?"
+              "query": "Which pipeline runs for report-builder succeeded recently?",
+              "query_implied": "Which recent pipeline runs for report-builder passed every stage?"
             },
             {
               "name": "list_running_pipeline_runs",
@@ -1770,7 +1844,8 @@
               "required": [
                 "service_name"
               ],
-              "query": "What pipeline runs are running right now for search-indexer?"
+              "query": "What pipeline runs are running right now for search-indexer?",
+              "query_implied": "Which pipeline runs for search-indexer are in progress at this moment?"
             },
             {
               "name": "list_queued_pipeline_runs",
@@ -1789,7 +1864,8 @@
               "required": [
                 "service_name"
               ],
-              "query": "Are any pipeline runs queued for checkout-api?"
+              "query": "Are any pipeline runs queued for checkout-api?",
+              "query_implied": "Which pipeline runs for checkout-api are still waiting for a free build agent?"
             }
           ]
         },
@@ -1818,7 +1894,8 @@
                 "service_name",
                 "flag_key"
               ],
-              "query": "Release flag new-cart on checkout-api to general availability."
+              "query": "Release flag new-cart on checkout-api to general availability.",
+              "query_implied": "Turn flag new-cart on for every user of checkout-api at once and drop the partial targeting."
             },
             {
               "name": "enable_flag_beta_users",
@@ -1842,7 +1919,8 @@
                 "service_name",
                 "flag_key"
               ],
-              "query": "Enable flag smart-search for beta users of search-indexer."
+              "query": "Enable flag smart-search for beta users of search-indexer.",
+              "query_implied": "Enable flag smart-search on search-indexer just for the accounts enrolled in our early access program."
             },
             {
               "name": "enable_flag_staff_accounts",
@@ -1866,7 +1944,8 @@
                 "service_name",
                 "flag_key"
               ],
-              "query": "Switch on flag digest-v2 for staff only on notify-worker."
+              "query": "Switch on flag digest-v2 for staff only on notify-worker.",
+              "query_implied": "Enable flag digest-v2 on notify-worker for our own employees only, so we can dogfood it."
             },
             {
               "name": "enable_flag_percentage_rollout",
@@ -1891,7 +1970,8 @@
                 "flag_key",
                 "rollout_percent"
               ],
-              "query": "Start a percentage rollout of flag fast-pdf on report-builder at 15 percent."
+              "query": "Start a percentage rollout of flag fast-pdf on report-builder at 15 percent.",
+              "query_implied": "Enable flag fast-pdf on report-builder for a random 15 percent of people."
             }
           ]
         }
@@ -1925,7 +2005,8 @@
                 "mailbox_address",
                 "search_text"
               ],
-              "query": "Search the inbox of ops@example.com for messages about the server migration."
+              "query": "Search the inbox of ops@example.com for messages about the server migration.",
+              "query_implied": "Find messages about the server migration in ops@example.com that I received and haven't filed away yet."
             },
             {
               "name": "search_sent_messages",
@@ -1949,7 +2030,8 @@
                 "mailbox_address",
                 "search_text"
               ],
-              "query": "Find emails I sent from ops@example.com that mention the quarterly offsite."
+              "query": "Find emails I sent from ops@example.com that mention the quarterly offsite.",
+              "query_implied": "Find emails I wrote that went out from ops@example.com mentioning the quarterly offsite."
             },
             {
               "name": "search_spam_messages",
@@ -1973,7 +2055,8 @@
                 "mailbox_address",
                 "search_text"
               ],
-              "query": "Check the spam folder in sales@example.com for anything mentioning the conference invite."
+              "query": "Check the spam folder in sales@example.com for anything mentioning the conference invite.",
+              "query_implied": "Did a conference invite to sales@example.com get caught by the junk filter? Search there."
             },
             {
               "name": "search_archive_messages",
@@ -1997,7 +2080,8 @@
                 "mailbox_address",
                 "search_text"
               ],
-              "query": "Look in the archive of hr@example.com for messages about the parking policy."
+              "query": "Look in the archive of hr@example.com for messages about the parking policy.",
+              "query_implied": "Look through the older mail I filed away for long term keeping in hr@example.com for anything about the parking policy."
             }
           ]
         },
@@ -2027,7 +2111,8 @@
                 "match_value",
                 "target_folder"
               ],
-              "query": "In ops@example.com, file everything from the sender alerts@monitor.example.com into the Alerts folder."
+              "query": "In ops@example.com, file everything from the sender alerts@monitor.example.com into the Alerts folder.",
+              "query_implied": "In ops@example.com, put everything that alerts@monitor.example.com emails me into the Alerts folder."
             },
             {
               "name": "create_subject_filter",
@@ -2052,7 +2137,8 @@
                 "match_value",
                 "target_folder"
               ],
-              "query": "Set up a rule on ops@example.com that moves mail with 'Weekly digest' in the subject to the Newsletters folder."
+              "query": "Set up a rule on ops@example.com that moves mail with 'Weekly digest' in the subject to the Newsletters folder.",
+              "query_implied": "On ops@example.com, move mail whose title line says 'Weekly digest' into the Newsletters folder."
             },
             {
               "name": "create_attachment_filter",
@@ -2077,7 +2163,8 @@
                 "match_value",
                 "target_folder"
               ],
-              "query": "On finance@example.com, route messages with a .xlsx attachment into the Reports folder."
+              "query": "On finance@example.com, route messages with a .xlsx attachment into the Reports folder.",
+              "query_implied": "On finance@example.com, file any message that comes with a .xlsx file attached into the Reports folder."
             },
             {
               "name": "create_recipient_filter",
@@ -2102,7 +2189,8 @@
                 "match_value",
                 "target_folder"
               ],
-              "query": "On ops@example.com, move messages where the recipient is oncall@example.com into the Pager folder."
+              "query": "On ops@example.com, move messages where the recipient is oncall@example.com into the Pager folder.",
+              "query_implied": "On ops@example.com, move mail addressed to the oncall@example.com alias into the Pager folder."
             }
           ]
         },
@@ -2127,7 +2215,8 @@
                 "list_address",
                 "subscriber_address"
               ],
-              "query": "Add dana@example.com as a member of the list design@lists.example.com."
+              "query": "Add dana@example.com as a member of the list design@lists.example.com.",
+              "query_implied": "Subscribe dana@example.com to design@lists.example.com so she gets every post individually and can post too."
             },
             {
               "name": "add_list_moderator",
@@ -2147,7 +2236,8 @@
                 "list_address",
                 "subscriber_address"
               ],
-              "query": "Make lee@example.com a moderator on team@lists.example.com."
+              "query": "Make lee@example.com a moderator on team@lists.example.com.",
+              "query_implied": "Let lee@example.com approve held posts and remove subscribers on team@lists.example.com."
             },
             {
               "name": "add_list_owner",
@@ -2167,7 +2257,8 @@
                 "list_address",
                 "subscriber_address"
               ],
-              "query": "Add sam@example.com as an owner of the list board@lists.example.com."
+              "query": "Add sam@example.com as an owner of the list board@lists.example.com.",
+              "query_implied": "Give sam@example.com full control of board@lists.example.com, including its settings and deletion."
             },
             {
               "name": "add_list_digest_subscriber",
@@ -2187,7 +2278,8 @@
                 "list_address",
                 "subscriber_address"
               ],
-              "query": "Sign up kim@example.com as a digest subscriber to news@lists.example.com."
+              "query": "Sign up kim@example.com as a digest subscriber to news@lists.example.com.",
+              "query_implied": "Add kim@example.com to news@lists.example.com, but she wants one combined summary a day instead of every post."
             }
           ]
         },
@@ -2217,7 +2309,8 @@
                 "reply_text",
                 "reply_until"
               ],
-              "query": "Set an auto reply on ops@example.com for internal senders only saying 'Out until Monday', ending 2026-11-30."
+              "query": "Set an auto reply on ops@example.com for internal senders only saying 'Out until Monday', ending 2026-11-30.",
+              "query_implied": "Set an auto reply on ops@example.com saying 'Out until Monday' until 2026-11-30, but only colleagues inside the organisation should get it."
             },
             {
               "name": "set_auto_reply_external_senders",
@@ -2242,7 +2335,8 @@
                 "reply_text",
                 "reply_until"
               ],
-              "query": "Set an auto reply on sales@example.com for external senders saying 'Back on 3 December', ending 2026-12-02."
+              "query": "Set an auto reply on sales@example.com for external senders saying 'Back on 3 December', ending 2026-12-02.",
+              "query_implied": "Set an auto reply on sales@example.com saying 'Back on 3 December' until 2026-12-02, going just to people outside the organisation."
             },
             {
               "name": "set_auto_reply_everyone",
@@ -2267,7 +2361,8 @@
                 "reply_text",
                 "reply_until"
               ],
-              "query": "Turn on an auto reply for everyone on desk@example.com saying 'Replies may be slow', until 2026-12-05."
+              "query": "Turn on an auto reply for everyone on desk@example.com saying 'Replies may be slow', until 2026-12-05.",
+              "query_implied": "Set an auto reply on desk@example.com saying 'Replies may be slow' until 2026-12-05 for anybody who writes in, colleagues and outsiders alike."
             },
             {
               "name": "set_auto_reply_known_contacts",
@@ -2292,7 +2387,8 @@
                 "reply_text",
                 "reply_until"
               ],
-              "query": "Auto reply only to known contacts on chair@example.com with 'Slow to reply this week', until 2026-12-10."
+              "query": "Auto reply only to known contacts on chair@example.com with 'Slow to reply this week', until 2026-12-10.",
+              "query_implied": "Set an auto reply on chair@example.com saying 'Slow to reply' until 2026-12-10, but only for people saved in my address book."
             }
           ]
         }
@@ -2326,7 +2422,8 @@
                 "drive_id",
                 "name_contains"
               ],
-              "query": "Find image files with 'logo' in the name on drive DR-204."
+              "query": "Find image files with 'logo' in the name on drive DR-204.",
+              "query_implied": "Find pictures with 'logo' in the name on drive DR-204."
             },
             {
               "name": "search_spreadsheet_files",
@@ -2350,12 +2447,13 @@
                 "drive_id",
                 "name_contains"
               ],
-              "query": "Find the spreadsheet files named like 'headcount' on drive DR-311."
+              "query": "Find the spreadsheet files named like 'headcount' on drive DR-311.",
+              "query_implied": "Find the XLSX or CSV workbooks named like 'headcount' on drive DR-311."
             },
             {
               "name": "search_pdf_files",
               "qualifier": "pdf",
-              "description": "Search one storage drive for PDF documents by file name, optionally under a folder path. Images and office documents are excluded.",
+              "description": "Search one storage drive for PDF, portable document format, files by file name, optionally under a folder path. Images and office documents are excluded.",
               "parameters": {
                 "drive_id": {
                   "type": "string",
@@ -2374,7 +2472,8 @@
                 "drive_id",
                 "name_contains"
               ],
-              "query": "Look for PDF files with 'manual' in the name on drive DR-118."
+              "query": "Look for PDF files with 'manual' in the name on drive DR-118.",
+              "query_implied": "Find portable document format files with 'manual' in the name on drive DR-118."
             },
             {
               "name": "search_video_files",
@@ -2398,7 +2497,8 @@
                 "drive_id",
                 "name_contains"
               ],
-              "query": "Search drive DR-204 for video files named 'onboarding'."
+              "query": "Search drive DR-204 for video files named 'onboarding'.",
+              "query_implied": "Find the MP4 or MOV recordings named 'onboarding' on drive DR-204."
             }
           ]
         },
@@ -2431,7 +2531,8 @@
                 "drive_id",
                 "file_path"
               ],
-              "query": "Make a view only link for /reports/q3-summary.docx on drive DR-204."
+              "query": "Make a view only link for /reports/q3-summary.docx on drive DR-204.",
+              "query_implied": "Share /reports/q3-summary.docx on drive DR-204 so people can open and read it but not change or annotate it."
             },
             {
               "name": "create_comment_link",
@@ -2459,7 +2560,8 @@
                 "drive_id",
                 "file_path"
               ],
-              "query": "Create a link to /drafts/brief.docx on drive DR-311 where people can comment."
+              "query": "Create a link to /drafts/brief.docx on drive DR-311 where people can comment.",
+              "query_implied": "Share /drafts/brief.docx on drive DR-311 so reviewers can leave notes on it without changing the text."
             },
             {
               "name": "create_edit_link",
@@ -2487,7 +2589,8 @@
                 "drive_id",
                 "file_path"
               ],
-              "query": "Our planning team needs to update /plans/roadmap.xlsx on drive DR-118, so create an edit link for them."
+              "query": "Our planning team needs to update /plans/roadmap.xlsx on drive DR-118, so create an edit link for them.",
+              "query_implied": "Share /plans/roadmap.xlsx on drive DR-118 with a link that lets anyone holding it change the content."
             },
             {
               "name": "create_password_protected_link",
@@ -2516,7 +2619,8 @@
                 "file_path",
                 "link_password"
               ],
-              "query": "Create a password protected link for /finance/payroll.xlsx on drive DR-204 with password Kestrel-42."
+              "query": "Create a password protected link for /finance/payroll.xlsx on drive DR-204 with password Kestrel-42.",
+              "query_implied": "Share /finance/payroll.xlsx on drive DR-204 read only, and nobody should open it without the secret Kestrel-42."
             }
           ]
         },
@@ -2540,7 +2644,8 @@
               "required": [
                 "drive_id"
               ],
-              "query": "Break down storage usage on drive DR-204 by user."
+              "query": "Break down storage usage on drive DR-204 by user.",
+              "query_implied": "Which people are taking up the most space on drive DR-204?"
             },
             {
               "name": "get_usage_by_file_type",
@@ -2559,7 +2664,8 @@
               "required": [
                 "drive_id"
               ],
-              "query": "Which file type takes up the most storage on drive DR-311?"
+              "query": "Which file type takes up the most storage on drive DR-311?",
+              "query_implied": "Is it videos, images or documents eating the space on drive DR-311?"
             },
             {
               "name": "get_usage_by_age",
@@ -2578,7 +2684,8 @@
               "required": [
                 "drive_id"
               ],
-              "query": "Break down storage on drive DR-118 by age so I can see how much is old data."
+              "query": "Break down storage on drive DR-118 by age so I can see how much is old data.",
+              "query_implied": "How much of the data on drive DR-118 is over three years old compared with recent material?"
             },
             {
               "name": "get_usage_by_device",
@@ -2597,7 +2704,8 @@
               "required": [
                 "drive_id"
               ],
-              "query": "Break storage on drive DR-204 down by device, which one uploaded the most?"
+              "query": "Break storage on drive DR-204 down by device, which one uploaded the most?",
+              "query_implied": "Which synced laptop or phone uploaded the most data to drive DR-204?"
             }
           ]
         },
@@ -2626,7 +2734,8 @@
                 "drive_id",
                 "file_path"
               ],
-              "query": "I deleted /notes/ideas.md on drive DR-204 yesterday, restore it from the trash."
+              "query": "I deleted /notes/ideas.md on drive DR-204 yesterday, restore it from the trash.",
+              "query_implied": "I deleted /notes/ideas.md on drive DR-204 by mistake yesterday; bring it back to its folder."
             },
             {
               "name": "restore_file_version",
@@ -2651,7 +2760,8 @@
                 "file_path",
                 "restore_point"
               ],
-              "query": "Roll /plans/roadmap.xlsx on drive DR-118 back to version 7."
+              "query": "Roll /plans/roadmap.xlsx on drive DR-118 back to version 7.",
+              "query_implied": "Roll /plans/roadmap.xlsx on drive DR-118 back to its 7th saved revision."
             },
             {
               "name": "restore_from_snapshot",
@@ -2676,7 +2786,8 @@
                 "file_path",
                 "restore_point"
               ],
-              "query": "Restore /policies/terms.docx on drive DR-311 from the snapshot of 2026-10-01."
+              "query": "Restore /policies/terms.docx on drive DR-311 from the snapshot of 2026-10-01.",
+              "query_implied": "Bring back /policies/terms.docx on drive DR-311 exactly as it was in the drive's nightly capture from 2026-10-01."
             },
             {
               "name": "restore_sync_conflict_copy",
@@ -2700,7 +2811,8 @@
                 "drive_id",
                 "file_path"
               ],
-              "query": "Keep the sync conflict copy of /notes/plan.md on drive DR-204 instead of the current file."
+              "query": "Keep the sync conflict copy of /notes/plan.md on drive DR-204 instead of the current file.",
+              "query_implied": "My laptop and tablet both edited /notes/plan.md on drive DR-204 offline; keep the copy that clashed instead of the current file."
             }
           ]
         }
@@ -2715,7 +2827,7 @@
             {
               "name": "search_economy_flights",
               "qualifier": "economy",
-              "description": "Search scheduled flight options between two airports on one date and return only economy cabin fares, lowest price first.",
+              "description": "Search scheduled flight options between two airports on one date and return only economy cabin fares, the cheapest and most basic cabin.",
               "parameters": {
                 "origin_airport": {
                   "type": "string",
@@ -2739,12 +2851,13 @@
                 "destination_airport",
                 "departure_date"
               ],
-              "query": "Find economy flights from LIS to AMS on 2026-12-14."
+              "query": "Find economy flights from LIS to AMS on 2026-12-14.",
+              "query_implied": "Find the cheapest basic cabin seats from LIS to AMS on 2026-12-14, nothing fancy."
             },
             {
               "name": "search_premium_economy_flights",
               "qualifier": "premium economy",
-              "description": "Search scheduled flight options between two airports on one date and return only premium economy cabin fares, lowest price first.",
+              "description": "Search scheduled flight options between two airports on one date and return only premium economy cabin fares, one step above economy.",
               "parameters": {
                 "origin_airport": {
                   "type": "string",
@@ -2768,12 +2881,13 @@
                 "destination_airport",
                 "departure_date"
               ],
-              "query": "Show premium economy fares from MAD to FCO on 2026-12-18."
+              "query": "Show premium economy fares from MAD to FCO on 2026-12-18.",
+              "query_implied": "Find fares from MAD to FCO on 2026-12-18 in the cabin just one step up from the cheapest seats."
             },
             {
               "name": "search_business_flights",
               "qualifier": "business",
-              "description": "Search scheduled flight options between two airports on one date and return only business cabin fares with lie flat or recliner seats.",
+              "description": "Search scheduled flight options between two airports on one date and return only business cabin fares with lie flat seats, below first class.",
               "parameters": {
                 "origin_airport": {
                   "type": "string",
@@ -2797,12 +2911,13 @@
                 "destination_airport",
                 "departure_date"
               ],
-              "query": "Search business class flights from FRA to JFK on 2027-01-09."
+              "query": "Search business class flights from FRA to JFK on 2027-01-09.",
+              "query_implied": "Find lie flat seats from FRA to JFK on 2027-01-09 for my overnight work trip."
             },
             {
               "name": "search_first_class_flights",
               "qualifier": "first class",
-              "description": "Search scheduled flight options between two airports on one date and return only first class cabin fares, where the route offers them.",
+              "description": "Search scheduled flight options between two airports on one date and return only first class cabin fares, the top cabin above all others.",
               "parameters": {
                 "origin_airport": {
                   "type": "string",
@@ -2826,7 +2941,8 @@
                 "destination_airport",
                 "departure_date"
               ],
-              "query": "Are there first class flights from SIN to LHR on 2027-01-15?"
+              "query": "Are there first class flights from SIN to LHR on 2027-01-15?",
+              "query_implied": "Find seats in the most exclusive top cabin, above everything else on the plane, from SIN to LHR on 2027-01-15."
             }
           ]
         },
@@ -2851,7 +2967,8 @@
                 "flight_number",
                 "flight_date"
               ],
-              "query": "Which gate does flight QX482 leave from on 2026-11-03?"
+              "query": "Which gate does flight QX482 leave from on 2026-11-03?",
+              "query_implied": "Where do I go to board flight QX482 on 2026-11-03?"
             },
             {
               "name": "get_flight_delay",
@@ -2871,7 +2988,8 @@
                 "flight_number",
                 "flight_date"
               ],
-              "query": "What's the delay on flight QX219 on 2026-11-03?"
+              "query": "What's the delay on flight QX219 on 2026-11-03?",
+              "query_implied": "How late is flight QX219 on 2026-11-03 running, and why?"
             },
             {
               "name": "get_flight_baggage_carousel",
@@ -2891,7 +3009,8 @@
                 "flight_number",
                 "flight_date"
               ],
-              "query": "Which baggage carousel will bags from flight QX733 use on 2026-11-04?"
+              "query": "Which baggage carousel will bags from flight QX733 use on 2026-11-04?",
+              "query_implied": "Where do I pick up my suitcase after flight QX733 lands on 2026-11-04?"
             },
             {
               "name": "get_flight_aircraft",
@@ -2911,7 +3030,8 @@
                 "flight_number",
                 "flight_date"
               ],
-              "query": "What aircraft is operating flight QX905 on 2026-11-05?"
+              "query": "What aircraft is operating flight QX905 on 2026-11-05?",
+              "query_implied": "What plane model and registration is operating QX905 on 2026-11-05?"
             }
           ]
         },
@@ -2936,7 +3056,8 @@
                 "booking_reference",
                 "passenger_number"
               ],
-              "query": "Give passenger 1 on booking BK7Q2L a window seat."
+              "query": "Give passenger 1 on booking BK7Q2L a window seat.",
+              "query_implied": "Give passenger 1 on booking BK7Q2L a seat by the side of the plane where they can look outside."
             },
             {
               "name": "select_aisle_seat",
@@ -2956,7 +3077,8 @@
                 "booking_reference",
                 "passenger_number"
               ],
-              "query": "Put passenger 2 on booking BK9M4T in an aisle seat."
+              "query": "Put passenger 2 on booking BK9M4T in an aisle seat.",
+              "query_implied": "Passenger 2 on booking BK9M4T gets up a lot; seat them where they can stand up without climbing over anyone."
             },
             {
               "name": "select_exit_row_seat",
@@ -2976,7 +3098,8 @@
                 "booking_reference",
                 "passenger_number"
               ],
-              "query": "Can passenger 1 on booking BK3H8Z get an exit row seat?"
+              "query": "Can passenger 1 on booking BK3H8Z get an exit row seat?",
+              "query_implied": "Passenger 1 on booking BK3H8Z is very tall; give them the extra legroom seat next to the emergency door."
             },
             {
               "name": "select_bulkhead_seat",
@@ -2996,7 +3119,8 @@
                 "booking_reference",
                 "passenger_number"
               ],
-              "query": "Book a bulkhead seat for passenger 3 on booking BK5R1W."
+              "query": "Book a bulkhead seat for passenger 3 on booking BK5R1W.",
+              "query_implied": "Passenger 3 on booking BK5R1W is travelling with an infant who needs a bassinet; seat them right behind the cabin divider."
             }
           ]
         },
@@ -3021,7 +3145,8 @@
                 "booking_reference",
                 "bag_count"
               ],
-              "query": "Add one carry on bag to booking BK7Q2L."
+              "query": "Add one carry on bag to booking BK7Q2L.",
+              "query_implied": "Add one small bag for the overhead bin to booking BK7Q2L."
             },
             {
               "name": "add_checked_bag",
@@ -3041,7 +3166,8 @@
                 "booking_reference",
                 "bag_count"
               ],
-              "query": "Add 2 checked bags to booking BK9M4T."
+              "query": "Add 2 checked bags to booking BK9M4T.",
+              "query_implied": "Add 2 suitcases that go in the hold, dropped at the counter, to booking BK9M4T."
             },
             {
               "name": "add_oversized_bag",
@@ -3061,7 +3187,8 @@
                 "booking_reference",
                 "bag_count"
               ],
-              "query": "Add 1 oversized bag for a bicycle to booking BK3H8Z."
+              "query": "Add 1 oversized bag for a bicycle to booking BK3H8Z.",
+              "query_implied": "Add 1 bicycle box, longer than 158 cm in total dimensions, to booking BK3H8Z."
             },
             {
               "name": "add_pet_carrier",
@@ -3081,7 +3208,8 @@
                 "booking_reference",
                 "bag_count"
               ],
-              "query": "Add one pet carrier for my cat to booking BK5R1W."
+              "query": "Add one pet carrier for my cat to booking BK5R1W.",
+              "query_implied": "My cat is flying with me in the cabin; add one under-seat travel crate for her to booking BK5R1W."
             }
           ]
         }
@@ -3111,7 +3239,8 @@
                 "sku",
                 "site_code"
               ],
-              "query": "How many units of SKU-40418 are on the shelf at site ST-031?"
+              "query": "How many units of SKU-40418 are on the shelf at site ST-031?",
+              "query_implied": "How many units of SKU-40418 can shoppers grab on the sales floor at site ST-031 right now?"
             },
             {
               "name": "get_backroom_stock",
@@ -3131,7 +3260,8 @@
                 "sku",
                 "site_code"
               ],
-              "query": "Check backroom stock of SKU-22907 at site ST-014."
+              "query": "Check backroom stock of SKU-22907 at site ST-014.",
+              "query_implied": "How many units of SKU-22907 are in storage behind the scenes at site ST-014, not yet put out on the floor?"
             },
             {
               "name": "get_warehouse_stock",
@@ -3151,7 +3281,8 @@
                 "sku",
                 "site_code"
               ],
-              "query": "How much SKU-51830 does the warehouse serving site ST-022 hold?"
+              "query": "How much SKU-51830 does the warehouse serving site ST-022 hold?",
+              "query_implied": "How much SKU-51830 does the regional distribution center that supplies site ST-022 have available?"
             },
             {
               "name": "get_in_transit_stock",
@@ -3171,7 +3302,8 @@
                 "sku",
                 "site_code"
               ],
-              "query": "How many units of SKU-33015 are in transit to site ST-031?"
+              "query": "How many units of SKU-33015 are in transit to site ST-031?",
+              "query_implied": "How many units of SKU-33015 are already on their way to site ST-031 but not received yet?"
             }
           ]
         },
@@ -3201,7 +3333,8 @@
                 "site_code",
                 "quantity"
               ],
-              "query": "Reorder SKU-40418 for site ST-031 by the case, quantity 12."
+              "query": "Reorder SKU-40418 for site ST-031 by the case, quantity 12.",
+              "query_implied": "Reorder 12 supplier cartons of SKU-40418 for site ST-031."
             },
             {
               "name": "create_pallet_reorder",
@@ -3226,7 +3359,8 @@
                 "site_code",
                 "quantity"
               ],
-              "query": "Reorder SKU-22907 for site ST-014 by the pallet, quantity 3."
+              "query": "Reorder SKU-22907 for site ST-014 by the pallet, quantity 3.",
+              "query_implied": "Reorder 3 full forklift skids of SKU-22907 for site ST-014."
             },
             {
               "name": "create_unit_reorder",
@@ -3251,7 +3385,8 @@
                 "site_code",
                 "quantity"
               ],
-              "query": "Reorder SKU-51830 for site ST-022 by the unit, quantity 5."
+              "query": "Reorder SKU-51830 for site ST-022 by the unit, quantity 5.",
+              "query_implied": "Reorder 5 individual pieces of SKU-51830 for site ST-022; it's a slow seller."
             },
             {
               "name": "create_truckload_reorder",
@@ -3276,7 +3411,8 @@
                 "site_code",
                 "quantity"
               ],
-              "query": "Book a truckload reorder of SKU-33015 for site ST-031, quantity 2."
+              "query": "Book a truckload reorder of SKU-33015 for site ST-031, quantity 2.",
+              "query_implied": "Order 2 entire trucks' worth of SKU-33015 for site ST-031."
             }
           ]
         },
@@ -3306,7 +3442,8 @@
                 "site_code",
                 "percent_off"
               ],
-              "query": "Mark SKU-40418 down 40 percent for clearance at site ST-031."
+              "query": "Mark SKU-40418 down 40 percent for clearance at site ST-031.",
+              "query_implied": "SKU-40418 is discontinued; knock 40 percent off it at site ST-031 for good to get rid of the remaining stock."
             },
             {
               "name": "apply_promotional_markdown",
@@ -3331,7 +3468,8 @@
                 "site_code",
                 "percent_off"
               ],
-              "query": "Run a 15 percent promotional discount on SKU-22907 at site ST-014."
+              "query": "Run a 15 percent promotional discount on SKU-22907 at site ST-014.",
+              "query_implied": "Take 15 percent off SKU-22907 at site ST-014 for this weekend's sale only, then restore the usual amount."
             },
             {
               "name": "apply_open_box_markdown",
@@ -3356,7 +3494,8 @@
                 "site_code",
                 "percent_off"
               ],
-              "query": "Take 30 percent off the open box units of SKU-51830 at site ST-022."
+              "query": "Take 30 percent off the open box units of SKU-51830 at site ST-022.",
+              "query_implied": "Take 30 percent off units of SKU-51830 at site ST-022 that customers returned with the packaging already opened."
             },
             {
               "name": "apply_price_match_markdown",
@@ -3381,7 +3520,8 @@
                 "site_code",
                 "percent_off"
               ],
-              "query": "Apply a 10 percent price match on SKU-33015 at site ST-031."
+              "query": "Apply a 10 percent price match on SKU-33015 at site ST-031.",
+              "query_implied": "A competitor is advertising SKU-33015 for less; cut ours at site ST-031 by 10 percent so we are level with them."
             }
           ]
         },
@@ -3411,7 +3551,8 @@
                 "site_code",
                 "units_lost"
               ],
-              "query": "Write off 4 units of SKU-40418 at site ST-031 lost to theft."
+              "query": "Write off 4 units of SKU-40418 at site ST-031 lost to theft.",
+              "query_implied": "4 units of SKU-40418 were shoplifted at site ST-031; write them off."
             },
             {
               "name": "log_spoilage_shrinkage",
@@ -3436,7 +3577,8 @@
                 "site_code",
                 "units_lost"
               ],
-              "query": "Log 18 units of SKU-60224 at site ST-014 as spoilage, the yogurt expired."
+              "query": "Log 18 units of SKU-60224 at site ST-014 as spoilage, the yogurt expired.",
+              "query_implied": "18 units of yogurt SKU-60224 at site ST-014 went past their sell by date; write them off."
             },
             {
               "name": "log_breakage_shrinkage",
@@ -3461,7 +3603,8 @@
                 "site_code",
                 "units_lost"
               ],
-              "query": "Record 6 units of SKU-22907 lost to breakage at site ST-022."
+              "query": "Record 6 units of SKU-22907 lost to breakage at site ST-022.",
+              "query_implied": "6 units of SKU-22907 at site ST-022 got smashed while being shelved; write them off."
             },
             {
               "name": "log_admin_error_shrinkage",
@@ -3486,7 +3629,8 @@
                 "site_code",
                 "units_lost"
               ],
-              "query": "Adjust out 9 units of SKU-33015 at site ST-031 as shrinkage from an admin error in receiving."
+              "query": "Adjust out 9 units of SKU-33015 at site ST-031 as shrinkage from an admin error in receiving.",
+              "query_implied": "We miscounted the delivery of SKU-33015 at site ST-031 and recorded 9 units too many; write the difference off."
             }
           ]
         }
@@ -3520,7 +3664,8 @@
                 "patient_id",
                 "preferred_date"
               ],
-              "query": "Book patient PT-30871 an in person visit on 2026-11-18."
+              "query": "Book patient PT-30871 an in person visit on 2026-11-18.",
+              "query_implied": "Book patient PT-30871 a consultation at the clinic building on 2026-11-18."
             },
             {
               "name": "book_telehealth_visit",
@@ -3544,7 +3689,8 @@
                 "patient_id",
                 "preferred_date"
               ],
-              "query": "Set up a telehealth visit for patient PT-11402 on 2026-11-19 with clinician CL-07."
+              "query": "Set up a telehealth visit for patient PT-11402 on 2026-11-19 with clinician CL-07.",
+              "query_implied": "Book patient PT-11402 a consultation over secure video on 2026-11-19 with clinician CL-07."
             },
             {
               "name": "book_phone_visit",
@@ -3568,7 +3714,8 @@
                 "patient_id",
                 "preferred_date"
               ],
-              "query": "Book a phone consultation for patient PT-55219 on 2026-11-20."
+              "query": "Book a phone consultation for patient PT-55219 on 2026-11-20.",
+              "query_implied": "Book patient PT-55219 a consultation on 2026-11-20 where the clinician just rings them."
             },
             {
               "name": "book_house_call",
@@ -3592,7 +3739,8 @@
                 "patient_id",
                 "preferred_date"
               ],
-              "query": "Arrange a house call for patient PT-27730 on 2026-11-21."
+              "query": "Arrange a house call for patient PT-27730 on 2026-11-21.",
+              "query_implied": "Patient PT-27730 is housebound and can't travel; book a clinician to come to them on 2026-11-21."
             }
           ]
         },
@@ -3616,7 +3764,8 @@
               "required": [
                 "patient_id"
               ],
-              "query": "Show the latest blood test results for patient PT-30871."
+              "query": "Show the latest blood test results for patient PT-30871.",
+              "query_implied": "What were patient PT-30871's latest cholesterol numbers?"
             },
             {
               "name": "get_urine_lab_results",
@@ -3635,7 +3784,8 @@
               "required": [
                 "patient_id"
               ],
-              "query": "Pull urine test results for patient PT-11402 since 2026-09-01."
+              "query": "Pull urine test results for patient PT-11402 since 2026-09-01.",
+              "query_implied": "Show patient PT-11402's urinalysis and culture results since 2026-09-01."
             },
             {
               "name": "get_genetic_lab_results",
@@ -3654,7 +3804,8 @@
               "required": [
                 "patient_id"
               ],
-              "query": "Have patient PT-55219's genetic test results come back?"
+              "query": "Have patient PT-55219's genetic test results come back?",
+              "query_implied": "Have patient PT-55219's results on detected gene variants come back?"
             },
             {
               "name": "get_biopsy_lab_results",
@@ -3673,7 +3824,8 @@
               "required": [
                 "patient_id"
               ],
-              "query": "Get the biopsy results for patient PT-27730."
+              "query": "Get the biopsy results for patient PT-27730.",
+              "query_implied": "What did the pathologist conclude about the tissue sample taken from patient PT-27730?"
             }
           ]
         },
@@ -3698,7 +3850,8 @@
                 "patient_id",
                 "prescription_number"
               ],
-              "query": "Refill prescription RX-4410 for patient PT-30871 for collection at the pharmacy counter."
+              "query": "Refill prescription RX-4410 for patient PT-30871 for collection at the pharmacy counter.",
+              "query_implied": "Refill prescription RX-4410 for patient PT-30871; they'll walk in and collect it inside the clinic pharmacy."
             },
             {
               "name": "request_mail_order_refill",
@@ -3718,7 +3871,8 @@
                 "patient_id",
                 "prescription_number"
               ],
-              "query": "Send prescription RX-2286 for patient PT-11402 as a mail order refill."
+              "query": "Send prescription RX-2286 for patient PT-11402 as a mail order refill.",
+              "query_implied": "Refill prescription RX-2286 for patient PT-11402 and post it to the address on file; a few days is fine."
             },
             {
               "name": "request_courier_refill",
@@ -3738,7 +3892,8 @@
                 "patient_id",
                 "prescription_number"
               ],
-              "query": "Patient PT-55219 needs prescription RX-9013 refilled by courier today."
+              "query": "Patient PT-55219 needs prescription RX-9013 refilled by courier today.",
+              "query_implied": "Patient PT-55219 urgently needs prescription RX-9013 refilled and brought to the address on file today."
             },
             {
               "name": "request_drive_through_refill",
@@ -3758,7 +3913,8 @@
                 "patient_id",
                 "prescription_number"
               ],
-              "query": "Refill prescription RX-6675 for patient PT-27730 for drive through collection."
+              "query": "Refill prescription RX-6675 for patient PT-27730 for drive through collection.",
+              "query_implied": "Refill prescription RX-6675 for patient PT-27730; they want to collect it at the pharmacy window without getting out of the car."
             }
           ]
         },
@@ -3783,7 +3939,8 @@
                 "patient_id",
                 "referral_reason"
               ],
-              "query": "Refer patient PT-30871 to cardiology for recurring chest pain."
+              "query": "Refer patient PT-30871 to cardiology for recurring chest pain.",
+              "query_implied": "Refer patient PT-30871 to the heart specialists for recurring chest pain."
             },
             {
               "name": "create_dermatology_referral",
@@ -3803,7 +3960,8 @@
                 "patient_id",
                 "referral_reason"
               ],
-              "query": "Refer patient PT-11402 to dermatology about a changing mole."
+              "query": "Refer patient PT-11402 to dermatology about a changing mole.",
+              "query_implied": "Refer patient PT-11402 to the skin specialists about a changing mole."
             },
             {
               "name": "create_physiotherapy_referral",
@@ -3823,7 +3981,8 @@
                 "patient_id",
                 "referral_reason"
               ],
-              "query": "Patient PT-55219 needs a physiotherapy referral for knee rehab after surgery."
+              "query": "Patient PT-55219 needs a physiotherapy referral for knee rehab after surgery.",
+              "query_implied": "Patient PT-55219 needs rehabilitation therapy to get knee movement back after surgery; please refer them."
             },
             {
               "name": "create_orthopedics_referral",
@@ -3843,7 +4002,8 @@
                 "patient_id",
                 "referral_reason"
               ],
-              "query": "Refer patient PT-27730 to orthopedics for a suspected hip fracture."
+              "query": "Refer patient PT-27730 to orthopedics for a suspected hip fracture.",
+              "query_implied": "Refer patient PT-27730 for a surgical bone and joint assessment of a suspected hip fracture."
             }
           ]
         }
@@ -3878,7 +4038,8 @@
                 "thermostat_id",
                 "target_celsius"
               ],
-              "query": "Put thermostat TH-02 in home HM-118 on heating at 21 degrees."
+              "query": "Put thermostat TH-02 in home HM-118 on heating at 21 degrees.",
+              "query_implied": "It's freezing in here; have thermostat TH-02 in home HM-118 warm the place up to 21 degrees."
             },
             {
               "name": "set_thermostat_cooling_mode",
@@ -3903,7 +4064,8 @@
                 "thermostat_id",
                 "target_celsius"
               ],
-              "query": "Set thermostat TH-05 in home HM-118 to cooling at 23 degrees."
+              "query": "Set thermostat TH-05 in home HM-118 to cooling at 23 degrees.",
+              "query_implied": "It's sweltering; have thermostat TH-05 in home HM-118 run the air conditioning down to 23 degrees."
             },
             {
               "name": "set_thermostat_eco_mode",
@@ -3927,7 +4089,8 @@
                 "home_code",
                 "thermostat_id"
               ],
-              "query": "Switch thermostat TH-02 in home HM-240 to eco."
+              "query": "Switch thermostat TH-02 in home HM-240 to eco.",
+              "query_implied": "Put thermostat TH-02 in home HM-240 into its energy saving setting with a wider comfort range."
             },
             {
               "name": "set_thermostat_unoccupied_mode",
@@ -3951,7 +4114,8 @@
                 "home_code",
                 "thermostat_id"
               ],
-              "query": "We're leaving for a week, set thermostat TH-01 in home HM-305 to unoccupied mode."
+              "query": "We're leaving for a week, set thermostat TH-01 in home HM-305 to unoccupied mode.",
+              "query_implied": "Nobody will be in home HM-305 for a week; set thermostat TH-01 to hold a low setback temperature until we return."
             }
           ]
         },
@@ -3984,7 +4148,8 @@
                 "home_code",
                 "light_group"
               ],
-              "query": "Set the living room lights in home HM-118 to warm white."
+              "query": "Set the living room lights in home HM-118 to warm white.",
+              "query_implied": "Make the living room lights in home HM-118 a cozy, relaxed evening tone around 2700 kelvin."
             },
             {
               "name": "set_lights_daylight",
@@ -4012,7 +4177,8 @@
                 "home_code",
                 "light_group"
               ],
-              "query": "Switch the office lights in home HM-240 to daylight at 90 percent."
+              "query": "Switch the office lights in home HM-240 to daylight at 90 percent.",
+              "query_implied": "I'm working in the office in home HM-240; set those lights to a bright, crisp tone around 5000 kelvin at 90 percent."
             },
             {
               "name": "set_lights_color",
@@ -4041,7 +4207,8 @@
                 "light_group",
                 "color_name"
               ],
-              "query": "Make the kitchen lights in home HM-305 a blue color."
+              "query": "Make the kitchen lights in home HM-305 a blue color.",
+              "query_implied": "Turn the kitchen lights in home HM-305 blue for the party."
             },
             {
               "name": "set_lights_night_light",
@@ -4069,7 +4236,8 @@
                 "home_code",
                 "light_group"
               ],
-              "query": "Put the hallway lights in home HM-118 on night light."
+              "query": "Put the hallway lights in home HM-118 on night light.",
+              "query_implied": "Set the hallway lights in home HM-118 very dim and amber so they can stay on overnight without waking anyone."
             }
           ]
         },
@@ -4103,7 +4271,8 @@
                 "lock_id",
                 "guest_label"
               ],
-              "query": "Create a single use code for lock LK-1 at home HM-118 for the plumber tomorrow."
+              "query": "Create a single use code for lock LK-1 at home HM-118 for the plumber tomorrow.",
+              "query_implied": "Make a code for lock LK-1 at home HM-118 that lets the plumber in once tomorrow and then stops working."
             },
             {
               "name": "create_recurring_access_code",
@@ -4133,7 +4302,8 @@
                 "guest_label",
                 "access_window"
               ],
-              "query": "Create a recurring access code on lock LK-2 at home HM-240 for the cleaner, Tuesdays 09:00 to 11:00."
+              "query": "Create a recurring access code on lock LK-2 at home HM-240 for the cleaner, Tuesdays 09:00 to 11:00.",
+              "query_implied": "Give the cleaner a code for lock LK-2 at home HM-240 that works every Tuesday from 09:00 to 11:00."
             },
             {
               "name": "create_permanent_access_code",
@@ -4162,7 +4332,8 @@
                 "lock_id",
                 "guest_label"
               ],
-              "query": "Add a permanent access code to lock LK-1 at home HM-305 for my partner."
+              "query": "Add a permanent access code to lock LK-1 at home HM-305 for my partner.",
+              "query_implied": "Give my partner a code for lock LK-1 at home HM-305 that never expires."
             },
             {
               "name": "create_date_range_access_code",
@@ -4192,7 +4363,8 @@
                 "guest_label",
                 "access_window"
               ],
-              "query": "Make a date range access code for lock LK-3 at home HM-118 for the house sitter, 2026-12-20 to 2026-12-28."
+              "query": "Make a date range access code for lock LK-3 at home HM-118 for the house sitter, 2026-12-20 to 2026-12-28.",
+              "query_implied": "Give the house sitter a code for lock LK-3 at home HM-118 that works any time from 2026-12-20 until 2026-12-28."
             }
           ]
         },
@@ -4221,7 +4393,8 @@
                 "home_code",
                 "camera_id"
               ],
-              "query": "Show the motion clips from camera CAM-3 at home HM-118 from the last 12 hours."
+              "query": "Show the motion clips from camera CAM-3 at home HM-118 from the last 12 hours.",
+              "query_implied": "Show clips from camera CAM-3 at home HM-118 where something moved in view during the last 12 hours."
             },
             {
               "name": "list_doorbell_clips",
@@ -4245,7 +4418,8 @@
                 "home_code",
                 "camera_id"
               ],
-              "query": "Somebody rang earlier, list the doorbell clips from camera CAM-1 at home HM-240."
+              "query": "Somebody rang earlier, list the doorbell clips from camera CAM-1 at home HM-240.",
+              "query_implied": "Show clips from camera CAM-1 at home HM-240 from when visitors pressed the button at the front door."
             },
             {
               "name": "list_sound_clips",
@@ -4269,7 +4443,8 @@
                 "home_code",
                 "camera_id"
               ],
-              "query": "List sound clips from camera CAM-2 at home HM-305, something loud went off last night."
+              "query": "List sound clips from camera CAM-2 at home HM-305, something loud went off last night.",
+              "query_implied": "Show clips from camera CAM-2 at home HM-305 that were set off by something loud, like breaking glass."
             },
             {
               "name": "list_scheduled_clips",
@@ -4293,7 +4468,8 @@
                 "home_code",
                 "camera_id"
               ],
-              "query": "List the scheduled clips from camera CAM-4 at home HM-118."
+              "query": "List the scheduled clips from camera CAM-4 at home HM-118.",
+              "query_implied": "Show the clips camera CAM-4 at home HM-118 records on its fixed timetable, regardless of activity."
             }
           ]
         }
@@ -4323,7 +4499,8 @@
                 "counterparty_code",
                 "effective_date"
               ],
-              "query": "Draft a nondisclosure agreement with counterparty CP-2093 effective 2026-12-01."
+              "query": "Draft a nondisclosure agreement with counterparty CP-2093 effective 2026-12-01.",
+              "query_implied": "Draft a confidentiality agreement with counterparty CP-2093 effective 2026-12-01."
             },
             {
               "name": "generate_lease_contract",
@@ -4343,7 +4520,8 @@
                 "counterparty_code",
                 "effective_date"
               ],
-              "query": "Prepare a lease draft with counterparty CP-4410 effective 2027-01-01."
+              "query": "Prepare a lease draft with counterparty CP-4410 effective 2027-01-01.",
+              "query_implied": "Draft a contract to rent our property to counterparty CP-4410, effective 2027-01-01."
             },
             {
               "name": "generate_supplier_contract",
@@ -4363,7 +4541,8 @@
                 "counterparty_code",
                 "effective_date"
               ],
-              "query": "Generate a supplier agreement draft with counterparty CP-1187 effective 2026-11-15."
+              "query": "Generate a supplier agreement draft with counterparty CP-1187 effective 2026-11-15.",
+              "query_implied": "Draft a contract for buying goods from counterparty CP-1187, effective 2026-11-15."
             },
             {
               "name": "generate_licensing_contract",
@@ -4383,7 +4562,8 @@
                 "counterparty_code",
                 "effective_date"
               ],
-              "query": "Start a licensing agreement draft with counterparty CP-3352 effective 2027-02-01."
+              "query": "Start a licensing agreement draft with counterparty CP-3352 effective 2027-02-01.",
+              "query_implied": "Draft a contract that lets counterparty CP-3352 use our software, effective 2027-02-01."
             }
           ]
         },
@@ -4403,7 +4583,8 @@
               "required": [
                 "contract_ref"
               ],
-              "query": "What does the termination clause in contract K-50921 say?"
+              "query": "What does the termination clause in contract K-50921 say?",
+              "query_implied": "Under contract K-50921, how much notice does either side need to give to end it, and on what grounds?"
             },
             {
               "name": "extract_indemnity_clause",
@@ -4418,7 +4599,8 @@
               "required": [
                 "contract_ref"
               ],
-              "query": "Pull the indemnity clause from contract K-31007."
+              "query": "Pull the indemnity clause from contract K-31007.",
+              "query_implied": "In contract K-31007, which party compensates the other for losses, and is liability capped?"
             },
             {
               "name": "extract_renewal_clause",
@@ -4433,7 +4615,8 @@
               "required": [
                 "contract_ref"
               ],
-              "query": "Show me the renewal clause in contract K-77240."
+              "query": "Show me the renewal clause in contract K-77240.",
+              "query_implied": "Does contract K-77240 roll over automatically, and when is the opt out deadline?"
             },
             {
               "name": "extract_governing_law_clause",
@@ -4448,7 +4631,8 @@
               "required": [
                 "contract_ref"
               ],
-              "query": "What's the governing law clause in contract K-12688?"
+              "query": "What's the governing law clause in contract K-12688?",
+              "query_implied": "Under contract K-12688, which legal system applies and where would disputes be heard?"
             }
           ]
         },
@@ -4473,7 +4657,8 @@
                 "contract_ref",
                 "signer_codes"
               ],
-              "query": "Send contract K-50921 for sequential signing by SG-11 then SG-24."
+              "query": "Send contract K-50921 for sequential signing by SG-11 then SG-24.",
+              "query_implied": "Send contract K-50921 to SG-11 and then SG-24 for e-signature, with SG-24 notified only after SG-11 signs."
             },
             {
               "name": "send_for_parallel_signature",
@@ -4493,7 +4678,8 @@
                 "contract_ref",
                 "signer_codes"
               ],
-              "query": "Route contract K-31007 to SG-11, SG-37 and SG-40 for parallel signature."
+              "query": "Route contract K-31007 to SG-11, SG-37 and SG-40 for parallel signature.",
+              "query_implied": "Send contract K-31007 to SG-11, SG-37 and SG-40 for e-signature all at once, signing in any order."
             },
             {
               "name": "send_for_witnessed_signature",
@@ -4513,7 +4699,8 @@
                 "contract_ref",
                 "signer_codes"
               ],
-              "query": "Contract K-77240 needs a witnessed signature from SG-24."
+              "query": "Contract K-77240 needs a witnessed signature from SG-24.",
+              "query_implied": "Contract K-77240 must be signed by SG-24 with another person observing who also signs and attests."
             },
             {
               "name": "send_for_notarized_signature",
@@ -4533,7 +4720,8 @@
                 "contract_ref",
                 "signer_codes"
               ],
-              "query": "Arrange a notarized signature on contract K-12688 for signer SG-52."
+              "query": "Arrange a notarized signature on contract K-12688 for signer SG-52.",
+              "query_implied": "Contract K-12688 must be signed by SG-52 before a commissioned notary."
             }
           ]
         },
@@ -4557,7 +4745,8 @@
               "required": [
                 "counterparty_code"
               ],
-              "query": "Which contracts with counterparty CP-2093 are still in negotiation?"
+              "query": "Which contracts with counterparty CP-2093 are still in negotiation?",
+              "query_implied": "Which contracts with counterparty CP-2093 are we still redlining?"
             },
             {
               "name": "list_executed_contracts",
@@ -4576,7 +4765,8 @@
               "required": [
                 "counterparty_code"
               ],
-              "query": "Show the executed contracts we have with counterparty CP-4410."
+              "query": "Show the executed contracts we have with counterparty CP-4410.",
+              "query_implied": "Which contracts with counterparty CP-4410 have been signed by both sides and are currently in force?"
             },
             {
               "name": "list_expired_contracts",
@@ -4595,7 +4785,8 @@
               "required": [
                 "counterparty_code"
               ],
-              "query": "List expired contracts with counterparty CP-1187."
+              "query": "List expired contracts with counterparty CP-1187.",
+              "query_implied": "Which contracts with counterparty CP-1187 simply ran to their end date without being extended?"
             },
             {
               "name": "list_terminated_contracts",
@@ -4614,7 +4805,8 @@
               "required": [
                 "counterparty_code"
               ],
-              "query": "Which contracts with counterparty CP-3352 were terminated?"
+              "query": "Which contracts with counterparty CP-3352 were terminated?",
+              "query_implied": "Which contracts with counterparty CP-3352 were ended early by either side before their scheduled end?"
             }
           ]
         }
@@ -4648,7 +4840,8 @@
                 "listener_id",
                 "seed_value"
               ],
-              "query": "Recommend songs for listener LS-3021 similar to artist AR-778."
+              "query": "Recommend songs for listener LS-3021 similar to artist AR-778.",
+              "query_implied": "Listener LS-3021 loves everything by AR-778; recommend more from them and similar acts."
             },
             {
               "name": "recommend_by_track",
@@ -4672,7 +4865,8 @@
                 "listener_id",
                 "seed_value"
               ],
-              "query": "Recommend more songs like track TR-55210 for listener LS-3021."
+              "query": "Recommend more songs like track TR-55210 for listener LS-3021.",
+              "query_implied": "Listener LS-3021 has TR-55210 on repeat; recommend songs that sound like that one song."
             },
             {
               "name": "recommend_by_genre",
@@ -4696,7 +4890,8 @@
                 "listener_id",
                 "seed_value"
               ],
-              "query": "Suggest new songs in the synthwave genre for listener LS-4170."
+              "query": "Suggest new songs in the synthwave genre for listener LS-4170.",
+              "query_implied": "Recommend synthwave songs that listener LS-4170 hasn't heard yet."
             },
             {
               "name": "recommend_by_mood",
@@ -4720,7 +4915,8 @@
                 "listener_id",
                 "seed_value"
               ],
-              "query": "Recommend songs with a calm mood for listener LS-1209."
+              "query": "Recommend songs with a calm mood for listener LS-1209.",
+              "query_implied": "Listener LS-1209 wants something calm to unwind to; recommend songs that feel that way."
             }
           ]
         },
@@ -4744,7 +4940,8 @@
               "required": [
                 "chart_region_code"
               ],
-              "query": "What's on the weekly chart for music region RG-14?"
+              "query": "What's on the weekly chart for music region RG-14?",
+              "query_implied": "What were the most streamed tracks over the last seven days in region RG-14?"
             },
             {
               "name": "get_monthly_song_chart",
@@ -4763,7 +4960,8 @@
               "required": [
                 "chart_region_code"
               ],
-              "query": "Show the monthly chart for music region RG-14."
+              "query": "Show the monthly chart for music region RG-14.",
+              "query_implied": "What were the most streamed tracks over the last calendar month in region RG-14?"
             },
             {
               "name": "get_yearly_song_chart",
@@ -4782,7 +4980,8 @@
               "required": [
                 "chart_region_code"
               ],
-              "query": "Give me the yearly chart for music region RG-22."
+              "query": "Give me the yearly chart for music region RG-22.",
+              "query_implied": "What were the most streamed tracks over the last full calendar year in region RG-22?"
             },
             {
               "name": "get_all_time_song_chart",
@@ -4801,7 +5000,8 @@
               "required": [
                 "chart_region_code"
               ],
-              "query": "What are the all time most streamed songs in music region RG-09?"
+              "query": "What are the all time most streamed songs in music region RG-09?",
+              "query_implied": "What are the most streamed tracks in region RG-09 since the service launched?"
             }
           ]
         },
@@ -4826,7 +5026,8 @@
                 "listener_id",
                 "track_id"
               ],
-              "query": "Download song TR-55210 for listener LS-3021 in data saver mode."
+              "query": "Download song TR-55210 for listener LS-3021 in data saver mode.",
+              "query_implied": "Download song TR-55210 offline for listener LS-3021 using as little of the phone plan and storage as possible."
             },
             {
               "name": "download_track_standard_quality",
@@ -4846,7 +5047,8 @@
                 "listener_id",
                 "track_id"
               ],
-              "query": "Save song TR-30118 offline for listener LS-4170 at standard quality."
+              "query": "Save song TR-30118 offline for listener LS-4170 at standard quality.",
+              "query_implied": "Download song TR-30118 offline for listener LS-4170 at the normal, balanced setting of around 160 kbps."
             },
             {
               "name": "download_track_high_quality",
@@ -4866,7 +5068,8 @@
                 "listener_id",
                 "track_id"
               ],
-              "query": "Download song TR-77802 in high quality for listener LS-1209."
+              "query": "Download song TR-77802 in high quality for listener LS-1209.",
+              "query_implied": "Download song TR-77802 offline for listener LS-1209 at about 320 kbps; storage isn't a concern."
             },
             {
               "name": "download_track_lossless",
@@ -4886,7 +5089,8 @@
                 "listener_id",
                 "track_id"
               ],
-              "query": "Grab song TR-91003 as lossless for listener LS-3021."
+              "query": "Grab song TR-91003 as lossless for listener LS-3021.",
+              "query_implied": "Download song TR-91003 offline for listener LS-3021 as FLAC, CD fidelity or better."
             }
           ]
         },
@@ -4910,7 +5114,8 @@
               "required": [
                 "listener_id"
               ],
-              "query": "What has listener LS-3021 played today?"
+              "query": "What has listener LS-3021 played today?",
+              "query_implied": "What has listener LS-3021 played since midnight?"
             },
             {
               "name": "list_tracks_played_this_week",
@@ -4929,7 +5134,8 @@
               "required": [
                 "listener_id"
               ],
-              "query": "What did listener LS-4170 listen to this week?"
+              "query": "What did listener LS-4170 listen to this week?",
+              "query_implied": "What has listener LS-4170 played since Monday?"
             },
             {
               "name": "list_tracks_played_this_month",
@@ -4948,7 +5154,8 @@
               "required": [
                 "listener_id"
               ],
-              "query": "Show what listener LS-1209 played this month."
+              "query": "Show what listener LS-1209 played this month.",
+              "query_implied": "What has listener LS-1209 played since the 1st?"
             },
             {
               "name": "list_tracks_played_this_year",
@@ -4967,7 +5174,8 @@
               "required": [
                 "listener_id"
               ],
-              "query": "Pull the listening history for listener LS-3021 for this year."
+              "query": "Pull the listening history for listener LS-3021 for this year.",
+              "query_implied": "What has listener LS-3021 played since January 1?"
             }
           ]
         }
@@ -4997,7 +5205,8 @@
                 "student_number",
                 "course_code"
               ],
-              "query": "Enroll student SN-20417 in course BIO-210 for credit."
+              "query": "Enroll student SN-20417 in course BIO-210 for credit.",
+              "query_implied": "Enroll student SN-20417 in course BIO-210 so the grade counts toward their degree."
             },
             {
               "name": "enroll_as_auditor",
@@ -5017,7 +5226,8 @@
                 "student_number",
                 "course_code"
               ],
-              "query": "Sign student SN-31122 up as an auditor for course HIS-105."
+              "query": "Sign student SN-31122 up as an auditor for course HIS-105.",
+              "query_implied": "Student SN-31122 wants to sit in on course HIS-105 without being graded or having it count toward the degree; enroll them that way."
             },
             {
               "name": "enroll_via_waitlist",
@@ -5037,7 +5247,8 @@
                 "student_number",
                 "course_code"
               ],
-              "query": "Course CS-330 is full, put student SN-40988 on the waitlist."
+              "query": "Course CS-330 is full, put student SN-40988 on the waitlist.",
+              "query_implied": "Course CS-330 is full; put student SN-40988 in line for the next seat that opens."
             },
             {
               "name": "enroll_pass_fail",
@@ -5057,7 +5268,8 @@
                 "student_number",
                 "course_code"
               ],
-              "query": "Enroll student SN-15603 in course ART-120 as pass fail."
+              "query": "Enroll student SN-15603 in course ART-120 as pass fail.",
+              "query_implied": "Enroll student SN-15603 in course ART-120 so the transcript shows only a satisfactory or unsatisfactory result instead of a letter grade."
             }
           ]
         },
@@ -5082,7 +5294,8 @@
                 "student_number",
                 "course_code"
               ],
-              "query": "Show the quiz grades for student SN-20417 in BIO-210."
+              "query": "Show the quiz grades for student SN-20417 in BIO-210.",
+              "query_implied": "How did student SN-20417 do on the short weekly tests in BIO-210?"
             },
             {
               "name": "get_midterm_grades",
@@ -5102,7 +5315,8 @@
                 "student_number",
                 "course_code"
               ],
-              "query": "What was student SN-31122's midterm grade in HIS-105?"
+              "query": "What was student SN-31122's midterm grade in HIS-105?",
+              "query_implied": "What did student SN-31122 score on the mid-semester test in HIS-105?"
             },
             {
               "name": "get_final_exam_grades",
@@ -5122,7 +5336,8 @@
                 "student_number",
                 "course_code"
               ],
-              "query": "Show student SN-40988's final exam result in CS-330."
+              "query": "Show student SN-40988's final exam result in CS-330.",
+              "query_implied": "What did student SN-40988 score on the end of term test in CS-330?"
             },
             {
               "name": "get_assignment_grades",
@@ -5142,7 +5357,8 @@
                 "student_number",
                 "course_code"
               ],
-              "query": "List student SN-15603's assignment grades in ART-120."
+              "query": "List student SN-15603's assignment grades in ART-120.",
+              "query_implied": "What marks did student SN-15603 get on homework submitted in ART-120?"
             }
           ]
         },
@@ -5166,7 +5382,8 @@
               "required": [
                 "subject_keyword"
               ],
-              "query": "Find online courses about statistics for term TERM-2027S."
+              "query": "Find online courses about statistics for term TERM-2027S.",
+              "query_implied": "Find statistics courses for term TERM-2027S that I can attend live over video at set times from home."
             },
             {
               "name": "search_hybrid_courses",
@@ -5185,7 +5402,8 @@
               "required": [
                 "subject_keyword"
               ],
-              "query": "Search for hybrid courses on marketing."
+              "query": "Search for hybrid courses on marketing.",
+              "query_implied": "Find marketing courses that mix sessions on campus with some remote sessions."
             },
             {
               "name": "search_classroom_courses",
@@ -5204,7 +5422,8 @@
               "required": [
                 "subject_keyword"
               ],
-              "query": "What classroom courses are there in organic chemistry?"
+              "query": "What classroom courses are there in organic chemistry?",
+              "query_implied": "What organic chemistry courses are taught entirely face to face on campus, with no remote sessions?"
             },
             {
               "name": "search_self_paced_courses",
@@ -5223,7 +5442,8 @@
               "required": [
                 "subject_keyword"
               ],
-              "query": "Show me self paced courses on Python programming."
+              "query": "Show me self paced courses on Python programming.",
+              "query_implied": "Show me recorded Python programming courses I can work through whenever I like, with no scheduled sessions."
             }
           ]
         },
@@ -5247,7 +5467,8 @@
               "required": [
                 "student_number"
               ],
-              "query": "Order an official transcript for student SN-20417, two copies."
+              "query": "Order an official transcript for student SN-20417, two copies.",
+              "query_implied": "Student SN-20417 needs two sealed copies of their full course and grade record, signed by the registrar."
             },
             {
               "name": "request_enrollment_letter",
@@ -5266,7 +5487,8 @@
               "required": [
                 "student_number"
               ],
-              "query": "Student SN-31122 needs an enrollment letter for their insurer."
+              "query": "Student SN-31122 needs an enrollment letter for their insurer.",
+              "query_implied": "Student SN-31122's insurer wants proof they are currently registered this term; get that from the registrar."
             },
             {
               "name": "request_completion_certificate",
@@ -5285,7 +5507,8 @@
               "required": [
                 "student_number"
               ],
-              "query": "Issue a completion certificate for student SN-40988."
+              "query": "Issue a completion certificate for student SN-40988.",
+              "query_implied": "Student SN-40988 finished their program; get them a document from the registrar confirming it, with the date."
             },
             {
               "name": "request_degree_audit",
@@ -5304,7 +5527,8 @@
               "required": [
                 "student_number"
               ],
-              "query": "Run a degree audit for student SN-15603."
+              "query": "Run a degree audit for student SN-15603.",
+              "query_implied": "Show which program requirements student SN-15603 has completed and which credits are still outstanding."
             }
           ]
         }
@@ -5334,7 +5558,8 @@
                 "league_code",
                 "season"
               ],
-              "query": "Show the overall standings for league LG-04 in season 2026."
+              "query": "Show the overall standings for league LG-04 in season 2026.",
+              "query_implied": "Show the full league table for LG-04 in season 2026, counting every match."
             },
             {
               "name": "get_home_standings",
@@ -5354,7 +5579,8 @@
                 "league_code",
                 "season"
               ],
-              "query": "Show the home standings for league LG-11, season 2026."
+              "query": "Show the home standings for league LG-11, season 2026.",
+              "query_implied": "How do teams in league LG-11 rank on games at their own ground in season 2026?"
             },
             {
               "name": "get_away_standings",
@@ -5374,7 +5600,8 @@
                 "league_code",
                 "season"
               ],
-              "query": "Show the away table for league LG-11 in season 2025."
+              "query": "Show the away table for league LG-11 in season 2025.",
+              "query_implied": "How do teams in league LG-11 rank on games played at an opponent's ground in season 2025?"
             },
             {
               "name": "get_recent_form_standings",
@@ -5394,7 +5621,8 @@
                 "league_code",
                 "season"
               ],
-              "query": "Which teams in league LG-07 have the best recent form in season 2026?"
+              "query": "Which teams in league LG-07 have the best recent form in season 2026?",
+              "query_implied": "Rank the teams in league LG-07 by their last five matches in season 2026."
             }
           ]
         },
@@ -5419,7 +5647,8 @@
                 "player_code",
                 "season"
               ],
-              "query": "Give me player PL-3381's scoring stats for season 2026."
+              "query": "Give me player PL-3381's scoring stats for season 2026.",
+              "query_implied": "How many goals and assists did player PL-3381 have in season 2026?"
             },
             {
               "name": "get_player_defensive_stats",
@@ -5439,7 +5668,8 @@
                 "player_code",
                 "season"
               ],
-              "query": "How good were player PL-2209's defensive numbers in season 2025?"
+              "query": "How good were player PL-2209's defensive numbers in season 2025?",
+              "query_implied": "How many tackles and interceptions did player PL-2209 make in season 2025?"
             },
             {
               "name": "get_player_disciplinary_stats",
@@ -5459,7 +5689,8 @@
                 "player_code",
                 "season"
               ],
-              "query": "What's player PL-4417's disciplinary record for season 2026?"
+              "query": "What's player PL-4417's disciplinary record for season 2026?",
+              "query_implied": "How many yellow and red cards did player PL-4417 pick up in season 2026?"
             },
             {
               "name": "get_player_appearance_stats",
@@ -5479,7 +5710,8 @@
                 "player_code",
                 "season"
               ],
-              "query": "What are player PL-1056's appearance stats for season 2026?"
+              "query": "What are player PL-1056's appearance stats for season 2026?",
+              "query_implied": "How many games did player PL-1056 start or come off the bench in during season 2026?"
             }
           ]
         },
@@ -5503,7 +5735,8 @@
               "required": [
                 "team_code"
               ],
-              "query": "What are the upcoming fixtures for team TM-08?"
+              "query": "What are the upcoming fixtures for team TM-08?",
+              "query_implied": "When and where does team TM-08 play next?"
             },
             {
               "name": "list_postponed_fixtures",
@@ -5522,7 +5755,8 @@
               "required": [
                 "team_code"
               ],
-              "query": "Which matches for team TM-15 have been postponed?"
+              "query": "Which matches for team TM-15 have been postponed?",
+              "query_implied": "Which of team TM-15's matches were called off and still need a new date?"
             },
             {
               "name": "list_completed_fixtures",
@@ -5541,7 +5775,8 @@
               "required": [
                 "team_code"
               ],
-              "query": "Show completed fixtures with scores for team TM-03."
+              "query": "Show completed fixtures with scores for team TM-03.",
+              "query_implied": "What were the final scores of team TM-03's matches so far this season?"
             },
             {
               "name": "list_live_fixtures",
@@ -5560,7 +5795,8 @@
               "required": [
                 "team_code"
               ],
-              "query": "Is team TM-21 playing right now? Show its live fixtures."
+              "query": "Is team TM-21 playing right now? Show its live fixtures.",
+              "query_implied": "What's the score in team TM-21's match that is being played right now?"
             }
           ]
         },
@@ -5585,7 +5821,8 @@
                 "match_id",
                 "ticket_count"
               ],
-              "query": "Buy 4 unreserved tickets for match MT-7701."
+              "query": "Buy 4 unreserved tickets for match MT-7701.",
+              "query_implied": "Get 4 tickets for match MT-7701 with no assigned seats; we'll sit wherever is free."
             },
             {
               "name": "buy_reserved_tickets",
@@ -5605,7 +5842,8 @@
                 "match_id",
                 "ticket_count"
               ],
-              "query": "Get 2 reserved tickets for match MT-7702."
+              "query": "Get 2 reserved tickets for match MT-7702.",
+              "query_implied": "Get 2 tickets for match MT-7702 with specific seat numbers assigned to us."
             },
             {
               "name": "buy_hospitality_tickets",
@@ -5625,7 +5863,8 @@
                 "match_id",
                 "ticket_count"
               ],
-              "query": "Buy 6 hospitality tickets for match MT-7703 for a client event."
+              "query": "Buy 6 hospitality tickets for match MT-7703 for a client event.",
+              "query_implied": "Get 6 tickets for match MT-7703 that include a private lounge and a meal, for entertaining clients."
             },
             {
               "name": "buy_family_section_tickets",
@@ -5645,7 +5884,8 @@
                 "match_id",
                 "ticket_count"
               ],
-              "query": "I need 5 family section tickets for match MT-7704, three are kids."
+              "query": "I need 5 family section tickets for match MT-7704, three are kids.",
+              "query_implied": "I need 5 tickets for match MT-7704 for me and the kids, in the alcohol free area with child discounts."
             }
           ]
         }
@@ -5678,7 +5918,8 @@
               "required": [
                 "dish_keyword"
               ],
-              "query": "Find vegan recipes for chili that take under 45 minutes."
+              "query": "Find vegan recipes for chili that take under 45 minutes.",
+              "query_implied": "Find chili recipes with no animal products at all that take under 45 minutes."
             },
             {
               "name": "search_gluten_free_recipes",
@@ -5701,7 +5942,8 @@
               "required": [
                 "dish_keyword"
               ],
-              "query": "Show me gluten free recipes for pancakes."
+              "query": "Show me gluten free recipes for pancakes.",
+              "query_implied": "My friend has celiac disease; find pancake recipes made without wheat, barley or rye."
             },
             {
               "name": "search_keto_recipes",
@@ -5724,7 +5966,8 @@
               "required": [
                 "dish_keyword"
               ],
-              "query": "Find keto recipes for lasagna."
+              "query": "Find keto recipes for lasagna.",
+              "query_implied": "Find lasagna recipes with under 20 grams of net carbs per serving."
             },
             {
               "name": "search_low_sodium_recipes",
@@ -5747,7 +5990,8 @@
               "required": [
                 "dish_keyword"
               ],
-              "query": "Give me low sodium recipes for soup."
+              "query": "Give me low sodium recipes for soup.",
+              "query_implied": "My doctor told me to cut back on salt; find soup recipes under 500 milligrams of it per serving."
             }
           ]
         },
@@ -5771,7 +6015,8 @@
               "required": [
                 "recipe_id"
               ],
-              "query": "What's the calorie count per serving for recipe RC-2201?"
+              "query": "What's the calorie count per serving for recipe RC-2201?",
+              "query_implied": "How many kilocalories per serving are in recipe RC-2201?"
             },
             {
               "name": "get_recipe_protein_content",
@@ -5790,7 +6035,8 @@
               "required": [
                 "recipe_id"
               ],
-              "query": "How much protein is in recipe RC-1187 per serving?"
+              "query": "How much protein is in recipe RC-1187 per serving?",
+              "query_implied": "I'm trying to build muscle; how many grams of the macronutrient that helps with that does recipe RC-1187 have per serving?"
             },
             {
               "name": "get_recipe_fiber_content",
@@ -5809,7 +6055,8 @@
               "required": [
                 "recipe_id"
               ],
-              "query": "How much fiber does recipe RC-3040 have?"
+              "query": "How much fiber does recipe RC-3040 have?",
+              "query_implied": "Will recipe RC-3040 help keep me regular? How much roughage is in it?"
             },
             {
               "name": "get_recipe_fat_content",
@@ -5828,7 +6075,8 @@
               "required": [
                 "recipe_id"
               ],
-              "query": "Tell me the fat content of recipe RC-0915 for 4 servings."
+              "query": "Tell me the fat content of recipe RC-0915 for 4 servings.",
+              "query_implied": "How much saturated versus unsaturated content is in recipe RC-0915 for 4 servings?"
             }
           ]
         },
@@ -5853,7 +6101,8 @@
                 "recipe_id",
                 "ingredient_name"
               ],
-              "query": "My kid has a nut allergy, what can replace almonds in recipe RC-2201?"
+              "query": "My kid has a nut allergy, what can replace almonds in recipe RC-2201?",
+              "query_implied": "My kid reacts badly to nuts; what can replace almonds in recipe RC-2201?"
             },
             {
               "name": "suggest_budget_substitute",
@@ -5873,7 +6122,8 @@
                 "recipe_id",
                 "ingredient_name"
               ],
-              "query": "What's a budget swap for saffron in recipe RC-1187?"
+              "query": "What's a budget swap for saffron in recipe RC-1187?",
+              "query_implied": "Saffron costs too much; what cheaper swap keeps the taste in recipe RC-1187?"
             },
             {
               "name": "suggest_seasonal_substitute",
@@ -5893,7 +6143,8 @@
                 "recipe_id",
                 "ingredient_name"
               ],
-              "query": "Asparagus is hard to find, suggest a seasonal substitute for it in recipe RC-3040."
+              "query": "Asparagus is hard to find, suggest a seasonal substitute for it in recipe RC-3040.",
+              "query_implied": "Asparagus isn't growing at this time of year; what fresh produce could stand in for it in recipe RC-3040?"
             },
             {
               "name": "suggest_pantry_substitute",
@@ -5913,7 +6164,8 @@
                 "recipe_id",
                 "ingredient_name"
               ],
-              "query": "I'm out of buttermilk for recipe RC-0915, what pantry staple can I use instead?"
+              "query": "I'm out of buttermilk for recipe RC-0915, what pantry staple can I use instead?",
+              "query_implied": "I'm out of buttermilk for recipe RC-0915 and can't go shopping; what staple I already have at home can replace it?"
             }
           ]
         },
@@ -5941,7 +6193,8 @@
               "required": [
                 "plan_days"
               ],
-              "query": "Plan 5 days of breakfast for a household of 2."
+              "query": "Plan 5 days of breakfast for a household of 2.",
+              "query_implied": "Plan 5 days of morning meals, 2 servings each."
             },
             {
               "name": "generate_lunch_plan",
@@ -5964,7 +6217,8 @@
               "required": [
                 "plan_days"
               ],
-              "query": "Make me a 7 day lunch plan."
+              "query": "Make me a 7 day lunch plan.",
+              "query_implied": "Plan 7 days of packable midday meals I can take to work."
             },
             {
               "name": "generate_dinner_plan",
@@ -5987,7 +6241,8 @@
               "required": [
                 "plan_days"
               ],
-              "query": "Plan dinner for the next 4 days for a household of 3."
+              "query": "Plan dinner for the next 4 days for a household of 3.",
+              "query_implied": "Plan evening meals for the next 4 days, 3 servings each."
             },
             {
               "name": "generate_snack_plan",
@@ -6010,7 +6265,8 @@
               "required": [
                 "plan_days"
               ],
-              "query": "Give me a 3 day snack plan for after school."
+              "query": "Give me a 3 day snack plan for after school.",
+              "query_implied": "Plan 3 days of small bites to eat after school."
             }
           ]
         }
@@ -6039,7 +6295,8 @@
               "required": [
                 "title_keyword"
               ],
-              "query": "Is there a print copy of 'River Atlas' at library branch BR-03?"
+              "query": "Is there a print copy of 'River Atlas' at library branch BR-03?",
+              "query_implied": "Is there a physical paper copy of 'River Atlas' on the shelves at library branch BR-03?"
             },
             {
               "name": "search_ebook_titles",
@@ -6058,7 +6315,8 @@
               "required": [
                 "title_keyword"
               ],
-              "query": "Search the library for an ebook titled 'Salt and Iron'."
+              "query": "Search the library for an ebook titled 'Salt and Iron'.",
+              "query_implied": "Can I borrow 'Salt and Iron' from the library to read on my e-reader?"
             },
             {
               "name": "search_audiobook_titles",
@@ -6077,7 +6335,8 @@
               "required": [
                 "title_keyword"
               ],
-              "query": "Does the library have 'The Glass Orchard' as an audiobook?"
+              "query": "Does the library have 'The Glass Orchard' as an audiobook?",
+              "query_implied": "Can I borrow 'The Glass Orchard' from the library to listen to on my commute?"
             },
             {
               "name": "search_braille_titles",
@@ -6096,7 +6355,8 @@
               "required": [
                 "title_keyword"
               ],
-              "query": "Find braille editions of 'Quiet Harbour' in the library."
+              "query": "Find braille editions of 'Quiet Harbour' in the library.",
+              "query_implied": "My grandfather is blind and reads with his fingers; does the library have 'Quiet Harbour' in a format for him?"
             }
           ]
         },
@@ -6125,7 +6385,8 @@
                 "library_card",
                 "isbn"
               ],
-              "query": "Place a hold on ISBN 9780000000017 for library card LC-55102, for branch collection at BR-03."
+              "query": "Place a hold on ISBN 9780000000017 for library card LC-55102, for branch collection at BR-03.",
+              "query_implied": "Place a hold on ISBN 9780000000017 for library card LC-55102; I'll pick it up at the desk at BR-03."
             },
             {
               "name": "place_hold_curbside",
@@ -6149,7 +6410,8 @@
                 "library_card",
                 "isbn"
               ],
-              "query": "Hold ISBN 9780000000024 for library card LC-30984 with curbside collection."
+              "query": "Hold ISBN 9780000000024 for library card LC-30984 with curbside collection.",
+              "query_implied": "Hold ISBN 9780000000024 for library card LC-30984; I'd like it brought out to my car."
             },
             {
               "name": "place_hold_housebound_service",
@@ -6173,7 +6435,8 @@
                 "library_card",
                 "isbn"
               ],
-              "query": "Library card LC-77421 can't leave the house; place a hold on ISBN 9780000000031 through the housebound service."
+              "query": "Library card LC-77421 can't leave the house; place a hold on ISBN 9780000000031 through the housebound service.",
+              "query_implied": "Library card LC-77421 belongs to someone who can't leave home; place a hold on ISBN 9780000000031 and have volunteers bring it to them."
             },
             {
               "name": "place_hold_bookmobile",
@@ -6197,7 +6460,8 @@
                 "library_card",
                 "isbn"
               ],
-              "query": "Put a hold on ISBN 9780000000048 for library card LC-61230 to collect from the bookmobile."
+              "query": "Put a hold on ISBN 9780000000048 for library card LC-61230 to collect from the bookmobile.",
+              "query_implied": "Hold ISBN 9780000000048 for library card LC-61230; I'll collect it from the mobile library van at its next stop."
             }
           ]
         },
@@ -6221,7 +6485,8 @@
               "required": [
                 "library_card"
               ],
-              "query": "Show the current loans for library card LC-55102."
+              "query": "Show the current loans for library card LC-55102.",
+              "query_implied": "What does library card LC-55102 have checked out that isn't due back yet?"
             },
             {
               "name": "list_late_loans",
@@ -6240,7 +6505,8 @@
               "required": [
                 "library_card"
               ],
-              "query": "Which books on library card LC-30984 are late?"
+              "query": "Which books on library card LC-30984 are late?",
+              "query_implied": "Which items on library card LC-30984 are past their due date, and what fines have built up?"
             },
             {
               "name": "list_returned_loans",
@@ -6259,7 +6525,8 @@
               "required": [
                 "library_card"
               ],
-              "query": "Show the books library card LC-77421 has returned."
+              "query": "Show the books library card LC-77421 has returned.",
+              "query_implied": "What has library card LC-77421 borrowed and already brought back?"
             },
             {
               "name": "list_lost_loans",
@@ -6278,7 +6545,8 @@
               "required": [
                 "library_card"
               ],
-              "query": "Which items on library card LC-61230 are marked lost?"
+              "query": "Which items on library card LC-61230 are marked lost?",
+              "query_implied": "Which borrowed items on library card LC-61230 can't be found and now carry replacement charges?"
             }
           ]
         },
@@ -6308,7 +6576,8 @@
                 "branch_code",
                 "slot_start"
               ],
-              "query": "Reserve a study room at library branch BR-03 for card LC-55102 at 2026-11-07 14:00."
+              "query": "Reserve a study room at library branch BR-03 for card LC-55102 at 2026-11-07 14:00.",
+              "query_implied": "Book a quiet place for my group to revise together at library branch BR-03 for card LC-55102 at 2026-11-07 14:00."
             },
             {
               "name": "reserve_computer",
@@ -6333,7 +6602,8 @@
                 "branch_code",
                 "slot_start"
               ],
-              "query": "Book a computer at library branch BR-05 for card LC-30984 on 2026-11-08 at 10:00."
+              "query": "Book a computer at library branch BR-05 for card LC-30984 on 2026-11-08 at 10:00.",
+              "query_implied": "I need internet access and printing at library branch BR-05 for card LC-30984 on 2026-11-08 at 10:00; book me a terminal."
             },
             {
               "name": "reserve_recording_booth",
@@ -6358,7 +6628,8 @@
                 "branch_code",
                 "slot_start"
               ],
-              "query": "Reserve the recording booth at library branch BR-01 for card LC-77421 on 2026-11-09 at 16:00."
+              "query": "Reserve the recording booth at library branch BR-01 for card LC-77421 on 2026-11-09 at 16:00.",
+              "query_implied": "I want to record my podcast somewhere soundproof at library branch BR-01 for card LC-77421 on 2026-11-09 at 16:00."
             },
             {
               "name": "reserve_maker_space",
@@ -6383,7 +6654,8 @@
                 "branch_code",
                 "slot_start"
               ],
-              "query": "Book the maker space at library branch BR-02 for card LC-61230 on 2026-11-10 at 11:00."
+              "query": "Book the maker space at library branch BR-02 for card LC-61230 on 2026-11-10 at 11:00.",
+              "query_implied": "Book me a bench with the 3D printers and laser cutter at library branch BR-02 for card LC-61230 on 2026-11-10 at 11:00."
             }
           ]
         }

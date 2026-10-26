@@ -92,5 +92,16 @@ was rejected: the axis would depend on which embedding model ran, and it would n
 dependency or a second endpoint. The count axis adds only fillers from other domains, at most one
 per family, so the target's neighbourhood stays fixed while N grows.
 
+The headline is two numbers, accuracy when a tool was called and the call rate, not one blended
+accuracy. In calibration a mid-sized model scored 83% blended while never picking a wrong tool:
+every miss was a clarifying question about an optional parameter. A blend would have reported
+abstention as confusion. Blended accuracy stays as the stored score so runs still sort.
+
+Each tool carries a literal query, which names its qualifier, and an implied one, which does
+not. Making the literal queries harder in place was rejected because it would remove the clean
+control and leave nothing to separate keyword matching from understanding. In calibration
+neither cue produced measurable confusion in two models up to 64 tools, so the next difficulty
+axes are description quality, crowded fillers, and larger N rather than harder queries.
+
 Revisit if labs need a continuous similarity axis, or a crowded-filler axis where the fillers are
 near-duplicates of each other.

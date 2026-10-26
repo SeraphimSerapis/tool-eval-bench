@@ -18,6 +18,11 @@ every contrast is paired:
 
 N=1 is the control cell: the target alone. It separates "cannot call a tool"
 from "picked the wrong tool".
+
+A third axis, the cue, picks the user message: the literal query names the
+target's qualifier, the implied query only implies it. Both cues see the
+identical tool list, so literal minus implied is paired as well, and isolates
+keyword matching from understanding.
 """
 
 from __future__ import annotations
@@ -40,6 +45,9 @@ SIMILARITY_LEVELS: tuple[str, ...] = ("near", "related", "distinct")
 
 CONTROL = "control"
 """Similarity label of the N=1 cell, which has no neighbours."""
+
+CUES: tuple[str, ...] = ("literal", "implied")
+"""How the query signals the target: naming its qualifier, or implying it."""
 
 NEIGHBOURS = 3
 DEFAULT_COUNTS: tuple[int, ...] = (1, 4, 8, 16, 32, 64)
@@ -80,11 +88,17 @@ class ToolscaleItem:
     trial: int
     tools: tuple[CatalogTool, ...]  # presentation order
     roles: tuple[tuple[str, str], ...]  # (tool name, "target" | "neighbour" | "filler")
+    cue: str = "literal"
 
     @property
     def item_id(self) -> str:
-        """Stable identifier, for example ``list_draft_invoices@N16/near/t0``."""
-        return f"{self.target.name}@N{self.count}/{self.similarity}/t{self.trial}"
+        """Stable identifier, for example ``list_draft_invoices@N16/near/implied/t0``."""
+        return f"{self.target.name}@N{self.count}/{self.similarity}/{self.cue}/t{self.trial}"
+
+    @property
+    def query(self) -> str:
+        """The user message this item sends."""
+        return self.target.query_for(self.cue)
 
     @property
     def target_index(self) -> int:
@@ -142,6 +156,27 @@ def validate_similarities(levels: list[str]) -> list[str]:
     if not levels:
         raise GridError("at least one similarity level is needed")
     return [level for level in SIMILARITY_LEVELS if level in levels]
+
+
+def validate_cues(cues: list[str], catalog: Catalog) -> list[str]:
+    """Known cues in canonical order, or :class:`GridError`.
+
+    The implied cue needs an implied query on every tool, since any tool can
+    be drawn as a target.
+    """
+    unknown = [cue for cue in cues if cue not in CUES]
+    if unknown:
+        raise GridError(f"unknown cue(s) {unknown}; choose from {list(CUES)}")
+    if not cues:
+        raise GridError("at least one cue is needed")
+    if "implied" in cues:
+        missing = [tool.name for tool in catalog.tools if tool.query_implied is None]
+        if missing:
+            raise GridError(
+                f"the implied cue needs a query_implied on every tool; {len(missing)} "
+                f"lack one (first: {missing[0]})"
+            )
+    return [cue for cue in CUES if cue in cues]
 
 
 def select_targets(catalog: Catalog, limit: int | None, seed: int) -> list[CatalogTool]:
@@ -245,10 +280,16 @@ def build_items(
     limit: int | None = None,
     trials: int = 1,
     seed: int = 0,
+    cues: list[str] | None = None,
 ) -> list[ToolscaleItem]:
-    """Every item of the grid, deterministic for a given catalog and seed."""
+    """Every item of the grid, deterministic for a given catalog and seed.
+
+    ``cues`` defaults to the literal cue alone. Adding a cue never changes the
+    tool lists, only the user message.
+    """
     counts = validate_counts(counts, catalog)
     similarities = validate_similarities(similarities)
+    cues = validate_cues(cues or ["literal"], catalog)
     if trials < 1:
         raise GridError("trials must be at least 1")
     targets = select_targets(catalog, limit, seed)
@@ -259,7 +300,7 @@ def build_items(
             draw = _draw(catalog, target, seed, trial)
             for count in counts:
                 if count == 1:
-                    items.append(
+                    items.extend(
                         ToolscaleItem(
                             target=target,
                             target_rank=rank,
@@ -268,7 +309,9 @@ def build_items(
                             trial=trial,
                             tools=(target,),
                             roles=((target.name, "target"),),
+                            cue=cue,
                         )
+                        for cue in cues
                     )
                     continue
                 fillers = draw.fillers[: count - 1 - NEIGHBOURS]
@@ -281,7 +324,7 @@ def build_items(
                         position=draw.position,
                         order_seed=order_seed,
                     )
-                    items.append(
+                    items.extend(
                         ToolscaleItem(
                             target=target,
                             target_rank=rank,
@@ -290,7 +333,9 @@ def build_items(
                             trial=trial,
                             tools=tools,
                             roles=roles,
+                            cue=cue,
                         )
+                        for cue in cues
                     )
     return items
 
@@ -310,7 +355,7 @@ def build_messages(item: ToolscaleItem) -> list[ChatMessage]:
                 f"({BENCHMARK_REFERENCE_DAY}). Use this date for any relative time request."
             ),
         },
-        {"role": "user", "content": item.target.query},
+        {"role": "user", "content": item.query},
     ]
 
 

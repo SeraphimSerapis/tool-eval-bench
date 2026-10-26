@@ -871,6 +871,16 @@
   },
   {
     "choices": null,
+    "default": "literal,implied",
+    "dest": "toolscale_cues",
+    "flags": [
+      "--toolscale-cues"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": 0,
     "dest": "toolscale_limit",
     "flags": [

@@ -556,6 +556,13 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Neighbour tiers (default: near,related,distinct)",
     )
     toolscale_grp.add_argument(
+        "--toolscale-cues",
+        type=str,
+        default="literal,implied",
+        metavar="LIST",
+        help="Query cues (default: literal,implied)",
+    )
+    toolscale_grp.add_argument(
         "--toolscale-limit",
         type=int,
         default=0,

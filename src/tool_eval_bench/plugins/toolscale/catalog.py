@@ -9,6 +9,11 @@ truth rather than a convenience:
 - families in one domain share vocabulary but do different jobs;
 - tools in different domains are unrelated.
 
+Every variant has a literal ``query`` that names its qualifier, and may have a
+``query_implied`` that only implies it ("prepared but not sent yet" for a
+draft). The literal query is the clean control; the implied one tests whether
+a model understands the tools or only matches keywords.
+
 The built-in catalog ships as ``catalog/v1.json``. A lab can run a private
 catalog with the same schema through ``--toolscale-catalog PATH``, which keeps
 the items out of public training data.
@@ -53,6 +58,15 @@ class CatalogTool:
     parameters: Mapping[str, Any]
     required: tuple[str, ...]
     query: str
+    query_implied: str | None = None
+
+    def query_for(self, cue: str) -> str:
+        """The user message for *cue*: ``"literal"`` or ``"implied"``."""
+        if cue == "implied":
+            if self.query_implied is None:
+                raise KeyError(f"{self.name} has no implied query")
+            return self.query_implied
+        return self.query
 
     def to_openai_tool(self) -> dict[str, Any]:
         """The tool as an OpenAI function definition, the adapters' common input."""
@@ -251,6 +265,9 @@ def _parse_tool(raw: Any, domain: str, family: str, seen_names: set[str]) -> Cat
         parameters=parameters,
         required=tuple(required),
         query=_string(raw, "query", where),
+        query_implied=(
+            _string(raw, "query_implied", where) if raw.get("query_implied") is not None else None
+        ),
     )
 
 
@@ -295,14 +312,47 @@ def _strip_phrase(phrase: str, text: str) -> str:
     return re.sub(r"\b" + r"\s+".join(words) + r"\b", " ", text, flags=re.IGNORECASE)
 
 
-def lint_catalog(catalog: Catalog) -> list[str]:
-    """Return authoring problems that would make an item ambiguous.
+# Words too common to count as giving a qualifier away on their own. The whole
+# qualifier phrase is always checked; these only exempt single words of a
+# multi-word qualifier ("same day" may not appear, "day" may).
+_GENERIC_QUALIFIER_WORDS = frozenset(
+    "a an and the of to in on by for per with only day days through out up off".split()
+)
 
-    Each query must name its own variant's qualifier and none of its siblings',
-    every variant name must carry its qualifier (no generic default that also
-    matches a sibling's query), and no query may contain a tool name. These
-    are the checks that keep the near tier measuring confusion instead of
-    ambiguity. An empty list means the catalog is clean.
+
+def _lint_implied(tool: CatalogTool, family: Family, all_names: list[str]) -> list[str]:
+    """Problems with *tool*'s implied query: it must not give the answer away."""
+    query = tool.query_implied
+    if query is None:
+        return []
+    problems: list[str] = []
+    if _phrase_in(tool.qualifier, query):
+        problems.append(f"{tool.name}: implied query names its qualifier {tool.qualifier!r}")
+    else:
+        for word in tool.qualifier.lower().split():
+            if word not in _GENERIC_QUALIFIER_WORDS and _phrase_in(word, query):
+                problems.append(f"{tool.name}: implied query contains qualifier word {word!r}")
+    for sibling in family.variants:
+        if sibling is not tool and _phrase_in(sibling.qualifier, query):
+            problems.append(
+                f"{tool.name}: implied query names sibling qualifier {sibling.qualifier!r}"
+            )
+    lowered = query.lower()
+    leaked = [name for name in all_names if name.lower() in lowered]
+    if leaked:
+        problems.append(f"{tool.name}: implied query contains tool name(s) {leaked}")
+    return problems
+
+
+def lint_catalog(catalog: Catalog) -> list[str]:
+    """Return authoring problems that would make an item ambiguous or give it away.
+
+    Each literal query must name its own variant's qualifier and none of its
+    siblings', every variant name must carry its qualifier (no generic default
+    that also matches a sibling's query), and no query may contain a tool name.
+    An implied query must name neither its own qualifier nor a sibling's, so
+    the answer has to be inferred. These checks keep the near tier measuring
+    confusion instead of ambiguity. An empty list means the catalog is clean.
     """
     problems: list[str] = []
     all_names = [tool.name for tool in catalog.tools]
@@ -337,4 +387,5 @@ def lint_catalog(catalog: Catalog) -> list[str]:
             leaked = [name for name in all_names if name.lower() in lowered]
             if leaked:
                 problems.append(f"{tool.name}: query contains tool name(s) {leaked}")
+            problems.extend(_lint_implied(tool, family, all_names))
     return problems

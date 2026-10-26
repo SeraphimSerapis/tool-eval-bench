@@ -355,6 +355,7 @@ download nothing. Toolscale is the one plugin that sends `tools`.
 | `--toolscale-only` | Tool-selection sweep over tool count and description similarity |
 | `--toolscale-counts LIST` | Tool counts to sweep, `1` is the control (default: 1,4,8,16,32,64) |
 | `--toolscale-similarity LIST` | Neighbour tiers to sweep (default: near,related,distinct) |
+| `--toolscale-cues LIST` | Query cues: literal names the target, implied only implies it (default: both) |
 | `--toolscale-limit N` | Targets per cell (default: one per catalog family) |
 | `--toolscale-catalog PATH` | Private catalog; the report withholds its items |
 

@@ -259,8 +259,8 @@ def test_subprocess_help_is_command_specific(command: str, included: str, exclud
     # Listing --fail-on-safety, --scenario-pack/--pack-only, and --tokenizer,
     # which bench already accepted, brought it to 227, and --include-held-out,
     # which sits with the pack flags, to 231. --perf-preset brought it to 232,
-    # and --context-fill-tokens to 236. The six --toolscale* flags brought it to
-    # 252, still far short of the flat parser's 378.
+    # and --context-fill-tokens to 236. The seven --toolscale* flags brought it to
+    # 254, still far short of the flat parser's 376.
     assert len(completed.stdout.splitlines()) < 256
 
 

@@ -720,6 +720,12 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Neighbour similarity tiers to sweep",
     },
     {
+        "name": "toolscale_cues",
+        "type": "string",
+        "default": "literal,implied",
+        "description": "Query cues: literal names the target's qualifier, implied only implies it",
+    },
+    {
         "name": "toolscale_limit",
         "type": "int",
         "default": 0,

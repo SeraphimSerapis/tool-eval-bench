@@ -49,6 +49,8 @@ from tool_eval_bench.plugins.toolscale.stats import (
 # ---------------------------------------------------------------------------
 
 _QUALIFIERS = ("alpha", "beta", "gamma", "delta")
+# Implied queries refer to a variant by its position, never by its qualifier.
+_ORDINALS = {"alpha": "first", "beta": "second", "gamma": "third", "delta": "fourth"}
 
 
 def _catalog_data(domains: int = 5, families: int = 4, variants: int = 4) -> dict[str, Any]:
@@ -68,6 +70,10 @@ def _catalog_data(domains: int = 5, families: int = 4, variants: int = 4) -> dic
                         "parameters": {f"key{d}": {"type": "string", "description": "Key"}},
                         "required": [f"key{d}"],
                         "query": f"Please run the {qualifier} operation {f} for key K-{d}{f}{v}.",
+                        "query_implied": (
+                            f"Please run operation {f} the {_ORDINALS.get(qualifier, 'other')} "
+                            f"way for key K-{d}{f}{v}."
+                        ),
                     }
                 )
             fams.append({"id": f"fam{f}", "variants": vs})
@@ -207,6 +213,29 @@ class TestCatalogLint:
         )
         catalog = parse_catalog(json.dumps(data).encode(), source="custom")
         assert lint_catalog(catalog) == []
+
+    def test_implied_query_must_not_name_its_qualifier(self) -> None:
+        findings = self._lint_after(query_implied="Run the alpha operation 0 for K-1.")
+        assert any("implied query names its qualifier 'alpha'" in f for f in findings)
+
+    def test_implied_query_must_not_name_a_sibling(self) -> None:
+        findings = self._lint_after(query_implied="Run operation 0, not the beta one, for K-1.")
+        assert any("implied query names sibling qualifier 'beta'" in f for f in findings)
+
+    def test_implied_query_must_not_use_a_distinctive_qualifier_word(self) -> None:
+        data = _catalog_data()
+        variant = data["domains"][0]["families"][0]["variants"][1]
+        variant.update(
+            name="op0_dom0_same_day",
+            qualifier="same day",
+            query="Please run the same day operation 0 for key K-001.",
+            query_implied="Please run operation 0 so it is done the same evening, key K-001.",
+        )
+        findings = lint_catalog(parse_catalog(json.dumps(data).encode(), source="custom"))
+        assert any("qualifier word 'same'" in f for f in findings)
+        # "day" alone is too generic to give the answer away.
+        variant["query_implied"] = "Please run operation 0 before the day ends, key K-001."
+        assert lint_catalog(parse_catalog(json.dumps(data).encode(), source="custom")) == []
 
     def test_every_variant_name_carries_its_qualifier(self) -> None:
         findings = self._lint_after(name="op0_dom0_generic")
@@ -350,6 +379,32 @@ class TestGridConstruction:
         assert len(first) == len(second)
         assert layout(first) != layout(second)
 
+    def test_cues_share_the_tool_list_and_differ_in_the_query(self) -> None:
+        items = _items(cues=["literal", "implied"], counts=[1, 8])
+        pairs: dict[tuple, dict[str, ToolscaleItem]] = {}
+        for item in items:
+            key = (item.target.name, item.trial, item.count, item.similarity)
+            pairs.setdefault(key, {})[item.cue] = item
+        assert pairs and all(set(p) == {"literal", "implied"} for p in pairs.values())
+        for pair in pairs.values():
+            literal, implied = pair["literal"], pair["implied"]
+            assert literal.tools == implied.tools
+            assert literal.query == literal.target.query
+            assert implied.query == implied.target.query_implied
+            assert literal.item_id.replace("/literal/", "/implied/") == implied.item_id
+
+    def test_unknown_cue_is_rejected(self) -> None:
+        with pytest.raises(GridError, match="unknown cue"):
+            _items(cues=["vague"])
+
+    def test_implied_cue_needs_every_implied_query(self) -> None:
+        data = _catalog_data()
+        del data["domains"][2]["families"][1]["variants"][3]["query_implied"]
+        catalog = parse_catalog(json.dumps(data).encode(), source="custom")
+        assert _items(catalog, cues=["literal"])  # literal alone still builds
+        with pytest.raises(GridError, match="1 lack one"):
+            _items(catalog, cues=["implied"])
+
     def test_trials_must_be_positive(self) -> None:
         with pytest.raises(GridError):
             _items(trials=0)
@@ -459,8 +514,11 @@ class _StubAdapter:
 
 
 def _matches(query: str, name: str) -> bool:
+    """Whether a synthetic query, literal or implied, asks for tool *name*."""
     op, dom, qualifier = name.split("_")
-    return f"{qualifier} operation {op[2:]}" in query and f"K-{dom[3:]}" in query
+    literal = f"{qualifier} operation {op[2:]}" in query
+    implied = f"operation {op[2:]} the {_ORDINALS.get(qualifier, 'other')} way" in query
+    return (literal or implied) and f"K-{dom[3:]}" in query
 
 
 def _near_confuser(query: str, names: list[str]) -> str:
@@ -483,9 +541,37 @@ class TestToolscalePlugin:
         catalog = _catalog()
         result = await _run(_items(catalog), _StubAdapter(), catalog)
         assert result.score == 100.0
-        assert result.details["control"]["accuracy"] == 100.0
+        assert result.details["control"]["literal"]["accuracy"] == 100.0
+        assert (result.details["call_rate"], result.details["accuracy_when_called"]) == (100, 100)
         assert result.details["errors"] == 0
         assert all(e["delta"] == 0 for e in result.details["similarity_effects"])
+
+    async def test_cue_effect_isolates_keyword_reliance(self) -> None:
+        """A model that only matches keywords: right on literal, confused on implied."""
+        catalog = _catalog()
+        items = _items(catalog, cues=["literal", "implied"], counts=[1, 4, 8])
+
+        def keyword_matcher(query: str, names: list[str]) -> str:
+            target = next(n for n in names if _matches(query, n))
+            if target.split("_")[2] in query:
+                return target
+            return next(n for n in names if n != target)
+
+        plugin = ToolscalePlugin()
+        result = await _run(items, _StubAdapter(keyword_matcher), catalog)
+        d = result.details
+        assert d["by_cue"]["literal"]["accuracy_when_called"] == 100.0
+        assert d["by_cue"]["implied"]["accuracy_when_called"] == 0.0
+        assert d["by_cue"]["implied"]["call_rate"] == 100.0
+        assert d["cue_effects"] and all(e["delta"] == 100 for e in d["cue_effects"])
+        assert set(d["control"]) == {"literal", "implied"}
+        # The literal query leans toward its target by word overlap; the implied
+        # one carries no qualifier, so its lean is smaller.
+        q = d["query_check"]
+        assert q["literal"]["margin_over_sibling"] > q["implied"]["margin_over_sibling"]
+        report = "\n".join(plugin.render_report_section(result))
+        for heading in ("Headline by Cue", "Cue Effect", "Query Check", "(implied cue)"):
+            assert heading in report
 
     async def test_requests_carry_the_item_tool_list(self) -> None:
         catalog = _catalog()
@@ -526,6 +612,7 @@ class TestToolscalePlugin:
         result = await _run(items, _StubAdapter(policy), catalog)
         cell = result.details["cells"][0]
         assert (cell["accuracy"], cell["called"], cell["accuracy_when_called"]) == (75.0, 3, 100.0)
+        assert (result.details["call_rate"], result.details["accuracy_when_called"]) == (75, 100)
         report = "\n".join(plugin.render_report_section(result))
         assert "Accuracy When a Tool Was Called" in report
         assert "*(no call)* Which environment do you mean?" in report
@@ -588,7 +675,9 @@ class TestToolscalePlugin:
         )
         report = "\n".join(ToolscalePlugin().render_report_section(result))
         for heading in (
-            "Accuracy Grid",
+            "Accuracy When a Tool Was Called (literal cue)",
+            "Call Rate (literal cue)",
+            "Combined Accuracy (literal cue)",
             "Similarity Effect at Fixed N",
             "Count Effect at Fixed Similarity",
             "Error Mix",
@@ -621,6 +710,9 @@ class TestBuiltinCatalog:
     def test_lint_is_clean(self, catalog: Catalog) -> None:
         assert lint_catalog(catalog) == []
 
+    def test_every_tool_has_an_implied_query(self, catalog: Catalog) -> None:
+        assert all(t.query_implied for t in catalog.tools)
+
     def test_description_lengths_are_matched(self, catalog: Catalog) -> None:
         lengths = [len(t.description.split()) for t in catalog.tools]
         assert min(lengths) >= 12 and max(lengths) <= 30
@@ -648,8 +740,9 @@ class TestBuiltinCatalog:
             counts=[1, 4, 8, 16, 32, 64],
             similarities=["near", "related", "distinct"],
             seed=0,
+            cues=["literal", "implied"],
         )
-        assert len(items) == len(catalog.families) * (1 + 5 * 3)
+        assert len(items) == len(catalog.families) * (1 + 5 * 3) * 2
 
 
 # ---------------------------------------------------------------------------
@@ -675,6 +768,7 @@ class TestCliWiring:
         assert args.toolscale_only is True
         assert args.toolscale_counts == "1,4,8,16,32,64"
         assert args.toolscale_similarity == "near,related,distinct"
+        assert args.toolscale_cues == "literal,implied"
         assert args.toolscale_limit == 0
         assert args.toolscale_catalog is None
 
@@ -687,6 +781,8 @@ class TestCliWiring:
                 "1,4",
                 "--similarity",
                 "near",
+                "--cues",
+                "implied",
                 "--limit",
                 "3",
                 "--catalog",
@@ -697,6 +793,7 @@ class TestCliWiring:
         )
         assert args.toolscale_only is True
         assert (args.toolscale_counts, args.toolscale_similarity) == ("1,4", "near")
+        assert args.toolscale_cues == "implied"
         assert (args.toolscale_limit, args.toolscale_catalog, args.trials) == (
             3,
             "private.json",
@@ -732,6 +829,7 @@ def _runner_args(**overrides: Any) -> argparse.Namespace:
     defaults: dict[str, Any] = {
         "toolscale_counts": "1,4,8",
         "toolscale_similarity": "near,distinct",
+        "toolscale_cues": "literal,implied",
         "toolscale_limit": 4,
         "toolscale_catalog": None,
         "trials": 1,
@@ -780,7 +878,9 @@ class TestToolscaleRunner:
         assert config["catalog_source"] == "custom"
         assert len(config["catalog_sha256"]) == 64
         assert config["counts"] == [1, 4, 8]
-        assert "Selection accuracy" in output
+        assert config["cues"] == ["literal", "implied"]
+        assert "Accuracy when called" in output and "Call rate" in output
+        assert "Accuracy when called / call rate (%)" in output
         reports = list(tmp_path.rglob("*.md"))
         assert reports, "a Markdown report is written"
         text = reports[0].read_text()

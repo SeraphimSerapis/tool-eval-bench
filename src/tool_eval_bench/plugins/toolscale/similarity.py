@@ -27,14 +27,18 @@ _STOPWORDS = frozenset(
 )
 
 
+def text_tokens(text: str) -> list[str]:
+    """Content words of free text, tokenized the same way as tool definitions."""
+    return [word for word in _WORD_RE.findall(text.lower()) if word not in _STOPWORDS]
+
+
 def tool_tokens(tool: Mapping[str, Any]) -> list[str]:
     """The words a model reads in an OpenAI-format tool definition."""
     function = tool.get("function", tool)
     parts = [str(function.get("name", "")).replace("_", " "), str(function.get("description", ""))]
     properties = (function.get("parameters") or {}).get("properties") or {}
     parts.extend(str(name).replace("_", " ") for name in properties)
-    words = _WORD_RE.findall(" ".join(parts).lower())
-    return [word for word in words if word not in _STOPWORDS]
+    return text_tokens(" ".join(parts))
 
 
 class TfidfSpace:
