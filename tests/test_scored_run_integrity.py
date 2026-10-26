@@ -132,7 +132,8 @@ async def test_no_answer_and_no_tool_calls_fails(sid: str, content: str) -> None
     result = await _run(Replies(content), BY_ID[sid])
 
     assert (result.status, result.points) == (ScenarioStatus.FAIL, 0)
-    assert result.failure_kind == FailureKind.MISSING_STEP
+    # Nothing visible and no call: tagged as an empty turn, not a skipped step.
+    assert result.failure_kind == FailureKind.EMPTY_TURN
     assert result.summary == "Returned no answer and made no tool calls."
 
 

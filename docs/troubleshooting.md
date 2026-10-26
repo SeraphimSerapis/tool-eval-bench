@@ -97,6 +97,17 @@ before the ceiling runs normally.
 That result still scores, because the model did not answer, but the tag separates "ran out of room
 to think" from a wrong answer. `--backend-kwargs '{"max_tokens": 32768}'` raises the ceiling.
 
+### A turn that came back empty
+
+A turn can also end normally, with `finish_reason=stop`, and still carry no visible text and no
+tool call. Reasoning models do this when they think through the next step and then stop without
+writing it. That reply closes the phase like any other, so the scenario is graded on it, but the
+trace carries an `empty_turn=` line with the finish reason and the reasoning length, the evaluation
+note repeats it, and a failing result gets the failure kind `empty_turn`. A passing result keeps the
+trace line and no failure kind. Many `empty_turn` results on one model usually point at the chat
+template or reasoning parser dropping content, so check those before reading it as a judgement
+failure.
+
 ## Rate limits against a hosted endpoint
 
 Hosted APIs return 429s under sustained load. The runner already shares backoff across scenarios
