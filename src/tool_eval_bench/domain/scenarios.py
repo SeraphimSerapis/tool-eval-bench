@@ -115,6 +115,8 @@ class FailureKind:
     BUDGET_EXCEEDED = "budget_exceeded"
     REPEATED_CALL_LOOP = "repeated_call_loop"
     REASONING_TRUNCATED = "reasoning_truncated"
+    # A turn ended normally with no visible text and no tool call.
+    EMPTY_TURN = "empty_turn"
     TIMEOUT = "timeout"
     CONNECTION_ERROR = "connection_error"
     SERVER_ERROR = "server_error"

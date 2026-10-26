@@ -1008,6 +1008,80 @@ async def test_length_stop_with_only_whitespace_is_tagged_as_truncated() -> None
     assert "truncated=Turn 1 hit the max_tokens ceiling" in result.raw_log
 
 
+@pytest.mark.asyncio
+async def test_reasoning_only_stop_after_tool_use_is_tagged_as_empty_turn() -> None:
+    """A thinking model that calls a tool, reasons, then stops with nothing visible."""
+    scenario = _tool_failing_evaluator("EMPTY-01")
+    adapter = MockAdapter(
+        [
+            {"content": "", "tool_calls": [{"name": "get_weather", "arguments": {"q": 1}}]},
+            ChatCompletionResult(content="", reasoning="x" * 900, finish_reason="stop"),
+        ]
+    )
+    result = await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+    )
+    assert result.failure_kind == FailureKind.EMPTY_TURN
+    assert result.turn_budget_exceeded is False
+    assert (
+        "empty_turn=Turn 2 ended with no visible answer and no tool call "
+        "(finish_reason=stop, 900 characters of reasoning)." in result.raw_log
+    )
+    assert "note=Turn 2 ended with no visible answer" in result.raw_log
+
+
+@pytest.mark.asyncio
+async def test_visible_answer_is_not_an_empty_turn() -> None:
+    scenario = _tool_failing_evaluator("EMPTY-02")
+    adapter = MockAdapter([ChatCompletionResult(content="It is sunny.", finish_reason="stop")])
+    result = await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+    )
+    assert result.failure_kind != FailureKind.EMPTY_TURN
+    assert "empty_turn=" not in result.raw_log
+
+
+@pytest.mark.asyncio
+async def test_empty_turn_tag_is_not_applied_to_a_passing_result() -> None:
+    def passing(state: ScenarioState) -> ScenarioEvaluation:
+        return ScenarioEvaluation(ScenarioStatus.PASS, 2, "fine")
+
+    scenario = ScenarioDefinition(
+        id="EMPTY-03",
+        title="EMPTY-03",
+        description="EMPTY-03",
+        category=Category.A,
+        user_message="Say nothing, then answer the follow-up.",
+        handle_tool_call=lambda state, call: {},
+        evaluate=passing,
+        follow_up_messages=["Now answer."],
+    )
+    adapter = MockAdapter(
+        [ChatCompletionResult(content="", finish_reason="stop"), {"content": "Answer."}]
+    )
+    result = await run_scenario(
+        adapter,
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+        max_turns=8,
+    )
+    assert result.status == ScenarioStatus.PASS
+    assert result.failure_kind is None
+    assert "empty_turn=Turn 1" in result.raw_log
+
+
 def _recording_scenario(scenario_id: str, handled: list[str]) -> ScenarioDefinition:
     """Records every handled call; the evaluator fails so the failure kind is visible."""
 

@@ -482,6 +482,10 @@ async def run_scenario(
     # Set when a turn ends on finish_reason=length with nothing to grade: the
     # model spent the whole ceiling thinking and never reached an answer.
     truncated_stop: str | None = None
+    # Set when a turn ends normally (not on length) with neither visible text
+    # nor a tool call, typically a reasoning-only reply. The phase closes on
+    # nothing; tagging it keeps it apart from a wrong answer or wrong call.
+    empty_stop: str | None = None
     max_tokens = default_max_tokens(extra)
     # Stepped down when the endpoint rejects the requested response_format,
     # so later turns of the scenario do not repeat the rejected request.
@@ -644,6 +648,13 @@ async def run_scenario(
 
             # No tool calls → model finished this conversational phase
             if not result.tool_calls:
+                if not visible_answer and empty_stop is None:
+                    empty_stop = (
+                        f"Turn {turn} ended with no visible answer and no tool call "
+                        f"(finish_reason={result.finish_reason or 'unknown'}, "
+                        f"{len(result.reasoning or '')} characters of reasoning)."
+                    )
+                    trace_lines.append(f"empty_turn={empty_stop}")
                 if on_scenario_turn is not None:
                     await _notify_turn(
                         on_scenario_turn,
@@ -849,7 +860,7 @@ async def run_scenario(
                 diagnostics=evaluation.diagnostics,
                 safety_violation=evaluation.safety_violation,
             )
-        harness_stop = truncated_stop or loop_stop
+        harness_stop = truncated_stop or loop_stop or empty_stop
         if harness_stop is not None and evaluation.status != ScenarioStatus.PASS:
             evaluation.note = f"{harness_stop} {evaluation.note or ''}".strip()
         if response_format_fallback is not None:
@@ -964,6 +975,8 @@ async def run_scenario(
             if truncated_stop is not None and evaluation.status != ScenarioStatus.PASS
             else FailureKind.REPEATED_CALL_LOOP
             if loop_stop is not None and evaluation.status != ScenarioStatus.PASS
+            else FailureKind.EMPTY_TURN
+            if empty_stop is not None and evaluation.status != ScenarioStatus.PASS
             else FailureKind.BUDGET_EXCEEDED
             if budget_exhausted and evaluation.status != ScenarioStatus.PASS
             else _classify_evaluation_failure(state, evaluation)
