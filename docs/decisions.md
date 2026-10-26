@@ -78,3 +78,19 @@ browser rendering stays close without them.
 
 Revisit if `resvg-py` stops publishing wheels for a supported platform, if a pure-Python
 renderer can produce the same output, or if the card needs text features resvg lacks.
+
+## Toolscale: a plugin with structurally defined similarity
+
+The tool-count sweep (#319) is a plugin, not a scenario group or a flag on Category L. A flag
+would change TC-37 to TC-40 and break comparison with every stored Category L result, and a grid
+of about a thousand generated single-turn items does not fit the hand-graded, three-tier scenario
+model or belong in the main score.
+
+Similarity is defined by the catalog's structure (variants of one family, families of one
+domain, other domains) and only checked by a TF-IDF metric. Defining it by an embedding model
+was rejected: the axis would depend on which embedding model ran, and it would need a new
+dependency or a second endpoint. The count axis adds only fillers from other domains, at most one
+per family, so the target's neighbourhood stays fixed while N grows.
+
+Revisit if labs need a continuous similarity axis, or a crowded-filler axis where the fillers are
+near-duplicates of each other.

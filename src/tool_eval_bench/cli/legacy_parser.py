@@ -529,6 +529,47 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Haystack sizes to probe, up to the context window (default: 4)",
     )
 
+    # -- Toolscale sweep --------------------------------------------------
+    toolscale_grp = parser.add_argument_group("toolscale benchmark")
+    toolscale_grp.add_argument(
+        "--toolscale",
+        action="store_true",
+        help="Run the toolscale sweep after tool-call scenarios",
+    )
+    toolscale_grp.add_argument(
+        "--toolscale-only",
+        action="store_true",
+        help="Run ONLY the toolscale sweep",
+    )
+    toolscale_grp.add_argument(
+        "--toolscale-counts",
+        type=str,
+        default="1,4,8,16,32,64",
+        metavar="LIST",
+        help="Tool counts, 1 = control (default: 1,4,8,16,32,64)",
+    )
+    toolscale_grp.add_argument(
+        "--toolscale-similarity",
+        type=str,
+        default="near,related,distinct",
+        metavar="LIST",
+        help="Neighbour tiers (default: near,related,distinct)",
+    )
+    toolscale_grp.add_argument(
+        "--toolscale-limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Targets per cell (default: 0 = one per family)",
+    )
+    toolscale_grp.add_argument(
+        "--toolscale-catalog",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Private catalog JSON; reports withhold its items",
+    )
+
     # -- Decision models ------------------------------------------------
     decision_grp = parser.add_argument_group("decision-model benchmark")
     decision_grp.add_argument(

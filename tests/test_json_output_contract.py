@@ -200,7 +200,7 @@ def test_skip_tool_eval_alone_warns_as_a_log_event(cli: Cli) -> None:
         "level": "warning",
         "logger": "tool_eval_bench.cli.dispatch",
         "message": "--skip-tool-eval has no effect without --perf, --perf-only, --spec-bench, "
-        "--gsm8k, --mmlu, --ifeval, --needle, or --decision-bench.",
+        "--gsm8k, --mmlu, --ifeval, --needle, --toolscale, or --decision-bench.",
     }
     assert cli.runs == []
 

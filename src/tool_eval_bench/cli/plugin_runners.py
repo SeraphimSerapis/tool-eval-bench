@@ -940,6 +940,260 @@ def _print_needle_grid(console: Console, result: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Toolscale sweep (--toolscale / --toolscale-only)
+# ---------------------------------------------------------------------------
+
+
+def _toolscale_list(value: str, flag: str) -> list[str]:
+    items = [part.strip() for part in value.split(",") if part.strip()]
+    if not items:
+        raise ValueError(f"{flag} needs at least one value")
+    return items
+
+
+def _run_toolscale_benchmark(
+    console: Console,
+    model: str,
+    display_name: str,
+    base_url: str,
+    api_key: str | None,
+    args: argparse.Namespace,
+    *,
+    extra_params: dict[str, Any] | None = None,
+    output_dir: str | None = None,
+    run_context: RunContext | None = None,
+) -> None:
+    """Run the tool-count x similarity selection sweep and display the grid."""
+    from rich.markup import escape
+    from rich.panel import Panel
+
+    from tool_eval_bench.adapters.factory import build_adapter
+    from tool_eval_bench.cli.helpers import adapter_options
+    from tool_eval_bench.plugins.toolscale.catalog import (
+        CatalogError,
+        lint_catalog,
+        load_builtin_catalog,
+        load_catalog_file,
+    )
+    from tool_eval_bench.plugins.toolscale.grid import GridError, build_items
+    from tool_eval_bench.plugins.toolscale.plugin import ToolscalePlugin
+
+    seed = getattr(args, "seed", None)
+    trials = max(1, getattr(args, "trials", 1) or 1)
+    catalog_path = getattr(args, "toolscale_catalog", None)
+    limit = args.toolscale_limit or None
+    try:
+        counts = [int(c) for c in _toolscale_list(args.toolscale_counts, "--toolscale-counts")]
+        levels = _toolscale_list(args.toolscale_similarity, "--toolscale-similarity")
+        catalog = load_catalog_file(catalog_path) if catalog_path else load_builtin_catalog()
+        items = build_items(
+            catalog,
+            counts=counts,
+            similarities=levels,
+            limit=limit,
+            trials=trials,
+            seed=seed if seed is not None else 0,
+        )
+    except (CatalogError, GridError, ValueError) as exc:
+        report_run_failed(console, f"\n[bold red]Toolscale error:[/] {escape(str(exc))}")
+        sys.exit(1)
+
+    if catalog.is_custom:
+        # A private catalog may break the authoring conventions on purpose, so
+        # problems are warnings. Names stay out of the console for the same
+        # reason the report withholds them.
+        problems = lint_catalog(catalog)
+        if problems:
+            console.print(
+                f"  [yellow]⚠ {len(problems)} catalog lint finding(s): items may be "
+                "ambiguous. Run lint_catalog() on the file to see them.[/]"
+            )
+
+    counts = sorted({item.count for item in items})
+    levels = [
+        lvl for lvl in ("near", "related", "distinct") if any(i.similarity == lvl for i in items)
+    ]
+    targets = len({item.target_rank for item in items})
+    parallel = args.parallel
+    parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]{display_name}[/]\n"
+            f"[dim]N = {', '.join(map(str, counts))} × {', '.join(levels)} · "
+            f"{targets} targets · {trials} trial(s) = {len(items)} requests · "
+            f"catalog v{catalog.version} ({catalog.source}){parallel_label}[/]",
+            title="[bold]🧰 Toolscale — Tool Count × Similarity[/]",
+            border_style="bright_blue",
+        )
+    )
+
+    plugin = ToolscalePlugin()
+    adapter = build_adapter(base_url, **adapter_options(args))
+    result_holder: list = []
+
+    async def run() -> None:
+        with PluginProgressDisplay(console, total=len(items)) as display:
+
+            async def on_progress(current: int, total: int, item_info: dict) -> None:
+                display.tally.record(item_info)
+                label = (
+                    f"N{item_info.get('count')}/{item_info.get('similarity')}"
+                    if catalog.is_custom
+                    else item_info.get("item_id")
+                )
+                display.advance(
+                    current,
+                    total,
+                    stats=tally_line(
+                        display.tally,
+                        rate=display.rate_per_minute(current),
+                        unit="req/min",
+                        accent="blue",
+                    ),
+                    detail=(
+                        f"  {status_icon(item_info)} [bold]{escape(str(label))}[/]  "
+                        f"[dim]{item_info.get('outcome')}[/]"
+                    ),
+                )
+
+            try:
+                result = await plugin.run(
+                    adapter,
+                    model=model,
+                    base_url=base_url,
+                    api_key=api_key,
+                    temperature=args.temperature,
+                    timeout_seconds=args.timeout,
+                    seed=seed,
+                    extra_params=extra_params,
+                    on_progress=on_progress,
+                    items=items,
+                    catalog=catalog,
+                    concurrency=parallel,
+                )
+                result_holder.append(result)
+                d = result.details
+                display.finish(
+                    completed=d["total"],
+                    stats=final_tally_line(
+                        correct=d["correct"],
+                        wrong=d["total"] - d["correct"] - d.get("errors", 0),
+                        errors=d.get("errors", 0),
+                        score=d["accuracy"],
+                        rate=(
+                            d["total"] / result.duration_seconds * 60
+                            if result.duration_seconds > 0
+                            else 0
+                        ),
+                        unit="req/min",
+                        accent="blue",
+                    ),
+                )
+            finally:
+                if hasattr(adapter, "aclose"):
+                    await adapter.aclose()
+
+    result = _execute_plugin(console, "Toolscale", run, result_holder)
+    if result is None:
+        return
+    details = result.details
+
+    console.print()
+    _print_toolscale_grid(console, result)
+    console.print()
+    console.print(
+        f"  [bold]Selection Accuracy (grid):[/] [bold green]{details['accuracy']:.1f}%[/] "
+        f"({details['grid_correct']}/{details['grid_items']})"
+    )
+    control = details.get("control")
+    if control:
+        console.print(
+            f"  [bold]Control (N=1):[/] {control['accuracy']:.1f}% "
+            f"({control['correct']}/{control['items']})"
+        )
+    for effect in details.get("count_effects", []):
+        slope = effect.get("slope_per_doubling")
+        console.print(
+            f"  [bold]Count effect[/] ({effect['similarity']}, N={effect['from_count']}→"
+            f"{effect['to_count']}): {effect['delta']:+.1f} pts "
+            f"[dim](95% CI {effect['ci_low']:+.1f} to {effect['ci_high']:+.1f}"
+            + ("" if slope is None else f"; {slope:+.1f} per doubling")
+            + ")[/]"
+        )
+    errs = details.get("errors", 0)
+    if errs > 0:
+        console.print(f"  [bold yellow]⚠ {errs} errors[/] (counted as misses)")
+    console.print(f"  [bold]Rating:[/] {result.rating}")
+    console.print(
+        f"  [dim]Duration: {result.duration_seconds:.1f}s · Tokens: {result.total_tokens:,}[/]"
+    )
+
+    _finalize_plugin_run(
+        console,
+        mode="toolscale",
+        title="Toolscale",
+        display_name=display_name,
+        result=result,
+        config={
+            "model": model,
+            "base_url": base_url,
+            "mode": "toolscale",
+            # A catalog edit or a different grid must never share a fingerprint
+            # with older runs.
+            "catalog_version": catalog.version,
+            "catalog_source": catalog.source,
+            "catalog_sha256": catalog.sha256,
+            "counts": counts,
+            "similarities": levels,
+            "targets": targets,
+            "trials": trials,
+            "temperature": args.temperature,
+            "seed": seed,
+            "extra_params": extra_params or None,
+        },
+        report_metrics=[
+            f"- **Selection Accuracy (grid)**: **{details['accuracy']:.1f}%**",
+            *([f"- **Control (N=1)**: {control['accuracy']:.1f}%"] if control else []),
+            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
+        ],
+        report_lines=plugin.render_report_section(result),
+        output_dir=output_dir,
+        label=getattr(args, "label", None),
+        run_context=run_context,
+    )
+
+
+def _print_toolscale_grid(console: Console, result: Any) -> None:
+    """Print accuracy per cell as similarity rows against tool-count columns."""
+    from rich.table import Table
+
+    details = result.details
+    counts: list[int] = details.get("counts", [])
+    levels: list[str] = details.get("similarities", [])
+    if not counts or not levels:
+        return
+    cells = {(c["count"], c["similarity"]): c for c in details.get("cells", [])}
+
+    table = Table(title="Selection accuracy", title_style="bold", border_style="bright_blue")
+    table.add_column("Similarity", style="dim")
+    for count in counts:
+        table.add_column(f"N={count}", justify="right")
+    for level in levels:
+        row = []
+        for count in counts:
+            cell = cells.get((count, level))
+            if cell is None:
+                row.append("")
+                continue
+            acc = cell["accuracy"]
+            colour = "green" if acc >= 90 else "yellow" if acc >= 70 else "red"
+            row.append(f"[{colour}]{acc:.1f}%[/]")
+        table.add_row(level, *row)
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
 # Decision models (--decision-bench / --decision-bench-only)
 # ---------------------------------------------------------------------------
 

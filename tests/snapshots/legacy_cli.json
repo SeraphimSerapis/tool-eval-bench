@@ -832,6 +832,66 @@
   {
     "choices": null,
     "default": false,
+    "dest": "toolscale",
+    "flags": [
+      "--toolscale"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "toolscale_only",
+    "flags": [
+      "--toolscale-only"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": "1,4,8,16,32,64",
+    "dest": "toolscale_counts",
+    "flags": [
+      "--toolscale-counts"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": "near,related,distinct",
+    "dest": "toolscale_similarity",
+    "flags": [
+      "--toolscale-similarity"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": 0,
+    "dest": "toolscale_limit",
+    "flags": [
+      "--toolscale-limit"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "toolscale_catalog",
+    "flags": [
+      "--toolscale-catalog"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
     "dest": "decision_bench",
     "flags": [
       "--decision-bench"

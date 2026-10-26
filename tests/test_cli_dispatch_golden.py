@@ -1615,7 +1615,7 @@ def test_plugins_stop_the_cli_when_they_handle_the_run(
 
     assert outcome.code == 0
     (call,) = cli.leaves["run_selected_plugins"]
-    assert sorted(call["runners"]) == ["decision", "gsm8k", "ifeval", "mmlu", "needle"]
+    assert sorted(call["runners"]) == ["decision", "gsm8k", "ifeval", "mmlu", "needle", "toolscale"]
     assert _leaf_call({k: v for k, v in call.items() if k != "runners"}) == {
         "args": ("<console>", "m", "m", BASE_URL, None, "<args>"),
         "extra_params": None,

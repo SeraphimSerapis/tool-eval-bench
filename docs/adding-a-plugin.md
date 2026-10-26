@@ -1,7 +1,8 @@
 # Adding a benchmark plugin
 
-A plugin is a benchmark that is not tool-calling: GSM8K, MMLU, IFEval, needle, and decision
-models ship today. Each scores its own items through the same endpoint (decision models use
+A plugin is a benchmark outside the scenario suite: GSM8K, MMLU, IFEval, needle, toolscale, and
+decision models ship today. Most are not tool-calling; toolscale sends generated tool lists to
+measure selection alone. Each scores its own items through the same endpoint (decision models use
 `/v1/systemone`) and reports into the same run. A plugin owns its dataset, its prompting, and
 its scoring. It reuses the adapter, storage, and reporting layers.
 

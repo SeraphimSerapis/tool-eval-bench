@@ -694,6 +694,43 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "default": 4,
         "description": "Haystack sizes to probe, up to the context window",
     },
+    # -- Toolscale sweep --
+    {
+        "name": "toolscale",
+        "type": "bool",
+        "default": False,
+        "description": "Run the tool-count x similarity selection sweep after tool-call scenarios",
+    },
+    {
+        "name": "toolscale_only",
+        "type": "bool",
+        "default": False,
+        "description": "Run ONLY the toolscale sweep (skip tool-call scenarios)",
+    },
+    {
+        "name": "toolscale_counts",
+        "type": "string",
+        "default": "1,4,8,16,32,64",
+        "description": "Tool counts N to sweep; 1 is the target-only control",
+    },
+    {
+        "name": "toolscale_similarity",
+        "type": "string",
+        "default": "near,related,distinct",
+        "description": "Neighbour similarity tiers to sweep",
+    },
+    {
+        "name": "toolscale_limit",
+        "type": "int",
+        "default": 0,
+        "description": "Targets per toolscale cell (0 = one per catalog family)",
+    },
+    {
+        "name": "toolscale_catalog",
+        "type": "string",
+        "default": None,
+        "description": "Private toolscale catalog JSON; the report withholds its items",
+    },
     # -- Decision models --
     {
         "name": "decision_bench",

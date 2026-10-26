@@ -146,6 +146,7 @@ tool_eval_bench = [
   "evals/yaml_scenarios/*.yaml",
   "evals/locales/*.json",
   "plugins/decision/vendor/typed_decisions/*",
+  "plugins/toolscale/catalog/*.json",
   "web/static/*",
   "py.typed",
   # The card's PNG export needs its bundled fonts, their OFL texts, and SOURCES.txt.

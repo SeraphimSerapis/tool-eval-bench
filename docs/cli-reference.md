@@ -318,6 +318,9 @@ tool-eval-bench --ifeval-only --ifeval-limit 20
 # Needle in a haystack — long-context retrieval (no dataset download)
 tool-eval-bench --needle-only --needle-lengths 4 --needle-depths 5
 
+# Toolscale — tool count x description similarity (needs tools support, no download)
+tool-eval-bench --toolscale-only --trials 3
+
 # Decision models — llama.cpp /v1/systemone (no dataset download, no chat preflight)
 tool-eval-bench --decision-bench-only --base-url http://host:8084
 
@@ -334,7 +337,8 @@ tool-eval-bench --gsm8k --mmlu --ifeval --skip-tool-eval
 GSM8K, MMLU, and IFEval datasets are downloaded from HuggingFace on first use
 and cached locally. Install the `[hf]` extra for rate-limit-free downloads
 (`pip install -e '.[hf]'` in a checkout, or the `uv tool install` form in
-[benchmarks.md](benchmarks.md)). The needle benchmark generates its own cases and downloads nothing.
+[benchmarks.md](benchmarks.md)). The needle and toolscale benchmarks generate their own cases and
+download nothing. Toolscale is the one plugin that sends `tools`.
 
 | Flag | Purpose |
 |------|---------|
@@ -348,8 +352,14 @@ and cached locally. Install the `[hf]` extra for rate-limit-free downloads
 | `--ifeval-limit N` | Limit prompts (default: all 541) |
 | `--needle-lengths N` | Haystack sizes to probe (default: 4) |
 | `--needle-depths N` | Needle depths to probe (default: 5) |
+| `--toolscale-only` | Tool-selection sweep over tool count and description similarity |
+| `--toolscale-counts LIST` | Tool counts to sweep, `1` is the control (default: 1,4,8,16,32,64) |
+| `--toolscale-similarity LIST` | Neighbour tiers to sweep (default: near,related,distinct) |
+| `--toolscale-limit N` | Targets per cell (default: one per catalog family) |
+| `--toolscale-catalog PATH` | Private catalog; the report withholds its items |
 
-See [needle.md](needle.md) for the retrieval grid and how to read it, and
+See [needle.md](needle.md) for the retrieval grid and how to read it,
+[toolscale.md](toolscale.md) for the tool-count sweep, and
 [decision-models.md](decision-models.md) for the decision-model report.
 
 ## Web UI (`serve`)
