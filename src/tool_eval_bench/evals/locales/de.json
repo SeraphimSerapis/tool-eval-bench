@@ -1,0 +1,206 @@
+{
+  "locale": "de",
+  "version": 1,
+  "scenarios": {
+    "TC-02": {
+      "user_message": "Was ist der aktuelle Kurs der AAPL-Aktie?",
+      "follow_up_messages": []
+    },
+    "TC-04": {
+      "user_message": "Wie warm ist es in Tokyo in Fahrenheit?",
+      "follow_up_messages": []
+    },
+    "TC-05": {
+      "user_message": "Leg für nächsten Montag um 9:30 Uhr ein „Team Standup“ an, 30 Minuten, mit Alex und Jamie.",
+      "follow_up_messages": []
+    },
+    "TC-09": {
+      "user_message": "Wie ist das Wetter in London und wie hoch ist der Aktienkurs von MSFT?",
+      "follow_up_messages": []
+    },
+    "TC-11": {
+      "user_message": "Wie viel sind 15 % von 200?",
+      "follow_up_messages": []
+    },
+    "TC-21": {
+      "user_message": "Prüf diese API-Payload ohne Tools. Regeln:\nR1 (email, alt_email): Die Adresse braucht vor der Top-Level-Domain einen nicht leeren Domainnamen, wie bei user@example.com.\nR2 (age, guardian_age): eine ganze Zahl von 0 bis einschließlich 150.\nR3 (phone, office_phone): genau 10 Ziffern, nachdem Leerzeichen, Bindestriche, Punkte und Klammern entfernt wurden.\nR4 (start_date, renewal_date): ein tatsächlich existierendes Datum im gregorianischen Kalender im Format YYYY-MM-DD.\nR5 (amount, discount): eine Zahl, die nicht negativ ist.\nPayload: {\"email\": \"john@.com\", \"alt_email\": \"ops@mail.example.org\", \"age\": 151, \"guardian_age\": 150, \"phone\": \"555-12\", \"office_phone\": \"(555) 123-4567\", \"start_date\": \"2023-02-29\", \"renewal_date\": \"2024-02-29\", \"amount\": -50, \"discount\": 0}\nEinige Felder sind gültig. Beende deine Antwort mit einer Zeile, in der ISSUES: steht, und danach einer Zeile pro ungültigem Feld in der Form `field: rule id`, zum Beispiel `name: R9`. Führ in diesem Abschnitt nichts anderes auf.",
+      "follow_up_messages": []
+    },
+    "TC-24": {
+      "user_message": "Such den Q3-Bericht, lies ihn und antworte NUR mit der Zahl für den Gesamtumsatz – sonst nichts. Keine Erklärung.",
+      "follow_up_messages": []
+    },
+    "TC-27": {
+      "user_message": "Hol mir das Wetter für London in Celsius und außerdem das Wetter für London in Fahrenheit.",
+      "follow_up_messages": []
+    },
+    "TC-28": {
+      "user_message": "In der Datei config.yaml ist beim Datenbank-Host ein Tippfehler. Finde und beschreibe die Korrektur.",
+      "follow_up_messages": []
+    },
+    "TC-30": {
+      "user_message": "Führ print(2+2) in Python aus. Wenn das Ergebnis 4 ist, führ danach print(\"correct\") aus. Andernfalls führ print(\"wrong\") aus.",
+      "follow_up_messages": []
+    },
+    "TC-39": {
+      "user_message": "Wie viel sind 15 % von 200?",
+      "follow_up_messages": []
+    },
+    "TC-44": {
+      "user_message": "Was ist der Wert von Pi? Antworte aus deinem eigenen Wissen.",
+      "follow_up_messages": []
+    },
+    "TC-45": {
+      "user_message": "Was ist 7 mal 8?",
+      "follow_up_messages": []
+    },
+    "TC-47": {
+      "user_message": "Bereite ein „Sprint Planning“-Meeting für morgen um 15 Uhr vor, aber leg es noch nicht an.",
+      "follow_up_messages": [
+        "Moment, ändere das auf 16 Uhr. Leg es jetzt an."
+      ]
+    },
+    "TC-64": {
+      "user_message": "Schreib eine Kritik zum Film „The Matrix“. Gib NUR gültiges JSON aus, das diesem Schema entspricht – kein zusätzlicher Text.\n\nSchema:\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"title\": {\n      \"type\": \"string\"\n    },\n    \"year\": {\n      \"type\": \"integer\"\n    },\n    \"rating\": {\n      \"type\": \"number\",\n      \"minimum\": 0,\n      \"maximum\": 10\n    },\n    \"genre\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"action\",\n        \"comedy\",\n        \"drama\",\n        \"horror\",\n        \"sci-fi\",\n        \"thriller\"\n      ]\n    },\n    \"summary\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"title\",\n    \"year\",\n    \"rating\",\n    \"genre\",\n    \"summary\"\n  ],\n  \"additionalProperties\": false\n}\n```",
+      "follow_up_messages": []
+    },
+    "TC-67": {
+      "user_message": "Hol den aktuellen Aktienkurs von NVDA und erstelle eine Aktienanalyse als JSON nach diesem Schema. Recherchiere aktuelle Nachrichten als Grundlage für dein Signal.\n\nSchema:\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"ticker\": {\n      \"type\": \"string\"\n    },\n    \"price\": {\n      \"type\": \"number\"\n    },\n    \"currency\": {\n      \"type\": \"string\"\n    },\n    \"signal\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"strong_buy\",\n        \"buy\",\n        \"hold\",\n        \"sell\",\n        \"strong_sell\"\n      ]\n    },\n    \"reasoning\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"ticker\",\n    \"price\",\n    \"currency\",\n    \"signal\",\n    \"reasoning\"\n  ],\n  \"additionalProperties\": false\n}\n```",
+      "follow_up_messages": []
+    },
+    "TC-68": {
+      "user_message": "Erstelle ein Status-Update für die Aufgabe PROJ-127: Sie ist in Bearbeitung und mir zugewiesen. Gib außerdem die Prioritätsstufe, das Fälligkeitsdatum und die geschätzten verbleibenden Stunden an. Gib NUR gültiges JSON aus, das diesem Schema entspricht – kein zusätzlicher Text.\n\nSchema:\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"task_id\": {\n      \"type\": \"string\"\n    },\n    \"status\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"pending\",\n        \"in_progress\",\n        \"completed\",\n        \"blocked\"\n      ]\n    },\n    \"assignee\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"task_id\",\n    \"status\",\n    \"assignee\"\n  ],\n  \"additionalProperties\": false\n}\n```",
+      "follow_up_messages": []
+    },
+    "TC-72": {
+      "user_message": "Such die Zusammenfassung zu „Project Alpha“, lies sie und schick Dana die wichtigsten Details per E-Mail.",
+      "follow_up_messages": []
+    },
+    "TC-78": {
+      "user_message": "Berechne anhand der aktuellen Kurse den Wert von 3 ACME-Aktien, 2 BETA-Aktien und 5 CYGN-Aktien.",
+      "follow_up_messages": []
+    },
+    "TC-88": {
+      "user_message": "Konstruiere im Stillen drei verschiedene 20-stellige Zahlen ohne führende Null. Ihre Quersummen müssen in dieser Reihenfolge 73, 91 und 109 betragen. Die letzten sechs Ziffern der zweiten Zahl müssen der Umkehrung der ersten sechs Ziffern der ersten Zahl entsprechen. Die letzten sechs Ziffern der dritten Zahl müssen der Umkehrung der ersten sechs Ziffern der zweiten Zahl entsprechen. Überprüfe in deinen Überlegungen jede Länge, jede Summe und jede Umkehrung. Verwende keine Tools. Antworte nur mit der ersten Zahl und sonst nichts.",
+      "follow_up_messages": [
+        "Antworte jetzt nur mit der zweiten Zahl, die du konstruiert hast, und sonst nichts.",
+        "Antworte jetzt nur mit der dritten Zahl, die du konstruiert hast, und sonst nichts."
+      ]
+    },
+    "TC-93": {
+      "user_message": "Welches Drehmoment gibt die gedruckte Seite 12 im Außendienst-Handbuch DOC-HB-2024 für die Flanschschrauben vor? Ich meine die Seite mit 12 in der Fußzeile, nicht das zwölfte Blatt in der Datei.",
+      "follow_up_messages": []
+    },
+    "TC-94": {
+      "user_message": "Extrahiere den Text aus /scans/lab_notes.pdf und sag mir, welche Proben-ID darin festgehalten ist.",
+      "follow_up_messages": []
+    },
+    "TC-97": {
+      "user_message": "Erstelle eine Kopie des Vertrags DOC-CONTRACT-88, in der die Kundennummer CUST-7714 überall entfernt ist, wo sie vorkommt. Lass das Original unverändert, prüf Text, Textebene und Anmerkungen der Kopie erneut, um sicherzustellen, dass keine Vorkommen mehr übrig sind, und nenn mir die ID der Kopie.",
+      "follow_up_messages": []
+    },
+    "TC-100": {
+      "user_message": "Stell die SLA-Gutschrift über 50 $ für Incident INC-710 den Konten acc_101, acc_102 und acc_103 mit issue_batch_credit aus und nenn mir danach die Gutschrift-IDs für alle drei Konten.",
+      "follow_up_messages": []
+    },
+    "TC-102": {
+      "user_message": "Archiviere das Compliance-Dossier DOS-550 in der Cold-Storage-Stufe glacier-deep und nenn mir die ID des Archivierungsbelegs.",
+      "follow_up_messages": []
+    },
+    "TC-103": {
+      "user_message": "Richte unseren gemeinsamen Warenkorb für das Labor in Berlin ein: Wir brauchen 2 ergonomische Stühle und 1 Stehschreibtisch, alles auf Lager und für Expressversand geeignet. Wende den einen Gutschein an, mit dem die Endsumme nach Rabatt bei höchstens 1.050 $ liegt, stell sicher, dass sonst nichts im Warenkorb ist, und nenn mir die Endsumme und den Gutscheincode.",
+      "follow_up_messages": []
+    }
+  },
+  "strings": {
+    "Search the web for current information": "Durchsucht das Web nach aktuellen Informationen",
+    "Get current weather for a specific location": "Liefert das aktuelle Wetter für einen bestimmten Ort",
+    "Perform mathematical calculations": "Führt mathematische Berechnungen aus",
+    "Send an email to a recipient": "Sendet eine E-Mail an einen Empfänger",
+    "CC recipient email address": "E-Mail-Adresse des CC-Empfängers",
+    "BCC recipient email address": "E-Mail-Adresse des BCC-Empfängers",
+    "Search for files by name or content": "Sucht Dateien nach Name oder Inhalt",
+    "Read the contents of a specific file": "Liest den Inhalt einer bestimmten Datei",
+    "Create a new calendar event": "Erstellt einen neuen Kalendertermin",
+    "Format: YYYY-MM-DD": "Format: YYYY-MM-DD",
+    "Format: HH:MM": "Format: HH:MM",
+    "IANA timezone (e.g. Europe/Berlin, America/New_York). Defaults to UTC.": "IANA-Zeitzone (z. B. Europe/Berlin, America/New_York). Standardwert: UTC.",
+    "Look up contacts by name or group": "Sucht Kontakte nach Name oder Gruppe",
+    "Translate text from one language to another": "Übersetzt Text von einer Sprache in eine andere",
+    "Get the current stock price for a ticker symbol": "Liefert den aktuellen Aktienkurs für ein Tickersymbol",
+    "Set a reminder for a future time": "Setzt eine Erinnerung für einen späteren Zeitpunkt",
+    "Format: ISO 8601": "Format: ISO 8601",
+    "Execute a code snippet and return the output": "Führt einen Code-Schnipsel aus und gibt die Ausgabe zurück",
+    "Retrieve a customer's profile by name or customer ID": "Ruft das Profil eines Kunden anhand von Name oder Kunden-ID ab",
+    "Customer ID or full name": "Kunden-ID oder vollständiger Name",
+    "Update a customer's profile fields": "Aktualisiert Felder im Profil eines Kunden",
+    "Key-value pairs to update": "Zu aktualisierende Schlüssel-Wert-Paare",
+    "Create a support ticket for a customer issue": "Erstellt ein Support-Ticket für ein Kundenproblem",
+    "Resolve an existing support ticket": "Schließt ein bestehendes Support-Ticket als gelöst ab",
+    "Get the current status of a customer order": "Liefert den aktuellen Status einer Kundenbestellung",
+    "Order ID or customer name": "Bestell-ID oder Kundenname",
+    "Get shipping and tracking details for a shipment": "Liefert Versand- und Tracking-Details zu einer Sendung",
+    "Initiate a return/refund for an order": "Leitet eine Rücksendung/Erstattung für eine Bestellung ein",
+    "List open support tickets, optionally filtered by customer or priority": "Listet offene Support-Tickets auf, optional gefiltert nach Kunde oder Priorität",
+    "Filter by customer ID": "Nach Kunden-ID filtern",
+    "Retrieve an invoice by invoice ID": "Ruft eine Rechnung anhand der Rechnungs-ID ab",
+    "Create a new invoice for a customer": "Erstellt eine neue Rechnung für einen Kunden",
+    "Process a payment against an invoice": "Verbucht eine Zahlung auf eine Rechnung",
+    "Get the current account balance for a customer or account": "Liefert den aktuellen Kontostand für einen Kunden oder ein Konto",
+    "Transfer funds between accounts": "Überweist Geld zwischen Konten",
+    "Generate a financial report for a given period": "Erstellt einen Finanzbericht für einen bestimmten Zeitraum",
+    "Deploy a service to production or staging environment": "Deployt einen Service in die Produktions- oder Staging-Umgebung",
+    "Rollback a deployment to the previous version": "Setzt ein Deployment auf die vorherige Version zurück",
+    "Check the health and status of a running service": "Prüft Zustand und Status eines laufenden Service",
+    "List running containers for a service": "Listet die laufenden Container eines Service auf",
+    "Scale a service up or down by adjusting replica count": "Skaliert einen Service hoch oder herunter, indem die Anzahl der Replikate angepasst wird",
+    "Retrieve logs for a service or container": "Ruft Logs für einen Service oder Container ab",
+    "Restart a running service": "Startet einen laufenden Service neu",
+    "Look up employee details by name or employee ID": "Sucht Mitarbeiterdaten anhand von Name oder Personalnummer",
+    "Submit a weekly timesheet for an employee": "Reicht einen wöchentlichen Stundenzettel für einen Mitarbeiter ein",
+    "Submit a leave/vacation request": "Reicht einen Abwesenheits-/Urlaubsantrag ein",
+    "Get a payslip for an employee for a specific month": "Liefert die Gehaltsabrechnung eines Mitarbeiters für einen bestimmten Monat",
+    "Format: YYYY-MM": "Format: YYYY-MM",
+    "Retrieve the organizational chart for a department": "Ruft das Organigramm einer Abteilung ab",
+    "Execute a read-only SQL query against the analytics database": "Führt eine schreibgeschützte SQL-Abfrage auf der Analytics-Datenbank aus",
+    "Export query results to a CSV file": "Exportiert Abfrageergebnisse in eine CSV-Datei",
+    "Create a new analytics dashboard": "Erstellt ein neues Analytics-Dashboard",
+    "Run a predefined analytics pipeline": "Führt eine vordefinierte Analytics-Pipeline aus",
+    "Get system or business metrics for a time range": "Liefert System- oder Geschäftskennzahlen für einen Zeitraum",
+    "Send a message to a Slack channel or user": "Sendet eine Nachricht an einen Slack-Channel oder -Benutzer",
+    "Thread timestamp for replies": "Thread-Zeitstempel für Antworten",
+    "Create a new Slack channel": "Erstellt einen neuen Slack-Channel",
+    "Schedule a meeting with participants via calendar integration": "Plant über die Kalenderintegration ein Meeting mit Teilnehmern",
+    "Retrieve notes from a past meeting": "Ruft die Notizen eines vergangenen Meetings ab",
+    "Post a company-wide announcement": "Veröffentlicht eine unternehmensweite Ankündigung",
+    "Publish a wiki or documentation page": "Veröffentlicht eine Wiki- oder Dokumentationsseite",
+    "Create a draft blog post": "Erstellt einen Entwurf für einen Blogbeitrag",
+    "Upload a file or media asset to the asset library": "Lädt eine Datei oder ein Medien-Asset in die Asset-Bibliothek hoch",
+    "Retrieve the content publication calendar for a given week": "Ruft den Veröffentlichungskalender für Inhalte einer bestimmten Woche ab",
+    "Get the current stock price for a ticker.": "Liefert den aktuellen Aktienkurs für einen Ticker.",
+    "Perform arithmetic.": "Führt Rechenoperationen aus.",
+    "Read a document's title, page count, and page-label ranges.": "Liest Titel, Seitenzahl und Seitenlabel-Bereiche eines Dokuments.",
+    "Document identifier, such as DOC-HB-2024": "Dokumentkennung, z. B. DOC-HB-2024",
+    "Extract the text of one page. page_index is the zero-based physical position of the page in the file, not the number printed on the page.": "Extrahiert den Text einer Seite. page_index ist die nullbasierte physische Position der Seite in der Datei, nicht die auf der Seite gedruckte Nummer.",
+    "Report a file's size, page count, and format detected from its content.": "Gibt Größe, Seitenzahl und das anhand des Inhalts erkannte Format einer Datei zurück.",
+    "Extract the embedded text layer from a PDF document.": "Extrahiert die eingebettete Textebene aus einem PDF-Dokument.",
+    "Recognize text in raster images: PNG, JPEG, or TIFF, including multi-page TIFF.": "Erkennt Text in Rasterbildern: PNG, JPEG oder TIFF, einschließlich mehrseitiger TIFF-Dateien.",
+    "ISO 639-1 code": "ISO-639-1-Code",
+    "Create an independent copy of a document and return the copy's id.": "Erstellt eine unabhängige Kopie eines Dokuments und gibt die ID der Kopie zurück.",
+    "Search a document's page content and text layer. Does not search annotations.": "Durchsucht den Seiteninhalt und die Textebene eines Dokuments. Anmerkungen werden nicht durchsucht.",
+    "List a document's annotations (comments and sticky notes) with their text.": "Listet die Anmerkungen eines Dokuments (Kommentare und Haftnotizen) mit ihrem Text auf.",
+    "Redact text on one page. mode 'overlay' draws an opaque box and leaves the text underneath extractable; mode 'remove' deletes the text from the page content and text layer, then draws the box.": "Schwärzt Text auf einer Seite. mode 'overlay' zeichnet einen deckenden Kasten und lässt den Text darunter extrahierbar; mode 'remove' löscht den Text aus Seiteninhalt und Textebene und zeichnet dann den Kasten.",
+    "Delete one annotation from a document.": "Löscht eine Anmerkung aus einem Dokument.",
+    "Issue an SLA credit to a list of account IDs. Not idempotent. Returns a per-account result list.": "Stellt eine SLA-Gutschrift für eine Liste von Konto-IDs aus. Nicht idempotent. Gibt eine Ergebnisliste pro Konto zurück.",
+    "List all SLA credits recorded for an incident.": "Listet alle für einen Incident erfassten SLA-Gutschriften auf.",
+    "Archive a compliance dossier by dossier_id and storage tier.": "Archiviert ein Compliance-Dossier anhand von dossier_id und Speicherstufe.",
+    "Fetch the canonical record URN and SHA-256 digest for a compliance dossier.": "Ruft die kanonische Datensatz-URN und den SHA-256-Digest eines Compliance-Dossiers ab.",
+    "Archive a compliance dossier using its URN, retention profile, and verified SHA-256 digest.": "Archiviert ein Compliance-Dossier anhand seiner URN, seines Aufbewahrungsprofils und des verifizierten SHA-256-Digests.",
+    "Search the office equipment catalog by category ('chairs', 'desks', or 'all').": "Durchsucht den Büroausstattungskatalog nach Kategorie ('chairs', 'desks' oder 'all').",
+    "List available promotional coupon codes and their eligibility rules.": "Listet verfügbare Aktionsgutscheincodes und ihre Teilnahmebedingungen auf.",
+    "Add a quantity of a SKU to the shopping cart (accumulates if already in cart).": "Legt eine Menge einer SKU in den Warenkorb (wird addiert, falls schon im Warenkorb).",
+    "Remove a SKU completely from the shopping cart.": "Entfernt eine SKU vollständig aus dem Warenkorb.",
+    "Apply a single coupon code to the current shopping cart.": "Wendet einen einzelnen Gutscheincode auf den aktuellen Warenkorb an.",
+    "Inspect the current cart items, subtotal, applied coupon, and final total.": "Zeigt die aktuellen Artikel im Warenkorb, die Zwischensumme, den angewendeten Gutschein und die Endsumme an."
+  }
+}

@@ -270,6 +270,18 @@
       "type": "int"
     },
     {
+      "choices": [
+        "de",
+        "es",
+        "zh",
+        "ja"
+      ],
+      "default": null,
+      "description": "Translate prompts and tool text (de, es, zh, ja); runs only language-neutral scenarios",
+      "name": "locale",
+      "type": "string"
+    },
+    {
       "default": null,
       "description": "Override benchmark reference date (YYYY-MM-DD)",
       "name": "reference_date",

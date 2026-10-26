@@ -293,6 +293,13 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Select versioned deterministic scenario fixtures independently of sampling seed",
     },
     {
+        "name": "locale",
+        "type": "string",
+        "default": None,
+        "choices": ["de", "es", "zh", "ja"],
+        "description": "Translate prompts and tool text (de, es, zh, ja); runs only language-neutral scenarios",
+    },
+    {
         "name": "reference_date",
         "type": "string",
         "default": None,

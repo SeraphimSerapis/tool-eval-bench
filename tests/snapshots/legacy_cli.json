@@ -258,6 +258,21 @@
     "required": false
   },
   {
+    "choices": [
+      "de",
+      "es",
+      "zh",
+      "ja"
+    ],
+    "default": null,
+    "dest": "locale",
+    "flags": [
+      "--locale"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
     "choices": null,
     "default": false,
     "dest": "hardmode",

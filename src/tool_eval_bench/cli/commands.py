@@ -85,13 +85,36 @@ def resolve_scenarios(args: argparse.Namespace) -> list[ScenarioDefinition]:
         unknown = sorted(requested - known_ids)
         if unknown:
             raise ValueError(f"Unknown scenarios: {', '.join(unknown)}")
-        return [s for s in base if s.id in requested]
-
-    if args.categories:
+        selected = [s for s in base if s.id in requested]
+    elif args.categories:
         cats = {c.upper() for c in args.categories}
-        return [s for s in base if s.category.value in cats]
+        selected = [s for s in base if s.category.value in cats]
+    else:
+        selected = base
+    return _locale_subset(args, selected)
 
-    return base
+
+def _locale_subset(
+    args: argparse.Namespace, selected: list[ScenarioDefinition]
+) -> list[ScenarioDefinition]:
+    """Keep the scenarios ``--locale`` supports, so previews and totals match the run.
+
+    Explicitly named IDs that cannot run in a locale are an error rather than a
+    silent skip.
+    """
+    locale = getattr(args, "locale", None)
+    if locale is None:
+        return selected
+    from tool_eval_bench.evals.locales import ineligible_ids, is_eligible
+
+    if args.scenarios and (named := ineligible_ids(selected)):
+        raise ValueError(
+            f"--locale {locale} does not support {', '.join(named)}; see docs/locales.md."
+        )
+    kept = [s for s in selected if is_eligible(s.id)]
+    if not kept:
+        raise ValueError(f"None of the selected scenarios support --locale {locale}.")
+    return kept
 
 
 def resolve_all_scenarios_for_ids(

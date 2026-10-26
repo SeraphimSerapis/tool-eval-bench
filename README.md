@@ -128,6 +128,17 @@ clarification followed by action, room capacities, transaction outcomes, paginat
 and changed identifiers. Private YAML packs remain unchanged. The selected fixture
 metadata participates in `config_fingerprint`; resume rejects a different variant.
 
+### Run in another language
+
+```bash
+tool-eval-bench run --locale de
+```
+
+`--locale` (`de`, `es`, `zh`, `ja`) sends translated user messages and tool descriptions while
+identifiers, schemas, and mock data stay fixed, and runs only the 26 scenarios whose grading is
+language-neutral. Each result also records whether the model drifted back into English. See
+[locale runs](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/locales.md).
+
 See [methodology](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/methodology.md#controlled-fixture-variants) for coverage and limits, and
 [capability diagnostics](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/methodology.md#capability-diagnostics) for what reports record about toolset
 size, reasoning transport, and structured output.

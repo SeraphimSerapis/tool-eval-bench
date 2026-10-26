@@ -57,6 +57,7 @@ SCENARIOS = (
     "hardmode",
     "hardmode_only",
     "variant_seed",
+    "locale",
     "scenario_pack",
     "pack_only",
     "include_held_out",
