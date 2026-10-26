@@ -43,6 +43,23 @@ uv tool install 'tool-eval-bench[perf,web,card] @ git+https://github.com/Seraphi
 Also available via [Docker](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/docker.md) if you would rather not have a local
 Python, or as a [development checkout](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/CONTRIBUTING.md#development-setup).
 
+### Upgrading from 2.8 to 3.0
+
+- Re-run score baselines. TC-21 now grades explicit field and rule IDs, and TC-89
+  distinguishes payment claims from negation, conditions, and future promises.
+  Their scores are not comparable with earlier versions. Tool-choice probe retries
+  and structured-output fallbacks can also change which scenarios get graded.
+- Back up `data/benchmarks.sqlite` while all runs and the web UI are stopped.
+  The first database open automatically upgrades SQLite schema 4 to 5 and keeps
+  existing rows. Older runs have no session ID; include them in a card with
+  repeatable `card --run RUN_ID` arguments instead of a session selector.
+- Update argument-schema consumers for version 9. Throughput grid defaults are
+  now `null`, meaning use the selected preset. The default `short` preset keeps
+  the previous grid.
+- Check the working directory's `.env`. Installed CLIs now search there and in
+  its parents before falling back to the installed module's location. Exported
+  environment variables and CLI flags still take precedence.
+
 ### Run it
 
 Point it at an OpenAI-compatible endpoint and run the core 15 scenarios. This

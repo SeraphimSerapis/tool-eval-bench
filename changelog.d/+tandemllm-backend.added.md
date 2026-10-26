@@ -1,1 +1,0 @@
-**TandemLLM backend** — `--backend tandemllm` is accepted, and automatic detection identifies TandemLLM by `owned_by: "tandemllm"` in `/v1/models` or its `Server` header and records its version from `/health`.

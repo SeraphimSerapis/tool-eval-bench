@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import multiprocessing
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,7 @@ from tool_eval_bench.storage.db import _SCHEMA_VERSION
 
 def test_old_database_is_migrated_to_current_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "legacy.sqlite"
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         conn.execute(
             """
             CREATE TABLE scenario_runs (
@@ -31,7 +32,7 @@ def test_old_database_is_migrated_to_current_schema(tmp_path: Path) -> None:
         conn.execute("PRAGMA user_version = 0")
 
     repo = open_repository(db_path=str(db_path))
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(scenario_runs)")}
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         tables = {
