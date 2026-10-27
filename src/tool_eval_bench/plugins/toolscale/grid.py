@@ -136,23 +136,42 @@ class ToolscaleItem:
         return None
 
 
-def max_count(catalog: Catalog) -> int:
-    """The largest N this catalog supports.
+def max_count(catalog: Catalog, density: str = "sparse") -> int:
+    """The largest N this catalog supports at *density*, for every target.
 
     Fillers and the distinct-tier neighbours come from families outside the
-    target's domain, at most one tool per family, and must not overlap. With F
-    such families, ``(N - 4) + 3 <= F``.
+    target's domain and must not overlap; the distinct neighbours reserve three
+    of those families. Sparse fillers take one tool per remaining family, so
+    with F outside families ``(N - 4) + 3 <= F``. Crowded fillers take every
+    variant of the remaining families, so the bound is the variant count left
+    after reserving the three largest families, the worst case of the draw.
     """
-    total = len(catalog.families)
-    outside = min(total - len(domain.families) for domain in catalog.domains)
-    return outside + 1
+    limits = []
+    for domain in catalog.domains:
+        outside = [f for f in catalog.families if f.domain != domain.id]
+        if density == "crowded":
+            sizes = sorted((len(f.variants) for f in outside), reverse=True)
+            fillers = sum(sizes) - sum(sizes[:NEIGHBOURS])
+        else:
+            fillers = len(outside) - NEIGHBOURS
+        limits.append(fillers + NEIGHBOURS + 1)
+    return min(limits)
 
 
-def validate_counts(counts: list[int], catalog: Catalog) -> list[int]:
-    """Sorted, de-duplicated counts, or :class:`GridError` naming the bad value."""
+def validate_counts(
+    counts: list[int], catalog: Catalog, densities: list[str] | None = None
+) -> list[int]:
+    """Sorted, de-duplicated counts, or :class:`GridError` naming the bad value.
+
+    A count above the sparse maximum is allowed when crowded fillers are
+    requested: only crowded cells exist at that count, because a finite
+    catalog runs out of unrelated families before it runs out of tools.
+    """
     if not counts:
         raise GridError("at least one tool count is needed")
-    ceiling = max_count(catalog)
+    densities = densities or ["sparse"]
+    sparse_ceiling = max_count(catalog, "sparse")
+    ceiling = max(max_count(catalog, density) for density in densities)
     for count in counts:
         if count != 1 and count < NEIGHBOURS + 1:
             raise GridError(
@@ -160,7 +179,17 @@ def validate_counts(counts: list[int], catalog: Catalog) -> list[int]:
                 f"{NEIGHBOURS + 1}, the target plus {NEIGHBOURS} neighbours"
             )
         if count > ceiling:
-            raise GridError(f"tool count {count} exceeds this catalog's maximum of {ceiling}")
+            hint = ""
+            if "crowded" not in densities and count <= max_count(catalog, "crowded"):
+                hint = (
+                    f"; crowded fillers reach {max_count(catalog, 'crowded')}, "
+                    "add crowded to the filler densities"
+                )
+            raise GridError(
+                f"tool count {count} exceeds this catalog's maximum of {ceiling}"
+                + (f" (sparse: {sparse_ceiling})" if ceiling != sparse_ceiling else "")
+                + hint
+            )
     return sorted(set(counts))
 
 
@@ -190,9 +219,11 @@ def validate_cues(cues: list[str], catalog: Catalog) -> list[str]:
     if "implied" in cues:
         missing = [tool.name for tool in catalog.tools if tool.query_implied is None]
         if missing:
+            # A private catalog's tool names stay out of errors as well as reports.
+            first = "" if catalog.is_custom else f" (first: {missing[0]})"
             raise GridError(
                 f"the implied cue needs a query_implied on every tool; {len(missing)} "
-                f"lack one (first: {missing[0]})"
+                f"lack one{first}"
             )
     return [cue for cue in CUES if cue in cues]
 
@@ -330,10 +361,11 @@ def build_items(
     fillers alone. Adding a cue never changes the tool lists, only the user
     message; adding a density never changes the sparse items.
     """
-    counts = validate_counts(counts, catalog)
+    densities = validate_densities(densities or ["sparse"])
+    counts = validate_counts(counts, catalog, densities)
     similarities = validate_similarities(similarities)
     cues = validate_cues(cues or ["literal"], catalog)
-    densities = validate_densities(densities or ["sparse"])
+    sparse_ceiling = max_count(catalog, "sparse")
     if trials < 1:
         raise GridError("trials must be at least 1")
     targets = select_targets(catalog, limit, seed)
@@ -363,8 +395,11 @@ def build_items(
                 for density in densities:
                     if density == "crowded" and wanted == 0:
                         continue  # no fillers: identical to the sparse item
+                    if density == "sparse" and count > sparse_ceiling:
+                        continue  # beyond unrelated families: only crowded exists here
                     pool = draw.crowded if density == "crowded" else draw.fillers
                     if wanted > len(pool):
+                        # validate_counts bounds the worst case, so this is a bug.
                         raise GridError(f"tool count {count} needs more {density} fillers")
                     fillers = pool[:wanted]
                     for level in similarities:
@@ -389,6 +424,14 @@ def build_items(
                             )
                             for cue in cues
                         )
+    produced = {item.count for item in items}
+    empty = [count for count in counts if count not in produced]
+    if empty:
+        raise GridError(
+            f"tool count(s) {empty} produce no cells with filler density {densities}: "
+            "crowded fillers need at least one filler (N of 5 or more), so add sparse "
+            "or drop those counts"
+        )
     return items
 
 

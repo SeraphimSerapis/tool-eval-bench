@@ -101,7 +101,7 @@ noise.
 |---|---|---|
 | `--toolscale` | off | Run the sweep after the tool-call scenarios |
 | `--toolscale-only` | off | Run only this benchmark |
-| `--toolscale-counts LIST` | `1,4,8,16,32,64` | Tool counts. `1` is the control; other values must be at least 4 |
+| `--toolscale-counts LIST` | `1,4,8,16,32,64` | Tool counts. `1` is the control; other values must be at least 4. Above the sparse maximum (65 built-in), only crowded cells run, up to 248 |
 | `--toolscale-similarity LIST` | `near,related,distinct` | Tiers to sweep |
 | `--toolscale-cues LIST` | `literal,implied` | Query cues to sweep |
 | `--toolscale-fillers LIST` | `sparse` | Filler densities to sweep: `sparse`, `crowded` |
@@ -109,8 +109,10 @@ noise.
 | `--toolscale-catalog PATH` | built-in | A private catalog with the same schema |
 | `--trials N` | 1 | Repetitions inside one run; 3 or more gives a spread per cell |
 
-`--seed`, `--parallel`, `--temperature`, and `--timeout` behave as they do
-everywhere else. Under the `plugin toolscale` subcommand the grid flags are
+`--seed`, `--parallel`, and `--temperature` behave as they do everywhere else.
+`--timeout` does too, except that it is raised when a long tool list needs
+more time to prefill, the way the needle benchmark stretches it for long
+haystacks. Under the `plugin toolscale` subcommand the grid flags are
 spelled `--counts`, `--similarity`, `--cues`, `--fillers`, `--limit`, and
 `--catalog`.
 
@@ -122,8 +124,9 @@ toolscale run keeps all its trials in one stored run.
 The default grid is 68 targets × (1 control + 5 counts × 3 tiers) × 2 cues =
 2,176 requests per trial. `--toolscale-cues literal` halves that. Adding
 `--toolscale-fillers sparse,crowded` adds 68 × 4 counts × 3 tiers per cue.
-Prompts run from a few hundred tokens at N=1 to roughly 6K at N=64. The report shows the measured mean prompt size per cell. Each list
-is shuffled, so prefix caching helps little. A quick smoke run:
+Prompts run from a few hundred tokens at N=1 to roughly 8K at N=64, 16K at
+N=128, and 33K at N=248. The report shows the measured mean prompt size per
+cell. Each list is shuffled, so prefix caching helps little. A quick smoke run:
 
 ```bash
 tool-eval-bench plugin toolscale --limit 17 --counts 1,4,16,64 --cues implied --parallel 4
@@ -139,14 +142,18 @@ The headline is two numbers, reported apart on purpose:
 
 - **Accuracy when called.** Of the items where the model called a tool, the
   share where it called the right one. This is the tool-confusion measure.
-- **Call rate.** The share of items where the model called any tool. A model
-  that asks a clarifying question, often about an optional parameter, or
-  declines a high-impact action, is abstaining, not confusing tools.
+- **Call rate.** The share of answered items where the model called any tool.
+  A model that asks a clarifying question, often about an optional parameter,
+  or declines a high-impact action, is abstaining, not confusing tools. A
+  request error has no model answer, so it is left out of the call rate; a
+  turn that ran out of token budget without calling counts as no call.
 
 A single blended accuracy hid this in calibration. A mid-sized model scored 83%
 combined, and every miss was a clarifying question; it never picked a wrong
-tool. The combined accuracy (correct over all items) is still stored as the
-run's score so runs sort, but it is not the headline. Read the two together:
+tool. The combined accuracy is still stored as the run's score so runs sort,
+but it is not the headline. It is correct over all grid items, errors
+included as misses; the N=1 control is reported on its own, except in a
+control-only run, where it is the score. Read the two together:
 accuracy when called alone can be gamed by declining hard items.
 
 The terminal prints both per cell, one row per tier and cue, plus the cue
@@ -243,8 +250,13 @@ private catalog with the same JSON schema as
 
 A catalog needs at least two domains, four families per domain, and four
 variants per family. `query_implied` is optional per tool, but the implied cue
-needs it on every tool; run a catalog without it with `--toolscale-cues literal`. The largest N it supports is the number of families
-outside the smallest domain, plus one. With a private catalog:
+needs it on every tool; run a catalog without it with `--toolscale-cues literal`.
+
+The largest N is set by the domain with the most families, since every
+target's fillers must come from outside its own domain. For sparse fillers it
+is the number of families outside that domain, plus one. For crowded fillers
+it is the number of tools in those families after setting aside the three
+largest, plus four. With a private catalog:
 
 - the report keeps every table but withholds tool names and queries;
 - stored results replace target names with `target-<n>`;
@@ -305,8 +317,14 @@ conversation depth are the next to add.
 ## Limits
 
 - Argument correctness is not graded.
-- N stops at 64 with the built-in catalog. Larger lists need a larger catalog,
-  and several providers cap the number of tools per request.
+- With the built-in catalog, sparse lists stop at 65 tools and crowded lists
+  at 248. Above 65 only crowded cells exist: a finite catalog runs out of
+  unrelated families before it runs out of tools, as a real 200-tool catalog
+  would. Clean sparse lists past 65 would need a larger catalog.
+- Some providers cap tools per request. OpenAI rejects more than 128; the run
+  warns above that, and a rejected request is recorded as an error, not a wrong
+  pick. Local OpenAI-compatible servers have no tool cap, only their context
+  window.
 - With clean, well-written descriptions and at most 64 tools, current models
   rarely confuse tools on either cue (see Calibration). Expect the call rate to
   separate models before accuracy when called does.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import defaultdict
 from collections.abc import Iterable
@@ -161,6 +162,7 @@ class ToolscalePlugin(BenchmarkPlugin):
             prompt_tokens: int | None = None
             arguments: str | None = None
             reply: str | None = None
+            error: str | None = None
             try:
                 async with sem:
                     response = await adapter.chat_completion(
@@ -190,8 +192,11 @@ class ToolscalePlugin(BenchmarkPlugin):
                     # question and a refusal read very differently.
                     reply = (response.content or "").strip()[:300] or None
             except Exception as exc:
-                logger.debug("Error on toolscale item %s: %s", item.item_id, exc)
+                logger.debug("Error on toolscale item %s: %s", _log_id(item, catalog), exc)
                 outcome, picked = ERROR, None
+                # Kept for the report: a run of errors is only diagnosable if
+                # it says whether the endpoint timed out, refused, or rejected.
+                error = f"{type(exc).__name__}: {exc}"[:200]
 
             results[idx] = row(
                 item,
@@ -200,6 +205,7 @@ class ToolscalePlugin(BenchmarkPlugin):
                 prompt_tokens=prompt_tokens,
                 arguments=arguments,
                 reply=reply,
+                error=error,
             )
             if on_progress:
                 async with progress_lock:
@@ -211,10 +217,16 @@ class ToolscalePlugin(BenchmarkPlugin):
         )
         for i, exc in enumerate(gathered):
             if isinstance(exc, BaseException):
-                logger.error("Toolscale item %s crashed: %s", items[i].item_id, exc)
+                logger.error("Toolscale item %s crashed: %s", _log_id(items[i], catalog), exc)
                 if not results[i]:
                     results[i] = row(
-                        items[i], ERROR, None, prompt_tokens=None, arguments=None, reply=None
+                        items[i],
+                        ERROR,
+                        None,
+                        prompt_tokens=None,
+                        arguments=None,
+                        reply=None,
+                        error=f"{type(exc).__name__}: {exc}"[:200],
                     )
 
         details = summarize(results, items, catalog)
@@ -332,7 +344,8 @@ def summarize(
         "completion_rate": round((total - errors) / total * 100, 2) if total else 0.0,
         "status": "incomplete" if errors else "completed",
         "incomplete": errors > 0,
-        **_headline(grid_rows),
+        # A control-only run has no grid; its headline is the control's.
+        **_headline(grid_rows or control_rows),
         "by_cue": {cue: _headline([r for r in grid_rows if r["cue"] == cue]) for cue in cues},
         "by_density": {
             density: _headline([r for r in grid_rows if r["density"] == density])
@@ -373,14 +386,34 @@ def _headline(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Call rate, accuracy when called, and the combined accuracy over *rows*."""
     correct, n = _accuracy(rows)
     called = sum(1 for r in rows if r["picked"] is not None)
+    errors = sum(1 for r in rows if r["outcome"] == ERROR)
     return {
         "grid_items": n,
         "grid_correct": correct,
         "grid_called": called,
+        "grid_errors": errors,
         "accuracy": _pct(correct, n),
-        "call_rate": _pct(called, n),
+        "call_rate": _call_rate(called, n, errors),
         "accuracy_when_called": _pct(correct, called),
     }
+
+
+def _call_rate(called: int, items: int, errors: int) -> float:
+    """Share of answered items with a tool call.
+
+    A request error has no model answer at all, so it would be wrong to read it
+    as the model declining to act; it leaves the denominator here (it still
+    counts as a miss in combined accuracy). A truncated turn stays in: the
+    model spent its budget without calling.
+    """
+    return _pct(called, items - errors)
+
+
+def _log_id(item: ToolscaleItem, catalog: Catalog) -> str:
+    """An item label for logs; grid coordinates only for a private catalog."""
+    if catalog.is_custom:
+        return f"target-{item.target_rank}@N{item.count}/{item.similarity}/{item.cue}"
+    return item.item_id
 
 
 def _cell_summary(
@@ -409,7 +442,7 @@ def _cell_summary(
         # declines to act (no call) is not confusing tools, so this isolates
         # confusion from abstention.
         "called": called,
-        "call_rate": _pct(called, n),
+        "call_rate": _call_rate(called, n, sum(1 for r in rows if r["outcome"] == ERROR)),
         "accuracy_when_called": _pct(correct, called),
         "mean_prompt_tokens": round(fmean(prompt_tokens)) if prompt_tokens else None,
     }
@@ -616,8 +649,12 @@ def similarity_check(items: list[ToolscaleItem], catalog: Catalog) -> dict[str, 
     filler_scores: list[float] = []
     filler_seen: set[tuple[str, str]] = set()
     nearest: dict[tuple[str, int], list[float]] = defaultdict(list)
+    # The "flat across N" check is about the target's neighbourhood with
+    # unrelated fillers, so it reads sparse lists when there are any; crowding
+    # is measured separately in filler_crowding.
+    has_sparse = any(i.density == "sparse" and i.similarity != CONTROL for i in items)
     for item in items:
-        if item.similarity == CONTROL:
+        if item.similarity == CONTROL or (has_sparse and item.density != "sparse"):
             continue
         target = defs[item.target.name]
         roles = dict(item.roles)
@@ -662,18 +699,23 @@ def _filler_crowding(
 ) -> dict[str, float]:
     """Mean similarity of each filler to its closest other filler, per density.
 
-    Measured on the largest tool list of each target and trial, once per
-    density, so the crowded axis is shown to be denser rather than assumed.
+    Measured on each density's largest tool list, once per target and trial,
+    so the crowded axis is shown to be denser rather than assumed.
     """
     if not items:
         return {}
-    largest = max(item.count for item in items)
+    # Each density's own largest list: sparse cells stop at the sparse maximum
+    # while crowded ones can go further, and comparing different sizes would
+    # leave sparse unmeasured.
+    largest: dict[str, int] = {}
+    for item in items:
+        largest[item.density] = max(largest.get(item.density, 0), item.count)
     first_level = next((i.similarity for i in items if i.similarity != CONTROL), None)
     seen: set[tuple[str, int, str]] = set()
     scores: dict[str, list[float]] = defaultdict(list)
     for item in items:
         key = (item.target.name, item.trial, item.density)
-        if item.count != largest or item.similarity != first_level or key in seen:
+        if item.count != largest[item.density] or item.similarity != first_level or key in seen:
             continue
         seen.add(key)
         fillers = [defs[name] for name, role in item.roles if role == "filler"]
@@ -768,6 +810,19 @@ def _cell(
 def _slice_label(cue: str, density: str, densities: list[str]) -> str:
     """``implied`` alone, or ``implied, crowded`` when the run swept densities."""
     return cue if len(densities) < 2 else f"{cue}, {density}"
+
+
+def _table_text(value: Any, limit: int) -> str:
+    """Model or catalog text made safe for one Markdown table cell.
+
+    GFM splits a row on any unescaped pipe, even inside a code span, and
+    CommonMark ends a line at a lone carriage return, so both are neutralised.
+    """
+    text = re.sub(r"[\r\n]+", " ", str(value))
+    if len(text) > limit:
+        text = text[: limit - 1] + "…"
+    # Escape after truncating, so a cut never separates a backslash from its pipe.
+    return text.replace("|", "\\|")
 
 
 def _signed(value: float) -> str:
@@ -975,8 +1030,9 @@ def render_report(result: BenchmarkResult) -> list[str]:
                 "### Count Effect at Fixed Similarity",
                 "",
                 "Accuracy at the smallest N minus accuracy at the largest, paired by target. "
-                "Positive means more tools cost accuracy. The slope is a least-squares fit of "
-                "cell accuracy against log2(N).",
+                "A positive delta means more tools cost accuracy. The slope is a least-squares "
+                "fit of cell accuracy against log2(N), in points per doubling: negative means "
+                "accuracy falls as the list grows.",
                 "",
                 "| Slice | Similarity | From N | To N | Delta (pts) | 95% CI | Slope per doubling |",
                 "|---|---|---:|---:|---:|---|---:|",
@@ -1134,16 +1190,13 @@ def render_report(result: BenchmarkResult) -> list[str]:
         failures.sort(key=lambda f: (f.get("picked") is None, f["item_id"]))
         lines.extend(["| Item | Query | Picked | Outcome |", "|---|---|---|---|"])
         for f in failures[:_MAX_LISTED_FAILURES]:
-            query = str(f.get("query", "")).replace("|", "\\|").replace("\n", " ")
-            if len(query) > 100:
-                query = query[:97] + "…"
+            query = _table_text(f.get("query", ""), 100)
             if f.get("picked"):
-                picked = f"`{f['picked']}`"
+                picked = f"`{_table_text(f['picked'], 80)}`"
+            elif f.get("error"):
+                picked = f"*(request failed)* {_table_text(f['error'], 80)}"
             elif f.get("reply"):
-                reply = str(f["reply"]).replace("|", "\\|").replace("\n", " ")
-                if len(reply) > 80:
-                    reply = reply[:77] + "…"
-                picked = f"*(no call)* {reply}"
+                picked = f"*(no call)* {_table_text(f['reply'], 80)}"
             else:
                 picked = "*(none)*"
             lines.append(f"| `{f['item_id']}` | {query} | {picked} | {f['outcome']} |")

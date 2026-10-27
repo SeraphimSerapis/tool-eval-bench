@@ -944,6 +944,20 @@ def _print_needle_grid(console: Console, result: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
+# OpenAI's Chat Completions API rejects requests with more tools than this.
+_OPENAI_TOOL_CAP = 128
+
+# A catalog tool definition costs about this many prompt tokens. Used only to
+# stretch the request timeout for long tool lists, as the needle runner does
+# for long haystacks.
+_TOKENS_PER_TOOL_ESTIMATE = 135
+
+
+def _toolscale_timeout(requested: float, largest_count: int) -> float:
+    """The per-request timeout, stretched so a long tool list can prefill."""
+    return max(requested, 120.0 + largest_count * _TOKENS_PER_TOOL_ESTIMATE / 50_000 * 60.0)
+
+
 def _toolscale_list(value: str, flag: str) -> list[str]:
     items = [part.strip() for part in value.split(",") if part.strip()]
     if not items:
@@ -1014,6 +1028,12 @@ def _run_toolscale_benchmark(
             )
 
     counts = sorted({item.count for item in items})
+    if counts[-1] > _OPENAI_TOOL_CAP:
+        console.print(
+            f"  [yellow]⚠ N up to {counts[-1]}: some providers cap tools per request "
+            f"(OpenAI: {_OPENAI_TOOL_CAP}). A rejected request is recorded as an error, "
+            "not a wrong pick. Local OpenAI-compatible servers have no tool cap.[/]"
+        )
     levels = [
         lvl for lvl in ("near", "related", "distinct") if any(i.similarity == lvl for i in items)
     ]
@@ -1073,7 +1093,7 @@ def _run_toolscale_benchmark(
                     base_url=base_url,
                     api_key=api_key,
                     temperature=args.temperature,
-                    timeout_seconds=args.timeout,
+                    timeout_seconds=_toolscale_timeout(args.timeout, counts[-1]),
                     seed=seed,
                     extra_params=extra_params,
                     on_progress=on_progress,
@@ -1083,12 +1103,14 @@ def _run_toolscale_benchmark(
                 )
                 result_holder.append(result)
                 d = result.details
+                # The tally describes the scored items (the grid, or the
+                # control when it ran alone), so its counts agree with the score.
                 display.finish(
                     completed=d["total"],
                     stats=final_tally_line(
-                        correct=d["correct"],
-                        wrong=d["total"] - d["correct"] - d.get("errors", 0),
-                        errors=d.get("errors", 0),
+                        correct=d["grid_correct"],
+                        wrong=d["grid_items"] - d["grid_correct"] - d["grid_errors"],
+                        errors=d["grid_errors"],
                         score=d["accuracy"],
                         rate=(
                             d["total"] / result.duration_seconds * 60
@@ -1125,8 +1147,10 @@ def _run_toolscale_benchmark(
                     f"    [dim]{value}:[/] {h['accuracy_when_called']:.1f}% when called · "
                     f"{h['call_rate']:.1f}% call rate"
                 )
+    grid_counts: list[int] = details.get("counts", [])
+    density_counts = [e["count"] for e in details.get("density_effects", [])]
     for effect in details.get("density_effects", []):
-        if effect["similarity"] == "near" and effect["count"] == counts[-1]:
+        if effect["similarity"] == "near" and effect["count"] == max(density_counts):
             console.print(
                 f"  [bold]Density effect[/] ({effect['cue']}, near, N={effect['count']}): "
                 f"{effect['delta']:+.1f} pts [dim](sparse minus crowded; 95% CI "
@@ -1136,7 +1160,7 @@ def _run_toolscale_benchmark(
         if (
             effect["similarity"] == "near"
             and effect.get("density", "sparse") == "sparse"
-            and effect["count"] in (counts[1:2] + counts[-1:])
+            and effect["count"] in (grid_counts[:1] + grid_counts[-1:])
         ):
             console.print(
                 f"  [bold]Cue effect[/] (near, N={effect['count']}): {effect['delta']:+.1f} pts "

@@ -252,6 +252,38 @@ class TestGridValidation:
         # 20 families, 4 in the target's domain: 16 outside, so N <= 17.
         assert max_count(_catalog()) == 17
 
+    def test_crowded_max_count_reserves_the_largest_families(self) -> None:
+        # 16 outside families of 4 tools; 3 reserved for distinct neighbours leaves
+        # 52 filler tools, plus the target and 3 neighbours.
+        assert max_count(_catalog(), "crowded") == 56
+        data = _catalog_data()
+        extra = dict(data["domains"][1]["families"][0]["variants"][0])
+        extra.update(name="op0_dom1_epsilon", qualifier="epsilon", query="epsilon op K-1.")
+        data["domains"][1]["families"][0]["variants"].append(extra)
+        catalog = parse_catalog(json.dumps(data).encode(), source="custom")
+        # A 5-variant family may be one of the reserved three, so the worst case
+        # does not grow; for the target's own domain it is simply not outside.
+        assert max_count(catalog, "crowded") == 56
+
+    def test_counts_beyond_sparse_need_crowded(self) -> None:
+        catalog = _catalog()
+        with pytest.raises(GridError, match="crowded fillers reach 56"):
+            validate_counts([32], catalog)
+        assert validate_counts([32], catalog, ["sparse", "crowded"]) == [32]
+        with pytest.raises(GridError, match="maximum of 56"):
+            validate_counts([57], catalog, ["sparse", "crowded"])
+
+    def test_beyond_sparse_only_crowded_cells_exist(self) -> None:
+        catalog = _catalog()
+        items = _items(catalog, counts=[16, 32, 56], densities=["sparse", "crowded"])
+        sparse_counts = {i.count for i in items if i.density == "sparse"}
+        crowded_counts = {i.count for i in items if i.density == "crowded"}
+        assert sparse_counts == {16}
+        assert crowded_counts == {16, 32, 56}
+        for item in items:
+            assert len(item.tools) == item.count == len({t.name for t in item.tools})
+            assert [r for _, r in item.roles].count("neighbour") == 3
+
     @pytest.mark.parametrize("bad", [0, 2, 3, 18])
     def test_rejects_unbuildable_counts(self, bad: int) -> None:
         with pytest.raises(GridError):
@@ -455,6 +487,22 @@ class TestGridConstruction:
             }
             assert by_count[8] <= by_count[16]
 
+    def test_counts_without_cells_are_rejected(self) -> None:
+        # Crowded skips N=4 (no fillers), so a crowded-only grid at N=4 is empty.
+        with pytest.raises(GridError, match=r"\[4\] produce no cells"):
+            _items(counts=[4], densities=["crowded"])
+        with pytest.raises(GridError, match=r"\[4\] produce no cells"):
+            _items(counts=[1, 4, 8], densities=["crowded"])
+        assert _items(counts=[1, 8], densities=["crowded"])
+
+    def test_private_catalog_names_stay_out_of_cue_errors(self) -> None:
+        data = _catalog_data()
+        del data["domains"][2]["families"][1]["variants"][3]["query_implied"]
+        catalog = parse_catalog(json.dumps(data).encode(), source="custom")
+        with pytest.raises(GridError) as caught:
+            _items(catalog, cues=["implied"])
+        assert "op1_dom2" not in str(caught.value)
+
     def test_unknown_density_is_rejected(self) -> None:
         with pytest.raises(GridError, match="unknown filler density"):
             _items(densities=["packed"])
@@ -652,6 +700,77 @@ class TestToolscalePlugin:
         for heading in ("Density Effect", "Headline by Fillers", "(literal cue, crowded fillers)"):
             assert heading in report
 
+    async def test_counts_beyond_sparse_aggregate_cleanly(self) -> None:
+        catalog = _catalog()
+        items = _items(catalog, counts=[8, 16, 32], densities=["sparse", "crowded"], limit=6)
+        plugin = ToolscalePlugin()
+        result = await _run(items, _StubAdapter(), catalog)
+        d = result.details
+        assert d["counts"] == [8, 16, 32]
+        # Count effects run over each slice's own measured range.
+        ranges = {(e["density"], e["from_count"], e["to_count"]) for e in d["count_effects"]}
+        assert ranges == {("sparse", 8, 16), ("crowded", 8, 32)}
+        # Density effects only where both exist.
+        assert {e["count"] for e in d["density_effects"]} == {8, 16}
+        # Crowding is measured on each density's own largest list.
+        assert set(d["similarity_check"]["filler_crowding"]) == {"sparse", "crowded"}
+        report = "\n".join(plugin.render_report_section(result))
+        assert "N=32" in report
+
+    async def test_control_only_run_scores_the_control(self) -> None:
+        catalog = _catalog()
+        result = await _run(_items(catalog, counts=[1]), _StubAdapter(), catalog)
+        assert result.score == 100.0
+        assert result.details["grid_items"] == result.details["total"]
+        assert result.rating.startswith("★★★★★")
+
+    async def test_failed_items_table_survives_hostile_model_text(self) -> None:
+        catalog = _catalog()
+        items = _items(catalog, counts=[4], similarities=["near"], limit=2)
+
+        def hostile(query: str, names: list[str]) -> Any:
+            if query == items[0].target.query:
+                return _response("made|up\rname")
+            return ChatCompletionResult(content="Which | one?\r\nTell me.", finish_reason="stop")
+
+        plugin = ToolscalePlugin()
+        result = await _run(items, _StubAdapter(hostile), catalog)
+        report = plugin.render_report_section(result)
+        start = report.index(next(line for line in report if line.startswith("### Failed Items")))
+        rows = [line for line in report[start:] if line.startswith("| `")]
+        assert len(rows) == 2
+        for row in rows:
+            # 4 cells: unescaped pipes are exactly the 5 separators.
+            assert len([c for i, c in enumerate(row) if c == "|" and row[i - 1] != "\\"]) == 5
+            assert "\r" not in row
+
+    async def test_private_catalog_errors_log_coordinates_only(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        catalog = parse_catalog(json.dumps(_catalog_data()).encode(), source="custom")
+        items = _items(catalog, counts=[4], similarities=["near"], limit=1)
+
+        def boom(query: str, names: list[str]) -> Any:
+            return RuntimeError("server exploded")
+
+        with caplog.at_level(logging.DEBUG, logger="tool_eval_bench.plugins.toolscale.plugin"):
+            await _run(items, _StubAdapter(boom), catalog)
+        assert caplog.records
+        assert all(items[0].target.name not in r.getMessage() for r in caplog.records)
+
+    async def test_sparse_lists_define_the_flat_nearest_check(self) -> None:
+        catalog = _catalog()
+        both = _items(catalog, counts=[8, 16], densities=["sparse", "crowded"], limit=6)
+        sparse = _items(catalog, counts=[8, 16], limit=6)
+        from tool_eval_bench.plugins.toolscale.plugin import similarity_check
+
+        assert (
+            similarity_check(both, catalog)["nearest_by_count"]
+            == similarity_check(sparse, catalog)["nearest_by_count"]
+        )
+
     async def test_requests_carry_the_item_tool_list(self) -> None:
         catalog = _catalog()
         items = _items(catalog, counts=[8], similarities=["near"], limit=2)
@@ -706,12 +825,18 @@ class TestToolscalePlugin:
                 return RuntimeError("server exploded")
             return next(n for n in names if _matches(query, n))
 
+        plugin = ToolscalePlugin()
         result = await _run(items, _StubAdapter(policy), catalog)
         assert result.details["errors"] == 1
         assert result.details["incomplete"] is True
+        report = "\n".join(plugin.render_report_section(result))
+        assert "*(request failed)* RuntimeError: server exploded" in report
         # An error is a miss, never a free pass: 3 of 4 items correct.
         assert result.score == 75.0
         assert result.details["grid_items"] == 4
+        # But it is not the model declining to act: the call rate leaves it out.
+        assert result.details["call_rate"] == 100.0
+        assert result.details["cells"][0]["call_rate"] == 100.0
         assert result.details["cells"][0]["outcomes"]["error"] == 1
 
     async def test_transport_rejection_is_an_error(self) -> None:
@@ -927,6 +1052,14 @@ def _runner_args(**overrides: Any) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+def test_timeout_stretches_for_long_tool_lists() -> None:
+    from tool_eval_bench.cli.plugin_runners import _toolscale_timeout
+
+    assert _toolscale_timeout(300.0, 64) == 300.0  # an explicit longer timeout wins
+    assert _toolscale_timeout(5.0, 64) > 120.0
+    assert _toolscale_timeout(5.0, 248) > _toolscale_timeout(5.0, 64)
+
+
 class TestToolscaleRunner:
     def _run(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, args: argparse.Namespace
@@ -971,6 +1104,31 @@ class TestToolscaleRunner:
         text = reports[0].read_text()
         assert "Toolscale" in text
         assert "op0_dom0_alpha" not in text
+
+    def test_large_lists_warn_about_provider_tool_caps(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from tool_eval_bench.cli import plugin_runners
+
+        monkeypatch.setattr(plugin_runners, "_OPENAI_TOOL_CAP", 4)
+        path = tmp_path / "private.json"
+        path.write_text(json.dumps(_catalog_data()))
+        output, _ = self._run(monkeypatch, tmp_path, _runner_args(toolscale_catalog=str(path)))
+        assert "some providers cap tools per request" in output
+
+    def test_crowded_grid_without_cells_exits_cleanly(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "private.json"
+        path.write_text(json.dumps(_catalog_data()))
+        with pytest.raises(SystemExit):
+            self._run(
+                monkeypatch,
+                tmp_path,
+                _runner_args(
+                    toolscale_catalog=str(path), toolscale_counts="4", toolscale_fillers="crowded"
+                ),
+            )
 
     def test_bad_counts_stop_before_any_request(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
