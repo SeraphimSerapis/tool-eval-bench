@@ -570,6 +570,13 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Filler density: sparse, crowded (default: sparse)",
     )
     toolscale_grp.add_argument(
+        "--toolscale-descriptions",
+        type=str,
+        default="clean",
+        metavar="LIST",
+        help="Description quality: clean, terse, bare (default: clean)",
+    )
+    toolscale_grp.add_argument(
         "--toolscale-limit",
         type=int,
         default=0,

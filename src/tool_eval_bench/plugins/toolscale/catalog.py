@@ -14,6 +14,10 @@ Every variant has a literal ``query`` that names its qualifier, and may have a
 draft). The literal query is the clean control; the implied one tests whether
 a model understands the tools or only matches keywords.
 
+Each family may also carry a ``description_terse``: one generic sentence that
+is true of all its variants. The ``terse`` description level shows it in place
+of every variant's own description, so near-duplicates differ only by name.
+
 The built-in catalog ships as ``catalog/v1.json``. A lab can run a private
 catalog with the same schema through ``--toolscale-catalog PATH``, which keeps
 the items out of public training data.
@@ -25,7 +29,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -40,6 +44,8 @@ MIN_FAMILIES_PER_DOMAIN = 4
 # OpenAI's function-name rule, the strictest of the supported wire formats.
 _NAME_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 _PARAM_TYPES = frozenset({"string", "integer", "number", "boolean"})
+# Parameter-schema keys kept at the terse and bare description levels.
+_DEGRADED_SCHEMA_KEYS = frozenset({"type", "enum"})
 
 
 class CatalogError(ValueError):
@@ -59,6 +65,7 @@ class CatalogTool:
     required: tuple[str, ...]
     query: str
     query_implied: str | None = None
+    family_description: str | None = None
 
     def query_for(self, cue: str) -> str:
         """The user message for *cue*: ``"literal"`` or ``"implied"``."""
@@ -68,21 +75,39 @@ class CatalogTool:
             return self.query_implied
         return self.query
 
-    def to_openai_tool(self) -> dict[str, Any]:
-        """The tool as an OpenAI function definition, the adapters' common input."""
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": json.loads(json.dumps(self.parameters)),
-                    "required": list(self.required),
-                    "additionalProperties": False,
-                },
-            },
+    def to_openai_tool(self, descriptions: str = "clean") -> dict[str, Any]:
+        """The tool as an OpenAI function definition, the adapters' common input.
+
+        *descriptions* degrades what the model reads: ``"clean"`` is the
+        catalog as written; ``"terse"`` swaps in the family's shared
+        description and drops parameter descriptions; ``"bare"`` drops every
+        description, leaving names, types, and enums.
+        """
+        properties = json.loads(json.dumps(self.parameters))
+        if descriptions != "clean":
+            # Keep only what a schema needs to be callable. A private catalog
+            # may carry titles or examples, which would leak the very text the
+            # degraded levels exist to remove.
+            properties = {
+                name: {k: v for k, v in schema.items() if k in _DEGRADED_SCHEMA_KEYS}
+                for name, schema in properties.items()
+            }
+        function: dict[str, Any] = {"name": self.name}
+        if descriptions == "clean":
+            function["description"] = self.description
+        elif descriptions == "terse":
+            if self.family_description is None:
+                raise KeyError("this tool's family has no description_terse")
+            function["description"] = self.family_description
+        elif descriptions != "bare":
+            raise ValueError(f"unknown description level {descriptions!r}")
+        function["parameters"] = {
+            "type": "object",
+            "properties": properties,
+            "required": list(self.required),
+            "additionalProperties": False,
         }
+        return {"type": "function", "function": function}
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +117,7 @@ class Family:
     id: str
     domain: str
     variants: tuple[CatalogTool, ...]
+    description_terse: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,11 +240,26 @@ def parse_catalog(raw: bytes, *, source: str) -> Catalog:
                     f"{where} has {len(raw_variants)} variants; "
                     f"at least {MIN_VARIANTS_PER_FAMILY} are needed"
                 )
+            terse = (
+                _string(raw_family, "description_terse", where)
+                if raw_family.get("description_terse") is not None
+                else None
+            )
             variants = tuple(
-                _parse_tool(raw_variant, domain_id, family_id, seen_names)
+                replace(
+                    _parse_tool(raw_variant, domain_id, family_id, seen_names),
+                    family_description=terse,
+                )
                 for raw_variant in raw_variants
             )
-            families.append(Family(id=family_id, domain=domain_id, variants=variants))
+            families.append(
+                Family(
+                    id=family_id,
+                    domain=domain_id,
+                    variants=variants,
+                    description_terse=terse,
+                )
+            )
         domains.append(Domain(id=domain_id, families=tuple(families)))
 
     canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -388,4 +429,33 @@ def lint_catalog(catalog: Catalog) -> list[str]:
             if leaked:
                 problems.append(f"{tool.name}: query contains tool name(s) {leaked}")
             problems.extend(_lint_implied(tool, family, all_names))
+        problems.extend(_lint_terse(family))
+    return problems
+
+
+def _lint_terse(family: Family) -> list[str]:
+    """Problems with a family's shared description: it must favour no variant."""
+    terse = family.description_terse
+    if terse is None:
+        return []
+    problems: list[str] = []
+    for tool in family.variants:
+        # A tool name is snake_case, so a word-boundary match on its qualifier
+        # would miss it; check the whole name as a substring first.
+        if tool.name.lower() in terse.lower():
+            problems.append(
+                f"{family.domain}/{family.id}: terse description contains tool name {tool.name!r}"
+            )
+            continue
+        if _phrase_in(tool.qualifier, terse):
+            problems.append(
+                f"{family.domain}/{family.id}: terse description names qualifier {tool.qualifier!r}"
+            )
+            continue
+        for word in tool.qualifier.lower().split():
+            if word not in _GENERIC_QUALIFIER_WORDS and _phrase_in(word, terse):
+                problems.append(
+                    f"{family.domain}/{family.id}: terse description contains qualifier "
+                    f"word {word!r}"
+                )
     return problems

@@ -1001,6 +1001,7 @@ def _run_toolscale_benchmark(
         levels = _toolscale_list(args.toolscale_similarity, "--toolscale-similarity")
         cues = _toolscale_list(args.toolscale_cues, "--toolscale-cues")
         densities = _toolscale_list(args.toolscale_fillers, "--toolscale-fillers")
+        described = _toolscale_list(args.toolscale_descriptions, "--toolscale-descriptions")
         catalog = load_catalog_file(catalog_path) if catalog_path else load_builtin_catalog()
         items = build_items(
             catalog,
@@ -1011,6 +1012,7 @@ def _run_toolscale_benchmark(
             seed=seed if seed is not None else 0,
             cues=cues,
             densities=densities,
+            descriptions=described,
         )
     except (CatalogError, GridError, ValueError) as exc:
         report_run_failed(console, f"\n[bold red]Toolscale error:[/] {escape(str(exc))}")
@@ -1037,8 +1039,20 @@ def _run_toolscale_benchmark(
     levels = [
         lvl for lvl in ("near", "related", "distinct") if any(i.similarity == lvl for i in items)
     ]
-    cues = [cue for cue in ("literal", "implied") if any(i.cue == cue for i in items)]
-    densities = [d for d in ("sparse", "crowded") if any(i.density == d for i in items)]
+    # Conditions come from the grid items: the N=1 control is always sparse.
+    grid_items = [i for i in items if i.count > 1] or items
+    cues = [cue for cue in ("literal", "implied") if any(i.cue == cue for i in grid_items)]
+    densities = [d for d in ("sparse", "crowded") if any(i.density == d for i in grid_items)]
+    described = [
+        level
+        for level in ("clean", "terse", "bare")
+        if any(i.descriptions == level for i in grid_items)
+    ]
+    if len(described) > 1 and "clean" not in described:
+        console.print(
+            "  [yellow]⚠ Description effects compare against clean descriptions; add clean "
+            "to --toolscale-descriptions to measure them.[/]"
+        )
     targets = len({item.target_rank for item in items})
     parallel = args.parallel
     parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
@@ -1047,7 +1061,8 @@ def _run_toolscale_benchmark(
         Panel(
             f"[bold]{display_name}[/]\n"
             f"[dim]N = {', '.join(map(str, counts))} × {', '.join(levels)} × "
-            f"{', '.join(cues)} cue · {', '.join(densities)} fillers · {targets} targets · "
+            f"{', '.join(cues)} cue · {', '.join(densities)} fillers · "
+            f"{', '.join(described)} descriptions · {targets} targets · "
             f"{trials} trial(s) = "
             f"{len(items)} requests · "
             f"catalog v{catalog.version} ({catalog.source}){parallel_label}[/]",
@@ -1067,7 +1082,8 @@ def _run_toolscale_benchmark(
                 display.tally.record(item_info)
                 label = (
                     f"N{item_info.get('count')}/{item_info.get('similarity')}/"
-                    f"{item_info.get('cue')}"
+                    f"{item_info.get('cue')}/{item_info.get('density')}/"
+                    f"{item_info.get('descriptions')}"
                     if catalog.is_custom
                     else item_info.get("item_id")
                 )
@@ -1139,7 +1155,7 @@ def _run_toolscale_benchmark(
         f"[bold]Call rate:[/] [bold cyan]{details['call_rate']:.1f}%[/] "
         f"({details['grid_called']}/{details['grid_items']})"
     )
-    for axis in ("by_cue", "by_density"):
+    for axis in ("by_cue", "by_density", "by_descriptions"):
         breakdown = details.get(axis, {})
         if len(breakdown) > 1:
             for value, h in breakdown.items():
@@ -1147,26 +1163,7 @@ def _run_toolscale_benchmark(
                     f"    [dim]{value}:[/] {h['accuracy_when_called']:.1f}% when called · "
                     f"{h['call_rate']:.1f}% call rate"
                 )
-    grid_counts: list[int] = details.get("counts", [])
-    density_counts = [e["count"] for e in details.get("density_effects", [])]
-    for effect in details.get("density_effects", []):
-        if effect["similarity"] == "near" and effect["count"] == max(density_counts):
-            console.print(
-                f"  [bold]Density effect[/] ({effect['cue']}, near, N={effect['count']}): "
-                f"{effect['delta']:+.1f} pts [dim](sparse minus crowded; 95% CI "
-                f"{effect['ci_low']:+.1f} to {effect['ci_high']:+.1f})[/]"
-            )
-    for effect in details.get("cue_effects", []):
-        if (
-            effect["similarity"] == "near"
-            and effect.get("density", "sparse") == "sparse"
-            and effect["count"] in (grid_counts[:1] + grid_counts[-1:])
-        ):
-            console.print(
-                f"  [bold]Cue effect[/] (near, N={effect['count']}): {effect['delta']:+.1f} pts "
-                f"[dim](literal minus implied; 95% CI {effect['ci_low']:+.1f} to "
-                f"{effect['ci_high']:+.1f})[/]"
-            )
+    _print_toolscale_effects(console, details)
     for cue, control in (details.get("control") or {}).items():
         console.print(
             f"  [bold]Control (N=1, {cue}):[/] {control['accuracy']:.1f}% "
@@ -1200,6 +1197,7 @@ def _run_toolscale_benchmark(
             "similarities": levels,
             "cues": cues,
             "densities": densities,
+            "descriptions": described,
             "targets": targets,
             "trials": trials,
             "temperature": args.temperature,
@@ -1219,8 +1217,49 @@ def _run_toolscale_benchmark(
     )
 
 
+# Console wording for each condition-axis effect: (details key, name, contrast).
+_TOOLSCALE_EFFECTS = (
+    ("cue_effects", "Cue effect", "literal minus implied"),
+    ("density_effects", "Density effect", "sparse minus crowded"),
+    ("description_effects", "Description effect", "clean minus {versus}"),
+)
+
+
+def _print_toolscale_effects(console: Console, details: Mapping[str, Any]) -> None:
+    """One line per condition contrast: near tier, at the largest N it was measured."""
+    present = {
+        "cue": details.get("cues", ["literal"]),
+        "density": details.get("densities", ["sparse"]),
+        "descriptions": details.get("descriptions", ["clean"]),
+    }
+    baseline = {"cue": "literal", "density": "sparse", "descriptions": "clean"}
+    for key, name, contrast in _TOOLSCALE_EFFECTS:
+        effects = [e for e in details.get(key, []) if e["similarity"] == "near"]
+        # The largest N per slice: a sparse slice stops at the sparse maximum
+        # while a crowded one can run further, and both deserve a line.
+        largest: dict[tuple[Any, ...], int] = {}
+        for e in effects:
+            slice_key = tuple(e.get(a) for a in ("cue", "density", "descriptions", "versus"))
+            largest[slice_key] = max(largest.get(slice_key, 0), e["count"])
+        for e in effects:
+            slice_key = tuple(e.get(a) for a in ("cue", "density", "descriptions", "versus"))
+            if e["count"] != largest[slice_key]:
+                continue
+            context = ", ".join(
+                e.get(axis, baseline[axis])
+                for axis in ("cue", "density", "descriptions")
+                if axis in e and len(present[axis]) > 1
+            )
+            where = f"{context}, near" if context else "near"
+            console.print(
+                f"  [bold]{name}[/] ({where}, N={e['count']}): {e['delta']:+.1f} pts "
+                f"[dim]({contrast.format(versus=e['versus'])}; 95% CI "
+                f"{e['ci_low']:+.1f} to {e['ci_high']:+.1f})[/]"
+            )
+
+
 def _print_toolscale_grid(console: Console, result: Any) -> None:
-    """Print accuracy-when-called and call rate per cell, one row per tier and cue."""
+    """Print accuracy-when-called and call rate per cell, one row per tier and condition."""
     from rich.table import Table
 
     details = result.details
@@ -1228,10 +1267,17 @@ def _print_toolscale_grid(console: Console, result: Any) -> None:
     levels: list[str] = details.get("similarities", [])
     cues: list[str] = details.get("cues", ["literal"])
     densities: list[str] = details.get("densities", ["sparse"])
+    described: list[str] = details.get("descriptions", ["clean"])
     if not counts or not levels:
         return
     cells = {
-        (c["count"], c["similarity"], c["cue"], c.get("density", "sparse")): c
+        (
+            c["count"],
+            c["similarity"],
+            c["cue"],
+            c.get("density", "sparse"),
+            c.get("descriptions", "clean"),
+        ): c
         for c in details.get("cells", [])
     }
 
@@ -1245,36 +1291,32 @@ def _print_toolscale_grid(console: Console, result: Any) -> None:
     table.add_column("Cue", style="dim")
     if len(densities) > 1:
         table.add_column("Fill", style="dim")
+    if len(described) > 1:
+        table.add_column("Desc", style="dim")
     table.add_column("Tier", style="dim")
     for count in counts:
         table.add_column(f"N={count}", justify="right")
     for cue in cues:
         for density in densities:
-            for level in levels:
-                _toolscale_grid_row(table, cells, counts, cue, density, level, len(densities) > 1)
+            for level_of_description in described:
+                for level in levels:
+                    labels = [cue]
+                    if len(densities) > 1:
+                        labels.append(density)
+                    if len(described) > 1:
+                        labels.append(level_of_description)
+                    labels.append(level)
+                    row = []
+                    for count in counts:
+                        cell = cells.get((count, level, cue, density, level_of_description))
+                        if cell is None:
+                            row.append("")
+                            continue
+                        acc = cell["accuracy_when_called"]
+                        colour = "green" if acc >= 90 else "yellow" if acc >= 70 else "red"
+                        row.append(f"[{colour}]{acc:.0f}[/][dim]/{cell['call_rate']:.0f}[/]")
+                    table.add_row(*labels, *row)
     console.print(table)
-
-
-def _toolscale_grid_row(
-    table: Any,
-    cells: Mapping[tuple[int, str, str, str], Any],
-    counts: list[int],
-    cue: str,
-    density: str,
-    level: str,
-    show_density: bool,
-) -> None:
-    row = []
-    for count in counts:
-        cell = cells.get((count, level, cue, density))
-        if cell is None:
-            row.append("")
-            continue
-        acc = cell["accuracy_when_called"]
-        colour = "green" if acc >= 90 else "yellow" if acc >= 70 else "red"
-        row.append(f"[{colour}]{acc:.0f}[/][dim]/{cell['call_rate']:.0f}[/]")
-    labels = (cue, density, level) if show_density else (cue, level)
-    table.add_row(*labels, *row)
 
 
 # ---------------------------------------------------------------------------

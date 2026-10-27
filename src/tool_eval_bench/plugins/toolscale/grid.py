@@ -59,6 +59,19 @@ CUES: tuple[str, ...] = ("literal", "implied")
 DENSITIES: tuple[str, ...] = ("sparse", "crowded")
 """How fillers are drawn: one tool per unrelated family, or whole families."""
 
+DESCRIPTIONS: tuple[str, ...] = ("clean", "terse", "bare")
+"""What the tool definitions say: as written, one shared line per family, or nothing."""
+
+AXES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("cue", CUES),
+    ("density", DENSITIES),
+    ("descriptions", DESCRIPTIONS),
+)
+"""Condition axes that change an item without changing its target or tier.
+
+The first value of each is the baseline the paired effects compare against.
+"""
+
 NEIGHBOURS = 3
 DEFAULT_COUNTS: tuple[int, ...] = (1, 4, 8, 16, 32, 64)
 
@@ -100,17 +113,20 @@ class ToolscaleItem:
     roles: tuple[tuple[str, str], ...]  # (tool name, "target" | "neighbour" | "filler")
     cue: str = "literal"
     density: str = "sparse"
+    descriptions: str = "clean"
 
     @property
     def item_id(self) -> str:
         """Stable identifier, for example ``list_draft_invoices@N16/near/implied/t0``.
 
-        Crowded items carry a ``/crowded`` segment; sparse ones keep the
-        shorter form.
+        Crowded items carry a ``/crowded`` segment and degraded descriptions a
+        ``/terse`` or ``/bare`` one; baseline conditions keep the shorter form.
         """
         density = "" if self.density == "sparse" else f"/{self.density}"
+        descriptions = "" if self.descriptions == "clean" else f"/{self.descriptions}"
         return (
-            f"{self.target.name}@N{self.count}/{self.similarity}/{self.cue}{density}/t{self.trial}"
+            f"{self.target.name}@N{self.count}/{self.similarity}/{self.cue}"
+            f"{density}{descriptions}/t{self.trial}"
         )
 
     @property
@@ -238,6 +254,27 @@ def validate_densities(densities: list[str]) -> list[str]:
     return [d for d in DENSITIES if d in densities]
 
 
+def validate_descriptions(levels: list[str], catalog: Catalog) -> list[str]:
+    """Known description levels in canonical order, or :class:`GridError`.
+
+    The terse level needs a family ``description_terse`` on every family.
+    """
+    unknown = [level for level in levels if level not in DESCRIPTIONS]
+    if unknown:
+        raise GridError(f"unknown description level {unknown}; choose from {list(DESCRIPTIONS)}")
+    if not levels:
+        raise GridError("at least one description level is needed")
+    if "terse" in levels:
+        missing = [f for f in catalog.families if f.description_terse is None]
+        if missing:
+            first = "" if catalog.is_custom else f" (first: {missing[0].domain}/{missing[0].id})"
+            raise GridError(
+                f"the terse level needs a description_terse on every family; "
+                f"{len(missing)} lack one{first}"
+            )
+    return [level for level in DESCRIPTIONS if level in levels]
+
+
 def select_targets(catalog: Catalog, limit: int | None, seed: int) -> list[CatalogTool]:
     """Targets balanced across domains, then families, then variants.
 
@@ -354,17 +391,21 @@ def build_items(
     seed: int = 0,
     cues: list[str] | None = None,
     densities: list[str] | None = None,
+    descriptions: list[str] | None = None,
 ) -> list[ToolscaleItem]:
     """Every item of the grid, deterministic for a given catalog and seed.
 
     ``cues`` defaults to the literal cue alone, ``densities`` to sparse
-    fillers alone. Adding a cue never changes the tool lists, only the user
-    message; adding a density never changes the sparse items.
+    fillers alone, ``descriptions`` to clean ones. Adding a cue never changes
+    the tool lists, only the user message; adding a density never changes the
+    sparse items; adding a description level changes only what each tool says.
     """
     densities = validate_densities(densities or ["sparse"])
     counts = validate_counts(counts, catalog, densities)
     similarities = validate_similarities(similarities)
     cues = validate_cues(cues or ["literal"], catalog)
+    descriptions = validate_descriptions(descriptions or ["clean"], catalog)
+    variants = [(cue, level) for cue in cues for level in descriptions]
     sparse_ceiling = max_count(catalog, "sparse")
     if trials < 1:
         raise GridError("trials must be at least 1")
@@ -386,8 +427,9 @@ def build_items(
                             tools=(target,),
                             roles=((target.name, "target"),),
                             cue=cue,
+                            descriptions=described,
                         )
-                        for cue in cues
+                        for cue, described in variants
                     )
                     continue
                 wanted = count - 1 - NEIGHBOURS
@@ -421,8 +463,9 @@ def build_items(
                                 roles=roles,
                                 cue=cue,
                                 density=density,
+                                descriptions=described,
                             )
-                            for cue in cues
+                            for cue, described in variants
                         )
     produced = {item.count for item in items}
     empty = [count for count in counts if count not in produced]
@@ -476,5 +519,5 @@ def grade(item: ToolscaleItem, response: ChatCompletionResult) -> tuple[str, str
 
 
 def openai_tools(item: ToolscaleItem) -> list[dict[str, Any]]:
-    """The item's tool list in OpenAI function format, in presentation order."""
-    return [tool.to_openai_tool() for tool in item.tools]
+    """The item's tool list in OpenAI function format, at its description level."""
+    return [tool.to_openai_tool(item.descriptions) for tool in item.tools]

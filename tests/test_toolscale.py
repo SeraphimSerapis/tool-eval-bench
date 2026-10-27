@@ -33,6 +33,7 @@ from tool_eval_bench.plugins.toolscale.grid import (
     build_items,
     grade,
     max_count,
+    openai_tools,
     select_targets,
     validate_counts,
 )
@@ -76,7 +77,13 @@ def _catalog_data(domains: int = 5, families: int = 4, variants: int = 4) -> dic
                         ),
                     }
                 )
-            fams.append({"id": f"fam{f}", "variants": vs})
+            fams.append(
+                {
+                    "id": f"fam{f}",
+                    "description_terse": f"Run operation {f} in domain {d}.",
+                    "variants": vs,
+                }
+            )
         out.append({"id": f"dom{d}", "families": fams})
     return {"version": "test", "domains": out}
 
@@ -177,6 +184,37 @@ class TestCatalogParsing:
         with pytest.raises(CatalogError, match=message):
             parse_catalog(json.dumps(data).encode(), source="custom")
 
+    def test_description_levels_degrade_what_the_model_reads(self) -> None:
+        tool = _catalog().tools[0]
+        clean = tool.to_openai_tool()["function"]
+        terse = tool.to_openai_tool("terse")["function"]
+        bare = tool.to_openai_tool("bare")["function"]
+        assert clean["description"] == tool.description
+        assert terse["description"] == "Run operation 0 in domain 0."
+        assert "description" not in bare
+        for degraded in (terse, bare):
+            assert degraded["name"] == tool.name
+            assert all(
+                "description" not in p for p in degraded["parameters"]["properties"].values()
+            )
+            assert degraded["parameters"]["required"] == clean["parameters"]["required"]
+        # The catalog's own parameter schema is never mutated by degrading a copy.
+        assert "description" in tool.parameters["key0"]
+        with pytest.raises(ValueError, match="unknown description level"):
+            tool.to_openai_tool("vague")
+
+    def test_degraded_levels_keep_only_callable_schema_keys(self) -> None:
+        data = _catalog_data()
+        data["domains"][0]["families"][0]["variants"][0]["parameters"]["key0"].update(
+            title="Alpha key", examples=["alpha flavour"], enum=["K-000", "K-001"]
+        )
+        tool = parse_catalog(json.dumps(data).encode(), source="custom").tools[0]
+        for level in ("terse", "bare"):
+            schema = tool.to_openai_tool(level)["function"]["parameters"]["properties"]["key0"]
+            assert schema == {"type": "string", "enum": ["K-000", "K-001"]}
+        clean = tool.to_openai_tool()["function"]["parameters"]["properties"]["key0"]
+        assert clean["title"] == "Alpha key"
+
     def test_rejects_invalid_json(self) -> None:
         with pytest.raises(CatalogError, match="not valid JSON"):
             parse_catalog(b"{nope", source="custom")
@@ -236,6 +274,18 @@ class TestCatalogLint:
         # "day" alone is too generic to give the answer away.
         variant["query_implied"] = "Please run operation 0 before the day ends, key K-001."
         assert lint_catalog(parse_catalog(json.dumps(data).encode(), source="custom")) == []
+
+    def test_terse_description_must_favour_no_variant(self) -> None:
+        data = _catalog_data()
+        data["domains"][0]["families"][0]["description_terse"] = "Run the alpha operation."
+        findings = lint_catalog(parse_catalog(json.dumps(data).encode(), source="custom"))
+        assert any("terse description names qualifier 'alpha'" in f for f in findings)
+
+    def test_terse_description_must_not_contain_a_tool_name(self) -> None:
+        data = _catalog_data()
+        data["domains"][0]["families"][0]["description_terse"] = "Run op0_dom0_alpha for a key."
+        findings = lint_catalog(parse_catalog(json.dumps(data).encode(), source="custom"))
+        assert any("terse description contains tool name" in f for f in findings)
 
     def test_every_variant_name_carries_its_qualifier(self) -> None:
         findings = self._lint_after(name="op0_dom0_generic")
@@ -503,6 +553,32 @@ class TestGridConstruction:
             _items(catalog, cues=["implied"])
         assert "op1_dom2" not in str(caught.value)
 
+    def test_description_levels_share_everything_but_the_text(self) -> None:
+        items = _items(counts=[1, 8], descriptions=["clean", "terse", "bare"])
+        groups: dict[tuple, dict[str, ToolscaleItem]] = {}
+        for item in items:
+            key = (item.target.name, item.trial, item.count, item.similarity, item.cue)
+            groups.setdefault(key, {})[item.descriptions] = item
+        assert groups and all(set(g) == {"clean", "terse", "bare"} for g in groups.values())
+        for group in groups.values():
+            assert len({tuple(t.name for t in g.tools) for g in group.values()}) == 1
+            assert len({g.query for g in group.values()}) == 1
+            assert group["terse"].item_id.endswith("/terse/t0")
+            assert group["clean"].item_id.endswith(f"/{group['clean'].cue}/t0")
+        sent = openai_tools(next(i for i in items if i.descriptions == "bare"))
+        assert all("description" not in t["function"] for t in sent)
+
+    def test_terse_needs_every_family_description(self) -> None:
+        data = _catalog_data()
+        del data["domains"][1]["families"][2]["description_terse"]
+        catalog = parse_catalog(json.dumps(data).encode(), source="custom")
+        assert _items(catalog, descriptions=["clean", "bare"])
+        with pytest.raises(GridError, match="1 lack one") as caught:
+            _items(catalog, descriptions=["terse"])
+        assert "dom1" not in str(caught.value)  # private catalog: no names
+        with pytest.raises(GridError, match="unknown description level"):
+            _items(descriptions=["poetic"])
+
     def test_unknown_density_is_rejected(self) -> None:
         with pytest.raises(GridError, match="unknown filler density"):
             _items(densities=["packed"])
@@ -591,16 +667,22 @@ class TestSimilarity:
 class _StubAdapter:
     """Picks the target, unless *policy* says otherwise for an item."""
 
-    def __init__(self, policy: Any = None) -> None:
+    def __init__(self, policy: Any = None, tools_policy: Any = None) -> None:
         self.policy = policy
+        self.tools_policy = tools_policy
         self.requests: list[dict[str, Any]] = []
 
     async def chat_completion(self, **kwargs: Any) -> ChatCompletionResult:
         self.requests.append(kwargs)
         query = kwargs["messages"][-1]["content"]
         names = [t["function"]["name"] for t in kwargs["tools"]]
-        if self.policy is not None:
+        if self.tools_policy is not None:
+            outcome = self.tools_policy(query, names, kwargs["tools"])
+        elif self.policy is not None:
             outcome = self.policy(query, names)
+        else:
+            outcome = None
+        if outcome is not None:
             if isinstance(outcome, ChatCompletionResult):
                 return outcome
             if isinstance(outcome, Exception):
@@ -770,6 +852,73 @@ class TestToolscalePlugin:
             similarity_check(both, catalog)["nearest_by_count"]
             == similarity_check(sparse, catalog)["nearest_by_count"]
         )
+
+    async def test_description_effect_isolates_reliance_on_descriptions(self) -> None:
+        """A model that needs descriptions: right when clean, confused when degraded."""
+        catalog = _catalog()
+        items = _items(
+            catalog,
+            counts=[1, 4, 8],
+            cues=["literal", "implied"],
+            descriptions=["clean", "terse", "bare"],
+        )
+
+        def needs_descriptions(query: str, names: list[str], tools: list[dict]) -> str:
+            target = next(n for n in names if _matches(query, n))
+            described = {t["function"]["name"]: t["function"].get("description") for t in tools}
+            if described[target] and "flavour" in described[target]:
+                return target
+            siblings = [n for n in names if n != target]
+            return siblings[0] if siblings else target
+
+        plugin = ToolscalePlugin()
+        result = await _run(items, _StubAdapter(tools_policy=needs_descriptions), catalog)
+        d = result.details
+        assert d["by_descriptions"]["clean"]["accuracy_when_called"] == 100.0
+        assert d["by_descriptions"]["terse"]["accuracy_when_called"] == 0.0
+        assert d["by_descriptions"]["bare"]["accuracy_when_called"] == 0.0
+        effects = d["description_effects"]
+        assert {e["versus"] for e in effects} == {"terse", "bare"}
+        assert all(e["delta"] == 100 for e in effects)
+        assert {e["cue"] for e in effects} == {"literal", "implied"}
+        # Controls exist per cue and description level, labelled by both.
+        assert set(d["control"]) == {
+            f"{cue}, {level}"
+            for cue in ("literal", "implied")
+            for level in ("clean", "terse", "bare")
+        }
+        # Degraded descriptions remove the words that explain each variant.
+        q = d["query_check"]
+        assert q["literal, bare"]["query_to_target"] < q["literal"]["query_to_target"]
+        report = "\n".join(plugin.render_report_section(result))
+        for heading in (
+            "Description Effect",
+            "Headline by Descriptions",
+            "(implied cue, terse descriptions)",
+        ):
+            assert heading in report
+
+    async def test_crowded_only_run_has_no_phantom_sparse_slice(self) -> None:
+        catalog = _catalog()
+        items = _items(catalog, counts=[1, 8, 16], densities=["crowded"], limit=4)
+        plugin = ToolscalePlugin()
+        result = await _run(items, _StubAdapter(), catalog)
+        d = result.details
+        assert d["densities"] == ["crowded"]
+        assert set(d["by_density"]) == {"crowded"}
+        assert d["control"]  # the control still ran, as sparse
+        report = "\n".join(plugin.render_report_section(result))
+        assert "sparse fillers" not in report and "Headline by Fillers" not in report
+
+    async def test_effect_tables_say_all_when_no_other_axis_varies(self) -> None:
+        catalog = _catalog()
+        items = _items(catalog, counts=[8], descriptions=["clean", "bare"], limit=3)
+        plugin = ToolscalePlugin()
+        result = await _run(items, _StubAdapter(), catalog)
+        report = plugin.render_report_section(result)
+        start = report.index("### Description Effect")
+        row = next(line for line in report[start:] if line.startswith("| all | bare |"))
+        assert row
 
     async def test_requests_carry_the_item_tool_list(self) -> None:
         catalog = _catalog()
@@ -1039,6 +1188,7 @@ def _runner_args(**overrides: Any) -> argparse.Namespace:
         "toolscale_similarity": "near,distinct",
         "toolscale_cues": "literal,implied",
         "toolscale_fillers": "sparse,crowded",
+        "toolscale_descriptions": "clean",
         "toolscale_limit": 4,
         "toolscale_catalog": None,
         "trials": 1,
@@ -1050,6 +1200,40 @@ def _runner_args(**overrides: Any) -> argparse.Namespace:
     }
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
+
+
+def test_console_prints_each_slice_at_its_own_largest_count() -> None:
+    from rich.console import Console
+
+    from tool_eval_bench.cli.plugin_runners import _print_toolscale_effects
+
+    def effect(count: int, density: str) -> dict[str, Any]:
+        return {
+            "cue": "literal",
+            "density": density,
+            "descriptions": "clean",
+            "versus": "implied",
+            "count": count,
+            "similarity": "near",
+            "delta": 0.0,
+            "ci_low": 0.0,
+            "ci_high": 0.0,
+            "targets": 4,
+        }
+
+    console = Console(record=True, width=200)
+    _print_toolscale_effects(
+        console,
+        {
+            "cues": ["literal", "implied"],
+            "densities": ["sparse", "crowded"],
+            "descriptions": ["clean"],
+            "cue_effects": [effect(16, "sparse"), effect(64, "sparse"), effect(128, "crowded")],
+        },
+    )
+    output = console.export_text()
+    assert "sparse, near, N=64" in output and "crowded, near, N=128" in output
+    assert "N=16" not in output
 
 
 def test_timeout_stretches_for_long_tool_lists() -> None:

@@ -691,6 +691,12 @@
       "type": "string"
     },
     {
+      "default": "clean",
+      "description": "Description quality: clean (as written), terse (one shared line per family), or bare (no descriptions)",
+      "name": "toolscale_descriptions",
+      "type": "string"
+    },
+    {
       "default": 0,
       "description": "Targets per toolscale cell (0 = one per catalog family)",
       "name": "toolscale_limit",

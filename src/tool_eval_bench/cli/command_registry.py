@@ -116,6 +116,7 @@ PLUGIN_LEGACY = (
     "toolscale_similarity",
     "toolscale_cues",
     "toolscale_fillers",
+    "toolscale_descriptions",
     "toolscale_limit",
     "toolscale_catalog",
     "decision_bench",
