@@ -130,6 +130,7 @@ def _add_plugin_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--similarity", metavar="LIST")
     parser.add_argument("--cues", metavar="LIST")
     parser.add_argument("--fillers", metavar="LIST")
+    parser.add_argument("--descriptions", metavar="LIST")
     parser.add_argument("--catalog", metavar="PATH")
 
 
@@ -218,6 +219,7 @@ def _plugin_argv(argv: list[str]) -> list[str]:
         ("similarity", args.similarity),
         ("cues", args.cues),
         ("fillers", args.fillers),
+        ("descriptions", args.descriptions),
         ("catalog", args.catalog),
     ):
         if value is None:

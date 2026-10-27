@@ -891,6 +891,16 @@
   },
   {
     "choices": null,
+    "default": "clean",
+    "dest": "toolscale_descriptions",
+    "flags": [
+      "--toolscale-descriptions"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": 0,
     "dest": "toolscale_limit",
     "flags": [

@@ -732,6 +732,15 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "description": "Filler density: sparse (one tool per family) or crowded (whole families)",
     },
     {
+        "name": "toolscale_descriptions",
+        "type": "string",
+        "default": "clean",
+        "description": (
+            "Description quality: clean (as written), terse (one shared line per family), "
+            "or bare (no descriptions)"
+        ),
+    },
+    {
         "name": "toolscale_limit",
         "type": "int",
         "default": 0,

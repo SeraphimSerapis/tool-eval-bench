@@ -115,5 +115,12 @@ cleaner version of a null result. Real-world tools as fillers were also deferred
 test description quality, and as fillers they would move count and description quality together;
 description quality needs its own paired axis.
 
+Description quality is an axis of the same catalog rather than real-world tools. Terse shows one
+generic line per family, so every near-duplicate reads the same and only the name differs; bare
+removes descriptions entirely. Per-tool truncation or mutation was rejected because it would
+make each degraded description favour or disfavour its own tool unevenly, and real-world fillers
+because they would change count and description quality together. In calibration this was the
+only condition that produced near-sibling confusion.
+
 Revisit if labs need a continuous similarity axis, crowding inside the target's own domain, or a
 model shows a count effect on crowded lists that sparse lists would need to disentangle.

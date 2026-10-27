@@ -6,6 +6,7 @@
       "families": [
         {
           "id": "forecast",
+          "description_terse": "Get a weather forecast for a location.",
           "variants": [
             {
               "name": "get_forecast_hourly",
@@ -107,6 +108,7 @@
         },
         {
           "id": "air_quality",
+          "description_terse": "Get an air quality reading for a location.",
           "variants": [
             {
               "name": "get_air_ozone_level",
@@ -192,6 +194,7 @@
         },
         {
           "id": "weather_alerts",
+          "description_terse": "List active weather warnings for a location.",
           "variants": [
             {
               "name": "list_flood_alerts",
@@ -297,6 +300,7 @@
         },
         {
           "id": "observation_history",
+          "description_terse": "Get past weather measurements for a location.",
           "variants": [
             {
               "name": "get_observed_rainfall",
@@ -411,6 +415,7 @@
       "families": [
         {
           "id": "invoice_listing",
+          "description_terse": "List invoices on a billing account.",
           "variants": [
             {
               "name": "list_draft_invoices",
@@ -496,6 +501,7 @@
         },
         {
           "id": "refund_issuing",
+          "description_terse": "Refund an amount from a paid invoice.",
           "variants": [
             {
               "name": "issue_card_refund",
@@ -621,6 +627,7 @@
         },
         {
           "id": "tax_rate_lookup",
+          "description_terse": "Look up a tax rate for a jurisdiction.",
           "variants": [
             {
               "name": "get_sales_tax_rate",
@@ -722,6 +729,7 @@
         },
         {
           "id": "payment_reminder",
+          "description_terse": "Schedule a payment reminder for an unpaid invoice.",
           "variants": [
             {
               "name": "schedule_sms_payment_reminder",
@@ -836,6 +844,7 @@
       "families": [
         {
           "id": "leave_balance",
+          "description_terse": "Get an employee's remaining leave balance.",
           "variants": [
             {
               "name": "get_vacation_leave_balance",
@@ -921,6 +930,7 @@
         },
         {
           "id": "leave_request_submission",
+          "description_terse": "Submit a leave request for an employee.",
           "variants": [
             {
               "name": "submit_full_day_leave",
@@ -1044,6 +1054,7 @@
         },
         {
           "id": "leave_request_listing",
+          "description_terse": "List an employee's leave requests.",
           "variants": [
             {
               "name": "list_pending_leave_requests",
@@ -1129,6 +1140,7 @@
         },
         {
           "id": "holiday_calendar",
+          "description_terse": "List holidays an office observes in a year.",
           "variants": [
             {
               "name": "list_national_holidays",
@@ -1223,6 +1235,7 @@
       "families": [
         {
           "id": "shipping_quote",
+          "description_terse": "Quote the price to ship a parcel.",
           "variants": [
             {
               "name": "quote_same_day_shipping",
@@ -1332,6 +1345,7 @@
         },
         {
           "id": "parcel_tracking",
+          "description_terse": "Get tracking information for a parcel.",
           "variants": [
             {
               "name": "get_parcel_latest_scan",
@@ -1401,6 +1415,7 @@
         },
         {
           "id": "parcel_pickup",
+          "description_terse": "Book a courier to collect parcels.",
           "variants": [
             {
               "name": "schedule_residential_pickup",
@@ -1506,6 +1521,7 @@
         },
         {
           "id": "return_label",
+          "description_terse": "Create a return label for a shipment.",
           "variants": [
             {
               "name": "create_damaged_return_label",
@@ -1596,6 +1612,7 @@
       "families": [
         {
           "id": "service_deploy",
+          "description_terse": "Deploy a build of a service.",
           "variants": [
             {
               "name": "deploy_to_staging",
@@ -1685,6 +1702,7 @@
         },
         {
           "id": "build_logs",
+          "description_terse": "Fetch logs from a pipeline run.",
           "variants": [
             {
               "name": "get_compile_logs",
@@ -1786,6 +1804,7 @@
         },
         {
           "id": "pipeline_run_listing",
+          "description_terse": "List pipeline runs for a service.",
           "variants": [
             {
               "name": "list_failed_pipeline_runs",
@@ -1871,6 +1890,7 @@
         },
         {
           "id": "feature_flag_rollout",
+          "description_terse": "Turn on a feature flag for a service.",
           "variants": [
             {
               "name": "enable_flag_general_availability",
@@ -1982,6 +2002,7 @@
       "families": [
         {
           "id": "message_search",
+          "description_terse": "Search email messages in a mailbox.",
           "variants": [
             {
               "name": "search_inbox_messages",
@@ -2087,6 +2108,7 @@
         },
         {
           "id": "mail_filter",
+          "description_terse": "Create a mailbox rule that moves incoming email.",
           "variants": [
             {
               "name": "create_sender_filter",
@@ -2196,6 +2218,7 @@
         },
         {
           "id": "mailing_list_membership",
+          "description_terse": "Add an email address to a mailing list.",
           "variants": [
             {
               "name": "add_list_member",
@@ -2285,6 +2308,7 @@
         },
         {
           "id": "auto_reply",
+          "description_terse": "Turn on an automatic email reply for a mailbox.",
           "variants": [
             {
               "name": "set_auto_reply_internal_senders",
@@ -2399,6 +2423,7 @@
       "families": [
         {
           "id": "file_search",
+          "description_terse": "Search a storage drive for files by name.",
           "variants": [
             {
               "name": "search_image_files",
@@ -2504,6 +2529,7 @@
         },
         {
           "id": "share_link",
+          "description_terse": "Create a share link to a stored file.",
           "variants": [
             {
               "name": "create_view_only_link",
@@ -2626,6 +2652,7 @@
         },
         {
           "id": "storage_usage",
+          "description_terse": "Report storage space used on a drive.",
           "variants": [
             {
               "name": "get_usage_by_user",
@@ -2711,6 +2738,7 @@
         },
         {
           "id": "file_recovery",
+          "description_terse": "Restore a file on a storage drive.",
           "variants": [
             {
               "name": "restore_from_trash",
@@ -2823,6 +2851,7 @@
       "families": [
         {
           "id": "flight_search",
+          "description_terse": "Search flights between two airports on a date.",
           "variants": [
             {
               "name": "search_economy_flights",
@@ -2948,6 +2977,7 @@
         },
         {
           "id": "flight_info",
+          "description_terse": "Get details about a scheduled flight.",
           "variants": [
             {
               "name": "get_flight_gate",
@@ -3037,6 +3067,7 @@
         },
         {
           "id": "seat_selection",
+          "description_terse": "Assign a seat to a passenger on a booking.",
           "variants": [
             {
               "name": "select_window_seat",
@@ -3126,6 +3157,7 @@
         },
         {
           "id": "baggage_addition",
+          "description_terse": "Add baggage items to a flight booking.",
           "variants": [
             {
               "name": "add_carry_on_bag",
@@ -3220,6 +3252,7 @@
       "families": [
         {
           "id": "stock_level",
+          "description_terse": "Count stock of a product for a retail site.",
           "variants": [
             {
               "name": "get_shelf_stock",
@@ -3309,6 +3342,7 @@
         },
         {
           "id": "stock_reorder",
+          "description_terse": "Place a replenishment order for a product.",
           "variants": [
             {
               "name": "create_case_reorder",
@@ -3418,6 +3452,7 @@
         },
         {
           "id": "price_markdown",
+          "description_terse": "Apply a percentage markdown to a product.",
           "variants": [
             {
               "name": "apply_clearance_markdown",
@@ -3527,6 +3562,7 @@
         },
         {
           "id": "shrinkage_logging",
+          "description_terse": "Write off lost stock as shrinkage.",
           "variants": [
             {
               "name": "log_theft_shrinkage",
@@ -3641,6 +3677,7 @@
       "families": [
         {
           "id": "appointment_booking",
+          "description_terse": "Book a consultation for a clinic patient.",
           "variants": [
             {
               "name": "book_in_person_visit",
@@ -3746,6 +3783,7 @@
         },
         {
           "id": "lab_results",
+          "description_terse": "Return a patient's lab results.",
           "variants": [
             {
               "name": "get_blood_lab_results",
@@ -3831,6 +3869,7 @@
         },
         {
           "id": "prescription_refill",
+          "description_terse": "Request a prescription refill for a patient.",
           "variants": [
             {
               "name": "request_counter_refill",
@@ -3920,6 +3959,7 @@
         },
         {
           "id": "specialist_referral",
+          "description_terse": "Refer a patient to a specialist service.",
           "variants": [
             {
               "name": "create_cardiology_referral",
@@ -4014,6 +4054,7 @@
       "families": [
         {
           "id": "thermostat_mode",
+          "description_terse": "Change the mode of a smart thermostat.",
           "variants": [
             {
               "name": "set_thermostat_heating_mode",
@@ -4121,6 +4162,7 @@
         },
         {
           "id": "lighting_scene",
+          "description_terse": "Change the setting of a smart bulb group.",
           "variants": [
             {
               "name": "set_lights_warm_white",
@@ -4243,6 +4285,7 @@
         },
         {
           "id": "door_access_code",
+          "description_terse": "Create an access code for a smart lock.",
           "variants": [
             {
               "name": "create_single_use_access_code",
@@ -4370,6 +4413,7 @@
         },
         {
           "id": "camera_clips",
+          "description_terse": "List recorded clips from a security camera.",
           "variants": [
             {
               "name": "list_motion_clips",
@@ -4480,6 +4524,7 @@
       "families": [
         {
           "id": "contract_drafting",
+          "description_terse": "Generate a first draft contract with a counterparty.",
           "variants": [
             {
               "name": "generate_nondisclosure_contract",
@@ -4569,6 +4614,7 @@
         },
         {
           "id": "clause_extraction",
+          "description_terse": "Extract a clause from a signed contract.",
           "variants": [
             {
               "name": "extract_termination_clause",
@@ -4638,6 +4684,7 @@
         },
         {
           "id": "signature_routing",
+          "description_terse": "Send a contract out for signature.",
           "variants": [
             {
               "name": "send_for_sequential_signature",
@@ -4727,6 +4774,7 @@
         },
         {
           "id": "contract_stage_listing",
+          "description_terse": "List contracts with a counterparty.",
           "variants": [
             {
               "name": "list_contracts_in_negotiation",
@@ -4817,6 +4865,7 @@
       "families": [
         {
           "id": "song_recommendation",
+          "description_terse": "Recommend songs for a listener from a seed.",
           "variants": [
             {
               "name": "recommend_by_artist",
@@ -4922,6 +4971,7 @@
         },
         {
           "id": "song_chart",
+          "description_terse": "Get a song chart for a region.",
           "variants": [
             {
               "name": "get_weekly_song_chart",
@@ -5007,6 +5057,7 @@
         },
         {
           "id": "offline_download",
+          "description_terse": "Download a song for offline listening.",
           "variants": [
             {
               "name": "download_track_data_saver",
@@ -5096,6 +5147,7 @@
         },
         {
           "id": "listening_history",
+          "description_terse": "List tracks a listener has played.",
           "variants": [
             {
               "name": "list_tracks_played_today",
@@ -5186,6 +5238,7 @@
       "families": [
         {
           "id": "course_enrollment",
+          "description_terse": "Enroll a student in a course.",
           "variants": [
             {
               "name": "enroll_for_credit",
@@ -5275,6 +5328,7 @@
         },
         {
           "id": "grade_lookup",
+          "description_terse": "Get a student's grades in a course.",
           "variants": [
             {
               "name": "get_quiz_grades",
@@ -5364,6 +5418,7 @@
         },
         {
           "id": "course_catalog_search",
+          "description_terse": "Search the course catalog by subject.",
           "variants": [
             {
               "name": "search_online_courses",
@@ -5449,6 +5504,7 @@
         },
         {
           "id": "academic_document",
+          "description_terse": "Request a registrar document for a student.",
           "variants": [
             {
               "name": "request_official_transcript",
@@ -5539,6 +5595,7 @@
       "families": [
         {
           "id": "league_standings",
+          "description_terse": "Get a league table for a season.",
           "variants": [
             {
               "name": "get_overall_standings",
@@ -5628,6 +5685,7 @@
         },
         {
           "id": "player_statistics",
+          "description_terse": "Get a player's statistics for a season.",
           "variants": [
             {
               "name": "get_player_scoring_stats",
@@ -5717,6 +5775,7 @@
         },
         {
           "id": "fixture_listing",
+          "description_terse": "List a team's league matches.",
           "variants": [
             {
               "name": "list_upcoming_fixtures",
@@ -5802,6 +5861,7 @@
         },
         {
           "id": "match_tickets",
+          "description_terse": "Buy tickets for a league match.",
           "variants": [
             {
               "name": "buy_unreserved_tickets",
@@ -5896,6 +5956,7 @@
       "families": [
         {
           "id": "recipe_search",
+          "description_terse": "Search recipes by dish keyword.",
           "variants": [
             {
               "name": "search_vegan_recipes",
@@ -5997,6 +6058,7 @@
         },
         {
           "id": "recipe_nutrition",
+          "description_terse": "Return nutrition information for a recipe.",
           "variants": [
             {
               "name": "get_recipe_calorie_count",
@@ -6082,6 +6144,7 @@
         },
         {
           "id": "ingredient_substitution",
+          "description_terse": "Suggest a replacement for a recipe ingredient.",
           "variants": [
             {
               "name": "suggest_allergy_substitute",
@@ -6171,6 +6234,7 @@
         },
         {
           "id": "meal_plan",
+          "description_terse": "Generate a meal plan for a number of days.",
           "variants": [
             {
               "name": "generate_breakfast_plan",
@@ -6277,6 +6341,7 @@
       "families": [
         {
           "id": "catalogue_search",
+          "description_terse": "Search the library catalogue by title.",
           "variants": [
             {
               "name": "search_print_titles",
@@ -6362,6 +6427,7 @@
         },
         {
           "id": "hold_placement",
+          "description_terse": "Place a library hold on a title.",
           "variants": [
             {
               "name": "place_hold_branch_collection",
@@ -6467,6 +6533,7 @@
         },
         {
           "id": "loan_listing",
+          "description_terse": "List a library cardholder's loans.",
           "variants": [
             {
               "name": "list_current_loans",
@@ -6552,6 +6619,7 @@
         },
         {
           "id": "space_reservation",
+          "description_terse": "Reserve a library facility for a time slot.",
           "variants": [
             {
               "name": "reserve_study_room",

@@ -73,6 +73,21 @@ The control and N=4 have no fillers, so crowded skips them. The report
 confirms the axis by measuring each filler's similarity to its closest other
 filler.
 
+### Description quality: clean, terse, and bare
+
+| Level | Each tool shows | At issue |
+|---|---|---|
+| `clean` (default) | its own description and parameter descriptions, as written | the control |
+| `terse` | one generic line shared by its whole family ("List invoices on a billing account."), no parameter descriptions | near-duplicates differ only by name |
+| `bare` | no descriptions at all: name, parameter names, types, and enums | the worst real-world case |
+
+Every variant name carries its qualifier, so each item keeps exactly one
+defensible answer even when the descriptions say nothing. The tool list, the
+query, and the fillers are identical across levels, so clean minus terse (or
+bare) is paired by target. With the implied cue and terse or bare tools, a
+model has to connect "prepared but not sent yet" to `list_draft_invoices`
+from the name alone.
+
 ### The control cell
 
 N=1 offers the target alone. It separates "cannot call a tool at all" from
@@ -105,6 +120,7 @@ noise.
 | `--toolscale-similarity LIST` | `near,related,distinct` | Tiers to sweep |
 | `--toolscale-cues LIST` | `literal,implied` | Query cues to sweep |
 | `--toolscale-fillers LIST` | `sparse` | Filler densities to sweep: `sparse`, `crowded` |
+| `--toolscale-descriptions LIST` | `clean` | Description levels to sweep: `clean`, `terse`, `bare` |
 | `--toolscale-limit N` | 0 (one per family, 68) | Targets per cell, spread across domains first |
 | `--toolscale-catalog PATH` | built-in | A private catalog with the same schema |
 | `--trials N` | 1 | Repetitions inside one run; 3 or more gives a spread per cell |
@@ -113,8 +129,8 @@ noise.
 `--timeout` does too, except that it is raised when a long tool list needs
 more time to prefill, the way the needle benchmark stretches it for long
 haystacks. Under the `plugin toolscale` subcommand the grid flags are
-spelled `--counts`, `--similarity`, `--cues`, `--fillers`, `--limit`, and
-`--catalog`.
+spelled `--counts`, `--similarity`, `--cues`, `--fillers`, `--descriptions`,
+`--limit`, and `--catalog`.
 
 Unlike the tool-call scenarios, where `--trials N` stores N separate runs, a
 toolscale run keeps all its trials in one stored run.
@@ -124,6 +140,8 @@ toolscale run keeps all its trials in one stored run.
 The default grid is 68 targets × (1 control + 5 counts × 3 tiers) × 2 cues =
 2,176 requests per trial. `--toolscale-cues literal` halves that. Adding
 `--toolscale-fillers sparse,crowded` adds 68 × 4 counts × 3 tiers per cue.
+Each extra description level repeats the whole grid, controls included, with
+shorter prompts.
 Prompts run from a few hundred tokens at N=1 to roughly 8K at N=64, 16K at
 N=128, and 33K at N=248. The report shows the measured mean prompt size per
 cell. Each list is shuffled, so prefix caching helps little. A quick smoke run:
@@ -156,8 +174,8 @@ included as misses; the N=1 control is reported on its own, except in a
 control-only run, where it is the score. Read the two together:
 accuracy when called alone can be gamed by declining hard items.
 
-The terminal prints both per cell, one row per tier and cue, plus the cue
-effect and the controls. The Markdown report adds:
+The terminal prints both per cell, one row per tier and condition, plus each
+condition effect (near tier, at each slice's largest N) and the controls. The Markdown report adds:
 
 - **Headline by cue.** Both numbers for each cue.
 - **Grids per cue.** Accuracy when called, call rate, and combined accuracy for
@@ -169,6 +187,12 @@ effect and the controls. The Markdown report adds:
 - **Density effect.** Sparse minus crowded accuracy at each N, tier, and cue,
   paired by target, when the run swept both densities. Positive means a
   catalog dense with near-duplicate clusters costs accuracy.
+- **Description effect.** Clean minus terse, and clean minus bare, at each N,
+  tier, and cue, paired by target. Positive means the model relied on the
+  descriptions. Description effects need `clean` in the sweep, since clean is
+  the baseline; the run warns otherwise. The query check gains a row per
+  degraded level, showing how much word overlap between query and target the
+  degradation removed.
 - **Similarity effect at fixed N.** Distinct accuracy minus near (or related)
   accuracy, paired by target, with a bootstrap interval. Positive means
   similarity costs accuracy.
@@ -195,9 +219,10 @@ error mix as `error`, so a reader can tell them from wrong picks.
 ### The similarity check
 
 The tiers are defined by the catalog's structure. The report confirms them with
-a measured, dependency-free metric: TF-IDF cosine over the words a model reads
-in a tool definition (name, description, and parameter names), with inverse
-document frequency fitted on the catalog. It reports:
+a measured, dependency-free metric: TF-IDF cosine over the words of each clean
+tool definition (name, description, and parameter names), with inverse
+document frequency fitted on the catalog. It always reads the clean
+definitions, whatever description level the run used. It reports:
 
 - mean similarity between a target and its three neighbours, per tier. It must
   rise from distinct to related to near;
@@ -251,6 +276,8 @@ private catalog with the same JSON schema as
 A catalog needs at least two domains, four families per domain, and four
 variants per family. `query_implied` is optional per tool, but the implied cue
 needs it on every tool; run a catalog without it with `--toolscale-cues literal`.
+Likewise a family's `description_terse` is optional, but the terse level needs
+it on every family.
 
 The largest N is set by the domain with the most families, since every
 target's fillers must come from outside its own domain. For sparse fillers it
@@ -267,7 +294,8 @@ largest, plus four. With a private catalog:
 `lint_catalog()` in `plugins/toolscale/catalog.py` checks the authoring rules
 that keep items unambiguous: every variant name carries its qualifier, each
 literal query names its own qualifier and no sibling's, each implied query
-names neither, and no query contains a tool name. A private catalog that breaks them still runs, with a warning.
+names neither, no query contains a tool name, and no family's terse
+description names any of its variants' qualifiers. A private catalog that breaks them still runs, with a warning.
 
 ## Calibration
 
@@ -311,6 +339,21 @@ What it showed:
   act, not less. A first Gemma attempt lost two thirds of its requests to a
   server outage; the rerun had no errors, and the report now prints each
   failed request's reason.
+- **Degraded descriptions finally produced confusion.** At N=16 and 64, with
+  both cues and all three description levels, Gemma's accuracy when called on
+  implied queries in the near tier fell from 100% (clean) to 92% (terse) and
+  88% (bare) at N=64, and to 95 to 96% at N=16. All 16 of its wrong picks
+  were near siblings, such as walk-in collection read as drive-through or
+  "already brought back" read as current loans. Each item was correct with
+  clean descriptions, and each query still rules the wrong pick out, so the
+  descriptions were carrying the distinction the names alone did not. The
+  paired description effect was +16 to +19 points at near, N=64, with
+  intervals clear of zero. With literal queries there was no effect: the name
+  carries the word the query names. DeepSeek stayed at 99.9% accuracy when
+  called, but terse descriptions cut its call rate on implied queries to 87 to
+  94%: a generic family line reads as a complete spec, so it declined ("I
+  can't set her subscription to a daily digest") rather than guess. Bare
+  tools, which contradict nothing, did not have that effect.
 - **Calibration fixes.** One literal query that fit three tools ("premium
   cabin"), one implied query that a faster service also satisfied, and one
   production-deploy variant that the strong model refused even when it was
@@ -319,8 +362,9 @@ What it showed:
 The published drops this benchmark set out to separate come from conditions it
 holds clean on purpose: hundreds of tools, inconsistent or terse descriptions,
 and selection deep in a conversation. Crowded catalogs and lists of up to 248
-tools are now covered and, for these two models, made no difference.
-Description quality and conversation depth are the next to add.
+tools made no difference for these two models. Description quality did: it is
+the one condition here that turned near-duplicates into wrong picks, and it
+compounded with tool count. Conversation depth is the remaining axis.
 
 ## Limits
 
@@ -333,9 +377,10 @@ Description quality and conversation depth are the next to add.
   warns above that, and a rejected request is recorded as an error, not a wrong
   pick. Local OpenAI-compatible servers have no tool cap, only their context
   window.
-- With clean, well-written descriptions and at most 64 tools, current models
-  rarely confuse tools on either cue (see Calibration). Expect the call rate to
-  separate models before accuracy when called does.
+- With clean, well-written descriptions, current models rarely confuse tools
+  on either cue (see Calibration). Expect the call rate to separate models
+  before accuracy when called does, and look at the implied cue with terse or
+  bare descriptions for confusion.
 - Implied queries need a short, common-sense inference that the target's
   description supports. Lint can check that they do not give the answer away,
   not that the inference is fair; that rests on review and calibration.
