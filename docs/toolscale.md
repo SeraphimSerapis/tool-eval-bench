@@ -339,6 +339,21 @@ What it showed:
   act, not less. A first Gemma attempt lost two thirds of its requests to a
   server outage; the rerun had no errors, and the report now prints each
   failed request's reason.
+- **Degraded descriptions finally produced confusion.** At N=16 and 64, with
+  both cues and all three description levels, Gemma's accuracy when called on
+  implied queries in the near tier fell from 100% (clean) to 92% (terse) and
+  88% (bare) at N=64, and to 95 to 96% at N=16. All 16 of its wrong picks
+  were near siblings, such as walk-in collection read as drive-through or
+  "already brought back" read as current loans. Each item was correct with
+  clean descriptions, and each query still rules the wrong pick out, so the
+  descriptions were carrying the distinction the names alone did not. The
+  paired description effect was +16 to +19 points at near, N=64, with
+  intervals clear of zero. With literal queries there was no effect: the name
+  carries the word the query names. DeepSeek stayed at 99.9% accuracy when
+  called, but terse descriptions cut its call rate on implied queries to 87 to
+  94%: a generic family line reads as a complete spec, so it declined ("I
+  can't set her subscription to a daily digest") rather than guess. Bare
+  tools, which contradict nothing, did not have that effect.
 - **Calibration fixes.** One literal query that fit three tools ("premium
   cabin"), one implied query that a faster service also satisfied, and one
   production-deploy variant that the strong model refused even when it was
@@ -347,8 +362,9 @@ What it showed:
 The published drops this benchmark set out to separate come from conditions it
 holds clean on purpose: hundreds of tools, inconsistent or terse descriptions,
 and selection deep in a conversation. Crowded catalogs and lists of up to 248
-tools are now covered and, for these two models, made no difference.
-Description quality and conversation depth are the next to add.
+tools made no difference for these two models. Description quality did: it is
+the one condition here that turned near-duplicates into wrong picks, and it
+compounded with tool count. Conversation depth is the remaining axis.
 
 ## Limits
 
@@ -361,9 +377,10 @@ Description quality and conversation depth are the next to add.
   warns above that, and a rejected request is recorded as an error, not a wrong
   pick. Local OpenAI-compatible servers have no tool cap, only their context
   window.
-- With clean, well-written descriptions and at most 64 tools, current models
-  rarely confuse tools on either cue (see Calibration). Expect the call rate to
-  separate models before accuracy when called does.
+- With clean, well-written descriptions, current models rarely confuse tools
+  on either cue (see Calibration). Expect the call rate to separate models
+  before accuracy when called does, and look at the implied cue with terse or
+  bare descriptions for confusion.
 - Implied queries need a short, common-sense inference that the target's
   description supports. Lint can check that they do not give the answer away,
   not that the inference is fair; that rests on review and calibration.
