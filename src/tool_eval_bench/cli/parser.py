@@ -126,6 +126,11 @@ def _add_plugin_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--subjects", metavar="LIST")
     parser.add_argument("--depths", type=int, metavar="N")
     parser.add_argument("--lengths", type=int, metavar="N")
+    parser.add_argument("--counts", metavar="LIST")
+    parser.add_argument("--similarity", metavar="LIST")
+    parser.add_argument("--cues", metavar="LIST")
+    parser.add_argument("--fillers", metavar="LIST")
+    parser.add_argument("--catalog", metavar="PATH")
 
 
 class _Token(str):
@@ -185,6 +190,8 @@ def _plugin_argv(argv: list[str]) -> list[str]:
             parser.error("--shots is not supported by the IFEval plugin")
         if args.benchmark == "decision":
             parser.error("--shots is not supported by the decision plugin")
+        if args.benchmark == "toolscale":
+            parser.error("--shots is not supported by the toolscale plugin")
         translated.extend((f"{prefix}-shots", str(args.shots)))
     if args.limit is not None:
         if args.benchmark == "needle":
@@ -206,6 +213,18 @@ def _plugin_argv(argv: list[str]) -> list[str]:
         if args.benchmark != "needle":
             parser.error(f"--{name} is only supported by the needle plugin")
         translated.extend((f"--needle-{name}", str(value)))
+    for name, value in (
+        ("counts", args.counts),
+        ("similarity", args.similarity),
+        ("cues", args.cues),
+        ("fillers", args.fillers),
+        ("catalog", args.catalog),
+    ):
+        if value is None:
+            continue
+        if args.benchmark != "toolscale":
+            parser.error(f"--{name} is only supported by the toolscale plugin")
+        translated.extend((f"--toolscale-{name}", value))
     return translated + remainder
 
 

@@ -940,6 +940,344 @@ def _print_needle_grid(console: Console, result: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Toolscale sweep (--toolscale / --toolscale-only)
+# ---------------------------------------------------------------------------
+
+
+# OpenAI's Chat Completions API rejects requests with more tools than this.
+_OPENAI_TOOL_CAP = 128
+
+# A catalog tool definition costs about this many prompt tokens. Used only to
+# stretch the request timeout for long tool lists, as the needle runner does
+# for long haystacks.
+_TOKENS_PER_TOOL_ESTIMATE = 135
+
+
+def _toolscale_timeout(requested: float, largest_count: int) -> float:
+    """The per-request timeout, stretched so a long tool list can prefill."""
+    return max(requested, 120.0 + largest_count * _TOKENS_PER_TOOL_ESTIMATE / 50_000 * 60.0)
+
+
+def _toolscale_list(value: str, flag: str) -> list[str]:
+    items = [part.strip() for part in value.split(",") if part.strip()]
+    if not items:
+        raise ValueError(f"{flag} needs at least one value")
+    return items
+
+
+def _run_toolscale_benchmark(
+    console: Console,
+    model: str,
+    display_name: str,
+    base_url: str,
+    api_key: str | None,
+    args: argparse.Namespace,
+    *,
+    extra_params: dict[str, Any] | None = None,
+    output_dir: str | None = None,
+    run_context: RunContext | None = None,
+) -> None:
+    """Run the tool-count x similarity selection sweep and display the grid."""
+    from rich.markup import escape
+    from rich.panel import Panel
+
+    from tool_eval_bench.adapters.factory import build_adapter
+    from tool_eval_bench.cli.helpers import adapter_options
+    from tool_eval_bench.plugins.toolscale.catalog import (
+        CatalogError,
+        lint_catalog,
+        load_builtin_catalog,
+        load_catalog_file,
+    )
+    from tool_eval_bench.plugins.toolscale.grid import GridError, build_items
+    from tool_eval_bench.plugins.toolscale.plugin import ToolscalePlugin
+
+    seed = getattr(args, "seed", None)
+    trials = max(1, getattr(args, "trials", 1) or 1)
+    catalog_path = getattr(args, "toolscale_catalog", None)
+    limit = args.toolscale_limit or None
+    try:
+        counts = [int(c) for c in _toolscale_list(args.toolscale_counts, "--toolscale-counts")]
+        levels = _toolscale_list(args.toolscale_similarity, "--toolscale-similarity")
+        cues = _toolscale_list(args.toolscale_cues, "--toolscale-cues")
+        densities = _toolscale_list(args.toolscale_fillers, "--toolscale-fillers")
+        catalog = load_catalog_file(catalog_path) if catalog_path else load_builtin_catalog()
+        items = build_items(
+            catalog,
+            counts=counts,
+            similarities=levels,
+            limit=limit,
+            trials=trials,
+            seed=seed if seed is not None else 0,
+            cues=cues,
+            densities=densities,
+        )
+    except (CatalogError, GridError, ValueError) as exc:
+        report_run_failed(console, f"\n[bold red]Toolscale error:[/] {escape(str(exc))}")
+        sys.exit(1)
+
+    if catalog.is_custom:
+        # A private catalog may break the authoring conventions on purpose, so
+        # problems are warnings. Names stay out of the console for the same
+        # reason the report withholds them.
+        problems = lint_catalog(catalog)
+        if problems:
+            console.print(
+                f"  [yellow]⚠ {len(problems)} catalog lint finding(s): items may be "
+                "ambiguous. Run lint_catalog() on the file to see them.[/]"
+            )
+
+    counts = sorted({item.count for item in items})
+    if counts[-1] > _OPENAI_TOOL_CAP:
+        console.print(
+            f"  [yellow]⚠ N up to {counts[-1]}: some providers cap tools per request "
+            f"(OpenAI: {_OPENAI_TOOL_CAP}). A rejected request is recorded as an error, "
+            "not a wrong pick. Local OpenAI-compatible servers have no tool cap.[/]"
+        )
+    levels = [
+        lvl for lvl in ("near", "related", "distinct") if any(i.similarity == lvl for i in items)
+    ]
+    cues = [cue for cue in ("literal", "implied") if any(i.cue == cue for i in items)]
+    densities = [d for d in ("sparse", "crowded") if any(i.density == d for i in items)]
+    targets = len({item.target_rank for item in items})
+    parallel = args.parallel
+    parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]{display_name}[/]\n"
+            f"[dim]N = {', '.join(map(str, counts))} × {', '.join(levels)} × "
+            f"{', '.join(cues)} cue · {', '.join(densities)} fillers · {targets} targets · "
+            f"{trials} trial(s) = "
+            f"{len(items)} requests · "
+            f"catalog v{catalog.version} ({catalog.source}){parallel_label}[/]",
+            title="[bold]🧰 Toolscale — Tool Count × Similarity[/]",
+            border_style="bright_blue",
+        )
+    )
+
+    plugin = ToolscalePlugin()
+    adapter = build_adapter(base_url, **adapter_options(args))
+    result_holder: list = []
+
+    async def run() -> None:
+        with PluginProgressDisplay(console, total=len(items)) as display:
+
+            async def on_progress(current: int, total: int, item_info: dict) -> None:
+                display.tally.record(item_info)
+                label = (
+                    f"N{item_info.get('count')}/{item_info.get('similarity')}/"
+                    f"{item_info.get('cue')}"
+                    if catalog.is_custom
+                    else item_info.get("item_id")
+                )
+                display.advance(
+                    current,
+                    total,
+                    stats=tally_line(
+                        display.tally,
+                        rate=display.rate_per_minute(current),
+                        unit="req/min",
+                        accent="blue",
+                    ),
+                    detail=(
+                        f"  {status_icon(item_info)} [bold]{escape(str(label))}[/]  "
+                        f"[dim]{item_info.get('outcome')}[/]"
+                    ),
+                )
+
+            try:
+                result = await plugin.run(
+                    adapter,
+                    model=model,
+                    base_url=base_url,
+                    api_key=api_key,
+                    temperature=args.temperature,
+                    timeout_seconds=_toolscale_timeout(args.timeout, counts[-1]),
+                    seed=seed,
+                    extra_params=extra_params,
+                    on_progress=on_progress,
+                    items=items,
+                    catalog=catalog,
+                    concurrency=parallel,
+                )
+                result_holder.append(result)
+                d = result.details
+                # The tally describes the scored items (the grid, or the
+                # control when it ran alone), so its counts agree with the score.
+                display.finish(
+                    completed=d["total"],
+                    stats=final_tally_line(
+                        correct=d["grid_correct"],
+                        wrong=d["grid_items"] - d["grid_correct"] - d["grid_errors"],
+                        errors=d["grid_errors"],
+                        score=d["accuracy"],
+                        rate=(
+                            d["total"] / result.duration_seconds * 60
+                            if result.duration_seconds > 0
+                            else 0
+                        ),
+                        unit="req/min",
+                        accent="blue",
+                    ),
+                )
+            finally:
+                if hasattr(adapter, "aclose"):
+                    await adapter.aclose()
+
+    result = _execute_plugin(console, "Toolscale", run, result_holder)
+    if result is None:
+        return
+    details = result.details
+
+    console.print()
+    _print_toolscale_grid(console, result)
+    console.print()
+    console.print(
+        f"  [bold]Accuracy when called:[/] [bold green]{details['accuracy_when_called']:.1f}%[/] "
+        f"({details['grid_correct']}/{details['grid_called']})  ·  "
+        f"[bold]Call rate:[/] [bold cyan]{details['call_rate']:.1f}%[/] "
+        f"({details['grid_called']}/{details['grid_items']})"
+    )
+    for axis in ("by_cue", "by_density"):
+        breakdown = details.get(axis, {})
+        if len(breakdown) > 1:
+            for value, h in breakdown.items():
+                console.print(
+                    f"    [dim]{value}:[/] {h['accuracy_when_called']:.1f}% when called · "
+                    f"{h['call_rate']:.1f}% call rate"
+                )
+    grid_counts: list[int] = details.get("counts", [])
+    density_counts = [e["count"] for e in details.get("density_effects", [])]
+    for effect in details.get("density_effects", []):
+        if effect["similarity"] == "near" and effect["count"] == max(density_counts):
+            console.print(
+                f"  [bold]Density effect[/] ({effect['cue']}, near, N={effect['count']}): "
+                f"{effect['delta']:+.1f} pts [dim](sparse minus crowded; 95% CI "
+                f"{effect['ci_low']:+.1f} to {effect['ci_high']:+.1f})[/]"
+            )
+    for effect in details.get("cue_effects", []):
+        if (
+            effect["similarity"] == "near"
+            and effect.get("density", "sparse") == "sparse"
+            and effect["count"] in (grid_counts[:1] + grid_counts[-1:])
+        ):
+            console.print(
+                f"  [bold]Cue effect[/] (near, N={effect['count']}): {effect['delta']:+.1f} pts "
+                f"[dim](literal minus implied; 95% CI {effect['ci_low']:+.1f} to "
+                f"{effect['ci_high']:+.1f})[/]"
+            )
+    for cue, control in (details.get("control") or {}).items():
+        console.print(
+            f"  [bold]Control (N=1, {cue}):[/] {control['accuracy']:.1f}% "
+            f"({control['correct']}/{control['items']})"
+        )
+    console.print(f"  [dim]Combined accuracy (stored score): {details['accuracy']:.1f}%[/]")
+    errs = details.get("errors", 0)
+    if errs > 0:
+        console.print(f"  [bold yellow]⚠ {errs} errors[/] (counted as misses)")
+    console.print(f"  [bold]Rating:[/] {result.rating}")
+    console.print(
+        f"  [dim]Duration: {result.duration_seconds:.1f}s · Tokens: {result.total_tokens:,}[/]"
+    )
+
+    _finalize_plugin_run(
+        console,
+        mode="toolscale",
+        title="Toolscale",
+        display_name=display_name,
+        result=result,
+        config={
+            "model": model,
+            "base_url": base_url,
+            "mode": "toolscale",
+            # A catalog edit or a different grid must never share a fingerprint
+            # with older runs.
+            "catalog_version": catalog.version,
+            "catalog_source": catalog.source,
+            "catalog_sha256": catalog.sha256,
+            "counts": counts,
+            "similarities": levels,
+            "cues": cues,
+            "densities": densities,
+            "targets": targets,
+            "trials": trials,
+            "temperature": args.temperature,
+            "seed": seed,
+            "extra_params": extra_params or None,
+        },
+        report_metrics=[
+            f"- **Accuracy when called**: **{details['accuracy_when_called']:.1f}%**",
+            f"- **Call rate**: **{details['call_rate']:.1f}%**",
+            f"- **Combined accuracy**: {details['accuracy']:.1f}%",
+            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
+        ],
+        report_lines=plugin.render_report_section(result),
+        output_dir=output_dir,
+        label=getattr(args, "label", None),
+        run_context=run_context,
+    )
+
+
+def _print_toolscale_grid(console: Console, result: Any) -> None:
+    """Print accuracy-when-called and call rate per cell, one row per tier and cue."""
+    from rich.table import Table
+
+    details = result.details
+    counts: list[int] = details.get("counts", [])
+    levels: list[str] = details.get("similarities", [])
+    cues: list[str] = details.get("cues", ["literal"])
+    densities: list[str] = details.get("densities", ["sparse"])
+    if not counts or not levels:
+        return
+    cells = {
+        (c["count"], c["similarity"], c["cue"], c.get("density", "sparse")): c
+        for c in details.get("cells", [])
+    }
+
+    # Two numbers per cell in an 80-column terminal: keep them bare and say
+    # what they are once, in the title.
+    table = Table(
+        title="Accuracy when called / call rate (%)",
+        title_style="bold",
+        border_style="bright_blue",
+    )
+    table.add_column("Cue", style="dim")
+    if len(densities) > 1:
+        table.add_column("Fill", style="dim")
+    table.add_column("Tier", style="dim")
+    for count in counts:
+        table.add_column(f"N={count}", justify="right")
+    for cue in cues:
+        for density in densities:
+            for level in levels:
+                _toolscale_grid_row(table, cells, counts, cue, density, level, len(densities) > 1)
+    console.print(table)
+
+
+def _toolscale_grid_row(
+    table: Any,
+    cells: Mapping[tuple[int, str, str, str], Any],
+    counts: list[int],
+    cue: str,
+    density: str,
+    level: str,
+    show_density: bool,
+) -> None:
+    row = []
+    for count in counts:
+        cell = cells.get((count, level, cue, density))
+        if cell is None:
+            row.append("")
+            continue
+        acc = cell["accuracy_when_called"]
+        colour = "green" if acc >= 90 else "yellow" if acc >= 70 else "red"
+        row.append(f"[{colour}]{acc:.0f}[/][dim]/{cell['call_rate']:.0f}[/]")
+    labels = (cue, density, level) if show_density else (cue, level)
+    table.add_row(*labels, *row)
+
+
+# ---------------------------------------------------------------------------
 # Decision models (--decision-bench / --decision-bench-only)
 # ---------------------------------------------------------------------------
 

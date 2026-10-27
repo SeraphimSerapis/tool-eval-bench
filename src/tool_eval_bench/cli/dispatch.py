@@ -113,6 +113,7 @@ from tool_eval_bench.cli.plugin_runners import (
     _run_ifeval_benchmark,
     _run_mmlu_benchmark,
     _run_needle_benchmark,
+    _run_toolscale_benchmark,
 )
 from tool_eval_bench.cli.pressure import (
     run_pressure_sweep as _run_pressure_sweep,
@@ -1966,6 +1967,7 @@ def _run_plugins_mode(target: _Target) -> bool:
             "mmlu": _run_mmlu_benchmark,
             "ifeval": _run_ifeval_benchmark,
             "needle": _run_needle_benchmark,
+            "toolscale": _run_toolscale_benchmark,
             "decision": _run_decision_benchmark,
         },
         extra_params=target.extra_params or None,
@@ -1990,7 +1992,7 @@ def _skip_tool_eval_mode(target: _Target) -> bool:
         message = (
             "--skip-tool-eval has no effect without "
             "--perf, --perf-only, --spec-bench, --gsm8k, --mmlu, --ifeval, "
-            "--needle, or --decision-bench."
+            "--needle, --toolscale, or --decision-bench."
         )
         if args.json:
             logger.warning(message)

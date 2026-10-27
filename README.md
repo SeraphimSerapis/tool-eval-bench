@@ -246,6 +246,7 @@ anthropic` pins it for a gateway root that serves several formats.
 | **Hard Mode** | 35 opt-in adversarial, stateful, and transactional scenarios in category P, for models that already score well, broken down by capability in reports | [hard-mode](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/hard-mode.md) |
 | **Throughput** | llama-bench-style prefill and generation speed, with depth and concurrency sweeps; `--perf-preset long` sweeps depth to 128K | [benchmarks](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/benchmarks.md) |
 | **Long-context retrieval** | Needle-in-a-haystack across a grid of context lengths and depths, reporting effective context | [needle](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/needle.md) |
+| **Toolset scale** | Tool selection as tool count, description similarity, and query explicitness vary independently, reporting accuracy when a tool is called apart from call rate, with paired effects and an error mix that attributes each miss to similarity or count | [toolscale](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/toolscale.md) |
 | **Context pressure** | Pre-fill a share of the window, or a fixed token count, before each scenario to find where quality slips | [context-pressure](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/context-pressure.md) |
 | **Speculative decoding** | Acceptance rate, effective tokens per second, speedup, plus a live monitor | [speculative-decoding](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/speculative-decoding.md) |
 | **Accuracy** | GSM8K, MMLU, and IFEval through the same adapter | [benchmarks](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/benchmarks.md) |
@@ -292,7 +293,7 @@ design, and per-scenario acceptance notes: [docs/methodology.md](https://github.
 | `run` | Run tool-call scenarios |
 | `probe` | Check inference-server reachability |
 | `bench` | Throughput, speculative-decoding, or context-pressure benchmarks |
-| `plugin` | Run GSM8K, MMLU, IFEval, needle-in-a-haystack, or decision models |
+| `plugin` | Run GSM8K, MMLU, IFEval, needle-in-a-haystack, toolscale, or decision models |
 | `spec-live` | Monitor speculative-decoding metrics |
 | `decision-live` | Monitor a decision model with live canary probes |
 | `compare` | Compare stored runs or Markdown reports |

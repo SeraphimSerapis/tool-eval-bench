@@ -898,6 +898,22 @@ answer from its prefix cache. The headline number is the **effective context** �
 the largest haystack size retrieved at every depth. See
 [needle.md](needle.md) for the grid, the flags, and the grading rules.
 
+### Toolscale — Tool Count × Description Similarity
+
+Category L measures selection from one fixed 52-tool set. Toolscale sweeps the
+tool count N and the similarity of the target's three nearest neighbours as two
+independent axes, using a 272-tool catalog whose domain, family, and variant
+structure defines the similarity tiers. Each item is one request graded on the
+first tool call's name. Each tool has a literal query that names its
+distinguishing qualifier and an implied one that only implies it, sent with the
+identical tool list. An opt-in crowded condition draws the fillers as whole
+near-duplicate families. Contrasts are paired by target, fillers are shared across
+tiers and nested across N, and each wrong pick is classified as a neighbour or
+a filler, which attributes the miss to similarity or to count. The headline
+reports accuracy when a tool was called apart from the call rate, because a
+clarifying question is abstention, not confusion. A TF-IDF similarity check
+confirms the tiers. See [toolscale.md](toolscale.md).
+
 All the accuracy plugins score against the total selected item count. Request
 errors therefore reduce the displayed score and mark the run `incomplete`; they
 are not removed from the denominator. The result also records answered items and

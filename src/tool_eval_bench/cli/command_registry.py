@@ -110,6 +110,14 @@ PLUGIN_LEGACY = (
     "needle_only",
     "needle_depths",
     "needle_lengths",
+    "toolscale",
+    "toolscale_only",
+    "toolscale_counts",
+    "toolscale_similarity",
+    "toolscale_cues",
+    "toolscale_fillers",
+    "toolscale_limit",
+    "toolscale_catalog",
     "decision_bench",
     "decision_bench_only",
 )
@@ -121,6 +129,7 @@ PLUGIN_FLAG_STEMS = {
     "mmlu": "mmlu",
     "ifeval": "ifeval",
     "needle": "needle",
+    "toolscale": "toolscale",
     "decision": "decision_bench",
 }
 

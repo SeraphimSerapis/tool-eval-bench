@@ -656,6 +656,54 @@
     },
     {
       "default": false,
+      "description": "Run the tool-count x similarity selection sweep after tool-call scenarios",
+      "name": "toolscale",
+      "type": "bool"
+    },
+    {
+      "default": false,
+      "description": "Run ONLY the toolscale sweep (skip tool-call scenarios)",
+      "name": "toolscale_only",
+      "type": "bool"
+    },
+    {
+      "default": "1,4,8,16,32,64",
+      "description": "Tool counts N to sweep; 1 is the target-only control",
+      "name": "toolscale_counts",
+      "type": "string"
+    },
+    {
+      "default": "near,related,distinct",
+      "description": "Neighbour similarity tiers to sweep",
+      "name": "toolscale_similarity",
+      "type": "string"
+    },
+    {
+      "default": "literal,implied",
+      "description": "Query cues: literal names the target's qualifier, implied only implies it",
+      "name": "toolscale_cues",
+      "type": "string"
+    },
+    {
+      "default": "sparse",
+      "description": "Filler density: sparse (one tool per family) or crowded (whole families)",
+      "name": "toolscale_fillers",
+      "type": "string"
+    },
+    {
+      "default": 0,
+      "description": "Targets per toolscale cell (0 = one per catalog family)",
+      "name": "toolscale_limit",
+      "type": "int"
+    },
+    {
+      "default": null,
+      "description": "Private toolscale catalog JSON; the report withholds its items",
+      "name": "toolscale_catalog",
+      "type": "string"
+    },
+    {
+      "default": false,
       "description": "Run the decision-model benchmark (/v1/systemone) after tool-call scenarios",
       "name": "decision_bench",
       "type": "bool"
@@ -856,6 +904,7 @@
         "mmlu",
         "ifeval",
         "needle",
+        "toolscale",
         "decision"
       ],
       "description": "Run an external accuracy benchmark",
@@ -864,6 +913,7 @@
         "mmlu_only",
         "ifeval_only",
         "needle_only",
+        "toolscale_only",
         "decision_bench_only"
       ]
     },

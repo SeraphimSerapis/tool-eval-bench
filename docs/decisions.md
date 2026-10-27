@@ -78,3 +78,42 @@ browser rendering stays close without them.
 
 Revisit if `resvg-py` stops publishing wheels for a supported platform, if a pure-Python
 renderer can produce the same output, or if the card needs text features resvg lacks.
+
+## Toolscale: a plugin with structurally defined similarity
+
+The tool-count sweep (#319) is a plugin, not a scenario group or a flag on Category L. A flag
+would change TC-37 to TC-40 and break comparison with every stored Category L result, and a grid
+of about a thousand generated single-turn items does not fit the hand-graded, three-tier scenario
+model or belong in the main score.
+
+Similarity is defined by the catalog's structure (variants of one family, families of one
+domain, other domains) and only checked by a TF-IDF metric. Defining it by an embedding model
+was rejected: the axis would depend on which embedding model ran, and it would need a new
+dependency or a second endpoint. The count axis adds only fillers from other domains, at most one
+per family, so the target's neighbourhood stays fixed while N grows.
+
+The headline is two numbers, accuracy when a tool was called and the call rate, not one blended
+accuracy. In calibration a mid-sized model scored 83% blended while never picking a wrong tool:
+every miss was a clarifying question about an optional parameter. A blend would have reported
+abstention as confusion. Blended accuracy stays as the stored score so runs still sort.
+
+Each tool carries a literal query, which names its qualifier, and an implied one, which does
+not. Making the literal queries harder in place was rejected because it would remove the clean
+control and leave nothing to separate keyword matching from understanding. In calibration
+neither cue produced measurable confusion in two models up to 64 tools, so the next difficulty
+axes are description quality, crowded fillers, and larger N rather than harder queries.
+
+Crowded fillers draw whole families instead of one tool per family, walking the same family
+order, so the target's neighbours and slot layout are unchanged and sparse minus crowded is
+paired. Crowded stays opt-in because it adds 75% to an already doubled grid, and in calibration it
+changed nothing for two models.
+
+Counts above the sparse maximum build crowded cells only, up to 248 tools from the 272-tool
+catalog. Growing the catalog to about 1,040 tools for clean sparse lists at 256 was rejected:
+neither calibrated model lost accuracy when called at 248 crowded, so a larger catalog would buy a
+cleaner version of a null result. Real-world tools as fillers were also deferred. They mostly
+test description quality, and as fillers they would move count and description quality together;
+description quality needs its own paired axis.
+
+Revisit if labs need a continuous similarity axis, crowding inside the target's own domain, or a
+model shows a count effect on crowded lists that sparse lists would need to disentangle.

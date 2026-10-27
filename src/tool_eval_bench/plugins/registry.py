@@ -12,6 +12,7 @@ def _load_builtin_plugins() -> dict[str, type[BenchmarkPlugin]]:
     from tool_eval_bench.plugins.ifeval.plugin import IFEvalPlugin
     from tool_eval_bench.plugins.mmlu.plugin import MMLUPlugin
     from tool_eval_bench.plugins.needle.plugin import NeedlePlugin
+    from tool_eval_bench.plugins.toolscale.plugin import ToolscalePlugin
 
     return {
         "decision": DecisionPlugin,
@@ -19,6 +20,7 @@ def _load_builtin_plugins() -> dict[str, type[BenchmarkPlugin]]:
         "ifeval": IFEvalPlugin,
         "mmlu": MMLUPlugin,
         "needle": NeedlePlugin,
+        "toolscale": ToolscalePlugin,
     }
 
 
