@@ -303,6 +303,14 @@ What it showed:
   sparse and crowded lists alike. Four misses in about 1,400 calls are too few
   to call a count-by-similarity interaction, but that cell is where to look
   with weaker models or more trials.
+- **Up to 248 tools, still no confusion.** With crowded lists at N=64, 128,
+  and 248 on the implied cue, DeepSeek was correct on all 537 calls and Gemma
+  on 483 of 486 (99.4%). Gemma's misses were the same shipping item twice and
+  one near sibling at N=248. Gemma's call rate rose with the list, from 87% at
+  N=64 to 94% at N=248 in the near tier: more tools made it more willing to
+  act, not less. A first Gemma attempt lost two thirds of its requests to a
+  server outage; the rerun had no errors, and the report now prints each
+  failed request's reason.
 - **Calibration fixes.** One literal query that fit three tools ("premium
   cabin"), one implied query that a faster service also satisfied, and one
   production-deploy variant that the strong model refused even when it was
@@ -310,9 +318,9 @@ What it showed:
 
 The published drops this benchmark set out to separate come from conditions it
 holds clean on purpose: hundreds of tools, inconsistent or terse descriptions,
-and selection deep in a conversation. Crowded catalogs are now an axis and,
-for these two models, made no difference. Description quality, larger N, and
-conversation depth are the next to add.
+and selection deep in a conversation. Crowded catalogs and lists of up to 248
+tools are now covered and, for these two models, made no difference.
+Description quality and conversation depth are the next to add.
 
 ## Limits
 

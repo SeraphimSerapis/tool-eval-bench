@@ -108,4 +108,12 @@ order, so the target's neighbours and slot layout are unchanged and sparse minus
 paired. Crowded stays opt-in because it adds 75% to an already doubled grid, and in calibration it
 changed nothing for two models.
 
-Revisit if labs need a continuous similarity axis, or crowding inside the target's own domain.
+Counts above the sparse maximum build crowded cells only, up to 248 tools from the 272-tool
+catalog. Growing the catalog to about 1,040 tools for clean sparse lists at 256 was rejected:
+neither calibrated model lost accuracy when called at 248 crowded, so a larger catalog would buy a
+cleaner version of a null result. Real-world tools as fillers were also deferred. They mostly
+test description quality, and as fillers they would move count and description quality together;
+description quality needs its own paired axis.
+
+Revisit if labs need a continuous similarity axis, crowding inside the target's own domain, or a
+model shows a count effect on crowded lists that sparse lists would need to disentangle.
