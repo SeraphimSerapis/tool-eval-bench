@@ -68,6 +68,7 @@
       ["path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" }],
       ["circle", { cx: "12", cy: "12", r: "3" }],
     ],
+    trash: [["path", { d: "M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6" }]],
   };
 
   function icon(name) {
@@ -159,6 +160,9 @@
     runsRequestSeq: 0,
     selectRunSeq: 0,
     compareRuns: [],
+    // Selection mode in the run list, for deleting several runs at once.
+    selecting: false,
+    deleteSelection: new Set(),
   };
 
   // ------------------------------------------------------------ Formatting
@@ -460,7 +464,12 @@
         }
       }
       state.runs = data.runs || [];
+      // Only runs still on screen may stay selected, so a delete never
+      // reaches a run the current filters hide.
+      const shown = new Set(state.runs.map((r) => r.run_id));
+      for (const id of state.deleteSelection) if (!shown.has(id)) state.deleteSelection.delete(id);
       renderRunsList();
+      updateSelectBar();
       if (!state.selectedRunId && state.runs.length > 0) {
         selectRun(state.runs[0].run_id);
       } else if (!state.runs.length && !state.selectedRunId) {
@@ -480,16 +489,19 @@
 
   function runCard(run) {
     const selected = run.run_id === state.selectedRunId;
+    const picked = state.selecting && state.deleteSelection.has(run.run_id);
     const score = run.final_score;
     return h(
       "button",
       {
         type: "button",
-        class: "run-card run-item",
+        class: state.selecting ? "run-card run-item is-selecting" : "run-card run-item",
         dataset: { runId: run.run_id },
-        "aria-current": selected ? "true" : null,
-        onclick: () => selectRun(run.run_id),
+        "aria-current": selected && !state.selecting ? "true" : null,
+        "aria-pressed": state.selecting ? String(picked) : null,
+        onclick: () => (state.selecting ? toggleDeleteSelection(run.run_id) : selectRun(run.run_id)),
       },
+      state.selecting ? h("span", { class: "run-check", "aria-hidden": "true" }, picked ? icon("check") : null) : null,
       modelBlock(run.model, "run-model"),
       ring(score, {
         label: score === null || score === undefined ? null : Math.round(score),
@@ -521,6 +533,131 @@
       return;
     }
     setChildren(container, ...state.runs.map(runCard));
+  }
+
+  // ------------------------------------------------------- Deleting runs
+
+  function setSelecting(on) {
+    state.selecting = on;
+    state.deleteSelection.clear();
+    const toggle = byId("runs-select-toggle");
+    if (toggle) {
+      toggle.setAttribute("aria-pressed", String(on));
+      toggle.textContent = on ? "Done" : "Select";
+    }
+    const bar = byId("runs-select-bar");
+    if (bar) bar.hidden = !on;
+    renderRunsList();
+    updateSelectBar();
+  }
+
+  function toggleDeleteSelection(runId) {
+    if (state.deleteSelection.has(runId)) state.deleteSelection.delete(runId);
+    else state.deleteSelection.add(runId);
+    renderRunsList();
+    updateSelectBar();
+    // Re-rendering replaced the button; keep keyboard focus on the same run.
+    byId("runs-list-container")?.querySelector(`[data-run-id="${CSS.escape(runId)}"]`)?.focus();
+  }
+
+  function updateSelectBar() {
+    const count = state.deleteSelection.size;
+    const label = byId("runs-select-count");
+    if (label) label.textContent = `${count} selected`;
+    const del = byId("runs-delete-selected");
+    if (del) del.disabled = count === 0;
+    const all = byId("runs-select-all");
+    if (all) {
+      all.textContent = count > 0 && count === state.runs.length ? "Clear" : "Select all";
+      all.disabled = state.runs.length === 0;
+    }
+  }
+
+  function toggleSelectAll() {
+    if (state.runs.length && state.deleteSelection.size === state.runs.length) state.deleteSelection.clear();
+    else for (const run of state.runs) state.deleteSelection.add(run.run_id);
+    renderRunsList();
+    updateSelectBar();
+  }
+
+  function setRunsStatus(message, kind = "") {
+    const el = byId("runs-status");
+    if (!el) return;
+    el.textContent = message;
+    el.className = kind ? `rail-status is-${kind}` : "rail-status";
+  }
+
+  // Resolves true only when the user picked Delete; Esc, a click outside,
+  // and Cancel all resolve false.
+  function confirmDelete(runs) {
+    const dialog = byId("delete-dialog");
+    if (!dialog) return Promise.resolve(false);
+    const count = runs.length;
+    const shown = runs.slice(0, 5);
+    byId("delete-dialog-title").textContent = count === 1 ? "Delete this run?" : `Delete ${count} runs?`;
+    setChildren(
+      byId("delete-dialog-body"),
+      h("p", {
+        text:
+          count === 1
+            ? "The run and its Markdown report are deleted. This cannot be undone."
+            : "The runs and their Markdown reports are deleted. This cannot be undone.",
+      }),
+      h(
+        "ul",
+        { class: "dialog-list" },
+        shown.map((r) => h("li", {}, h("span", { text: splitModel(r.model).name }), h("span", { class: "mono muted", text: r.run_id })))
+      ),
+      count > shown.length ? h("p", { class: "muted", text: `and ${count - shown.length} more` }) : null,
+      runs.some((r) => r.status === "running")
+        ? h("p", { class: "dialog-note", text: "A run still executing in another process writes its row back when it finishes." })
+        : null
+    );
+    dialog.returnValue = "";
+    return new Promise((resolve) => {
+      dialog.addEventListener(
+        "close",
+        () => {
+          const confirmed = dialog.returnValue === "delete";
+          dialog.returnValue = "";
+          resolve(confirmed);
+        },
+        { once: true }
+      );
+      dialog.showModal();
+    });
+  }
+
+  async function deleteRuns(runs) {
+    if (!runs.length || !(await confirmDelete(runs))) return;
+    setRunsStatus("");
+    let res;
+    try {
+      res = await postJson("/api/runs/delete", { run_ids: runs.map((r) => r.run_id) });
+    } catch (err) {
+      setRunsStatus(`Could not delete: ${err.message}`, "error");
+      return;
+    }
+    const gone = new Set([...res.deleted, ...res.missing]);
+    if (gone.has(state.selectedRunId)) {
+      state.selectedRunId = null;
+      state.selectedRun = null;
+      // Clear the deleted run now; loadRunsList then opens the newest one.
+      renderInspector();
+    }
+    if (gone.has(state.compareLeftId)) state.compareLeftId = "";
+    if (gone.has(state.compareRightId)) state.compareRightId = "";
+    if (!state.compareLeftId || !state.compareRightId) state.lastComparison = null;
+    if (state.selecting) setSelecting(false);
+    const runCount = res.deleted.length;
+    const reportCount = res.reports_removed;
+    let message = `Deleted ${runCount} ${runCount === 1 ? "run" : "runs"} and ${reportCount} ${reportCount === 1 ? "report" : "reports"}.`;
+    if (res.reports_kept.length) {
+      const kept = res.reports_kept.length;
+      message += ` Kept ${kept} ${kept === 1 ? "report" : "reports"}: ${res.reports_kept[0].reason}.`;
+    }
+    setRunsStatus(message, res.reports_kept.length ? "warn" : "");
+    await loadRunsList();
   }
 
   async function selectRun(runId) {
@@ -709,6 +846,7 @@
       run.status === "interrupted"
         ? h("button", { type: "button", class: "btn btn-primary", id: "inspect-resume-btn", onclick: () => resumeInterruptedRun(run.run_id) }, icon("play"), "Resume")
         : null,
+      h("button", { type: "button", class: "btn btn-danger", id: "inspect-delete-btn", onclick: () => deleteRuns([run]) }, icon("trash"), "Delete"),
     ];
 
     const hero = h(
@@ -1925,6 +2063,11 @@
     });
     byId("history-search")?.addEventListener("input", scheduleRunsListLoad);
     byId("history-status-filter")?.addEventListener("change", loadRunsList);
+    byId("runs-select-toggle")?.addEventListener("click", () => setSelecting(!state.selecting));
+    byId("runs-select-all")?.addEventListener("click", toggleSelectAll);
+    byId("runs-delete-selected")?.addEventListener("click", () =>
+      deleteRuns(state.runs.filter((r) => state.deleteSelection.has(r.run_id)))
+    );
     byId("history-type-filter")?.addEventListener("change", loadRunsList);
     renderInspector();
     loadRunsList();

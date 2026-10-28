@@ -844,6 +844,36 @@
       "type": "float"
     },
     {
+      "default": null,
+      "description": "Delete these stored runs and their Markdown reports, or the runs the --delete-* filters and --model select, and exit",
+      "name": "delete",
+      "type": "list[string]"
+    },
+    {
+      "choices": [
+        "completed",
+        "failed",
+        "interrupted",
+        "running"
+      ],
+      "default": null,
+      "description": "With --delete, select runs with these statuses",
+      "name": "delete_status",
+      "type": "list[string]"
+    },
+    {
+      "default": null,
+      "description": "With --delete, select runs stored before this UTC date (YYYY-MM-DD)",
+      "name": "delete_before",
+      "type": "string"
+    },
+    {
+      "default": false,
+      "description": "Skip the --delete confirmation prompt",
+      "name": "yes",
+      "type": "bool"
+    },
+    {
       "default": false,
       "description": "Weight scenario scores by difficulty tier (1\u00d7trivial \u2026 5\u00d7very hard)",
       "name": "weight_by_difficulty",
@@ -884,6 +914,12 @@
       "description": "Live-monitor a decision model with canary probes",
       "legacy_flags": [
         "decision_live"
+      ]
+    },
+    "delete": {
+      "description": "Delete stored runs and their Markdown reports",
+      "legacy_flags": [
+        "delete"
       ]
     },
     "export": {
@@ -952,5 +988,5 @@
       ]
     }
   },
-  "schema_version": "9"
+  "schema_version": "10"
 }

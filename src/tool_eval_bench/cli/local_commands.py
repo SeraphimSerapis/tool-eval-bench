@@ -150,6 +150,12 @@ def handle_local_command(
         from tool_eval_bench.cli.card import run_card_command
 
         run_card_command(args, console)
+    elif getattr(args, "delete", None) is not None:
+        # Ahead of --dry-run, which a delete reads as "list, do not delete".
+        _reject_json(args, "--delete")
+        from tool_eval_bench.cli.delete import run_delete_command
+
+        run_delete_command(args, console)
     elif args.dry_run:
         _render_dry_run(args, console, resolve_scenarios)
     else:

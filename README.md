@@ -195,6 +195,18 @@ tool-eval-bench compare A B      # two persisted runs, side by side
 tool-eval-bench serve            # all of the above in a browser (needs the web extra)
 ```
 
+To clear out runs you no longer want, such as interrupted or failed attempts:
+
+```bash
+tool-eval-bench delete --status interrupted --status failed   # lists them, then asks
+tool-eval-bench delete RUN_ID                                  # one run
+tool-eval-bench delete --before 2026-09-01 --dry-run           # preview, delete nothing
+```
+
+Deleting a run removes its database row, traces, checkpoints, and Markdown
+report. In the web UI, use **Delete** on a run, or **Select** above the run list
+to delete several.
+
 ### Point it at your server
 
 For remote servers or non-standard ports, create a `.env` file:
@@ -299,6 +311,7 @@ design, and per-scenario acceptance notes: [docs/methodology.md](https://github.
 | `compare` | Compare stored runs or Markdown reports |
 | `history`, `leaderboard`, `export` | Inspect or export persisted results |
 | `card` | Render a shareable results card from stored runs |
+| `delete` | Delete stored runs and their Markdown reports |
 | `resume` | Continue an incomplete run |
 | `serve` | Launch the local web UI for browsing, live runs, comparisons, and launching benchmarks; open the sign-in link it prints ([details](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/cli-reference.md#web-ui-serve)) |
 
@@ -405,7 +418,7 @@ See [answer audit limits and API configuration](https://github.com/SeraphimSerap
 
 `tool-eval-bench serve` opens a local web UI over the same SQLite history:
 run traces, cohort leaderboards, two-run comparisons, and live runs you can
-launch, watch, stop, and resume. It needs the `web` extra.
+launch, watch, stop, and resume. It can also delete runs. It needs the `web` extra.
 
 ```bash
 tool-eval-bench serve                         # http://localhost:8765, or the next free port

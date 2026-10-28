@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date
 
 from tool_eval_bench.adapters.wire_format import WIRE_FORMATS
 from tool_eval_bench.application.decision_audit import (
@@ -34,6 +35,21 @@ def _tcp_port(value: str) -> int:
     if not 0 <= parsed <= 65535:
         raise argparse.ArgumentTypeError(f"must be a TCP port (0-65535), got {parsed}")
     return parsed
+
+
+# Every status a stored run can carry, as the web UI's status filter lists them.
+RUN_STATUSES = ("completed", "failed", "interrupted", "running")
+
+
+def iso_date(value: str) -> str:
+    """Parse a ``YYYY-MM-DD`` date for --delete-before, returned as written."""
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"expected a date as YYYY-MM-DD, got {value!r}") from exc
+    if len(value) != 10:
+        raise argparse.ArgumentTypeError(f"expected a date as YYYY-MM-DD, got {value!r}")
+    return value
 
 
 def _make_parser() -> argparse.ArgumentParser:
@@ -836,7 +852,7 @@ def _make_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help="Card file path or directory; a .png path also writes PNG "
-        "(default: <output-dir>/cards/<model>-<YYYYMMDD>-<fingerprint>.svg)",
+        "(default: <output-dir>/cards/<model>-<YYYYMMDD-HHMM>-<fingerprint>.svg)",
     )
     card_grp.add_argument(
         "--card-png",
@@ -849,6 +865,37 @@ def _make_parser() -> argparse.ArgumentParser:
         default=2.0,
         metavar="N",
         help="PNG pixel scale relative to the SVG size, 0.25 to 8 (default: 2)",
+    )
+
+    # -- Deleting runs -----------------------------------------------------
+    delete_grp = parser.add_argument_group("deleting runs")
+    delete_grp.add_argument(
+        "--delete",
+        nargs="*",
+        default=None,
+        metavar="RUN_ID",
+        help="Delete stored runs and their Markdown reports, then exit. Name run IDs, or "
+        "select runs with --delete-status, --delete-before, and --model",
+    )
+    delete_grp.add_argument(
+        "--delete-status",
+        action="append",
+        choices=RUN_STATUSES,
+        default=None,
+        metavar="STATUS",
+        help=f"With --delete, select runs with this status (repeatable): {', '.join(RUN_STATUSES)}",
+    )
+    delete_grp.add_argument(
+        "--delete-before",
+        type=iso_date,
+        default=None,
+        metavar="DATE",
+        help="With --delete, select runs stored before this UTC date (YYYY-MM-DD)",
+    )
+    delete_grp.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the --delete confirmation prompt; required when stdin is not a terminal",
     )
 
     # -- Scoring options ---------------------------------------------------

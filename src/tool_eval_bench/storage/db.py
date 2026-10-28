@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, NamedTuple
 
 _SCHEMA_VERSION = 5
 
@@ -137,6 +137,15 @@ _SELECT_RUNS = (
     "scores_json, metadata_json, run_type, report_path, session_id "
     "FROM scenario_runs"
 )
+
+
+class DeletedRunRow(NamedTuple):
+    """A run ``RunRepository.delete_runs`` removed."""
+
+    run_id: str
+    report_path: str | None
+    #: Another stored run still names the same report.
+    report_shared: bool
 
 
 def _run_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
@@ -436,6 +445,37 @@ class RunRepository:
         with self._conn as conn:
             conn.execute("DELETE FROM run_checkpoints WHERE run_id=?", (run_id,))
 
+    def delete_runs(self, run_ids: Collection[str]) -> List[DeletedRunRow]:
+        """Delete runs with their traces and checkpoints, in one transaction.
+
+        Returns one row per run that existed, in the order given. The tables
+        have no foreign keys, so every table is cleared by hand; an id with no
+        run row still loses any orphaned traces or checkpoints. ``report_shared``
+        is true when a run that survives the delete stores the same report path,
+        so the caller can leave that file in place.
+        """
+        removed: list[tuple[str, str | None]] = []
+        with self._write_lock, self._conn as conn:
+            for run_id in dict.fromkeys(run_ids):
+                row = conn.execute(
+                    "SELECT report_path FROM scenario_runs WHERE run_id=?", (run_id,)
+                ).fetchone()
+                conn.execute("DELETE FROM scenario_runs WHERE run_id=?", (run_id,))
+                conn.execute("DELETE FROM scenario_traces WHERE run_id=?", (run_id,))
+                conn.execute("DELETE FROM run_checkpoints WHERE run_id=?", (run_id,))
+                if row is not None:
+                    removed.append((run_id, row[0]))
+            deleted: list[DeletedRunRow] = []
+            for run_id, report_path in removed:
+                shared = bool(report_path) and (
+                    conn.execute(
+                        "SELECT 1 FROM scenario_runs WHERE report_path=? LIMIT 1", (report_path,)
+                    ).fetchone()
+                    is not None
+                )
+                deleted.append(DeletedRunRow(run_id, report_path, shared))
+        return deleted
+
     def get_traces(self, run_id: str) -> dict[str, str]:
         """Return externalized traces for a run, keyed by scenario ID."""
         with self._conn as conn:
@@ -525,6 +565,52 @@ class RunRepository:
         if not runs:
             return None
         return self.get(runs[0]["run_id"])
+
+    def list_summaries(
+        self,
+        *,
+        statuses: Collection[str] | None = None,
+        before: str | None = None,
+        model: str | None = None,
+    ) -> List[dict[str, Any]]:
+        """Return identifying fields of every matching run, newest first, without scores.
+
+        ``before`` is an ISO date or timestamp; a run matches when its stored
+        UTC ``created_at`` sorts before it, so ``2026-10-01`` keeps that whole
+        day.  ``model`` matches as in :meth:`latest_session_id`.  ``None`` skips
+        a filter and an empty ``statuses`` matches nothing.  There is no limit:
+        a bulk delete must see every match, not the newest page of them.
+        """
+        if statuses is not None and not statuses:
+            return []
+        label = _json_field("metadata_json", "label")
+        query = "SELECT run_id, created_at, status, model, run_type, " + label
+        query += " FROM scenario_runs WHERE 1=1"
+        params: list[str] = []
+        if statuses is not None:
+            ordered = sorted(set(statuses))
+            query += f" AND status IN ({', '.join('?' * len(ordered))})"
+            params.extend(ordered)
+        if before:
+            query += " AND created_at < ?"
+            params.append(before)
+        if model:
+            query += " AND (model = ? OR substr(model, -length(?) - 1) = '/' || ?)"
+            params.extend((model, model, model))
+        query += " ORDER BY created_at DESC, rowid DESC"
+        with self._conn as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [
+            {
+                "run_id": row[0],
+                "created_at": row[1],
+                "status": row[2],
+                "model": row[3],
+                "run_type": row[4],
+                "label": row[5],
+            }
+            for row in rows
+        ]
 
     def list_session(self, session_id: str) -> List[dict[str, Any]]:
         """Return every run tagged with *session_id*, oldest first, without traces.

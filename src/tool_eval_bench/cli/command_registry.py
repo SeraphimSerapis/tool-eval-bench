@@ -261,6 +261,12 @@ COMMAND_SPECS = (
         legacy_flags=("card",),
     ),
     CommandSpec(
+        "delete",
+        "Delete stored runs and their Markdown reports",
+        translation="delete",
+        legacy_flags=("delete",),
+    ),
+    CommandSpec(
         "resume",
         "Resume an incomplete run",
         translation="resume",

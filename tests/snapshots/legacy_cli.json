@@ -1293,6 +1293,51 @@
   },
   {
     "choices": null,
+    "default": null,
+    "dest": "delete",
+    "flags": [
+      "--delete"
+    ],
+    "nargs": "*",
+    "required": false
+  },
+  {
+    "choices": [
+      "completed",
+      "failed",
+      "interrupted",
+      "running"
+    ],
+    "default": null,
+    "dest": "delete_status",
+    "flags": [
+      "--delete-status"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "delete_before",
+    "flags": [
+      "--delete-before"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "yes",
+    "flags": [
+      "--yes"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": false,
     "dest": "weight_by_difficulty",
     "flags": [
