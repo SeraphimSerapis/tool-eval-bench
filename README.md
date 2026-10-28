@@ -430,9 +430,9 @@ tool-eval-bench --seed 42 --perf --perf-preset long --needle --gsm8k --mmlu --if
 tool-eval-bench card --png --hardware "RTX 5090 32GB"
 ```
 
-The card is written to `runs/cards/<model>-<YYYYMMDD>-<fingerprint>.svg`, using
-the model name in lowercase with punctuation turned into dashes, the date of the
-newest run on the card, and the first
+The card is written to `runs/cards/<model>-<YYYYMMDD-HHMM>-<fingerprint>.svg`,
+using the model name in lowercase with punctuation turned into dashes, the UTC
+date and time of the newest run on the card, and the first
 8 characters of the configuration fingerprint. Add `--png` for a `.png` beside
 it. PNG export needs the `card` extra, installed as shown under
 [Install](#install) or with

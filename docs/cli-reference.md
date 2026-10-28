@@ -431,13 +431,15 @@ tool-eval-bench card --png --hardware "RTX 5090 32GB"
 | `--scale N` | PNG pixel scale relative to the SVG, from 0.25 to 8 (default: 2) |
 | `--output-dir DIR` | Root of the default path (default: `./runs`) |
 
-The default path is `<output-dir>/cards/<model>-<YYYYMMDD>-<fingerprint>.svg`:
+The default path is `<output-dir>/cards/<model>-<YYYYMMDD-HHMM>-<fingerprint>.svg`:
 the model name lowercased with other punctuation turned into dashes, so
-`Qwen/Qwen3-32B-AWQ` becomes `qwen-qwen3-32b-awq`, then the date of the newest
-run on the card, and the first
-8 characters of the configuration fingerprint, so two configurations of one
-model on one day do not overwrite each other. The date comes from the stored
-run, never from today. When an SVG is rendered again without `--png`, `card`
+`Qwen/Qwen3-32B-AWQ` becomes `qwen-qwen3-32b-awq`, then the UTC date and time of
+the newest run on the card, and the first
+8 characters of the configuration fingerprint. The fingerprint keeps two
+configurations of one model apart; the time keeps two sessions of one
+configuration on one day apart, such as a rerun that only adds `--needle`. The
+time comes from the stored run, never from now, so rendering the same session
+again writes the same file. When an SVG is rendered again without `--png`, `card`
 warns if an older PNG with the same name sits beside it.
 
 The card uses the newest completed run of each kind in the selection: the

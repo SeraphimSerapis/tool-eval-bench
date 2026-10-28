@@ -158,13 +158,13 @@ class TestTranslation:
 
 
 class TestPaths:
-    def test_default_path_uses_model_slug_and_run_date(
+    def test_default_path_uses_model_slug_and_run_time(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         text, renderer, loaded = _run(
             monkeypatch, ["card", "--output-dir", str(tmp_path), "--hardware", "H100"]
         )
-        svg = tmp_path / "cards" / "qwen3-32b-awq-20261010.svg"
+        svg = tmp_path / "cards" / "qwen3-32b-awq-20261010-1213.svg"
         assert svg.read_text(encoding="utf-8") == "<svg>Qwen3-32B-AWQ</svg>"
         assert not svg.with_suffix(".png").exists()
         assert str(svg) in text
@@ -181,7 +181,7 @@ class TestPaths:
     ) -> None:
         card = dataclasses.replace(FULL_CARD, fingerprint="0123abcd99")
         _run(monkeypatch, ["card", "--output-dir", str(tmp_path)], card=card)
-        assert (tmp_path / "cards" / "qwen3-32b-awq-20261010-0123abcd.svg").exists()
+        assert (tmp_path / "cards" / "qwen3-32b-awq-20261010-1213-0123abcd.svg").exists()
 
     def test_default_root_is_runs_under_the_working_directory(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -194,19 +194,30 @@ class TestPaths:
     @pytest.mark.parametrize(
         ("created_at", "expected"),
         [
-            ("2026-10-10T12:13:00Z", "20261010"),
-            ("2026-06-02 08:25:16 garbage", "20260602"),
+            ("2026-10-10T12:13:00Z", "20261010-1213"),
+            ("2026-06-02 08:25:16 garbage", "20260602-0825"),
+            ("2026-06-02 garbage", "20260602"),
         ],
     )
-    def test_card_date_reads_the_run_timestamp(self, created_at: str, expected: str) -> None:
+    def test_card_timestamp_reads_the_run_timestamp(self, created_at: str, expected: str) -> None:
         card = dataclasses.replace(EMPTY_CARD, created_at=created_at)
-        assert card_cli.card_date(card) == expected
+        assert card_cli.card_timestamp(card) == expected
+
+    def test_later_session_with_the_same_fingerprint_gets_its_own_file(self) -> None:
+        # A second run the same day that only adds --needle keeps the tool-call
+        # fingerprint, and used to overwrite the first card.
+        first = dataclasses.replace(
+            FULL_CARD, fingerprint="9aaa93e4ab", created_at="2026-10-26T13:30:00Z"
+        )
+        second = dataclasses.replace(first, created_at="2026-10-26T14:23:00Z")
+        assert card_cli.default_filename(first) != card_cli.default_filename(second)
+        assert card_cli.default_filename(second) == "qwen3-32b-awq-20261026-1423-9aaa93e4.svg"
 
     def test_output_directory_gets_the_default_name(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         _run(monkeypatch, ["card", "-o", str(tmp_path)])
-        assert (tmp_path / "qwen3-32b-awq-20261010.svg").exists()
+        assert (tmp_path / "qwen3-32b-awq-20261010-1213.svg").exists()
 
     def test_output_without_a_suffix_becomes_svg(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
