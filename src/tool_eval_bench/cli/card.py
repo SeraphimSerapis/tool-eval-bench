@@ -37,21 +37,28 @@ def _renderer() -> ModuleType:
     return importlib.import_module(_RENDERER_MODULE)
 
 
-def card_date(card: CardData) -> str:
-    """``YYYYMMDD`` of the newest run on the card, or ``undated`` without a readable timestamp.
+def card_timestamp(card: CardData) -> str:
+    """``YYYYMMDD-HHMM`` of the newest run on the card, or ``undated`` without a readable one.
 
-    The run date rather than today's keeps a regenerated card on the same file.
+    The run time rather than now keeps a regenerated card on the same file. The
+    time of day keeps two sessions of one configuration on one day apart: a
+    later run that adds ``--needle`` leaves the tool-call fingerprint unchanged.
     """
     try:
-        return datetime.fromisoformat(card.created_at.replace("Z", "+00:00")).strftime("%Y%m%d")
+        stamp = datetime.fromisoformat(card.created_at.replace("Z", "+00:00"))
     except ValueError:
-        match = re.match(r"(\d{4})-(\d{2})-(\d{2})", card.created_at)
-        return "".join(match.groups()) if match else "undated"
+        match = re.match(r"(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?", card.created_at)
+        if not match:
+            return "undated"
+        year, month, day, hour, minute = match.groups()
+        date = f"{year}{month}{day}"
+        return f"{date}-{hour}{minute}" if hour else date
+    return stamp.strftime("%Y%m%d-%H%M")
 
 
 def default_filename(card: CardData) -> str:
-    """``<model>-<YYYYMMDD>[-<fingerprint>].svg``, with the model name slugified."""
-    parts = [slugify_label(card.model) or "model", card_date(card)]
+    """``<model>-<YYYYMMDD-HHMM>[-<fingerprint>].svg``, with the model name slugified."""
+    parts = [slugify_label(card.model) or "model", card_timestamp(card)]
     if card.fingerprint:
         parts.append(card.fingerprint[:_FILENAME_FINGERPRINT_CHARS])
     return "-".join(parts) + ".svg"

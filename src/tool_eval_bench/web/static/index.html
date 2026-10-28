@@ -54,7 +54,10 @@
       <div class="split">
         <aside class="rail" aria-label="Stored benchmark runs">
           <div class="rail-head">
-            <h1 class="rail-title">Stored runs <span id="runs-count" class="count"></span></h1>
+            <div class="rail-title-row">
+              <h1 class="rail-title">Stored runs <span id="runs-count" class="count"></span></h1>
+              <button type="button" id="runs-select-toggle" class="btn btn-ghost btn-sm" aria-pressed="false">Select</button>
+            </div>
             <div class="input-with-icon">
               <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
               <label class="visually-hidden" for="history-search">Search runs</label>
@@ -89,6 +92,12 @@
             <div class="skeleton"></div>
             <div class="skeleton"></div>
           </div>
+          <div id="runs-select-bar" class="rail-select-bar" hidden>
+            <span id="runs-select-count" class="rail-select-count">0 selected</span>
+            <button type="button" id="runs-select-all" class="btn btn-ghost btn-sm">Select all</button>
+            <button type="button" id="runs-delete-selected" class="btn btn-danger btn-sm" disabled>Delete</button>
+          </div>
+          <p id="runs-status" class="rail-status" role="status"></p>
         </aside>
         <section id="run-inspector" class="pane" aria-label="Run inspector"></section>
       </div>
@@ -106,5 +115,14 @@
       <div id="compare-workspace" class="page"></div>
     </section>
   </main>
+
+  <dialog id="delete-dialog" class="dialog" aria-labelledby="delete-dialog-title" aria-describedby="delete-dialog-body" closedby="any">
+    <h2 id="delete-dialog-title" class="dialog-title">Delete run?</h2>
+    <div id="delete-dialog-body" class="dialog-body"></div>
+    <form method="dialog" class="dialog-actions">
+      <button type="submit" value="cancel" class="btn" autofocus>Cancel</button>
+      <button type="submit" value="delete" class="btn btn-danger">Delete</button>
+    </form>
+  </dialog>
 </body>
 </html>

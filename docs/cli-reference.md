@@ -387,6 +387,12 @@ export, and two-run comparisons with McNemar's test. It also launches runs,
 streams them live over Server-Sent Events, and stops or resumes them. CLI runs
 can be watched too: the UI follows their SQLite checkpoints.
 
+**Deleting runs.** **Delete** in a run's header removes that run. **Select**
+above the run list lets you pick several, and **Select all** picks every run
+the current search and filters show. Both ask for confirmation and remove the
+same things as [`delete`](#deleting-runs). The UI refuses to delete a run it is
+still executing; stop it first.
+
 **Sign-in.** On startup the server prints a link ending in `?token=...`. The token
 changes on every start. Opening the link sets a session cookie
 (`HttpOnly`, `SameSite=Strict`), and every request except static assets must
@@ -406,6 +412,40 @@ endpoint again (or set `TOOL_EVAL_BASE_URL`); a different endpoint is refused.
 Runs that used context pressure, a decision judge, scenario variants, or a
 held-out pack need options only the CLI has, so resume those with
 `tool-eval-bench resume RUN_ID` and the original flags.
+
+## Deleting runs
+
+`delete` removes stored runs: the database row, its traces and checkpoints, and
+the Markdown report the run wrote. Name runs by id, or select them with
+filters, which combine.
+
+```bash
+tool-eval-bench delete RUN_ID [RUN_ID ...]
+tool-eval-bench delete --status interrupted --status failed
+tool-eval-bench delete --before 2026-09-01 --model Qwen3-32B --dry-run
+```
+
+| Flag | Purpose |
+|------|---------|
+| `RUN_ID` | Runs to delete. An unknown id is an error, and nothing is deleted |
+| `--status STATUS` | Select runs with this status, repeatable: `completed`, `failed`, `interrupted`, `running` |
+| `--before DATE` | Select runs stored before this UTC date, as `YYYY-MM-DD` |
+| `--model MODEL` | Select only this model's runs; `Qwen3-32B` also matches `Qwen/Qwen3-32B` |
+| `--dry-run` | List the selected runs and delete nothing |
+| `-y`, `--yes` | Skip the confirmation prompt. Required when stdin is not a terminal |
+
+Run ids and filters cannot be combined, and one of them is required, so a bare
+`delete` never selects everything. `delete` lists the runs before it asks.
+
+A report is removed only when its stored path has the shape the report writers
+produce: `<YYYY>/<MM>/<run id>[--<label>][<suffix>].md`. A path that does not
+match, or a report another stored run still names, is kept and listed. Cards
+under `runs/cards/` are not touched. A run marked `running` may belong to a
+process that is still going; if it is, that process writes its row back when it
+finishes.
+
+The flat form is `--delete [RUN_ID ...]` with `--delete-status`,
+`--delete-before`, `--model`, `--dry-run`, and `--yes`.
 
 ## Results card
 
@@ -431,13 +471,15 @@ tool-eval-bench card --png --hardware "RTX 5090 32GB"
 | `--scale N` | PNG pixel scale relative to the SVG, from 0.25 to 8 (default: 2) |
 | `--output-dir DIR` | Root of the default path (default: `./runs`) |
 
-The default path is `<output-dir>/cards/<model>-<YYYYMMDD>-<fingerprint>.svg`:
+The default path is `<output-dir>/cards/<model>-<YYYYMMDD-HHMM>-<fingerprint>.svg`:
 the model name lowercased with other punctuation turned into dashes, so
-`Qwen/Qwen3-32B-AWQ` becomes `qwen-qwen3-32b-awq`, then the date of the newest
-run on the card, and the first
-8 characters of the configuration fingerprint, so two configurations of one
-model on one day do not overwrite each other. The date comes from the stored
-run, never from today. When an SVG is rendered again without `--png`, `card`
+`Qwen/Qwen3-32B-AWQ` becomes `qwen-qwen3-32b-awq`, then the UTC date and time of
+the newest run on the card, and the first
+8 characters of the configuration fingerprint. The fingerprint keeps two
+configurations of one model apart; the time keeps two sessions of one
+configuration on one day apart, such as a rerun that only adds `--needle`. The
+time comes from the stored run, never from now, so rendering the same session
+again writes the same file. When an SVG is rendered again without `--png`, `card`
 warns if an older PNG with the same name sits beside it.
 
 The card uses the newest completed run of each kind in the selection: the

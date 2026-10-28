@@ -22,6 +22,7 @@ from tool_eval_bench.application.leaderboard import (
     extract_leaderboard_rows,
     shorten_model_name,
 )
+from tool_eval_bench.application.run_deletion import delete_runs
 from tool_eval_bench.application.run_queries import (
     get_run,
     recent_runs,
@@ -46,6 +47,8 @@ from tool_eval_bench.web.security import SecurityHeaders, SessionGate
 
 # Matches the CLI leaderboard's window, so both rank the same runs.
 _LEADERBOARD_WINDOW = 500
+# /api/runs returns at most this many runs, so a delete from the list never needs more.
+_MAX_DELETE_IDS = 500
 
 _STATIC_MIME_TYPES = {
     "index.html": "text/html; charset=utf-8",
@@ -547,6 +550,37 @@ def build_starlette_app(
             return _error(str(exc), 400)
         return JSONResponse(resumed, status_code=202)
 
+    async def delete_runs_endpoint(request: Request) -> JSONResponse:
+        try:
+            payload = await _json_object(request, required=True)
+        except ValueError as exc:
+            return _error(str(exc), 400)
+        run_ids = payload.get("run_ids")
+        if (
+            not isinstance(run_ids, list)
+            or not run_ids
+            or not all(isinstance(run_id, str) and run_id for run_id in run_ids)
+        ):
+            return _error("'run_ids' must be a non-empty list of run IDs", 400)
+        if len(run_ids) > _MAX_DELETE_IDS:
+            return _error(f"Delete at most {_MAX_DELETE_IDS} runs per request", 400)
+        live = [run_id for run_id in run_ids if (session := hub.get(run_id)) and session.is_live]
+        if live:
+            return _error(
+                f"Stop the run before deleting it: {', '.join(live)} is still running here", 409
+            )
+        result = await run_in_threadpool(delete_runs, run_ids)
+        return JSONResponse(
+            {
+                "deleted": list(result.deleted),
+                "missing": list(result.missing),
+                "reports_removed": len(result.reports_removed),
+                "reports_kept": [
+                    {"run_id": kept.run_id, "reason": kept.reason} for kept in result.reports_kept
+                ],
+            }
+        )
+
     routes = [
         Route("/", endpoint=index_page, methods=["GET"]),
         Route("/static/{filename:path}", endpoint=static_asset, methods=["GET"]),
@@ -554,6 +588,7 @@ def build_starlette_app(
         Route("/api/probe", endpoint=probe_endpoint, methods=["POST"]),
         Route("/api/runs", endpoint=list_runs_endpoint, methods=["GET"]),
         Route("/api/runs", endpoint=launch_run_endpoint, methods=["POST"]),
+        Route("/api/runs/delete", endpoint=delete_runs_endpoint, methods=["POST"]),
         Route("/api/runs/{run_id}", endpoint=get_run_endpoint, methods=["GET"]),
         Route("/api/runs/{run_id}/progress", endpoint=run_progress_endpoint, methods=["GET"]),
         Route("/api/runs/{run_id}/events", endpoint=run_events_endpoint, methods=["GET"]),

@@ -92,6 +92,8 @@ def _command_help(command: str, *, include_legacy_options: bool = True) -> argpa
         parser.add_argument("run_id")
     elif command == "card":
         _add_card_options(parser)
+    elif command == "delete":
+        _add_delete_options(parser)
     elif command == "compare-report":
         parser.add_argument("report_a", help="First Markdown report")
         parser.add_argument("report_b", help="Second Markdown report")
@@ -290,7 +292,7 @@ def _add_card_options(parser: argparse.ArgumentParser) -> None:
         "--output",
         metavar="PATH",
         help="Card path or directory; a .png path also writes PNG "
-        "(default: <output-dir>/cards/<model>-<YYYYMMDD>-<fingerprint>.svg)",
+        "(default: <output-dir>/cards/<model>-<YYYYMMDD-HHMM>-<fingerprint>.svg)",
     )
     parser.add_argument(
         "--png", action="store_true", help="Also write PNG (needs tool-eval-bench[card])"
@@ -334,6 +336,52 @@ def _card_argv(argv: list[str]) -> list[str]:
     return translated
 
 
+def _add_delete_options(parser: argparse.ArgumentParser) -> None:
+    """The ``delete`` subcommand's own options, translated by :func:`_delete_argv`."""
+    from tool_eval_bench.cli.legacy_parser import RUN_STATUSES, iso_date
+
+    parser.add_argument("run_ids", nargs="*", metavar="RUN_ID", help="Runs to delete")
+    parser.add_argument(
+        "--status",
+        action="append",
+        choices=RUN_STATUSES,
+        metavar="STATUS",
+        help=f"Delete runs with this status (repeatable): {', '.join(RUN_STATUSES)}",
+    )
+    parser.add_argument(
+        "--before",
+        type=iso_date,
+        metavar="DATE",
+        help="Delete runs stored before this UTC date (YYYY-MM-DD)",
+    )
+    parser.add_argument("--model", metavar="MODEL", help="Delete only this model's runs")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="List the runs that would be deleted and stop"
+    )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Do not ask for confirmation; required when stdin is not a terminal",
+    )
+
+
+def _delete_argv(argv: list[str]) -> list[str]:
+    args = _command_help("delete").parse_args(argv)
+    translated = ["--delete", *args.run_ids]
+    for status in args.status or ():
+        translated.append(f"--delete-status={status}")
+    if args.before is not None:
+        translated.append(f"--delete-before={args.before}")
+    if args.model is not None:
+        translated.append(f"--model={args.model}")
+    if args.dry_run:
+        translated.append("--dry-run")
+    if args.yes:
+        translated.append("--yes")
+    return translated
+
+
 def translate_argv(argv: Sequence[str]) -> list[str]:
     """Translate a subcommand invocation into legacy flat-parser arguments."""
     values = list(argv)
@@ -359,6 +407,8 @@ def translate_argv(argv: Sequence[str]) -> list[str]:
         return _export_argv(rest)
     if spec.translation == "card":
         return _card_argv(rest)
+    if spec.translation == "delete":
+        return _delete_argv(rest)
     if spec.translation == "resume":
         run_id, remaining = _take_positional(rest, "resume", "run_id")
         if run_id is None:

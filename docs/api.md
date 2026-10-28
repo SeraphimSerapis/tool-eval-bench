@@ -260,7 +260,7 @@ External tools can validate benchmark configuration:
 ```python
 from tool_eval_bench.schema import get_schema
 
-schema = get_schema()  # {"schema_version": "8", "args": [...]}
+schema = get_schema()  # {"schema_version": "10", "args": [...]}
 for arg in schema["args"]:
     print(f"{arg['name']}: {arg['type']} = {arg['default']}")
 ```

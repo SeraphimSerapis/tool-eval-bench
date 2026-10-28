@@ -37,7 +37,7 @@ from tool_eval_bench.domain.engines import BACKEND_LABELS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 # Argument schema version — bump when adding/removing/renaming args.
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 
 COMMANDS_SCHEMA: dict[str, dict[str, Any]] = commands_schema()
 
@@ -883,6 +883,33 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "type": "float",
         "default": 2.0,
         "description": "PNG pixel scale relative to the SVG size, 0.25 to 8",
+    },
+    # -- Deleting runs --
+    {
+        "name": "delete",
+        "type": "list[string]",
+        "default": None,
+        "description": "Delete these stored runs and their Markdown reports, or the runs "
+        "the --delete-* filters and --model select, and exit",
+    },
+    {
+        "name": "delete_status",
+        "type": "list[string]",
+        "default": None,
+        "choices": ["completed", "failed", "interrupted", "running"],
+        "description": "With --delete, select runs with these statuses",
+    },
+    {
+        "name": "delete_before",
+        "type": "string",
+        "default": None,
+        "description": "With --delete, select runs stored before this UTC date (YYYY-MM-DD)",
+    },
+    {
+        "name": "yes",
+        "type": "bool",
+        "default": False,
+        "description": "Skip the --delete confirmation prompt",
     },
     # -- Scoring --
     {

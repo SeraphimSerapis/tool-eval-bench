@@ -56,7 +56,8 @@ graph TD
 
 `cli/` and `web/` may format reports through `storage.reports`, which is a renderer, but must not open the
 database. Connection lifetime, query shape, and the write-then-persist ordering belong to
-`application/`; `application/run_queries.py` holds the reads the delivery layer needs.
+`application/`; `application/run_queries.py` holds the reads the delivery layer needs, and
+`application/run_deletion.py` the one delete path.
 
 These rules describe first-party layer imports. Measurement runners such as
 throughput, speculative decoding, and context pressure use the
@@ -226,6 +227,7 @@ Shared infrastructure:
 | `run_config.py` | `RunSettings` and `RUN_CONFIG_FIELDS`, the one declaration of every persisted config key. Each row says whether the key is written, fingerprinted, compared on `--resume`, and kept in the leaderboard's cross-model cohort. The builder, the resume check, and the cohort exclusions all derive from it. A new run setting needs a row, and `tests/test_run_config_schema.py` fails until it has one |
 | `run_context.py` | Backend detection (`identify_backend`) and `RunContext` collection, shared by the CLI and the Python API |
 | `run_queries.py` | Read queries against stored runs, each owning the repository's lifetime |
+| `run_deletion.py` | `delete_runs` removes runs in one transaction, then their Markdown reports, removing only a path shaped like a report the writers produce. `find_runs` selects runs by status, date, and model for the `delete` command |
 | `card_data.py` | `build_card_data` maps stored runs onto `CardData`, newest completed run of each kind, copying named fields only. `load_card_data` selects the runs by session or run id through `run_queries` |
 
 ### `storage/` — Persistence
@@ -248,6 +250,7 @@ Shared infrastructure:
 | `scored_run.py` | `ScoredRun`, the one place that turns the flags into `run_benchmark` kwargs (for the live, plain, and `--json` runners) and the `RunSettings` the resume check compares |
 | `compare_report.py` | HTML comparison command for Markdown reports |
 | `local_commands.py` | Dry-run and local command rendering |
+| `delete.py` | The `delete` command: selects runs by id or filter through `application.run_deletion`, lists them, confirms, and deletes |
 | `card.py` | The `card` command: loads `CardData` through `application.card_data`, renders it with `storage.reports.card`, and writes the SVG and optional PNG |
 | `model_probe.py` | Model discovery and availability probing |
 | `plugin_runners.py` | Shared persistence/progress lifecycle and plugin-specific execution |
