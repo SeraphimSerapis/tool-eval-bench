@@ -109,9 +109,11 @@ def build_card_data(runs: Sequence[Mapping[str, Any]], *, hardware: str | None =
         perf_tg=tg,
         perf=perf,
         tool_eval=_tool_eval_summary(tool_eval_trials) if tool_eval_trials else None,
-        needle=_needle_summary(needle_run) if needle_run else None,
+        needle=needle_summary(needle_run) if needle_run else None,
         accuracy=tuple(
-            result for name, run in accuracy_runs if (result := _accuracy(name, run)) is not None
+            result
+            for name, run in accuracy_runs
+            if (result := accuracy_result(name, run)) is not None
         ),
         seed=_first_int(used, "config", "seed"),
         fingerprint=str(fingerprint)[:_FINGERPRINT_CHARS] if fingerprint else None,
@@ -509,6 +511,11 @@ def _perf_points(rows: Sequence[Mapping[str, Any]]) -> tuple[PerfPoint, ...]:
     return tuple(points)
 
 
+def perf_points(run: Mapping[str, Any]) -> tuple[PerfPoint, ...]:
+    """The averaged throughput cells of a ``perf`` run or of a scored run that carried ``--perf``."""
+    return _perf_points(_perf_rows(run))
+
+
 def _perf_workload(run: Mapping[str, Any]) -> tuple[int | None, int | None]:
     """The prompt and generation sizes of the sweep.
 
@@ -697,7 +704,7 @@ def _tool_eval_summary(trials: Sequence[Mapping[str, Any]]) -> ToolEvalSummary:
     )
 
 
-def _needle_summary(run: Mapping[str, Any]) -> NeedleSummary:
+def needle_summary(run: Mapping[str, Any]) -> NeedleSummary:
     """The retrieval grid, with every cell, and accuracy over answered cells.
 
     An errored cell, such as a context overflow, stays in the grid with
@@ -736,7 +743,7 @@ def _needle_summary(run: Mapping[str, Any]) -> NeedleSummary:
     )
 
 
-def _accuracy(name: str, run: Mapping[str, Any]) -> AccuracyResult | None:
+def accuracy_result(name: str, run: Mapping[str, Any]) -> AccuracyResult | None:
     """An accuracy benchmark as correct over answered items, with its sample size.
 
     The plugins store the run as completed even when most requests failed, so

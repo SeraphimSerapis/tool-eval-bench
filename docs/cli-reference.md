@@ -387,6 +387,16 @@ export, and two-run comparisons with McNemar's test. It also launches runs,
 streams them live over Server-Sent Events, and stops or resumes them. CLI runs
 can be watched too: the UI follows their SQLite checkpoints.
 
+**Run types.** One command can store several runs: `--perf --needle
+--spec-bench` stores a tool-call run plus throughput, needle, and
+speculative-decoding runs. The run list labels each with its type and shows its
+main figure in place of a score: decode speed for throughput, effective decode
+speed for spec decode, retrieval for needle, accuracy for GSM8K, MMLU, and
+IFEval, and the fill level a context-pressure sweep holds to. Opening one shows
+its measurements as a table. A **Same session** panel on every run lists the
+other runs its command stored and links to them. Leaderboard and Compare still
+cover tool-call runs only.
+
 **Deleting runs.** **Delete** in a run's header removes that run. **Select**
 above the run list lets you pick several, and **Select all** picks every run
 the current search and filters show. Both ask for confirmation and remove the

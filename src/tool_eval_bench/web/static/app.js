@@ -310,6 +310,51 @@
     return el;
   }
 
+  // Tool-call runs have a 0-100 score. Every other mode stores measurements,
+  // and the server picks the one figure (its headline) the UI shows instead.
+  function isToolEval(run) {
+    return (run.run_type || "tool_eval") === "tool_eval";
+  }
+
+  function fmtNumber(value) {
+    return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+
+  function fmtFigure(value, unit) {
+    if (value === null || value === undefined || value === "") return "—";
+    if (typeof value !== "number") return String(value);
+    const text = fmtNumber(value);
+    if (!unit) return text;
+    return unit === "%" || unit === "×" ? `${text}${unit}` : `${text} ${unit}`;
+  }
+
+  function hasFigure(headline) {
+    return Boolean(headline) && headline.value !== null && headline.value !== undefined;
+  }
+
+  function metric(headline, opts = {}) {
+    const has = hasFigure(headline);
+    const value = has ? Number(headline.value) : null;
+    // The list slot is narrow: large values drop their decimals.
+    const shown = has ? (Math.abs(value) >= 100 ? Math.round(value).toLocaleString() : fmtNumber(value)) : "—";
+    return h(
+      "div",
+      {
+        class: `metric ${has ? "" : "metric-empty"} ${opts.cls || ""}`,
+        role: "img",
+        "aria-label": has ? `${headline.label} ${fmtFigure(headline.value, headline.unit)}` : "Nothing measured",
+        title: has && headline.detail ? headline.detail : null,
+      },
+      h("span", { class: "metric-value", text: shown }),
+      has && headline.unit ? h("span", { class: "metric-unit", text: headline.unit }) : null,
+      has && opts.withLabel ? h("span", { class: "metric-label", text: headline.label }) : null
+    );
+  }
+
+  function typeChip(run) {
+    return h("span", { class: "chip chip-type", text: run.type_label || run.run_type });
+  }
+
   function bar(pct, cls = "") {
     return h("div", { class: `bar ${cls}`, role: "presentation" }, h("span", { style: { "--value": pct } }));
   }
@@ -503,15 +548,18 @@
       },
       state.selecting ? h("span", { class: "run-check", "aria-hidden": "true" }, picked ? icon("check") : null) : null,
       modelBlock(run.model, "run-model"),
-      ring(score, {
-        label: score === null || score === undefined ? null : Math.round(score),
-        title: score === null || score === undefined ? `No score, ${run.status}` : `Score ${score} of 100`,
-      }),
+      isToolEval(run)
+        ? ring(score, {
+            label: score === null || score === undefined ? null : Math.round(score),
+            title: score === null || score === undefined ? `No score, ${run.status}` : `Score ${score} of 100`,
+          })
+        : metric(run.headline),
       h(
         "div",
         { class: "run-meta" },
         chip(run.status),
-        h("span", { text: run.backend || "unknown" }),
+        isToolEval(run) ? null : typeChip(run),
+        isToolEval(run) || (run.backend && run.backend !== "unknown") ? h("span", { text: run.backend || "unknown" }) : null,
         h("span", { title: absTime(run.created_at), text: relTime(run.created_at) }),
         run.label ? h("span", { class: "chip chip-accent" }, icon("tag"), run.label) : null,
         run.safety_warnings_count > 0
@@ -807,6 +855,87 @@
     );
   }
 
+  // The other runs the same CLI invocation stored: a scored run's spec-decode,
+  // throughput, needle, or accuracy rows, or the scored run of one of those.
+  function sessionCard(entries) {
+    if (!entries || !entries.length) return null;
+    const figure = (entry) => {
+      if (entry.final_score !== null && entry.final_score !== undefined) return `Score ${Math.round(entry.final_score)}`;
+      if (hasFigure(entry.headline)) return `${entry.headline.label} ${fmtFigure(entry.headline.value, entry.headline.unit)}`;
+      return "Nothing measured";
+    };
+    return h(
+      "section",
+      { class: "card card-pad session-card", "aria-labelledby": "session-card-title" },
+      h("div", { class: "eyebrow", id: "session-card-title", text: `Same session · ${entries.length}` }),
+      h("p", { class: "muted session-hint", text: "Stored by the same command." }),
+      h(
+        "ul",
+        { class: "session-list" },
+        entries.map((entry) =>
+          h(
+            "li",
+            {},
+            h(
+              "button",
+              { type: "button", class: "session-item", dataset: { runId: entry.run_id }, onclick: () => selectRun(entry.run_id) },
+              typeChip(entry),
+              h("span", { class: "session-figure", text: figure(entry) }),
+              hasFigure(entry.headline) && entry.headline.detail ? h("span", { class: "muted", text: entry.headline.detail }) : null,
+              h("span", { class: "session-end" }, chip(entry.status), h("span", { class: "muted", title: absTime(entry.created_at), text: relTime(entry.created_at) }))
+            )
+          )
+        )
+      )
+    );
+  }
+
+  // Stats and a measurement table for a run that is not a tool-call run.
+  function modeBody(detail) {
+    const stats = detail && detail.stats ? detail.stats : [];
+    const table = detail && detail.table ? detail.table : null;
+    if (!stats.length && !table) {
+      return [h("div", { class: "section-spacer" }, banner("info", "info", "This run stored no measurements to show."))];
+    }
+    const out = [];
+    if (stats.length) out.push(h("div", { class: "stats" }, stats.map((s) => stat(s.label, fmtFigure(s.value, s.unit)))));
+    if (table) {
+      const numeric = table.columns.map((c) => table.rows.some((row) => typeof row[c.key] === "number"));
+      out.push(
+        h("h2", { class: "section-title" }, "Measurements", h("span", { class: "count", text: table.rows.length })),
+        h(
+          "div",
+          { class: "table-wrap" },
+          h(
+            "table",
+            { class: "table" },
+            h(
+              "thead",
+              {},
+              h("tr", {}, table.columns.map((c, i) => h("th", { scope: "col", class: numeric[i] ? "num" : null, text: c.unit ? `${c.label} (${c.unit})` : c.label })))
+            ),
+            h(
+              "tbody",
+              {},
+              table.rows.map((row) =>
+                h(
+                  "tr",
+                  {},
+                  table.columns.map((c, i) => {
+                    const value = row[c.key];
+                    const text = value === null || value === undefined || value === "" ? "—" : typeof value === "number" ? fmtNumber(value) : String(value);
+                    return h("td", { class: numeric[i] ? "num" : null, text });
+                  })
+                )
+              )
+            )
+          )
+        )
+      );
+    }
+    return out;
+  }
+
   function renderInspector(opts = {}) {
     const pane = byId("run-inspector");
     if (!pane) return;
@@ -825,21 +954,25 @@
     const total = results.length;
     const { org, name } = splitModel(run.model);
 
+    const toolEval = isToolEval(run);
     const actions = [
-      h(
-        "button",
-        {
-          type: "button",
-          class: "btn",
-          id: "inspect-compare-btn",
-          onclick: () => {
-            state.compareLeftId = run.run_id;
-            switchView("compare");
-          },
-        },
-        icon("swap"),
-        "Compare"
-      ),
+      // Compare pairs scenario results, which only tool-call runs have.
+      toolEval
+        ? h(
+            "button",
+            {
+              type: "button",
+              class: "btn",
+              id: "inspect-compare-btn",
+              onclick: () => {
+                state.compareLeftId = run.run_id;
+                switchView("compare");
+              },
+            },
+            icon("swap"),
+            "Compare"
+          )
+        : null,
       run.status === "running"
         ? h("button", { type: "button", class: "btn btn-primary", id: "inspect-watch-live-btn", onclick: () => openLiveRun(run.run_id) }, icon("eye"), "Watch live")
         : null,
@@ -852,7 +985,9 @@
     const hero = h(
       "div",
       { class: "card hero" },
-      ring(run.final_score, { cls: "ring-lg", animate: opts.animate, sub: run.final_score !== null && run.final_score !== undefined ? "of 100" : null }),
+      toolEval
+        ? ring(run.final_score, { cls: "ring-lg", animate: opts.animate, sub: run.final_score !== null && run.final_score !== undefined ? "of 100" : null })
+        : metric(run.headline, { cls: "metric-lg", withLabel: true }),
       h(
         "div",
         { class: "hero-title" },
@@ -862,9 +997,13 @@
           "div",
           { class: "hero-meta" },
           chip(run.status),
+          toolEval ? null : typeChip(run),
           run.rating ? h("span", { class: "meta-item", text: run.rating }) : null,
           h("span", { class: "meta-item mono", title: "Run ID", text: run.run_id }),
-          h("span", { class: "meta-item" }, icon("server"), run.backend || "unknown"),
+          toolEval || (run.backend && run.backend !== "unknown")
+            ? h("span", { class: "meta-item" }, icon("server"), run.backend || "unknown")
+            : null,
+          !toolEval && run.headline && run.headline.detail ? h("span", { class: "meta-item", text: run.headline.detail }) : null,
           meta.engine_name ? h("span", { class: "meta-item" }, icon("cpu"), `${meta.engine_name} ${meta.engine_version || ""}`.trim()) : null,
           meta.quantization ? h("span", { class: "meta-item mono", text: meta.quantization }) : null,
           h("span", { class: "meta-item", title: absTime(run.created_at) }, icon("calendar"), relTime(run.created_at)),
@@ -874,6 +1013,12 @@
       ),
       h("div", { class: "hero-actions" }, actions)
     );
+
+    const session = sessionCard(run.session);
+    if (!toolEval) {
+      setChildren(pane, hero, session, ...modeBody(run.detail));
+      return;
+    }
 
     const p = run.passes || 0;
     const q = run.partials || 0;
@@ -973,6 +1118,7 @@
 
     setChildren(pane,
       hero,
+      session,
       safety,
       stats,
       catCard || mapCard ? h("div", { class: "two-col" }, catCard, mapCard) : null,

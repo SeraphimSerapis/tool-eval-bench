@@ -651,6 +651,10 @@ pre,
   --chip: var(--text-3);
 }
 
+.chip-type {
+  --chip: var(--accent-2);
+}
+
 /* ---------------------------------------------------------- Score ring */
 
 .ring {
@@ -1368,6 +1372,64 @@ pre,
 
 .ring-empty {
   --value: 0;
+}
+
+/* A measured figure in place of a score ring, for runs that are not
+   tool-call runs: throughput, spec decode, pressure, retrieval, accuracy. */
+.metric {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  min-width: 3.4rem;
+  min-height: 2.6rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  text-align: center;
+  line-height: 1.1;
+}
+
+.run-card .metric {
+  grid-row: span 2;
+  align-self: center;
+}
+
+.metric-value {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-unit {
+  font-size: 0.62rem;
+  color: var(--text-3);
+}
+
+.metric-empty .metric-value {
+  color: var(--text-3);
+}
+
+.metric-lg {
+  min-width: 7.25rem;
+  min-height: 7.25rem;
+  gap: 0.2rem;
+  border-radius: var(--radius);
+}
+
+.metric-lg .metric-value {
+  font-size: 1.7rem;
+}
+
+.metric-lg .metric-unit {
+  font-size: 0.8rem;
+}
+
+.metric-label {
+  font-size: 0.7rem;
+  color: var(--text-3);
 }
 
 .ring-empty .ring-label {
@@ -2198,4 +2260,58 @@ details.advanced > .grid-2 {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 1.1rem;
+}
+
+/* --------------------------------------------------------- Same session */
+
+.session-card {
+  margin-top: 1rem;
+}
+
+.session-hint {
+  margin: 0.15rem 0 0.6rem;
+  font-size: 0.78rem;
+}
+
+.session-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-item:hover {
+  background: var(--surface-hover);
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--border));
+}
+
+.session-figure {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+  font-size: 0.78rem;
 }

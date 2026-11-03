@@ -28,7 +28,9 @@ from tool_eval_bench.application.run_queries import (
     recent_runs,
     resolve_run,
     run_progress,
+    session_runs,
 )
+from tool_eval_bench.application.run_summary import detail, session_entry
 from tool_eval_bench.web.launcher import (
     RunConflict,
     build_launcher_schema,
@@ -391,7 +393,21 @@ def build_starlette_app(
             run = get_run(run_id, include_traces=True)
         if run is None:
             return _error(f"Run '{run_id}' not found", 404)
-        return JSONResponse(sanitize_run_for_web(run, include_traces=True))
+        payload = sanitize_run_for_web(run, include_traces=True)
+        payload["detail"] = detail(payload)
+        # The other runs one CLI invocation stored, such as the spec-decode or
+        # needle rows of a scored run, so the UI can link them together.
+        session_id = run.get("session_id")
+        payload["session"] = (
+            [
+                session_entry(sanitize_run_for_web(other, include_traces=False))
+                for other in session_runs(session_id)
+                if other.get("run_id") != run.get("run_id")
+            ]
+            if session_id
+            else []
+        )
+        return JSONResponse(payload)
 
     def leaderboard_endpoint(request: Request) -> JSONResponse:
         params = request.query_params
