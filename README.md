@@ -418,7 +418,9 @@ See [answer audit limits and API configuration](https://github.com/SeraphimSerap
 
 `tool-eval-bench serve` opens a local web UI over the same SQLite history:
 run traces, cohort leaderboards, two-run comparisons, and live runs you can
-launch, watch, stop, and resume. It can also delete runs. It needs the `web` extra.
+launch, watch, stop, and resume. Throughput, spec-decode, needle, and accuracy
+runs show their own measurements and link to the other runs their command
+stored. It can also delete runs. It needs the `web` extra.
 
 ```bash
 tool-eval-bench serve                         # http://localhost:8765, or the next free port

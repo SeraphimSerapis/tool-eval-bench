@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from tool_eval_bench.application.run_summary import headline, run_type, type_label
 from tool_eval_bench.cli.held_out import HELD_OUT, redact_result, redact_run
 from tool_eval_bench.domain.redaction import redact_url
 from tool_eval_bench.domain.scenarios import CATEGORY_LABELS
@@ -176,12 +177,16 @@ def sanitize_run_for_web(run: Mapping[str, Any], *, include_traces: bool = True)
         len(results_raw) if isinstance(results_raw, list) else 0,
     )
 
+    kind = run_type(redacted)
     out: dict[str, Any] = {
         "run_id": redacted.get("run_id"),
         "created_at": redacted.get("created_at"),
         "status": redacted.get("status", "completed"),
         "model": redacted.get("model") or config.get("model", "unknown"),
-        "run_type": redacted.get("run_type", "tool_eval"),
+        "run_type": kind,
+        "type_label": type_label(kind),
+        "headline": headline(redacted),
+        "session_id": redacted.get("session_id"),
         "report_path": redacted.get("report_path"),
         "label": label,
         "backend": metadata.get("backend") or config.get("backend", "unknown"),

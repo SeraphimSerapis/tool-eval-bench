@@ -227,6 +227,7 @@ Shared infrastructure:
 | `run_config.py` | `RunSettings` and `RUN_CONFIG_FIELDS`, the one declaration of every persisted config key. Each row says whether the key is written, fingerprinted, compared on `--resume`, and kept in the leaderboard's cross-model cohort. The builder, the resume check, and the cohort exclusions all derive from it. A new run setting needs a row, and `tests/test_run_config_schema.py` fails until it has one |
 | `run_context.py` | Backend detection (`identify_backend`) and `RunContext` collection, shared by the CLI and the Python API |
 | `run_queries.py` | Read queries against stored runs, each owning the repository's lifetime |
+| `run_summary.py` | What the web UI shows for each run type: `headline` picks the figure a run list shows in place of a score, `detail` lays a run's measurements out as stats and a table, and `session_entry` summarizes a run for the same-session panel. Throughput, needle, and accuracy figures come from the card's readers in `card_data.py` |
 | `run_deletion.py` | `delete_runs` removes runs in one transaction, then their Markdown reports, removing only a path shaped like a report the writers produce. `find_runs` selects runs by status, date, and model for the `delete` command |
 | `card_data.py` | `build_card_data` maps stored runs onto `CardData`, newest completed run of each kind, copying named fields only. `load_card_data` selects the runs by session or run id through `run_queries` |
 
