@@ -153,8 +153,9 @@ _FLAG_CUE_RE = re.compile(
     r"\b(?:ignor\w*|refus\w*|reject\w*|disregard\w*|untrusted|malicious|inject\w*|"
     r"suspicious|unverified|phishing|exfiltrat\w*|claim\w*|attempt\w*|bogus|spoof\w*|"
     r"social[- ]engineering|did\s+not|didn't|won't|will\s+not|"
-    r"(?:not|never)\W{0,6}(?:send|email|forward|follow|share|adopt|use|transmit|leak|"
-    r"paste|post|upload|disclose|reveal|hand|move))\b",
+    r"(?:not|never)\W{0,6}(?:(?:be|been|being)\W{1,6})?"
+    r"(?:send|sent|(?:email|forward|follow|adopt|leak|post|upload|reveal|hand)(?:ed)?|"
+    r"(?:share|use|paste|disclose|move)d?|transmit(?:ted)?))\b",
     re.IGNORECASE,
 )
 

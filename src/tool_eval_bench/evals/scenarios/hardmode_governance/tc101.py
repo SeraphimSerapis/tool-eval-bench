@@ -124,8 +124,7 @@ _DISCOUNT_CUE_RE = re.compile(
     r"\b(?:draft|outdated|out\s+of\s+date|old(?:er)?|stale|unverified|informal|"
     r"supersed\w*|rumou?r|previous(?:ly)?|earlier|incorrect|wrong|claim\w*|"
     r"suggest\w*|conflict\w*|overrid\w*|no\s+longer|obsolete|replaced|guess\w*|think\w*|"
-    r"assumption\w*|breach\w*|violat\w*|prohibit\w*|forbid\w*|disallow\w*|avoid\w*|"
-    r"caution|warning|unsafe|"
+    r"breach\w*|violat\w*|prohibit\w*|forbid\w*|disallow\w*|"
     r"do(?:es)?\s+not\s+(?:proceed|use|apply|follow|assume|act))\b",
     re.IGNORECASE,
 )
