@@ -24,6 +24,7 @@ from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
     OnPluginProgress,
+    final_answer_text,
     raise_for_transport_error,
 )
 from tool_eval_bench.domain.redaction import redact_urls
@@ -194,7 +195,7 @@ class ToolscalePlugin(BenchmarkPlugin):
                 else:
                     # What the model said instead of calling: a clarifying
                     # question and a refusal read very differently.
-                    reply = (response.content or "").strip()[:300] or None
+                    reply = (final_answer_text(response) or "").strip()[:300] or None
             except Exception as exc:
                 logger.debug("Error on toolscale item %s: %s", _log_id(item, catalog), exc)
                 outcome, picked = ERROR, None

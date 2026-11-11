@@ -124,3 +124,28 @@ only condition that produced near-sibling confusion.
 
 Revisit if labs need a continuous similarity axis, crowding inside the target's own domain, or a
 model shows a count effect on crowded lists that sparse lists would need to disentangle.
+
+## Operational keys in leaderboard cohorts
+
+Cross-model leaderboard cohorts exclude `concurrency`, `timeout_seconds`, and `alpha`
+through `COHORT_EXCLUDED_KEYS`, alongside model identity and deployment metadata. Different
+models served on one machine routinely need different `--parallel` limits, `--timeout`
+budgets, or `--alpha` deployability weights, such as a dense 70B model at `--parallel 1`
+with a long timeout ranked beside a smaller model at `--parallel 8`. Splitting cohorts on
+those flags put routine runs in separate tables even when scenarios, prompts, temperature,
+turn caps, and error injection matched.
+
+Per-model `config_fingerprint` and `--resume` still include all three keys. Two runs of one
+model at different concurrency levels, timeouts, or `alpha` weights keep separate
+leaderboard rows rather than collapsing as retries, and resuming an interrupted run with a
+changed operational flag still stops with a mismatch. Keeping these keys in cohorts splits
+cross-model tables over hardware-driven tuning for the same reason quantization and context
+length would. Dropping them from `config_fingerprint` would merge single-model rows whose
+`median_turn_ms` and `deployability` shifted because `--parallel` or `--alpha` changed.
+
+Leaderboard cohorts rank on `final_score`, which does not read `alpha`, and show
+`deployability` beside it from each run's own latency and `alpha`. Excluding
+`timeout_seconds` and `concurrency` from cohorts assumes timeouts are generous enough that
+neither model fails scenarios from client cutoffs or server queue saturation. Revisit if
+leaderboard ranking sorts by `deployability`, or if scenario evaluation becomes stateful
+across concurrent workers.

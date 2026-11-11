@@ -6,6 +6,7 @@ import asyncio
 import email.utils
 import threading
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ import pytest
 
 from tests.conftest import open_repository
 from tool_eval_bench.application.leaderboard import (
+    cohort_fingerprint,
     extract_leaderboard_rows,
     is_rank_eligible,
 )
@@ -24,7 +26,12 @@ from tool_eval_bench.application.resume import (
     plan_stored_resume,
     result_requires_rerun,
 )
-from tool_eval_bench.application.run_config import RunSettings, build_run_config
+from tool_eval_bench.application.run_config import (
+    COHORT_EXCLUDED_KEYS,
+    RunSettings,
+    build_run_config,
+    resume_mismatches,
+)
 from tool_eval_bench.application.run_deletion import delete_runs, is_run_report
 from tool_eval_bench.application.service import BenchmarkService, _collect_metadata_safe
 from tool_eval_bench.compare_reports._common import _tv
@@ -42,6 +49,7 @@ from tool_eval_bench.compare_reports.tool_eval import (
 )
 from tool_eval_bench.domain.adapters import ChatCompletionResult
 from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.domain.plugin import final_answer_text, strip_thinking
 from tool_eval_bench.domain.scenarios import (
     Category as ScenarioCategory,
 )
@@ -53,7 +61,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioStatus,
 )
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, ALL_SCENARIOS_WITH_HARDMODE
-from tool_eval_bench.plugins._thinking import plugin_answer_text, strip_thinking
+from tool_eval_bench.plugins._thinking import plugin_answer_text
 from tool_eval_bench.plugins.decision.metrics import reliability_bins
 from tool_eval_bench.plugins.decision.plugin import _error_row as decision_error_row
 from tool_eval_bench.plugins.decision.typed_decisions import load_cases as load_decision_cases
@@ -413,6 +421,150 @@ class TestLifecycleResumeAndLeaderboard:
         assert rows[0]["final_score"] == 0
         assert rows[0]["date"] == "?"
 
+    def test_cohort_ignores_operational_keys_while_fingerprint_and_resume_keep_them(
+        self,
+    ) -> None:
+        assert {"concurrency", "timeout_seconds", "alpha"} <= COHORT_EXCLUDED_KEYS
+
+        scenarios = [s for s in ALL_SCENARIOS if s.id == "TC-01"]
+        metadata = {"tool_version": "0.1.0", "git_sha": "abc1234"}
+        base_settings = RunSettings(
+            model="model-a",
+            backend="vllm",
+            base_url="http://localhost:8000",
+            temperature=0.0,
+            timeout_seconds=30.0,
+            max_turns=6,
+            seed=None,
+            reference_date=None,
+            concurrency=1,
+            error_rate=0.0,
+            alpha=0.7,
+            extra_params=None,
+            context_pressure_config=None,
+            weight_by_difficulty=False,
+        )
+        cfg_base = build_run_config(base_settings, scenarios=scenarios, metadata=metadata)
+        cfg_parallel = build_run_config(
+            replace(base_settings, concurrency=8), scenarios=scenarios, metadata=metadata
+        )
+        cfg_timeout = build_run_config(
+            replace(base_settings, timeout_seconds=600.0), scenarios=scenarios, metadata=metadata
+        )
+        cfg_alpha = build_run_config(
+            replace(base_settings, alpha=0.2), scenarios=scenarios, metadata=metadata
+        )
+        cfg_model_b_operational = build_run_config(
+            replace(
+                base_settings,
+                model="model-b",
+                concurrency=8,
+                timeout_seconds=600.0,
+                alpha=0.2,
+            ),
+            scenarios=scenarios,
+            metadata=metadata,
+        )
+
+        # Positive: operational keys do not split cross-model leaderboard cohorts.
+        base_cohort = cohort_fingerprint(cfg_base, metadata)
+        assert cohort_fingerprint(cfg_parallel, metadata) == base_cohort
+        assert cohort_fingerprint(cfg_timeout, metadata) == base_cohort
+        assert cohort_fingerprint(cfg_alpha, metadata) == base_cohort
+        assert cohort_fingerprint(cfg_model_b_operational, metadata) == base_cohort
+
+        # Negative: per-model config_fingerprint still distinguishes operational keys.
+        assert cfg_parallel["config_fingerprint"] != cfg_base["config_fingerprint"]
+        assert cfg_timeout["config_fingerprint"] != cfg_base["config_fingerprint"]
+        assert cfg_alpha["config_fingerprint"] != cfg_base["config_fingerprint"]
+
+        # Negative: evaluation-affecting settings still split cohorts.
+        for scoring_override in (
+            {"temperature": 0.7},
+            {"max_turns": 4},
+            {"seed": 42},
+            {"error_rate": 0.1},
+            {"weight_by_difficulty": True},
+            {"system_prompt": "Be concise."},
+        ):
+            cfg_scoring = build_run_config(
+                replace(base_settings, **scoring_override),
+                scenarios=scenarios,
+                metadata=metadata,
+            )
+            assert cohort_fingerprint(cfg_scoring, metadata) != base_cohort
+
+        # Negative: --resume mismatch detection still enforces operational keys.
+        assert resume_mismatches(cfg_base, cfg_parallel, base_url=base_settings.base_url) == [
+            "concurrency"
+        ]
+        assert resume_mismatches(cfg_base, cfg_timeout, base_url=base_settings.base_url) == [
+            "timeout_seconds"
+        ]
+        assert resume_mismatches(cfg_base, cfg_alpha, base_url=base_settings.base_url) == ["alpha"]
+
+        # Stored resume reconstructs and validates operational keys strictly.
+        cfg_interrupted = build_run_config(
+            replace(base_settings, concurrency=4, timeout_seconds=180.0, alpha=0.4),
+            scenarios=scenarios,
+            metadata=metadata,
+        )
+        plan = plan_stored_resume(
+            {"status": "interrupted", "config": cfg_interrupted},
+            [],
+            base_url=base_settings.base_url,
+        )
+        assert plan.settings.concurrency == 4
+        assert plan.settings.timeout_seconds == 180.0
+        assert plan.settings.alpha == 0.4
+        for bad_key, bad_val in (
+            ("concurrency", True),
+            ("timeout_seconds", float("nan")),
+            ("alpha", None),
+        ):
+            with pytest.raises(ResumeRejected, match=bad_key):
+                plan_stored_resume(
+                    {"status": "interrupted", "config": {**cfg_base, bad_key: bad_val}},
+                    [],
+                    base_url=base_settings.base_url,
+                )
+
+        # End-to-end leaderboard: model-a and model-b with different operational
+        # flags rank together in one cohort.
+        rows = extract_leaderboard_rows(
+            [
+                {
+                    "run_id": "run-a",
+                    "model": "model-a",
+                    "status": "completed",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "config": cfg_base,
+                    "scores": {
+                        "final_score": 82.0,
+                        "completion_rate": 100,
+                        "scenario_results": [{"scenario_id": "TC-01", "status": "pass"}],
+                    },
+                    "metadata": metadata,
+                },
+                {
+                    "run_id": "run-b",
+                    "model": "model-b",
+                    "status": "completed",
+                    "created_at": "2026-01-01T00:05:00Z",
+                    "config": cfg_model_b_operational,
+                    "scores": {
+                        "final_score": 91.0,
+                        "completion_rate": 100,
+                        "scenario_results": [{"scenario_id": "TC-01", "status": "pass"}],
+                    },
+                    "metadata": metadata,
+                },
+            ]
+        )
+        assert [r["model"] for r in rows] == ["model-b", "model-a"]
+        assert [r["cohort_rank"] for r in rows] == [1, 2]
+        assert rows[0]["cohort_fingerprint"] == rows[1]["cohort_fingerprint"] == base_cohort
+
 
 # ---------------------------------------------------------------------------
 # 4. Reports, Held-Out Redaction, Escaping & Comparison Renderers
@@ -700,11 +852,79 @@ class _StaticAdapter:
 
 class TestPluginFixes:
     def test_thinking_strip_and_unclosed_truncation_detection(self) -> None:
+        assert plugin_answer_text is final_answer_text
+
+        # Closed <think> blocks (including attributes, case, and non-mutation of raw content).
         assert strip_thinking("<think>draft 99, comma</think>\nFINAL ANSWER") == "FINAL ANSWER"
-        assert strip_thinking("<think>unfinished reasoning", fallback_to_thought=False) is None
+        assert strip_thinking('<THINK mode="fast">step 1</THINK>Answer: B') == "Answer: B"
         assert strip_thinking("<think>done</think>   ", fallback_to_thought=False) is None
+        raw_closed = ChatCompletionResult(
+            content="<think>thought</think>\n42", finish_reason="stop"
+        )
+        assert final_answer_text(raw_closed) == "42"
+        assert raw_closed.content == "<think>thought</think>\n42"
         assert (
-            plugin_answer_text(
+            final_answer_text(
+                ChatCompletionResult(content="<think>done</think>\n42", finish_reason="length")
+            )
+            == "42"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(content="<think>#### 12</think>", finish_reason="stop")
+            )
+            == "#### 12"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(content="<think>#### 12</think>", finish_reason="length")
+            )
+            is None
+        )
+
+        # Multiple <think> blocks (consecutive leading, inline mid-answer, thought-only).
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>first</think>\n<think>second</think>\n42",
+                    finish_reason="stop",
+                )
+            )
+            == "42"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>plan</think>Result: <think>recheck</think>42",
+                    finish_reason="stop",
+                )
+            )
+            == "Result: 42"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>part 1</think>  <think>#### 7</think>\n",
+                    finish_reason="stop",
+                )
+            )
+            == "part 1\n#### 7"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>part 1</think>  <think>#### 7</think>\n",
+                    finish_reason="length",
+                )
+            )
+            is None
+        )
+
+        # Unclosed <think> blocks (length truncation vs stop vs visible prefix before <think>).
+        assert strip_thinking("<think>unfinished reasoning", fallback_to_thought=False) is None
+        assert strip_thinking("<think>unfinished reasoning", fallback_to_thought=True) == ""
+        assert (
+            final_answer_text(
                 ChatCompletionResult(
                     content="<think>cut off mid-thought 42", finish_reason="length"
                 )
@@ -712,17 +932,99 @@ class TestPluginFixes:
             is None
         )
         assert (
-            plugin_answer_text(
-                ChatCompletionResult(content="<think>thought</think>\n42", finish_reason="stop")
+            final_answer_text(
+                ChatCompletionResult(content="<think>cut off mid-thought 42", finish_reason="stop")
+            )
+            == ""
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>done</think>\n<think>unfinished 99", finish_reason="length"
+                )
+            )
+            is None
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>done</think>\n<think>unfinished 99", finish_reason="stop"
+                )
+            )
+            == ""
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="Answer: C\n<think>post-answer scratchpad", finish_reason="length"
+                )
+            )
+            == "Answer: C"
+        )
+
+        # reasoning_content (result.reasoning) fallback interaction.
+        assert (
+            final_answer_text(
+                ChatCompletionResult(content="", reasoning="#### 4", finish_reason="stop")
+            )
+            == "#### 4"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(content="", reasoning="#### 4", finish_reason="length")
+            )
+            is None
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>   </think>", reasoning="#### 4", finish_reason="stop"
+                )
+            )
+            == "#### 4"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>unfinished", reasoning="#### 4", finish_reason="stop"
+                )
+            )
+            == "#### 4"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>draft</think>42", reasoning="999", finish_reason="stop"
+                )
             )
             == "42"
         )
         assert (
-            plugin_answer_text(
-                ChatCompletionResult(content="<think>#### 12</think>", finish_reason="stop")
+            final_answer_text(
+                ChatCompletionResult(
+                    content="", reasoning="<think>inner</think>#### 8", finish_reason="stop"
+                )
             )
-            == "#### 12"
+            == "#### 8"
         )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(content="", reasoning=None, finish_reason="stop")
+            )
+            == ""
+        )
+
+        # Literal prose without <think> tags.
+        for literal in (
+            "The answer is 42.",
+            "<thinking>keep me</thinking> 42",
+            "if a < think and b > 0: return 42",
+        ):
+            assert strip_thinking(literal) == literal
+            assert (
+                final_answer_text(ChatCompletionResult(content=literal, finish_reason="stop"))
+                == literal
+            )
 
     @pytest.mark.parametrize(
         ("text", "expected_val", "expected_method"),
@@ -901,6 +1203,23 @@ class TestPluginFixes:
         ts_report = "\n".join(ToolscalePlugin().render_report_section(ts_res))
         assert "s3cretP@ss" not in ts_report
         assert "sk-super-secret" not in ts_report
+
+        ts_reply_msg = ChatCompletionResult(
+            content="<think>missing optional filter</think>Which region should I query?",
+            finish_reason="stop",
+        )
+        ts_abstain = await ToolscalePlugin().run(
+            _StaticAdapter(ts_reply_msg),
+            model="m",
+            base_url="http://localhost:8000/v1",
+            items=items,
+            catalog=catalog,
+        )
+        assert ts_abstain.item_results[0]["reply"] == "Which region should I query?"
+        assert (
+            ts_reply_msg.content
+            == "<think>missing optional filter</think>Which region should I query?"
+        )
 
         # Retry-After parsing (numeric, HTTP-date, malformed, clamped)
         assert _parse_retry_after("4.5", 2.0) == pytest.approx(4.5)

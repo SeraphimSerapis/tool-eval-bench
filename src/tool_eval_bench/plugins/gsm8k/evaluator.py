@@ -12,7 +12,7 @@ import math
 import re
 from dataclasses import dataclass
 
-from tool_eval_bench.plugins._thinking import strip_thinking
+from tool_eval_bench.domain.plugin import strip_thinking
 
 # One whole number.  The trailing lookahead stops a backtrack from shortening
 # "25" to "2" when a later rule rejects what follows, and the minus sign must

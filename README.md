@@ -179,12 +179,14 @@ runs:
   `tool-eval-bench` version and commit, and the discovered deployment metadata:
   engine version, context window, quantization, GPU count, server slot count,
   and speculative decoding mode. Repeat runs of one model collapse into a
-  leaderboard row only when the whole fingerprint matches. Ranking across
-  models uses a cohort of settings plus code identity and deliberately leaves
-  deployment out, because quantization and context window legitimately differ
-  between models served on one box. Check the engine columns in `export` before
-  reading two ranks as a like-for-like comparison. Two scores from different
-  cohorts are not a comparison.
+  leaderboard row only when the whole fingerprint matches, and `--resume`
+  checks the same operational flags. Ranking across models uses a cohort of
+  evaluation settings plus code identity and deliberately leaves deployment
+  metadata, `concurrency`, `timeout_seconds`, and `alpha` out, because
+  quantization, context window, parallelism, and request timeouts legitimately
+  differ between models served on one box. Check the engine columns in `export`
+  before reading two ranks as a like-for-like comparison. Two scores from
+  different cohorts are not a comparison.
 
 To read past runs back:
 

@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from tool_eval_bench.plugins._thinking import strip_thinking
+from tool_eval_bench.domain.plugin import strip_thinking
 from tool_eval_bench.plugins.ifeval.checkers import check_instruction
 
 

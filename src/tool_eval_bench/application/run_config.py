@@ -486,12 +486,19 @@ RUN_CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ),
 )
 
+#: Operational execution settings kept in ``config_fingerprint`` and
+#: ``--resume`` checks for per-model run identity, while excluded from
+#: cross-model leaderboard cohorts.
+_COHORT_OPERATIONAL_KEYS = frozenset({"concurrency", "timeout_seconds", "alpha"})
+
 #: Keys the leaderboard drops to rank different models under the same
-#: conditions: the ones naming the model or endpoint, the ones that never split
-#: a cohort, and the per-model fingerprint itself.
+#: conditions: the ones naming the model or endpoint, operational execution
+#: controls, the ones that never split a cohort, and the per-model fingerprint
+#: itself.
 COHORT_EXCLUDED_KEYS = frozenset(
     {
         CONFIG_FINGERPRINT_KEY,
+        *_COHORT_OPERATIONAL_KEYS,
         *(
             field.key
             for field in RUN_CONFIG_FIELDS

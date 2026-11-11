@@ -24,9 +24,9 @@ from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
     OnPluginProgress,
+    final_answer_text,
     raise_for_transport_error,
 )
-from tool_eval_bench.plugins._thinking import plugin_answer_text
 from tool_eval_bench.plugins.hf_utils import items_sha256
 from tool_eval_bench.plugins.mmlu.dataset import (
     CATEGORIES,
@@ -239,7 +239,7 @@ class MMLUPlugin(BenchmarkPlugin):
                     )
 
                 raise_for_transport_error(response)
-                content = plugin_answer_text(response)
+                content = final_answer_text(response)
                 total_tokens += (response.prompt_tokens or 0) + (response.completion_tokens or 0)
                 is_error = False
             except Exception as exc:
@@ -272,7 +272,7 @@ class MMLUPlugin(BenchmarkPlugin):
                     "extracted_answer": None,
                     "ground_truth": item.answer_letter,
                     "extraction_method": "truncated",
-                    "model_response": (response.reasoning or "")[:1000],
+                    "model_response": (response.reasoning or response.content or "")[:1000],
                 }
             else:
                 result = evaluate_answer(content, item.answer)

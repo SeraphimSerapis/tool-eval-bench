@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from tool_eval_bench.plugins._thinking import strip_thinking
+from tool_eval_bench.domain.plugin import strip_thinking
 
 _VALID_LETTERS = {"A", "B", "C", "D"}
 

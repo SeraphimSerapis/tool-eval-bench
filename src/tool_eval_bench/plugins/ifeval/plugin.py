@@ -18,9 +18,9 @@ from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
     OnPluginProgress,
+    final_answer_text,
     raise_for_transport_error,
 )
-from tool_eval_bench.plugins._thinking import plugin_answer_text
 from tool_eval_bench.plugins.hf_utils import items_sha256
 from tool_eval_bench.plugins.ifeval.dataset import IFEvalItem, dataset_revision, load_dataset
 from tool_eval_bench.plugins.ifeval.evaluator import evaluate_prompt
@@ -134,7 +134,7 @@ class IFEvalPlugin(BenchmarkPlugin):
                     )
 
                 raise_for_transport_error(response)
-                content = plugin_answer_text(response)
+                content = final_answer_text(response)
                 total_tokens += (response.prompt_tokens or 0) + (response.completion_tokens or 0)
                 is_error = False
             except Exception as exc:
@@ -169,7 +169,7 @@ class IFEvalPlugin(BenchmarkPlugin):
                         {"id": iid, "passed": False, "error": "truncated"}
                         for iid in item.instruction_id_list
                     ],
-                    "model_response": (response.reasoning or "")[:1000],
+                    "model_response": (response.reasoning or response.content or "")[:1000],
                 }
                 instructions_total += len(item.instruction_id_list)
             else:

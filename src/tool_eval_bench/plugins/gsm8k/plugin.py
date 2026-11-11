@@ -21,10 +21,10 @@ from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
     OnPluginProgress,
+    final_answer_text,
     raise_for_transport_error,
 )
 from tool_eval_bench.domain.redaction import redact_urls
-from tool_eval_bench.plugins._thinking import plugin_answer_text
 from tool_eval_bench.plugins.gsm8k.dataset import GSM8KItem, dataset_revision, load_dataset
 from tool_eval_bench.plugins.gsm8k.evaluator import evaluate_answer
 from tool_eval_bench.plugins.gsm8k.prompts import build_messages
@@ -274,7 +274,7 @@ class GSM8KPlugin(BenchmarkPlugin):
                 extra_params=extra_params,
             )
             raise_for_transport_error(result)
-            response_text = plugin_answer_text(result)
+            response_text = final_answer_text(result)
             tokens = (result.prompt_tokens or 0) + (result.completion_tokens or 0)
         except Exception as exc:
             logger.debug("Error on question %d: %s", item.index, exc)
@@ -299,7 +299,7 @@ class GSM8KPlugin(BenchmarkPlugin):
                 "ground_truth": item.ground_truth,
                 "extracted_answer": None,
                 "extraction_method": "truncated",
-                "model_response": (result.reasoning or "")[:1000],
+                "model_response": (result.reasoning or result.content or "")[:1000],
                 "tokens": tokens,
             }
 
