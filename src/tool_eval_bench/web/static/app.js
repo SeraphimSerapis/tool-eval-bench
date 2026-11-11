@@ -1606,13 +1606,16 @@
                     class: "btn btn-ghost",
                     onclick: (ev) => {
                       const btn = ev.currentTarget;
-                      navigator.clipboard?.writeText(selectorSnippet).then(() => {
-                        if (!(btn instanceof HTMLElement)) return;
-                        btn.textContent = "Copied";
-                        setTimeout(() => {
-                          btn.textContent = "Copy --scenarios";
-                        }, 1500);
-                      });
+                      navigator.clipboard
+                        ?.writeText(selectorSnippet)
+                        .then(() => {
+                          if (!(btn instanceof HTMLElement)) return;
+                          btn.textContent = "Copied";
+                          setTimeout(() => {
+                            btn.textContent = "Copy --scenarios";
+                          }, 1500);
+                        })
+                        .catch(() => {});
                     },
                     text: "Copy --scenarios",
                   }

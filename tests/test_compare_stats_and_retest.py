@@ -22,7 +22,7 @@ from tool_eval_bench.application.comparison import (
 from tool_eval_bench.application.leaderboard import compute_mcnemar_stats
 from tool_eval_bench.cli.dispatch import main
 from tool_eval_bench.cli.history import compare_runs
-from tool_eval_bench.cli.retest_diffs import run_retest_diffs_command
+from tool_eval_bench.cli.retest_diffs import _render_retest_summary, run_retest_diffs_command
 from tool_eval_bench.storage.db import RunRepository
 from tool_eval_bench.web import create_app
 
@@ -128,9 +128,19 @@ def _seed_db(
     with RunRepository(db_path=db_path) as repo:
         for run in runs:
             repo.upsert_scenario_run(run)
+
+    class _SeededRepo(RunRepository):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            kwargs.setdefault("db_path", db_path)
+            super().__init__(*args, **kwargs)
+
     monkeypatch.setattr(
         "tool_eval_bench.application.run_queries._repository",
-        lambda: RunRepository(db_path=db_path),
+        lambda: _SeededRepo(),
+    )
+    monkeypatch.setattr(
+        "tool_eval_bench.application.service.RunRepository",
+        _SeededRepo,
     )
     return db_path
 
@@ -278,6 +288,37 @@ class TestMcNemarAndPairedComparison:
         # Exact sign test symmetry and clamping at 1.0 when counts match
         assert exact_two_sided_sign_p_value(2, 2) == 1.0
         assert exact_two_sided_sign_p_value(1, 7) == exact_two_sided_sign_p_value(7, 1)
+
+    def test_opposite_direction_sign_count_vs_point_delta_is_inconclusive(self) -> None:
+        # 61 scenarios shift 0 -> 1 (+61 pts) while 39 shift 2 -> 0 (-78 pts).
+        # Unweighted sign test favors B (61 vs 39, p ~ 0.0352 < 0.05), whereas
+        # weighted mean_pct_delta favors A (-17 / 200 = -8.50%). Opposite
+        # directions must report inconclusive_noise rather than regression.
+        ids = [f"TC-{i:03d}" for i in range(1, 101)]
+        map_a: dict[str, dict[str, Any]] = {}
+        map_b: dict[str, dict[str, Any]] = {}
+        for idx, sid in enumerate(ids):
+            if idx < 61:
+                map_a[sid] = _scenario_row(sid, points=0)
+                map_b[sid] = _scenario_row(sid, points=1)
+            else:
+                map_a[sid] = _scenario_row(sid, points=2)
+                map_b[sid] = _scenario_row(sid, points=0)
+
+        paired = compute_paired_comparison(map_a, map_b, ids, seed=0)
+        assert len(paired["improved_ids"]) == 61
+        assert len(paired["regressed_ids"]) == 39
+        assert paired["sign_p_value"] < 0.05
+        assert paired["mean_pct_delta"] == pytest.approx(-8.5)
+        assert paired["verdict"] == "inconclusive_noise"
+
+        # Symmetric case: 61 scenarios shift 2 -> 1 (-61 pts) and 39 shift 0 -> 2 (+78 pts).
+        flipped = compute_paired_comparison(map_b, map_a, ids, seed=0)
+        assert len(flipped["improved_ids"]) == 39
+        assert len(flipped["regressed_ids"]) == 61
+        assert flipped["sign_p_value"] < 0.05
+        assert flipped["mean_pct_delta"] == pytest.approx(8.5)
+        assert flipped["verdict"] == "inconclusive_noise"
 
 
 class TestCompareRunsCli:
@@ -451,7 +492,7 @@ class TestCompareRetestDiffsCli:
             )
 
         monkeypatch.setattr(
-            "tool_eval_bench.cli.retest_diffs.BenchmarkService.run_benchmark",
+            "tool_eval_bench.application.service.BenchmarkService.run_benchmark",
             _fake_run_benchmark,
         )
 
@@ -534,7 +575,7 @@ class TestCompareRetestDiffsCli:
             return {}
 
         monkeypatch.setattr(
-            "tool_eval_bench.cli.retest_diffs.BenchmarkService.run_benchmark",
+            "tool_eval_bench.application.service.BenchmarkService.run_benchmark",
             _unexpected,
         )
 
@@ -620,7 +661,7 @@ class TestCompareRetestDiffsCli:
             )
 
         monkeypatch.setattr(
-            "tool_eval_bench.cli.retest_diffs.BenchmarkService.run_benchmark",
+            "tool_eval_bench.application.service.BenchmarkService.run_benchmark",
             _fake_pack_run,
         )
         buf_ok = StringIO()
@@ -712,7 +753,7 @@ class TestCompareRetestDiffsCli:
             return _stored_run("t", [_scenario_row("TC-01", points=pts)])
 
         monkeypatch.setattr(
-            "tool_eval_bench.cli.retest_diffs.BenchmarkService.run_benchmark",
+            "tool_eval_bench.application.service.BenchmarkService.run_benchmark",
             _reg_run,
         )
         reg_console = Console(file=StringIO(), width=140, no_color=True)
@@ -743,7 +784,7 @@ class TestCompareRetestDiffsCli:
             )
 
         monkeypatch.setattr(
-            "tool_eval_bench.cli.retest_diffs.BenchmarkService.run_benchmark",
+            "tool_eval_bench.application.service.BenchmarkService.run_benchmark",
             _infra_run,
         )
         infra_console = Console(file=StringIO(), width=140, no_color=True)
@@ -757,7 +798,7 @@ class TestCompareRetestDiffsCli:
             return _stored_run("t_noisy", [_scenario_row("TC-01", points=next(seq))])
 
         monkeypatch.setattr(
-            "tool_eval_bench.cli.retest_diffs.BenchmarkService.run_benchmark",
+            "tool_eval_bench.application.service.BenchmarkService.run_benchmark",
             _noisy_run,
         )
         noisy_console = Console(file=StringIO(), width=140, no_color=True)
@@ -813,6 +854,95 @@ class TestCompareRetestDiffsCli:
                 console,
             )
         assert exc_backend.value.code == 2
+
+    def test_retest_diffs_closes_repository_and_rejects_opposite_direction_verdict(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db_path = _seed_db(
+            tmp_path,
+            monkeypatch,
+            [
+                _stored_run("close_a", [_scenario_row("TC-01", points=0)]),
+                _stored_run("close_b", [_scenario_row("TC-01", points=2)]),
+            ],
+        )
+
+        opened_repos: list[_TrackingRepo] = []
+
+        class _TrackingRepo(RunRepository):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                self.closed = False
+                kwargs.setdefault("db_path", db_path)
+                super().__init__(*args, **kwargs)
+                opened_repos.append(self)
+
+            def close(self) -> None:
+                self.closed = True
+                super().close()
+
+        monkeypatch.setattr(
+            "tool_eval_bench.application.service.RunRepository",
+            _TrackingRepo,
+        )
+
+        async def _ok_trial(self: Any, **kwargs: Any) -> dict[str, Any]:
+            return _stored_run("t_ok", [_scenario_row("TC-01", points=2)])
+
+        monkeypatch.setattr(
+            "tool_eval_bench.application.service.BenchmarkService.run_benchmark",
+            _ok_trial,
+        )
+        args = argparse.Namespace(
+            compare=["close_a", "close_b"],
+            trials=1,
+            base_url="http://localhost:8000",
+            base_url_a=None,
+            base_url_b=None,
+            api_key=None,
+            api_key_a=None,
+            api_key_b=None,
+            backend=None,
+            scenario_pack=None,
+            redact_url=False,
+            output_dir=str(tmp_path / "runs"),
+            json=False,
+        )
+        run_retest_diffs_command(args, Console(file=StringIO(), width=140, no_color=True))
+        assert len(opened_repos) == 1
+        assert opened_repos[0].closed is True
+
+        async def _boom_trial(self: Any, **kwargs: Any) -> dict[str, Any]:
+            raise RuntimeError("endpoint dropped connection")
+
+        monkeypatch.setattr(
+            "tool_eval_bench.application.service.BenchmarkService.run_benchmark",
+            _boom_trial,
+        )
+        with pytest.raises(SystemExit) as exc_boom:
+            run_retest_diffs_command(args, Console(file=StringIO(), width=140, no_color=True))
+        assert exc_boom.value.code == 1
+        assert len(opened_repos) == 2
+        assert opened_repos[1].closed is True
+
+        # Multi-trial summary must also treat opposite-direction sign counts vs mean delta as inconclusive.
+        ids = [f"TC-{i:03d}" for i in range(1, 101)]
+        rows_a = [_scenario_row(sid, points=0 if i < 61 else 2) for i, sid in enumerate(ids)]
+        rows_b = [_scenario_row(sid, points=1 if i < 61 else 0) for i, sid in enumerate(ids)]
+        r_a = _stored_run("opp_a", rows_a)
+        r_b = _stored_run("opp_b", rows_b)
+        opp_console = Console(file=StringIO(), width=140, no_color=True)
+        _render_retest_summary(
+            opp_console,
+            id_a="opp_a",
+            run_a=r_a,
+            id_b="opp_b",
+            run_b=r_b,
+            discordant_ids=ids,
+            trial_runs_a=[r_a],
+            trial_runs_b=[r_b],
+            trials=1,
+        )
+        assert "Inconclusive across trials" in opp_console.file.getvalue()
 
 
 class TestRunScenariosFromDiffCli:
@@ -1069,3 +1199,4 @@ class TestWebComparePairedStatsAndDomSafety:
         assert "ci95_low_pct" in source
         assert "discordant_scenario_ids" in source
         assert "--scenarios " in source
+        assert ".catch(() => {})" in source

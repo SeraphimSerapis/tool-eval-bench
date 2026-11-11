@@ -131,9 +131,9 @@ def compute_paired_comparison(
         verdict = "no_shared_scenarios"
     elif not discordant_scenario_ids:
         verdict = "identical"
-    elif sign_p_value < 0.05 and mean_pct_delta > 0:
+    elif sign_p_value < 0.05 and len(improved_ids) > len(regressed_ids) and mean_pct_delta > 0:
         verdict = "significant_improvement"
-    elif sign_p_value < 0.05 and mean_pct_delta < 0:
+    elif sign_p_value < 0.05 and len(regressed_ids) > len(improved_ids) and mean_pct_delta < 0:
         verdict = "significant_regression"
     else:
         verdict = "inconclusive_noise"

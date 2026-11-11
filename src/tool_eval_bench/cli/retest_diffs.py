@@ -32,14 +32,13 @@ from tool_eval_bench.application.comparison import (
     is_infrastructure_failure_dict,
 )
 from tool_eval_bench.application.run_queries import invocation_session, resolve_run
-from tool_eval_bench.application.service import BenchmarkService
+from tool_eval_bench.application.service import open_benchmark_service
 from tool_eval_bench.cli.commands import resolve_packs
 from tool_eval_bench.cli.headless import exit_invalid_arguments
 from tool_eval_bench.domain.engines import ACCEPTED_BACKEND_LABELS, BACKEND_LABELS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.domain.scenarios import ScenarioDefinition
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
-from tool_eval_bench.storage.reports import MarkdownReporter
 from tool_eval_bench.utils.urls import redact_url, redact_urls, validate_http_url
 
 DEFAULT_RETEST_TRIALS = 5
@@ -423,23 +422,25 @@ def run_retest_diffs_command(args: argparse.Namespace, console: Console) -> None
         f"  [dim]B: {escape(kwargs_b['model'])} @ {escape(disp_url_b)}[/]\n"
     )
 
-    service = BenchmarkService(reporter=MarkdownReporter(root=getattr(args, "output_dir", None)))
-
-    async def _run_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        runs_a: list[dict[str, Any]] = []
-        runs_b: list[dict[str, Any]] = []
-        for idx in range(1, trials + 1):
-            console.print(f"  [dim]Running baseline A trial {idx}/{trials}...[/]")
-            call_a = {**kwargs_a, "scenarios": list(discordant_scenarios)}
-            runs_a.append(await service.run_benchmark(**call_a))
-        for idx in range(1, trials + 1):
-            console.print(f"  [dim]Running candidate B trial {idx}/{trials}...[/]")
-            call_b = {**kwargs_b, "scenarios": list(discordant_scenarios)}
-            runs_b.append(await service.run_benchmark(**call_b))
-        return runs_a, runs_b
-
     try:
-        with invocation_session(uuid.uuid4().hex):
+        with (
+            open_benchmark_service(getattr(args, "output_dir", None)) as service,
+            invocation_session(uuid.uuid4().hex),
+        ):
+
+            async def _run_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+                runs_a: list[dict[str, Any]] = []
+                runs_b: list[dict[str, Any]] = []
+                for idx in range(1, trials + 1):
+                    console.print(f"  [dim]Running baseline A trial {idx}/{trials}...[/]")
+                    call_a = {**kwargs_a, "scenarios": list(discordant_scenarios)}
+                    runs_a.append(await service.run_benchmark(**call_a))
+                for idx in range(1, trials + 1):
+                    console.print(f"  [dim]Running candidate B trial {idx}/{trials}...[/]")
+                    call_b = {**kwargs_b, "scenarios": list(discordant_scenarios)}
+                    runs_b.append(await service.run_benchmark(**call_b))
+                return runs_a, runs_b
+
             trial_runs_a, trial_runs_b = asyncio.run(_run_all())
     except KeyboardInterrupt:
         console.print("\n[bold red]Interrupted.[/]")
@@ -574,12 +575,11 @@ def _render_retest_summary(
         ci_low = mean_pct_delta
         ci_high = mean_pct_delta
 
-    # Combine scenario-level sign test with unanimous multi-trial consistency.
+    # Combine directional scenario-level and trial-level sign tests with unanimous consistency.
     trial_b_wins = sum(1 for d in trial_pct_deltas if d > 1e-9)
     trial_a_wins = sum(1 for d in trial_pct_deltas if d < -1e-9)
     scenario_sign_p = exact_two_sided_sign_p_value(a_wins, b_wins)
     trial_sign_p = exact_two_sided_sign_p_value(trial_a_wins, trial_b_wins)
-    effective_p = min(scenario_sign_p, trial_sign_p)
 
     unanimous_b = len(trial_pct_deltas) >= DEFAULT_RETEST_TRIALS and all(
         d > 1e-9 for d in trial_pct_deltas
@@ -587,18 +587,28 @@ def _render_retest_summary(
     unanimous_a = len(trial_pct_deltas) >= DEFAULT_RETEST_TRIALS and all(
         d < -1e-9 for d in trial_pct_deltas
     )
+    confirmed_b = (
+        (scenario_sign_p < 0.05 and b_wins > a_wins)
+        or (trial_sign_p < 0.05 and trial_b_wins > trial_a_wins)
+        or unanimous_b
+    )
+    confirmed_a = (
+        (scenario_sign_p < 0.05 and a_wins > b_wins)
+        or (trial_sign_p < 0.05 and trial_a_wins > trial_b_wins)
+        or unanimous_a
+    )
 
     if abs(mean_pct_delta) < 1e-9:
         verdict_line = (
             "[dim]Multi-trial verdict:[/] Converged; multi-trial means match and the "
             "initial gap was single-run variance."
         )
-    elif (effective_p < 0.05 or unanimous_b) and mean_pct_delta > 0:
+    elif confirmed_b and mean_pct_delta > 0:
         verdict_line = (
             "[bold green]Multi-trial verdict:[/] Confirmed improvement; candidate B "
             "consistently outperforms baseline A on the discordant scenarios."
         )
-    elif (effective_p < 0.05 or unanimous_a) and mean_pct_delta < 0:
+    elif confirmed_a and mean_pct_delta < 0:
         verdict_line = (
             "[bold red]Multi-trial verdict:[/] Confirmed regression; candidate B "
             "consistently trails baseline A on the discordant scenarios."
