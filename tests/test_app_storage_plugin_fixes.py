@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import email.utils
-import threading
 import xml.etree.ElementTree as ET
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -47,7 +46,7 @@ from tool_eval_bench.compare_reports.tool_eval import (
 from tool_eval_bench.compare_reports.tool_eval import (
     parse_md as parse_tool_eval_report,
 )
-from tool_eval_bench.domain.adapters import ChatCompletionResult
+from tool_eval_bench.domain.adapters import BackendAdapter, ChatCompletionResult
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.plugin import final_answer_text, strip_thinking
 from tool_eval_bench.domain.scenarios import (
@@ -155,29 +154,22 @@ class TestSQLiteStorageFixes:
             repo.upsert_scenario_run(
                 {"run_id": "r1", "status": "running", "config": {"model": "m"}, "scores": {}}
             )
-            errors: list[BaseException] = []
 
             def hammer_sync() -> None:
-                try:
-                    for i in range(25):
-                        repo.mark_run_status("r1", "running" if i % 2 == 0 else "interrupted")
-                        _ = repo.get("r1")
-                        _ = repo.list(limit=5)
-                except BaseException as exc:  # pragma: no cover
-                    errors.append(exc)
+                for i in range(25):
+                    repo.mark_run_status("r1", "running" if i % 2 == 0 else "interrupted")
+                    _ = repo.get("r1")
+                    _ = repo.list(limit=5)
 
-            worker = threading.Thread(target=hammer_sync)
-            worker.start()
             await asyncio.gather(
+                asyncio.to_thread(hammer_sync),
                 *(
                     repo.acheckpoint_scenario_result(
                         "r1", {"scenario_id": f"TC-{i:02d}", "status": "pass", "points": 2}
                     )
                     for i in range(1, 26)
-                )
+                ),
             )
-            worker.join()
-            assert errors == []
             assert len(repo.get_checkpoints("r1")) == 25
 
 
@@ -840,7 +832,7 @@ class TestReportAndComparisonFixes:
 # ---------------------------------------------------------------------------
 
 
-class _StaticAdapter:
+class _StaticAdapter(BackendAdapter):
     def __init__(self, result: ChatCompletionResult | Exception) -> None:
         self._result = result
 
@@ -1071,7 +1063,7 @@ class TestPluginFixes:
         assert extract_mmlu(response) == (expected_letter, expected_method)
         for bad_gt in (-1, 4, True):
             with pytest.raises(ValueError, match="ground_truth"):
-                eval_mmlu("A", bad_gt)  # type: ignore[arg-type]
+                eval_mmlu("A", bad_gt)
 
     def test_ifeval_checkers_and_inline_thinking_handling(self) -> None:
         # Non-word-char boundaries in forbidden_words
