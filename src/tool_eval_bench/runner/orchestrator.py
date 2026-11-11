@@ -62,6 +62,10 @@ from tool_eval_bench.domain.tools import (
     SYSTEM_PROMPT,
     UNIVERSAL_TOOLS,
 )
+from tool_eval_bench.domain.wire_hygiene import (
+    detect_unparsed_tool_call,
+    format_tool_parser_advice,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -523,6 +527,9 @@ async def run_scenario(
     # nor a tool call, typically a reasoning-only reply. The phase closes on
     # nothing; tagging it keeps it apart from a wrong answer or wrong call.
     empty_stop: str | None = None
+    # Set when a turn with tools available returns raw tool-call markup or a
+    # JSON call envelope in content while tool_calls is empty.
+    unparsed_stop: str | None = None
     max_tokens = default_max_tokens(extra)
     # Stepped down when the endpoint rejects the requested response_format,
     # so later turns of the scenario do not repeat the rejected request.
@@ -701,6 +708,21 @@ async def run_scenario(
             # No tool calls → model finished this conversational phase
             if not result.tool_calls:
                 recent_turn_signatures.clear()
+                if scenario_tools and unparsed_stop is None:
+                    unparsed_match = detect_unparsed_tool_call(result.content, scenario_tools)
+                    if unparsed_match is not None:
+                        marker = unparsed_match.display_marker(held_out=scenario.held_out)
+                        if unparsed_match.parser_family == "raw_json":
+                            unparsed_stop = (
+                                f"Turn {turn} emitted unparsed {marker} in content "
+                                "instead of structured tool_calls."
+                            )
+                        else:
+                            unparsed_stop = (
+                                f"Turn {turn} emitted unparsed tool-call markup {marker} "
+                                "in content instead of structured tool_calls."
+                            )
+                        trace_lines.append(f"unparsed_tool_call={unparsed_stop}")
                 if not visible_answer and empty_stop is None:
                     empty_stop = (
                         f"Turn {turn} ended with no visible answer and no tool call "
@@ -918,7 +940,7 @@ async def run_scenario(
                 diagnostics=evaluation.diagnostics,
                 safety_violation=evaluation.safety_violation,
             )
-        harness_stop = truncated_stop or loop_stop or empty_stop
+        harness_stop = truncated_stop or loop_stop or unparsed_stop or empty_stop
         if harness_stop is not None and evaluation.status != ScenarioStatus.PASS:
             evaluation.note = f"{harness_stop} {evaluation.note or ''}".strip()
         if response_format_fallback is not None:
@@ -1035,6 +1057,8 @@ async def run_scenario(
             if truncated_stop is not None and evaluation.status != ScenarioStatus.PASS
             else FailureKind.REPEATED_CALL_LOOP
             if loop_stop is not None and evaluation.status != ScenarioStatus.PASS
+            else FailureKind.UNPARSED_TOOL_CALL
+            if unparsed_stop is not None and evaluation.status != ScenarioStatus.PASS
             else FailureKind.EMPTY_TURN
             if empty_stop is not None and evaluation.status != ScenarioStatus.PASS
             else FailureKind.BUDGET_EXCEEDED
@@ -1092,6 +1116,35 @@ class ToolChoiceProbe:
     detail: str
 
 
+@dataclass(frozen=True)
+class ToolCallWireProbe:
+    """What the auto tool-call wire probe established about parser hygiene."""
+
+    parsed: bool
+    arguments_intact: bool
+    detail: str
+    unparsed_marker: str | None = None
+    parser_family: str | None = None
+
+    @property
+    def enforced(self) -> bool:
+        """Compatibility alias matching ToolChoiceProbe.enforced."""
+        return self.parsed
+
+
+def _strip_probe_max_tokens(extra_params: dict[str, Any] | None) -> dict[str, Any]:
+    """Remove caller token ceilings so a probe owns its retry budget."""
+    probe_extra = dict(extra_params or {})
+    for key in ("max_tokens", "max_completion_tokens", "maxOutputTokens"):
+        probe_extra.pop(key, None)
+    generation_config = probe_extra.get("generationConfig")
+    if isinstance(generation_config, dict) and "maxOutputTokens" in generation_config:
+        probe_extra["generationConfig"] = {
+            k: v for k, v in generation_config.items() if k != "maxOutputTokens"
+        }
+    return probe_extra
+
+
 async def probe_tool_choice_required(
     adapter: BackendAdapter,
     *,
@@ -1117,18 +1170,7 @@ async def probe_tool_choice_required(
     A reasoning model can exhaust the initial budget before reaching the call.
     Retry that case once with more tokens before drawing a conclusion.
     """
-    # The probe owns its budget. Adapter extras otherwise override max_tokens,
-    # which could silently cap the retry at the same low ceiling. The Gemini
-    # adapter also reads maxOutputTokens, at the top level or nested in
-    # generationConfig.
-    probe_extra = dict(extra_params or {})
-    for key in ("max_tokens", "max_completion_tokens", "maxOutputTokens"):
-        probe_extra.pop(key, None)
-    generation_config = probe_extra.get("generationConfig")
-    if isinstance(generation_config, dict) and "maxOutputTokens" in generation_config:
-        probe_extra["generationConfig"] = {
-            k: v for k, v in generation_config.items() if k != "maxOutputTokens"
-        }
+    probe_extra = _strip_probe_max_tokens(extra_params)
     attempts: list[str] = []
     for max_tokens in (256, 4096):
         label = "probe" if not attempts else "retry"
@@ -1176,7 +1218,15 @@ async def probe_tool_choice_required(
     elif result.malformed:
         detail = "inconclusive; probe response was not valid JSON"
     elif not result.tool_calls:
-        if result.finish_reason == "length":
+        unparsed_match = detect_unparsed_tool_call(result.content, _TOOL_CHOICE_PROBE_TOOLS)
+        if unparsed_match is not None:
+            advice = format_tool_parser_advice(parser_family=unparsed_match.parser_family)
+            detail = (
+                f"not enforced; the endpoint emitted raw unparsed tool-call markup "
+                f"{unparsed_match.marker} in content instead of structured tool_calls. "
+                f"{advice}"
+            )
+        elif result.finish_reason == "length":
             detail = "inconclusive; probe exhausted both token budgets without a tool call"
             # Truncated text may be prose or a call cut off before it parsed,
             # so it is reported, not read as non-enforcement.
@@ -1200,6 +1250,101 @@ async def probe_tool_choice_required(
                 "empty-argument calls in this scenario may be the tool parser rather than the model"
             )
     return ToolChoiceProbe(enforced, arguments_intact, f"{detail}; " + "; ".join(attempts))
+
+
+async def probe_tool_call_parsing(
+    adapter: BackendAdapter,
+    *,
+    model: str,
+    base_url: str,
+    api_key: str | None,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    extra_params: dict[str, Any] | None = None,
+) -> ToolCallWireProbe:
+    """Check whether a simple auto tool-call request returns structured tool_calls."""
+    probe_extra = _strip_probe_max_tokens(extra_params)
+    attempts: list[str] = []
+    for max_tokens in (256, 4096):
+        label = "probe" if not attempts else "retry"
+        try:
+            result = await adapter.chat_completion(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": "Call probe_ping with value 'ok'.",
+                    }
+                ],
+                tools=_TOOL_CHOICE_PROBE_TOOLS,
+                tool_choice="auto",
+                temperature=0.0,
+                max_tokens=max_tokens,
+                timeout_seconds=timeout_seconds,
+                api_key=api_key,
+                base_url=base_url,
+                extra_params=probe_extra or None,
+                stream=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed probe cannot establish parsing
+            logger.warning("tool-call wire %s failed: %s; probe inconclusive", label, exc)
+            attempts.append(f"{label}: max_tokens={max_tokens}, request failed")
+            return ToolCallWireProbe(
+                False,
+                False,
+                f"inconclusive; probe request failed with {exc}; " + "; ".join(attempts),
+            )
+        attempts.append(
+            f"{label}: max_tokens={max_tokens}, finish_reason={result.finish_reason}, "
+            f"completion_tokens={result.completion_tokens}"
+        )
+        if (
+            result.transport_error_status is not None
+            or result.malformed
+            or result.tool_calls
+            or result.finish_reason != "length"
+        ):
+            break
+
+    parsed = False
+    arguments_intact = False
+    if result.transport_error_status is not None:
+        detail = f"probe request rejected with HTTP {result.transport_error_status}"
+    elif result.malformed:
+        detail = "inconclusive; probe response was not valid JSON"
+    elif not result.tool_calls:
+        unparsed_match = detect_unparsed_tool_call(result.content, _TOOL_CHOICE_PROBE_TOOLS)
+        if unparsed_match is not None:
+            advice = format_tool_parser_advice(parser_family=unparsed_match.parser_family)
+            detail = (
+                f"unparsed tool call; the endpoint emitted raw {unparsed_match.marker} "
+                f"in content instead of structured tool_calls. {advice}"
+            )
+            return ToolCallWireProbe(
+                False,
+                False,
+                f"{detail}; " + "; ".join(attempts),
+                unparsed_marker=unparsed_match.marker,
+                parser_family=unparsed_match.parser_family,
+            )
+        if result.finish_reason == "length":
+            detail = "inconclusive; probe exhausted both token budgets without a tool call"
+            if result.content.strip():
+                detail += ", leaving partial text"
+        elif result.content.strip():
+            detail = "no tool call; the model answered in prose instead of calling probe_ping"
+        else:
+            detail = "inconclusive; probe returned no tool call or answer"
+    else:
+        parsed = True
+        call = result.tool_calls[0]
+        arguments_intact = call.name == "probe_ping" and bool(
+            str(call.arguments.get("value", "")).strip()
+        )
+        if arguments_intact:
+            detail = "structured tool_calls parsed with intact arguments"
+        else:
+            detail = "structured tool_calls parsed, but probe_ping arrived with empty arguments"
+    return ToolCallWireProbe(parsed, arguments_intact, f"{detail}; " + "; ".join(attempts))
 
 
 async def supports_tool_choice_required(

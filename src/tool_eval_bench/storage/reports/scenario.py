@@ -15,9 +15,14 @@ from typing import Any, Mapping
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.scenarios import (
     Category,
+    FailureKind,
     ModelScoreSummary,
     ScenarioReportMetadata,
     ScenarioStatus,
+)
+from tool_eval_bench.domain.wire_hygiene import (
+    dominant_parser_family,
+    format_tool_parser_advice,
 )
 from tool_eval_bench.storage.reports._common import (
     _HELD_OUT_LABEL,
@@ -220,6 +225,23 @@ def write_scenario_report(
             f"{ctx_size:,} context{estimate_note})",
         )
 
+    unparsed_results = [
+        r for r in summary.scenario_results if r.failure_kind == FailureKind.UNPARSED_TOOL_CALL
+    ]
+    unparsed_warning_line: str | None = None
+    if unparsed_results:
+        parser_advice = format_tool_parser_advice(
+            backend=run_context.backend if run_context else None,
+            engine_name=run_context.engine_name if run_context else None,
+            parser_family=dominant_parser_family([r.note for r in unparsed_results]),
+        )
+        failure_word = "failure" if len(unparsed_results) == 1 else "failures"
+        unparsed_warning_line = (
+            f"> **{len(unparsed_results)} `unparsed_tool_call` {failure_word} detected:** "
+            "Raw tool-call markup arrived in assistant `content` instead of structured "
+            f"`tool_calls`. {parser_advice}"
+        )
+
     # Safety warnings
     if summary.safety_warnings:
         md.extend(
@@ -239,7 +261,12 @@ def write_scenario_report(
                 md.append(f"> - {_markdown_heading(held_id)}: {HELD_OUT_CELL}")
             else:
                 md.append(f"> - {_markdown_heading(w)}")
+        if unparsed_warning_line is not None:
+            md.append(">")
+            md.append(unparsed_warning_line)
         md.append("")
+    elif unparsed_warning_line is not None:
+        md.extend(["> [!WARNING]", unparsed_warning_line, ""])
 
     # Run Context section (issue #6)
     if run_context:

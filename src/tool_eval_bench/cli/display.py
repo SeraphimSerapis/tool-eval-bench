@@ -32,6 +32,11 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioResult,
     ScenarioStatus,
 )
+from tool_eval_bench.domain.wire_hygiene import (
+    dominant_parser_family,
+    format_tool_parser_advice,
+    infer_parser_family_from_text,
+)
 from tool_eval_bench.evals.scenarios import (
     ALL_DISPLAY_DETAILS,
     ALL_SCENARIOS_WITH_HARDMODE,
@@ -196,6 +201,7 @@ class BenchmarkDisplay:
         self.active_scenario: str | None = None
         self.active_audit: str | None = None
         self._audit_heading_printed = False
+        self._warned_unparsed_tool_call: bool = False
         self.started_at = time.time()
         self.rate_limit: RateLimitStatus | None = None
 
@@ -258,6 +264,21 @@ class BenchmarkDisplay:
 
         # Print result as a permanent line (appears above the Live footer)
         self.console.print(self._format_result_line(scenario, result))
+
+        if (
+            not self._warned_unparsed_tool_call
+            and result.failure_kind == FailureKind.UNPARSED_TOOL_CALL
+        ):
+            self._warned_unparsed_tool_call = True
+            advice = format_tool_parser_advice(
+                backend=self.backend,
+                engine_name=getattr(self.run_context, "engine_name", None),
+                parser_family=infer_parser_family_from_text(result.note),
+            )
+            self.console.print(
+                f"  [bold yellow]⚠[/] [yellow]{escape(scenario.id)}: raw tool-call markup arrived "
+                f"in content instead of tool_calls. {escape(advice)}[/]"
+            )
 
         # Update the footer
         self._refresh_footer()
@@ -523,6 +544,22 @@ def _print_final_panel(
             timeout_seconds=getattr(run_context, "timeout_seconds", None),
         ):
             content += f"\n  [yellow]   {escape(advice)}[/]"
+
+    unparsed_results = [
+        r for r in summary.scenario_results if r.failure_kind == FailureKind.UNPARSED_TOOL_CALL
+    ]
+    if unparsed_results:
+        parser_advice = format_tool_parser_advice(
+            backend=getattr(run_context, "backend", None),
+            engine_name=getattr(run_context, "engine_name", None),
+            parser_family=dominant_parser_family([r.note for r in unparsed_results]),
+        )
+        scenario_word = "scenario" if len(unparsed_results) == 1 else "scenarios"
+        content += (
+            f"\n  [bold yellow]⚠  {len(unparsed_results)} {scenario_word} failed with "
+            "unparsed_tool_call: raw tool-call markup arrived in content instead of tool_calls.[/]"
+            f"\n  [yellow]   {escape(parser_advice)}[/]"
+        )
 
     # Deployability composite (only when latency data is present)
     if summary.deployability is not None and summary.responsiveness is not None:
