@@ -115,8 +115,17 @@ def _code_cell(value: object) -> str:
 
     GFM splits table cells on ``|`` even inside code spans, unless the pipe is
     written ``\\|``. Entities would show literally inside the code span.
+    Values containing backticks use a longer backtick delimiter so an embedded
+    backtick cannot close the code span early.
     """
-    return "`" + str(value).replace("|", "\\|") + "`"
+    text = safe_label_text(str(value)).replace("|", "\\|")
+    if "`" not in text:
+        return f"`{text}`"
+    longest = max(len(run) for run in re.findall(r"`+", text))
+    fence = "`" * (longest + 1)
+    if text.startswith("`") or text.endswith("`"):
+        return f"{fence} {text} {fence}"
+    return f"{fence}{text}{fence}"
 
 
 def _markdown_heading(value: object) -> str:
@@ -207,7 +216,7 @@ def _render_run_parameters(ctx: RunContext) -> list[str]:
     if ctx.extra_params:
         import json as _json
 
-        md.append(f"| Extra Params | `{_json.dumps(ctx.extra_params)}` |")
+        md.append(f"| Extra Params | {_code_cell(_json.dumps(ctx.extra_params))} |")
     md.append("")
     return md
 

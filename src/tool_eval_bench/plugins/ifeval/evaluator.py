@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from tool_eval_bench.plugins._thinking import strip_thinking
 from tool_eval_bench.plugins.ifeval.checkers import check_instruction
 
 
@@ -55,17 +57,17 @@ def evaluate_prompt(
         ``detectable_format:constrained_response``, keep their contract in
         the prompt instead of in the kwargs payload.
     """
+    cleaned_response = strip_thinking(response, fallback_to_thought=True) or ""
     results: list[InstructionResult] = []
 
     for i, inst_id in enumerate(instruction_ids):
-        kw = kwargs_list[i] if i < len(kwargs_list) else {}
-        # Filter out None values from kwargs
-        kw = {k: v for k, v in kw.items() if v is not None}
+        raw_kw = kwargs_list[i] if i < len(kwargs_list) else {}
+        kw = {k: v for k, v in raw_kw.items() if v is not None} if isinstance(raw_kw, dict) else {}
         if prompt is not None:
             kw.setdefault("prompt", prompt)
 
         try:
-            passed = check_instruction(inst_id, response, kw)
+            passed = check_instruction(inst_id, cleaned_response, kw)
             results.append(
                 InstructionResult(
                     instruction_id=inst_id,
@@ -81,6 +83,14 @@ def evaluate_prompt(
                     instruction_id=inst_id,
                     passed=False,
                     error=f"Unknown instruction: {inst_id}",
+                )
+            )
+        except (TypeError, ValueError, re.error) as exc:
+            results.append(
+                InstructionResult(
+                    instruction_id=inst_id,
+                    passed=False,
+                    error=f"Checker error ({type(exc).__name__}): {exc}",
                 )
             )
 

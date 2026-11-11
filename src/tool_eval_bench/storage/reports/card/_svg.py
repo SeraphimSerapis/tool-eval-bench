@@ -7,6 +7,7 @@ same way, so an untrusted model name cannot open a tag or an attribute.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from html import escape
 
@@ -41,6 +42,8 @@ def esc(text: str) -> str:
 
 def num(value: float) -> str:
     """A coordinate with at most two decimals, so output is stable and compact."""
+    if not math.isfinite(value):
+        return "0"
     text = f"{value:.2f}".rstrip("0").rstrip(".")
     return "0" if text in ("-0", "") else text
 
@@ -54,7 +57,7 @@ def attrs(**values: object) -> str:
         if isinstance(value, float):
             text = num(value)
         else:
-            text = str(value)
+            text = str(value).translate(_INVALID_XML)
         parts.append(f'{name}="{escape(text, quote=True)}"')
     return " ".join(parts)
 

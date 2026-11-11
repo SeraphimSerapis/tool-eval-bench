@@ -26,6 +26,7 @@ from tool_eval_bench.domain.plugin import (
     OnPluginProgress,
     raise_for_transport_error,
 )
+from tool_eval_bench.domain.redaction import redact_urls
 from tool_eval_bench.domain.tools_large import LARGE_TOOLSET
 from tool_eval_bench.plugins.toolscale.catalog import Catalog
 from tool_eval_bench.plugins.toolscale.grid import (
@@ -199,7 +200,7 @@ class ToolscalePlugin(BenchmarkPlugin):
                 outcome, picked = ERROR, None
                 # Kept for the report: a run of errors is only diagnosable if
                 # it says whether the endpoint timed out, refused, or rejected.
-                error = f"{type(exc).__name__}: {exc}"[:200]
+                error = redact_urls(f"{type(exc).__name__}: {exc}")[:200]
 
             results[idx] = row(
                 item,
@@ -229,7 +230,7 @@ class ToolscalePlugin(BenchmarkPlugin):
                         prompt_tokens=None,
                         arguments=None,
                         reply=None,
-                        error=f"{type(exc).__name__}: {exc}"[:200],
+                        error=redact_urls(f"{type(exc).__name__}: {exc}")[:200],
                     )
 
         details = summarize(results, items, catalog)

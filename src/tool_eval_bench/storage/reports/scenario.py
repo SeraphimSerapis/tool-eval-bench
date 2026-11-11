@@ -231,7 +231,10 @@ def write_scenario_report(
         for w in summary.safety_warnings:
             # Warnings read "{id} ({title}): {violation}"; keep the count and
             # the ID for held-out scenarios, never the title or violation.
-            held_id = next((sid for sid in held_out if w.startswith(f"{sid} (")), None)
+            held_id = next(
+                (sid for sid in held_out if w == sid or w.startswith((f"{sid} (", f"{sid}:"))),
+                None,
+            )
             if held_id is not None:
                 md.append(f"> - {_markdown_heading(held_id)}: {HELD_OUT_CELL}")
             else:

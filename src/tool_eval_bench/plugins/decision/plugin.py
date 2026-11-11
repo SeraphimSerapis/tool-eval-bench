@@ -32,6 +32,7 @@ from tool_eval_bench.domain.plugin import (
     BenchmarkResult,
     OnPluginProgress,
 )
+from tool_eval_bench.domain.redaction import redact_urls
 from tool_eval_bench.plugins.decision.evaluator import score_against_gold
 from tool_eval_bench.plugins.decision.metrics import (
     HIGH_CONFIDENCE,
@@ -252,7 +253,7 @@ def _error_row(case: TypedDecisionCase, name: str, exc: Exception) -> dict[str, 
         "predicted": None,
         "correct": False,
         "is_error": True,
-        "error": f"{type(exc).__name__}: {exc}"[:200],
+        "error": redact_urls(f"{type(exc).__name__}: {exc}")[:200],
     }
 
 

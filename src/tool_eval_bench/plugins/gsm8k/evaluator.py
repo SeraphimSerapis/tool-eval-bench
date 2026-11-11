@@ -12,14 +12,24 @@ import math
 import re
 from dataclasses import dataclass
 
+from tool_eval_bench.plugins._thinking import strip_thinking
+
 # One whole number.  The trailing lookahead stops a backtrack from shortening
 # "25" to "2" when a later rule rejects what follows, and the minus sign must
-# touch the digits so a markdown bullet ("- 18") is not read as a sign.  A
-# trailing "%" or unit is left in place and simply not part of the number.
-_NUMBER = r"-?\$?\d[\d,]*(?:\.\d+)?(?![\d.,]*\d)"
+# touch the digits (or currency symbol) so a markdown bullet ("- 18") is not
+# read as a sign.  A trailing "%" or unit is left in place and simply not part
+# of the number.
+_CURRENCY = r"[$€£¥]"
+_NUMBER = rf"(?:-?{_CURRENCY}?|{_CURRENCY}-)\d[\d,]*(?:\.\d+)?(?![\d.,]*\d)"
 
 _MARKER_RE = re.compile(r"####\s*([^\n]+)")
-_ANSWER_RE = re.compile(rf"(?:the\s+answer\s+is|answer\s*[:=])\s*({_NUMBER})", re.IGNORECASE)
+_MARKER_LEAD_RE = re.compile(rf"^\s*({_NUMBER})")
+_BOXED_RE = re.compile(r"\\boxed\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}")
+_LATEX_TEXT_RE = re.compile(r"\\(?:text|mathrm|mathbf)\{([^{}]*)\}")
+_ANSWER_RE = re.compile(
+    rf"(?:the\s+answer\s+is|answer\s*[:=])\s*[*_`]*({_NUMBER})",
+    re.IGNORECASE,
+)
 # Standalone numbers: not glued to a word, a decimal point, or a fraction slash.
 _STANDALONE_RE = re.compile(rf"(?<![\w./])({_NUMBER})(?!/)")
 
@@ -31,7 +41,26 @@ class EvalResult:
     correct: bool
     extracted_answer: float | None
     ground_truth: float
-    extraction_method: str  # "marker", "answer_pattern", "last_number", "none"
+    extraction_method: str  # "marker", "boxed", "answer_pattern", "last_number", "none"
+
+
+def _parse_marker(raw: str) -> float | None:
+    cleaned = raw.strip().strip("*_`")
+    num = _parse_number(cleaned)
+    if num is not None:
+        return num
+    lead = _MARKER_LEAD_RE.match(cleaned)
+    if lead is not None:
+        return _parse_number(lead.group(1))
+    return None
+
+
+def _parse_boxed(raw: str) -> float | None:
+    unwrapped = _LATEX_TEXT_RE.sub(r"\1", raw).replace(r"\$", "$").replace(r"\%", "%")
+    unwrapped = unwrapped.strip().strip("*_`")
+    if unwrapped.endswith("%"):
+        unwrapped = unwrapped[:-1]
+    return _parse_number(unwrapped)
 
 
 def extract_answer(text: str) -> tuple[float | None, str]:
@@ -47,20 +76,28 @@ def extract_answer(text: str) -> tuple[float | None, str]:
     The fallbacks take their last match, because a model that corrects itself
     in prose ends with the answer it settled on.
     """
+    text = strip_thinking(text, fallback_to_thought=True) or ""
+
     # Strategy 1: the first ``#### N`` marker that parses.  A markdown heading
     # such as "#### Step 1" is also a marker, but not a number, so it is skipped.
     for match in _MARKER_RE.finditer(text):
-        num = _parse_number(match.group(1).strip())
+        num = _parse_marker(match.group(1))
         if num is not None:
             return num, "marker"
 
-    # Strategy 2: the last "the answer is N" phrase
+    # Strategy 2: the last LaTeX ``\boxed{N}`` answer.
+    for match in reversed(list(_BOXED_RE.finditer(text))):
+        num = _parse_boxed(match.group(1))
+        if num is not None:
+            return num, "boxed"
+
+    # Strategy 3: the last "the answer is N" phrase
     for match in reversed(list(_ANSWER_RE.finditer(text))):
         num = _parse_number(match.group(1))
         if num is not None:
             return num, "answer_pattern"
 
-    # Strategy 3: the last standalone number in the text
+    # Strategy 4: the last standalone number in the text
     for match in reversed(list(_STANDALONE_RE.finditer(text))):
         num = _parse_number(match.group(1))
         if num is not None:
@@ -80,9 +117,10 @@ def _parse_number(s: str) -> float | None:
     if not s:
         return None
     try:
-        return float(s)
+        val = float(s)
     except ValueError:
         return None
+    return val if math.isfinite(val) else None
 
 
 def evaluate_answer(

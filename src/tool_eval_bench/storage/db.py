@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import sqlite3
 import threading
 import time
@@ -73,6 +74,29 @@ def normalize_session_id(value: object) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def _sanitize_for_json(value: Any) -> Any:
+    """Replace non-finite floats with ``None`` so stored JSON stays RFC 8259 valid.
+
+    SQLite's ``json_valid()`` rejects ``NaN`` and ``Infinity`` tokens, which
+    would silently blank out ``_json_field`` search predicates on the whole blob.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _sanitize_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_for_json(v) for v in value]
+    return value
+
+
+def _json_dumps(value: Any) -> str:
+    """Serialize *value* as strict JSON without ``NaN`` or ``Infinity`` tokens."""
+    try:
+        return json.dumps(value, allow_nan=False)
+    except ValueError:
+        return json.dumps(_sanitize_for_json(value), allow_nan=False)
 
 
 def _split_traces(scores: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
@@ -180,7 +204,7 @@ class RunRepository:
         # only safe while access stays serialised, which ``_write_lock`` and the
         # single-worker executor below guarantee.
         self._conn: sqlite3.Connection = sqlite3.connect(self.db_path, check_same_thread=False)
-        self._write_lock = threading.Lock()
+        self._write_lock = threading.RLock()
         self._writer: ThreadPoolExecutor | None = None
         self._conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
         # WAL mode: crash-safe and allows concurrent reads during active runs
@@ -206,11 +230,13 @@ class RunRepository:
 
     def close(self) -> None:
         """Close the underlying SQLite connection and any writer thread."""
-        if self._writer is not None:
-            self._writer.shutdown(wait=True)
+        writer = self._writer
+        if writer is not None:
             self._writer = None
-        if self._conn:
-            self._conn.close()
+            writer.shutdown(wait=True)
+        with self._write_lock:
+            if self._conn:
+                self._conn.close()
 
     def __enter__(self) -> "RunRepository":
         return self
@@ -322,12 +348,22 @@ class RunRepository:
         so resuming a CLI run through the Python API, which sets no session,
         does not drop the run out of its session.
         """
-        scores, traces = _split_traces(run_data.get("scores", {}))
-        metadata = run_data.get("metadata") or {}
-        session_id = (
-            normalize_session_id(metadata.get("session_id")) if isinstance(metadata, dict) else None
-        ) or current_session_id()
-        with self._conn as conn:
+        raw_config = run_data.get("config")
+        config_dict = raw_config if isinstance(raw_config, dict) else {}
+        raw_scores = run_data.get("scores")
+        scores_is_null = "scores" in run_data and raw_scores is None
+        scores, traces = (
+            ({}, {})
+            if scores_is_null
+            else _split_traces(raw_scores if isinstance(raw_scores, dict) else {})
+        )
+        raw_metadata = run_data.get("metadata")
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        session_id = normalize_session_id(metadata.get("session_id")) or current_session_id()
+        model_name = config_dict.get("model") or run_data.get("model") or "unknown"
+        scores_json = None if scores_is_null else _json_dumps(scores)
+        metadata_json = _json_dumps(raw_metadata if raw_metadata is not None else {})
+        with self._write_lock, self._conn as conn:
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
                 """
@@ -351,10 +387,10 @@ class RunRepository:
                     run_data["run_id"],
                     now,
                     run_data.get("status", "completed"),
-                    run_data.get("config", {}).get("model", "unknown"),
-                    json.dumps(run_data.get("config", {})),
-                    json.dumps(scores),
-                    json.dumps(run_data.get("metadata", {})),
+                    str(model_name),
+                    _json_dumps(config_dict),
+                    scores_json,
+                    metadata_json,
                     run_data.get("run_type", "tool_eval"),
                     run_data.get("report_path"),
                     session_id,
@@ -378,7 +414,7 @@ class RunRepository:
         Used to flip a checkpointed run to ``interrupted`` without rewriting
         scores that were never computed.
         """
-        with self._conn as conn:
+        with self._write_lock, self._conn as conn:
             conn.execute("UPDATE scenario_runs SET status=? WHERE run_id=?", (status, run_id))
 
     def checkpoint_scenario_result(self, run_id: str, result: dict[str, Any]) -> None:
@@ -405,7 +441,7 @@ class RunRepository:
                     run_id,
                     scenario_id,
                     datetime.now(timezone.utc).isoformat(),
-                    json.dumps(result),
+                    _json_dumps(result),
                 ),
             )
 
@@ -425,7 +461,7 @@ class RunRepository:
 
     def get_checkpoints(self, run_id: str) -> List[dict[str, Any]]:
         """Return checkpointed scenario results for a run, oldest first."""
-        with self._conn as conn:
+        with self._write_lock, self._conn as conn:
             rows = conn.execute(
                 "SELECT result_json FROM run_checkpoints WHERE run_id=? ORDER BY created_at",
                 (run_id,),
@@ -442,7 +478,7 @@ class RunRepository:
 
     def clear_checkpoints(self, run_id: str) -> None:
         """Drop checkpoints once the run's final scores are persisted."""
-        with self._conn as conn:
+        with self._write_lock, self._conn as conn:
             conn.execute("DELETE FROM run_checkpoints WHERE run_id=?", (run_id,))
 
     def delete_runs(self, run_ids: Collection[str]) -> List[DeletedRunRow]:
@@ -478,7 +514,7 @@ class RunRepository:
 
     def get_traces(self, run_id: str) -> dict[str, str]:
         """Return externalized traces for a run, keyed by scenario ID."""
-        with self._conn as conn:
+        with self._write_lock, self._conn as conn:
             rows = conn.execute(
                 "SELECT scenario_id, raw_log FROM scenario_traces WHERE run_id=?",
                 (run_id,),
@@ -491,17 +527,18 @@ class RunRepository:
         Resume and comparison need the traces; pass ``include_traces=False`` to
         skip the second query when only scores are wanted.
         """
-        with self._conn as conn:
-            row = conn.execute(
-                _SELECT_RUNS + " WHERE run_id=?",
-                (run_id,),
-            ).fetchone()
-        if not row:
-            return None
-        run = _run_from_row(row)
-        if include_traces:
-            run["scores"] = _merge_traces(run["scores"], self.get_traces(run_id))
-        return run
+        with self._write_lock:
+            with self._conn as conn:
+                row = conn.execute(
+                    _SELECT_RUNS + " WHERE run_id=?",
+                    (run_id,),
+                ).fetchone()
+            if not row:
+                return None
+            run = _run_from_row(row)
+            if include_traces:
+                run["scores"] = _merge_traces(run["scores"], self.get_traces(run_id))
+            return run
 
     def list(
         self,
@@ -549,7 +586,7 @@ class RunRepository:
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
 
-        with self._conn as conn:
+        with self._write_lock, self._conn as conn:
             rows = conn.execute(query, params).fetchall()
         return [_run_from_row(r) for r in rows]
 
@@ -598,7 +635,7 @@ class RunRepository:
             query += " AND (model = ? OR substr(model, -length(?) - 1) = '/' || ?)"
             params.extend((model, model, model))
         query += " ORDER BY created_at DESC, rowid DESC"
-        with self._conn as conn:
+        with self._write_lock, self._conn as conn:
             rows = conn.execute(query, params).fetchall()
         return [
             {
@@ -619,7 +656,7 @@ class RunRepository:
         share a timestamp keep insertion order, so a session's runs read in the
         order the invocation wrote them.
         """
-        with self._conn as conn:
+        with self._write_lock, self._conn as conn:
             rows = conn.execute(
                 _SELECT_RUNS + " WHERE session_id = ? ORDER BY created_at, rowid",
                 (session_id,),
@@ -659,7 +696,7 @@ class RunRepository:
                 query += f" AND {column} IN ({', '.join('?' * len(ordered))})"
                 params.extend(ordered)
         query += " ORDER BY created_at DESC, rowid DESC LIMIT 1"
-        with self._conn as conn:
+        with self._write_lock, self._conn as conn:
             row = conn.execute(query, params).fetchone()
         return str(row[0]) if row else None
 
@@ -678,7 +715,7 @@ class RunRepository:
         prefix = prefix.strip().lower()
         if not prefix:
             return None
-        with self._conn as conn:
+        with self._write_lock, self._conn as conn:
             if conn.execute(
                 "SELECT 1 FROM scenario_runs WHERE session_id = ? LIMIT 1", (prefix,)
             ).fetchone():

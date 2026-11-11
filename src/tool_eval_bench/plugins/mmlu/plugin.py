@@ -24,9 +24,9 @@ from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
     OnPluginProgress,
-    final_answer_text,
     raise_for_transport_error,
 )
+from tool_eval_bench.plugins._thinking import plugin_answer_text
 from tool_eval_bench.plugins.hf_utils import items_sha256
 from tool_eval_bench.plugins.mmlu.dataset import (
     CATEGORIES,
@@ -165,6 +165,8 @@ class MMLUPlugin(BenchmarkPlugin):
 
         if concurrency < 1:
             raise ValueError("concurrency must be at least 1")
+        if limit < 0:
+            raise ValueError("limit must be >= 0")
         if subjects_filter:
             # Fail on a typo before downloading anything.
             resolve_subjects(subjects_filter)
@@ -237,7 +239,7 @@ class MMLUPlugin(BenchmarkPlugin):
                     )
 
                 raise_for_transport_error(response)
-                content = final_answer_text(response)
+                content = plugin_answer_text(response)
                 total_tokens += (response.prompt_tokens or 0) + (response.completion_tokens or 0)
                 is_error = False
             except Exception as exc:

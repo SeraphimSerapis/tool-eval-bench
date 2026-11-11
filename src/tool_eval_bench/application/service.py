@@ -258,8 +258,9 @@ class BenchmarkService:
         else:
             resolved = ALL_SCENARIOS
         # A completed run with nothing in it would be stored and ranked as a
-        # real score of 0.  A resume may legitimately have nothing left to run.
-        if not resolved and resume_run_id is None:
+        # real score of 0.  A resume may legitimately have nothing left to run
+        # only when preserved prior results already cover the protocol.
+        if not resolved and not (resume_run_id is not None and resume_prior_results):
             raise ValueError("No scenarios to run")
         from tool_eval_bench.evals.variants import prepare_scenarios
 
@@ -380,16 +381,23 @@ class BenchmarkService:
 
         # Merge prior results for resumed runs
         if resume_prior_results:
+            from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
+
             merged_results = list(summary.scenario_results)
             existing_ids = {r.scenario_id for r in merged_results}
+            prior_by_id: dict[str, ScenarioResult] = {}
             for pr in resume_prior_results:
-                if pr.get("scenario_id") not in existing_ids:
-                    merged_results.append(ScenarioResult.from_dict(pr))
+                sid = pr.get("scenario_id")
+                if sid and sid not in existing_ids:
+                    prior_by_id[str(sid)] = ScenarioResult.from_dict(pr)
+            merged_results.extend(prior_by_id.values())
             # The registry is only a fallback for callers that omit
             # resume_scenarios. It ranks below the run's own definitions and
             # gets the run's variants, or preserved outcomes would be recorded
             # as unvarianted and move the run's fingerprint.
-            registry = prepare_scenarios(ALL_SCENARIOS, variant_seed=variant_seed, locale=locale)
+            registry = prepare_scenarios(
+                ALL_SCENARIOS_WITH_HARDMODE, variant_seed=variant_seed, locale=locale
+            )
             scenario_by_id = {s.id: s for s in [*registry, *(resume_scenarios or []), *resolved]}
             missing_ids = {r.scenario_id for r in merged_results} - scenario_by_id.keys()
             if missing_ids:
@@ -627,8 +635,11 @@ async def _collect_metadata_safe(
         config = BenchmarkConfig(model=model, backend=backend, base_url=base_url, api_key=api_key)
         return await collect_run_metadata(config)
     except (httpx.HTTPError, OSError, ValueError, RuntimeError) as exc:
-        logger.warning("Failed to collect metadata: %s", exc)
-        return {"error": str(exc)}
+        from tool_eval_bench.domain.redaction import redact_urls
+
+        redacted = redact_urls(str(exc))
+        logger.warning("Failed to collect metadata: %s", redacted)
+        return {"error": redacted}
 
 
 @contextmanager

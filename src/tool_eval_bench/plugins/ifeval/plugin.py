@@ -18,9 +18,9 @@ from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
     OnPluginProgress,
-    final_answer_text,
     raise_for_transport_error,
 )
+from tool_eval_bench.plugins._thinking import plugin_answer_text
 from tool_eval_bench.plugins.hf_utils import items_sha256
 from tool_eval_bench.plugins.ifeval.dataset import IFEvalItem, dataset_revision, load_dataset
 from tool_eval_bench.plugins.ifeval.evaluator import evaluate_prompt
@@ -72,6 +72,8 @@ class IFEvalPlugin(BenchmarkPlugin):
 
         if concurrency < 1:
             raise ValueError("concurrency must be at least 1")
+        if limit < 0:
+            raise ValueError("limit must be >= 0")
 
         # Load dataset
         if preloaded is not None:
@@ -132,7 +134,7 @@ class IFEvalPlugin(BenchmarkPlugin):
                     )
 
                 raise_for_transport_error(response)
-                content = final_answer_text(response)
+                content = plugin_answer_text(response)
                 total_tokens += (response.prompt_tokens or 0) + (response.completion_tokens or 0)
                 is_error = False
             except Exception as exc:

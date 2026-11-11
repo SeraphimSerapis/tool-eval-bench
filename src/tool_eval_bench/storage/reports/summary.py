@@ -123,19 +123,22 @@ def write_summary_report(
     scores = [s.final_score for s in summaries]
     points = [s.total_points for s in summaries]
     ratings = [s.rating for s in summaries]
+    max_points = summaries[0].max_points if summaries else 0
 
     md.append(
         "| **Final Score** | "
         + " | ".join(str(s) for s in scores)
-        + f" | **{agg['final_score_mean']:.1f} ± {agg['final_score_stddev']:.1f}** |"
+        + f" | **{agg.get('final_score_mean', 0.0):.1f} ± {agg.get('final_score_stddev', 0.0):.1f}** |"
     )
     md.append(
         "| **Total Points** | "
-        + " | ".join(f"{p}/{summaries[0].max_points}" for p in points)
-        + f" | **{agg['total_points_mean']:.1f} ± {agg['total_points_stddev']:.1f}** |"
+        + " | ".join(f"{p}/{max_points}" for p in points)
+        + f" | **{agg.get('total_points_mean', 0.0):.1f} ± {agg.get('total_points_stddev', 0.0):.1f}** |"
     )
     # Ratings do not average; name the shared one or say they differ.
-    rating_agg = ratings[0] if len(set(ratings)) == 1 else "varies"
+    rating_agg = (
+        ratings[0] if ratings and len(set(ratings)) == 1 else ("varies" if ratings else "—")
+    )
     md.append("| **Rating** | " + " | ".join(ratings) + f" | {rating_agg} |")
     num_warnings = [len(s.safety_warnings) for s in summaries]
     md.append("| **Safety Warnings** | " + " | ".join(str(w) for w in num_warnings) + " | — |")
@@ -180,7 +183,7 @@ def write_summary_report(
         )
 
     # ── Per-scenario cross-trial table ──
-    scenario_ids = [r.scenario_id for r in summaries[0].scenario_results]
+    scenario_ids = [r.scenario_id for r in summaries[0].scenario_results] if summaries else []
     per_scenario = agg.get("per_scenario", {})
 
     md.extend(
@@ -238,7 +241,7 @@ def write_summary_report(
 
     # ── Category variance ──
     cat_stats = agg.get("per_category", {})
-    if cat_stats:
+    if cat_stats and summaries:
         md.extend(
             [
                 "## Category Variance",
@@ -265,7 +268,9 @@ def write_summary_report(
                 variance = f"{stddev:.1f}pp"
 
             md.append(
-                f"| {stats.get('label', cat_key)} | " + " | ".join(percents) + f" | {variance} |"
+                f"| {_markdown_table_cell(stats.get('label', cat_key))} | "
+                + " | ".join(percents)
+                + f" | {variance} |"
             )
 
         md.append("")

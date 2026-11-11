@@ -6,11 +6,16 @@ One section per pressure level, with the full trace for every scenario run at it
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from tool_eval_bench.domain.models import RunContext
-from tool_eval_bench.domain.redaction import redact_url
-from tool_eval_bench.storage.reports._common import _trace_block
+from tool_eval_bench.domain.redaction import redact_url, redact_urls
+from tool_eval_bench.domain.scenarios import ScenarioReportMetadata
+from tool_eval_bench.storage.reports._common import (
+    _render_held_out_note,
+    _trace_block,
+    held_out_ids,
+)
 from tool_eval_bench.storage.reports.mode import ModeReport, write_mode_report
 
 
@@ -31,6 +36,8 @@ def write_pressure_sweep_report(
     interrupted: bool = False,
     stop_reason: str | None = None,
     breaking_point_lower_bound: bool = False,
+    scenario_metadata: Mapping[str, ScenarioReportMetadata] | None = None,
+    scenario_packs: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Write a trace-complete artifact for a context-pressure sweep.
 
@@ -49,6 +56,8 @@ def write_pressure_sweep_report(
         interrupted=interrupted,
         stop_reason=stop_reason,
         breaking_point_lower_bound=breaking_point_lower_bound,
+        scenario_metadata=scenario_metadata,
+        scenario_packs=scenario_packs,
     )
     return write_mode_report(root, run_id, report, run_context)
 
@@ -67,6 +76,8 @@ def pressure_sweep_report(
     interrupted: bool = False,
     stop_reason: str | None = None,
     breaking_point_lower_bound: bool = False,
+    scenario_metadata: Mapping[str, ScenarioReportMetadata] | None = None,
+    scenario_packs: list[dict[str, Any]] | None = None,
 ) -> ModeReport:
     """Build the context-pressure sweep report content.
 
@@ -104,6 +115,8 @@ def pressure_sweep_report(
     ]
     if stop_reason is not None:
         header.append(f"- **Stopped Early**: {stop_reason}")
+    held_out = held_out_ids(scenario_metadata)
+    seen_held_out: set[str] = set()
     markdown: list[str] = []
     for index, level in enumerate(level_results, start=1):
         fill_line = f"- **Fill Tokens**: {level['fill_tokens']:,}"
@@ -129,29 +142,47 @@ def pressure_sweep_report(
                 "(infrastructure failures, not counted in the pass rate)"
             )
         if level.get("error"):
-            markdown.append(f"- **Level Error**: {level['error']}")
+            markdown.append(f"- **Level Error**: {redact_urls(str(level['error']))}")
         markdown.append("")
         for scenario in level["scenario_results"]:
+            sid = str(scenario["scenario_id"])
             status = str(scenario["status"])
-            if scenario["scenario_id"] in excluded:
+            if sid in excluded:
                 status += " (excluded from scoring)"
-            markdown.extend(
-                [
-                    f"### {scenario['scenario_id']}",
-                    "",
-                    f"- **Status**: {status}",
-                    f"- **Points**: {scenario['points']} / 2",
-                    f"- **Summary**: {scenario.get('summary') or ''}",
-                    f"- **Expected**: {scenario.get('expected_behavior') or ''}",
-                    "- **Tool Calls**: "
-                    + (", ".join(scenario.get("tool_calls_made") or []) or "none"),
-                    "",
-                    "#### Full trace",
-                    "",
-                    *_trace_block(scenario.get("raw_log", "")),
-                    "",
-                ]
-            )
+            if sid in held_out or scenario.get("held_out"):
+                seen_held_out.add(sid)
+                markdown.extend(
+                    [
+                        f"### {sid}",
+                        "",
+                        f"- **Status**: {status}",
+                        f"- **Points**: {scenario['points']} / 2",
+                        "",
+                        "_Held-out scenario: title, summary, and trace withheld._",
+                        "",
+                    ]
+                )
+            else:
+                markdown.extend(
+                    [
+                        f"### {sid}",
+                        "",
+                        f"- **Status**: {status}",
+                        f"- **Points**: {scenario['points']} / 2",
+                        f"- **Summary**: {scenario.get('summary') or ''}",
+                        f"- **Expected**: {scenario.get('expected_behavior') or ''}",
+                        "- **Tool Calls**: "
+                        + (", ".join(scenario.get("tool_calls_made") or []) or "none"),
+                        "",
+                        "#### Full trace",
+                        "",
+                        *_trace_block(scenario.get("raw_log", "")),
+                        "",
+                    ]
+                )
+    if seen_held_out:
+        markdown.extend(_render_held_out_note(sorted(seen_held_out), scenario_packs))
+        markdown.append("")
     return ModeReport(
         title="Context Pressure Sweep",
         display_name=model,

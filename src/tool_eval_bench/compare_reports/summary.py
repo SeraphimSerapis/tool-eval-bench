@@ -150,16 +150,19 @@ def _parse_summary_scenarios(txt):
         if not line.strip().startswith("|"):
             continue
         cols = [c.strip() for c in line.split("|")]
-        if len(cols) < 3 or not cols[1].startswith("TC-"):
+        if len(cols) < 5 or not cols[1] or cols[1] in ("ID", "Scenario"):
             continue
-        if all(c in ("---", "") for c in cols):
+        if all(set(c) <= {":", "-"} for c in cols if c):
             continue
-        # Trial results are cols 2..(n-2), last two are Pass@k and Pass^k
-        trial_results = []
-        for c in cols[2:-2]:
-            trial_results.append(c)
-        passk = cols[-2].strip() if len(cols) >= 3 else ""
-        passk8 = cols[-1].strip() if len(cols) >= 3 else ""
+        # Note: trailing empty element from splitting `|...|` is cols[-1];
+        # last two data cells are cols[-3] (Pass@k) and cols[-2] (Pass^k) when
+        # line ends with `|`, or cols[-2]/cols[-1] otherwise.
+        data_cols = cols[1:-1] if cols[-1] == "" else cols[1:]
+        if len(data_cols) < 3:
+            continue
+        trial_results = list(data_cols[1:-2])
+        passk = data_cols[-2].strip()
+        passk8 = data_cols[-1].strip()
 
         # Calculate pass/partial/fail counts
         passes = sum(1 for r in trial_results if r == "✅")
@@ -168,7 +171,7 @@ def _parse_summary_scenarios(txt):
 
         rows.append(
             {
-                "id": cols[1],
+                "id": html.unescape(data_cols[0]),
                 "trials": trial_results,
                 "passes": passes,
                 "partials": partials,
@@ -185,13 +188,12 @@ def _parse_never_passes(txt):
     block = re.search(r"### ❌ Never Passes.*?\n\n(.+?)(?=\n### |\n## |\Z)", txt, re.S)
     if not block:
         return items
-    for m in re.finditer(
-        r"\|\s*\*\*(TC-\d+)\*\*\s*\|\s*(.+?)\s*\|",
-        block.group(1),
-        re.S,
-    ):
-        issue = html.unescape(" ".join(m.group(2).split()))
-        items.append({"id": m.group(1), "issue": issue})
+    for line in block.group(1).split("\n"):
+        m = re.match(r"\|\s*\*\*(.+?)\*\*\s*\|\s*(.+?)\s*\|", line)
+        if m:
+            sid = html.unescape(m.group(1).strip())
+            issue = html.unescape(" ".join(m.group(2).split()))
+            items.append({"id": sid, "issue": issue})
     return items
 
 
@@ -200,9 +202,11 @@ def _parse_flaky(txt):
     block = re.search(r"### 🔀 Flaky.*?\n\n(.+?)(?=\n### |\n## |\Z)", txt, re.S)
     if block:
         for line in block.group(1).split("\n"):
-            m = re.match(r"\|\s*\*\*(TC-\d+)\*\*\s*\|\s*(.+?)\s*\|", line)
+            m = re.match(r"\|\s*\*\*(.+?)\*\*\s*\|\s*(.+?)\s*\|", line)
             if m:
-                items.append({"id": m.group(1), "results": m.group(2).strip()})
+                items.append(
+                    {"id": html.unescape(m.group(1).strip()), "results": m.group(2).strip()}
+                )
     return items
 
 
@@ -211,9 +215,14 @@ def _parse_consistent_partials(txt):
     block = re.search(r"### ⚠️ Consistently Partial.*?\n\n(.+?)(?=\n### |\n## |\Z)", txt, re.S)
     if block:
         for line in block.group(1).split("\n"):
-            m = re.match(r"\|\s*(TC-\d+)\s*\|\s*(.+?)\s*\|", line)
-            if m:
-                items.append({"id": m.group(1), "issue": html.unescape(m.group(2).strip())})
+            if not line.strip().startswith("|"):
+                continue
+            cols = [c.strip() for c in line.split("|")]
+            if len(cols) < 4 or not cols[1] or cols[1] in ("ID", "Scenario"):
+                continue
+            if all(set(c) <= {":", "-"} for c in cols if c):
+                continue
+            items.append({"id": html.unescape(cols[1]), "issue": html.unescape(cols[2])})
     return items
 
 
@@ -550,8 +559,8 @@ def generate_html(da: dict, db: dict, out: str) -> None:
         w_class += "font-extrabold text-emerald-800 tabular-nums"
         lines.append(f'''            <tr{tc_attr}>
               <td class="py-3 px-6 font-semibold">{esc(label)}</td>
-              <td class="py-3 px-4 text-center"><span class="{w_class}">{wv}</span></td>
-              <td class="py-3 px-4 text-center"><span class="font-extrabold tabular-nums text-slate-800">{rv}</span></td>
+              <td class="py-3 px-4 text-center"><span class="{w_class}">{esc(wv)}</span></td>
+              <td class="py-3 px-4 text-center"><span class="font-extrabold tabular-nums text-slate-800">{esc(rv)}</span></td>
               <td class="py-3 px-4 text-center"><span class="{dc}">{esc(dv)}</span></td>
             </tr>''')
 

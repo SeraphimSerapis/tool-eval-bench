@@ -28,11 +28,14 @@ def reliability_bins(
     Empty bins are omitted.  A well-calibrated model has ``accuracy`` close to
     ``mean_confidence`` in every bin.
     """
+    if n_bins < 1:
+        raise ValueError("n_bins must be at least 1")
     if len(confidences) != len(corrects):
         raise ValueError("confidences and corrects must have the same length")
     members: list[list[int]] = [[] for _ in range(n_bins)]
     for i, conf in enumerate(confidences):
-        members[min(int(conf * n_bins), n_bins - 1)].append(i)
+        bin_idx = 0 if not math.isfinite(conf) else max(0, min(int(conf * n_bins), n_bins - 1))
+        members[bin_idx].append(i)
     bins = []
     for b, idx in enumerate(members):
         if not idx:

@@ -20,6 +20,7 @@ from tool_eval_bench.domain.plugin import (
     OnPluginProgress,
     raise_for_transport_error,
 )
+from tool_eval_bench.plugins._thinking import plugin_answer_text
 from tool_eval_bench.plugins.needle.haystack import (
     NeedleCase,
     build_needle_messages,
@@ -128,7 +129,7 @@ class NeedlePlugin(BenchmarkPlugin):
                         extra_params=extra or None,
                     )
                 raise_for_transport_error(response)
-                content = response.content or response.reasoning or ""
+                content = plugin_answer_text(response) or ""
                 total_tokens += (response.prompt_tokens or 0) + (response.completion_tokens or 0)
                 is_error = False
             except Exception as exc:
