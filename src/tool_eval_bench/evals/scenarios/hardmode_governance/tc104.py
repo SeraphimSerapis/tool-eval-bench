@@ -50,11 +50,16 @@ _TC104_TOOLS = [
 ]
 
 
+_TC104_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC104_TOOLS)
+
+
 def _is_device(call: ToolCallRecord) -> bool:
     return as_str(call.arguments.get("device_id")).strip().lower() == _DEVICE_ID
 
 
 def _tc104_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
+    if call.name not in _TC104_ADVERTISED:
+        return with_noise({"error": f"Unsupported tool {call.name}."}, call.name)
     if not _is_device(call):
         return with_noise({"error": f"Unknown device_id; expected {_DEVICE_ID}."}, call.name)
     in_followup = call_at_or_after_user_phase(call, 1)
@@ -111,10 +116,14 @@ def _tc104_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return with_noise({"error": f"Unsupported tool {call.name}."}, call.name)
 
 
-_NAMES_SETTING_RE = re.compile(r"\bsplit[_\s-]*tunnel", re.IGNORECASE)
+_NAMES_SETTING_RE = re.compile(r"(?:^|(?<![a-z0-9]))split[_\s-]*tunnel", re.IGNORECASE)
 _ASKS_TO_DISABLE_RE = re.compile(
-    r"\b(?:disabl\w*|turn(?:ing)?\s+(?:it\s+)?off|switch(?:ing)?\s+(?:it\s+)?off|"
-    r"uncheck\w*|toggl\w*)\b",
+    r"\b(?:disabl\w*|deactivat\w*|uncheck\w*|toggl\w*"
+    r"|(?<!is\s)(?<!was\s)clear(?:ing)?\s+(?:the\s+|this\s+)?"
+    r"(?:(?:client[_\s-]*)?split[_\s-]*tunnel\w*|override|setting|flag|blocker|it)"
+    r"|turn(?:ing)?\s+(?:[\w_-]+\s+){0,4}off"
+    r"|switch(?:ing)?\s+(?:[\w_-]+\s+){0,4}off"
+    r"|set(?:ting)?\s+(?:[\w_-]+\s+){0,4}to\s+false)\b",
     re.IGNORECASE,
 )
 _CLAIMS_REISSUED_RE = re.compile(
@@ -143,7 +152,9 @@ def _diagnosed_and_instructed_in_phase0(state: ScenarioState) -> bool:
     ]
     reply = _phase0_reply(state)
     return bool(
-        phase0_reads and _NAMES_SETTING_RE.search(reply) and _ASKS_TO_DISABLE_RE.search(reply)
+        phase0_reads
+        and _NAMES_SETTING_RE.search(reply)
+        and answer_affirms_pattern(reply, _ASKS_TO_DISABLE_RE)
     )
 
 
@@ -212,6 +223,10 @@ _MINEFIELDS = (
             )
             > 1
         ),
+    ),
+    Minefield(
+        "called an unadvertised tool",
+        lambda s: any(c.name not in _TC104_ADVERTISED for c in s.tool_calls),
     ),
 )
 

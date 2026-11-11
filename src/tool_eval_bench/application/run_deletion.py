@@ -115,16 +115,24 @@ def is_run_report(path: Path, run_id: str) -> bool:
 
     Matches ``report_filename`` in ``storage.reports``: the file name is the
     run id followed by ``.md``, a ``--<label>`` slug, or a ``_<suffix>``, and
-    it sits in a ``YYYY/MM`` folder. A directory or a missing file does not
-    match.
+    it sits in a ``YYYY/MM`` folder. Symlinks, parent traversal segments,
+    directories, and missing files do not match.
     """
+    if not run_id or "/" in run_id or "\\" in run_id or ".." in run_id:
+        return False
+    if ".." in path.parts:
+        return False
     name = path.name
-    if not run_id or path.suffix != ".md" or not name.startswith(run_id):
+    if path.suffix != ".md" or not name.startswith(run_id):
         return False
     rest = name[len(run_id) :]
     if rest != ".md" and not rest.startswith(("--", "_")):
         return False
     month, year = path.parent.name, path.parent.parent.name
     if not (_MONTH.fullmatch(month) and _YEAR.fullmatch(year)):
+        return False
+    if not (1 <= int(month) <= 12):
+        return False
+    if path.is_symlink() or path.parent.is_symlink() or path.parent.parent.is_symlink():
         return False
     return path.is_file()

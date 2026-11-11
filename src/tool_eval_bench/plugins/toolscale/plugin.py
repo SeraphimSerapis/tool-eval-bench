@@ -24,8 +24,10 @@ from tool_eval_bench.domain.plugin import (
     BenchmarkPlugin,
     BenchmarkResult,
     OnPluginProgress,
+    final_answer_text,
     raise_for_transport_error,
 )
+from tool_eval_bench.domain.redaction import redact_urls
 from tool_eval_bench.domain.tools_large import LARGE_TOOLSET
 from tool_eval_bench.plugins.toolscale.catalog import Catalog
 from tool_eval_bench.plugins.toolscale.grid import (
@@ -193,13 +195,13 @@ class ToolscalePlugin(BenchmarkPlugin):
                 else:
                     # What the model said instead of calling: a clarifying
                     # question and a refusal read very differently.
-                    reply = (response.content or "").strip()[:300] or None
+                    reply = (final_answer_text(response) or "").strip()[:300] or None
             except Exception as exc:
                 logger.debug("Error on toolscale item %s: %s", _log_id(item, catalog), exc)
                 outcome, picked = ERROR, None
                 # Kept for the report: a run of errors is only diagnosable if
                 # it says whether the endpoint timed out, refused, or rejected.
-                error = f"{type(exc).__name__}: {exc}"[:200]
+                error = redact_urls(f"{type(exc).__name__}: {exc}")[:200]
 
             results[idx] = row(
                 item,
@@ -229,7 +231,7 @@ class ToolscalePlugin(BenchmarkPlugin):
                         prompt_tokens=None,
                         arguments=None,
                         reply=None,
-                        error=f"{type(exc).__name__}: {exc}"[:200],
+                        error=redact_urls(f"{type(exc).__name__}: {exc}")[:200],
                     )
 
         details = summarize(results, items, catalog)

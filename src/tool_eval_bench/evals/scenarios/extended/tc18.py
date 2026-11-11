@@ -16,6 +16,9 @@ from tool_eval_bench.evals.helpers import (
     address_observed_before as _address_observed_before,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients as _addressed_recipients,
+)
+from tool_eval_bench.evals.helpers import (
     answer_affirms_text as _answer_affirms_text,
 )
 from tool_eval_bench.evals.helpers import (
@@ -130,6 +133,7 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
         c
         for c in email_calls
         if _recipient_values(c.arguments.get("to")) == ["hans.mueller@firma.de"]
+        and _addressed_recipients(c) == ["hans.mueller@firma.de"]
     ]
     usable_translations = [
         call

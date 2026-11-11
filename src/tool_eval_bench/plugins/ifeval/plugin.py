@@ -72,6 +72,8 @@ class IFEvalPlugin(BenchmarkPlugin):
 
         if concurrency < 1:
             raise ValueError("concurrency must be at least 1")
+        if limit < 0:
+            raise ValueError("limit must be >= 0")
 
         # Load dataset
         if preloaded is not None:
@@ -167,7 +169,7 @@ class IFEvalPlugin(BenchmarkPlugin):
                         {"id": iid, "passed": False, "error": "truncated"}
                         for iid in item.instruction_id_list
                     ],
-                    "model_response": (response.reasoning or "")[:1000],
+                    "model_response": (response.reasoning or response.content or "")[:1000],
                 }
                 instructions_total += len(item.instruction_id_list)
             else:

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import random
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -130,7 +131,7 @@ def _retry_after_seconds(
                 delay = max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
     if delay is None:
         delay = _retry_delay_from_body(response)
-    if delay is None:
+    if delay is None or not math.isfinite(delay):
         return None
     if delay < 0 or delay > cap:
         return None
@@ -218,6 +219,52 @@ class PreEventLines:
             return json.loads("\n".join(self._lines))
         except json.JSONDecodeError:
             return None
+
+
+class SseDataBuffer:
+    """Assemble JSON objects from single-line or multi-line SSE ``data:`` fields."""
+
+    def __init__(self, limit: int = MAX_PRE_EVENT_CHARS) -> None:
+        self._lines: list[str] = []
+        self._chars = 0
+        self._limit = limit
+
+    def reset(self) -> None:
+        self._lines.clear()
+        self._chars = 0
+
+    def push_data(self, payload: str) -> Any:
+        """Feed one ``data:`` line's payload; return parsed JSON when complete, else None."""
+        if not self._lines:
+            try:
+                return json.loads(payload)
+            except json.JSONDecodeError:
+                if payload.lstrip().startswith("{") and len(payload) <= self._limit:
+                    self._lines.append(payload)
+                    self._chars = len(payload)
+                return None
+
+        combined = "\n".join([*self._lines, payload])
+        try:
+            parsed = json.loads(combined)
+        except json.JSONDecodeError:
+            tail = "".join(self._lines).rstrip()[-1:]
+            if tail not in "[,:":
+                try:
+                    solo = json.loads(payload)
+                except json.JSONDecodeError:
+                    solo = None
+                if isinstance(solo, dict):
+                    self.reset()
+                    return solo
+            self._chars += len(payload) + 1
+            if self._chars > self._limit:
+                self.reset()
+            else:
+                self._lines.append(payload)
+            return None
+        self.reset()
+        return parsed
 
 
 def _backoff_delay(attempt: int, response: httpx.Response | None = None) -> float:
@@ -320,12 +367,22 @@ class RateLimitCoordinator:
             async with self._lock:
                 now = time.monotonic()
                 start = max(now, self._pause_until, self._next_slot)
-                self._next_slot = start + self._min_interval
+                reserved_next = start + self._min_interval
+                self._next_slot = reserved_next
                 generation = self._pressure_generation
 
             delay = start - time.monotonic()
             if delay > 0:
-                await asyncio.sleep(delay)
+                try:
+                    await asyncio.sleep(delay)
+                except BaseException:
+                    if (
+                        not self._lock.locked()
+                        and self._pressure_generation == generation
+                        and self._next_slot == reserved_next
+                    ):
+                        self._next_slot = start
+                    raise
 
             async with self._lock:
                 now = time.monotonic()
@@ -464,7 +521,11 @@ class RetryingHTTPAdapter:
             rate_limited = False
             try:
                 result = await attempt()
-                await self._rate_limits.on_success()
+                err_status = getattr(result, "transport_error_status", None)
+                if err_status is None or (
+                    err_status < 500 and err_status not in RETRYABLE_STATUS_CODES
+                ):
+                    await self._rate_limits.on_success()
                 return result
             except httpx.HTTPStatusError as exc:
                 # The message quotes the full request URL. Callers keep str(exc)

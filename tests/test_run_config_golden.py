@@ -727,22 +727,23 @@ def test_resume_reports_every_mismatch() -> None:
 
 
 EXPECTED_COHORTS: dict[str, str] = {
-    "default": "71ee3042f76c",
-    "judged": "71ee3042f76c",
-    "other_model": "71ee3042f76c",
-    "other_commit": "d9fa5f3c4b8d",
-    "other_version": "685db5753d81",
-    "no_code_identity": "a35d44e6f170",
-    "legacy_key": "6a0f491b1a81",
-    "unsorted_ids": "6c38dcf557b7",
-    "pressure": "8fab51c30a7c",
-    "everything": "c47454d3187d",
+    "default": "5054a1bcd7ca",
+    "judged": "5054a1bcd7ca",
+    "operational": "5054a1bcd7ca",
+    "other_model": "5054a1bcd7ca",
+    "other_commit": "69019191b42b",
+    "other_version": "2b053dc725a9",
+    "no_code_identity": "b57c7714b630",
+    "legacy_key": "164a7738fce9",
+    "unsorted_ids": "28af95c9af4d",
+    "pressure": "d78a296029fd",
+    "everything": "6439776e4d9e",
 }
 EXPECTED_ROWS: list[tuple[str, str, str, int]] = [
-    ("r2", "0de29cc2c3a0", "a35d44e6f170", 2),
-    ("r3", "12194949d7a5", "c10e42bd5845", 1),
-    ("r4", "0de29cc2c3a0", "a35d44e6f170", 1),
-    ("r5", "0cac0195d776", "a35d44e6f170", 1),
+    ("r2", "0de29cc2c3a0", "b57c7714b630", 2),
+    ("r3", "12194949d7a5", "71fc179d7afb", 1),
+    ("r4", "0de29cc2c3a0", "b57c7714b630", 1),
+    ("r5", "0cac0195d776", "b57c7714b630", 1),
 ]
 
 
@@ -754,6 +755,10 @@ def _cohort_cases() -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
     return {
         "default": (stored, CODE_IDENTITY),
         "judged": ({**stored, "decision_judge": JUDGE}, CODE_IDENTITY),
+        "operational": (
+            {**stored, "concurrency": 8, "timeout_seconds": 600.0, "alpha": 0.2},
+            CODE_IDENTITY,
+        ),
         "other_model": (
             {
                 **stored,

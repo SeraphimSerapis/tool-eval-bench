@@ -66,7 +66,10 @@ _FIELD = re.compile(
     + r")(?![a-z0-9_])",
     re.IGNORECASE,
 )
-_RULE = re.compile(r"(?<![a-z0-9_])(?:r|rule\s*|regla\s*)([1-5])(?![a-z0-9_])", re.IGNORECASE)
+_RULE = re.compile(
+    r"(?<![a-z0-9_])(?:r|rule\s*|regla\s*|regel\s*|规则\s*|ルール\s*)([1-5])(?![a-z0-9_])",
+    re.IGNORECASE,
+)
 _ISSUES_MARKER = re.compile(r"^[\W_]*issues[\W_]*[:：]", re.IGNORECASE | re.MULTILINE)
 
 

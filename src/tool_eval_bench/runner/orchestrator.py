@@ -17,7 +17,7 @@ import random
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx
@@ -234,8 +234,11 @@ def _repair_json_str(s: str) -> str:
     if not s or not s.strip():
         return "{}"
     try:
-        json.loads(s)
-        return s  # already valid
+        parsed = json.loads(s)
+        if isinstance(parsed, dict):
+            return s  # already valid JSON object
+        logger.warning("Tool-call arguments were not a JSON object: %s", s[:120])
+        return "{}"
     except json.JSONDecodeError:
         pass
 
@@ -272,12 +275,40 @@ def _repair_json_str(s: str) -> str:
     repaired += "".join(reversed(stack))
 
     try:
-        json.loads(repaired)
-        return repaired
+        parsed = json.loads(repaired)
+        if isinstance(parsed, dict):
+            return repaired
+        logger.warning("Repaired tool-call arguments were not a JSON object: %s", s[:120])
+        return "{}"
     except json.JSONDecodeError:
         # Last resort: return empty object so the server doesn't crash
         logger.warning("Could not repair malformed tool-call arguments: %s", s[:120])
         return "{}"
+
+
+def _ensure_unique_tool_call_ids(
+    tool_calls: Sequence[ProviderToolCall], seen_ids: set[str], turn: int
+) -> list[ProviderToolCall]:
+    """Return tool calls with non-empty IDs that are unique across the conversation."""
+    normalized: list[ProviderToolCall] = []
+    for idx, tc in enumerate(tool_calls, start=1):
+        candidate = str(tc.id).strip() if tc.id is not None else ""
+        if not candidate:
+            candidate = f"tool_call_t{turn}_{idx}"
+        if candidate in seen_ids:
+            suffix = 2
+            while f"{candidate}_{suffix}" in seen_ids:
+                suffix += 1
+            candidate = f"{candidate}_{suffix}"
+        seen_ids.add(candidate)
+        normalized.append(replace(tc, id=candidate) if candidate != tc.id else tc)
+    return normalized
+
+
+def _format_calls_made(tool_calls: Sequence[ToolCallRecord]) -> list[str]:
+    return [
+        f"{tc.name}({', '.join(f'{k}={v}' for k, v in tc.arguments.items())})" for tc in tool_calls
+    ]
 
 
 def _assistant_message(
@@ -451,6 +482,12 @@ async def run_scenario(
     total_arg_bytes: int = 0  # Track tool call argument sizes
     parallel_tool_turns: list[int] = []
     state_checkpoints: list[str] = []
+    seen_call_ids: set[str] = {
+        str(tc["id"])
+        for msg in messages
+        for tc in (msg.get("tool_calls") or [])
+        if isinstance(tc, dict) and tc.get("id")
+    }
 
     # Build the queue of user messages: initial + any follow-ups
     follow_ups = list(scenario.follow_up_messages)  # copy so we can pop
@@ -555,31 +592,33 @@ async def run_scenario(
             turn_latencies.append(turn_ms)
 
             # A rejected request produced no model output, so there is nothing
-            # to grade. Whether that is the model's fault depends on what the
-            # request contained: once the model has authored a tool call, the
-            # history carries arguments a strict server may refuse, and the
-            # existing soft-result behaviour records that as a model failure
-            # unless the adapter identifies a backend-internal rejection.
-            # Before then the request is entirely ours, so a 4xx means the
-            # endpoint would not accept a parameter this benchmark sent
-            # (tool_choice and response_format are the usual ones) and the
-            # scenario measures the serving stack rather than the model.
-            # A body that is not JSON is the serving stack's fault at any
-            # turn: the server serialises the response, not the model.
-            if result.malformed or (
-                result.transport_error_status is not None
-                and (not state.tool_calls or result.transport_error_is_infrastructure)
-            ):
+            # to grade and follow-ups must not continue with an error string as
+            # assistant prose. Whether that failure belongs to the model or the
+            # serving stack depends on what the request contained: once the
+            # model has authored a tool call, the history carries arguments a
+            # strict server may refuse, so a non-infrastructure rejection is
+            # recorded as MODEL_CRASH rather than SERVER_ERROR. Before then the
+            # request is entirely ours, so a 4xx means the endpoint rejected a
+            # parameter this benchmark sent (tool_choice and response_format are
+            # the usual ones) and the scenario measures the serving stack. A
+            # body that is not JSON is the serving stack's fault at any turn.
+            if result.malformed or result.transport_error_status is not None:
                 elapsed = time.perf_counter() - t0
+                is_infrastructure = (
+                    result.malformed
+                    or not state.tool_calls
+                    or result.transport_error_is_infrastructure
+                )
                 if result.malformed:
                     summary = "Endpoint returned a response body that is not valid JSON."
                     trace_lines.append("transport_error=malformed_response")
                 else:
-                    rejection_stage = (
-                        "because the serving stack failed before inference"
-                        if result.transport_error_is_infrastructure
-                        else "before the model produced anything"
-                    )
+                    if result.transport_error_is_infrastructure:
+                        rejection_stage = "because the serving stack failed before inference"
+                    elif not state.tool_calls:
+                        rejection_stage = "before the model produced anything"
+                    else:
+                        rejection_stage = "after model-authored tool-call history"
                     summary = (
                         f"Endpoint rejected the request with HTTP "
                         f"{result.transport_error_status} {rejection_stage}: "
@@ -594,13 +633,20 @@ async def run_scenario(
                     raw_log=_format_trace(
                         model, scenario, {"status": "fail", "summary": summary}, trace_lines
                     ),
+                    tool_calls_made=_format_calls_made(state.tool_calls),
+                    expected_behavior=scenario.description,
                     duration_seconds=elapsed,
                     ttft_ms=ttft_ms,
                     turn_count=len(turn_latencies),
                     turn_latencies_ms=turn_latencies,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    tool_call_arg_bytes=total_arg_bytes,
                     parallel_tool_turns=parallel_tool_turns,
                     state_checkpoints=state_checkpoints,
-                    failure_kind=FailureKind.SERVER_ERROR,
+                    failure_kind=(
+                        FailureKind.SERVER_ERROR if is_infrastructure else FailureKind.MODEL_CRASH
+                    ),
                 )
 
             # Capture TTFT from the first streamed turn
@@ -612,6 +658,12 @@ async def run_scenario(
                 total_prompt_tokens += result.prompt_tokens
             if result.completion_tokens is not None:
                 total_completion_tokens += result.completion_tokens
+
+            if result.tool_calls:
+                result = replace(
+                    result,
+                    tool_calls=_ensure_unique_tool_call_ids(result.tool_calls, seen_call_ids, turn),
+                )
 
             state.assistant_messages.append(result.content)
             state.assistant_reasoning.append(result.reasoning or "")
@@ -648,6 +700,7 @@ async def run_scenario(
 
             # No tool calls → model finished this conversational phase
             if not result.tool_calls:
+                recent_turn_signatures.clear()
                 if not visible_answer and empty_stop is None:
                     empty_stop = (
                         f"Turn {turn} ended with no visible answer and no tool call "
@@ -821,10 +874,15 @@ async def run_scenario(
             raw_log=_format_trace(
                 model, scenario, {"status": "fail", "summary": summary}, trace_lines
             ),
+            tool_calls_made=_format_calls_made(state.tool_calls),
+            expected_behavior=scenario.description,
             duration_seconds=elapsed,
             ttft_ms=ttft_ms,
             turn_count=len(turn_latencies),
             turn_latencies_ms=turn_latencies,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            tool_call_arg_bytes=total_arg_bytes,
             parallel_tool_turns=parallel_tool_turns,
             state_checkpoints=state_checkpoints,
             failure_kind=_classify_runtime_error(exc),
@@ -923,20 +981,22 @@ async def run_scenario(
             raw_log=_format_trace(
                 model, scenario, {"status": "fail", "summary": summary}, trace_lines
             ),
+            tool_calls_made=_format_calls_made(state.tool_calls),
+            expected_behavior=scenario.description,
             duration_seconds=elapsed,
             ttft_ms=ttft_ms,
             turn_count=len(turn_latencies),
             turn_latencies_ms=turn_latencies,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            tool_call_arg_bytes=total_arg_bytes,
             parallel_tool_turns=parallel_tool_turns,
             state_checkpoints=state_checkpoints,
             failure_kind=FailureKind.EVALUATOR_ERROR,
         )
 
     # Build diagnostic summary of what tools were actually called
-    calls_made = [
-        f"{tc.name}({', '.join(f'{k}={v}' for k, v in tc.arguments.items())})"
-        for tc in state.tool_calls
-    ]
+    calls_made = _format_calls_made(state.tool_calls)
     expected = scenario.description
 
     elapsed = time.perf_counter() - t0
@@ -1441,6 +1501,8 @@ async def run_all_scenarios(
     gather_results = await asyncio.gather(*tasks, return_exceptions=True)
     callback_error: _CallbackError | None = None
     for i, exc in enumerate(gather_results):
+        if isinstance(exc, BaseException) and not isinstance(exc, Exception):
+            raise exc
         if isinstance(exc, _CallbackError):
             # The caller's callback failed, not the model. Re-raised below,
             # after every scenario finished, as the sequential path raises it.

@@ -17,10 +17,16 @@ from tool_eval_bench.evals.helpers import (
     address_observed_before as _address_observed_before,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients as _addressed_recipients,
+)
+from tool_eval_bench.evals.helpers import (
     answer_affirms_number as _answer_affirms_number,
 )
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
+)
+from tool_eval_bench.evals.helpers import (
+    counted_calls as _counted_calls,
 )
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -159,6 +165,7 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
         "send_email",
         lambda c: (
             _recipient_values(c.arguments.get("to")) == ["jordan.park@company.com"]
+            and _addressed_recipients(c) == ["jordan.park@company.com"]
             # TC-38 is TC-07 with 52 tools, so a score difference between them
             # has to mean the toolset size mattered. Spelling the unit out
             # ("$4.4 million", "$4,400,000") or sending the address as a
@@ -205,6 +212,15 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
         email = cast(ToolCallRecord, email)
         if not (search.turn < read.turn < email.turn and manager.turn < email.turn):
             return _partial("Completed the calls, but violated a data dependency before email.")
+        email_attempts = [c for c in state.tool_calls if c.name == "send_email"]
+        if len(_counted_calls(email_attempts)) != 1 or any(
+            _recipient_values(c.arguments.get("to")) != ["jordan.park@company.com"]
+            or _addressed_recipients(c) != ["jordan.park@company.com"]
+            for c in email_attempts
+        ):
+            return _partial(
+                "Found the chain but issued an unsafe duplicate or incorrect email mutation."
+            )
         if not _address_observed_before(
             state, email, "jordan.park@company.com", sources=_TC38_LOOKUPS
         ):

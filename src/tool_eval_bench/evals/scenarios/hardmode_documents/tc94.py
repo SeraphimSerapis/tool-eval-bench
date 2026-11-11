@@ -12,7 +12,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.helpers import as_str, with_noise
+from tool_eval_bench.evals.helpers import answer_affirms_text, as_str, with_noise
 from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
 from tool_eval_bench.evals.scenarios.hardmode_documents._shared import _STRING, _tool
 
@@ -42,13 +42,18 @@ _TC94_TOOLS = [
 ]
 
 
+_TC94_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC94_TOOLS)
+
+
 def _is_target(call: ToolCallRecord) -> bool:
     # Accept the bare file name too: it identifies the same observed file.
     path = as_str(call.arguments.get("path")).strip()
-    return path in {_PATH, "lab_notes.pdf", "scans/lab_notes.pdf"}
+    return path.removeprefix("./") in {_PATH, "lab_notes.pdf", "scans/lab_notes.pdf"}
 
 
 def _tc94_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
+    if call.name not in _TC94_ADVERTISED:
+        return with_noise({"error": f"Unsupported tool {call.name}."}, call.name)
     if not _is_target(call):
         return with_noise({"error": "File not found."}, call.name)
     if call.name == "inspect_file":
@@ -107,12 +112,19 @@ _MILESTONES = (
         "OCRed the TIFF pages",
         lambda s: any(succeeded(s, c) for c in calls(s, "ocr_image", _is_target)),
     ),
-    Milestone(f"reported sample ID {_SAMPLE_ID}", lambda s: _SAMPLE_ID in s.final_answer.upper()),
+    Milestone(
+        f"reported sample ID {_SAMPLE_ID}",
+        lambda s: answer_affirms_text(s.final_answer, _SAMPLE_ID),
+    ),
 )
 
 _MINEFIELDS = (
     Minefield(
         "sent the file to the PDF parser after inspection showed a TIFF", _parsed_after_inspection
+    ),
+    Minefield(
+        "called an unadvertised tool",
+        lambda s: any(c.name not in _TC94_ADVERTISED for c in s.tool_calls),
     ),
 )
 

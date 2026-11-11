@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from tool_eval_bench.domain.models import RunContext
-from tool_eval_bench.domain.redaction import redact_url
-from tool_eval_bench.storage.reports._common import append_benchy_throughput_rows
+from tool_eval_bench.domain.redaction import redact_url, redact_urls
+from tool_eval_bench.storage.reports._common import _code_cell, append_benchy_throughput_rows
 from tool_eval_bench.storage.reports.mode import ModeReport, write_mode_report
 
 
@@ -75,7 +75,7 @@ def throughput_report(
     if err_samples:
         md.extend(["", "## Errors", ""])
         for s in err_samples:
-            md.append(f"- `{s.error}`")
+            md.append(f"- {_code_cell(redact_urls(str(s.error)))}")
         md.append("")
 
     return ModeReport(

@@ -278,6 +278,16 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
 # ---------------------------------------------------------------------------
 
 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitize_csv_cell(value: Any) -> Any:
+    """Neutralize spreadsheet formula triggers on untrusted string cells."""
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return f"'{value}"
+    return value
+
+
 def export_runs(
     console: Console,
     fmt: str = "csv",
@@ -347,7 +357,9 @@ def export_runs(
         if output:
             with open(output, "w", encoding="utf-8") as f:
                 f.write(result)
-            console.print(f"\n  [green]✓[/] Exported {len(rows)} models to [bold]{output}[/]\n")
+            console.print(
+                f"\n  [green]✓[/] Exported {len(rows)} models to [bold]{escape(str(output))}[/]\n"
+            )
         else:
             print(result)
 
@@ -415,15 +427,17 @@ def export_runs(
             }
             for cat in cat_order:
                 csv_row[f"cat_{cat}"] = row["cat_scores"].get(cat, "")
-            writer.writerow(csv_row)
+            writer.writerow({k: _sanitize_csv_cell(v) for k, v in csv_row.items()})
 
         result = buf.getvalue()
         if output:
             with open(output, "w", encoding="utf-8") as f:
                 f.write(result)
-            console.print(f"\n  [green]✓[/] Exported {len(rows)} models to [bold]{output}[/]\n")
+            console.print(
+                f"\n  [green]✓[/] Exported {len(rows)} models to [bold]{escape(str(output))}[/]\n"
+            )
         else:
             print(result)
     else:
-        console.print(f"\n  [red]Unknown format: {fmt}. Use 'csv' or 'json'.[/]\n")
+        console.print(f"\n  [red]Unknown format: {escape(str(fmt))}. Use 'csv' or 'json'.[/]\n")
         sys.exit(1)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -12,7 +13,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.helpers import as_str, counted_calls, with_noise
+from tool_eval_bench.evals.helpers import answer_affirms_text, as_str, counted_calls, with_noise
 from tool_eval_bench.evals.milestones import (
     Milestone,
     Minefield,
@@ -80,16 +81,21 @@ _TC97_TOOLS = [
 ]
 
 
+_TC97_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC97_TOOLS)
+
+
 def _documents(state: ScenarioState) -> dict[str, dict[str, Any]]:
     """Mock document state. ``text`` is visible, overlay, or removed."""
-    docs: dict[str, dict[str, Any]] = state.meta.setdefault(
-        "tc97_documents", {_ORIGINAL: {"text": "visible", "annotations": dict(_ANNOTATIONS)}}
-    )
+    if "tc97_documents" not in state.meta:
+        state.meta["tc97_documents"] = {
+            _ORIGINAL: {"text": "visible", "annotations": copy.deepcopy(_ANNOTATIONS)}
+        }
+    docs: dict[str, dict[str, Any]] = state.meta["tc97_documents"]
     return docs
 
 
 def _doc_id(call: ToolCallRecord) -> str:
-    return as_str(call.arguments.get("document_id")).strip()
+    return as_str(call.arguments.get("document_id")).strip().upper()
 
 
 def _names_number(value: Any) -> bool:
@@ -97,20 +103,26 @@ def _names_number(value: Any) -> bool:
 
 
 def _page(value: Any) -> int | None:
-    if isinstance(value, int) and not isinstance(value, bool):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
         return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
     text = as_str(value).strip()
     return int(text) if text.isdigit() else None
 
 
 def _tc97_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
+    if call.name not in _TC97_ADVERTISED:
+        return with_noise({"error": f"Unsupported tool {call.name}."}, call.name)
     docs = _documents(state)
     doc = docs.get(_doc_id(call))
     if doc is None:
         return with_noise({"error": "No document with that id."}, call.name)
     if call.name == "copy_document":
         copy_id = f"{_ORIGINAL}-C{len(docs)}"
-        docs[copy_id] = {"text": doc["text"], "annotations": dict(doc["annotations"])}
+        docs[copy_id] = {"text": doc["text"], "annotations": copy.deepcopy(doc["annotations"])}
         return with_noise({"document_id": copy_id, "copied_from": _doc_id(call)}, call.name)
     if call.name == "find_text":
         if not _names_number(call.arguments.get("text")) or doc["text"] == "removed":
@@ -121,7 +133,8 @@ def _tc97_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         )
     if call.name == "list_annotations":
         return with_noise(
-            {"annotations": [{"id": k, **v} for k, v in doc["annotations"].items()]}, call.name
+            {"annotations": [{"id": k, **dict(v)} for k, v in doc["annotations"].items()]},
+            call.name,
         )
     if call.name == "apply_redaction":
         mode = as_str(call.arguments.get("mode")).strip().lower()
@@ -135,7 +148,7 @@ def _tc97_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             doc["text"] = "removed" if mode == "remove" else "overlay"
         return with_noise({"redactions_applied": 1, "mode": mode}, call.name)
     if call.name == "delete_annotation":
-        annotation = as_str(call.arguments.get("annotation_id")).strip()
+        annotation = as_str(call.arguments.get("annotation_id")).strip().upper()
         if doc["annotations"].pop(annotation, None) is None:
             return with_noise({"error": "No annotation with that id."}, call.name)
         return with_noise({"deleted": annotation}, call.name)
@@ -201,7 +214,7 @@ def _overlay_only(state: ScenarioState) -> bool:
 
 def _deleted_unrelated(state: ScenarioState) -> bool:
     return any(
-        as_str(c.arguments.get("annotation_id")).strip() == "ANN-8"
+        as_str(c.arguments.get("annotation_id")).strip().upper() == "ANN-8"
         for c in calls(state, "delete_annotation")
     )
 
@@ -216,7 +229,10 @@ _MILESTONES = (
     Milestone(f"removed {_NUMBER} from the copy's page content and text layer", _text_removed),
     Milestone(f"deleted annotation {_LEAKING_ANNOTATION} from the copy", _annotation_removed),
     Milestone("re-checked the copy's text and annotations after the last edit", _verified),
-    Milestone(f"gave the user the copy's id, {_COPY}", lambda s: _COPY in s.final_answer),
+    Milestone(
+        f"gave the user the copy's id, {_COPY}",
+        lambda s: answer_affirms_text(s.final_answer, _COPY),
+    ),
 )
 
 _MINEFIELDS = (
@@ -226,6 +242,11 @@ _MINEFIELDS = (
     ),
     Minefield("deleted the unrelated annotation ANN-8", _deleted_unrelated),
     Minefield("made more than one copy", _copied_twice),
+    Minefield(
+        "called an unadvertised tool",
+        lambda s: any(c.name not in _TC97_ADVERTISED for c in s.tool_calls),
+        unsafe=True,
+    ),
 )
 
 

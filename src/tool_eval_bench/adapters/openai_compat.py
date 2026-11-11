@@ -22,6 +22,7 @@ from tool_eval_bench.adapters.http_retry import (
     RateLimitObserver,
     RateLimitStatus,
     RetryingHTTPAdapter,
+    SseDataBuffer,
     _backoff_delay,
     _rate_limit_delay,
     _retry_after_seconds,
@@ -128,8 +129,11 @@ def _repair_streamed_tool_args(s: str) -> str:
     repaired += "".join(reversed(stack))
 
     try:
-        json.loads(repaired)
-        return repaired
+        parsed = json.loads(repaired)
+        if isinstance(parsed, dict):
+            return repaired
+        logger.warning("Could not repair streamed tool-call arguments into an object: %.80s", s)
+        return s
     except json.JSONDecodeError:
         logger.warning("Could not repair streamed tool-call arguments: %.80s", s)
         return s  # return original; let downstream parsing handle it
@@ -167,20 +171,29 @@ def _starts_new_call(slot: dict, func: dict, ids_seen: dict[str, int]) -> bool:
 
 
 def _normalize_tool_calls(raw_calls: list[dict] | None) -> list[ProviderToolCall]:
-    if not raw_calls:
+    if not raw_calls or not isinstance(raw_calls, list):
         return []
     result = []
     for idx, call in enumerate(raw_calls):
-        func = call.get("function") or {}
+        if not isinstance(call, dict):
+            continue
+        func = call.get("function")
+        if not isinstance(func, dict):
+            func = {}
         args = func.get("arguments", "{}")
-        if isinstance(args, dict):
-            args = json.dumps(args)
+        if args is None:
+            args_str = "{}"
+        elif isinstance(args, str):
+            args_str = args
+        else:
+            args_str = json.dumps(args)
+        extra = call.get("extra_content")
         result.append(
             ProviderToolCall(
-                id=call.get("id", f"tool_call_{idx + 1}"),
-                name=func.get("name", "unknown_tool"),
-                arguments_str=args,
-                extra_content=call.get("extra_content"),
+                id=str(call.get("id") or f"tool_call_{idx + 1}"),
+                name=str(func.get("name") or "unknown_tool"),
+                arguments_str=args_str,
+                extra_content=extra if isinstance(extra, dict) else None,
             )
         )
     return result
@@ -425,35 +438,51 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     # the body is not an ordinary JSON document.
                     pass
                 else:
+                    elapsed_ms = (time.perf_counter() - started) * 1000
                     if isinstance(data, dict):
-                        elapsed_ms = (time.perf_counter() - started) * 1000
                         return self._parse_response(data, elapsed_ms)
+                    logger.warning(
+                        "Malformed non-SSE JSON from %s: expected object, got %s",
+                        _redact_url(url),
+                        type(data).__name__,
+                    )
+                    return ChatCompletionResult(
+                        content="[malformed response]",
+                        tool_calls=[],
+                        raw_response={},
+                        elapsed_ms=elapsed_ms,
+                        malformed=True,
+                    )
 
-            async for line in response.aiter_lines():
+            sse_buffer = SseDataBuffer()
+            async for raw_line in response.aiter_lines():
+                line = raw_line.rstrip("\r")
                 if not saw_event:
                     unparsed_lines.add(line)
                 if line.startswith("error:"):
                     # llama-server builds before ggml-org/llama.cpp#16109
                     # (September 2025) report a mid-stream failure in a
                     # non-standard ``error:`` field instead of ``data:``.
+                    sse_buffer.reset()
                     chunk: dict[str, Any] = {"error": _parse_sse_error_field(line[6:])}
                     saw_event = True
                 else:
                     if not line.startswith("data:"):
+                        if line == "" or line.startswith(("event:", "id:", "retry:")):
+                            sse_buffer.reset()
                         continue
                     payload_str = line[5:]
                     if payload_str.startswith(" "):
                         payload_str = payload_str[1:]
                     if payload_str.strip() == "[DONE]":
+                        sse_buffer.reset()
                         saw_event = True
                         break
 
-                    try:
-                        chunk = json.loads(payload_str)
-                    except json.JSONDecodeError:
+                    parsed_chunk = sse_buffer.push_data(payload_str)
+                    if not isinstance(parsed_chunk, dict):
                         continue
-                    if not isinstance(chunk, dict):
-                        continue
+                    chunk = parsed_chunk
                     saw_event = True
 
                 error = completion_stream_error(chunk)
@@ -478,16 +507,18 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                     )
 
                 # Capture usage from final chunk (vLLM/OpenAI include this)
-                if chunk.get("usage"):
-                    stream_usage = chunk["usage"]
+                usage_chunk = chunk.get("usage")
+                if isinstance(usage_chunk, dict) and usage_chunk:
+                    stream_usage = usage_chunk
 
-                choices = chunk.get("choices") or []
-                if not choices:
+                choices = chunk.get("choices")
+                if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
                     continue
 
                 if choices[0].get("finish_reason"):
                     finish_reason = str(choices[0]["finish_reason"])
-                delta = choices[0].get("delta") or {}
+                raw_delta = choices[0].get("delta")
+                delta = raw_delta if isinstance(raw_delta, dict) else {}
                 reasoning = delta.get("reasoning_content") or delta.get("reasoning")
 
                 # Measure TTFT on the first generated reasoning, content, or
@@ -500,17 +531,21 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
 
                 # Accumulate content
                 if delta.get("content"):
-                    content_parts.append(delta["content"])
+                    content_parts.append(str(delta["content"]))
 
                 # Accumulate reasoning
                 if reasoning:
-                    reasoning_parts.append(reasoning)
+                    reasoning_parts.append(str(reasoning))
 
                 # Accumulate tool calls
-                for tc_delta in delta.get("tool_calls") or []:
+                raw_tc_deltas = delta.get("tool_calls")
+                for tc_delta in raw_tc_deltas if isinstance(raw_tc_deltas, list) else []:
+                    if not isinstance(tc_delta, dict):
+                        continue
                     call_id = tc_delta.get("id")
                     explicit_idx = tc_delta.get("index")
-                    func = tc_delta.get("function") or {}
+                    raw_func = tc_delta.get("function")
+                    func = raw_func if isinstance(raw_func, dict) else {}
                     if explicit_idx is not None:
                         idx = slot_for_index.get(int(explicit_idx), int(explicit_idx))
                         slot = tool_calls_map.get(idx)
@@ -559,15 +594,20 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                             "extra_content": None,
                         }
                     if func.get("name"):
-                        tool_calls_map[idx]["name"] = func["name"]
-                    if func.get("arguments"):
-                        tool_calls_map[idx]["arguments"] += func["arguments"]
+                        tool_calls_map[idx]["name"] = str(func["name"])
+                    arg_fragment = func.get("arguments")
+                    if arg_fragment:
+                        tool_calls_map[idx]["arguments"] += (
+                            arg_fragment
+                            if isinstance(arg_fragment, str)
+                            else json.dumps(arg_fragment)
+                        )
                     if call_id:
-                        tool_calls_map[idx]["id"] = call_id
-                    if tc_delta.get("extra_content") is not None:
+                        tool_calls_map[idx]["id"] = str(call_id)
+                    if isinstance(tc_delta.get("extra_content"), dict):
                         tool_calls_map[idx]["extra_content"] = tc_delta["extra_content"]
 
-                if delta.get("extra_content") is not None:
+                if isinstance(delta.get("extra_content"), dict):
                     message_extra_content = delta["extra_content"]
 
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -639,13 +679,32 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
 
     @staticmethod
     def _parse_response(data: dict, elapsed_ms: float) -> ChatCompletionResult:
-        message = {}
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            error = completion_stream_error(data)
+            if error is not None:
+                status, err_message = error
+                details = data.get("error")
+                context_overflow = (
+                    isinstance(details, dict) and details.get("code") == "context_length_exceeded"
+                )
+                return ChatCompletionResult(
+                    content=f"[server error {status}] {err_message}",
+                    raw_response=data,
+                    elapsed_ms=elapsed_ms,
+                    transport_error_status=status,
+                    transport_error_is_infrastructure=stream_error_is_infrastructure(
+                        status, context_overflow=context_overflow
+                    ),
+                )
+
+        message: dict[str, Any] = {}
         finish_reason: str | None = None
-        try:
-            message = data["choices"][0]["message"]
-            finish_reason = data["choices"][0].get("finish_reason") or None
-        except (KeyError, IndexError):
-            pass
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            raw_message = choices[0].get("message")
+            if isinstance(raw_message, dict):
+                message = raw_message
+            finish_reason = choices[0].get("finish_reason") or None
 
         content = message.get("content") or ""
         if isinstance(content, list):
@@ -654,22 +713,26 @@ class OpenAICompatibleAdapter(RetryingHTTPAdapter, BackendAdapter):
                 for part in content
                 if isinstance(part, dict) and part.get("type") == "text"
             ).strip()
+        elif not isinstance(content, str):
+            content = str(content)
 
         tool_calls = _normalize_tool_calls(message.get("tool_calls"))
         reasoning = message.get("reasoning_content") or message.get("reasoning")
 
         # Extract token usage (most OpenAI-compatible servers include this)
-        usage = data.get("usage") or {}
+        raw_usage = data.get("usage")
+        usage = raw_usage if isinstance(raw_usage, dict) else {}
         prompt_tokens = usage.get("prompt_tokens")
         completion_tokens = usage.get("completion_tokens")
+        extra_content = message.get("extra_content")
 
         return ChatCompletionResult(
             content=content,
             tool_calls=tool_calls,
             raw_response=data,
             elapsed_ms=elapsed_ms,
-            reasoning=reasoning,
-            message_extra_content=message.get("extra_content"),
+            reasoning=str(reasoning) if reasoning is not None else None,
+            message_extra_content=extra_content if isinstance(extra_content, dict) else None,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             finish_reason=str(finish_reason) if finish_reason else None,

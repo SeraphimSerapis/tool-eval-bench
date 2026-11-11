@@ -14,13 +14,16 @@ Features:
 from __future__ import annotations
 
 import dataclasses
+import email.utils
 import hashlib
 import json
 import logging
+import math
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +39,28 @@ _INTER_PAGE_DELAY_S = 0.15  # Throttle between pages to avoid 429
 
 OnDownloadProgress = Callable[[int, int], None]
 OnRetry = Callable[[int, int, float], None]  # (attempt, max_retries, wait_seconds)
+
+
+def _parse_retry_after(header_value: str | None, fallback: float) -> float:
+    """Parse an HTTP ``Retry-After`` header (delta-seconds or HTTP-date)."""
+    if not header_value:
+        return fallback
+    text = header_value.strip()
+    if not text:
+        return fallback
+    try:
+        seconds = float(text)
+    except ValueError:
+        try:
+            target = email.utils.parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            return fallback
+        if target.tzinfo is None:
+            target = target.replace(tzinfo=timezone.utc)
+        seconds = (target - datetime.now(timezone.utc)).total_seconds()
+    if not math.isfinite(seconds):
+        return fallback
+    return max(0.0, min(seconds, _MAX_BACKOFF_S))
 
 
 def _fetch_with_retry(
@@ -57,7 +82,7 @@ def _fetch_with_retry(
             if exc.code == 429:
                 # Rate limited — check Retry-After header
                 retry_after = exc.headers.get("Retry-After") if exc.headers else None
-                wait = float(retry_after) if retry_after else backoff
+                wait = _parse_retry_after(retry_after, backoff)
 
                 if attempt < max_retries:
                     if on_retry:

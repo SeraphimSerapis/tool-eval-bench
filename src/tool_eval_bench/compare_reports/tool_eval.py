@@ -116,9 +116,9 @@ def _parse_scenarios(txt):
         if not line.strip().startswith("|"):
             continue
         cols = [c.strip() for c in line.split("|")]
-        if len(cols) < 2 or not cols[1].startswith("TC-"):
+        if len(cols) < 6 or not cols[1] or cols[1] in ("ID", "Scenario"):
             continue
-        if all(c in ("---", "") for c in cols):
+        if all(set(c) <= {":", "-"} for c in cols if c):
             continue
         sr = cols[4] if len(cols) > 4 else ""
         if "pass" in sr or "✅" in sr:
@@ -130,7 +130,7 @@ def _parse_scenarios(txt):
         pm = re.search(r"(\d+)/(\d+)", cols[5] if len(cols) > 5 else "")
         rows.append(
             {
-                "id": cols[1],
+                "id": html.unescape(cols[1]),
                 "title": html.unescape(cols[2]),
                 "diff": cols[3].count("★") if len(cols) > 3 else 0,
                 "status": status,
@@ -153,14 +153,18 @@ def _parse_diffs(txt):
         if not line.strip().startswith("|"):
             continue
         cols = [c.strip() for c in line.split("|")]
-        if len(cols) >= 5 and cols[1] in ("Trivial", "Easy", "Moderate", "Hard", "Very Hard"):
+        if len(cols) < 5:
+            continue
+        tier = re.sub(r"\s*\(\d+\)\s*$", "", cols[1])
+        if tier in ("Trivial", "Easy", "Moderate", "Hard", "Very Hard"):
+            rate_col = cols[7] if len(cols) >= 9 else cols[4]
             try:
-                rate = int(float(cols[4].rstrip("%")))
+                rate = int(float(rate_col.rstrip("%")))
             except (ValueError, TypeError):
                 rate = 0
             rows.append(
                 {
-                    "tier": cols[1],
+                    "tier": tier,
                     "scenarios": cols[2],
                     "passed": cols[3],
                     "rate": rate,
@@ -438,8 +442,8 @@ def generate_html(da: dict, db: dict, out: str) -> None:
         w_class += "font-extrabold text-emerald-800 tabular-nums"
         lines.append(f'''            <tr{tc_attr}>
               <td class="py-3 px-6 font-semibold">{esc(label)}</td>
-              <td class="py-3 px-4 text-center"><span class="{w_class}">{wv}</span></td>
-              <td class="py-3 px-4 text-center"><span class="font-extrabold tabular-nums text-slate-800">{rv}</span></td>
+              <td class="py-3 px-4 text-center"><span class="{w_class}">{esc(wv)}</span></td>
+              <td class="py-3 px-4 text-center"><span class="font-extrabold tabular-nums text-slate-800">{esc(rv)}</span></td>
               <td class="py-3 px-4 text-center"><span class="{dc}">{esc(dv)}</span></td>
             </tr>''')
 

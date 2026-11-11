@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any
 
@@ -57,13 +58,18 @@ _TC96_TOOLS = [
 ]
 
 
+_TC96_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC96_TOOLS)
+
+
 def _document(call: ToolCallRecord) -> str:
     name = as_str(call.arguments.get("document")).strip().lower()
     return name if name.endswith(".pdf") else f"{name}.pdf"
 
 
 def _tc96_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
-    if as_str(call.arguments.get("collection")).strip() != _COLLECTION:
+    if call.name not in _TC96_ADVERTISED:
+        return with_noise({"error": f"Unsupported tool {call.name}."}, call.name)
+    if as_str(call.arguments.get("collection")).strip().lower() != _COLLECTION:
         return with_noise({"error": "No collection with that name."}, call.name)
     if call.name == "search_index":
         return with_noise(
@@ -87,7 +93,9 @@ def _tc96_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "ocr_document":
         document = _document(call)
         if document in _SCANS:
-            return with_noise({"document": document, "pages": _SCANS[document]}, call.name)
+            return with_noise(
+                {"document": document, "pages": copy.deepcopy(_SCANS[document])}, call.name
+            )
         if document in _INDEXED:
             return with_noise({"error": "Already indexed; use search_index."}, call.name)
         return with_noise({"error": "No document with that name."}, call.name)
@@ -101,19 +109,30 @@ def _ocred_match(state: ScenarioState) -> bool:
 
 
 _SCAN_0419 = re.compile(r"(?:scan_)?0419(?:\.pdf)?\b", re.IGNORECASE)
+_SCAN_0412 = re.compile(r"(?:scan_)?0412(?:\.pdf)?\b", re.IGNORECASE)
 _DENIES_MATCH_AFTER = re.compile(
     r"^[^.!?\n]{0,40}\b(?:(?:does|did)(?:n't| not)\s+(?:contain|mention|include|have|match)|"
     r"has\s+no\s+(?:match|mention)|contains?\s+no)\b",
     re.IGNORECASE,
 )
+_EMPTY_COLLECTION_CLAIM = re.compile(
+    r"\b(?:(?:collection|search)\s+found\s+no\s+documents?"
+    r"|no\s+documents?\s+(?:in\s+(?:the\s+)?[\w-]+\s+(?:collection\s+)?)?"
+    r"(?:contain\w*|mention\w*|have\s+that\s+phrase)"
+    r"|none\s+of\s+the\s+documents\s+(?:in\s+(?:the\s+)?[\w-]+\s+)?(?:contain\w*|mention\w*)"
+    r"|does\s+not\s+appear\s+in\s+any\s+document)\b",
+    re.IGNORECASE,
+)
+
+
+def _affirms_scan(answer: str, pattern: re.Pattern[str]) -> bool:
+    if not answer_affirms_pattern(answer, pattern):
+        return False
+    return any(not _DENIES_MATCH_AFTER.search(answer[m.end() :]) for m in pattern.finditer(answer))
 
 
 def _affirms_0419(answer: str) -> bool:
-    if not answer_affirms_pattern(answer, _SCAN_0419):
-        return False
-    return any(
-        not _DENIES_MATCH_AFTER.search(answer[m.end() :]) for m in _SCAN_0419.finditer(answer)
-    )
+    return _affirms_scan(answer, _SCAN_0419)
 
 
 def _reported(state: ScenarioState) -> bool:
@@ -132,11 +151,22 @@ _MILESTONES = (
 _MINEFIELDS = (
     Minefield(
         "answered no although the index had not covered the whole collection",
-        lambda s: bool(_LEADING_NO.match(s.final_answer)) and not _affirms_0419(s.final_answer),
+        lambda s: (
+            not _ocred_match(s)
+            and (
+                bool(_LEADING_NO.match(s.final_answer))
+                or bool(_EMPTY_COLLECTION_CLAIM.search(s.final_answer))
+            )
+            and not _affirms_0419(s.final_answer)
+        ),
     ),
     Minefield(
         "cited the 890 K near miss in scan_0412.pdf as the match",
-        lambda s: "0412" in s.final_answer and "0419" not in s.final_answer,
+        lambda s: _affirms_scan(s.final_answer, _SCAN_0412) and not _affirms_0419(s.final_answer),
+    ),
+    Minefield(
+        "called an unadvertised tool",
+        lambda s: any(c.name not in _TC96_ADVERTISED for c in s.tool_calls),
     ),
 )
 

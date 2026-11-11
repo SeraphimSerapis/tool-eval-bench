@@ -14,7 +14,13 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.helpers import answer_affirms_pattern, as_str, counted_calls, with_noise
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern,
+    answer_affirms_text,
+    as_str,
+    counted_calls,
+    with_noise,
+)
 from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
 from tool_eval_bench.evals.scenarios.hardmode_documents._shared import _DOCUMENT_ID, _tool
 
@@ -58,6 +64,9 @@ _TC95_TOOLS = [
 ]
 
 
+_TC95_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC95_TOOLS)
+
+
 def _pages(call: ToolCallRecord) -> set[int] | None:
     value = call.arguments.get("pages")
     items = value if isinstance(value, list) else [value]
@@ -65,6 +74,8 @@ def _pages(call: ToolCallRecord) -> set[int] | None:
     for item in items:
         if isinstance(item, int) and not isinstance(item, bool):
             pages.add(item)
+        elif isinstance(item, float) and item.is_integer():
+            pages.add(int(item))
         elif as_str(item).strip().isdigit():
             pages.add(int(as_str(item).strip()))
         else:
@@ -73,7 +84,9 @@ def _pages(call: ToolCallRecord) -> set[int] | None:
 
 
 def _tc95_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
-    if as_str(call.arguments.get("document_id")) != _DOC:
+    if call.name not in _TC95_ADVERTISED:
+        return with_noise({"error": f"Unsupported tool {call.name}."}, call.name)
+    if as_str(call.arguments.get("document_id")).strip().upper() != _DOC:
         return with_noise({"error": "No document with that id."}, call.name)
     if call.name == "get_document_info":
         return with_noise(
@@ -143,8 +156,8 @@ def _ocr_scanned(state: ScenarioState) -> bool:
 
 
 def _reported(state: ScenarioState) -> bool:
-    answer = state.final_answer
-    return "okafor" in answer.lower() and answer_affirms_pattern(answer, _REJECTED)
+    answer = re.sub(r"\b([A-Za-z])\.\s+(?=[A-Za-z])", r"\1 ", state.final_answer)
+    return answer_affirms_text(answer, "okafor") and answer_affirms_pattern(answer, _REJECTED)
 
 
 _MILESTONES = (
@@ -158,6 +171,10 @@ _MILESTONES = (
 _MINEFIELDS = (
     Minefield("OCRed a page that already had a text layer", _ocr_on_native),
     Minefield("OCRed the same page more than once", _ocr_twice),
+    Minefield(
+        "called an unadvertised tool",
+        lambda s: any(c.name not in _TC95_ADVERTISED for c in s.tool_calls),
+    ),
 )
 
 

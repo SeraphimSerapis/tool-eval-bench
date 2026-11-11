@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -212,8 +213,8 @@ def spec_decode_report(
             ar = getattr(s, "acceptance_rate", None)
             pt = getattr(s, "prompt_type", "?")
             depth = getattr(s, "depth", 0)
-            if ar is not None:
-                bar_len = int(ar * 40)
+            if ar is not None and math.isfinite(ar):
+                bar_len = max(0, min(int(ar * 40), 40))
                 bar = "█" * bar_len + "░" * (40 - bar_len)
                 md.append(f"  {pt:>10} d{depth:<5} {bar} {ar * 100:.1f}%")
             else:
@@ -267,11 +268,8 @@ def spec_decode_report(
         avg_window = sum(s.draft_window for s in with_window) / len(with_window)
         avg_tau = sum(s.acceptance_length for s in with_window) / len(with_window)
         utilization = (window_utilization(avg_tau, avg_window) or 0.0) * 100
-        avg_waste = (
-            sum(s.waste_ratio for s in with_window if getattr(s, "waste_ratio", None) is not None)
-            / len(with_window)
-            * 100
-        )
+        wrs = [s.waste_ratio for s in with_window if getattr(s, "waste_ratio", None) is not None]
+        avg_waste_str = f"{sum(wrs) / len(wrs) * 100:.0f}%" if wrs else "—"
 
         md.extend(
             [
@@ -282,7 +280,7 @@ def spec_decode_report(
                 f"| Avg Draft Window | {avg_window:.0f} tokens/step |",
                 f"| Avg Acceptance Length (τ) | {avg_tau:.1f} tokens/step |",
                 f"| Window Utilization | {utilization:.0f}% |",
-                f"| Avg Waste | {avg_waste:.0f}% |",
+                f"| Avg Waste | {avg_waste_str} |",
             ]
         )
         optimal = suggested_draft_window(avg_tau, avg_window)

@@ -24,6 +24,7 @@ from tool_eval_bench.domain.plugin import (
     final_answer_text,
     raise_for_transport_error,
 )
+from tool_eval_bench.domain.redaction import redact_urls
 from tool_eval_bench.plugins.gsm8k.dataset import GSM8KItem, dataset_revision, load_dataset
 from tool_eval_bench.plugins.gsm8k.evaluator import evaluate_answer
 from tool_eval_bench.plugins.gsm8k.prompts import build_messages
@@ -91,6 +92,8 @@ class GSM8KPlugin(BenchmarkPlugin):
 
         if concurrency < 1:
             raise ValueError("concurrency must be at least 1")
+        if limit < 0:
+            raise ValueError("limit must be >= 0")
 
         # Load dataset (or use preloaded items from the CLI layer)
         if preloaded is not None:
@@ -283,7 +286,7 @@ class GSM8KPlugin(BenchmarkPlugin):
                 "ground_truth": item.ground_truth,
                 "extracted_answer": None,
                 "extraction_method": "error",
-                "error": str(exc),
+                "error": redact_urls(str(exc)),
                 "tokens": 0,
             }
 
@@ -296,7 +299,7 @@ class GSM8KPlugin(BenchmarkPlugin):
                 "ground_truth": item.ground_truth,
                 "extracted_answer": None,
                 "extraction_method": "truncated",
-                "model_response": (result.reasoning or "")[:1000],
+                "model_response": (result.reasoning or result.content or "")[:1000],
                 "tokens": tokens,
             }
 

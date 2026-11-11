@@ -165,6 +165,8 @@ class MMLUPlugin(BenchmarkPlugin):
 
         if concurrency < 1:
             raise ValueError("concurrency must be at least 1")
+        if limit < 0:
+            raise ValueError("limit must be >= 0")
         if subjects_filter:
             # Fail on a typo before downloading anything.
             resolve_subjects(subjects_filter)
@@ -270,7 +272,7 @@ class MMLUPlugin(BenchmarkPlugin):
                     "extracted_answer": None,
                     "ground_truth": item.answer_letter,
                     "extraction_method": "truncated",
-                    "model_response": (response.reasoning or "")[:1000],
+                    "model_response": (response.reasoning or response.content or "")[:1000],
                 }
             else:
                 result = evaluate_answer(content, item.answer)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import socket
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ def create_app(
     output_dir: str | None = None,
     redact_url: bool = False,
     token: str | None = None,
+    allowed_hosts: Iterable[str] | None = None,
 ) -> Any:
     """Create and return the Starlette ASGI application.
 
@@ -49,7 +51,12 @@ def create_app(
     from tool_eval_bench.web.security import generate_token
 
     session_token = token or generate_token()
-    app = build_starlette_app(token=session_token, output_dir=output_dir, redact_url=redact_url)
+    app = build_starlette_app(
+        token=session_token,
+        output_dir=output_dir,
+        redact_url=redact_url,
+        allowed_hosts=allowed_hosts,
+    )
     app.state.token = session_token
     return app
 
@@ -133,8 +140,12 @@ def run_web_server(
         raise SystemExit(1) from None
 
     bound_port = sock.getsockname()[1]
-    app = create_app(output_dir=output_dir, redact_url=redact_url)
-    if host not in _LOOPBACK_HOSTS:
+    clean_host = host.strip("[]")
+    allowed_hosts: Iterable[str] | None = None
+    if clean_host not in _LOOPBACK_HOSTS:
+        allowed_hosts = (*_LOOPBACK_HOSTS, clean_host)
+    app = create_app(output_dir=output_dir, redact_url=redact_url, allowed_hosts=allowed_hosts)
+    if clean_host not in _LOOPBACK_HOSTS:
         console.print(
             "\n  [bold yellow]Warning:[/] Binding web UI to non-loopback address "
             f"[bold]{escape(host)}[/]. Anyone who gets the link below can read stored traces "

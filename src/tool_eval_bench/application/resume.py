@@ -9,6 +9,7 @@ and refuses whatever that config cannot reproduce.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -64,7 +65,12 @@ def result_requires_rerun(result: dict[str, Any]) -> bool:
         return True
     if result.get("status") not in {status.value for status in ScenarioStatus}:
         return True
-    if not isinstance(result.get("points"), int) or not isinstance(result.get("summary"), str):
+    points = result.get("points")
+    if (
+        isinstance(points, bool)
+        or not isinstance(points, int)
+        or not isinstance(result.get("summary"), str)
+    ):
         return True
     if not isinstance(result.get("raw_log"), str) or not result["raw_log"].strip():
         return True
@@ -91,6 +97,29 @@ class StoredResumePlan:
     remaining: list[ScenarioDefinition]
 
 
+def _config_float(config: dict[str, Any], key: str, default: float) -> float:
+    raw = config.get(key, default)
+    if isinstance(raw, bool) or raw is None:
+        raise ResumeRejected(f"Stored run config has invalid {key}: {raw!r}")
+    try:
+        val = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ResumeRejected(f"Stored run config has invalid {key}: {raw!r}") from exc
+    if not math.isfinite(val):
+        raise ResumeRejected(f"Stored run config has non-finite {key}: {raw!r}")
+    return val
+
+
+def _config_int(config: dict[str, Any], key: str, default: int) -> int:
+    raw = config.get(key, default)
+    if isinstance(raw, bool) or raw is None:
+        raise ResumeRejected(f"Stored run config has invalid {key}: {raw!r}")
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ResumeRejected(f"Stored run config has invalid {key}: {raw!r}") from exc
+
+
 def plan_stored_resume(
     prev_run: dict[str, Any],
     checkpoints: list[dict[str, Any]],
@@ -112,20 +141,33 @@ def plan_stored_resume(
     """
     from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
 
-    config = prev_run.get("config") or {}
+    if prev_run.get("status") == "completed":
+        raise ResumeRejected("Run is already completed and its results are immutable.")
+    if prev_run.get("run_type", "tool_eval") != "tool_eval":
+        raise ResumeRejected("Only tool_eval runs can be resumed.")
+
+    raw_config = prev_run.get("config")
+    if raw_config is not None and not isinstance(raw_config, dict):
+        raise ResumeRejected("Stored run config is malformed.")
+    config = raw_config or {}
     scenario_ids = config.get("scenario_ids")
-    if not isinstance(scenario_ids, list) or not scenario_ids:
+    if (
+        not isinstance(scenario_ids, list)
+        or not scenario_ids
+        or not all(isinstance(sid, str) and sid for sid in scenario_ids)
+    ):
         raise ResumeRejected(
             "The run did not record its scenario list, so only the CLI can resume it."
         )
+    deduped_ids = list(dict.fromkeys(scenario_ids))
     by_id = {scenario.id: scenario for scenario in ALL_SCENARIOS_WITH_HARDMODE}
-    unknown = [sid for sid in scenario_ids if sid not in by_id]
+    unknown = [sid for sid in deduped_ids if sid not in by_id]
     if unknown:
         raise ResumeRejected(
             f"{len(unknown)} scenario(s) in this run are not in the public registry, which "
             "means a held-out pack. Resume it from the CLI with the same --scenario-pack."
         )
-    scenarios = [by_id[sid] for sid in scenario_ids]
+    scenarios = [by_id[sid] for sid in deduped_ids]
 
     try:
         resolved_format = resolve_wire_format(wire_format, base_url)
@@ -138,14 +180,14 @@ def plan_stored_resume(
         model=str(config.get("model") or prev_run.get("model") or ""),
         backend=str(config.get("backend") or "unknown"),
         base_url=base_url,
-        temperature=float(config.get("temperature", 0.0)),
-        timeout_seconds=float(config.get("timeout_seconds", DEFAULT_REQUEST_TIMEOUT_SECONDS)),
-        max_turns=int(config.get("max_turns", DEFAULT_MAX_TURNS)),
+        temperature=_config_float(config, "temperature", 0.0),
+        timeout_seconds=_config_float(config, "timeout_seconds", DEFAULT_REQUEST_TIMEOUT_SECONDS),
+        max_turns=_config_int(config, "max_turns", DEFAULT_MAX_TURNS),
         seed=config.get("seed"),
         reference_date=config.get("reference_date"),
-        concurrency=int(config.get("concurrency", 1)),
-        error_rate=float(config.get("error_rate", 0.0)),
-        alpha=float(config.get("alpha", DEFAULT_ALPHA)),
+        concurrency=_config_int(config, "concurrency", 1),
+        error_rate=_config_float(config, "error_rate", 0.0),
+        alpha=_config_float(config, "alpha", DEFAULT_ALPHA),
         extra_params=config.get("extra_params"),
         context_pressure_config=None,
         weight_by_difficulty=bool(config.get("weight_by_difficulty", False)),

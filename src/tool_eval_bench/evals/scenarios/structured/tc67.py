@@ -89,6 +89,25 @@ def _tc67_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return generic_tool_fallback(call)
 
 
+def _is_cjk_or_kana(ch: str) -> bool:
+    cp = ord(ch)
+    return (
+        0x3040 <= cp <= 0x30FF  # Hiragana and Katakana
+        or 0x31F0 <= cp <= 0x31FF  # Katakana Phonetic Extensions
+        or 0x3400 <= cp <= 0x4DBF  # CJK Unified Ideographs Extension A
+        or 0x4E00 <= cp <= 0x9FFF  # CJK Unified Ideographs
+        or 0xF900 <= cp <= 0xFAFF  # CJK Compatibility Ideographs
+        or 0xFF66 <= cp <= 0xFF9F  # Halfwidth Katakana
+        or 0x20000 <= cp <= 0x2EE5F  # CJK Unified Ideographs Extensions B through I
+        or 0x2F800 <= cp <= 0x2FA1F  # CJK Compatibility Ideographs Supplement
+        or 0x30000 <= cp <= 0x3347F  # CJK Unified Ideographs Extensions G, H, J
+    )
+
+
+def _weighted_reasoning_len(text: str) -> int:
+    return sum(2 if _is_cjk_or_kana(ch) else 1 for ch in text.strip())
+
+
 def _tc67_eval(state: ScenarioState) -> ScenarioEvaluation:
     def stock_result_is_nvda(payload: Any) -> bool:
         return (
@@ -116,7 +135,17 @@ def _tc67_eval(state: ScenarioState) -> ScenarioEvaluation:
             if call.name == "web_search"
             and any(
                 word in as_str(call.arguments.get("query")).lower()
-                for word in ("news", "nvidia", "nvda")
+                for word in (
+                    "news",
+                    "nvidia",
+                    "nvda",
+                    "nachrichten",
+                    "noticias",
+                    "英伟达",
+                    "新闻",
+                    "エヌビディア",
+                    "ニュース",
+                )
             )
             and _result_matches_if_present(
                 state,
@@ -160,7 +189,8 @@ def _tc67_eval(state: ScenarioState) -> ScenarioEvaluation:
     if normalize(as_str(data.get("ticker"))) != "nvda":
         return _partial("Ticker doesn't match tool result.")
 
-    if not isinstance(data.get("reasoning"), str) or len(data["reasoning"]) < 20:
+    reasoning = data.get("reasoning")
+    if not isinstance(reasoning, str) or _weighted_reasoning_len(reasoning) < 20:
         return _partial("Reasoning field is too short — should explain the signal.")
 
     if data.get("currency") != "USD" or set(data) != required:

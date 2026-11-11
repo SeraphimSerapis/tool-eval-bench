@@ -32,6 +32,7 @@ import httpx
 from tool_eval_bench.adapters.http_retry import (
     PreEventLines,
     RetryingHTTPAdapter,
+    SseDataBuffer,
     stream_error_is_infrastructure,
 )
 from tool_eval_bench.adapters.wire_format import gemini_generate_url
@@ -253,9 +254,19 @@ def _to_gemini_contents(
 
         if role == "assistant":
             parts: list[dict[str, Any]] = []
+            raw_tool_calls = message.get("tool_calls")
+            tool_calls_list = raw_tool_calls if isinstance(raw_tool_calls, list) else []
+            msg_signature = _thought_signature(message.get("extra_content"))
             if content:
-                parts.append({"text": content})
-            for call in message.get("tool_calls") or []:
+                text_part: dict[str, Any] = {"text": content}
+                if not tool_calls_list and msg_signature:
+                    text_part["thoughtSignature"] = msg_signature
+                parts.append(text_part)
+            elif not tool_calls_list and msg_signature:
+                parts.append({"text": "", "thoughtSignature": msg_signature})
+            for idx, call in enumerate(tool_calls_list):
+                if not isinstance(call, dict):
+                    continue
                 func = call.get("function") or {}
                 name = func.get("name") or "unknown_tool"
                 call_id = call.get("id")
@@ -274,8 +285,8 @@ def _to_gemini_contents(
                 if call_id:
                     function_call["id"] = call_id
                 part: dict[str, Any] = {"functionCall": function_call}
-                signature = _thought_signature(call.get("extra_content")) or _thought_signature(
-                    message.get("extra_content")
+                signature = _thought_signature(call.get("extra_content")) or (
+                    msg_signature if idx == 0 else None
                 )
                 if signature:
                     part["thoughtSignature"] = signature
@@ -398,18 +409,34 @@ class _Chunks:
     tool_calls: list[ProviderToolCall] = field(default_factory=list)
     usage: dict[str, Any] = field(default_factory=dict)
     finish_reason: str | None = None
+    raw_finish_reason: str | None = None
+    block_reason: str | None = None
+    thought_signature: str | None = None
 
     def add(self, chunk: dict[str, Any]) -> bool:
         """Merge one chunk; return whether it carried generated output."""
-        if chunk.get("usageMetadata"):
-            self.usage = chunk["usageMetadata"]
-        candidates = chunk.get("candidates") or []
-        if not candidates:
+        usage_meta = chunk.get("usageMetadata")
+        if isinstance(usage_meta, dict) and usage_meta:
+            self.usage = usage_meta
+        prompt_feedback = chunk.get("promptFeedback")
+        if isinstance(prompt_feedback, dict) and prompt_feedback.get("blockReason"):
+            self.block_reason = str(prompt_feedback["blockReason"])
+        candidates = chunk.get("candidates")
+        if (
+            not isinstance(candidates, list)
+            or not candidates
+            or not isinstance(candidates[0], dict)
+        ):
             return False
-        if candidates[0].get("finishReason"):
-            self.finish_reason = _finish_reason(candidates[0]["finishReason"])
-        parts = (candidates[0].get("content") or {}).get("parts") or []
-        texts, thoughts, calls = _parse_parts(parts)
+        raw_reason = candidates[0].get("finishReason")
+        if raw_reason:
+            self.raw_finish_reason = str(raw_reason)
+            self.finish_reason = _finish_reason(raw_reason)
+        cand_content = candidates[0].get("content")
+        parts = cand_content.get("parts") if isinstance(cand_content, dict) else []
+        texts, thoughts, calls, part_sig = _parse_parts(parts if isinstance(parts, list) else [])
+        if part_sig:
+            self.thought_signature = part_sig
         self.texts.extend(texts)
         self.thoughts.extend(thoughts)
         self.tool_calls.extend(calls)
@@ -418,13 +445,21 @@ class _Chunks:
         return bool(texts or thoughts or calls)
 
     def result(self, elapsed_ms: float, ttft_ms: float | None = None) -> ChatCompletionResult:
+        content = "".join(self.texts)
+        if not content and not self.tool_calls:
+            reason = self.raw_finish_reason or self.block_reason
+            if reason and reason != "STOP":
+                content = f"[no content: {reason}]"
         return ChatCompletionResult(
-            content="".join(self.texts),
+            content=content,
             tool_calls=_assign_call_ids(self.tool_calls),
             raw_response={},
             elapsed_ms=elapsed_ms,
             ttft_ms=ttft_ms,
             reasoning="".join(self.thoughts) or None,
+            message_extra_content=(
+                {"thoughtSignature": self.thought_signature} if self.thought_signature else None
+            ),
             prompt_tokens=self.usage.get("promptTokenCount"),
             completion_tokens=_completion_tokens(self.usage),
             finish_reason=self.finish_reason,
@@ -433,30 +468,37 @@ class _Chunks:
 
 def _parse_parts(
     parts: list[dict[str, Any]],
-) -> tuple[list[str], list[str], list[ProviderToolCall]]:
-    """Split candidate parts into text, reasoning, and tool calls."""
+) -> tuple[list[str], list[str], list[ProviderToolCall], str | None]:
+    """Split candidate parts into text, reasoning, tool calls, and turn signature."""
     texts: list[str] = []
     thoughts: list[str] = []
     tool_calls: list[ProviderToolCall] = []
+    part_signature: str | None = None
     for part in parts:
         if not isinstance(part, dict):
             continue
         call = part.get("functionCall")
         if isinstance(call, dict):
             signature = part.get("thoughtSignature")
+            raw_args = call.get("args")
             tool_calls.append(
                 ProviderToolCall(
                     # Ids are optional in the API; a stable one is assigned once
                     # the whole response (or stream) has been collected.
-                    id=call.get("id") or "",
-                    name=call.get("name", "unknown_tool"),
-                    arguments_str=json.dumps(call.get("args") or {}),
+                    id=str(call.get("id") or ""),
+                    name=str(call.get("name") or "unknown_tool"),
+                    arguments_str=json.dumps(raw_args if isinstance(raw_args, dict) else {}),
                     extra_content=(
-                        {"thoughtSignature": signature} if isinstance(signature, str) else None
+                        {"thoughtSignature": signature}
+                        if isinstance(signature, str) and signature
+                        else None
                     ),
                 )
             )
             continue
+        sig = part.get("thoughtSignature")
+        if isinstance(sig, str) and sig:
+            part_signature = sig
         text = part.get("text")
         if not isinstance(text, str) or not text:
             continue
@@ -464,7 +506,7 @@ def _parse_parts(
             thoughts.append(text)
         else:
             texts.append(text)
-    return texts, thoughts, tool_calls
+    return texts, thoughts, tool_calls, part_signature
 
 
 def _assign_call_ids(tool_calls: list[ProviderToolCall]) -> list[ProviderToolCall]:
@@ -625,24 +667,38 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
                     parsed = self._parse_unstreamed(data, elapsed_ms)
                     if parsed is not None:
                         return parsed
+                    logger.warning(
+                        "Malformed non-SSE JSON from %s: expected response object or chunk list",
+                        _redact_url(url),
+                    )
+                    return ChatCompletionResult(
+                        content="[malformed response]",
+                        tool_calls=[],
+                        raw_response={},
+                        elapsed_ms=elapsed_ms,
+                        malformed=True,
+                    )
 
-            async for line in response.aiter_lines():
+            sse_buffer = SseDataBuffer()
+            async for raw_line in response.aiter_lines():
+                line = raw_line.rstrip("\r")
                 if not saw_event:
                     unparsed_lines.add(line)
                 sse_data = _sse_payload(line)
                 if sse_data is None:
+                    if line == "" or line.startswith(("event:", "id:", "retry:")):
+                        sse_buffer.reset()
                     continue
                 chunk_str = sse_data.strip()
                 if chunk_str == "[DONE]":
+                    sse_buffer.reset()
                     saw_event = True
                 if not chunk_str or chunk_str == "[DONE]":
                     continue
-                try:
-                    chunk = json.loads(chunk_str)
-                except json.JSONDecodeError:
+                parsed_chunk = sse_buffer.push_data(sse_data)
+                if not isinstance(parsed_chunk, dict):
                     continue
-                if not isinstance(chunk, dict):
-                    continue
+                chunk = parsed_chunk
                 saw_event = True
 
                 if chunk.get("error") is not None:
@@ -721,30 +777,42 @@ class GeminiAdapter(RetryingHTTPAdapter, BackendAdapter):
 
     @staticmethod
     def _parse_response(data: dict, elapsed_ms: float) -> ChatCompletionResult:
-        candidates = data.get("candidates") or []
+        raw_candidates = data.get("candidates")
+        candidates = raw_candidates if isinstance(raw_candidates, list) else []
+        if data.get("error") is not None and not candidates:
+            return _stream_error_result(data, elapsed_ms, None)
+
         parts: list[dict[str, Any]] = []
-        if candidates:
-            parts = (candidates[0].get("content") or {}).get("parts") or []
-        texts, thoughts, tool_calls = _parse_parts(parts)
+        first_candidate = candidates[0] if candidates and isinstance(candidates[0], dict) else {}
+        if first_candidate:
+            cand_content = first_candidate.get("content")
+            raw_parts = cand_content.get("parts") if isinstance(cand_content, dict) else []
+            parts = raw_parts if isinstance(raw_parts, list) else []
+        texts, thoughts, tool_calls, part_sig = _parse_parts(parts)
 
         content = "".join(texts)
         if not content and not tool_calls:
             # A blocked prompt or a candidate cut short returns no parts at all;
             # surface the reason instead of an empty, unexplained turn.
-            reason = (candidates[0].get("finishReason") if candidates else None) or (
-                data.get("promptFeedback") or {}
-            ).get("blockReason")
+            prompt_feedback = data.get("promptFeedback")
+            reason = first_candidate.get("finishReason") or (
+                prompt_feedback.get("blockReason") if isinstance(prompt_feedback, dict) else None
+            )
             if reason and reason != "STOP":
                 content = f"[no content: {reason}]"
 
-        usage = data.get("usageMetadata") or {}
+        raw_usage = data.get("usageMetadata")
+        usage = raw_usage if isinstance(raw_usage, dict) else {}
         return ChatCompletionResult(
             content=content,
             tool_calls=_assign_call_ids(tool_calls),
             raw_response=data,
             elapsed_ms=elapsed_ms,
             reasoning="".join(thoughts) or None,
+            message_extra_content={"thoughtSignature": part_sig} if part_sig else None,
             prompt_tokens=usage.get("promptTokenCount"),
             completion_tokens=_completion_tokens(usage),
-            finish_reason=_finish_reason(candidates[0].get("finishReason")) if candidates else None,
+            finish_reason=_finish_reason(first_candidate.get("finishReason"))
+            if first_candidate
+            else None,
         )

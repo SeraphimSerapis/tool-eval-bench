@@ -20,6 +20,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
+    date_matches as _date_matches,
+)
+from tool_eval_bench.evals.helpers import (
     days_after_reference as _days_after_reference,
 )
 from tool_eval_bench.evals.helpers import (
@@ -40,6 +43,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
+)
+from tool_eval_bench.evals.helpers import (
+    time_matches as _time_matches,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
@@ -73,7 +79,7 @@ def _tc26_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
                 "title": state.meta.get("event_title", "Design Review"),
                 "attendees": state.meta.get("event_attendees", []),
             },
-            "create_calendar_event",
+            "get_calendar_event",
         )
     if call.name == "get_contacts":
         return _noise(
@@ -195,10 +201,15 @@ def _tc26_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     create_call = create_calls[0]
     expected_date = _days_after_reference(state, 1)
+    raw_title = _as_str(create_call.arguments.get("title")).strip().strip("\"'“”‘’`")
+    raw_time = create_call.arguments.get("time")
+    is_three_pm = _time_matches(raw_time, "15:00") or bool(
+        re.fullmatch(r"0?3(?::00(?::00)?)?\s*p\.?m\.?", _as_str(raw_time).strip(), re.IGNORECASE)
+    )
     correct_event = (
-        _normalize(_as_str(create_call.arguments.get("title"))) == "design review"
-        and _as_str(create_call.arguments.get("date")).startswith(expected_date)
-        and _as_str(create_call.arguments.get("time")).startswith("15:00")
+        _normalize(raw_title) == "design review"
+        and _date_matches(create_call.arguments.get("date"), expected_date)
+        and is_three_pm
     )
     if not correct_event:
         return _fail("Created the wrong event or used the wrong date/time.")

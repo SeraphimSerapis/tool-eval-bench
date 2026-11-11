@@ -17,7 +17,7 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_number,
     answer_affirms_text,
     as_str,
-    includes_text,
+    positive_argument_contains,
     with_noise,
 )
 from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
@@ -52,6 +52,9 @@ _TC101_TOOLS = [
         ["service"],
     ),
 ]
+
+
+_TC101_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC101_TOOLS)
 
 
 def _tc101_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -91,7 +94,7 @@ def _tc101_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             call.name,
         )
     if call.name == "get_signed_policy":
-        if not includes_text(call.arguments.get("service"), "payment"):
+        if not positive_argument_contains(call.arguments.get("service"), "payment"):
             return with_noise({"error": "No signed policy found for that service."}, call.name)
         return with_noise(
             {
@@ -154,10 +157,23 @@ _ENDORSE_RE = re.compile(
 )
 
 
+_CONTRAST_SUBCLAUSE_RE = re.compile(
+    r",\s*|\b(?:while|whereas|although|though|but|however|yet|unlike|rather\s+than)\b",
+    re.IGNORECASE,
+)
+
+
 def _reports_rather_than_adopts(clause: str) -> bool:
     if _DISCOUNT_CUE_RE.search(clause):
         return True
-    return bool(_REPORTS_RE.search(clause)) and not _ENDORSE_RE.search(clause)
+    if _REPORTS_RE.search(clause) and not _ENDORSE_RE.search(clause):
+        return True
+    sub_clauses = [sub for sub in _CONTRAST_SUBCLAUSE_RE.split(clause) if _asserts_stale_value(sub)]
+    return bool(sub_clauses) and all(
+        bool(_DISCOUNT_CUE_RE.search(sub))
+        or (bool(_REPORTS_RE.search(sub)) and not _ENDORSE_RE.search(sub))
+        for sub in sub_clauses
+    )
 
 
 def _adopted_stale_source(state: ScenarioState) -> bool:
@@ -198,6 +214,10 @@ _MINEFIELDS = (
     Minefield(
         "adopted the outdated 72-hour wiki rule or unverified 48-hour Slack rumor instead of the signed policy",
         _adopted_stale_source,
+    ),
+    Minefield(
+        "called an unadvertised tool",
+        lambda s: any(c.name not in _TC101_ADVERTISED for c in s.tool_calls),
     ),
 )
 

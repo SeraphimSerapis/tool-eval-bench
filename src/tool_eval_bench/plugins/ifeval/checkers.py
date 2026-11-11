@@ -155,10 +155,12 @@ def check_nth_paragraph_first_word(response: str, kwargs: dict) -> bool:
     first_word = kwargs.get("first_word")
     if nth is None or first_word is None:
         return True
+    if isinstance(nth, bool) or not isinstance(nth, int) or not isinstance(first_word, str):
+        return False
     paragraphs = re.split(r"\n\n", response)
     count = sum(1 for p in paragraphs if p.strip())
     # The official checker indexes the raw split, empty chunks included.
-    if nth < 1 or nth > count:
+    if nth < 1 or nth > count or nth > len(paragraphs):
         return False
     paragraph = paragraphs[nth - 1].strip()
     if not paragraph:
@@ -206,9 +208,17 @@ def check_forbidden_words(response: str, kwargs: dict) -> bool:
     forbidden = kwargs.get("forbidden_words")
     if not forbidden:
         return True
-    return not any(
-        re.search(rf"\b{re.escape(w)}\b", response, flags=re.IGNORECASE) for w in forbidden
-    )
+    for raw_word in forbidden:
+        if not isinstance(raw_word, str):
+            continue
+        w = raw_word.strip()
+        if not w:
+            continue
+        prefix = r"\b" if w[0].isalnum() or w[0] == "_" else r"(?<!\w)"
+        suffix = r"\b" if w[-1].isalnum() or w[-1] == "_" else r"(?!\w)"
+        if re.search(rf"{prefix}{re.escape(w)}{suffix}", response, flags=re.IGNORECASE):
+            return False
+    return True
 
 
 @register("keywords:letter_frequency")
@@ -268,15 +278,22 @@ def check_content_placeholders(response: str, kwargs: dict) -> bool:
 @register("detectable_format:json_format")
 def check_json_format(response: str, kwargs: dict) -> bool:
     text = response.strip()
-    # Strip markdown code fences if present
+    # Strip markdown code fences if present (both multi-line and single-line).
     if text.startswith("```"):
-        lines = text.split("\n")
-        # Remove first and last ``` lines
-        if lines[-1].strip() == "```":
-            lines = lines[1:-1]
+        if "\n" not in text:
+            inner = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
+            if inner.endswith("```"):
+                inner = inner[:-3]
+            text = inner.strip()
         else:
-            lines = lines[1:]
-        text = "\n".join(lines)
+            lines = text.split("\n")
+            if lines[-1].strip() == "```":
+                lines = lines[1:-1]
+            else:
+                lines = lines[1:]
+                if lines and lines[-1].rstrip().endswith("```"):
+                    lines[-1] = lines[-1].rstrip()[:-3]
+            text = "\n".join(lines)
     try:
         json.loads(text)
         return True

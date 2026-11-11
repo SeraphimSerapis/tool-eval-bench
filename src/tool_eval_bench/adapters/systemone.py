@@ -80,7 +80,8 @@ class SystemOneAdapter(OpenAICompatibleAdapter, DecisionBackend):
             if not isinstance(body, dict):
                 raise ValueError("decision response is not a JSON object")
             usage = body.get("usage")
-            input_tokens = int(usage.get("input_tokens", 0)) if isinstance(usage, dict) else 0
+            raw_input_tokens = usage.get("input_tokens") if isinstance(usage, dict) else 0
+            input_tokens = int(raw_input_tokens) if raw_input_tokens is not None else 0
             return DecisionResult(
                 answers=parse_answers(body, questions),
                 input_tokens=input_tokens,

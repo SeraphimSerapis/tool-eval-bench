@@ -19,6 +19,7 @@ from tool_eval_bench.evals.helpers import (
     counted_calls,
     days_after_reference,
     positive_argument_contains,
+    recipient_values,
     result_is_usable_if_present,
     tool_calls_by_name,
 )
@@ -73,7 +74,18 @@ def _tc79_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
-_TC79_CONFIRMATIONS = ("scheduled", "created", "booked", "set up", "added")
+_TC79_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC79_TOOLS)
+_TC79_CONFIRMATIONS = (
+    "scheduled",
+    "created",
+    "booked",
+    "set up",
+    "added",
+    "confirmed",
+    "arranged",
+    "on the calendar",
+    "on your calendar",
+)
 # Bare "rain" would reject "0% chance of rain", which is the correct forecast.
 _TC79_CONTRADICTIONS = ("will rain", "raining", "rainy", "not dry", "not be dry")
 
@@ -90,6 +102,8 @@ def _tc79_answer_is_truthful(answer: str) -> bool:
 
 
 def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
+    if any(c.name not in _TC79_ADVERTISED for c in state.tool_calls):
+        return _fail("Attempted an unadvertised tool call.")
     weather = tool_calls_by_name(state, "get_weather")
     contacts = tool_calls_by_name(state, "get_contacts")
     # An event that --error-rate failed and the model retried created nothing.
@@ -139,18 +153,23 @@ def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
         state, event, lambda payload: payload.get("status") == "created"
     )
     attendee_values = args.get("attendees")
+    raw_duration = args.get("duration_minutes")
+    duration_ok = not isinstance(raw_duration, bool) and (
+        (isinstance(raw_duration, (int, float)) and raw_duration == 30)
+        or (isinstance(raw_duration, str) and raw_duration.strip() == "30")
+    )
     required = [
         all(term in as_str(args.get("title")).lower() for term in ("outdoor", "review")),
-        args.get("date") == days_after_reference(state, 1),
+        as_str(args.get("date")).strip() == days_after_reference(state, 1),
         # Seconds are the same moment. An offset is not accepted: the event
         # carries a separate Europe/Lisbon timezone, so "09:00+01:00" would be
         # a different time.
         re.fullmatch(r"09:00(?::00)?", as_str(args.get("time")).strip()) is not None,
-        args.get("timezone") == "Europe/Lisbon",
-        args.get("duration_minutes") == 30,
+        as_str(args.get("timezone")).strip().lower() == "europe/lisbon",
+        duration_ok,
         isinstance(attendee_values, list)
         and len(attendee_values) == 1
-        and attendee_values[0] == "priya.shah@company.com",
+        and recipient_values(attendee_values) == ["priya.shah@company.com"],
     ]
     if dependencies_first and event_usable and all(required):
         if not _tc79_answer_is_truthful(state.final_answer):

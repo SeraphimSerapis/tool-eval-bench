@@ -14,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients as _addressed_recipients,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -249,6 +252,7 @@ def _tc46_eval(state: ScenarioState) -> ScenarioEvaluation:
     emailed = any(
         call.name == "send_email"
         and _recipient_values(call.arguments.get("to")) == ["jordan.park@company.com"]
+        and _addressed_recipients(call) == ["jordan.park@company.com"]
         and isinstance(call.arguments.get("subject"), str)
         and bool(call.arguments["subject"].strip())
         and isinstance(call.arguments.get("body"), str)

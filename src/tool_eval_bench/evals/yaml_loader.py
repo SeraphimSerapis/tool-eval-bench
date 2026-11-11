@@ -67,6 +67,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
+from tool_eval_bench.evals.helpers import counted_calls
 
 # YAML scenarios cannot declare tools; the orchestrator offers these to every one.
 _OFFERED_TOOLS = frozenset(tool["function"]["name"] for tool in UNIVERSAL_TOOLS)
@@ -74,6 +75,19 @@ _TOOL_PARAMETERS: dict[str, frozenset[str]] = {
     tool["function"]["name"]: frozenset(tool["function"]["parameters"]["properties"])
     for tool in UNIVERSAL_TOOLS
 }
+
+
+def _json_equal(left: Any, right: Any) -> bool:
+    """Compare JSON values without conflating booleans with 0 or 1."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _json_equal(a, b) for a, b in zip(left, right, strict=True)
+        )
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(_json_equal(left[k], right[k]) for k in left)
+    return bool(left == right)
 
 
 def _make_handler(
@@ -85,7 +99,10 @@ def _make_handler(
         rules = tool_responses.get(record.name, [])
         for rule in rules:
             match = rule.get("match") or {}
-            if all(record.arguments.get(k) == v for k, v in match.items()):
+            if all(
+                k in record.arguments and _json_equal(record.arguments[k], v)
+                for k, v in match.items()
+            ):
                 return rule.get("response", {"result": "ok"})
         # No rule matched — return a generic empty success so the conversation
         # can continue; the evaluator will flag the mismatch.
@@ -118,9 +135,10 @@ def _make_evaluator(
         )
 
     def evaluate(state: ScenarioState) -> ScenarioEvaluation:
+        calls = counted_calls(state.tool_calls)
         if not expected_tool_calls:
-            if state.tool_calls:
-                called = ", ".join(call.name for call in state.tool_calls)
+            if calls:
+                called = ", ".join(call.name for call in calls)
                 return ScenarioEvaluation(
                     status=ScenarioStatus.FAIL,
                     points=0,
@@ -132,13 +150,13 @@ def _make_evaluator(
         for expected in expected_tool_calls:
             tool = expected["tool"]
             args = expected.get("arguments", {})
-            if call_index >= len(state.tool_calls):
+            if call_index >= len(calls):
                 return ScenarioEvaluation(
                     status=ScenarioStatus.FAIL,
                     points=0,
                     summary=f"Missing expected tool call {tool}.",
                 )
-            actual = state.tool_calls[call_index]
+            actual = calls[call_index]
             if actual.name != tool:
                 return ScenarioEvaluation(
                     status=ScenarioStatus.FAIL,
@@ -146,7 +164,7 @@ def _make_evaluator(
                     summary=f"Expected {tool}, got {actual.name}.",
                 )
             for key, val in args.items():
-                if actual.arguments.get(key) != val:
+                if key not in actual.arguments or not _json_equal(actual.arguments[key], val):
                     return ScenarioEvaluation(
                         status=ScenarioStatus.FAIL,
                         points=0,
@@ -154,7 +172,7 @@ def _make_evaluator(
                     )
             call_index += 1
 
-        if len(state.tool_calls) > call_index:
+        if len(calls) > call_index:
             return ScenarioEvaluation(
                 status=ScenarioStatus.FAIL,
                 points=0,
@@ -425,7 +443,10 @@ def _load_yaml_file(path: Path, raw_bytes: bytes | None = None) -> ScenarioDefin
     *raw_bytes* lets a caller that has already read the file (to hash it, say)
     hand the bytes over instead of forcing a second read.
     """
-    raw = (raw_bytes if raw_bytes is not None else path.read_bytes()).decode("utf-8")
+    try:
+        raw = (raw_bytes if raw_bytes is not None else path.read_bytes()).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Invalid UTF-8 in {path}: {exc}") from exc
     try:
         data = yaml.load(raw, Loader=_StrictLoader)  # noqa: S506 - a SafeLoader subclass
     except yaml.YAMLError as exc:
@@ -446,6 +467,9 @@ def _load_yaml_file(path: Path, raw_bytes: bytes | None = None) -> ScenarioDefin
     description = data.get("description")
     if description is not None and not isinstance(description, str):
         raise ValueError(f"Field 'description' must be a string in {path}")
+    held_out = data.get("held_out", False)
+    if not isinstance(held_out, bool):
+        raise ValueError(f"Field 'held_out' must be a boolean in {path}")
     difficulty = _difficulty(data, path)
     tool_responses = _tool_responses(data, path)
     expected_tool_calls = _expected_tool_calls(data, path)
@@ -466,7 +490,7 @@ def _load_yaml_file(path: Path, raw_bytes: bytes | None = None) -> ScenarioDefin
         handle_tool_call=_make_handler(tool_responses),
         evaluate=_make_evaluator(expected_tool_calls, answer_contains),
         difficulty=difficulty,
-        held_out=bool(data.get("held_out", False)),
+        held_out=held_out,
         capabilities=tuple(capabilities),
     )
 

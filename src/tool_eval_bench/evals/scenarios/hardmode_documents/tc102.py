@@ -53,6 +53,9 @@ _TC102_TOOLS = [
 ]
 
 
+_TC102_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC102_TOOLS)
+
+
 def _is_manifest_call(call: ToolCallRecord) -> bool:
     return as_str(call.arguments.get("dossier_id")).strip().upper() == _DOSSIER_ID
 
@@ -187,6 +190,10 @@ _MINEFIELDS = (
     Minefield(
         "archived the dossier more than once",
         lambda s: len(counted_calls(calls(s, "archive_dossier_v2", _is_valid_v2))) > 1,
+    ),
+    Minefield(
+        "called an unadvertised tool",
+        lambda s: any(c.name not in _TC102_ADVERTISED for c in s.tool_calls),
     ),
 )
 

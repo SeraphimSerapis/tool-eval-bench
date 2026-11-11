@@ -27,6 +27,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
+    date_matches as _date_matches,
+)
+from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
@@ -37,6 +40,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    recipient_values as _recipient_values,
 )
 from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
@@ -102,7 +108,7 @@ def _tc51_date_is_friday(state: ScenarioState, value: Any) -> bool:
     date_value = _as_str(value).strip()
     if "reference_date" not in state.meta:
         return bool(date_value)
-    return date_value in _tc51_fridays(state)
+    return any(_date_matches(date_value, day) for day in _tc51_fridays(state))
 
 
 def _tc51_time_is_present(state: ScenarioState, value: Any) -> bool:
@@ -153,14 +159,18 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
     event_calls = _tool_calls_by_name(state, "create_calendar_event")
     email_calls = _tool_calls_by_name(state, "send_email")
+
+    def _event_attendees(call: ToolCallRecord) -> list[str]:
+        return _recipient_values(_as_str_list(call.arguments.get("attendees")))
+
     valid_events = [
         c
         for c in event_calls
         if _includes_text(c.arguments.get("title"), "lunch")
         and _tc51_date_is_friday(state, c.arguments.get("date"))
         and _tc51_time_is_present(state, c.arguments.get("time"))
-        and len(_as_str_list(c.arguments.get("attendees"))) == len(_TC51_ENGINEERING)
-        and set(_as_str_list(c.arguments.get("attendees"))) == _TC51_ENGINEERING
+        and len(_event_attendees(c)) == len(_TC51_ENGINEERING)
+        and set(_event_attendees(c)) == _TC51_ENGINEERING
         and _result_matches_if_present(state, c, _tc51_event_result_is_created)
     ]
     valid_event = valid_events[0] if len(valid_events) == 1 else None

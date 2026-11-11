@@ -48,7 +48,7 @@ ANCHORS: dict[str, tuple[str, ...]] = {
     "TC-05": ("Team Standup", "Alex", "Jamie"),
     "TC-09": ("London", "MSFT"),
     "TC-11": ("15", "200"),
-    "TC-21": ("R1", "R2", "R3", "R4", "R5", "YYYY-MM-DD", "user@example.com"),
+    "TC-21": ("R1", "R2", "R3", "R4", "R5", "YYYY-MM-DD", "user@example.com", "ISSUES:"),
     "TC-24": ("Q3",),
     "TC-27": ("London",),
     "TC-28": ("config.yaml",),
@@ -179,14 +179,70 @@ _CONSTITUENT_NEGATORS: dict[str, re.Pattern[str]] = {
     "es": re.compile(r"\bsin\b(?!\s+(?:duda|embargo)\b)", re.IGNORECASE),
 }
 _COMMA_DECIMAL_LOCALES = frozenset({"de", "es"})
+# Scenarios whose prose answers state a sub-thousand decimal constant rather
+# than a thousands-grouped integer, so bare single-group X.YYY such as 3.142
+# keeps its international decimal point while multi-group X.YYY.ZZZ and
+# X.YYY,dd still normalize as dot-grouped thousands.
+_PRESERVE_SINGLE_DOT_GROUP_SCENARIOS = frozenset({"TC-44"})
 
 
-def normalize_answer(text: str, locale: str) -> str:
-    """Rewrite ``text`` so English-oriented number and negation parsing applies."""
+def _replace_dot_grouped(match: re.Match[str], *, strip_single_dot_group: bool) -> str:
+    grouped = match.group(1)
+    decimals = match.group(2)
+    if not strip_single_dot_group and decimals is None and grouped.count(".") == 1:
+        return match.group(0)
+    return grouped.replace(".", "") + (f".{decimals}" if decimals else "")
+
+
+def _is_json_container(candidate: str) -> bool:
+    stripped = candidate.strip()
+    if not stripped.startswith(("{", "[")):
+        return False
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(parsed, (dict, list))
+
+
+_SINGLE_LINE_JSON_TAG = re.compile(r"^json\b\s*", re.IGNORECASE)
+
+
+def _fenced_block_is_json(block: str) -> bool:
+    body = block[3:-3].strip()
+    if body and not body.startswith(("{", "[")):
+        first_nl = body.find("\n")
+        if first_nl != -1:
+            body = body[first_nl + 1 :].strip()
+        else:
+            body = _SINGLE_LINE_JSON_TAG.sub("", body, count=1).strip()
+    return _is_json_container(body)
+
+
+def normalize_answer(text: str, locale: str, *, strip_single_dot_group: bool = True) -> str:
+    """Rewrite ``text`` so English-oriented number and negation parsing applies.
+
+    Valid JSON payloads and fenced JSON blocks are left untouched so prose
+    number and negation rewrites never corrupt structured outputs.
+    """
+    if _is_json_container(text):
+        return text
+    preserved: list[str] = []
+    if "```" in text:
+
+        def _stash(match: re.Match[str]) -> str:
+            block = match.group()
+            if not _fenced_block_is_json(block):
+                return block
+            token = f"\x00JSON_FENCE_{len(preserved)}\x00"
+            preserved.append(block)
+            return token
+
+        text = _FENCED_BLOCK.sub(_stash, text)
     text = text.translate(_FULLWIDTH)
     if locale in _COMMA_DECIMAL_LOCALES:
         text = _DOT_GROUPED.sub(
-            lambda m: m.group(1).replace(".", "") + (f".{m.group(2)}" if m.group(2) else ""),
+            lambda m: _replace_dot_grouped(m, strip_single_dot_group=strip_single_dot_group),
             text,
         )
         text = _DECIMAL_COMMA.sub(r"\1.\2", text)
@@ -197,13 +253,22 @@ def normalize_answer(text: str, locale: str) -> str:
     negator = _NEGATORS.get(locale)
     if negator is not None:
         text = negator.sub(" not ", text)
+    for index, block in enumerate(preserved):
+        text = text.replace(f"\x00JSON_FENCE_{index}\x00", block)
     return text
 
 
-def localized_state(state: ScenarioState, locale: str) -> ScenarioState:
+def localized_state(
+    state: ScenarioState, locale: str, *, strip_single_dot_group: bool = True
+) -> ScenarioState:
     result = copy.copy(state)
-    result.final_answer = normalize_answer(state.final_answer, locale)
-    result.assistant_messages = [normalize_answer(m, locale) for m in state.assistant_messages]
+    result.final_answer = normalize_answer(
+        state.final_answer, locale, strip_single_dot_group=strip_single_dot_group
+    )
+    result.assistant_messages = [
+        normalize_answer(m, locale, strip_single_dot_group=strip_single_dot_group)
+        for m in state.assistant_messages
+    ]
     return result
 
 
@@ -268,12 +333,26 @@ def localized_variant(scenario: ScenarioDefinition, locale: str) -> ScenarioDefi
     entry = pack["scenarios"][scenario.id]
     original_evaluate = scenario.evaluate
 
+    strip_single_dot_group = scenario.id not in _PRESERVE_SINGLE_DOT_GROUP_SCENARIOS
+
     def evaluate(state: ScenarioState) -> ScenarioEvaluation:
-        evaluation = original_evaluate(localized_state(state, locale))
+        evaluation = original_evaluate(
+            localized_state(state, locale, strip_single_dot_group=strip_single_dot_group)
+        )
         diagnostic = _language_diagnostic(state, locale)
         if diagnostic is None:
             return evaluation
         return replace(evaluation, diagnostics={**evaluation.diagnostics, "language": diagnostic})
+
+    audit = scenario.answer_audit
+    if audit is not None:
+        original_choice = audit.deterministic_choice
+        audit = replace(
+            audit,
+            deterministic_choice=lambda state: original_choice(
+                localized_state(state, locale, strip_single_dot_group=strip_single_dot_group)
+            ),
+        )
 
     return replace(
         scenario,
@@ -281,6 +360,7 @@ def localized_variant(scenario: ScenarioDefinition, locale: str) -> ScenarioDefi
         follow_up_messages=list(entry.get("follow_up_messages", [])),
         tools_override=localize_tools(scenario_tools(scenario), pack["strings"]),
         evaluate=evaluate,
+        answer_audit=audit,
         variant_metadata={
             **scenario.variant_metadata,
             "locale": locale,

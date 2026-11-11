@@ -247,6 +247,8 @@ def estimate_pass_seconds(
     which a concurrent batch can only exceed. Prefill and decode both slow
     down as depth grows, so the real run takes longer than this.
     """
+    if pp_tps <= 0 or tg_tps <= 0:
+        return 0.0
     per_run = 0.0
     for depth in perf_pass.depths:
         prefill = (depth + pp) / pp_tps

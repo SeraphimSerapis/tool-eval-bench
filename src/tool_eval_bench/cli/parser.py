@@ -191,6 +191,8 @@ def _plugin_argv(argv: list[str]) -> list[str]:
     if args.shots is not None:
         if args.benchmark == "ifeval":
             parser.error("--shots is not supported by the IFEval plugin")
+        if args.benchmark == "needle":
+            parser.error("--shots is not supported by the needle plugin")
         if args.benchmark == "decision":
             parser.error("--shots is not supported by the decision plugin")
         if args.benchmark == "toolscale":

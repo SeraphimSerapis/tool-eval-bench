@@ -15,11 +15,14 @@ import sys
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
+from tool_eval_bench.cli.commands import resolve_packs
 from tool_eval_bench.cli.headless import report_run_failed, report_run_saved
 from tool_eval_bench.cli.resolve import parse_sweep_range, redact_url, resolve_scenarios
 from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.domain.scenarios import scenario_report_metadata
 from tool_eval_bench.storage.reports.pressure import pressure_sweep_report
 from tool_eval_bench.utils.urls import redact_urls
 
@@ -78,7 +81,7 @@ def run_pressure_sweep(
     try:
         start, end = parse_sweep_range(args.context_pressure_sweep)
     except ValueError as exc:
-        report_run_failed(console, f"\n[bold red]Error:[/] {exc}")
+        report_run_failed(console, f"\n[bold red]Error:[/] {escape(str(exc))}")
         sys.exit(1)
 
     steps = max(2, args.sweep_steps)
@@ -92,8 +95,10 @@ def run_pressure_sweep(
 
     scenario_ids = [s.id for s in scenarios]
 
-    console.print(f"\n[bold]⚡ Context Pressure Sweep[/] — {display_name}")
-    console.print(f"[dim]  Backend: {backend}  |  Server: {display_url or base_url}[/]")
+    console.print(f"\n[bold]⚡ Context Pressure Sweep[/] — {escape(display_name)}")
+    console.print(
+        f"[dim]  Backend: {escape(backend)}  |  Server: {escape(str(display_url or base_url))}[/]"
+    )
     console.print(
         f"[dim]  Range: {start:.0%} → {end:.0%}  |  "
         f"{len(levels)} levels  |  "
@@ -144,7 +149,8 @@ def run_pressure_sweep(
 
         console.print(f"  [dim]Context window: {context_size:,} tokens[/]\n")
     except Exception as exc:
-        report_run_failed(console, f"\n[bold red]Error:[/] {exc}")
+        detail = redact_urls(str(exc)) if getattr(args, "redact_url", False) else str(exc)
+        report_run_failed(console, f"\n[bold red]Error:[/] {escape(detail)}")
         sys.exit(1)
 
     top_fill = compute_fill_budget(context_size, end)
@@ -317,7 +323,8 @@ def run_pressure_sweep(
                     "excluded_scenarios": list(scenario_ids),
                     "error": error,
                 }
-                console.print(f"[red]error: {exc}[/]")
+                shown_error = error if getattr(args, "redact_url", False) else str(exc)
+                console.print(f"[red]error: {escape(shown_error)}[/]")
             else:
                 emoji_str = "  ".join(
                     _EXCLUDED_EMOJI
@@ -477,6 +484,9 @@ def run_pressure_sweep(
     system_prompt = getattr(args, "system_prompt", None)
     if system_prompt is not None:
         sweep_fields["system_prompt"] = system_prompt
+    pack_attestations = [pack.to_dict() for pack in resolve_packs(args)] or None
+    if pack_attestations is not None:
+        sweep_fields["scenario_packs"] = pack_attestations
     # Status stays "completed" even when interrupted: history and resume treat
     # any other status as a resumable scored run.
     run = ModeRun(
@@ -510,10 +520,12 @@ def run_pressure_sweep(
             interrupted=interrupted,
             stop_reason=stop_reason,
             breaking_point_lower_bound=breaking_point_lower_bound,
+            scenario_metadata=scenario_report_metadata(scenarios),
+            scenario_packs=pack_attestations,
         ),
         run_context=run_context,
         output_dir=getattr(args, "output_dir", None),
     )
     report_run_saved(console, run, finalized)
     report_path = finalized.report_path
-    console.print(f"  [dim]Report saved to {report_path}[/]\n")
+    console.print(f"  [dim]Report saved to {escape(str(report_path))}[/]\n")

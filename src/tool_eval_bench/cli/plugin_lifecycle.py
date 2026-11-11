@@ -9,10 +9,12 @@ from typing import Any
 
 import httpx
 from rich.console import Console
+from rich.markup import escape
 
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
 from tool_eval_bench.cli.headless import report_run_failed, report_run_saved
 from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.domain.redaction import redact_urls
 from tool_eval_bench.storage.reports.mode import ModeReport
 
 
@@ -29,11 +31,14 @@ def execute_plugin(
         report_run_failed(console, "\n[bold red]Interrupted.[/]")
         sys.exit(1)
     except (httpx.HTTPError, OSError, RuntimeError, ValueError) as exc:
-        report_run_failed(console, f"\n[bold red]{benchmark_name} error:[/] {exc}")
+        report_run_failed(
+            console,
+            f"\n[bold red]{escape(benchmark_name)} error:[/] {escape(redact_urls(str(exc)))}",
+        )
         sys.exit(1)
 
     if not result_holder:
-        console.print(f"[bold red]No {benchmark_name} results.[/]")
+        console.print(f"[bold red]No {escape(benchmark_name)} results.[/]")
         return None
     return result_holder[0]
 
@@ -78,5 +83,5 @@ def finalize_plugin_run(
         output_dir=output_dir,
     )
     report_run_saved(console, run, finalized)
-    console.print(f"\n  [dim]Report saved to {finalized.report_path}[/]\n")
+    console.print(f"\n  [dim]Report saved to {escape(str(finalized.report_path))}[/]\n")
     return finalized.run_id

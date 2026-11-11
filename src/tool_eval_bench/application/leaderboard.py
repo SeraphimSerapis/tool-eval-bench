@@ -97,6 +97,12 @@ def cohort_label(config: dict[str, Any], cohort_fingerprint: str) -> str:
     return f"{', '.join(label)} [{cohort_fingerprint[:8]}]"
 
 
+def _finite_number(value: object, default: float = 0.0) -> int | float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return value if math.isfinite(value) else default
+
+
 def is_rank_eligible(run: dict[str, Any], config: dict[str, Any], scores: dict[str, Any]) -> bool:
     """Reject explicit partial, interrupted, and incomplete persisted runs."""
     # Records written before run status existed remain exportable.  New records
@@ -107,14 +113,27 @@ def is_rank_eligible(run: dict[str, Any], config: dict[str, Any], scores: dict[s
     if status != "completed":
         return False
     completion_rate = scores.get("completion_rate")
-    if isinstance(completion_rate, (int, float)) and completion_rate < 100:
+    if isinstance(completion_rate, (int, float)) and (
+        not math.isfinite(completion_rate) or completion_rate < 100
+    ):
         return False
     expected = config.get("scenario_count")
     results = scores.get("scenario_results")
-    if not isinstance(expected, int) or expected <= 0 or not isinstance(results, list):
+    if (
+        isinstance(expected, bool)
+        or not isinstance(expected, int)
+        or expected <= 0
+        or not isinstance(results, list)
+    ):
         return False
     return (
-        len({result.get("scenario_id") for result in results if result.get("scenario_id")})
+        len(
+            {
+                result.get("scenario_id")
+                for result in results
+                if isinstance(result, dict) and result.get("scenario_id")
+            }
+        )
         == expected
     )
 
@@ -163,9 +182,15 @@ def extract_leaderboard_rows(
         # retained only for status-less legacy imports that cannot distinguish
         # trials from historical duplicates.
         if all(run.get("status") is None for run in group_runs):
-            best = max(group_runs, key=lambda r: (r.get("scores") or {}).get("final_score", 0))
+            best = max(
+                group_runs,
+                key=lambda r: _finite_number((r.get("scores") or {}).get("final_score"), 0),
+            )
         else:
-            best = max(group_runs, key=lambda r: (r.get("created_at", ""), r.get("run_id", "")))
+            best = max(
+                group_runs,
+                key=lambda r: (str(r.get("created_at") or ""), str(r.get("run_id") or "")),
+            )
         scores = best.get("scores") or {}
         config = best.get("config") or {}
         scenario_count = config.get("scenario_count", len(scores.get("scenario_results", [])))
@@ -185,13 +210,14 @@ def extract_leaderboard_rows(
         # Extract metadata (issue #6)
         metadata = best.get("metadata") or {}
         row_cohort = cohort_fingerprint(config, metadata)
+        final_score = _finite_number(scores.get("final_score", 0), 0)
 
         rows.append(
             {
                 "model": model,
                 "run_id": best.get("run_id", "?"),
-                "date": best.get("created_at", "?")[:19],
-                "final_score": scores.get("final_score", 0),
+                "date": str(best.get("created_at") or "?")[:19],
+                "final_score": final_score,
                 "rating": scores.get("rating", "?"),
                 "total_points": scores.get("total_points", 0),
                 "max_points": scores.get("max_points", 0),
@@ -225,7 +251,14 @@ def extract_leaderboard_rows(
         )
 
     # Keep cohorts together, then rank scores within each comparable cohort.
-    rows.sort(key=lambda r: (r["cohort_label"], -r["final_score"], r["model"]))
+    rows.sort(
+        key=lambda r: (
+            r["cohort_label"],
+            r["cohort_fingerprint"],
+            -r["final_score"],
+            r["model"],
+        )
+    )
     previous_cohort: str | None = None
     cohort_rank = 0
     for row in rows:

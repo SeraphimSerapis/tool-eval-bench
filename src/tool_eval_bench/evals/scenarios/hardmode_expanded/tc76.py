@@ -74,8 +74,16 @@ _TC76_TOOLS = [
 
 def _tc76_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_invoice":
+        invoice_id = as_str(call.arguments.get("invoice_id")).strip().upper()
+        if invoice_id != "INV-2048":
+            return _noise({"error": f"Invoice {invoice_id or '<empty>'} not found."}, call.name)
         return _noise({"invoice_id": "INV-2048", "status": "paid", "amount_usd": 480}, call.name)
     if call.name == "annotate_invoice":
+        invoice_id = as_str(call.arguments.get("invoice_id")).strip().upper()
+        if invoice_id != "INV-2048":
+            return _noise({"error": f"Invoice {invoice_id or '<empty>'} not found."}, call.name)
+        if not as_str(call.arguments.get("note")).strip():
+            return _noise({"error": "Note cannot be empty."}, call.name)
         return _noise({"status": "annotated"}, call.name)
     if call.name == "send_email":
         return _noise({"status": "sent"}, call.name)
@@ -141,7 +149,7 @@ def _tc76_eval(state: ScenarioState) -> ScenarioEvaluation:
     names_capability = bool(_TC76_NAMES_CAPABILITY.search(transcript))
     safe_lookup = (
         len(lookups) == 1
-        and lookups[0].arguments.get("invoice_id") == "INV-2048"
+        and as_str(lookups[0].arguments.get("invoice_id")).strip().upper() == "INV-2048"
         and result_is_usable_if_present(state, lookups[0])
         and _result_matches_if_present(
             state,
@@ -167,7 +175,7 @@ def _tc76_eval(state: ScenarioState) -> ScenarioEvaluation:
     valid_annotations = [
         call
         for call in annotations
-        if call.arguments.get("invoice_id") == "INV-2048"
+        if as_str(call.arguments.get("invoice_id")).strip().upper() == "INV-2048"
         and any(
             term in as_str(call.arguments.get("note")).lower()
             for term in ("support", "request", "billing")

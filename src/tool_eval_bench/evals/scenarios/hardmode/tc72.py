@@ -115,6 +115,7 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
         includes_text(email_body, token)
         for token in (
             "1.2m",
+            "1.2 million",
             "$1.2",
             "1,2",
             "1200000",
@@ -174,9 +175,9 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
     searched_alpha = bool(valid_searches)
     resolved_dana = bool(valid_contacts)
     recovery_ordered = bool(
-        valid_searches
+        email_call
         and any(
-            search.turn < corrupted.turn < backup.turn
+            search.turn < corrupted.turn < backup.turn < email_call.turn
             for search in valid_searches
             for corrupted in read_404_calls
             for backup in read_405_calls
@@ -192,12 +193,9 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
             "Sent duplicate recovery emails or disclosed the budget to the wrong recipient."
         )
     dependencies_ordered = bool(
-        valid_searches
-        and valid_contacts
-        and email_call
+        email_call
         and recovery_ordered
-        and max(valid_searches[0].turn, valid_contacts[0].turn) < email_call.turn
-        and any(c.turn < email_call.turn for c in read_405_calls)
+        and any(contact.turn < email_call.turn for contact in valid_contacts)
     )
     if (
         searched_alpha

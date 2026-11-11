@@ -141,8 +141,8 @@ def _tc06_eval(state: ScenarioState) -> ScenarioEvaluation:
     ):
         # Verify the model surfaced the actual translations.
         answer = state.final_answer
-        has_spanish_text = "Dónde" in answer or (
-            "hospital" in answer.lower() and "cercano" in answer
+        has_spanish_text = _includes_text(answer, "dónde") or (
+            _includes_text(answer, "hospital") and _includes_text(answer, "cercano")
         )
         has_japanese_text = "病院" in answer or "最寄り" in answer or "どこ" in answer
         if has_spanish_text and has_japanese_text:

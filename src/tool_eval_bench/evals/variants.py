@@ -20,36 +20,119 @@ from tool_eval_bench.evals.helpers import fail_eval
 VARIANT_VERSION = 1
 
 
-def substitute(value: Any, replacements: dict[str, str]) -> Any:
+def _normalize_nfc(value: Any) -> Any:
+    if isinstance(value, str):
+        return unicodedata.normalize("NFC", value)
+    if isinstance(value, list):
+        return [_normalize_nfc(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_normalize_nfc(item) for item in value)
+    if isinstance(value, dict):
+        return {_normalize_nfc(key): _normalize_nfc(item) for key, item in value.items()}
+    return value
+
+
+def substitute(value: Any, replacements: dict[str, str], *, ignore_case: bool = False) -> Any:
     """Replace complete fixture literals, including inside nested payloads."""
     if isinstance(value, str):
         if not replacements:
             return value
         normalized = unicodedata.normalize("NFC", value)
-        boundary = r"[0-9A-Za-z_]" if all(k.isascii() for k in replacements) else r"\w"
+        normalized_map = {unicodedata.normalize("NFC", k): v for k, v in replacements.items()}
+        lookup = (
+            {k.lower(): v for k, v in normalized_map.items()} if ignore_case else normalized_map
+        )
+        boundary = r"[0-9A-Za-z_]" if all(k.isascii() for k in normalized_map) else r"\w"
         pattern = (
             rf"(?<!{boundary})(?:"
-            + "|".join(re.escape(k) for k in sorted(replacements, key=len, reverse=True))
+            + "|".join(re.escape(k) for k in sorted(normalized_map, key=len, reverse=True))
             + rf")(?!{boundary})"
         )
-        return re.sub(pattern, lambda match: replacements[match.group()], normalized)
+        flags = re.IGNORECASE if ignore_case else 0
+        return re.sub(
+            pattern,
+            lambda match: lookup[match.group().lower() if ignore_case else match.group()],
+            normalized,
+            flags=flags,
+        )
     if isinstance(value, list):
-        return [substitute(item, replacements) for item in value]
+        return [substitute(item, replacements, ignore_case=ignore_case) for item in value]
+    if isinstance(value, tuple):
+        return tuple(substitute(item, replacements, ignore_case=ignore_case) for item in value)
     if isinstance(value, dict):
-        return {key: substitute(item, replacements) for key, item in value.items()}
+        return {
+            substitute(key, replacements, ignore_case=ignore_case): substitute(
+                item, replacements, ignore_case=ignore_case
+            )
+            for key, item in value.items()
+        }
     return value
 
 
-def translated_state(state: ScenarioState, replacements: dict[str, str]) -> ScenarioState:
+def _invert_emails(value: Any, email_inverse: dict[str, str]) -> Any:
+    """Restore email literals from fixture addresses while preserving case edits."""
+    if not email_inverse:
+        return value
+    if isinstance(value, str):
+        normalized = unicodedata.normalize("NFC", value)
+        lower_lookup = {
+            unicodedata.normalize("NFC", k).lower(): (unicodedata.normalize("NFC", k), v)
+            for k, v in email_inverse.items()
+        }
+        boundary = r"[0-9A-Za-z_]" if all(k.isascii() for k in lower_lookup) else r"\w"
+        pattern = (
+            rf"(?<!{boundary})(?:"
+            + "|".join(re.escape(k) for k in sorted(lower_lookup, key=len, reverse=True))
+            + rf")(?!{boundary})"
+        )
+
+        def _replace(match: re.Match[str]) -> str:
+            matched = match.group()
+            exact_fixture, original = lower_lookup[matched.lower()]
+            if matched == exact_fixture:
+                return original
+            return original.upper() if original.upper() != original else original.lower()
+
+        return re.sub(pattern, _replace, normalized, flags=re.IGNORECASE)
+    if isinstance(value, list):
+        return [_invert_emails(item, email_inverse) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_invert_emails(item, email_inverse) for item in value)
+    if isinstance(value, dict):
+        return {
+            _invert_emails(key, email_inverse): _invert_emails(item, email_inverse)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _invert_value(value: Any, token_inverse: dict[str, str], email_inverse: dict[str, str]) -> Any:
+    restored = substitute(value, token_inverse) if token_inverse else value
+    return _invert_emails(restored, email_inverse)
+
+
+def translated_state(
+    state: ScenarioState,
+    replacements: dict[str, str],
+    *,
+    email_replacements: dict[str, str] | None = None,
+    ignore_case: bool = False,
+) -> ScenarioState:
+    def _transform(value: Any) -> Any:
+        restored = (
+            substitute(value, replacements, ignore_case=ignore_case) if replacements else value
+        )
+        return _invert_emails(restored, email_replacements) if email_replacements else restored
+
     result = copy.deepcopy(state)
     for call in result.tool_calls:
-        call.arguments = substitute(call.arguments, replacements)
-        call.raw_arguments = substitute(call.raw_arguments, replacements)
+        call.arguments = _transform(call.arguments)
+        call.raw_arguments = _transform(call.raw_arguments)
     for record in result.tool_results:
-        record.result = substitute(record.result, replacements)
-    result.assistant_messages = substitute(result.assistant_messages, replacements)
-    result.final_answer = substitute(result.final_answer, replacements)
-    result.meta = substitute(result.meta, replacements)
+        record.result = _transform(record.result)
+    result.assistant_messages = _transform(result.assistant_messages)
+    result.final_answer = _transform(result.final_answer)
+    result.meta = _transform(result.meta)
     return result
 
 
@@ -59,25 +142,38 @@ def identity_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinit
         + ("@example.com" if "@" in literal else "")
         for literal in scenario.variant_literals
     }
-    inverse = {value: key for key, value in replacements.items()}
+    email_replacements = {k: v for k, v in replacements.items() if "@" in k}
+    token_replacements = {k: v for k, v in replacements.items() if "@" not in k}
+    email_inverse = {value: key for key, value in email_replacements.items()}
+    token_inverse = {value: key for key, value in token_replacements.items()}
 
     def stale(value: Any) -> bool:
-        return substitute(value, replacements) != value
+        normalized = _normalize_nfc(value)
+        rewritten = substitute(normalized, token_replacements)
+        if email_replacements:
+            rewritten = substitute(rewritten, email_replacements, ignore_case=True)
+        return bool(rewritten != normalized)
 
     def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         if stale(call.arguments):
             return {"error": "This fixture does not contain the requested identifier."}
-        original = translated_state(state, inverse)
+        original = translated_state(state, token_inverse, email_replacements=email_inverse)
         original_call = next(
             (c for c in original.tool_calls if c.id == call.id),
-            replace(call, arguments=substitute(call.arguments, inverse)),
+            replace(
+                call,
+                arguments=_invert_value(call.arguments, token_inverse, email_inverse),
+                raw_arguments=_invert_value(call.raw_arguments, token_inverse, email_inverse),
+            ),
         )
         result = scenario.handle_tool_call(original, original_call)
         state.meta = substitute(original.meta, replacements)
         return substitute(result, replacements)
 
     def evaluate(state: ScenarioState) -> ScenarioEvaluation:
-        result = scenario.evaluate(translated_state(state, inverse))
+        result = scenario.evaluate(
+            translated_state(state, token_inverse, email_replacements=email_inverse)
+        )
         if any(stale(call.arguments) for call in state.tool_calls) or stale(state.final_answer):
             failure = fail_eval(
                 "Used an identifier from a different fixture instead of the observed data."
@@ -92,7 +188,16 @@ def identity_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinit
         original_choice = audit.deterministic_choice
         audit = replace(
             audit,
-            deterministic_choice=lambda state: original_choice(translated_state(state, inverse)),
+            deterministic_choice=lambda state: original_choice(
+                translated_state(state, token_inverse, email_replacements=email_inverse)
+            ),
+        )
+
+    checkpoint = scenario.checkpoint
+    if checkpoint is not None:
+        original_checkpoint = checkpoint
+        checkpoint = lambda state, phase: original_checkpoint(  # noqa: E731
+            translated_state(state, token_inverse, email_replacements=email_inverse), phase
         )
 
     return replace(
@@ -102,6 +207,7 @@ def identity_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinit
         tools_override=substitute(scenario.tools_override, replacements),
         handle_tool_call=handle,
         evaluate=evaluate,
+        checkpoint=checkpoint,
         answer_audit=audit,
         variant_metadata={"version": VARIANT_VERSION, "seed": seed, "kind": "identifiers"},
     )

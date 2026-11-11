@@ -118,7 +118,7 @@ def _tc30_is_expected_workflow(code: str) -> bool:
             or not isinstance(comparison.ops[0], ast.Eq)
             or len(comparison.comparators) != 1
         ):
-            continue
+            return False
         left = comparison.left
         right = comparison.comparators[0]
         compares_result_to_four = (
@@ -195,6 +195,20 @@ def _tc30_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc30_code_result_has_stdout(
+    state: ScenarioState, call: ToolCallRecord, expected_stdout: str
+) -> bool:
+    results = _matching_tool_results(state, call)
+    if not results:
+        return True
+    return any(
+        isinstance(result.result, dict)
+        and result.result.get("exit_code", 0) in (0, None)
+        and _as_str(result.result.get("stdout")).strip() == expected_stdout
+        for result in results
+    )
+
+
 def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Run print(2+2) in Python. If the result is 4, run print("correct"), otherwise run print("wrong").'
 
@@ -225,17 +239,17 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
             state, code_calls[0]
         ) or not _result_is_usable_if_present(state, code_calls[1]):
             return _partial("A run_code call returned an explicit error.")
-        first_results = _matching_tool_results(state, code_calls[0])
-        if first_results and not any(
-            isinstance(result.result, dict) and _as_str(result.result.get("stdout")).strip() == "4"
-            for result in first_results
-        ):
+        if not _tc30_code_result_has_stdout(state, code_calls[0], "4"):
             return _fail("The conditional branch was not grounded in a recorded result of 4.")
         second_code = _as_str(code_calls[1].arguments.get("code"))
         ran_correct = _tc30_is_print_text(second_code, "correct")
         ran_wrong = _tc30_is_print_text(second_code, "wrong")
 
         if ran_correct and not ran_wrong:
+            if not _tc30_code_result_has_stdout(state, code_calls[1], "correct"):
+                return _partial(
+                    "The second run_code call did not return a successful 'correct' output."
+                )
             return _pass("Correctly chained: ran 2+2, saw 4, ran 'correct'.")
         if ran_wrong:
             return _fail("Ran the 'wrong' branch despite the result being 4.")
@@ -250,7 +264,9 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
     # workflow. Printing the branch alone skips the requested calculation.
     raw_first_code = _as_str(code_calls[0].arguments.get("code"))
     if _tc30_is_expected_workflow(raw_first_code):
-        if not _result_is_usable_if_present(state, code_calls[0]):
+        if not _result_is_usable_if_present(
+            state, code_calls[0]
+        ) or not _tc30_code_result_has_stdout(state, code_calls[0], "4\ncorrect"):
             return _partial("The combined run_code call returned an explicit error.")
         return _pass("Ran the calculation and correct conditional branch in one call.")
     if _tc30_is_print_text(raw_first_code, "correct"):

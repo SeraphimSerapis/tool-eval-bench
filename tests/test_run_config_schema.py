@@ -140,11 +140,14 @@ def test_a_run_resumes_cleanly_against_itself() -> None:
     assert resume_mismatches(_build(FULL), _build(FULL)) == []
 
 
-def test_cohort_drops_model_identity_and_unfingerprinted_keys() -> None:
+def test_cohort_drops_model_identity_operational_and_unfingerprinted_keys() -> None:
     assert COHORT_EXCLUDED_KEYS == {
         "model",
         "base_url",
         "endpoint_id",
+        "concurrency",
+        "timeout_seconds",
+        "alpha",
         "decision_judge",
         "perf_preset",
         "perf_passes",

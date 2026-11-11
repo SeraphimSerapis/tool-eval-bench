@@ -779,6 +779,8 @@ async def prepare_context_pressure(
             )
 
     if fill_tokens is not None:
+        if fill_tokens < 0:
+            raise ValueError(f"--context-fill-tokens must be non-negative, got {fill_tokens:,}.")
         available = ctx_size - _RESERVED_FOR_OUTPUT - _RESERVED_FOR_SCENARIO
         if fill_tokens > available:
             raise ValueError(
@@ -789,7 +791,7 @@ async def prepare_context_pressure(
                 "by --parallel)."
             )
         return ContextPressureConfig(
-            ratio=round(fill_tokens / available, 4),
+            ratio=round(fill_tokens / available, 4) if available > 0 else 0.0,
             context_size=context_size_override,
             fill_tokens=fill_tokens,
             detected_context=ctx_size,

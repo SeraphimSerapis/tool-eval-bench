@@ -67,6 +67,8 @@ class MarkdownReporter:
         interrupted: bool = False,
         stop_reason: str | None = None,
         breaking_point_lower_bound: bool = False,
+        scenario_metadata: Mapping[str, ScenarioReportMetadata] | None = None,
+        scenario_packs: list[dict[str, Any]] | None = None,
     ) -> Path:
         """Write a trace-complete artifact for a context-pressure sweep."""
         return write_pressure_sweep_report(
@@ -85,6 +87,8 @@ class MarkdownReporter:
             interrupted=interrupted,
             stop_reason=stop_reason,
             breaking_point_lower_bound=breaking_point_lower_bound,
+            scenario_metadata=scenario_metadata,
+            scenario_packs=scenario_packs,
         )
 
     def write_scenario_report(

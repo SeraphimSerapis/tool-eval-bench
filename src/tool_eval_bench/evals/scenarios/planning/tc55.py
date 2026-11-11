@@ -83,7 +83,7 @@ def _tc55_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _sums_both_regions(call: ToolCallRecord) -> bool:
-    expression = _as_str(call.arguments.get("expression")).replace(",", "")
+    expression = _as_str(call.arguments.get("expression")).replace(",", "").replace("_", "")
     return bool(
         expression
         and "2400000" in expression
@@ -121,8 +121,9 @@ def _tc55_eval(state: ScenarioState) -> ScenarioEvaluation:
     search_calls = [
         call
         for call in _tool_calls_by_name(state, "search_files")
-        if "q3" in _as_str(call.arguments.get("query", "")).lower()
-        and "revenue" in _as_str(call.arguments.get("query", "")).lower()
+        if any(
+            term in _as_str(call.arguments.get("query", "")).lower() for term in ("q3", "revenue")
+        )
         and _result_matches_if_present(state, call, search_result_has_regions)
     ]
     read_na_calls = [

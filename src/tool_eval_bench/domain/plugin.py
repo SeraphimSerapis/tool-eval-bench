@@ -8,6 +8,7 @@ the existing layers; each plugin owns its own orchestration.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -110,22 +111,97 @@ def raise_for_transport_error(result: ChatCompletionResult) -> ChatCompletionRes
     return result
 
 
+_LEADING_THINK_RE = re.compile(
+    r"^\s*<think(?:\s[^>]*)?>(.*?)</think>\s*",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+_CLOSED_THINK_RE = re.compile(
+    r"<think(?:\s[^>]*)?>(.*?)</think>",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+_OPEN_THINK_RE = re.compile(r"<think(?:\s[^>]*)?>", flags=re.IGNORECASE)
+
+
+def strip_thinking(text: str, *, fallback_to_thought: bool = False) -> str | None:
+    """Strip inline ``<think>...</think>`` blocks from *text*.
+
+    Some OpenAI-compatible servers leave reasoning traces inline inside
+    ``content`` wrapped in ``<think>...</think>`` tags instead of populating a
+    separate ``reasoning_content`` field.  Closed blocks are removed so format
+    checkers and answer extractors see only the visible answer.
+
+    When *text* contains an unclosed ``<think>`` tag, any non-whitespace prefix
+    before it is returned; otherwise an unclosed ``<think>`` returns ``None``
+    when ``fallback_to_thought`` is ``False`` and ``""`` when ``True``, never
+    the unfinished scratchpad.  When only closed ``<think>...</think>`` blocks
+    are present with no visible text outside them, ``fallback_to_thought``
+    controls whether the completed thought text stands in or ``None`` is
+    returned.
+    """
+    if "<think" not in text.lower():
+        return text
+
+    thoughts: list[str] = []
+
+    def _collect(match: re.Match[str]) -> str:
+        thoughts.append(match.group(1))
+        return ""
+
+    cleaned = text
+    while True:
+        next_cleaned = _LEADING_THINK_RE.sub(_collect, cleaned, count=1)
+        if next_cleaned == cleaned:
+            break
+        cleaned = next_cleaned
+    cleaned = _CLOSED_THINK_RE.sub(_collect, cleaned)
+
+    open_match = _OPEN_THINK_RE.search(cleaned)
+    if open_match is not None:
+        prefix = cleaned[: open_match.start()]
+        if prefix.strip():
+            return prefix.rstrip()
+        return "" if fallback_to_thought else None
+
+    if cleaned.strip():
+        return cleaned
+    if not fallback_to_thought:
+        return None
+    joined = "\n".join(t for t in thoughts if t.strip())
+    return joined if joined else ""
+
+
 def final_answer_text(result: ChatCompletionResult) -> str | None:
     """Return the text to grade, or ``None`` when the token budget truncated the turn.
 
-    ``content`` is graded when it holds any non-whitespace text.  When it is
-    empty or whitespace only, the reasoning text stands in for models that put
-    their final answer there, but only if generation finished normally.  An
-    empty ``content`` with ``finish_reason == "length"`` means the budget ran
-    out mid-thought; grading that unfinished reasoning can pick up a stray
-    number or letter, so the caller records the item as truncated (wrong, and
-    counted separately).
+    Inline ``<think>...</think>`` blocks are stripped from ``content`` without
+    mutating *result*.  Visible non-whitespace text outside ``<think>`` always
+    wins, even when ``finish_reason == "length"``.  When no visible text remains
+    outside ``<think>``:
+
+    - ``finish_reason == "length"`` returns ``None`` so callers record the item
+      as truncated rather than grading unfinished reasoning.
+    - An unclosed ``<think>`` block returns ``""`` when generation stopped
+      without a separate ``reasoning`` fallback, never the half-written tail.
+    - Otherwise completed inline ``<think>...</think>`` text or
+      ``result.reasoning`` stands in for models that place their final answer in
+      reasoning and stop normally.
     """
+    finished = result.finish_reason != "length"
     if result.content and result.content.strip():
-        return result.content
-    if result.finish_reason == "length":
+        stripped = strip_thinking(result.content, fallback_to_thought=False)
+        if stripped is not None and stripped.strip():
+            return stripped
+        if not finished:
+            return None
+        from_thought = strip_thinking(result.content, fallback_to_thought=True) or ""
+        if from_thought.strip():
+            return from_thought
+
+    if not finished:
         return None
-    return result.reasoning or ""
+    if result.reasoning and result.reasoning.strip():
+        return strip_thinking(result.reasoning, fallback_to_thought=True) or ""
+    return ""
 
 
 # ---------------------------------------------------------------------------

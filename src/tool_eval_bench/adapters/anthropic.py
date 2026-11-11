@@ -36,6 +36,7 @@ import httpx
 from tool_eval_bench.adapters.http_retry import (
     PreEventLines,
     RetryingHTTPAdapter,
+    SseDataBuffer,
     stream_error_is_infrastructure,
 )
 from tool_eval_bench.adapters.wire_format import anthropic_messages_url
@@ -330,6 +331,27 @@ def _apply_extra_params(
             logger.debug("Dropping option %r: no Messages API equivalent", key)
 
 
+def _apply_streamed_input_json(block: dict[str, Any], fragments: list[str]) -> None:
+    """Populate a streamed ``tool_use`` block from accumulated JSON deltas."""
+    if not fragments:
+        return
+    raw = "".join(fragments)
+    if not raw.strip():
+        block["input"] = {}
+        return
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        block["input"] = {}
+        block["_raw_arguments"] = raw
+        return
+    if isinstance(parsed, dict):
+        block["input"] = parsed
+    else:
+        block["input"] = {}
+        block["_raw_arguments"] = raw
+
+
 def _parse_content_blocks(
     blocks: list[Any],
 ) -> tuple[list[str], list[str], list[ProviderToolCall], list[dict[str, Any]]]:
@@ -347,11 +369,21 @@ def _parse_content_blocks(
             if isinstance(text, str) and text:
                 texts.append(text)
         elif kind == "tool_use":
+            raw_args = block.get("_raw_arguments")
+            input_val = block.get("input")
+            if isinstance(raw_args, str):
+                args_str = raw_args
+            elif input_val is None:
+                args_str = "{}"
+            elif isinstance(input_val, str):
+                args_str = input_val
+            else:
+                args_str = json.dumps(input_val)
             tool_calls.append(
                 ProviderToolCall(
-                    id=block.get("id") or f"toolu_{len(tool_calls) + 1}",
-                    name=block.get("name") or "unknown_tool",
-                    arguments_str=json.dumps(block.get("input") or {}),
+                    id=str(block.get("id") or f"toolu_{len(tool_calls) + 1}"),
+                    name=str(block.get("name") or "unknown_tool"),
+                    arguments_str=args_str,
                 )
             )
         elif kind == "thinking":
@@ -511,6 +543,8 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
         partial_json: dict[int, list[str]] = {}
         usage: dict[str, Any] = {}
         finish_reason: str | None = None
+        raw_stop_reason: str | None = None
+        stop_details: dict[str, Any] = {}
         stream_error: dict[str, Any] | None = None
         # Whether a line parsed as an SSE event, and the lines before the
         # first one, which may be a plain JSON body.
@@ -547,35 +581,60 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                 except (json.JSONDecodeError, TypeError):
                     pass
                 else:
+                    elapsed_ms = (time.perf_counter() - started) * 1000
                     if isinstance(data, dict):
-                        elapsed_ms = (time.perf_counter() - started) * 1000
                         return self._parse_response(data, elapsed_ms)
+                    logger.warning(
+                        "Malformed non-SSE JSON from %s: expected object, got %s",
+                        _redact_url(url),
+                        type(data).__name__,
+                    )
+                    return ChatCompletionResult(
+                        content="[malformed response]",
+                        tool_calls=[],
+                        raw_response={},
+                        elapsed_ms=elapsed_ms,
+                        malformed=True,
+                    )
 
-            async for line in response.aiter_lines():
+            sse_buffer = SseDataBuffer()
+            async for raw_line in response.aiter_lines():
+                line = raw_line.rstrip("\r")
                 if not saw_event:
                     unparsed_lines.add(line)
                 sse_data = _sse_payload(line)
                 if sse_data is None:
+                    if line == "" or line.startswith(("event:", "id:", "retry:")):
+                        sse_buffer.reset()
                     continue
                 chunk_str = sse_data.strip()
                 if chunk_str == "[DONE]":
+                    sse_buffer.reset()
                     saw_event = True
                 if not chunk_str or chunk_str == "[DONE]":
                     continue
-                try:
-                    event = json.loads(chunk_str)
-                except json.JSONDecodeError:
+                parsed_event = sse_buffer.push_data(sse_data)
+                if not isinstance(parsed_event, dict):
                     continue
-                if not isinstance(event, dict):
-                    continue
+                event = parsed_event
                 saw_event = True
 
                 kind = event.get("type")
                 if kind == "message_start":
-                    usage.update((event.get("message") or {}).get("usage") or {})
+                    msg_obj = event.get("message")
+                    if isinstance(msg_obj, dict):
+                        msg_usage = msg_obj.get("usage")
+                        if isinstance(msg_usage, dict):
+                            usage.update(msg_usage)
+                        if msg_obj.get("stop_reason"):
+                            raw_stop_reason = str(msg_obj["stop_reason"])
+                            finish_reason = _finish_reason(raw_stop_reason)
+                        if isinstance(msg_obj.get("stop_details"), dict):
+                            stop_details = msg_obj["stop_details"]
                 elif kind == "content_block_start":
                     index = int(event.get("index", len(blocks)))
-                    block = dict(event.get("content_block") or {})
+                    raw_block = event.get("content_block")
+                    block = dict(raw_block) if isinstance(raw_block, dict) else {}
                     blocks[index] = block
                     if block.get("type") == "tool_use":
                         partial_json[index] = []
@@ -583,9 +642,17 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                             ttft_ms = (time.perf_counter() - started) * 1000
                 elif kind == "content_block_delta":
                     index = int(event.get("index", 0))
-                    block = blocks.setdefault(index, {"type": "text", "text": ""})
-                    delta = event.get("delta") or {}
+                    raw_delta = event.get("delta")
+                    delta = raw_delta if isinstance(raw_delta, dict) else {}
                     delta_type = delta.get("type")
+                    if index not in blocks:
+                        if delta_type in ("thinking_delta", "signature_delta"):
+                            blocks[index] = {"type": "thinking", "thinking": ""}
+                        elif delta_type == "input_json_delta":
+                            blocks[index] = {"type": "tool_use", "input": {}}
+                        else:
+                            blocks[index] = {"type": "text", "text": ""}
+                    block = blocks[index]
                     if delta_type == "text_delta":
                         block["text"] = block.get("text", "") + str(delta.get("text", ""))
                     elif delta_type == "thinking_delta":
@@ -593,7 +660,9 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                             delta.get("thinking", "")
                         )
                     elif delta_type == "signature_delta":
-                        block["signature"] = str(delta.get("signature", ""))
+                        block["signature"] = block.get("signature", "") + str(
+                            delta.get("signature", "")
+                        )
                     elif delta_type == "input_json_delta":
                         partial_json.setdefault(index, []).append(
                             str(delta.get("partial_json", ""))
@@ -608,12 +677,19 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                     index = int(event.get("index", 0))
                     fragments = partial_json.pop(index, None)
                     if fragments is not None and index in blocks:
-                        blocks[index]["input"] = _parse_arguments("".join(fragments))
+                        _apply_streamed_input_json(blocks[index], fragments)
                 elif kind == "message_delta":
-                    usage.update(event.get("usage") or {})
-                    stop = (event.get("delta") or {}).get("stop_reason")
-                    if stop:
-                        finish_reason = _finish_reason(stop)
+                    delta_usage = event.get("usage")
+                    if isinstance(delta_usage, dict):
+                        usage.update(delta_usage)
+                    delta_obj = event.get("delta")
+                    if isinstance(delta_obj, dict):
+                        stop = delta_obj.get("stop_reason")
+                        if stop:
+                            raw_stop_reason = str(stop)
+                            finish_reason = _finish_reason(stop)
+                        if isinstance(delta_obj.get("stop_details"), dict):
+                            stop_details = delta_obj["stop_details"]
                 elif kind == "error":
                     error = event.get("error") or {}
                     stream_error = error if isinstance(error, dict) else {"message": str(error)}
@@ -641,7 +717,7 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
         # fragments; parse what there is rather than sending an empty input.
         for index, fragments in partial_json.items():
             if index in blocks:
-                blocks[index]["input"] = _parse_arguments("".join(fragments))
+                _apply_streamed_input_json(blocks[index], fragments)
 
         ordered = [blocks[index] for index in sorted(blocks)]
         texts, thoughts, tool_calls, thinking_blocks = _parse_content_blocks(ordered)
@@ -663,8 +739,13 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
                 transport_error_is_infrastructure=stream_error_is_infrastructure(status),
             )
 
+        content = "".join(texts)
+        if not content and not tool_calls and raw_stop_reason == "refusal":
+            category = stop_details.get("category")
+            content = f"[no content: refusal{f' ({category})' if category else ''}]"
+
         return ChatCompletionResult(
-            content="".join(texts),
+            content=content,
             tool_calls=tool_calls,
             raw_response={},
             elapsed_ms=elapsed_ms,
@@ -716,6 +797,23 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
 
     @staticmethod
     def _parse_response(data: dict, elapsed_ms: float) -> ChatCompletionResult:
+        if data.get("type") == "error" or (
+            data.get("error") is not None and not data.get("content")
+        ):
+            raw_err = data.get("error")
+            err_obj = raw_err if isinstance(raw_err, dict) else {"message": str(raw_err or data)}
+            error_type = str(err_obj.get("type") or "api_error")
+            status = _STREAM_ERROR_STATUS.get(error_type, 500)
+            message = str(err_obj.get("message") or "")[:200].strip()
+            return ChatCompletionResult(
+                content=f"[stream error {error_type}] {message}",
+                tool_calls=[],
+                raw_response=data,
+                elapsed_ms=elapsed_ms,
+                transport_error_status=status,
+                transport_error_is_infrastructure=stream_error_is_infrastructure(status),
+            )
+
         content_blocks = data.get("content") or []
         texts, thoughts, tool_calls, thinking_blocks = _parse_content_blocks(
             content_blocks if isinstance(content_blocks, list) else []
@@ -730,7 +828,8 @@ class AnthropicAdapter(RetryingHTTPAdapter, BackendAdapter):
             category = details.get("category") if isinstance(details, dict) else None
             content = f"[no content: refusal{f' ({category})' if category else ''}]"
 
-        usage = data.get("usage") or {}
+        raw_usage = data.get("usage")
+        usage = raw_usage if isinstance(raw_usage, dict) else {}
         return ChatCompletionResult(
             content=content,
             tool_calls=tool_calls,

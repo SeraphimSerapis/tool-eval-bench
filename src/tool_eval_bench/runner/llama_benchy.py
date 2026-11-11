@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import shlex
 import shutil
@@ -531,7 +532,14 @@ def _parse_benchmark_entry(
 def _stat_mean(stat: dict[str, Any]) -> float:
     """Extract the mean value from a llama-benchy stat object."""
     if isinstance(stat, dict):
-        return float(stat.get("mean", 0))
+        raw = stat.get("mean")
+        if raw is not None:
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return 0.0
+            if math.isfinite(value):
+                return value
     return 0.0
 
 

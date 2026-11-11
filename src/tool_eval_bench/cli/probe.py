@@ -88,12 +88,14 @@ def preflight_model_check(
                     f"HTTP {response.status_code} on a test request: {body}",
                     exit_code=3,
                 )
+            if show_url != base_url:
+                body = redact_urls(body)
             console.print("[bold red]✗ Model not available[/]")
             console.print(
-                f"[red]Model '{model}' is listed in /v1/models but returned "
+                f"[red]Model '{escape(model)}' is listed in /v1/models but returned "
                 f"HTTP {response.status_code} on a test request.[/]"
             )
-            console.print(f"[dim]  {body}[/]")
+            console.print(f"[dim]  {escape(body)}[/]")
             console.print(
                 "\n[yellow]The server lists this model but cannot serve it. "
                 "Check server logs for model loading errors.[/]"
@@ -122,7 +124,7 @@ def preflight_model_check(
                 f"Could not connect to {base_url} for pre-flight check.",
                 exit_code=2,
             )
-        console.print(f"[bold red]✗ Cannot connect to {show_url}[/]")
+        console.print(f"[bold red]✗ Cannot connect to {escape(show_url)}[/]")
         sys.exit(2)
     except Exception as exc:
         detail = str(exc).strip() or type(exc).__name__
@@ -135,7 +137,7 @@ def preflight_model_check(
         if show_url != base_url:
             # httpx quotes the request URL in its messages.
             detail = redact_urls(detail)
-        console.print(f"[bold red]✗ Pre-flight check failed:[/] {detail}")
+        console.print(f"[bold red]✗ Pre-flight check failed:[/] {escape(detail)}")
         sys.exit(3)
 
 
@@ -208,4 +210,4 @@ def warmup_server(
                 message = f"{message}: {body[:300]}"
             if display_url is not None and display_url != base_url:
                 message = redact_urls(message)
-            console.print(f"  [bold yellow]⚠[/] Warm-up failed [dim]({message})[/]")
+            console.print(f"  [bold yellow]⚠[/] Warm-up failed [dim]({escape(message)})[/]")

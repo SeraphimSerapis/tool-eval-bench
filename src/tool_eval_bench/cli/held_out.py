@@ -45,7 +45,10 @@ def held_out_ids(args: argparse.Namespace) -> frozenset[str]:
     """IDs whose content JSON output must withhold; empty with ``--include-held-out``."""
     if getattr(args, "include_held_out", False):
         return frozenset()
-    return frozenset(scenario.id for scenario in resolve_pack_scenarios(args))
+    resumed = getattr(args, "_resume_scenarios", None) or ()
+    return frozenset(scenario.id for scenario in resolve_pack_scenarios(args)) | frozenset(
+        scenario.id for scenario in resumed if getattr(scenario, "held_out", False)
+    )
 
 
 def redact_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -73,11 +76,15 @@ def redact_result(result: dict[str, Any]) -> dict[str, Any]:
 def redact_warnings(warnings: Iterable[str], ids: frozenset[str]) -> list[str]:
     """Replace the title and violation of held-out safety warnings.
 
-    Warnings read ``"{id} ({title}): {violation}"``; the ID and the count stay.
+    Warnings read ``"{id} ({title}): {violation}"`` or ``"{id}: {violation}"``;
+    the ID and the count stay.
     """
     redacted = []
     for warning in warnings:
-        held_id = next((sid for sid in ids if warning.startswith(f"{sid} (")), None)
+        held_id = next(
+            (sid for sid in ids if warning.startswith((f"{sid} (", f"{sid}:"))),
+            None,
+        )
         redacted.append(f"{held_id}: {HELD_OUT}" if held_id is not None else warning)
     return redacted
 

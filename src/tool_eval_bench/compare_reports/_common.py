@@ -16,6 +16,16 @@ def _r(pat, txt, group=1, fl=0):
     return m.group(group).strip() if m else ""
 
 
+def _unwrap_code_span(text: str) -> str:
+    m = re.fullmatch(r"(`+)(.*)\1", text, re.S)
+    if not m:
+        return text.strip("`")
+    inner = m.group(2)
+    if len(inner) >= 2 and inner.startswith(" ") and inner.endswith(" "):
+        return inner[1:-1]
+    return inner
+
+
 def _tv(field, txt, strip_bt=False):
     """Read the value cell of a two-column ``| Field | value |`` table row.
 
@@ -32,7 +42,7 @@ def _tv(field, txt, strip_bt=False):
     if not m:
         return ""
     v = html.unescape(m.group(1).strip().replace("\\|", "|"))
-    return v.strip("`") if strip_bt else v
+    return _unwrap_code_span(v) if strip_bt else v
 
 
 #: Run settings the comparison pages describe.

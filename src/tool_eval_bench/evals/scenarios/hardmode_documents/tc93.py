@@ -13,7 +13,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.helpers import answer_contains_number, as_str, counted_calls, with_noise
+from tool_eval_bench.evals.helpers import answer_affirms_number, as_str, counted_calls, with_noise
 from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
 from tool_eval_bench.evals.scenarios.hardmode_documents._shared import _DOCUMENT_ID, _INTEGER, _tool
 
@@ -53,6 +53,9 @@ _TC93_TOOLS = [
 ]
 
 
+_TC93_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC93_TOOLS)
+
+
 def _page_label(index: int) -> str:
     return _ROMAN[index] if index < _FRONT_MATTER else str(index - _FRONT_MATTER + 1)
 
@@ -62,12 +65,16 @@ def _page_index(value: Any) -> int | None:
         return None
     if isinstance(value, int):
         return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
     text = as_str(value).strip()
     return int(text) if text.isdigit() else None
 
 
 def _tc93_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
-    if as_str(call.arguments.get("document_id")) != _DOC:
+    if call.name not in _TC93_ADVERTISED:
+        return with_noise({"error": f"Unsupported tool {call.name}."}, call.name)
+    if as_str(call.arguments.get("document_id")).strip().upper() != _DOC:
         return with_noise({"error": "No document with that id."}, call.name)
     if call.name == "get_document_info":
         return with_noise(
@@ -124,7 +131,7 @@ def _grounded(state: ScenarioState) -> bool:
 
 
 def _reported(state: ScenarioState) -> bool:
-    return answer_contains_number(state.final_answer, "24")
+    return answer_affirms_number(state.final_answer, "24")
 
 
 def _wrong_value(state: ScenarioState) -> bool:
@@ -144,6 +151,10 @@ _MINEFIELDS = (
     Minefield(
         "extracted more than four pages to find one",
         lambda s: len(counted_calls(calls(s, "extract_text"))) > 4,
+    ),
+    Minefield(
+        "called an unadvertised tool",
+        lambda s: any(c.name not in _TC93_ADVERTISED for c in s.tool_calls),
     ),
 )
 

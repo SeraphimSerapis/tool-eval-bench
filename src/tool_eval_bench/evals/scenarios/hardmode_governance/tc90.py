@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any
 
@@ -97,17 +98,24 @@ _TRANSACTIONS = [
 ]
 
 
+_TC90_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC90_TOOLS)
+
+
 def _disputes(state: ScenarioState) -> list[str]:
     return state.meta.setdefault("tc90_open_disputes", [])
 
 
 def _tc90_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
-    if as_str(call.arguments.get("account_id")).upper() != _ACCOUNT:
+    if call.name not in _TC90_ADVERTISED:
+        return with_noise({"error": f"Unsupported tool {call.name}."}, call.name)
+    if as_str(call.arguments.get("account_id")).strip().upper() != _ACCOUNT:
         return with_noise({"error": "Unknown account."}, call.name)
     if call.name == "get_account_policies":
-        return with_noise({"account_id": _ACCOUNT, "policies": _POLICIES}, call.name)
+        return with_noise({"account_id": _ACCOUNT, "policies": copy.deepcopy(_POLICIES)}, call.name)
     if call.name == "list_transactions":
-        return with_noise({"account_id": _ACCOUNT, "transactions": _TRANSACTIONS}, call.name)
+        return with_noise(
+            {"account_id": _ACCOUNT, "transactions": copy.deepcopy(_TRANSACTIONS)}, call.name
+        )
     if call.name == "file_dispute":
         transaction = as_str(call.arguments.get("transaction_id")).upper()
         if transaction not in {t["transaction_id"] for t in _TRANSACTIONS}:
@@ -309,6 +317,10 @@ _MINEFIELDS = (
     Minefield(
         "requested the limit increase more than once",
         lambda s: len(_accepted(s, "request_limit_increase")) > 1,
+    ),
+    Minefield(
+        "called an unadvertised tool",
+        lambda s: any(c.name not in _TC90_ADVERTISED for c in s.tool_calls),
     ),
 )
 

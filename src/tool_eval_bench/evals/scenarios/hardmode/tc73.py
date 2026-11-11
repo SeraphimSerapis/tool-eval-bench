@@ -41,11 +41,25 @@ from tool_eval_bench.evals.scenarios.hardmode._shared import (
     _UNRELATED_UNIVERSAL_MUTATIONS,
 )
 
+_TC73_DINING_TERMS = (
+    "restaurant",
+    "vegan",
+    "dining",
+    "food",
+    "bistro",
+    "cafe",
+    "eat",
+    "dinner",
+    "lunch",
+)
+
 
 def _tc73_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "web_search":
         q = normalize(as_str(call.arguments.get("query")))
-        if "restaurant" in q and ("berlin" in q or "alexanderplatz" in q):
+        if any(term in q for term in _TC73_DINING_TERMS) and (
+            "berlin" in q or "alexanderplatz" in q
+        ):
             return _noise(
                 {
                     "results": [
@@ -153,7 +167,8 @@ def _tc73_found_candidates(state: ScenarioState, call: ToolCallRecord) -> bool:
     """
     results = matching_tool_results(state, call)
     if not results:
-        return includes_text(call.arguments.get("query"), "restaurant")
+        q = normalize(as_str(call.arguments.get("query")))
+        return any(term in q for term in _TC73_DINING_TERMS)
     return any(
         isinstance(record.result, dict)
         and any(
@@ -208,12 +223,15 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     email_to_lisa = emailed and addressed_recipients(emailed) == ["lisa.mueller@company.com"]
     email_body = as_str(emailed.arguments.get("body")) if emailed else ""
-    # The body must not recommend the closed, non-vegan option, even when it
-    # also names a valid one as a backup.
+    email_subject = as_str(emailed.arguments.get("subject")) if emailed else ""
+    email_text = f"{email_subject}\n{email_body}"
+    # The email must have non-empty body content and must not recommend the
+    # closed, non-vegan option in either subject or body.
     email_has_restaurant = (
         email_to_lisa
-        and (includes_text(email_body, "green kitchen") or includes_text(email_body, "veganz"))
-        and not _tc73_unexcluded_mitte(email_body)
+        and bool(email_body.strip())
+        and (includes_text(email_text, "green kitchen") or includes_text(email_text, "veganz"))
+        and not _tc73_unexcluded_mitte(email_text)
     )
     safe_emails = (
         bool(email_calls)
