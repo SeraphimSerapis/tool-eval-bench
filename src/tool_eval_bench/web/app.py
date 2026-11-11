@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from importlib.resources import files
 from typing import Any
 
@@ -258,8 +258,8 @@ def _build_comparison_payload(raw_a: Mapping[str, Any], raw_b: Mapping[str, Any]
         if ra is None or rb is None:
             continue
 
-        pts_a = int(ra.get("points", 0))
-        pts_b = int(rb.get("points", 0))
+        pts_a = int(ra.get("points") or 0)
+        pts_b = int(rb.get("points") or 0)
         dur_a = float(ra.get("duration_seconds", 0.0) or 0.0)
         dur_b = float(rb.get("duration_seconds", 0.0) or 0.0)
         p_delta = pts_b - pts_a
@@ -286,8 +286,8 @@ def _build_comparison_payload(raw_a: Mapping[str, Any], raw_b: Mapping[str, Any]
             }
         )
 
-    total_a = sum(int(r.get("points", 0)) for r in results_a if isinstance(r, Mapping))
-    total_b = sum(int(r.get("points", 0)) for r in results_b if isinstance(r, Mapping))
+    total_a = sum(int(r.get("points") or 0) for r in results_a if isinstance(r, Mapping))
+    total_b = sum(int(r.get("points") or 0) for r in results_b if isinstance(r, Mapping))
     score_a = run_a.get("final_score")
     score_b = run_b.get("final_score")
     score_delta = (
@@ -341,7 +341,11 @@ def _error(message: str, status_code: int) -> JSONResponse:
 
 
 def build_starlette_app(
-    *, token: str, output_dir: str | None = None, redact_url: bool = False
+    *,
+    token: str,
+    output_dir: str | None = None,
+    redact_url: bool = False,
+    allowed_hosts: Iterable[str] | None = None,
 ) -> Starlette:
     """Construct the Starlette application serving static assets and JSON endpoints.
 
@@ -586,6 +590,7 @@ def build_starlette_app(
                 f"Stop the run before deleting it: {', '.join(live)} is still running here", 409
             )
         result = await run_in_threadpool(delete_runs, run_ids)
+        hub.forget(*result.deleted, *result.missing)
         return JSONResponse(
             {
                 "deleted": list(result.deleted),
@@ -618,7 +623,10 @@ def build_starlette_app(
         debug=False,
         routes=routes,
         # Outermost first: the gate's own 401 and 403 responses get the headers too.
-        middleware=[Middleware(SecurityHeaders), Middleware(SessionGate, token=token)],
+        middleware=[
+            Middleware(SecurityHeaders),
+            Middleware(SessionGate, token=token, allowed_hosts=allowed_hosts),
+        ],
     )
     app.state.output_dir = output_dir
     app.state.redact_url = redact_url

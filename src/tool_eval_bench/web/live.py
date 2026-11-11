@@ -6,6 +6,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -18,6 +19,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioResult,
 )
 from tool_eval_bench.web.sanitize import (
+    is_public_scenario_id,
     sanitize_result,
     sanitize_run_for_web,
     stored_held_out_ids,
@@ -27,6 +29,8 @@ TERMINAL_EVENTS = frozenset({"run_complete", "run_interrupted", "stream_error", 
 
 #: Finished sessions kept for late subscribers; older ones are dropped.
 MAX_FINISHED_SESSIONS = 20
+#: Per-subscriber SSE event buffer cap so a wedged browser tab cannot grow memory without bound.
+MAX_SUBSCRIBER_QUEUE = 1024
 #: Seconds between SSE comment frames, so proxies keep the stream open and a
 #: dropped client is noticed even when the run is quiet.
 HEARTBEAT_SECONDS = 15.0
@@ -78,7 +82,20 @@ class LiveRunSession:
             ]
         self.history.append(event)
         for queue in list(self.subscribers):
-            queue.put_nowait(event)
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                self.subscribers.discard(queue)
+                with suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+                with suppress(asyncio.QueueFull):
+                    queue.put_nowait(
+                        {
+                            "event": "stream_error",
+                            "run_id": self.run_id,
+                            "error": "Subscriber fell behind; reconnect to resync",
+                        }
+                    )
 
 
 class LiveRunHub:
@@ -86,13 +103,32 @@ class LiveRunHub:
 
     def __init__(self, *, max_finished: int = MAX_FINISHED_SESSIONS) -> None:
         self._sessions: dict[str, LiveRunSession] = {}
+        self._resuming: set[str] = set()
         self._max_finished = max_finished
 
     def get(self, run_id: str) -> LiveRunSession | None:
         return self._sessions.get(run_id)
 
+    def claim_resume(self, run_id: str) -> bool:
+        """Atomically mark ``run_id`` as resuming; return False if already claimed."""
+        if run_id in self._resuming:
+            return False
+        self._resuming.add(run_id)
+        return True
+
+    def release_resume(self, run_id: str) -> None:
+        self._resuming.discard(run_id)
+
     def active_sessions(self) -> list[LiveRunSession]:
         return [s for s in self._sessions.values() if s.status == "running"]
+
+    def forget(self, *run_ids: str) -> None:
+        """Drop finished sessions when runs are deleted from storage."""
+        for run_id in run_ids:
+            self._resuming.discard(run_id)
+            session = self._sessions.get(run_id)
+            if session is not None and not session.is_live:
+                del self._sessions[run_id]
 
     def register(
         self,
@@ -153,8 +189,15 @@ class LiveRunHub:
     def make_callbacks(self, session: LiveRunSession) -> dict[str, Any]:
         """Build orchestrator callbacks that publish sanitized live events."""
 
+        def _is_held_out(scenario: ScenarioDefinition) -> bool:
+            return (
+                scenario.held_out
+                or scenario.id in session.held_out
+                or not is_public_scenario_id(scenario.id)
+            )
+
         async def on_scenario_start(scenario: ScenarioDefinition, idx: int, total: int) -> None:
-            is_held_out = scenario.held_out or scenario.id in session.held_out
+            is_held_out = _is_held_out(scenario)
             session.publish(
                 {
                     "event": "scenario_start",
@@ -173,7 +216,7 @@ class LiveRunHub:
         async def on_scenario_turn(
             scenario: ScenarioDefinition, turn: int, turn_payload: dict[str, Any]
         ) -> None:
-            is_held_out = scenario.held_out or scenario.id in session.held_out
+            is_held_out = _is_held_out(scenario)
             session.publish(
                 {
                     "event": "scenario_turn",
@@ -195,7 +238,7 @@ class LiveRunHub:
         async def on_scenario_result(
             scenario: ScenarioDefinition, result: ScenarioResult, idx: int, total: int
         ) -> None:
-            held = session.held_out | ({scenario.id} if scenario.held_out else frozenset())
+            held = session.held_out | ({scenario.id} if _is_held_out(scenario) else frozenset())
             session.publish(
                 {
                     "event": "scenario_result",
@@ -212,7 +255,7 @@ class LiveRunHub:
         ) -> None:
             if not result.was_decision_audited:
                 return
-            is_held_out = scenario.held_out or scenario.id in session.held_out
+            is_held_out = _is_held_out(scenario)
             audit = result.decision_audit or {}
             session.publish(
                 {
@@ -296,7 +339,7 @@ async def stream_run_events(
 
 
 async def _stream_session(session: LiveRunSession, heartbeat_seconds: float) -> AsyncIterator[str]:
-    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=MAX_SUBSCRIBER_QUEUE)
     session.subscribers.add(queue)
     try:
         for past in list(session.history):

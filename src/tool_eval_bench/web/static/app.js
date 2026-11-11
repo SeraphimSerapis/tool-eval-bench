@@ -696,6 +696,19 @@
     if (gone.has(state.compareLeftId)) state.compareLeftId = "";
     if (gone.has(state.compareRightId)) state.compareRightId = "";
     if (!state.compareLeftId || !state.compareRightId) state.lastComparison = null;
+    if (gone.has(state.liveRunId)) {
+      if (state.eventSource) {
+        state.eventSource.close();
+        state.eventSource = null;
+      }
+      state.liveRunId = "";
+      state.liveActiveScenario = null;
+      state.liveTurns = [];
+      state.liveResults = [];
+      state.liveNote = null;
+      setLiveBadge(false);
+      renderLiveObserverPane();
+    }
     if (state.selecting) setSelecting(false);
     const runCount = res.deleted.length;
     const reportCount = res.reports_removed;
@@ -1827,10 +1840,31 @@
     box.hidden = false;
   }
 
+  function readNumericField(id, fallback, label) {
+    const el = byId(id);
+    if (!el) return { ok: true, value: fallback };
+    if (el.validity?.badInput) return { ok: false, error: `${label} must be a valid number.` };
+    const raw = el.value.trim();
+    if (raw === "") return { ok: true, value: fallback };
+    const num = Number(raw);
+    if (!Number.isFinite(num)) return { ok: false, error: `${label} must be a finite number.` };
+    return { ok: true, value: num };
+  }
+
   async function submitLaunch(ev) {
     ev.preventDefault();
     const box = byId("launch-error-msg");
     if (box) box.hidden = true;
+    const temperature = readNumericField("launch-temperature", 0, "Temperature");
+    const concurrency = readNumericField("launch-parallel", 1, "Concurrency");
+    const maxTurns = readNumericField("launch-max-turns", 8, "Max turns");
+    const timeoutSeconds = readNumericField("launch-timeout", 120, "Timeout (s)");
+    for (const parsed of [temperature, concurrency, maxTurns, timeoutSeconds]) {
+      if (!parsed.ok) {
+        showLaunchError(parsed.error);
+        return;
+      }
+    }
     const preset = byId("launch-preset")?.value || "short";
     const categoriesChecked = [...document.querySelectorAll(".launch-cat-cb:checked")].map((cb) => cb.value);
     const explicitScenarios = byId("launch-scenarios")?.value || "";
@@ -1843,10 +1877,10 @@
       preset,
       categories: preset === "custom" && categoriesChecked.length ? categoriesChecked : undefined,
       scenarios: preset === "custom" && explicitScenarios.trim() ? explicitScenarios : undefined,
-      temperature: Number(byId("launch-temperature")?.value || 0),
-      concurrency: Number(byId("launch-parallel")?.value || 1),
-      max_turns: Number(byId("launch-max-turns")?.value || 8),
-      timeout_seconds: Number(byId("launch-timeout")?.value || 120),
+      temperature: temperature.value,
+      concurrency: concurrency.value,
+      max_turns: maxTurns.value,
+      timeout_seconds: timeoutSeconds.value,
       label: byId("launch-label")?.value || undefined,
     };
     if (!payload.model) {
@@ -2185,6 +2219,10 @@
       connectLiveStream(res.run_id, { model: res.model, total: res.total_scenarios });
     } catch (err) {
       showLaunchError(err.message);
+      if (state.liveRunId === runId) {
+        state.liveNote = `Could not resume the run: ${err.message}`;
+        renderLiveObserverPane();
+      }
     }
   }
 

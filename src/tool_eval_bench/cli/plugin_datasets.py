@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 
 
 def _download_method_hint() -> str:
@@ -44,14 +45,17 @@ def load_dataset_with_progress(
     Returns the loaded items, or ``None`` when the download failed.  The caller
     should treat ``None`` as "stop, the user has already been told why".
     """
+    safe_name = escape(name)
+    safe_noun = escape(noun)
+    safe_cache_note = escape(cache_note)
     if cache_path.exists():
-        console.print(f"  [dim]Loading {name} from cache…[/]", end=" ")
+        console.print(f"  [dim]Loading {safe_name} from cache…[/]", end=" ")
         items = load()
-        console.print(f"[bold green]✓[/] [dim]{len(items)} {noun}[/]")
+        console.print(f"[bold green]✓[/] [dim]{len(items)} {safe_noun}[/]")
         return items
 
     resuming = partial_path is not None and partial_path.exists()
-    label = f"Resuming {name} download" if resuming else f"Downloading {name} dataset"
+    label = f"Resuming {safe_name} download" if resuming else f"Downloading {safe_name} dataset"
     console.print()
     with console.status(
         f"[bold]{label} from HuggingFace…[/] [dim]({_download_method_hint()})[/]",
@@ -60,7 +64,9 @@ def load_dataset_with_progress(
 
         def on_download(downloaded: int, total: int) -> None:
             pct = downloaded / total * 100 if total else 0
-            status.update(f"[bold]{label}…[/] [dim]{downloaded:,}/{total:,} {noun} ({pct:.0f}%)[/]")
+            status.update(
+                f"[bold]{label}…[/] [dim]{downloaded:,}/{total:,} {safe_noun} ({pct:.0f}%)[/]"
+            )
 
         try:
             items = load(on_progress=on_download)
@@ -71,15 +77,15 @@ def load_dataset_with_progress(
                 else ""
             )
             console.print(
-                f"\n  [bold red]✗[/] Failed to download {name} dataset: {exc}\n"
+                f"\n  [bold red]✗[/] Failed to download {safe_name} dataset: {escape(str(exc))}\n"
                 "  [dim]This is usually caused by HuggingFace rate limiting.\n"
                 f"{resume_hint}"
-                "  Tip: pip install tool-eval-bench[hf] for rate-limit-free downloads.[/]"
+                "  Tip: pip install tool-eval-bench\\[hf] for rate-limit-free downloads.[/]"
             )
             return None
 
     console.print(
-        f"  [bold green]✓[/] Downloaded [bold]{len(items)}[/] {noun} "
-        f"[dim](cached to {cache_note})[/]"
+        f"  [bold green]✓[/] Downloaded [bold]{len(items)}[/] {safe_noun} "
+        f"[dim](cached to {safe_cache_note})[/]"
     )
     return items

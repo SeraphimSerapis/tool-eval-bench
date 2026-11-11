@@ -18,8 +18,9 @@ assets must prove it came from someone who saw the startup link:
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import secrets
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import Awaitable, Callable, Iterable, MutableMapping
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -34,6 +35,9 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _PUBLIC_PREFIXES = ("/static/",)
+DEFAULT_ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_WILDCARD_HOSTS = frozenset({"*", "0.0.0.0", "::"})  # noqa: S104  # compared to --serve-host, never bound here
+_CROSS_ORIGIN_FETCH_SITES = frozenset({"cross-site", "same-site"})
 
 _LOGIN_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -120,14 +124,21 @@ def cookie_name(token: str) -> str:
 
 
 class SessionGate:
-    """Pure ASGI middleware enforcing the token, origin, and content-type rules."""
+    """Pure ASGI middleware enforcing the token, host, origin, and content-type rules."""
 
-    def __init__(self, app: ASGIApp, *, token: str) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        token: str,
+        allowed_hosts: Iterable[str] | None = None,
+    ) -> None:
         if not token:
             raise ValueError("The web UI session token must not be empty")
         self.app = app
         self._token = token
         self._cookie = cookie_name(token)
+        self._allowed_hosts = _normalize_allowed_hosts(allowed_hosts)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -150,11 +161,19 @@ class SessionGate:
         scheme, _, credential = headers.get("authorization", "").partition(" ")
         return scheme.lower() == "bearer" and self._matches(credential.strip())
 
+    def _allowed_host(self, headers: Headers) -> bool:
+        values = headers.getlist("host")
+        if len(values) != 1:
+            return False
+        return _valid_host_header(values[0], self._allowed_hosts)
+
     def _check(self, scope: Scope) -> Response | None:
         path: str = scope.get("path", "")
-        if path.startswith(_PUBLIC_PREFIXES):
-            return None
         headers = Headers(scope=scope)
+        if path.startswith(_PUBLIC_PREFIXES):
+            if not self._allowed_host(headers):
+                return JSONResponse({"error": "Invalid Host header"}, status_code=403)
+            return None
         method = str(scope.get("method", "GET")).upper()
 
         if path == "/" and method == "GET":
@@ -162,11 +181,19 @@ class SessionGate:
             if offered is not None:
                 if not self._matches(offered):
                     return HTMLResponse(_LOGIN_PAGE, status_code=401)
+                if not self._allowed_host(headers):
+                    return JSONResponse({"error": "Invalid Host header"}, status_code=403)
                 # Redirect so the token leaves the address bar and is not
                 # re-sent by a reload.
+                is_https = str(scope.get("scheme", "http")).lower() == "https"
                 redirect = RedirectResponse("/", status_code=303)
                 redirect.set_cookie(
-                    self._cookie, self._token, httponly=True, samesite="strict", path="/"
+                    self._cookie,
+                    self._token,
+                    httponly=True,
+                    samesite="strict",
+                    secure=is_https,
+                    path="/",
                 )
                 return redirect
 
@@ -175,12 +202,21 @@ class SessionGate:
                 return HTMLResponse(_LOGIN_PAGE, status_code=401)
             return JSONResponse({"error": "Authentication required"}, status_code=401)
 
+        if not self._allowed_host(headers):
+            return JSONResponse({"error": "Invalid Host header"}, status_code=403)
+
+        # Cookies ignore ports, so another local app on a different port sends
+        # Sec-Fetch-Site: same-site while still carrying the session cookie.
+        fetch_site = headers.get("sec-fetch-site", "").strip().lower()
+        if fetch_site in _CROSS_ORIGIN_FETCH_SITES and (
+            method not in _SAFE_METHODS or path.startswith("/api/")
+        ):
+            return JSONResponse({"error": "Cross-origin request refused"}, status_code=403)
+
         if method in _SAFE_METHODS:
             return None
-        if headers.get("sec-fetch-site", "").lower() == "cross-site":
-            return JSONResponse({"error": "Cross-site request refused"}, status_code=403)
         origin = headers.get("origin")
-        if origin is not None and not _same_origin(origin, scope, headers):
+        if origin is not None and not _same_origin(origin, scope, headers, self._allowed_hosts):
             return JSONResponse({"error": "Cross-origin request refused"}, status_code=403)
         content_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if content_type != "application/json":
@@ -189,6 +225,53 @@ class SessionGate:
                 status_code=415,
             )
         return None
+
+
+def _canonical_hostname(hostname: str) -> str | None:
+    if not hostname or hostname in {".", ".."} or hostname.endswith(".."):
+        return None
+    if hostname.endswith("."):
+        stripped = hostname[:-1]
+        if not stripped:
+            return None
+        try:
+            ipaddress.ip_address(stripped)
+        except ValueError:
+            return stripped.lower()
+        return None
+    return hostname.lower()
+
+
+def _normalize_allowed_hosts(allowed_hosts: Iterable[str] | None) -> frozenset[str] | None:
+    if allowed_hosts is None:
+        return DEFAULT_ALLOWED_HOSTS
+    raw_items = {h.strip().strip("[]").lower() for h in allowed_hosts if h and h.strip()}
+    if raw_items & _WILDCARD_HOSTS:
+        return None
+    normalized = {canon for h in raw_items if (canon := _canonical_hostname(h)) is not None}
+    return frozenset(normalized)
+
+
+def _valid_host_header(host_header: str, allowed_hosts: frozenset[str] | None) -> bool:
+    raw = host_header.strip()
+    if not raw or any(ch.isspace() or ch in "/?#@\\" for ch in raw):
+        return False
+    try:
+        parsed = urlsplit(f"http://{raw}")
+    except ValueError:
+        return False
+    if parsed.path or parsed.query or parsed.fragment or parsed.username is not None:
+        return False
+    hostname = _canonical_hostname(parsed.hostname or "")
+    if not hostname:
+        return False
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    if port is not None and not (1 <= port <= 65535):
+        return False
+    return allowed_hosts is None or hostname in allowed_hosts
 
 
 def _parse_cookies(headers: Headers) -> dict[str, str]:
@@ -200,11 +283,46 @@ def _parse_cookies(headers: Headers) -> dict[str, str]:
     return cookies
 
 
-def _same_origin(origin: str, scope: Scope, headers: Headers) -> bool:
+def _same_origin(
+    origin: str,
+    scope: Scope,
+    headers: Headers,
+    allowed_hosts: frozenset[str] | None = DEFAULT_ALLOWED_HOSTS,
+) -> bool:
     """Whether ``origin`` names this server as the request reached it."""
     if origin == "null":
         return False
-    parsed = urlsplit(origin)
-    scheme = str(scope.get("scheme", "http"))
-    host = headers.get("host", "")
-    return parsed.scheme == scheme and parsed.netloc.lower() == host.lower()
+    host_values = headers.getlist("host")
+    if len(host_values) != 1:
+        return False
+    host = host_values[0]
+    if not _valid_host_header(host, allowed_hosts):
+        return False
+    try:
+        parsed_origin = urlsplit(origin)
+        parsed_host = urlsplit(f"http://{host.strip()}")
+    except ValueError:
+        return False
+    if (
+        parsed_origin.path
+        or parsed_origin.query
+        or parsed_origin.fragment
+        or parsed_origin.username is not None
+    ):
+        return False
+    scheme = str(scope.get("scheme", "http")).lower()
+    if parsed_origin.scheme.lower() != scheme:
+        return False
+    try:
+        origin_port = parsed_origin.port
+        host_port = parsed_host.port
+    except ValueError:
+        return False
+    default_port = 443 if scheme == "https" else 80
+    origin_host = _canonical_hostname(parsed_origin.hostname or "")
+    target_host = _canonical_hostname(parsed_host.hostname or "")
+    if not origin_host or not target_host:
+        return False
+    return origin_host == target_host and (origin_port or default_port) == (
+        host_port or default_port
+    )

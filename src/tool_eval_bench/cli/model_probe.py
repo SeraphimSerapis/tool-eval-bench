@@ -121,7 +121,7 @@ def _detect_model(
                 exit_code=2,
             )
         console.print("[bold red]✗ cannot connect[/]")
-        console.print(f"\n[red]Could not connect to {show_url}. Is the server running?[/]")
+        console.print(f"\n[red]Could not connect to {escape(show_url)}. Is the server running?[/]")
         sys.exit(2)
     except httpx.HTTPStatusError as exc:
         if headless:
@@ -139,7 +139,7 @@ def _detect_model(
         if headless:
             _headless_error(DETECTION_FAILED, str(exc), exit_code=2)
         detail = _redact_urls(str(exc)) if show_url != base_url else str(exc)
-        console.print(f"[bold red]✗ {detail}[/]")
+        console.print(f"[bold red]✗ {escape(detail)}[/]")
         sys.exit(2)
 
     if used_fallback:
@@ -174,8 +174,10 @@ def _detect_model(
         )
         if headless:
             _headless_error(INVALID_RESPONSE, err_msg, exit_code=2)
+        if show_url != base_url:
+            err_msg = _redact_urls(err_msg)
         console.print("[bold red]✗ invalid response[/]")
-        console.print(f"[red]{err_msg}[/]")
+        console.print(f"[red]{escape(err_msg)}[/]")
         sys.exit(2)
 
     # Build (api_id, display_name) pairs
@@ -307,7 +309,9 @@ def _probe_server(
         else:
             # httpx quotes the request URL in its messages.
             detail = _redact_urls(str(exc)) if show_url != base_url else str(exc)
-            console.print(f"[bold red]✗[/] Server at {show_url} is not ready: {detail}")
+            console.print(
+                f"[bold red]✗[/] Server at {escape(show_url)} is not ready: {escape(detail)}"
+            )
         sys.exit(1)
 
     if 300 <= resp.status_code < 400:
@@ -347,9 +351,9 @@ def _probe_server(
         sys.stderr.write(json.dumps(msg) + "\n")
         sys.stderr.flush()
     else:
-        console.print(f"[bold green]✓[/] Server at {show_url} is ready")
+        console.print(f"[bold green]✓[/] Server at {escape(show_url)} is ready")
         if model_ids:
-            console.print(f"  Models: {', '.join(model_ids)}")
+            console.print(f"  Models: {', '.join(escape(m) for m in model_ids)}")
     sys.exit(0)
 
 

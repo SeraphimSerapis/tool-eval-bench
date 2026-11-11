@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 from rich.console import Console
+from rich.markup import escape
 
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
 from tool_eval_bench.cli.headless import report_run_failed, report_run_saved
@@ -29,7 +30,9 @@ def execute_plugin(
         report_run_failed(console, "\n[bold red]Interrupted.[/]")
         sys.exit(1)
     except (httpx.HTTPError, OSError, RuntimeError, ValueError) as exc:
-        report_run_failed(console, f"\n[bold red]{benchmark_name} error:[/] {exc}")
+        report_run_failed(
+            console, f"\n[bold red]{escape(benchmark_name)} error:[/] {escape(str(exc))}"
+        )
         sys.exit(1)
 
     if not result_holder:

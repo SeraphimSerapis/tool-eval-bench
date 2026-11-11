@@ -21,6 +21,7 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import os
 import sqlite3
 import sys
@@ -34,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from dotenv import load_dotenv  # noqa: F401  (re-exported via _load_dotenv)
 from rich.console import Console
+from rich.markup import escape
 from rich.text import Text
 
 from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
@@ -375,17 +377,21 @@ def _detect_model(
     multiple_models_hint: str | None = None,
 ) -> tuple[str, str]:
     """Compatibility wrapper preserving the historical asyncio patch seam."""
+    prior_asyncio = _model_probe.asyncio
     _model_probe.asyncio = asyncio
-    return _model_probe._detect_model(
-        base_url,
-        api_key,
-        console,
-        display_url=display_url,
-        headless=headless,
-        wire_format=wire_format,
-        headers=headers,
-        multiple_models_hint=multiple_models_hint,
-    )
+    try:
+        return _model_probe._detect_model(
+            base_url,
+            api_key,
+            console,
+            display_url=display_url,
+            headless=headless,
+            wire_format=wire_format,
+            headers=headers,
+            multiple_models_hint=multiple_models_hint,
+        )
+    finally:
+        _model_probe.asyncio = prior_asyncio
 
 
 def _probe_server(
@@ -399,16 +405,20 @@ def _probe_server(
     headers: Mapping[str, str] | None = None,
 ) -> None:
     """Compatibility wrapper preserving the historical asyncio patch seam."""
+    prior_asyncio = _model_probe.asyncio
     _model_probe.asyncio = asyncio
-    _model_probe._probe_server(
-        console,
-        base_url,
-        api_key,
-        display_url=display_url,
-        headless=headless,
-        wire_format=wire_format,
-        headers=headers,
-    )
+    try:
+        _model_probe._probe_server(
+            console,
+            base_url,
+            api_key,
+            display_url=display_url,
+            headless=headless,
+            wire_format=wire_format,
+            headers=headers,
+        )
+    finally:
+        _model_probe.asyncio = prior_asyncio
 
 
 # ---------------------------------------------------------------------------
@@ -1431,6 +1441,8 @@ def _prepare_args(
     # any perf sweep. The original string is kept: it is stored and fingerprinted.
     if args.reference_date:
         try:
+            if len(args.reference_date) != 10:
+                raise ValueError("not YYYY-MM-DD")
             datetime.strptime(args.reference_date, "%Y-%m-%d")
         except ValueError:
             parser.error(
@@ -1445,17 +1457,62 @@ def _validate_run_ranges(args: argparse.Namespace, parser: argparse.ArgumentPars
     Checked here rather than with an argparse ``type=`` so ``--json`` reports
     them as ``invalid_arguments``. ``0 <= x <= 1`` also rejects NaN.
     """
-    max_turns = getattr(args, "max_turns", None)
-    if max_turns is not None and max_turns < 1:
-        parser.error(f"--max-turns must be at least 1, got {max_turns}")
+    for flag, attr, minimum in (
+        ("--max-turns", "max_turns", 1),
+        ("--trials", "trials", 1),
+        ("--spec-runs", "spec_runs", 1),
+        ("--benchy-runs", "benchy_runs", 1),
+        ("--pp", "pp", 1),
+        ("--tg", "tg", 1),
+        ("--context-size", "context_size", 1),
+        ("--sweep-steps", "sweep_steps", 2),
+        ("--needle-depths", "needle_depths", 1),
+        ("--needle-lengths", "needle_lengths", 1),
+        ("--gsm8k-limit", "gsm8k_limit", 0),
+        ("--mmlu-limit", "mmlu_limit", 0),
+        ("--ifeval-limit", "ifeval_limit", 0),
+        ("--toolscale-limit", "toolscale_limit", 0),
+    ):
+        int_val = getattr(args, attr, None)
+        if int_val is not None and int_val < minimum:
+            parser.error(f"{flag} must be at least {minimum}, got {int_val}")
+
+    gsm8k_shots = getattr(args, "gsm8k_shots", None)
+    if gsm8k_shots is not None and not (0 <= gsm8k_shots <= 8):
+        parser.error(f"--gsm8k-shots must be between 0 and 8, got {gsm8k_shots}")
+    mmlu_shots = getattr(args, "mmlu_shots", None)
+    if mmlu_shots is not None and not (0 <= mmlu_shots <= 5):
+        parser.error(f"--mmlu-shots must be between 0 and 5, got {mmlu_shots}")
+
     for flag, attr in (
         ("--error-rate", "error_rate"),
         ("--alpha", "alpha"),
         ("--context-pressure", "context_pressure"),
+        ("--min-p", "min_p"),
     ):
         value = getattr(args, attr, None)
         if value is not None and not (0.0 <= value <= 1.0):
             parser.error(f"{flag} must be between 0 and 1, got {value}")
+
+    top_p = getattr(args, "top_p", None)
+    if top_p is not None and not (0.0 < top_p <= 1.0):
+        parser.error(f"--top-p must be in (0, 1], got {top_p}")
+
+    temperature = getattr(args, "temperature", None)
+    if temperature is not None and (not math.isfinite(temperature) or temperature < 0):
+        parser.error(f"--temperature must be a finite number >= 0, got {temperature}")
+
+    for flag, attr in (
+        ("--timeout", "timeout"),
+        ("--repeat-penalty", "repeat_penalty"),
+        ("--baseline-tgs", "baseline_tgs"),
+        ("--spec-live-interval", "spec_live_interval"),
+        ("--decision-live-interval", "decision_live_interval"),
+    ):
+        pos_val = getattr(args, attr, None)
+        if pos_val is not None and (not math.isfinite(pos_val) or pos_val <= 0):
+            parser.error(f"{flag} must be a finite number greater than 0, got {pos_val}")
+
     fill_tokens = getattr(args, "context_fill_tokens", None)
     if fill_tokens is not None:
         if fill_tokens < 1:
@@ -1756,7 +1813,8 @@ def _run_decision_live_mode(target: _Target) -> None:
     except KeyboardInterrupt:
         pass
     except (DecisionUnsupportedError, DatasetIntegrityError) as exc:
-        target.console.print(f"\n[bold red]Decision monitor error:[/] {exc}")
+        detail = _redact_urls(str(exc)) if args.redact_url else str(exc)
+        target.console.print(f"\n[bold red]Decision monitor error:[/] {escape(detail)}")
         sys.exit(1)
 
 
@@ -1945,7 +2003,7 @@ def _prepare_context_pressure(target: _Target) -> _PressureFill | None:
                 args.timeout = scaled_timeout
 
     except ValueError as exc:
-        report_run_failed(console, f"\n[bold red]Error:[/] {exc}")
+        report_run_failed(console, f"\n[bold red]Error:[/] {escape(str(exc))}")
         sys.exit(1)
     return _PressureFill(messages=pressure_messages, config=pressure_config_dict)
 
@@ -2390,7 +2448,7 @@ def _run_with_live_display(
         report_path = result.get("report_path")
         report_paths: list[str] = []
         if report_path:
-            console.print(f"\n  [dim]📄 Full report: {report_path}[/]\n")
+            console.print(f"\n  [dim]📄 Full report: {escape(str(report_path))}[/]\n")
             report_paths.append(str(report_path))
 
         # --- Trials 2..N: silent runs (same event loop) ---
@@ -2418,19 +2476,19 @@ def _run_with_live_display(
             if agg and len(all_summaries) > 1:
                 reporter = MarkdownReporter(root=args.output_dir)
                 run_id_base = result.get("run_id", "summary")
-                throughput = result.get("throughput_samples")
+                protocol_scenarios = getattr(args, "_resume_scenarios", None) or scenarios
                 summary_path = reporter.write_summary_report(
                     run_id=run_id_base,
                     model=display_name,
                     summaries=all_summaries,
                     agg=agg,
-                    throughput_samples=throughput,
+                    throughput_samples=throughput_samples,
                     report_paths=report_paths,
                     run_context=run_context,
-                    scenario_metadata=scenario_report_metadata(scenarios),
+                    scenario_metadata=scenario_report_metadata(protocol_scenarios),
                     scenario_packs=_pack_attestations(args),
                 )
-                console.print(f"  [dim]📊 Summary report: {summary_path}[/]\n")
+                console.print(f"  [dim]📊 Summary report: {escape(str(summary_path))}[/]\n")
         if _trials_safety_gate_failed(args, trial_results):
             raise SystemExit(2)
 
@@ -2442,7 +2500,8 @@ def _run_with_live_display(
         sys.exit(1)
     except Exception as exc:
         display.stop()
-        console.print(f"\n[bold red]Error: {exc}[/]")
+        detail = _redact_urls(str(exc)) if args.redact_url else str(exc)
+        console.print(f"\n[bold red]Error: {escape(detail)}[/]")
         sys.exit(1)
 
 
@@ -2562,8 +2621,10 @@ def _run_plain(
     wire_format: str = "openai",
 ) -> None:
     """Run with simple line-by-line output."""
-    console.print(f"\n[bold]Tool-Call Benchmark[/] — {display_name}")
-    console.print(f"[dim]  Backend: {backend}  |  Server: {display_url or base_url}[/]\n")
+    console.print(f"\n[bold]Tool-Call Benchmark[/] — {escape(display_name)}")
+    console.print(
+        f"[dim]  Backend: {escape(backend)}  |  Server: {escape(str(display_url or base_url))}[/]\n"
+    )
 
     resolved = _execution_scenarios(args)
 
@@ -2609,7 +2670,8 @@ def _run_plain(
         console.print("\n[bold red]Interrupted.[/]")
         sys.exit(1)
     except Exception as exc:
-        console.print(f"\n[bold red]Error: {exc}[/]")
+        detail = _redact_urls(str(exc)) if args.redact_url else str(exc)
+        console.print(f"\n[bold red]Error: {escape(detail)}[/]")
         sys.exit(1)
 
     elapsed = time.time() - started
@@ -2645,17 +2707,19 @@ def _run_plain(
             rp_list = [
                 str(r.get("report_path", "")) for r in all_results_dicts if r.get("report_path")
             ]
+            protocol_scenarios = getattr(args, "_resume_scenarios", None) or resolved
             summary_path = reporter.write_summary_report(
                 run_id=run_id_base,
                 model=display_name,
                 summaries=summaries,
                 agg=agg,
+                throughput_samples=throughput_samples,
                 report_paths=rp_list,
                 run_context=run_context,
-                scenario_metadata=scenario_report_metadata(resolved),
+                scenario_metadata=scenario_report_metadata(protocol_scenarios),
                 scenario_packs=_pack_attestations(args),
             )
-            console.print(f"  [dim]📊 Summary report: {summary_path}[/]\n")
+            console.print(f"  [dim]📊 Summary report: {escape(str(summary_path))}[/]\n")
     if _trials_safety_gate_failed(args, all_results_dicts):
         raise SystemExit(2)
 

@@ -9,6 +9,7 @@ import logging
 import math
 import os
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -22,7 +23,7 @@ from tool_eval_bench.application.service import open_benchmark_service, validate
 from tool_eval_bench.cli.commands import resolve_packs, resolve_scenarios
 from tool_eval_bench.cli.model_probe import _models_request
 from tool_eval_bench.cli.server import _discover_async
-from tool_eval_bench.domain.engines import BACKEND_LABELS
+from tool_eval_bench.domain.engines import ACCEPTED_BACKEND_LABELS, BACKEND_LABELS
 from tool_eval_bench.domain.models import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     RUN_STATUS_INTERRUPTED,
@@ -43,9 +44,9 @@ from tool_eval_bench.evals.scenarios import (
 from tool_eval_bench.schema import ARGS_SCHEMA, get_schema
 from tool_eval_bench.utils.ids import build_run_id
 from tool_eval_bench.utils.system_prompt import normalize_system_prompt
-from tool_eval_bench.utils.urls import root_endpoint_url
+from tool_eval_bench.utils.urls import root_endpoint_url, validate_http_url
 from tool_eval_bench.web.live import LiveRunHub, LiveRunSession
-from tool_eval_bench.web.sanitize import sanitize_result
+from tool_eval_bench.web.sanitize import sanitize_result, stored_held_out_ids
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +223,7 @@ async def probe_endpoint_models(
     shown_url = redact_url(resolved_url) if redact else resolved_url
     effective_key = api_key or os.getenv("TOOL_EVAL_API_KEY") or None
     try:
+        validate_http_url(resolved_url, what="base_url")
         resolved_format = resolve_wire_format(wire_format, resolved_url)
     except ValueError as exc:
         return {"reachable": False, "error": redact_urls(str(exc)), "models": []}
@@ -348,7 +350,13 @@ def _start_task(
             return
         hub.mark_complete(run_id, run_data)
 
-    session.task = asyncio.create_task(_execute(), name=f"web-run-{run_id}")
+    def _on_done(done_task: asyncio.Task[Any]) -> None:
+        if done_task.cancelled() and session.status == "running":
+            hub.mark_interrupted(run_id, "stopped by user")
+
+    task = asyncio.create_task(_execute(), name=f"web-run-{run_id}")
+    task.add_done_callback(_on_done)
+    session.task = task
 
 
 async def launch_web_run(
@@ -364,12 +372,18 @@ async def launch_web_run(
         raise ValueError("base_url is required")
     if not model:
         raise ValueError("model is required")
+    validate_http_url(base_url, what="base_url")
 
     api_key = _api_key(payload)
     wire_format_raw = str(payload.get("wire_format") or "auto").strip().lower()
     wire_format = resolve_wire_format(wire_format_raw, base_url)
 
     backend_raw = str(payload.get("backend") or "unknown").strip().lower()
+    if backend_raw not in ACCEPTED_BACKEND_LABELS:
+        raise ValueError(
+            f"Unsupported backend {payload.get('backend')!r}. "
+            f"Choose from: {', '.join(BACKEND_LABELS)}"
+        )
     temperature = _number(payload, "temperature", 0.0, minimum=0.0)
     timeout_seconds = _number(
         payload,
@@ -503,10 +517,16 @@ async def stop_web_run(hub: LiveRunHub, run_id: str) -> dict[str, Any]:
         session.task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await session.task
+        if session.status == "completed":
+            raise RunConflict(f"Run '{run_id}' is completed, not running")
+        if session.status == "running":
+            hub.mark_interrupted(run_id, "stopped by user")
         return {"run_id": run_id, "status": RUN_STATUS_INTERRUPTED}
 
     run = await asyncio.to_thread(get_run, run_id, include_traces=False)
     if run is None:
+        if session is not None:
+            raise RunConflict(f"Run '{run_id}' is {session.status}, not running")
         raise KeyError(run_id)
     status = run.get("status") or "completed"
     if status == RUN_STATUS_RUNNING:
@@ -531,6 +551,25 @@ async def resume_web_run(
     whose process is gone. The conditions come from the stored config and must
     pass the same compatibility check the CLI applies.
     """
+    session = hub.get(run_id)
+    if session is not None and session.is_live:
+        raise RunConflict("This run is already running in this server")
+    if not hub.claim_resume(run_id):
+        raise RunConflict("This run is already running in this server")
+
+    try:
+        return await _resume_claimed_run(hub, run_id, payload, output_dir=output_dir)
+    finally:
+        hub.release_resume(run_id)
+
+
+async def _resume_claimed_run(
+    hub: LiveRunHub,
+    run_id: str,
+    payload: Mapping[str, Any] | None,
+    *,
+    output_dir: str | None,
+) -> dict[str, Any]:
     loaded = await asyncio.to_thread(resume_state, run_id)
     if loaded is None:
         raise KeyError(run_id)
@@ -539,6 +578,8 @@ async def resume_web_run(
     session = hub.get(run_id)
     if session is not None and session.is_live:
         raise RunConflict("This run is already running in this server")
+    if session is not None and session.status not in {RUN_STATUS_INTERRUPTED, RUN_STATUS_RUNNING}:
+        raise RunConflict(f"Only interrupted runs can be resumed; this run is {session.status}")
     status = prev_run.get("status") or "completed"
     if status == RUN_STATUS_RUNNING:
         raise RunConflict(
@@ -557,16 +598,53 @@ async def resume_web_run(
             "base_url is required: the stored URL is redacted, so enter the endpoint "
             "in the launcher or set TOOL_EVAL_BASE_URL"
         )
+    validate_http_url(base_url, what="base_url")
     wire_format = _optional_text(payload, "wire_format") or "auto"
     plan = plan_stored_resume(prev_run, checkpoints, base_url=base_url, wire_format=wire_format)
     settings = plan.settings
+    api_key = _api_key(payload)
+    held_out = stored_held_out_ids(prev_run)
+    prev_meta = prev_run.get("metadata")
+    prev_cfg = prev_run.get("config")
+    meta_map = prev_meta if isinstance(prev_meta, Mapping) else {}
+    cfg_map = prev_cfg if isinstance(prev_cfg, Mapping) else {}
+    prior_label = meta_map.get("label") or cfg_map.get("label")
+    prior_selector = meta_map.get("scenario_selector") or f"web ({len(plan.scenarios)})"
+    run_context = await build_run_context(
+        model=settings.model,
+        backend=settings.backend,
+        base_url=base_url,
+        api_key=api_key,
+        temperature=settings.temperature,
+        max_turns=settings.max_turns,
+        timeout_seconds=settings.timeout_seconds,
+        seed=settings.seed,
+        scenario_selector=str(prior_selector),
+        trials=1,
+        parallel=settings.concurrency,
+        error_rate=settings.error_rate,
+        extra_params=settings.extra_params,
+        system_prompt=settings.system_prompt,
+        label=str(prior_label) if prior_label else None,
+        probe_engine=False,
+    )
+    prior_session_id = prev_run.get("session_id") or meta_map.get("session_id")
+    if run_context is not None and isinstance(prior_session_id, str) and prior_session_id:
+        run_context = replace(run_context, session_id=prior_session_id)
+
+    current = hub.get(run_id)
+    if current is not None and current.is_live:
+        raise RunConflict("This run is already running in this server")
+    if current is not None and current.status != RUN_STATUS_INTERRUPTED:
+        raise RunConflict(f"Only interrupted runs can be resumed; this run is {current.status}")
 
     session = hub.register(
         run_id,
         model=settings.model,
         backend=settings.backend,
         total=len(plan.scenarios),
-        preserved=[sanitize_result(result, frozenset()) for result in plan.reusable],
+        held_out=held_out,
+        preserved=[sanitize_result(result, held_out) for result in plan.reusable],
     )
     _start_task(
         hub,
@@ -576,7 +654,7 @@ async def resume_web_run(
             "model": settings.model,
             "backend": settings.backend,
             "base_url": base_url,
-            "api_key": _api_key(payload),
+            "api_key": api_key,
             "scenarios": plan.remaining,
             "temperature": settings.temperature,
             "timeout_seconds": settings.timeout_seconds,
@@ -588,6 +666,7 @@ async def resume_web_run(
             "alpha": settings.alpha,
             "extra_params": settings.extra_params,
             "weight_by_difficulty": settings.weight_by_difficulty,
+            "run_context": run_context,
             "resume_run_id": run_id,
             "resume_prior_results": plan.reusable,
             "resume_scenarios": plan.scenarios,

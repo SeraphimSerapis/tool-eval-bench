@@ -251,9 +251,9 @@ def print_diff(
             )
             continue
 
-        prev_pts = prev.get("points", 0)
-        prev_status = prev.get("status", "fail")
-        prev_dur = prev.get("duration_seconds", 0.0)
+        prev_pts = int(prev.get("points") or 0)
+        prev_status = prev.get("status") or "fail"
+        prev_dur = float(prev.get("duration_seconds") or 0.0)
 
         delta = cur_pts - prev_pts
         dur_delta = cur_dur - prev_dur
@@ -295,7 +295,7 @@ def print_diff(
     # Summary line
     cur_total = sum(r.points for r in current_results)
     prev_total = sum(
-        r.get("points", 0)
+        int(r.get("points") or 0)
         for r in prev_results
         if r["scenario_id"] in {cr.scenario_id for cr in current_results}
     )
@@ -426,7 +426,7 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
         if ra and not rb:
             table.add_row(
                 escape(sc_id),
-                f"[dim]{ra.get('points', 0)}/2[/]",
+                f"[dim]{int(ra.get('points') or 0)}/2[/]",
                 "→",
                 "[dim]—[/]",
                 "",
@@ -439,7 +439,7 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
                 escape(sc_id),
                 "[dim]—[/]",
                 "→",
-                f"[bold]{rb.get('points', 0)}/2[/]",
+                f"[bold]{int(rb.get('points') or 0)}/2[/]",
                 "[dim]new[/]",
                 "",
                 "[dim]new in B[/]",
@@ -448,9 +448,10 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
 
         if ra is None or rb is None:
             continue
-        pts_a, pts_b = ra.get("points", 0), rb.get("points", 0)
-        st_a, st_b = ra.get("status", "fail"), rb.get("status", "fail")
-        dur_a, dur_b = ra.get("duration_seconds", 0.0), rb.get("duration_seconds", 0.0)
+        pts_a, pts_b = int(ra.get("points") or 0), int(rb.get("points") or 0)
+        st_a, st_b = ra.get("status") or "fail", rb.get("status") or "fail"
+        dur_a = float(ra.get("duration_seconds") or 0.0)
+        dur_b = float(rb.get("duration_seconds") or 0.0)
 
         delta = pts_b - pts_a
         if delta > 0:
@@ -486,8 +487,8 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
     console.print(table)
 
     # Summary
-    total_a = sum(r.get("points", 0) for r in results_a)
-    total_b = sum(r.get("points", 0) for r in results_b)
+    total_a = sum(int(r.get("points") or 0) for r in results_a)
+    total_b = sum(int(r.get("points") or 0) for r in results_b)
     total_delta = total_b - total_a
     delta_color = "green" if total_delta > 0 else ("red" if total_delta < 0 else "dim")
     delta_sign = "+" if total_delta > 0 else ""

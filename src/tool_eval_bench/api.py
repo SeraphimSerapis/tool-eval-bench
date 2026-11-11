@@ -22,14 +22,18 @@ The returned dict matches the ``--json`` output schema (see OUTPUT_SCHEMA_VERSIO
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Mapping
 from contextlib import ExitStack, closing
+from datetime import datetime
 from typing import Any
 
 from tool_eval_bench import __version__
-from tool_eval_bench.application.decision_audit import DecisionJudgeSet
+from tool_eval_bench.adapters.wire_format import resolve_wire_format
+from tool_eval_bench.application.decision_audit import DecisionJudgeSet, decision_judge_config
 from tool_eval_bench.application.run_context import build_run_context, detect_backend
 from tool_eval_bench.application.service import BenchmarkService, validate_run_parameters
+from tool_eval_bench.domain.engines import ACCEPTED_BACKEND_LABELS, BACKEND_LABELS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.domain.scenarios import (
     OnScenarioAudit,
@@ -38,10 +42,12 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioDefinition,
 )
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, SCENARIOS
+from tool_eval_bench.evals.variants import prepare_scenarios
 from tool_eval_bench.schema import ARGS_SCHEMA  # noqa: F401 — public re-export
 from tool_eval_bench.storage.db import RunRepository
 from tool_eval_bench.storage.reports import MarkdownReporter
 from tool_eval_bench.utils.system_prompt import normalize_system_prompt
+from tool_eval_bench.utils.urls import validate_http_url
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +89,91 @@ def format_result(run_data: dict[str, Any]) -> dict[str, Any]:
     }
     envelope.update(run_data)
     return envelope
+
+
+def _validate_api_inputs(
+    *,
+    model: str,
+    base_url: str,
+    backend: str,
+    wire_format: str | None,
+    max_turns: int,
+    concurrency: int,
+    temperature: float,
+    timeout_seconds: float,
+    error_rate: float,
+    alpha: float,
+    seed: int | None,
+    variant_seed: int | None,
+    locale: str | None,
+    reference_date: str | None,
+    decision_judge: DecisionJudgeSet | None,
+    decision_judge_base_url: str | None,
+    decision_judge_model: str | None,
+    decision_judge_api_key: str | None,
+    resolved: list[ScenarioDefinition],
+) -> None:
+    """Validate public API arguments before sending any probe or model requests."""
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError("model must be a non-empty string")
+    if not isinstance(base_url, str) or not base_url.strip():
+        raise ValueError("base_url must be a non-empty string")
+    validate_http_url(base_url, what="base_url")
+    if backend and backend.lower() not in ACCEPTED_BACKEND_LABELS:
+        raise ValueError(f"Unsupported backend: {backend}. Supported: {', '.join(BACKEND_LABELS)}")
+    resolve_wire_format(wire_format, base_url)
+
+    for name, val in (
+        ("max_turns", max_turns),
+        ("concurrency", concurrency),
+        ("seed", seed),
+        ("variant_seed", variant_seed),
+    ):
+        if val is not None and (isinstance(val, bool) or not isinstance(val, int)):
+            raise ValueError(f"{name} must be an integer, got {val!r}")
+    for name, num in (
+        ("temperature", temperature),
+        ("timeout_seconds", timeout_seconds),
+        ("error_rate", error_rate),
+        ("alpha", alpha),
+    ):
+        if isinstance(num, bool) or not isinstance(num, int | float):
+            raise ValueError(f"{name} must be a number, got {num!r}")
+
+    validate_run_parameters(max_turns=max_turns, error_rate=error_rate, alpha=alpha)
+    if concurrency < 1:
+        raise ValueError(f"concurrency must be at least 1, got {concurrency!r}")
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError(
+            f"timeout_seconds must be a finite number greater than 0, got {timeout_seconds!r}"
+        )
+    if not math.isfinite(temperature) or temperature < 0:
+        raise ValueError(f"temperature must be a finite number >= 0, got {temperature!r}")
+
+    if reference_date:
+        try:
+            if not isinstance(reference_date, str) or len(reference_date) != 10:
+                raise ValueError("not YYYY-MM-DD")
+            datetime.strptime(reference_date, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(
+                f"Invalid --reference-date '{reference_date}'. "
+                "Expected format: YYYY-MM-DD (e.g. 2026-03-20)"
+            ) from None
+
+    decision_judge_config(
+        decision_judge_base_url,
+        decision_judge_model,
+        decision_judge_api_key,
+        decision_judge,
+    )
+
+    if not resolved:
+        raise ValueError("No scenarios to run")
+    if locale is not None or variant_seed is not None:
+        preview = prepare_scenarios(resolved, variant_seed=variant_seed, locale=locale)
+        if locale is not None and not preview:
+            raise ValueError(f"None of the selected scenarios support --locale {locale}.")
 
 
 async def run_benchmark(
@@ -209,13 +300,29 @@ async def run_benchmark(
         selector = f"all ({len(resolved)})"
 
     # Validated before any probe request, so bad settings fail without I/O.
-    validate_run_parameters(max_turns=max_turns, error_rate=error_rate, alpha=alpha)
     if system_prompt is not None:
         system_prompt = normalize_system_prompt(system_prompt)
-    # Likewise an empty selection; the service refuses it too, but only after
-    # the probe requests above have been sent.
-    if not resolved:
-        raise ValueError("No scenarios to run")
+    _validate_api_inputs(
+        model=model,
+        base_url=base_url,
+        backend=backend,
+        wire_format=wire_format,
+        max_turns=max_turns,
+        concurrency=concurrency,
+        temperature=temperature,
+        timeout_seconds=timeout_seconds,
+        error_rate=error_rate,
+        alpha=alpha,
+        seed=seed,
+        variant_seed=variant_seed,
+        locale=locale,
+        reference_date=reference_date,
+        decision_judge=decision_judge,
+        decision_judge_base_url=decision_judge_base_url,
+        decision_judge_model=decision_judge_model,
+        decision_judge_api_key=decision_judge_api_key,
+        resolved=resolved,
+    )
 
     backend = await detect_backend(
         backend, base_url=base_url, api_key=api_key, wire_format=wire_format, probe=probe_engine

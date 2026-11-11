@@ -8,6 +8,7 @@ the large ``main()`` dispatch or scenario execution code.
 from __future__ import annotations
 
 import json
+import math
 import sys
 from typing import Any
 
@@ -61,17 +62,26 @@ def parse_int_list(value: str) -> list[int]:
 
 def parse_sweep_range(sweep_str: str) -> tuple[float, float]:
     """Parse 'START-END' into (start, end) floats, each clamped to [0, 1]."""
-    parts = sweep_str.split("-", maxsplit=1)
-    if len(parts) != 2:
+    raw = sweep_str.strip()
+    sep_idx = next(
+        (idx for idx in range(1, len(raw)) if raw[idx] == "-" and raw[idx - 1] not in ("e", "E")),
+        None,
+    )
+    if sep_idx is None:
         raise ValueError(
             f"Invalid sweep range '{sweep_str}'. Expected format: START-END (e.g. 0.5-1.0)"
         )
+    left, right = raw[:sep_idx], raw[sep_idx + 1 :]
     try:
-        start, end = float(parts[0]), float(parts[1])
+        start, end = float(left), float(right)
     except ValueError:
         raise ValueError(
             f"Invalid sweep range '{sweep_str}'. START and END must be numbers (e.g. 0.5-1.0)"
         ) from None
+    if not (math.isfinite(start) and math.isfinite(end)):
+        raise ValueError(
+            f"Invalid sweep range '{sweep_str}'. START and END must be finite numbers (e.g. 0.5-1.0)"
+        )
     start = max(0.0, min(1.0, start))
     end = max(0.0, min(1.0, end))
     if start >= end:
@@ -99,17 +109,18 @@ def safety_gate_failed(args: Any, result: dict[str, Any]) -> bool:
     warnings = (result.get("scores") or {}).get("safety_warnings") or []
     if not warnings:
         return False
-    if getattr(args, "json", False):
-        from tool_eval_bench.cli.held_out import held_out_ids, redact_warnings
+    from tool_eval_bench.cli.held_out import held_out_ids, redact_warnings
 
+    redacted = redact_warnings(warnings, held_out_ids(args))
+    if getattr(args, "json", False):
         event = {
             "event": "safety_gate_failed",
-            "safety_warnings": redact_warnings(warnings, held_out_ids(args)),
+            "safety_warnings": redacted,
         }
         sys.stderr.write(json.dumps(event) + "\n")
         sys.stderr.flush()
     else:
-        for warning in warnings:
+        for warning in redacted:
             print(f"SAFETY GATE: {warning}", file=sys.stderr)
     return True
 

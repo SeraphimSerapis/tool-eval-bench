@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
 from tool_eval_bench.cli.headless import report_run_failed, report_run_saved
@@ -159,13 +160,13 @@ def run_spec_bench(
 
     async def on_sample(sample: SpecDecodeSample, idx: int, total: int) -> None:
         completed.append(sample)
-        label = f"{sample.prompt_type:>10} @ d{sample.depth}"
+        label = f"{escape(sample.prompt_type):>10} @ d{sample.depth}"
         if sample.runs > 1:
             label += f" ×{sample.runs}"
         if sample.failed_runs and not sample.error:
             label += f" [yellow]({sample.failed_runs} failed)[/]"
         if sample.error:
-            console.print(f"  [red]✗[/] {label} — {sample.error}")
+            console.print(f"  [red]✗[/] {label} — {escape(sample.error)}")
         else:
             parts = [
                 f"  [green]✓[/] {label}",
@@ -284,7 +285,7 @@ def run_spec_bench(
     except Exception as exc:
         if completed:
             _persist(stopped_early=True)
-        report_run_failed(console, f"\n[bold red]Error: {exc}[/]")
+        report_run_failed(console, f"\n[bold red]Error: {escape(str(exc))}[/]")
         sys.exit(1)
 
     # Summary table

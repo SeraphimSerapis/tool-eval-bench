@@ -18,6 +18,7 @@ from typing import Any
 
 from rich.console import Console, Group
 from rich.live import Live
+from rich.markup import escape
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -71,9 +72,10 @@ def status_icon(item_info: dict[str, Any], *, key: str = "correct") -> str:
 
 
 def truncate(text: str | None, limit: int = 90) -> str:
-    """Flatten and clip an item's prompt so it fits one status line."""
+    """Flatten, clip, and Rich-escape an item's prompt so it fits one status line."""
     flat = (text or "").replace("\n", " ").strip()
-    return flat[: limit - 3] + "…" if len(flat) > limit else flat
+    clipped = flat[: limit - 3] + "…" if len(flat) > limit else flat
+    return escape(clipped)
 
 
 def tally_line(

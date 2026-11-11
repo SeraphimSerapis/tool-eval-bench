@@ -32,6 +32,18 @@ def is_sensitive_key(key: str) -> bool:
     return any(part in lowered for part in _SENSITIVE_SUBSTRINGS)
 
 
+def _sanitize_list(items: list[Any]) -> list[Any]:
+    cleaned: list[Any] = []
+    for item in items:
+        if isinstance(item, Mapping):
+            cleaned.append(sanitize_mapping(item))
+        elif isinstance(item, list):
+            cleaned.append(_sanitize_list(item))
+        else:
+            cleaned.append(item)
+    return cleaned
+
+
 def sanitize_mapping(data: Mapping[str, Any] | None) -> dict[str, Any]:
     """Return a copy of *data* with credential keys removed and URLs redacted."""
     if not isinstance(data, Mapping):
@@ -46,12 +58,15 @@ def sanitize_mapping(data: Mapping[str, Any] | None) -> dict[str, Any]:
         elif isinstance(value, Mapping):
             cleaned[key_str] = sanitize_mapping(value)
         elif isinstance(value, list):
-            cleaned[key_str] = [
-                sanitize_mapping(item) if isinstance(item, Mapping) else item for item in value
-            ]
+            cleaned[key_str] = _sanitize_list(value)
         else:
             cleaned[key_str] = value
     return cleaned
+
+
+def is_public_scenario_id(scenario_id: str) -> bool:
+    """Whether *scenario_id* belongs to the public benchmark registry."""
+    return scenario_id in _PUBLIC_SCENARIO_MAP
 
 
 def stored_held_out_ids(run: Mapping[str, Any]) -> frozenset[str]:
@@ -70,18 +85,27 @@ def stored_held_out_ids(run: Mapping[str, Any]) -> frozenset[str]:
                     ids = pack.get("scenario_ids")
                     if isinstance(ids, list):
                         held_out.update(str(sid) for sid in ids if sid)
+        cfg_ids = config.get("scenario_ids")
+        if isinstance(cfg_ids, list):
+            for raw_id in cfg_ids:
+                if isinstance(raw_id, str) and raw_id and raw_id not in _PUBLIC_SCENARIO_MAP:
+                    held_out.add(raw_id)
     scores = run.get("scores")
+    result_lists: list[Any] = []
     if isinstance(scores, Mapping):
-        results = scores.get("scenario_results")
-        if isinstance(results, list):
-            for result in results:
-                if not isinstance(result, Mapping):
-                    continue
-                sid = result.get("scenario_id")
-                if not isinstance(sid, str) or not sid:
-                    continue
-                if result.get("held_out") is True or sid not in _PUBLIC_SCENARIO_MAP:
-                    held_out.add(sid)
+        result_lists.append(scores.get("scenario_results"))
+    result_lists.append(run.get("checkpoints"))
+    for results in result_lists:
+        if not isinstance(results, list):
+            continue
+        for result in results:
+            if not isinstance(result, Mapping):
+                continue
+            sid = result.get("scenario_id")
+            if not isinstance(sid, str) or not sid:
+                continue
+            if result.get("held_out") is True or sid not in _PUBLIC_SCENARIO_MAP:
+                held_out.add(sid)
     return frozenset(held_out)
 
 
@@ -89,7 +113,7 @@ def enrich_scenario_result(result: dict[str, Any], held_out: frozenset[str]) -> 
     """Attach scenario title, category, difficulty, and safety metadata for the UI."""
     sid = str(result.get("scenario_id", ""))
     enriched = dict(result)
-    if sid in held_out:
+    if sid in held_out or (bool(sid) and sid not in _PUBLIC_SCENARIO_MAP):
         enriched["title"] = HELD_OUT
         enriched["category"] = "held_out"
         enriched["category_label"] = "Held-Out Pack"
@@ -131,8 +155,11 @@ def sanitize_result(
     """
     raw = dict(result)
     sid = str(raw.get("scenario_id", ""))
-    if sid in held_out or raw.get("held_out") is True:
-        enriched = enrich_scenario_result(redact_result(raw), held_out | {sid})
+    is_non_public = bool(sid) and sid not in _PUBLIC_SCENARIO_MAP
+    if sid in held_out or raw.get("held_out") is True or is_non_public:
+        enriched = enrich_scenario_result(
+            redact_result(raw), held_out | ({sid} if sid else frozenset())
+        )
     else:
         enriched = enrich_scenario_result(raw, held_out)
     if not include_traces:
