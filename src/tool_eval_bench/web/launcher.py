@@ -20,7 +20,7 @@ from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.application.run_context import build_run_context, identify_backend
 from tool_eval_bench.application.run_queries import get_run, resume_state
 from tool_eval_bench.application.service import open_benchmark_service, validate_run_parameters
-from tool_eval_bench.cli.commands import resolve_packs, resolve_scenarios
+from tool_eval_bench.cli.commands import resolve_scenarios
 from tool_eval_bench.cli.model_probe import _models_request
 from tool_eval_bench.cli.server import _discover_async
 from tool_eval_bench.domain.engines import ACCEPTED_BACKEND_LABELS, BACKEND_LABELS
@@ -276,11 +276,23 @@ async def probe_endpoint_models(
     return result
 
 
+_VALID_PRESETS = frozenset({"short", "standard", "hardmode", "hardmode_only", "custom"})
+
+
 def _resolve_launcher_scenarios(
     payload: Mapping[str, Any],
 ) -> tuple[list[ScenarioDefinition], list[dict[str, Any]] | None, frozenset[str]]:
-    """Resolve scenarios and optional pack attestations from a launch request payload."""
-    preset = str(payload.get("preset") or "short").lower()
+    """Resolve scenarios from a launch request payload."""
+    if "scenario_pack" in payload or "pack_only" in payload:
+        raise ValueError(
+            "Held-out scenario packs are only supported from the CLI (--scenario-pack)"
+        )
+    raw_preset = payload.get("preset")
+    preset = "short" if raw_preset in (None, "") else str(raw_preset).strip().lower()
+    if preset not in _VALID_PRESETS:
+        raise ValueError(
+            f"Unsupported preset {raw_preset!r}. Choose from: {', '.join(sorted(_VALID_PRESETS))}"
+        )
     raw_categories = payload.get("categories")
     categories = (
         [str(c).upper() for c in raw_categories if str(c).strip()]
@@ -297,15 +309,6 @@ def _resolve_launcher_scenarios(
     else:
         scenarios_list = None
 
-    raw_packs = payload.get("scenario_pack")
-    pack_dirs = (
-        [str(p).strip() for p in raw_packs if str(p).strip()]
-        if isinstance(raw_packs, list)
-        else (
-            [str(raw_packs).strip()] if isinstance(raw_packs, str) and raw_packs.strip() else None
-        )
-    )
-
     ns = argparse.Namespace(
         short=preset == "short",
         hardmode=preset == "hardmode"
@@ -314,16 +317,13 @@ def _resolve_launcher_scenarios(
         hardmode_only=preset == "hardmode_only",
         scenarios=scenarios_list or None,
         categories=categories or None,
-        scenario_pack=pack_dirs,
-        pack_only=bool(payload.get("pack_only", False)),
+        scenario_pack=None,
+        pack_only=False,
     )
-    packs = resolve_packs(ns)
     resolved = resolve_scenarios(ns)
     if not resolved:
         raise ValueError("No scenarios matched the selected filters")
-    attestations = [pack.to_dict() for pack in packs] or None
-    held_out = frozenset(s.id for pack in packs for s in pack.scenarios)
-    return resolved, attestations, held_out
+    return resolved, None, frozenset()
 
 
 def _start_task(

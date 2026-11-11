@@ -949,7 +949,7 @@ def _validate_scenario_selection(
         parser.error(str(exc))
     if packs and not args.json:
         total = sum(len(p.scenarios) for p in packs)
-        names = ", ".join(f"{p.name} ({p.content_hash})" for p in packs)
+        names = ", ".join(f"{escape(p.name)} ({escape(p.content_hash)})" for p in packs)
         console.print(f"  [dim]🔒 Held-out packs: {names} — {total} scenario(s)[/]")
 
     if args.categories:
@@ -1051,7 +1051,7 @@ def _detect_decision_judge_model(args: argparse.Namespace, console: Console) -> 
     # The judge host is masked wherever it is printed or stored.
     display_url = _redact_url(judge_url)
     if not args.json:
-        console.print(f"[dim]  Decision judge: {display_url}[/]")
+        console.print(f"[dim]  Decision judge: {escape(display_url)}[/]")
     model, _ = _detect_model(
         judge_url,
         os.environ.get(DECISION_JUDGE_API_KEY_ENV),
@@ -1174,7 +1174,7 @@ def _build_run_context(
         engine_str = run_context.engine_name
         if run_context.engine_version:
             engine_str += f" {run_context.engine_version}"
-        console.print(f"  [dim]🔍 Engine: {engine_str}[/]")
+        console.print(f"  [dim]🔍 Engine: {escape(engine_str)}[/]")
     session_id = getattr(args, "_session_id", None)
     if run_context is not None and session_id:
         # Every mode persists ``run_context.to_dict()``, so this one field is
@@ -1648,7 +1648,7 @@ def _resolve_endpoint(
             sys.stderr.write(json.dumps({"event": "backend_detected", "backend": backend}) + "\n")
             sys.stderr.flush()
         else:
-            console.print(f"[dim]  Detected backend: {detection.server_name}[/]")
+            console.print(f"[dim]  Detected backend: {escape(detection.server_name)}[/]")
 
     return _Endpoint(
         base_url=base_url,
@@ -1691,7 +1691,7 @@ def _resolve_target(
     if not model:
         if not args.json:
             console.print("\n[bold]🔧 Tool-Call Benchmark[/]")
-            console.print(f"[dim]  Server: {display_url}[/]")
+            console.print(f"[dim]  Server: {escape(display_url)}[/]")
         model, display_name = _detect_model(
             base_url,
             api_key,
@@ -2139,21 +2139,22 @@ def _plan_resume(target: _Target, pressure: _PressureFill | None) -> None:
             report_run_failed(
                 console,
                 f"\n  [bold red]✗ Resume aborted: configuration mismatch[/]\n"
-                f"  [dim]Prior run differs in: {', '.join(mismatches)}[/]\n"
+                f"  [dim]Prior run differs in: {escape(', '.join(mismatches))}[/]\n"
                 f"  [dim]Start a fresh run instead of resuming.[/]\n",
             )
             sys.exit(1)
 
+        escaped_resume = escape(str(args.resume))
         prev_results = prior_results_for_resume(prev_run, prev_checkpoints)
         if prev_checkpoints and not args.json:
             console.print(
                 f"  [dim]ℹ Recovered {len(prev_checkpoints)} checkpointed scenario(s) from "
-                f"interrupted run {args.resume}.[/]"
+                f"interrupted run {escaped_resume}.[/]"
             )
         if not prev_results:
             if not args.json:
                 console.print(
-                    f"  [dim]ℹ No scenario results in run {args.resume} — running all.[/]"
+                    f"  [dim]ℹ No scenario results in run {escaped_resume} — running all.[/]"
                 )
         else:
             prior_by_id = {
@@ -2179,7 +2180,7 @@ def _plan_resume(target: _Target, pressure: _PressureFill | None) -> None:
             if not prior_by_id:
                 if not args.json:
                     console.print(
-                        f"  [dim]ℹ No reusable scenario outcomes in run {args.resume}"
+                        f"  [dim]ℹ No reusable scenario outcomes in run {escaped_resume}"
                         " — running all.[/]"
                     )
             else:
@@ -2187,7 +2188,7 @@ def _plan_resume(target: _Target, pressure: _PressureFill | None) -> None:
                 if not args.json:
                     console.print(
                         f"  [bold cyan]↻ Resume:[/] preserving {len(prior_by_id)} completed outcomes "
-                        f"in [dim]{args.resume}[/], "
+                        f"in [dim]{escaped_resume}[/], "
                         f"running {len(remaining)} remaining"
                     )
                 # An empty subset is intentional: service finalizes the fully

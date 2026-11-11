@@ -20,6 +20,7 @@ from rich.markup import escape
 from tool_eval_bench.application.mode_runs import ModeRun, finalize_mode_run
 from tool_eval_bench.cli.headless import report_run_failed, report_run_saved
 from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.domain.redaction import redact_urls
 from tool_eval_bench.domain.spec_decode import suggested_draft_window, window_utilization
 from tool_eval_bench.runner.spec_detection import canonical_spec_method_hint
 from tool_eval_bench.storage.reports.spec_decode import spec_decode_report
@@ -147,8 +148,8 @@ def run_spec_bench(
     runs_str = f"  runs={runs}" if runs > 1 else ""
     console.print(
         Panel(
-            f"[bold]{display_name}[/]\n"
-            f"[dim]tg={tg}  depth={depths}  prompts={prompt_types}  method={method_label}"
+            f"[bold]{escape(display_name)}[/]\n"
+            f"[dim]tg={tg}  depth={depths}  prompts={escape(str(prompt_types))}  method={escape(str(method_label))}"
             f"{runs_str}  temperature={temperature:g}{baseline_str}[/]",
             title="[bold]🔮 Speculative Decoding Benchmark[/]",
             border_style="bright_magenta",
@@ -160,13 +161,13 @@ def run_spec_bench(
 
     async def on_sample(sample: SpecDecodeSample, idx: int, total: int) -> None:
         completed.append(sample)
-        label = f"{escape(sample.prompt_type):>10} @ d{sample.depth}"
+        label = f"{escape(f'{sample.prompt_type:>10}')} @ d{sample.depth}"
         if sample.runs > 1:
             label += f" ×{sample.runs}"
         if sample.failed_runs and not sample.error:
             label += f" [yellow]({sample.failed_runs} failed)[/]"
         if sample.error:
-            console.print(f"  [red]✗[/] {label} — {escape(sample.error)}")
+            console.print(f"  [red]✗[/] {label} — {escape(redact_urls(sample.error))}")
         else:
             parts = [
                 f"  [green]✓[/] {label}",
@@ -271,7 +272,7 @@ def run_spec_bench(
             output_dir=output_dir,
         )
         report_run_saved(console, run, finalized)
-        console.print(f"\n  [dim]📄 Report saved to {finalized.report_path}[/]")
+        console.print(f"\n  [dim]📄 Report saved to {escape(str(finalized.report_path))}[/]")
         return failed_count
 
     try:
@@ -285,7 +286,7 @@ def run_spec_bench(
     except Exception as exc:
         if completed:
             _persist(stopped_early=True)
-        report_run_failed(console, f"\n[bold red]Error: {escape(str(exc))}[/]")
+        report_run_failed(console, f"\n[bold red]Error: {escape(redact_urls(str(exc)))}[/]")
         sys.exit(1)
 
     # Summary table
@@ -328,7 +329,7 @@ def run_spec_bench(
             wr_str = f"{s.waste_ratio * 100:.0f}%" if s.waste_ratio is not None else "—"
             al_str = f"{s.acceptance_length:.1f}" if s.acceptance_length is not None else "—"
             row: list[str] = [
-                s.prompt_type,
+                escape(s.prompt_type),
                 _depth_label(s.depth),
                 f"{s.effective_tg_tps:,.1f}",
                 ar_str,
@@ -396,9 +397,9 @@ def run_spec_bench(
             )
             if best.acceptance_rate is not None and worst.acceptance_rate is not None:
                 console.print(
-                    f"\n  [dim]Highest acceptance:[/] [bold]{best.prompt_type}[/] "
+                    f"\n  [dim]Highest acceptance:[/] [bold]{escape(best.prompt_type)}[/] "
                     f"({best.acceptance_rate * 100:.1f}%)  "
-                    f"[dim]Lowest:[/] [bold]{worst.prompt_type}[/] "
+                    f"[dim]Lowest:[/] [bold]{escape(worst.prompt_type)}[/] "
                     f"({worst.acceptance_rate * 100:.1f}%)"
                 )
 

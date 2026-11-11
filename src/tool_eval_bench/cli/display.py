@@ -217,7 +217,7 @@ class BenchmarkDisplay:
         self.console.print()
         self.console.print(
             Panel(
-                f"[bold]{self.model}[/]  [dim]via {self.backend} @ {self.base_url}[/]\n"
+                f"[bold]{escape(self.model)}[/]  [dim]via {escape(self.backend)} @ {escape(self.base_url)}[/]\n"
                 f"[dim]{total} scenarios[/]{version_tag}",
                 title="[bold]🔧 Tool-Call Benchmark[/]",
                 border_style="bright_blue",
@@ -337,8 +337,9 @@ class BenchmarkDisplay:
         latency_str = f"  [dim]{' '.join(latency_parts)}[/]" if latency_parts else ""
 
         # Base line: dot  ID  title  status  points  time  latency
+        padded_title = escape(f"{scenario.title:<30s}")
         line = (
-            f"  [{cat_color}]●[/] {scenario.id}  {scenario.title:<30s}"
+            f"  [{cat_color}]●[/] {escape(scenario.id)}  {padded_title}"
             f"  [{status_color}]{label}[/]"
             f"  [bold]{points}[/]/2"
             f"  [dim]{dur:>5s}[/]"
@@ -349,11 +350,11 @@ class BenchmarkDisplay:
         if infrastructure:
             # The evaluator never ran, so there is no summary to show. Say why
             # the line is here instead of leaving it to trail off blank.
-            line += f"  [{status_color}]{infrastructure_note(result)}[/]"
+            line += f"  [{status_color}]{escape(infrastructure_note(result))}[/]"
         elif result.status != ScenarioStatus.PASS:
-            line += f"  [{status_color}]{result.summary}[/]"
+            line += f"  [{status_color}]{escape(result.summary)}[/]"
         else:
-            line += f"  [dim]{result.summary}[/]"
+            line += f"  [dim]{escape(result.summary)}[/]"
 
         return line
 
@@ -373,7 +374,7 @@ class BenchmarkDisplay:
         elif self.active_scenario:
             sc = next((s for s in self.scenarios if s.id == self.active_scenario), None)
             name = f"{sc.id} {sc.title}" if sc else self.active_scenario
-            status = f"[bold cyan]⟳[/] [bold]{name}[/]"
+            status = f"[bold cyan]⟳[/] [bold]{escape(name)}[/]"
         elif done >= total:
             status = "[bold green]✓ Complete[/]"
         else:
@@ -422,7 +423,7 @@ def _print_category_scores(console: Console, summary: ModelScoreSummary) -> None
         filled = int((cs.percent / 100) * bar_width)
         bar = f"[{cat_color}]{'█' * filled}[/][dim]{'░' * (bar_width - filled)}[/]"
         table.add_row(
-            f"[{cat_color}]{cs.label}[/]",
+            f"[{cat_color}]{escape(cs.label)}[/]",
             f"[bold]{cs.percent}%[/]",
             bar,
             f"{cs.earned}/{cs.max_points}",
@@ -450,10 +451,10 @@ def _print_capability_scores(console: Console, summary: ModelScoreSummary) -> No
     table.add_column("Scenarios", min_width=12)
     for cs in summary.capability_scores:
         table.add_row(
-            cs.label,
+            escape(cs.label),
             f"[bold]{cs.percent}%[/]",
             f"{cs.earned}/{cs.max_points}",
-            ", ".join(cs.scenario_ids),
+            escape(", ".join(cs.scenario_ids)),
         )
     console.print(table)
 
@@ -484,13 +485,13 @@ def _print_final_panel(
             engine_str = rc.engine_name
             if rc.engine_version:
                 engine_str += f" {rc.engine_version}"
-            model_info_lines += f"\n  [dim]Engine:       {engine_str}[/]"
+            model_info_lines += f"\n  [dim]Engine:       {escape(engine_str)}[/]"
         if rc.quantization:
-            model_info_lines += f"\n  [dim]Quantization: {rc.quantization}[/]"
+            model_info_lines += f"\n  [dim]Quantization: {escape(str(rc.quantization))}[/]"
         if rc.max_model_len:
             model_info_lines += f"\n  [dim]Max context:  {rc.max_model_len:,} tokens[/]"
         if rc.server_model_root and rc.server_model_root != model:
-            model_info_lines += f"\n  [dim]Model root:   {rc.server_model_root}[/]"
+            model_info_lines += f"\n  [dim]Model root:   {escape(str(rc.server_model_root))}[/]"
 
     try:
         from tool_eval_bench import __version__
@@ -500,9 +501,9 @@ def _print_final_panel(
         benchmark_line = ""
 
     content = (
-        f"  [bold]Model:[/]  {model}\n"
+        f"  [bold]Model:[/]  {escape(model)}\n"
         f"  [bold]Score:[/]  [{rating_color}]{score} / 100[/]\n"
-        f"  [bold]Rating:[/] [{rating_color}]{rating}[/]"
+        f"  [bold]Rating:[/] [{rating_color}]{escape(rating)}[/]"
         f"{benchmark_line}"
         f"{model_info_lines}\n"
         f"\n"
@@ -515,13 +516,13 @@ def _print_final_panel(
         content += (
             f"\n  [yellow]⚠  {len(summary.excluded_scenarios)} scenario(s) excluded "
             f"(infrastructure failure), completion rate {summary.completion_rate}%[/]"
-            f"\n  [dim]     {excluded}[/]"
+            f"\n  [dim]     {escape(excluded)}[/]"
         )
         for advice in timeout_advice(
             summary,
             timeout_seconds=getattr(run_context, "timeout_seconds", None),
         ):
-            content += f"\n  [yellow]   {advice}[/]"
+            content += f"\n  [yellow]   {escape(advice)}[/]"
 
     # Deployability composite (only when latency data is present)
     if summary.deployability is not None and summary.responsiveness is not None:
@@ -555,7 +556,7 @@ def _print_final_panel(
             if summary.worst_category_percent >= 75
             else ("yellow" if summary.worst_category_percent >= 40 else "red")
         )
-        content += f"\n  [bold]Weakest:[/] [{floor_color}]{summary.worst_category}[/]"
+        content += f"\n  [bold]Weakest:[/] [{floor_color}]{escape(summary.worst_category)}[/]"
 
     content += f"\n\n  [dim]Completed in {elapsed:.1f}s[/]"
 
@@ -569,7 +570,9 @@ def _print_final_panel(
 
     # Surface safety-critical failures prominently
     if summary.safety_warnings:
-        warning_lines = "\n".join(f"    [bold yellow]⚠ {w}[/]" for w in summary.safety_warnings)
+        warning_lines = "\n".join(
+            f"    [bold yellow]⚠ {escape(w)}[/]" for w in summary.safety_warnings
+        )
         content += (
             f"\n\n  [bold red]🛡️  SAFETY WARNINGS ({len(summary.safety_warnings)}):[/]\n"
             f"{warning_lines}"
@@ -670,11 +673,11 @@ def print_final_report(
         display_detail = ALL_DISPLAY_DETAILS.get(r.scenario_id)
 
         if r.status == ScenarioStatus.PASS:
-            summary_text = f"[dim]{r.summary}[/]"
+            summary_text = f"[dim]{escape(r.summary)}[/]"
         else:
-            parts = [f"[{status_color}]{r.summary}[/]"]
+            parts = [f"[{status_color}]{escape(r.summary)}[/]"]
             if r.tool_calls_made:
-                parts.append(f"[dim]Called: {', '.join(r.tool_calls_made)}[/]")
+                parts.append(f"[dim]Called: {escape(', '.join(r.tool_calls_made))}[/]")
             else:
                 parts.append("[dim]Called: (no tools)[/]")
             expected = r.expected_behavior or (
@@ -682,12 +685,12 @@ def print_final_report(
             )
             if expected:
                 lbl = "Expected" if r.status == ScenarioStatus.FAIL else "For full pass"
-                parts.append(f"[dim]{lbl}: {expected}[/]")
+                parts.append(f"[dim]{lbl}: {escape(expected)}[/]")
             summary_text = "\n".join(parts)
 
         detail_table.add_row(
-            r.scenario_id,
-            title,
+            escape(r.scenario_id),
+            escape(title),
             status_text,
             f"{r.points}/2",
             f"[dim]{r.duration_seconds:.1f}s[/]",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 import json
 import math
 from collections.abc import Callable
@@ -22,12 +23,15 @@ from tool_eval_bench.api import run_benchmark
 from tool_eval_bench.application.run_queries import recent_runs
 from tool_eval_bench.cli import (
     dispatch,
+    leaderboard,
     model_probe,
     plugin_datasets,
     plugin_lifecycle,
     pressure,
     probe,
+    spec_bench,
 )
+from tool_eval_bench.cli.display import BenchmarkDisplay, print_final_report
 from tool_eval_bench.cli.headless import HeadlessConsole
 from tool_eval_bench.cli.held_out import HELD_OUT, held_out_ids, redact_warnings
 from tool_eval_bench.cli.helpers import parse_sweep_range, safety_gate_failed
@@ -36,8 +40,12 @@ from tool_eval_bench.cli.legacy_parser import make_parser
 from tool_eval_bench.cli.parser import translate_argv
 from tool_eval_bench.cli.plugin_progress import truncate
 from tool_eval_bench.domain.adapters import ChatCompletionResult
+from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.scenarios import (
+    CapabilityScore,
     Category,
+    CategoryScore,
+    FailureKind,
     ModelScoreSummary,
     ScenarioDefinition,
     ScenarioEvaluation,
@@ -46,12 +54,15 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.packs import ScenarioPack
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
+from tool_eval_bench.runner.speculative import SpecDecodeSample
 from tool_eval_bench.runner.throughput import ThroughputSample
 from tool_eval_bench.storage.db import RunRepository
 from tool_eval_bench.utils import metadata
 from tool_eval_bench.web import create_app
+from tool_eval_bench.web.app import _sanitize_csv_cell as _web_sanitize_csv_cell
 from tool_eval_bench.web.launcher import (
     RunConflict,
+    _resolve_launcher_scenarios,
     launch_web_run,
     probe_endpoint_models,
     resume_web_run,
@@ -1296,3 +1307,533 @@ def test_pressure_sweep_records_pack_attestations_and_forwards_metadata_when_sup
     assert captured_report_kwargs[0]["scenario_packs"][0]["name"] == "sweep-pack"
     stored = recent_runs(limit=1)[0]
     assert stored["config"]["scenario_packs"][0]["name"] == "sweep-pack"
+
+
+# ---------------------------------------------------------------------------
+# 6. Follow-Up Hardening: Display Markup, Interactive Redaction, Presets,
+#    Resumed Live Indices, and CSV Formula Injection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_display_and_final_report_escape_dynamic_markup_and_preserve_title_padding() -> None:
+    sc_bracket = replace(_TC01, title="Short [/] Title")
+    sc_plain = replace(_TC02, title="Plain Title")
+
+    res_pass = ScenarioResult(
+        scenario_id=sc_bracket.id,
+        status=ScenarioStatus.PASS,
+        points=2,
+        summary="Passed with [/] and [bad token",
+        duration_seconds=1.1,
+    )
+    res_plain = ScenarioResult(
+        scenario_id=sc_plain.id,
+        status=ScenarioStatus.PASS,
+        points=2,
+        summary="Plain summary",
+        duration_seconds=1.1,
+    )
+    res_fail = ScenarioResult(
+        scenario_id="TC-03[/]",
+        status=ScenarioStatus.FAIL,
+        points=0,
+        summary="Failed [/] [bad output",
+        tool_calls_made=["lookup([/])", "run([bad)"],
+        expected_behavior="Call safe_tool([/]) [bad",
+        duration_seconds=2.3,
+    )
+    res_infra = ScenarioResult(
+        scenario_id="TC-04",
+        status=ScenarioStatus.FAIL,
+        points=0,
+        summary="",
+        note="Request timed out [/] [bad",
+        failure_kind=FailureKind.TIMEOUT,
+        duration_seconds=120.0,
+    )
+
+    summary = ModelScoreSummary(
+        scenario_results=[res_pass, res_fail, res_infra],
+        category_scores=[
+            CategoryScore(
+                category=Category.A,
+                label="Direct [/] [bad",
+                earned=2,
+                max_points=4,
+                percent=50.0,
+                pass_count=1,
+                fail_count=1,
+            )
+        ],
+        capability_scores=[
+            CapabilityScore(
+                capability="policy",
+                label="Policy [/] [bad",
+                earned=2,
+                max_points=4,
+                percent=50.0,
+                scenario_ids=["TC-01[/]", "TC-03[bad"],
+            )
+        ],
+        final_score=50,
+        total_points=2,
+        max_points=4,
+        rating="★★★ Adequate [/]",
+        excluded_scenarios=["TC-04[/]"],
+        completion_rate=66.7,
+        worst_category="Direct [/] [bad",
+        worst_category_percent=50,
+        safety_warnings=["TC-03: leaked [/] [bad"],
+    )
+    run_ctx = RunContext(
+        tool_version="0.1.0",
+        git_sha=None,
+        hostname="host",
+        platform_info="linux",
+        python_version="3.13",
+        model="qwen[/][bad",
+        backend="vllm[/]",
+        base_url="http://***:8000/[/]",
+        timeout_seconds=120.0,
+        server_model_root="/models/[bad]/qwen[/]",
+        engine_name="vLLM[/]",
+        engine_version="0.8[bad",
+        quantization="AWQ[/][bad",
+    )
+
+    buf = StringIO()
+    console = Console(file=buf, width=160, no_color=True)
+    disp = BenchmarkDisplay(
+        model="qwen[/][bad",
+        backend="vllm[/]",
+        base_url="http://***:8000/[/]",
+        scenarios=[sc_bracket, sc_plain],
+        run_context=run_ctx,
+    )
+    disp.console = console
+
+    # Alignment check: padding before escape keeps identical status column offset.
+    line_bracket_buf = StringIO()
+    line_plain_buf = StringIO()
+    Console(file=line_bracket_buf, width=200, no_color=True).print(
+        disp._format_result_line(sc_bracket, res_pass)
+    )
+    Console(file=line_plain_buf, width=200, no_color=True).print(
+        disp._format_result_line(sc_plain, res_plain)
+    )
+    assert line_bracket_buf.getvalue().index("PASS") == line_plain_buf.getvalue().index("PASS")
+
+    disp.start()
+    await disp.on_scenario_start(sc_bracket, 0, 2)
+    footer = disp._build_footer()
+    assert "Short [/] Title" in footer.plain
+    await disp.on_scenario_result(sc_bracket, res_pass, 0, 2)
+    await disp.on_scenario_result(sc_plain, res_infra, 1, 2)
+    disp.set_finished(summary)
+
+    print_final_report(
+        console,
+        "qwen[/][bad",
+        summary,
+        3.4,
+        run_context=run_ctx,
+    )
+
+    rendered = buf.getvalue()
+    assert "qwen[/][bad" in rendered
+    assert "vLLM[/] 0.8[bad" in rendered
+    assert "AWQ[/][bad" in rendered
+    assert "/models/[bad]/qwen[/]" in rendered
+    assert "TC-03: leaked [/] [bad" in rendered
+    assert "lookup([/])" in rendered
+    assert "Call safe_tool([/]) [bad" in rendered
+
+
+def test_plugin_lifecycle_and_spec_bench_redact_urls_on_interactive_console_and_escape_paths(
+    isolated_env: dict[str, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # 1. Interactive Console in plugin_lifecycle redacts URLs and escapes benchmark_name / paths.
+    plain_buf = StringIO()
+    plain_console = Console(file=plain_buf, width=140, no_color=True)
+
+    def fail_coro() -> Any:
+        async def _inner() -> None:
+            raise httpx.ConnectError(
+                "failed connecting to http://secret-plugin.internal:8000/v1?key=sk-plugin [/] [bad"
+            )
+
+        return _inner()
+
+    with pytest.raises(SystemExit) as exc_info:
+        plugin_lifecycle.execute_plugin(plain_console, "GSM8K[/]", fail_coro, [])
+    assert exc_info.value.code == 1
+    out = plain_buf.getvalue()
+    assert "GSM8K[/] error:" in out
+    assert "secret-plugin.internal" not in out
+    assert "sk-plugin" not in out
+    assert "[/]" in out
+
+    empty_buf = StringIO()
+    empty_console = Console(file=empty_buf, width=140, no_color=True)
+    assert plugin_lifecycle.execute_plugin(empty_console, "MMLU[/][bad", AsyncMock(), []) is None
+    assert "No MMLU[/][bad results." in empty_buf.getvalue()
+
+    fake_res = MagicMock(score=87.5, rating="★★★★ Good", details={"correct": 7, "total": 8})
+    out_dir = tmp_path / "plugin[out][/]"
+    fin_buf = StringIO()
+    fin_console = Console(file=fin_buf, width=160, no_color=True)
+    plugin_lifecycle.finalize_plugin_run(
+        fin_console,
+        mode="gsm8k",
+        title="GSM8K",
+        display_name="Qwen[/]",
+        result=fake_res,
+        config={"model": "qwen", "backend": "vllm", "base_url": "http://***:8000"},
+        report_metrics=["- **Accuracy**: 87.5%"],
+        report_lines=["ok"],
+        output_dir=str(out_dir),
+        label=None,
+        run_context=None,
+    )
+    assert "plugin[out][/]" in fin_buf.getvalue()
+
+    # 2. Interactive Console in spec_bench redacts URLs on exception and escapes prompt_type / paths.
+    async def fail_spec(*_a: Any, **_kw: Any) -> list[SpecDecodeSample]:
+        raise httpx.ConnectError(
+            "spec failed at http://secret-spec.internal:8090/v1?api_key=sk-spec-secret [/] [bad"
+        )
+
+    monkeypatch.setattr("tool_eval_bench.runner.speculative.run_spec_bench", fail_spec)
+    spec_err_buf = StringIO()
+    spec_err_console = Console(file=spec_err_buf, width=160, no_color=True)
+    with pytest.raises(SystemExit) as spec_exc:
+        spec_bench.run_spec_bench(
+            spec_err_console,
+            "qwen",
+            "Qwen[/]",
+            "http://secret-spec.internal:8090",
+            None,
+            pp=128,
+            tg=64,
+            depths=[0],
+            output_dir=str(tmp_path / "spec_err"),
+        )
+    assert spec_exc.value.code == 1
+    spec_err_text = spec_err_buf.getvalue()
+    assert "secret-spec.internal" not in spec_err_text
+    assert "sk-spec-secret" not in spec_err_text
+    assert "[/]" in spec_err_text
+
+    async def ok_spec(*_a: Any, on_sample: Any = None, **_kw: Any) -> list[SpecDecodeSample]:
+        s_ok = SpecDecodeSample(
+            pp_tokens=128,
+            tg_tokens=64,
+            depth=0,
+            ttft_ms=12.0,
+            total_ms=500.0,
+            pp_tps=900.0,
+            tg_tps=120.0,
+            acceptance_rate=0.75,
+            acceptance_length=3.2,
+            draft_tokens_delta=80,
+            accepted_tokens_delta=60,
+            num_drafts_delta=20,
+            acceptance_source="response",
+            prompt_type="code[/]",
+        )
+        s_err = SpecDecodeSample(
+            depth=0,
+            prompt_type="bad[p]",
+            error="cell error from http://cell-secret.internal:8000/v1 [/]",
+        )
+        if on_sample is not None:
+            await on_sample(s_ok, 0, 2)
+            await on_sample(s_err, 1, 2)
+        return [s_ok, s_err]
+
+    monkeypatch.setattr("tool_eval_bench.runner.speculative.run_spec_bench", ok_spec)
+    spec_ok_dir = tmp_path / "spec[dir][/]"
+    spec_ok_buf = StringIO()
+    spec_ok_console = Console(file=spec_ok_buf, width=160, no_color=True)
+    samples = spec_bench.run_spec_bench(
+        spec_ok_console,
+        "qwen",
+        "Qwen[/]",
+        "http://localhost:8000",
+        None,
+        pp=128,
+        tg=64,
+        depths=[0],
+        prompt_types=["code[/]", "bad[p]"],
+        output_dir=str(spec_ok_dir),
+    )
+    assert len(samples) == 2
+    spec_ok_text = spec_ok_buf.getvalue()
+    assert "code[/]" in spec_ok_text
+    assert "spec[dir][/]" in spec_ok_text
+    assert "cell-secret.internal" not in spec_ok_text
+
+
+@pytest.mark.asyncio
+async def test_web_launcher_rejects_scenario_packs_and_unknown_presets(
+    isolated_env: dict[str, str],
+) -> None:
+    # Positive preset coverage.
+    short_default, packs, held = _resolve_launcher_scenarios({})
+    assert len(short_default) == 15 and packs is None and held == frozenset()
+    short_empty, _, _ = _resolve_launcher_scenarios({"preset": ""})
+    assert len(short_empty) == 15
+    standard, _, _ = _resolve_launcher_scenarios({"preset": "standard"})
+    assert len(standard) == 69
+    hardmode, _, _ = _resolve_launcher_scenarios({"preset": "hardmode"})
+    assert len(hardmode) == 104
+    hardmode_only, _, _ = _resolve_launcher_scenarios({"preset": "hardmode_only"})
+    assert len(hardmode_only) == 35
+    custom_one, _, _ = _resolve_launcher_scenarios({"preset": "custom", "scenarios": ["TC-01"]})
+    assert [s.id for s in custom_one] == ["TC-01"]
+
+    # Negative coverage via both direct launcher call and HTTP POST /api/runs.
+    hub = LiveRunHub()
+    app = create_app(token=TEST_TOKEN, output_dir=isolated_env["output_dir"])
+    bad_payloads: list[tuple[dict[str, Any], str]] = [
+        ({"scenario_pack": "/etc"}, "Held-out scenario packs are only supported from the CLI"),
+        ({"scenario_pack": None}, "Held-out scenario packs are only supported from the CLI"),
+        ({"pack_only": True}, "Held-out scenario packs are only supported from the CLI"),
+        ({"pack_only": False}, "Held-out scenario packs are only supported from the CLI"),
+        ({"preset": "everything"}, "Unsupported preset"),
+        ({"preset": "   "}, "Unsupported preset"),
+        ({"preset": 123}, "Unsupported preset"),
+    ]
+    async with web_client(app) as client:
+        for extra, expected_msg in bad_payloads:
+            full_payload: dict[str, Any] = {
+                "base_url": "http://localhost:8000",
+                "model": "qwen",
+                "backend": "vllm",
+                **extra,
+            }
+            with pytest.raises(ValueError, match=expected_msg):
+                await launch_web_run(hub, full_payload, output_dir=isolated_env["output_dir"])
+
+            resp = await client.post("/api/runs", headers=AUTH_HEADERS, json=full_payload)
+            assert resp.status_code == 400
+            assert expected_msg in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_live_run_hub_offsets_resumed_scenario_indices_and_keeps_zero_base_when_fresh() -> (
+    None
+):
+    hub = LiveRunHub()
+
+    # Fresh run: indices start at 0.
+    fresh = hub.register(
+        run_id="fresh-idx-run",
+        model="qwen",
+        backend="vllm",
+        total=2,
+    )
+    fresh_sub: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    fresh.subscribers.add(fresh_sub)
+    fresh_cb = hub.make_callbacks(fresh)
+    await fresh_cb["on_scenario_start"](_TC01, 0, 2)
+    await fresh_cb["on_scenario_result"](
+        _TC01, ScenarioResult("TC-01", ScenarioStatus.PASS, 2, "ok"), 0, 2
+    )
+    fresh_stream: list[tuple[str, int, int]] = []
+    while not fresh_sub.empty():
+        ev = fresh_sub.get_nowait()
+        if ev["event"] in {"scenario_start", "scenario_result"}:
+            fresh_stream.append((ev["event"], ev["index"], ev["total"]))
+    assert fresh_stream == [
+        ("scenario_start", 0, 2),
+        ("scenario_result", 0, 2),
+    ]
+
+    # Resumed run with k=2 preserved outcomes and 2 remaining scenarios (total=4):
+    # preserved replay emits 0..1, and orchestrator callbacks (idx=0..1) emit 2..3.
+    preserved = [
+        ScenarioResult("TC-01", ScenarioStatus.PASS, 2, "ok").to_dict(),
+        ScenarioResult("TC-02", ScenarioStatus.PARTIAL, 1, "half").to_dict(),
+    ]
+    resumed = hub.register(
+        run_id="resumed-idx-run",
+        model="qwen",
+        backend="vllm",
+        total=4,
+        preserved=preserved,
+    )
+    assert resumed.index_offset == 2
+    resumed_sub: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    resumed.subscribers.add(resumed_sub)
+    resumed_cb = hub.make_callbacks(resumed)
+    tc03 = ALL_SCENARIOS[2]
+    tc04 = ALL_SCENARIOS[3]
+    await resumed_cb["on_scenario_start"](tc03, 0, 2)
+    await resumed_cb["on_scenario_result"](
+        tc03, ScenarioResult(tc03.id, ScenarioStatus.PASS, 2, "ok"), 0, 2
+    )
+    await resumed_cb["on_scenario_start"](tc04, 1, 2)
+    await resumed_cb["on_scenario_result"](
+        tc04, ScenarioResult(tc04.id, ScenarioStatus.FAIL, 0, "no"), 1, 2
+    )
+
+    live_stream: list[tuple[str, str, int, int]] = []
+    while not resumed_sub.empty():
+        ev = resumed_sub.get_nowait()
+        if ev["event"] in {"scenario_start", "scenario_result"}:
+            live_stream.append((ev["event"], ev["scenario_id"], ev["index"], ev["total"]))
+    assert live_stream == [
+        ("scenario_start", tc03.id, 2, 4),
+        ("scenario_result", tc03.id, 2, 4),
+        ("scenario_start", tc04.id, 3, 4),
+        ("scenario_result", tc04.id, 3, 4),
+    ]
+
+    history_results = [
+        (ev["event"], ev["scenario_id"], ev["index"], ev["total"])
+        for ev in resumed.history
+        if ev["event"] == "scenario_result"
+    ]
+    assert history_results == [
+        ("scenario_result", "TC-01", 0, 4),
+        ("scenario_result", "TC-02", 1, 4),
+        ("scenario_result", tc03.id, 2, 4),
+        ("scenario_result", tc04.id, 3, 4),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_csv_export_neutralizes_formula_injection_in_web_and_cli_without_touching_numbers(
+    isolated_env: dict[str, str], tmp_path: Path
+) -> None:
+    # Unit-level boundary check on helper behavior for numbers, booleans, empty, and prefixes.
+    for fn in (_web_sanitize_csv_cell, leaderboard._sanitize_csv_cell):
+        assert fn("=1+1") == "'=1+1"
+        assert fn("+SUM(A1:A2)") == "'+SUM(A1:A2)"
+        assert fn("-2+3") == "'-2+3"
+        assert fn("@IMP") == "'@IMP"
+        assert fn("\ttabbed") == "'\ttabbed"
+        assert fn("\rcr") == "'\rcr"
+        assert fn("safe-model") == "safe-model"
+        assert fn("") == ""
+        assert fn(-42) == -42
+        assert fn(-0.25) == -0.25
+
+    with RunRepository(db_path=isolated_env["db_path"]) as repo:
+        repo.upsert_scenario_run(
+            {
+                "run_id": "csv-formula-run",
+                "run_type": "tool_eval",
+                "status": "completed",
+                "config": {
+                    "model": "=CMD|' /C calc'!A0",
+                    "backend": "@gateway",
+                    "base_url": "http://***:8000",
+                    "scenario_count": 1,
+                    "temperature": 0.0,
+                },
+                "metadata": {
+                    "model": "=CMD|' /C calc'!A0",
+                    "engine_name": "+vLLM",
+                    "engine_version": "-0.8.5",
+                    "quantization": "\tAWQ",
+                    "server_model_root": "\r/models/qwen",
+                    "tool_version": "0.1.0",
+                    "max_model_len": 32768,
+                    "temperature": 0.0,
+                },
+                "scores": {
+                    "final_score": 85,
+                    "rating": "★★★★ Good",
+                    "total_points": 17,
+                    "max_points": 20,
+                    "total_tokens": 1024,
+                    "scenario_results": [{"scenario_id": "TC-01", "status": "pass", "points": 2}],
+                    "category_scores": [{"category": "A", "percent": 85.0}],
+                },
+            }
+        )
+        repo.upsert_scenario_run(
+            {
+                "run_id": "csv-clean-run",
+                "run_type": "tool_eval",
+                "status": "completed",
+                "config": {
+                    "model": "qwen2.5-7b",
+                    "backend": "vllm",
+                    "base_url": "http://***:8000",
+                    "scenario_count": 1,
+                    "temperature": 0.2,
+                },
+                "metadata": {
+                    "model": "qwen2.5-7b",
+                    "engine_name": "vLLM",
+                    "engine_version": "0.8.5",
+                    "quantization": "FP8",
+                    "server_model_root": "/models/qwen2.5-7b",
+                    "temperature": 0.2,
+                },
+                "scores": {
+                    "final_score": 90,
+                    "rating": "★★★★★ Excellent",
+                    "total_points": 18,
+                    "max_points": 20,
+                    "total_tokens": 900,
+                    "scenario_results": [{"scenario_id": "TC-01", "status": "pass", "points": 2}],
+                    "category_scores": [{"category": "A", "percent": 90.0}],
+                },
+            }
+        )
+
+    # 1. Web CSV and JSON export.
+    app = create_app(token=TEST_TOKEN, output_dir=isolated_env["output_dir"])
+    async with web_client(app) as client:
+        csv_resp = await client.get("/api/export?format=csv", headers=AUTH_HEADERS)
+        assert csv_resp.status_code == 200
+        web_rows = {r["run_id"]: r for r in csv.DictReader(StringIO(csv_resp.text))}
+
+        json_resp = await client.get("/api/export?format=json", headers=AUTH_HEADERS)
+        assert json_resp.status_code == 200
+        json_rows = {r["run_id"]: r for r in json_resp.json()}
+
+    formula_row = web_rows["csv-formula-run"]
+    assert formula_row["model"].startswith("'=CMD")
+    assert formula_row["backend"] == "'@gateway"
+    assert formula_row["cohort"].startswith("'@gateway/1")
+    assert formula_row["engine_name"] == "'+vLLM"
+    assert formula_row["engine_version"] == "'-0.8.5"
+    assert formula_row["quantization"] == "'\tAWQ"
+    assert formula_row["server_model_root"] == "'\r/models/qwen"
+    assert formula_row["final_score"] == "85"
+    assert formula_row["temperature"] == "0.0"
+
+    clean_row = web_rows["csv-clean-run"]
+    assert clean_row["model"] == "qwen2.5-7b"
+    assert clean_row["engine_name"] == "vLLM"
+    assert clean_row["final_score"] == "90"
+    assert clean_row["temperature"] == "0.2"
+
+    # JSON export preserves raw strings without spreadsheet quoting.
+    assert json_rows["csv-formula-run"]["model"] == "=CMD|' /C calc'!A0"
+
+    # 2. CLI CSV export + bracketed output path escaping.
+    out_dir = tmp_path / "dir[/]"
+    out_dir.mkdir(parents=True)
+    out_csv = out_dir / "export[1].csv"
+    cli_buf = StringIO()
+    cli_console = Console(file=cli_buf, width=140, no_color=True)
+    leaderboard.export_runs(cli_console, fmt="csv", output=str(out_csv))
+    assert "dir[/]/export[1].csv" in cli_buf.getvalue()
+
+    cli_rows = {
+        r["run_id"]: r
+        for r in csv.DictReader(StringIO(out_csv.read_text(encoding="utf-8", newline="")))
+    }
+    assert cli_rows["csv-formula-run"]["model"].startswith("'=CMD")
+    assert cli_rows["csv-formula-run"]["engine_name"] == "'+vLLM"
+    assert cli_rows["csv-formula-run"]["engine_version"] == "'-0.8.5"
+    assert cli_rows["csv-formula-run"]["quantization"] == "'\tAWQ"
+    assert cli_rows["csv-clean-run"]["model"] == "qwen2.5-7b"
+    assert cli_rows["csv-clean-run"]["final_score"] == "90"

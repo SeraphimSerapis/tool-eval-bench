@@ -76,6 +76,16 @@ def _parse_limit(raw: str) -> int | None:
         return None
 
 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitize_csv_cell(value: Any) -> Any:
+    """Neutralize spreadsheet formula injection on string CSV cells."""
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return f"'{value}"
+    return value
+
+
 def _format_export_payload(rows: list[dict[str, Any]], fmt: str) -> tuple[str, str, str]:
     """Build export payload (body, content_type, filename) in CSV or JSON format."""
     all_cats: set[str] = set()
@@ -185,7 +195,7 @@ def _format_export_payload(rows: list[dict[str, Any]], fmt: str) -> tuple[str, s
         }
         for cat in cat_order:
             csv_row[f"cat_{cat}"] = row["cat_scores"].get(cat, "")
-        writer.writerow(csv_row)
+        writer.writerow({k: _sanitize_csv_cell(v) for k, v in csv_row.items()})
     return buf.getvalue(), "text/csv; charset=utf-8", "tool-eval-leaderboard.csv"
 
 

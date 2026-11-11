@@ -58,6 +58,7 @@ class LiveRunSession:
     total: int
     status: str = "running"
     held_out: frozenset[str] = field(default_factory=frozenset)
+    index_offset: int = 0
     history: list[dict[str, Any]] = field(default_factory=list)
     subscribers: set[asyncio.Queue[dict[str, Any]]] = field(default_factory=set)
     task: asyncio.Task[Any] | None = None
@@ -145,12 +146,14 @@ class LiveRunHub:
         Replaying preserved results lets a viewer of a resumed run see its true
         progress rather than only the scenarios still to run.
         """
+        preserved_list = list(preserved or ())
         session = LiveRunSession(
             run_id=run_id,
             model=model,
             backend=backend,
             total=total,
             held_out=held_out,
+            index_offset=len(preserved_list),
         )
         # Re-registering (a resume) moves the run to the newest position.
         self._sessions.pop(run_id, None)
@@ -167,7 +170,7 @@ class LiveRunHub:
                 "managed": True,
             }
         )
-        for index, result in enumerate(preserved or []):
+        for index, result in enumerate(preserved_list):
             session.publish(
                 {
                     "event": "scenario_result",
@@ -206,7 +209,7 @@ class LiveRunHub:
                     "title": HELD_OUT if is_held_out else scenario.title,
                     "category": "held_out" if is_held_out else scenario.category.value,
                     "held_out": is_held_out,
-                    "index": idx,
+                    "index": session.index_offset + idx,
                     # The session's total, not the orchestrator's: a resume
                     # executes only the remaining subset.
                     "total": session.total,
@@ -244,7 +247,7 @@ class LiveRunHub:
                     "event": "scenario_result",
                     "run_id": session.run_id,
                     "scenario_id": scenario.id,
-                    "index": idx,
+                    "index": session.index_offset + idx,
                     "total": session.total,
                     "result": sanitize_result(result.to_dict(), held),
                 }
