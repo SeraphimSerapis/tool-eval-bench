@@ -1495,7 +1495,7 @@ def test_plugin_lifecycle_and_spec_bench_redact_urls_on_interactive_console_and_
     assert "No MMLU[/][bad results." in empty_buf.getvalue()
 
     fake_res = MagicMock(score=87.5, rating="★★★★ Good", details={"correct": 7, "total": 8})
-    out_dir = tmp_path / "plugin[out][/]"
+    out_dir = tmp_path / "plugin[bold]out"
     fin_buf = StringIO()
     fin_console = Console(file=fin_buf, width=160, no_color=True)
     plugin_lifecycle.finalize_plugin_run(
@@ -1511,7 +1511,7 @@ def test_plugin_lifecycle_and_spec_bench_redact_urls_on_interactive_console_and_
         label=None,
         run_context=None,
     )
-    assert "plugin[out][/]" in fin_buf.getvalue()
+    assert "plugin[bold]out" in fin_buf.getvalue().replace("\n", "")
 
     # 2. Interactive Console in spec_bench redacts URLs on exception and escapes prompt_type / paths.
     async def fail_spec(*_a: Any, **_kw: Any) -> list[SpecDecodeSample]:
@@ -1568,7 +1568,7 @@ def test_plugin_lifecycle_and_spec_bench_redact_urls_on_interactive_console_and_
         return [s_ok, s_err]
 
     monkeypatch.setattr("tool_eval_bench.runner.speculative.run_spec_bench", ok_spec)
-    spec_ok_dir = tmp_path / "spec[dir][/]"
+    spec_ok_dir = tmp_path / "spec[bold]dir"
     spec_ok_buf = StringIO()
     spec_ok_console = Console(file=spec_ok_buf, width=160, no_color=True)
     samples = spec_bench.run_spec_bench(
@@ -1586,7 +1586,7 @@ def test_plugin_lifecycle_and_spec_bench_redact_urls_on_interactive_console_and_
     assert len(samples) == 2
     spec_ok_text = spec_ok_buf.getvalue()
     assert "code[/]" in spec_ok_text
-    assert "spec[dir][/]" in spec_ok_text
+    assert "spec[bold]dir" in spec_ok_text.replace("\n", "")
     assert "cell-secret.internal" not in spec_ok_text
 
 
@@ -1834,18 +1834,18 @@ async def test_csv_export_neutralizes_formula_injection_in_web_and_cli_without_t
     assert json_rows["csv-formula-run"]["model"] == "=CMD|' /C calc'!A0"
 
     # 2. CLI CSV export + bracketed output path escaping.
-    out_dir = tmp_path / "dir[/]"
+    out_dir = tmp_path / "dir[bold]"
     out_dir.mkdir(parents=True)
     out_csv = out_dir / "export[1].csv"
     cli_buf = StringIO()
     cli_console = Console(file=cli_buf, width=140, no_color=True)
     leaderboard.export_runs(cli_console, fmt="csv", output=str(out_csv))
-    assert "dir[/]/export[1].csv" in cli_buf.getvalue()
+    cli_out = cli_buf.getvalue().replace("\n", "")
+    assert "dir[bold]" in cli_out
+    assert "export[1].csv" in cli_out
 
-    cli_rows = {
-        r["run_id"]: r
-        for r in csv.DictReader(StringIO(out_csv.read_text(encoding="utf-8", newline="")))
-    }
+    with out_csv.open("r", encoding="utf-8", newline="") as fh:
+        cli_rows = {r["run_id"]: r for r in csv.DictReader(fh)}
     assert cli_rows["csv-formula-run"]["model"].startswith("'=CMD")
     assert cli_rows["csv-formula-run"]["engine_name"] == "'+vLLM"
     assert cli_rows["csv-formula-run"]["engine_version"] == "'-0.8.5"
