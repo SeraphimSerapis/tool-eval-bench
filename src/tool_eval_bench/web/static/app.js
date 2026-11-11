@@ -1521,6 +1521,13 @@
     } else if (cmp?.summary) {
       const s = cmp.summary;
       const mc = cmp.mcnemar || {};
+      const ps = cmp.paired_stats || {};
+      const infraExcluded = Array.isArray(ps.infra_excluded_ids) ? ps.infra_excluded_ids : [];
+      const discordantIds = Array.isArray(ps.discordant_scenario_ids) ? ps.discordant_scenario_ids : [];
+      const fmtSignedPct = (val) => {
+        const num = Number(val ?? 0);
+        return `${num > 0 ? "+" : ""}${num.toFixed(2)}`;
+      };
       if (cmp.config_mismatch) {
         body.push(
           h(
@@ -1530,7 +1537,34 @@
           )
         );
       }
+      if (infraExcluded.length > 0) {
+        body.push(
+          h(
+            "div",
+            { class: "section-spacer" },
+            banner(
+              "warn",
+              "alert",
+              h("strong", { text: "Excluded infrastructure failures: " }),
+              `${infraExcluded.length} shared ${infraExcluded.length === 1 ? "scenario" : "scenarios"} skipped from paired statistics: ${infraExcluded.join(", ")}.`
+            )
+          )
+        );
+      }
       const scoreDelta = s.score_delta;
+      const pairedVerdictMap = {
+        no_shared_scenarios: ["info", "info", "No shared non-infra scenarios"],
+        identical: ["info", "info", "Identical outcomes"],
+        significant_improvement: ["pass", "check", "Significant improvement in B"],
+        significant_regression: ["fail", "x", "Significant regression in B"],
+        inconclusive_noise: ["partial", "alert", "Inconclusive single-run noise"],
+      };
+      const pv = pairedVerdictMap[ps.verdict] || ["plain", "minus", "Paired comparison"];
+      const ciDetail =
+        ps.shared_count > 0
+          ? `${fmtSignedPct(ps.mean_pct_delta)} pts · 95% CI [${fmtSignedPct(ps.ci95_low_pct)}, ${fmtSignedPct(ps.ci95_high_pct)}] pts · 3-tier sign p = ${ps.sign_p_value ?? 1} · ${ps.shared_count} shared`
+          : "No shared gradable scenarios to compute paired confidence interval.";
+      const selectorSnippet = discordantIds.length ? `--scenarios ${discordantIds.join(" ")}` : "";
       const verdict =
         mc.discordant_pairs === 0
           ? ["info", "info", "Identical pass/fail outcomes", "No discordant pairs, so there is nothing to test."]
@@ -1548,6 +1582,43 @@
           stat("Improved", s.improved, { cls: "stat-pass", icon: "check" }),
           stat("Regressed", s.regressed, { cls: "stat-fail", icon: "x" }),
           stat("Unchanged", s.unchanged, { icon: "minus" })
+        ),
+        h(
+          "div",
+          { class: "card card-pad section-spacer" },
+          h("div", { class: "eyebrow", text: "Paired 3-tier signal vs noise" }),
+          h(
+            "div",
+            { class: "verdict" },
+            h("span", { class: `chip chip-${pv[0]}` }, icon(pv[1]), pv[2]),
+            h("span", { class: "muted mono", text: ciDetail })
+          ),
+          selectorSnippet
+            ? h(
+                "div",
+                { class: "toolbar section-spacer" },
+                h("span", { class: "muted", text: `Re-test ${discordantIds.length} discordant ${discordantIds.length === 1 ? "scenario" : "scenarios"}:` }),
+                h("code", { id: "cmp-discordant-selector", class: "mono", text: selectorSnippet }),
+                h(
+                  "button",
+                  {
+                    type: "button",
+                    class: "btn btn-ghost",
+                    onclick: (ev) => {
+                      const btn = ev.currentTarget;
+                      navigator.clipboard?.writeText(selectorSnippet).then(() => {
+                        if (!(btn instanceof HTMLElement)) return;
+                        btn.textContent = "Copied";
+                        setTimeout(() => {
+                          btn.textContent = "Copy --scenarios";
+                        }, 1500);
+                      });
+                    },
+                    text: "Copy --scenarios",
+                  }
+                )
+              )
+            : null
         ),
         h(
           "div",

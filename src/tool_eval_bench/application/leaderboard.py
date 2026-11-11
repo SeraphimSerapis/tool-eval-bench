@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from tool_eval_bench.application.run_config import CONFIG_FINGERPRINT_KEY, cohort_config
+from tool_eval_bench.domain.scenarios import INFRASTRUCTURE_FAILURE_KINDS
 from tool_eval_bench.utils.ids import build_config_fingerprint
 
 
@@ -281,27 +282,29 @@ def compute_mcnemar_stats(
 ) -> dict[str, Any]:
     """Compute McNemar's test for statistical significance between two runs.
 
-    Uses a 2×2 contingency table of pass/not-pass outcomes for scenarios
-    present in both runs.  The chi-squared statistic (with continuity
-    correction) is computed without scipy — only stdlib math is needed.
+    Uses a 2x2 contingency table of pass/not-pass outcomes for scenarios
+    present in both runs, excluding pairs where either run recorded an
+    infrastructure failure. Computed with stdlib math only.
 
     Interpretation:
-        p < 0.05  → statistically significant difference
-        p >= 0.05 → no significant difference (could be noise)
+        p < 0.05  -> statistically significant difference
+        p >= 0.05 -> no significant difference
 
     Values are returned unrounded; callers format them for display.
     """
-    # Build contingency table
-    # b = A pass, B fail (B regressed)
-    # c = A fail, B pass (B improved)
     b = 0  # A pass & B not-pass
     c = 0  # A not-pass & B pass
 
-    for sc_id in all_ids:
+    for sc_id in dict.fromkeys(all_ids):
         ra = map_a.get(sc_id)
         rb = map_b.get(sc_id)
         if not ra or not rb:
             continue  # skip scenarios not in both runs
+        if (
+            ra.get("failure_kind") in INFRASTRUCTURE_FAILURE_KINDS
+            or rb.get("failure_kind") in INFRASTRUCTURE_FAILURE_KINDS
+        ):
+            continue
 
         a_pass = ra.get("status") == "pass"
         b_pass = rb.get("status") == "pass"

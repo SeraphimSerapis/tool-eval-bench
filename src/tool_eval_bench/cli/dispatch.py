@@ -1314,6 +1314,11 @@ def main() -> None:
 def _run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser, console: Console) -> None:
     _prepare_args(args, parser, console)
 
+    if getattr(args, "scenarios_from_diff", None):
+        from tool_eval_bench.cli.retest_diffs import apply_scenarios_from_diff
+
+        apply_scenarios_from_diff(args, parser, console)
+
     if _handle_local_command(
         args,
         console,
@@ -1437,6 +1442,18 @@ def _prepare_args(
         parser.error("Decision judge audits require a run or resume of tool-call scenarios")
     if args.resume and (not _sends_system_prompt(args) or args.context_pressure_sweep is not None):
         parser.error("--resume requires a run of tool-call scenarios")
+    if getattr(args, "retest_diffs", False) and not getattr(args, "compare", None):
+        parser.error("--retest-diffs requires compare <left> <right> or --compare RUN_A RUN_B")
+    for retest_flag, retest_attr in (
+        ("--base-url-a", "base_url_a"),
+        ("--base-url-b", "base_url_b"),
+        ("--api-key-a", "api_key_a"),
+        ("--api-key-b", "api_key_b"),
+    ):
+        if getattr(args, retest_attr, None) is not None and not getattr(
+            args, "retest_diffs", False
+        ):
+            parser.error(f"{retest_flag} requires --retest-diffs")
     # The service applies the same rule, but only after preflight, warm-up, and
     # any perf sweep. The original string is kept: it is stored and fingerprinted.
     if args.reference_date:

@@ -175,7 +175,7 @@ COMMAND_SPECS = (
         + PRESSURE
         + DECISION_JUDGE
         + SAFETY_GATE
-        + ("dry_run", "resume", "diff", "weight_by_difficulty"),
+        + ("dry_run", "resume", "diff", "scenarios_from_diff", "weight_by_difficulty"),
     ),
     CommandSpec(
         "probe",
@@ -228,7 +228,7 @@ COMMAND_SPECS = (
         "Compare stored runs or Markdown reports",
         translation="compare",
         legacy_flags=("compare",),
-        modes=("runs", "report"),
+        modes=("runs", "report", "retest"),
     ),
     CommandSpec(
         "compare-report",

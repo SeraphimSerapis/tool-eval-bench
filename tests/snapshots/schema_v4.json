@@ -160,6 +160,12 @@
       "type": "list[string]"
     },
     {
+      "default": null,
+      "description": "Run only the discordant scenarios between two stored runs",
+      "name": "scenarios_from_diff",
+      "type": "list[string]"
+    },
+    {
       "choices": [
         "A",
         "B",
@@ -746,6 +752,36 @@
     },
     {
       "default": false,
+      "description": "With --compare, re-run discordant scenarios across multiple trials",
+      "name": "retest_diffs",
+      "type": "bool"
+    },
+    {
+      "default": null,
+      "description": "Baseline Run A server URL for --retest-diffs",
+      "name": "base_url_a",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Candidate Run B server URL for --retest-diffs",
+      "name": "base_url_b",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Baseline Run A API key for --retest-diffs",
+      "name": "api_key_a",
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Candidate Run B API key for --retest-diffs",
+      "name": "api_key_b",
+      "type": "string"
+    },
+    {
+      "default": false,
       "description": "List recent benchmark runs and exit",
       "name": "history",
       "type": "bool"
@@ -903,7 +939,8 @@
       ],
       "modes": [
         "runs",
-        "report"
+        "report",
+        "retest"
       ]
     },
     "compare-report": {
@@ -988,5 +1025,5 @@
       ]
     }
   },
-  "schema_version": "10"
+  "schema_version": "11"
 }

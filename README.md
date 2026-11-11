@@ -193,7 +193,9 @@ To read past runs back:
 ```bash
 tool-eval-bench history          # recent runs
 tool-eval-bench leaderboard      # ranked, grouped by comparable configuration
-tool-eval-bench compare A B      # two persisted runs, side by side
+tool-eval-bench compare A B      # paired 95% CI, 3-tier sign test, and McNemar's test
+tool-eval-bench compare A B --retest-diffs --trials 5   # re-test discordant scenarios on both endpoints
+tool-eval-bench run --scenarios-from-diff A B --trials 5 # re-test discordant scenarios on one active server
 tool-eval-bench serve            # all of the above in a browser (needs the web extra)
 ```
 

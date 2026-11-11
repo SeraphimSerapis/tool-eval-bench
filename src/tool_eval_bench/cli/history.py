@@ -5,11 +5,16 @@ Extracted from bench.py (CODE-02) to keep each module focused.
 
 from __future__ import annotations
 
+import shlex
 import sys
 
 from rich.console import Console
 from rich.markup import escape
 
+from tool_eval_bench.application.comparison import (
+    compute_paired_comparison,
+    is_infrastructure_failure_dict,
+)
 from tool_eval_bench.storage.reports import safe_label_text
 
 
@@ -453,19 +458,23 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
         dur_a = float(ra.get("duration_seconds") or 0.0)
         dur_b = float(rb.get("duration_seconds") or 0.0)
 
-        delta = pts_b - pts_a
-        if delta > 0:
-            improved += 1
-            delta_str = f"[bold green]+{delta}[/]"
-            note = "[green]improved[/]"
-        elif delta < 0:
-            regressed += 1
-            delta_str = f"[bold red]{delta}[/]"
-            note = "[red]regressed[/]"
+        if is_infrastructure_failure_dict(ra) or is_infrastructure_failure_dict(rb):
+            delta_str = "[yellow]skip[/]"
+            note = "[yellow]infrastructure failure excluded[/]"
         else:
-            unchanged += 1
-            delta_str = "[dim]=[/]"
-            note = ""
+            delta = pts_b - pts_a
+            if delta > 0:
+                improved += 1
+                delta_str = f"[bold green]+{delta}[/]"
+                note = "[green]improved[/]"
+            elif delta < 0:
+                regressed += 1
+                delta_str = f"[bold red]{delta}[/]"
+                note = "[red]regressed[/]"
+            else:
+                unchanged += 1
+                delta_str = "[dim]=[/]"
+                note = ""
 
         dur_delta = dur_b - dur_a
         dur_sign = "+" if dur_delta >= 0 else ""
@@ -506,11 +515,96 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
 
     console.print(Panel(summary, border_style="bright_cyan", padding=(0, 2)))
 
-    # McNemar's significance test — paired comparison of pass/fail outcomes
-    # Only considers scenarios present in both runs.
+    _print_paired_stats(console, id_a, id_b, map_a, map_b, all_ids)
     _print_mcnemar(console, map_a, map_b, all_ids)
 
     console.print()
+
+
+def _format_signed_pct(value: float) -> str:
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.2f}"
+
+
+def _print_paired_stats(
+    console: Console,
+    id_a: str,
+    id_b: str,
+    map_a: dict[str, dict],
+    map_b: dict[str, dict],
+    all_ids: list[str],
+) -> None:
+    """Display 3-tier paired statistical analysis and targeted re-test hints."""
+    paired = compute_paired_comparison(map_a, map_b, all_ids)
+    shared_count = paired["shared_count"]
+    infra_ids = paired["infra_excluded_ids"]
+    discordant_ids = paired["discordant_scenario_ids"]
+    improved_ids = paired["improved_ids"]
+    regressed_ids = paired["regressed_ids"]
+    mean_delta = paired["mean_pct_delta"]
+    ci_low = paired["ci95_low_pct"]
+    ci_high = paired["ci95_high_pct"]
+    sign_p = paired["sign_p_value"]
+    verdict = paired["verdict"]
+
+    lines: list[str] = []
+    if shared_count > 0:
+        lines.append(
+            f"  [bold]Paired quality delta:[/] {_format_signed_pct(mean_delta)} pts, "
+            f"95% CI [{_format_signed_pct(ci_low)}, {_format_signed_pct(ci_high)}] pts "
+            f"across {shared_count} shared scenarios"
+        )
+        sign_style = "bold green" if sign_p < 0.05 else "dim"
+        lines.append(
+            f"  [bold]3-tier exact sign test:[/] [{sign_style}]p={sign_p:.4f}[/]  "
+            f"[dim]{len(improved_ids)} improved, {len(regressed_ids)} regressed[/]"
+        )
+
+    if infra_ids:
+        escaped_infra = ", ".join(escape(sid) for sid in infra_ids)
+        pair_word = "pair" if len(infra_ids) == 1 else "pairs"
+        lines.append(
+            f"  [yellow]Excluded infrastructure failures:[/] "
+            f"{len(infra_ids)} {pair_word} skipped: {escaped_infra}"
+        )
+
+    if discordant_ids:
+        escaped_disc = ", ".join(escape(sid) for sid in discordant_ids)
+        lines.append(
+            f"  [bold]Discordant scenario IDs:[/] {len(discordant_ids)} total: {escaped_disc}"
+        )
+
+    if verdict == "no_shared_scenarios":
+        lines.append(
+            "  [yellow]Signal vs noise verdict:[/] No shared non-infrastructure scenarios to compare."
+        )
+    elif verdict == "identical":
+        lines.append(
+            "  [dim]Signal vs noise verdict:[/] Identical outcomes across all shared scenarios."
+        )
+    elif verdict == "significant_improvement":
+        lines.append(
+            "  [bold green]Signal vs noise verdict:[/] Statistically significant improvement "
+            "in B over A; signal exceeds single-run variance."
+        )
+    elif verdict == "significant_regression":
+        lines.append(
+            "  [bold red]Signal vs noise verdict:[/] Statistically significant regression "
+            "in B relative to A; signal exceeds single-run variance."
+        )
+    else:
+        qa = escape(shlex.quote(id_a))
+        qb = escape(shlex.quote(id_b))
+        lines.append(
+            "  [bold yellow]Signal vs noise verdict:[/] Inconclusive difference; "
+            "observed delta is within single-run variance."
+        )
+        lines.append("  [dim]Re-test discordant scenarios across multiple trials:[/]")
+        lines.append(f"    [cyan]tool-eval-bench compare {qa} {qb} --retest-diffs --trials 5[/]")
+        lines.append(f"    [cyan]tool-eval-bench run --scenarios-from-diff {qa} {qb} --trials 5[/]")
+
+    console.print()
+    console.print("\n".join(lines))
 
 
 def _print_mcnemar(

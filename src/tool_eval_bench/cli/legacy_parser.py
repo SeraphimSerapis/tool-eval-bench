@@ -198,6 +198,13 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Specific scenario IDs to run (e.g. TC-01 TC-07). Default: all.",
     )
     select.add_argument(
+        "--scenarios-from-diff",
+        nargs=2,
+        metavar=("RUN_A", "RUN_B"),
+        default=None,
+        help="Run only the discordant scenarios between two stored runs",
+    )
+    select.add_argument(
         "--categories",
         nargs="*",
         default=None,
@@ -771,6 +778,35 @@ def _make_parser() -> argparse.ArgumentParser:
         metavar=("RUN_A", "RUN_B"),
         default=None,
         help="Compare two stored runs by ID",
+    )
+    hist_grp.add_argument(
+        "--retest-diffs",
+        action="store_true",
+        help="With --compare, re-run discordant scenarios across multiple trials",
+    )
+    hist_grp.add_argument(
+        "--base-url-a",
+        default=None,
+        metavar="URL",
+        help="Baseline Run A server URL for --retest-diffs",
+    )
+    hist_grp.add_argument(
+        "--base-url-b",
+        default=None,
+        metavar="URL",
+        help="Candidate Run B server URL for --retest-diffs",
+    )
+    hist_grp.add_argument(
+        "--api-key-a",
+        default=None,
+        metavar="KEY",
+        help="Baseline Run A API key for --retest-diffs",
+    )
+    hist_grp.add_argument(
+        "--api-key-b",
+        default=None,
+        metavar="KEY",
+        help="Candidate Run B API key for --retest-diffs",
     )
     hist_grp.add_argument(
         "--history", action="store_true", help="List recent benchmark runs and exit"
