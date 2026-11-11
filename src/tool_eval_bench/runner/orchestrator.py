@@ -592,31 +592,33 @@ async def run_scenario(
             turn_latencies.append(turn_ms)
 
             # A rejected request produced no model output, so there is nothing
-            # to grade. Whether that is the model's fault depends on what the
-            # request contained: once the model has authored a tool call, the
-            # history carries arguments a strict server may refuse, and the
-            # existing soft-result behaviour records that as a model failure
-            # unless the adapter identifies a backend-internal rejection.
-            # Before then the request is entirely ours, so a 4xx means the
-            # endpoint would not accept a parameter this benchmark sent
-            # (tool_choice and response_format are the usual ones) and the
-            # scenario measures the serving stack rather than the model.
-            # A body that is not JSON is the serving stack's fault at any
-            # turn: the server serialises the response, not the model.
-            if result.malformed or (
-                result.transport_error_status is not None
-                and (not state.tool_calls or result.transport_error_is_infrastructure)
-            ):
+            # to grade and follow-ups must not continue with an error string as
+            # assistant prose. Whether that failure belongs to the model or the
+            # serving stack depends on what the request contained: once the
+            # model has authored a tool call, the history carries arguments a
+            # strict server may refuse, so a non-infrastructure rejection is
+            # recorded as MODEL_CRASH rather than SERVER_ERROR. Before then the
+            # request is entirely ours, so a 4xx means the endpoint rejected a
+            # parameter this benchmark sent (tool_choice and response_format are
+            # the usual ones) and the scenario measures the serving stack. A
+            # body that is not JSON is the serving stack's fault at any turn.
+            if result.malformed or result.transport_error_status is not None:
                 elapsed = time.perf_counter() - t0
+                is_infrastructure = (
+                    result.malformed
+                    or not state.tool_calls
+                    or result.transport_error_is_infrastructure
+                )
                 if result.malformed:
                     summary = "Endpoint returned a response body that is not valid JSON."
                     trace_lines.append("transport_error=malformed_response")
                 else:
-                    rejection_stage = (
-                        "because the serving stack failed before inference"
-                        if result.transport_error_is_infrastructure
-                        else "before the model produced anything"
-                    )
+                    if result.transport_error_is_infrastructure:
+                        rejection_stage = "because the serving stack failed before inference"
+                    elif not state.tool_calls:
+                        rejection_stage = "before the model produced anything"
+                    else:
+                        rejection_stage = "after model-authored tool-call history"
                     summary = (
                         f"Endpoint rejected the request with HTTP "
                         f"{result.transport_error_status} {rejection_stage}: "
@@ -642,7 +644,9 @@ async def run_scenario(
                     tool_call_arg_bytes=total_arg_bytes,
                     parallel_tool_turns=parallel_tool_turns,
                     state_checkpoints=state_checkpoints,
-                    failure_kind=FailureKind.SERVER_ERROR,
+                    failure_kind=(
+                        FailureKind.SERVER_ERROR if is_infrastructure else FailureKind.MODEL_CRASH
+                    ),
                 )
 
             # Capture TTFT from the first streamed turn
@@ -696,6 +700,7 @@ async def run_scenario(
 
             # No tool calls → model finished this conversational phase
             if not result.tool_calls:
+                recent_turn_signatures.clear()
                 if not visible_answer and empty_stop is None:
                     empty_stop = (
                         f"Turn {turn} ended with no visible answer and no tool call "

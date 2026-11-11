@@ -171,6 +171,7 @@ async def test_orchestrator_normalizes_non_object_tool_args_for_history_only() -
     turn_two_assistant = next(
         msg for msg in adapter.recorded_messages[1] if msg["role"] == "assistant"
     )
+    assert turn_two_assistant["tool_calls"] is not None
     assert turn_two_assistant["tool_calls"][0]["function"]["arguments"] == "{}"
 
 
@@ -355,6 +356,147 @@ async def test_run_all_scenarios_parallel_propagates_cancelled_error() -> None:
             scenarios=scenarios,
             concurrency=2,
         )
+
+
+@pytest.mark.asyncio
+async def test_post_tool_call_transport_error_stops_before_follow_ups_and_evaluator() -> None:
+    seen_evaluations: list[str] = []
+
+    def evaluate(state: ScenarioState) -> ScenarioEvaluation:
+        seen_evaluations.append(state.final_answer)
+        return ScenarioEvaluation(ScenarioStatus.PASS, 2, "graded transport error")
+
+    scenario = _make_scenario("FIX-POST-TOOL-400", evaluate=evaluate)
+    scenario.follow_up_messages = ["Now summarize the weather."]
+
+    adapter = _ScriptedAdapter(
+        [
+            ChatCompletionResult(
+                content="",
+                tool_calls=[
+                    ProviderToolCall(
+                        id="c1",
+                        name="get_weather",
+                        arguments_str='{"city": "Paris"}',
+                    )
+                ],
+                prompt_tokens=80,
+                completion_tokens=20,
+                ttft_ms=12.5,
+                finish_reason="tool_calls",
+            ),
+            ChatCompletionResult(
+                content="[server error 400] bad args",
+                transport_error_status=400,
+            ),
+            ChatCompletionResult(content="Should never be requested", finish_reason="stop"),
+        ]
+    )
+
+    result = await run_scenario(
+        adapter,
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=scenario,
+        max_turns=6,
+    )
+
+    assert seen_evaluations == []
+    assert len(adapter.recorded_messages) == 2
+    assert result.status == ScenarioStatus.FAIL
+    assert result.points == 0
+    assert result.failure_kind == FailureKind.MODEL_CRASH
+    assert not result.is_infrastructure_failure
+    assert "after model-authored tool-call history" in result.summary
+    assert "400" in result.summary
+    assert result.turn_count == 2
+    assert result.prompt_tokens == 80
+    assert result.completion_tokens == 20
+    assert result.ttft_ms == 12.5
+    assert result.tool_calls_made == ["get_weather(city=Paris)"]
+
+
+@pytest.mark.asyncio
+async def test_loop_guard_resets_across_non_tool_turns_and_follow_up_phases() -> None:
+    def same_call() -> ChatCompletionResult:
+        return ChatCompletionResult(
+            content="",
+            tool_calls=[
+                ProviderToolCall(id="c1", name="get_weather", arguments_str='{"city": "Paris"}')
+            ],
+            finish_reason="tool_calls",
+        )
+
+    scenario_ok = _make_scenario(
+        "FIX-LOOP-PHASE-OK",
+        handle_tool_call=lambda state, call: {"temp_c": 21},
+        evaluate=lambda state: ScenarioEvaluation(
+            ScenarioStatus.FAIL,
+            0,
+            "wrong summary",
+            failure_kind=FailureKind.WRONG_ARGS,
+        ),
+    )
+    scenario_ok.follow_up_messages = ["Check Paris once more."]
+
+    # Two identical tool turns in phase 0 + text reply + two identical tool turns in phase 1
+    # never reach 3 consecutive tool turns, so REPEATED_CALL_LOOP must not fire.
+    adapter_ok = _ScriptedAdapter(
+        [
+            same_call(),
+            same_call(),
+            ChatCompletionResult(content="21C right now.", finish_reason="stop"),
+            same_call(),
+            same_call(),
+            ChatCompletionResult(content="Still 21C.", finish_reason="stop"),
+        ]
+    )
+    res_ok = await run_scenario(
+        adapter_ok,
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=scenario_ok,
+        max_turns=8,
+    )
+    assert res_ok.turn_count == 6
+    assert res_ok.failure_kind == FailureKind.WRONG_ARGS
+    assert "loop_guard=" not in res_ok.raw_log
+
+    # Boundary check: 3 consecutive identical tool turns inside phase 1 still trip the guard.
+    scenario_loop = _make_scenario(
+        "FIX-LOOP-PHASE-TRIP",
+        handle_tool_call=lambda state, call: {"temp_c": 21},
+        evaluate=lambda state: ScenarioEvaluation(
+            ScenarioStatus.FAIL,
+            0,
+            "never finished",
+            failure_kind=FailureKind.WRONG_ARGS,
+        ),
+    )
+    scenario_loop.follow_up_messages = ["Try again."]
+    adapter_loop = _ScriptedAdapter(
+        [
+            same_call(),
+            ChatCompletionResult(content="21C.", finish_reason="stop"),
+            same_call(),
+            same_call(),
+            same_call(),
+            ChatCompletionResult(content="Unreachable", finish_reason="stop"),
+        ]
+    )
+    res_loop = await run_scenario(
+        adapter_loop,
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=scenario_loop,
+        max_turns=8,
+    )
+    assert res_loop.turn_count == 5
+    assert res_loop.failure_kind == FailureKind.REPEATED_CALL_LOOP
+    assert "loop_guard=" in res_loop.raw_log
 
 
 # 2. OpenAI-compatible adapter fixes
