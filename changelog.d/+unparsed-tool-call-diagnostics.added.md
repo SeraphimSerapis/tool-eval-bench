@@ -4,7 +4,6 @@ parser enabled, models emit native tool markup such as `<tool_call>`, `<function
 `content` while `tool_calls` stays empty. Failing scenarios now record
 `failure_kind="unparsed_tool_call"` and an `unparsed_tool_call=` trace line instead of a generic
 `missing_step`, while keeping full denominator points so a broken parser cannot inflate scores.
-Live output prints a one-time warning on the first affected scenario, and final panels, Markdown
-reports, and tool probes name the server flags that fix it, such as
+Live output prints a one-time warning on the first affected scenario, `tool-eval-bench probe --check-tools` verifies structured `tool_calls` parsing before a run and exits 1 when raw markup leaks into `content`, and final panels, Markdown reports, and tool probes name the server flags that fix it, such as
 `--enable-auto-tool-choice --tool-call-parser <parser>` on vLLM, `--tool-call-parser <parser>` on
 SGLang, and `--jinja` on llama.cpp.

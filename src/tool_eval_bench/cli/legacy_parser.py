@@ -123,6 +123,12 @@ def _make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Check if a server is reachable and exit (exit 0 = ready, exit 1 = not found)",
     )
+    conn.add_argument(
+        "--check-tools",
+        dest="check_tools",
+        action="store_true",
+        help="With --probe, send one tool-call request to verify structured tool_calls parsing",
+    )
 
     judge = parser.add_argument_group("decision judge audit")
     judge.add_argument(

@@ -120,6 +120,9 @@ from tool_eval_bench.cli.plugin_runners import (
 from tool_eval_bench.cli.pressure import (
     run_pressure_sweep as _run_pressure_sweep,
 )
+from tool_eval_bench.cli.probe import (
+    check_tool_call_wire_parsing as _check_tool_call_wire_parsing,
+)
 from tool_eval_bench.cli.probe import preflight_model_check as _preflight_model_check
 from tool_eval_bench.cli.probe import warmup_server as _do_warmup
 from tool_eval_bench.cli.provider_env import resolve_provider as _resolve_provider
@@ -1352,7 +1355,7 @@ def _run_session(
     """Run the benchmark modes of one invocation; ``_run_cli`` sets up its session."""
     endpoint = _resolve_endpoint(args, parser, console)
     if args.probe:
-        _run_probe_mode(args, console, endpoint)
+        _run_probe_mode(args, console, endpoint, parser=parser)
         return
 
     target = _resolve_target(args, parser, console, endpoint)
@@ -1442,6 +1445,8 @@ def _prepare_args(
         parser.error("Decision judge audits require a run or resume of tool-call scenarios")
     if args.resume and (not _sends_system_prompt(args) or args.context_pressure_sweep is not None):
         parser.error("--resume requires a run of tool-call scenarios")
+    if getattr(args, "check_tools", False) and not args.probe:
+        parser.error("--check-tools requires probe or --probe")
     if getattr(args, "retest_diffs", False) and not getattr(args, "compare", None):
         parser.error("--retest-diffs requires compare <left> <right> or --compare RUN_A RUN_B")
     for retest_flag, retest_attr in (
@@ -1677,17 +1682,78 @@ def _resolve_endpoint(
     )
 
 
-def _run_probe_mode(args: argparse.Namespace, console: Console, endpoint: _Endpoint) -> None:
-    """``--probe``: check whether the server is reachable."""
-    _probe_server(
+def _run_probe_mode(
+    args: argparse.Namespace,
+    console: Console,
+    endpoint: _Endpoint,
+    *,
+    parser: argparse.ArgumentParser | None = None,
+) -> None:
+    """``--probe``: check whether the server is reachable and optionally verify tool parsing."""
+    display_url = _redact_url(endpoint.base_url) if args.redact_url else endpoint.base_url
+    if not getattr(args, "check_tools", False):
+        _probe_server(
+            console,
+            endpoint.base_url,
+            endpoint.api_key,
+            display_url=display_url,
+            headless=args.json,
+            wire_format=endpoint.wire_format,
+            headers=endpoint.probe_headers,
+        )
+        return
+
+    prior_asyncio = _model_probe.asyncio
+    _model_probe.asyncio = asyncio
+    try:
+        model_ids = _model_probe.probe_server_models(
+            console,
+            endpoint.base_url,
+            endpoint.api_key,
+            display_url=display_url,
+            headless=args.json,
+            wire_format=endpoint.wire_format,
+            headers=endpoint.probe_headers,
+        )
+    finally:
+        _model_probe.asyncio = prior_asyncio
+
+    resolved_model = args.model or endpoint.model or (model_ids[0] if model_ids else None)
+    if not resolved_model:
+        if args.json:
+            event = {
+                "event": "tool_call_probe",
+                "status": "failed",
+                "parsed": False,
+                "arguments_intact": False,
+                "detail": "No model could be resolved from --model or /v1/models.",
+            }
+            sys.stderr.write(json.dumps(event) + "\n")
+            sys.stderr.flush()
+        else:
+            console.print(
+                "  [bold red]✗[/] [red]Cannot verify tool-call wire parsing: "
+                "pass --model or ensure /v1/models lists at least one model.[/]"
+            )
+        sys.exit(1)
+
+    active_parser = parser if parser is not None else _make_parser()
+    extra_params = _build_extra_params(args, active_parser)
+    _check_tool_call_wire_parsing(
         console,
         endpoint.base_url,
+        resolved_model,
         endpoint.api_key,
-        display_url=_redact_url(endpoint.base_url) if args.redact_url else endpoint.base_url,
-        headless=args.json,
+        backend=endpoint.backend,
+        headless=bool(args.json),
+        timeout_seconds=args.timeout,
+        extra_params=extra_params or None,
         wire_format=endpoint.wire_format,
         headers=endpoint.probe_headers,
+        display_url=display_url,
+        exit_on_failure=True,
     )
+    sys.exit(0)
 
 
 def _resolve_target(

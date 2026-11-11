@@ -113,6 +113,28 @@ done
 tool-eval-bench --json --short
 ```
 
+Add `--check-tools` to send one minimal tool-calling request after the model
+listing check and verify that structured `tool_calls` arrive with intact
+arguments:
+
+```bash
+tool-eval-bench probe --check-tools --base-url http://localhost:8000
+```
+
+Without `--check-tools`, `probe` queries only the model listing and makes zero
+chat-completion requests. With `--check-tools`, it resolves `--model` or the
+first model ID returned by `/v1/models`, sends one tool-call probe, prints
+server parser flag advice when raw tool markup such as `<tool_call>` or
+`[TOOL_CALLS]` leaks into `content`, and exits 1 unless both reachability and
+structured tool-call parsing succeed. Under `--json`, stderr receives a
+`tool_call_probe` event after `probe_result`.
+
+During a scored `run`, turns that emit raw tool markup or JSON call objects in
+`content` while `tool_calls` stays empty record
+`failure_kind="unparsed_tool_call"`. Unlike transport errors, these stay in the
+score denominator so omitting `--tool-call-parser` or `--jinja` cannot inflate a
+score by shrinking the graded set.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -174,6 +196,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--include-held-out` | Keep held-out pack titles, summaries, and traces in `--json`, `--json-file`, and stderr events. They are withheld by default, as in reports |
 | `--short` | Run core 15 scenarios (~2 min) instead of full 69 |
 | `--probe` | Check server readiness and exit |
+| `--check-tools` | With `probe` or `--probe`, send one tool-call request and exit 1 unless structured `tool_calls` parse cleanly |
 | `--dry-run` | List scenarios that would run (no server needed). Reports 0 when the invocation runs no tool-call scenarios, such as `--perf-only` |
 | `--base-url URL` | Server endpoint |
 | `--redact-url` | Mask the server URL in console output, including `--probe`, pre-flight errors, the auto-discovered localhost URL, and the `spec-live` metrics endpoint, for screenshots and recordings. Reports, stored runs, and `--json` error output are always redacted |
@@ -610,6 +633,7 @@ Each line on stderr is a JSON object:
 {"event": "backend_detected", "backend": "vllm"}
 {"event": "model_auto_selected", "model": "Qwen/Qwen3-8B", ...}
 {"event": "probe_result", ...}                      // --probe only
+{"event": "tool_call_probe", "status": "ok", ...}   // --probe --check-tools only
 {"event": "scenario_start", "scenario_id": "TC-01", "index": 0, "total": 15}
 {"event": "scenario_result", "scenario_id": "TC-01", "status": "pass", "points": 2, ...}
 {"event": "decision_audit_start", ...}              // with a decision judge

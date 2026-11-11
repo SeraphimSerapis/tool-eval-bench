@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from io import StringIO
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from rich.console import Console
 
@@ -1084,3 +1087,310 @@ def test_markdown_report_renders_unparsed_warning_and_preserves_safety_parser(
     parsed_2 = parse_md(str(report_path_2))
     assert parsed_2["safety_critical_count"] == 1
     assert parsed_2["safety_critical"][0]["id"] == "TC-34"
+
+
+# ---------------------------------------------------------------------------
+# End-to-end CLI tests for probe --check-tools and --probe --check-tools
+# ---------------------------------------------------------------------------
+
+
+def _install_mock_http(
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> None:
+    real_client = httpx.AsyncClient
+
+    def _client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _client)
+
+
+def _run_cli_argv(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+) -> tuple[int, str, str]:
+    from tool_eval_bench.cli import dispatch
+
+    for key in list(os.environ):
+        if key.startswith("TOOL_EVAL_"):
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["tool-eval-bench", *argv])
+    try:
+        dispatch.main()
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+    else:
+        code = 0
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
+
+
+def test_cli_bare_probe_makes_zero_chat_completion_requests(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen_paths: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append((request.method, request.url.path))
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "qwen3-32b"}]})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    _install_mock_http(monkeypatch, handler)
+    code, out, err = _run_cli_argv(
+        monkeypatch,
+        capsys,
+        ["probe", "--base-url", "http://gpu.test:8000"],
+    )
+    assert code == 0
+    assert err == ""
+    assert "is ready" in out
+    assert seen_paths == [("GET", "/v1/models")]
+
+
+def test_cli_probe_check_tools_structured_tool_calls_exits_0(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen_requests: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/models":
+            seen_requests.append((request.method, request.url.path, None))
+            return httpx.Response(200, json={"data": [{"id": "qwen3-32b"}]})
+        if request.url.path == "/v1/chat/completions":
+            body = json.loads(request.content.decode("utf-8"))
+            seen_requests.append((request.method, request.url.path, body))
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "tool_calls",
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "probe_ping",
+                                            "arguments": '{"value": "ok"}',
+                                        },
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 8},
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    _install_mock_http(monkeypatch, handler)
+    code, out, err = _run_cli_argv(
+        monkeypatch,
+        capsys,
+        ["probe", "--check-tools", "--base-url", "http://gpu.test:8000"],
+    )
+    assert code == 0
+    assert err == ""
+    assert "is ready" in out
+    assert "Tool-call wire parsing verified" in out
+    assert [r[:2] for r in seen_requests] == [
+        ("GET", "/v1/models"),
+        ("POST", "/v1/chat/completions"),
+    ]
+    assert seen_requests[1][2] is not None
+    assert seen_requests[1][2]["model"] == "qwen3-32b"
+
+
+def test_cli_probe_check_tools_raw_markup_exits_1_with_parser_advice(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "qwen3-32b"}]})
+        if request.url.path == "/v1/chat/completions":
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    "<tool_call>\n"
+                                    '{"name": "probe_ping", "arguments": {"value": "ok"}}\n'
+                                    "</tool_call>"
+                                ),
+                            },
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 20},
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    _install_mock_http(monkeypatch, handler)
+    code, out, err = _run_cli_argv(
+        monkeypatch,
+        capsys,
+        [
+            "--probe",
+            "--check-tools",
+            "--backend",
+            "vllm",
+            "--redact-url",
+            "--base-url",
+            "http://user:secret@gpu.internal:8000",
+        ],
+    )
+    assert code == 1
+    assert err == ""
+    flat_out = " ".join(out.split())
+    assert "<tool_call>" in flat_out
+    assert "--enable-auto-tool-choice --tool-call-parser hermes" in flat_out
+    assert "gpu.internal" not in out
+    assert "secret" not in out
+
+
+def test_cli_probe_check_tools_headless_json_events(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    emitted_markup = True
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "qwen3-32b"}]})
+        if request.url.path == "/v1/chat/completions":
+            if emitted_markup:
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "finish_reason": "stop",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": (
+                                        "<tool_call>\n"
+                                        '{"name": "probe_ping", "arguments": {"value": "ok"}}\n'
+                                        "</tool_call>"
+                                    ),
+                                },
+                            }
+                        ]
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "tool_calls",
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "probe_ping",
+                                            "arguments": '{"value": "ok"}',
+                                        },
+                                    }
+                                ],
+                            },
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    _install_mock_http(monkeypatch, handler)
+
+    fail_code, fail_out, fail_err = _run_cli_argv(
+        monkeypatch,
+        capsys,
+        [
+            "probe",
+            "--check-tools",
+            "--json",
+            "--backend",
+            "sglang",
+            "--base-url",
+            "http://gpu.test:8000",
+        ],
+    )
+    assert fail_code == 1
+    assert fail_out == ""
+    fail_events = [json.loads(line) for line in fail_err.splitlines() if line.strip()]
+    assert [ev["event"] for ev in fail_events] == ["probe_result", "tool_call_probe"]
+    assert fail_events[0]["status"] == "ready"
+    assert fail_events[1]["status"] == "failed"
+    assert fail_events[1]["unparsed_marker"] == "<tool_call>"
+    assert "--tool-call-parser hermes" in fail_events[1]["advice"]
+
+    emitted_markup = False
+    ok_code, ok_out, ok_err = _run_cli_argv(
+        monkeypatch,
+        capsys,
+        ["probe", "--check-tools", "--json", "--base-url", "http://gpu.test:8000"],
+    )
+    assert ok_code == 0
+    assert ok_out == ""
+    ok_events = [json.loads(line) for line in ok_err.splitlines() if line.strip()]
+    assert [ev["event"] for ev in ok_events] == ["probe_result", "tool_call_probe"]
+    assert ok_events[1]["status"] == "ok"
+    assert ok_events[1]["parsed"] is True
+    assert ok_events[1]["arguments_intact"] is True
+
+
+def test_cli_probe_check_tools_missing_model_and_standalone_flag_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_mock_http(
+        monkeypatch,
+        lambda request: httpx.Response(200, json={"data": []}),
+    )
+
+    no_model_code, no_model_out, _ = _run_cli_argv(
+        monkeypatch,
+        capsys,
+        ["probe", "--check-tools", "--base-url", "http://gpu.test:8000"],
+    )
+    assert no_model_code == 1
+    assert "Cannot verify tool-call wire parsing" in no_model_out
+
+    no_model_json_code, no_model_json_out, no_model_json_err = _run_cli_argv(
+        monkeypatch,
+        capsys,
+        ["probe", "--check-tools", "--json", "--base-url", "http://gpu.test:8000"],
+    )
+    assert no_model_json_code == 1
+    assert no_model_json_out == ""
+    events = [json.loads(line) for line in no_model_json_err.splitlines() if line.strip()]
+    assert [ev["event"] for ev in events] == ["probe_result", "tool_call_probe"]
+    assert events[1]["status"] == "failed"
+
+    bad_code, _, bad_err = _run_cli_argv(
+        monkeypatch,
+        capsys,
+        ["--check-tools", "--json", "--base-url", "http://gpu.test:8000"],
+    )
+    assert bad_code == 2
+    bad_event = json.loads(bad_err.strip())
+    assert bad_event["error"] == "invalid_arguments"
+    assert "--check-tools requires probe or --probe" in bad_event["message"]

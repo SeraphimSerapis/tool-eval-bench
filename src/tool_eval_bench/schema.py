@@ -111,6 +111,12 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "default": False,
         "description": "Check server reachability and exit (0 = ready, 1 = not found)",
     },
+    {
+        "name": "check_tools",
+        "type": "bool",
+        "default": False,
+        "description": "With probe, send one tool-call request to verify structured tool_calls parsing",
+    },
     # -- Decision judge audit --
     {
         "name": "decision_judge",

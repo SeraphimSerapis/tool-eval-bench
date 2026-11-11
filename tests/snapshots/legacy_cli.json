@@ -105,6 +105,16 @@
     "required": false
   },
   {
+    "choices": null,
+    "default": false,
+    "dest": "check_tools",
+    "flags": [
+      "--check-tools"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
     "choices": [
       "recommended",
       "all"

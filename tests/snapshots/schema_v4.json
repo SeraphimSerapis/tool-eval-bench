@@ -83,6 +83,12 @@
       "type": "bool"
     },
     {
+      "default": false,
+      "description": "With probe, send one tool-call request to verify structured tool_calls parsing",
+      "name": "check_tools",
+      "type": "bool"
+    },
+    {
       "choices": [
         "recommended",
         "all"
