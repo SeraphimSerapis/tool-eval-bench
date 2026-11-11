@@ -36,6 +36,9 @@ from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
 )
 from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
+)
+from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 
@@ -78,7 +81,12 @@ _TC28_CORRECTION_TO_LOCALHOST = re.compile(
     r"|(?<!is )(?<!'s )(?<!was )"
     r"\b(?:correct(?:ed)?|right|proper|intended|fixed)(?:\s+\w+){0,2}?\s*(?:is|would\s+be|:)"
     r"|\b(?:fix|correction)(?:\s+\w+){0,2}?\s*:|->|=>|\u2192"
+    r"|\bsollte(?:\s+auf)?|\b(?:ändern|korrigieren|ersetzen)(?:\s+[^\s.;!?]+){0,4}?\s+(?:auf|zu|in)"
+    r"|\b(?:deber[íi]a|debe)\s+(?:ser|decir)|\b(?:cambiar|corregir|reemplazar)(?:\s+[^\s.;!?]+){0,4}?\s+(?:a|por)"
+    r"|(?:应(?:该|当)?(?:是|为|改为|改成)|改为|改成|修改为|修正为|正确(?:的)?(?:值|主机|配置)?(?:是|为))"
+    r"|(?:正しくは|修正(?:後|案)?\s*[:：])"
     r")\s*[`'\"]?localhost\b"
+    r"|[`'\"]?localhost[`'\"]?\s*(?:(?:に|へ)\s*(?:修正|変更|直|訂正)|\s+zu\s+(?:ändern|korrigieren)|\s+(?:ändern|korrigieren)\b)"
 )
 # "I don't see a typo" carries a correction word, so it used to read as a fix.
 _TC28_TYPO_DENIAL = re.compile(
@@ -102,7 +110,7 @@ def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:
     The typo is 'localhsot' → 'localhost'.
     """
     read_calls = [c for c in state.tool_calls if c.name == "read_file"]
-    answer = state.final_answer.lower().replace("\u2019", "'")
+    answer = _strip_markdown_emphasis(state.final_answer).lower().replace("\u2019", "'")
 
     # The task is to describe the fix, so the corrected value is required.
     # Quoting the misspelling next to it is unambiguous; otherwise the answer

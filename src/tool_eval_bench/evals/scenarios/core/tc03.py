@@ -14,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients as _addressed_recipients,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -152,6 +155,7 @@ def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
         for call in email_calls
         if (
             _recipient_values(call.arguments.get("to")) == ["sarah.chen@company.com"]
+            and _addressed_recipients(call) == ["sarah.chen@company.com"]
             and bool(_as_str(call.arguments.get("subject")).strip())
             and bool(_as_str(call.arguments.get("body")).strip())
             and _tc03_states_the_new_time(
@@ -210,6 +214,7 @@ def _tc03_eval(state: ScenarioState) -> ScenarioEvaluation:
         and any(
             contact.turn <= email.turn
             and _recipient_values(email.arguments.get("to")) == ["sarah.chen@company.com"]
+            and _addressed_recipients(email) == ["sarah.chen@company.com"]
             for contact in contact_calls
             for email in email_calls
         )

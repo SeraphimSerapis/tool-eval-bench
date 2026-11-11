@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -13,7 +13,6 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.domain.tools import BENCHMARK_REFERENCE_DATE
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
@@ -34,6 +33,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    reference_date as _reference_date,
 )
 from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
@@ -101,10 +103,7 @@ def _tc47_eval(state: ScenarioState) -> ScenarioEvaluation:
     def _is_corrected(call: ToolCallRecord) -> bool:
         return _is_time(call, "16:00", "16:00:00", "4pm", "4 pm")
 
-    reference_date = date.fromisoformat(
-        _as_str(state.meta.get("reference_date") or BENCHMARK_REFERENCE_DATE)
-    )
-    expected_date = (reference_date + timedelta(days=1)).isoformat()
+    expected_date = (_reference_date(state) + timedelta(days=1)).isoformat()
 
     def _matches_request(call: ToolCallRecord) -> bool:
         # "Sprint Planning Meeting" is the meeting the user asked for.

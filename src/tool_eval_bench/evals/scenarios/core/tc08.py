@@ -200,7 +200,8 @@ def _tc08_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
         weather = [
             c
             for c in state.tool_calls
-            if _positive_argument_contains(c.arguments.get("location"), "paris")
+            if c.name == "get_weather"
+            and _positive_argument_contains(c.arguments.get("location"), "paris")
             and _result_matches_if_present(
                 state, c, lambda p: isinstance(p, dict) and p.get("condition") == "Clear"
             )

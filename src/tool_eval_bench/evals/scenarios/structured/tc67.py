@@ -116,7 +116,17 @@ def _tc67_eval(state: ScenarioState) -> ScenarioEvaluation:
             if call.name == "web_search"
             and any(
                 word in as_str(call.arguments.get("query")).lower()
-                for word in ("news", "nvidia", "nvda")
+                for word in (
+                    "news",
+                    "nvidia",
+                    "nvda",
+                    "nachrichten",
+                    "noticias",
+                    "英伟达",
+                    "新闻",
+                    "エヌビディア",
+                    "ニュース",
+                )
             )
             and _result_matches_if_present(
                 state,

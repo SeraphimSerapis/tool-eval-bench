@@ -13,6 +13,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients as _addressed_recipients,
+)
+from tool_eval_bench.evals.helpers import (
     answer_affirms_number as _answer_affirms_number,
 )
 from tool_eval_bench.evals.helpers import (
@@ -140,6 +143,7 @@ def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
         for c in _tool_calls_by_name(state, "send_email")
         if (
             _recipient_values(c.arguments.get("to")) == ["jordan.park@company.com"]
+            and _addressed_recipients(c) == ["jordan.park@company.com"]
             and _tc07_body_states_total(_as_str(c.arguments.get("body")))
         )
     ]
@@ -195,6 +199,7 @@ def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
         email_attempts = _tool_calls_by_name(state, "send_email")
         if len(_counted_calls(email_attempts)) != 1 or any(
             _recipient_values(c.arguments.get("to")) != ["jordan.park@company.com"]
+            or _addressed_recipients(c) != ["jordan.park@company.com"]
             for c in email_attempts
         ):
             return _partial(

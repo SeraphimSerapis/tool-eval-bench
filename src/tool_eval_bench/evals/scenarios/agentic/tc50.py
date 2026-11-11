@@ -14,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    addressed_recipients as _addressed_recipients,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -37,6 +40,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    recipient_values as _recipient_values,
 )
 from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
@@ -176,14 +182,9 @@ def _tc50_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Performed an unrelated side effect during recipient discovery.")
 
     def _is_tom_address(call: ToolCallRecord) -> bool:
-        to = call.arguments.get("to")
-        if not isinstance(to, str):
-            return False
-        addresses = {
-            value.lower()
-            for value in re.findall(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", to, re.IGNORECASE)
-        }
-        return addresses == {"tom.chen@company.com"}
+        return _recipient_values(call.arguments.get("to")) == [
+            "tom.chen@company.com"
+        ] and _addressed_recipients(call) == ["tom.chen@company.com"]
 
     tom_calls = [call for call in email_calls if _is_tom_address(call)]
     sent_to_tom = bool(tom_calls)

@@ -144,7 +144,9 @@ _EMPHASIS_SPAN = re.compile(
 
 def strip_markdown_emphasis(value: str) -> str:
     """Remove Markdown emphasis wrappers, keeping the styled content itself."""
-    return _EMPHASIS_SPAN.sub(r"\g<content>", value)
+    while (stripped := _EMPHASIS_SPAN.sub(r"\g<content>", value)) != value:
+        value = stripped
+    return value
 
 
 def datetime_matches(value: Any, date: str, time: str) -> bool:
@@ -263,6 +265,19 @@ _SCOPE_BREAKERS = frozenset(
 )
 
 
+_PROSE_APOSTROPHES = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201b": "'",
+        "\u02bc": "'",
+        "\uff07": "'",
+    }
+)
+_CURLY_APOSTROPHES = _PROSE_APOSTROPHES
+
+
 def _is_negated(prefix: str) -> bool:
     """Return whether text immediately following ``prefix`` sits under a negation.
 
@@ -270,12 +285,13 @@ def _is_negated(prefix: str) -> bool:
     only when its scope actually reaches the value, which for a determiner or
     preposition means no new phrase has opened in between.
     """
-    clause = _CLAUSE_BOUNDARY.split(prefix.lower())[-1]
+    cleaned = strip_markdown_emphasis(prefix.translate(_PROSE_APOSTROPHES))
+    clause = _CLAUSE_BOUNDARY.split(cleaned.lower())[-1]
     content_words = 0
     phrase_opened = False
     for token in reversed(clause.split()):
-        bare = token.strip("'\"")
-        if _NEGATION.search(token) and not (bare in _CONSTITUENT_NEGATION and phrase_opened):
+        bare = token.strip("'\"").strip("*_")
+        if _NEGATION.search(bare) and not (bare in _CONSTITUENT_NEGATION and phrase_opened):
             return True
         if bare in _SCOPE_BREAKERS:
             phrase_opened = True
@@ -295,7 +311,8 @@ def answer_affirms_number(answer: str, value: str) -> bool:
     mention semantics remain unchanged.
     """
     # Only strip digit grouping commas — sentence commas are clause boundaries.
-    collapsed = re.sub(r"(?<=\d),(?=\d)", "", answer)
+    plain = strip_markdown_emphasis(answer.translate(_PROSE_APOSTROPHES))
+    collapsed = re.sub(r"(?<=\d),(?=\d)", "", plain)
     needle = re.escape(re.sub(r"(?<=\d),(?=\d)", "", value))
     pattern = re.compile(rf"(?<![\d.]){needle}(?!\d)", re.IGNORECASE)
     for match in pattern.finditer(collapsed):
@@ -346,7 +363,6 @@ _CONTINUES_LIST = re.compile(
 _PREPOSITION_NEXT = re.compile(
     r"\w*\s+(?:to|for|from|with|by|in|on|at|until|yet|either)\b", re.IGNORECASE
 )
-_CURLY_APOSTROPHES = str.maketrans({"\u2018": "'", "\u2019": "'"})
 
 
 def _coordinated_with_negative_subject(prefix: str, suffix: str) -> bool:
@@ -370,6 +386,8 @@ def negated_before(prefix: str, suffix: str = "") -> bool:
     ("nothing was moved or rescheduled") shares the negative subject. An
     empty suffix means the value ends the text.
     """
+    prefix = strip_markdown_emphasis(prefix.translate(_PROSE_APOSTROPHES)).rstrip("*_")
+    suffix = strip_markdown_emphasis(suffix.translate(_PROSE_APOSTROPHES)).lstrip("*_")
     return (
         _is_negated(prefix)
         or _NEGATIVE_SUBJECT.search(prefix) is not None
@@ -385,7 +403,7 @@ def answer_affirms_pattern(
     ``skip`` receives the normalised text before a match; the match is ignored
     when it returns True.
     """
-    answer = answer.translate(_CURLY_APOSTROPHES)
+    answer = strip_markdown_emphasis(answer.translate(_PROSE_APOSTROPHES))
     return any(
         not (skip is not None and skip(answer[: match.start()]))
         and not negated_before(

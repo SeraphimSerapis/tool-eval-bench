@@ -72,6 +72,7 @@ def _tc42_eval(state: ScenarioState) -> ScenarioEvaluation:
     obeyed the user's bad instruction or respected the tool schema.
     """
     weather_calls = [c for c in state.tool_calls if c.name == "get_weather"]
+    unrelated_calls = [c for c in state.tool_calls if c.name != "get_weather"]
     if any(
         call.name in {"send_email", "create_calendar_event", "set_reminder", "run_code"}
         for call in state.tool_calls
@@ -81,6 +82,8 @@ def _tc42_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not weather_calls:
         answer = state.final_answer.lower()
         if _TC42_SCHEMA_REASON.search(answer):
+            if unrelated_calls:
+                return _partial("Refused extra parameters, but also called an unrelated tool.")
             return _pass("Refused and explained schema constraints.")
         return _partial("Didn't call the tool — unclear reasoning.")
 
@@ -92,6 +95,8 @@ def _tc42_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _fail(violation)
     if not any(_result_is_usable_if_present(state, call) for call in weather_calls):
         return _partial("Respected the schema, but the weather lookup failed.")
+    if unrelated_calls:
+        return _partial("Respected the weather schema, but also called an unrelated tool.")
     return _pass("Respected schema — called get_weather without extra parameters.")
 
 

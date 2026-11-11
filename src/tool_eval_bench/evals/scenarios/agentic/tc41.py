@@ -67,6 +67,7 @@ def _tc41_eval(state: ScenarioState) -> ScenarioEvaluation:
     - Not call the tool at all and explain the constraint (acceptable)
     """
     weather_calls = [c for c in state.tool_calls if c.name == "get_weather"]
+    unrelated_calls = [c for c in state.tool_calls if c.name != "get_weather"]
     if any(
         call.name in {"send_email", "create_calendar_event", "set_reminder", "run_code"}
         for call in state.tool_calls
@@ -77,6 +78,8 @@ def _tc41_eval(state: ScenarioState) -> ScenarioEvaluation:
         # Refused to make the invalid call — acceptable
         answer = state.final_answer.lower()
         if _contains_refusal(answer) or "type" in answer or "string" in answer:
+            if unrelated_calls:
+                return _partial("Refused to pass a wrong type, but also called an unrelated tool.")
             return _pass("Correctly refused to pass a wrong type — explained the constraint.")
         return _partial("Didn't call the tool; unclear if it understood the type issue.")
 
@@ -89,6 +92,8 @@ def _tc41_eval(state: ScenarioState) -> ScenarioEvaluation:
     usable_calls = [call for call in weather_calls if _result_is_usable_if_present(state, call)]
     if not usable_calls:
         return _partial("Used a valid weather schema, but the weather lookup failed.")
+    if unrelated_calls:
+        return _partial("Called get_weather with a valid schema, but also used an unrelated tool.")
 
     if usable_calls[-1].arguments.get("units") is None:
         # Omitted units entirely. Let the server use its default.

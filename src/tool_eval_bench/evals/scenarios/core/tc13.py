@@ -70,6 +70,7 @@ def _tc13_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
                 else []
             )
             return _noise({"results": results}, "search_files")
+        return _noise({"results": []}, "search_files")
     return _generic_tool_fallback(call)
 
 
