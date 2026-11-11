@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     as_str,
+    positive_argument_contains,
     result_is_usable_if_present,
     tool_calls_by_name,
 )
@@ -72,8 +73,9 @@ def _tc83_eval(state: ScenarioState) -> ScenarioEvaluation:
     searches = [
         c
         for c in tool_calls_by_name(state, "search_files")
-        if "q2" in as_str(c.arguments.get("query")).lower()
-        and "revenue" in as_str(c.arguments.get("query")).lower()
+        if any(
+            positive_argument_contains(c.arguments.get("query"), term) for term in ("q2", "revenue")
+        )
         and result_is_usable_if_present(state, c)
         and _result_matches_if_present(
             state,

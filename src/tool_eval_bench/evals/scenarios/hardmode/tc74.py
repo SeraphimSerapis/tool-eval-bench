@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     address_observed_before,
+    answer_affirms_text,
     as_str,
     as_str_list,
     call_at_or_after_user_phase,
@@ -80,13 +81,49 @@ def _tc74_denies_confirmation(text: str) -> bool:
 
 _TC74_CLOCK = r"\d{1,2}(?::\d{2})?(?:[ \t]*[ap]\.?m\.?)?"
 _TC74_TIMES = re.compile(
-    rf"(?<![\w:])(?P<start>{_TC74_CLOCK})"
-    rf"(?:[ \t]*(?:[-–—]|\bto\b)[ \t]*(?P<end>{_TC74_CLOCK}))?(?![\w:])",
+    rf"(?<![\w:])(?:"
+    rf"\bbetween[ \t]+(?P<b_start>{_TC74_CLOCK})[ \t]+and[ \t]+(?P<b_end>{_TC74_CLOCK})"
+    rf"|(?P<start>{_TC74_CLOCK})"
+    rf"(?:[ \t]*(?:[-–—]|\bto\b|\bthrough\b)[ \t]*(?P<end>{_TC74_CLOCK}))?"
+    rf")(?![\w:])",
     re.IGNORECASE,
 )
 _TC74_END_LABEL = re.compile(
     r"\b(?:ends?|ending|until|finishes?|finishing)(?:\s+at)?\s*:?\s*$", re.IGNORECASE
 )
+_TC74_ISO_OFFSET_RE = re.compile(r"(T\d{2}:\d{2}(?::\d{2})?)[+-]\d{2}:\d{2}")
+_TC74_ISO_TIME_RE = re.compile(r"T(\d{2}:\d{2})(?::(\d{2}))?", re.IGNORECASE)
+_TC74_TEAM_SYNC_RE = re.compile(r"\bteam\s+sync\b", re.IGNORECASE)
+_TC74_RENAME_BEFORE_RE = re.compile(
+    r"\b(?:(?:renamed|changed|updated|re-?titled|moved)\s+from|"
+    r"formerly|previously|instead\s+of|rather\s+than|replaces?|replacing|"
+    r"supersedes?|superseding|not)\b",
+    re.IGNORECASE,
+)
+_TC74_RENAME_AFTER_RE = re.compile(
+    r"^\s*(?:['\")\]]*\s*)?(?:was\s+|has\s+been\s+|is\s+now\s+)?"
+    r"(?:renamed|changed|updated|replaced|superseded)\b",
+    re.IGNORECASE,
+)
+
+
+def _tc74_team_sync_excused(value: str) -> bool:
+    matches = list(_TC74_TEAM_SYNC_RE.finditer(value))
+    if not matches:
+        return True
+    if not answer_affirms_text(value, "product review"):
+        return False
+    for match in matches:
+        clause_before = re.split(r"[.!?;,:\n]", value[max(0, match.start() - 50) : match.start()])[
+            -1
+        ]
+        clause_after = re.split(r"[.!?;,:\n]", value[match.end() : match.end() + 50])[0]
+        if not (
+            _TC74_RENAME_BEFORE_RE.search(clause_before)
+            or _TC74_RENAME_AFTER_RE.search(clause_after)
+        ):
+            return False
+    return True
 
 
 def _tc74_clock_minutes(value: str, inherited_period: str = "") -> int | None:
@@ -107,11 +144,21 @@ def _tc74_clock_minutes(value: str, inherited_period: str = "") -> int | None:
 
 def _tc74_confirmation_details_match(value: str, expected_date: str) -> bool:
     """Reject stated event details that contradict the authorized event."""
-    dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", value)
-    if includes_text(value, "team sync") or any(date != expected_date for date in dates):
+    cleaned = _TC74_ISO_OFFSET_RE.sub(r"\1", value)
+    dates = re.findall(r"\b\d{4}-\d{2}-\d{2}(?=\b|T\d{2}:)", cleaned)
+    if not _tc74_team_sync_excused(value) or any(date != expected_date for date in dates):
         return False
-    for match in _TC74_TIMES.finditer(value):
-        start, end = match["start"], match["end"]
+    iso_times = list(_TC74_ISO_TIME_RE.finditer(cleaned))
+    for idx, iso_match in enumerate(iso_times):
+        hhmm, secs = iso_match[1], iso_match[2] or "00"
+        if secs != "00":
+            return False
+        allowed_iso = {"14:00", "14:45"} if idx > 0 else {"14:00"}
+        if hhmm not in allowed_iso:
+            return False
+    for match in _TC74_TIMES.finditer(cleaned):
+        start = match["b_start"] or match["start"]
+        end = match["b_end"] or match["end"]
         period = re.search(r"([ap])\.?m\.?$", end or "", re.I) or re.search(
             r"([ap])\.?m\.?$", start, re.I
         )
@@ -119,7 +166,7 @@ def _tc74_confirmation_details_match(value: str, expected_date: str) -> bool:
             continue  # Bare numbers in dates or durations are not clock times.
         inherited_period = period[1] if period else ""
         expected_start = 14 * 60
-        if end is None and _TC74_END_LABEL.search(value[: match.start()]):
+        if end is None and _TC74_END_LABEL.search(cleaned[: match.start()]):
             expected_start += 45
         if _tc74_clock_minutes(start, inherited_period) != expected_start:
             return False

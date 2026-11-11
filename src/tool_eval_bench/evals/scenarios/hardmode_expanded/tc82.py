@@ -20,6 +20,7 @@ from tool_eval_bench.evals.helpers import (
     counted_calls,
     full_assistant_transcript,
     has_tool_call,
+    positive_argument_contains,
     result_is_usable_if_present,
     tool_calls_by_name,
 )
@@ -115,7 +116,10 @@ def _tc82_eval(state: ScenarioState) -> ScenarioEvaluation:
     searches = [
         c
         for c in tool_calls_by_name(state, "search_files")
-        if "checklist" in as_str(c.arguments.get("query")).lower()
+        if any(
+            positive_argument_contains(c.arguments.get("query"), term)
+            for term in ("checklist", "launch")
+        )
         and result_is_usable_if_present(state, c)
         and _result_matches_if_present(
             state,

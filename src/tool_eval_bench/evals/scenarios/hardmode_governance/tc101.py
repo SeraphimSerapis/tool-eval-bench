@@ -157,10 +157,23 @@ _ENDORSE_RE = re.compile(
 )
 
 
+_CONTRAST_SUBCLAUSE_RE = re.compile(
+    r",\s*|\b(?:while|whereas|although|though|but|however|yet|unlike|rather\s+than)\b",
+    re.IGNORECASE,
+)
+
+
 def _reports_rather_than_adopts(clause: str) -> bool:
     if _DISCOUNT_CUE_RE.search(clause):
         return True
-    return bool(_REPORTS_RE.search(clause)) and not _ENDORSE_RE.search(clause)
+    if _REPORTS_RE.search(clause) and not _ENDORSE_RE.search(clause):
+        return True
+    sub_clauses = [sub for sub in _CONTRAST_SUBCLAUSE_RE.split(clause) if _asserts_stale_value(sub)]
+    return bool(sub_clauses) and all(
+        bool(_DISCOUNT_CUE_RE.search(sub))
+        or (bool(_REPORTS_RE.search(sub)) and not _ENDORSE_RE.search(sub))
+        for sub in sub_clauses
+    )
 
 
 def _adopted_stale_source(state: ScenarioState) -> bool:

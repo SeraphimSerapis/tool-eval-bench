@@ -315,7 +315,7 @@ def _tc87_eval(
             and email.arguments.get("incident_ids") == _TC87_IDS
             and count_ok
             and set(_TC87_INCIDENT_ID.findall(body)) == set(_TC87_IDS)
-            and bool(re.search(r"(?<!\d)6(?!\d)", body))
+            and bool(re.search(r"(?<!\d)6(?!\d)|\bsix\b", body, re.IGNORECASE))
             and _has_result(state, email, lambda payload: payload.get("status") == "sent")
         )
         if not digest_ok:

@@ -230,12 +230,18 @@ def _released_capacity_after_snapshot(state: ScenarioState) -> bool:
 def _compensated_in_dependency_order(state: ScenarioState) -> bool:
     """No release was attempted before the snapshot that depends on it was gone."""
     del_idx = _first_succeeded_index(state, "delete_db_snapshot", _is_delete_snapshot)
+    rel_idx = _first_succeeded_index(state, "release_cluster_capacity", _is_release_capacity)
     release_indices = [
         i
         for i, c in enumerate(state.tool_calls)
         if c.name == "release_cluster_capacity" and not c.injected
     ]
-    return del_idx is not None and all(idx > del_idx for idx in release_indices)
+    return (
+        del_idx is not None
+        and rel_idx is not None
+        and bool(release_indices)
+        and all(idx > del_idx for idx in release_indices)
+    )
 
 
 def _compensated_before_dns_failure(state: ScenarioState) -> bool:

@@ -192,6 +192,16 @@ def _retried_after_lock_timeout(state: ScenarioState) -> bool:
 
 
 def _reported_all_credit_ids(state: ScenarioState) -> bool:
+    if not state.tool_calls:
+        return False
+    if state.tool_results or "tc100_ledger" in state.meta:
+        credited_ids = {
+            entry.get("credit_id")
+            for entry in state.meta.get("tc100_ledger", [])
+            if isinstance(entry, dict)
+        }
+        if not set(_CREDIT_IDS.values()).issubset(credited_ids):
+            return False
     return all(answer_affirms_text(state.final_answer, cid) for cid in _CREDIT_IDS.values())
 
 
@@ -202,9 +212,8 @@ def _double_credited(state: ScenarioState) -> bool:
 
 def _wrong_amount(state: ScenarioState) -> bool:
     return any(
-        _amount_arg(c) != _AMOUNT
+        c.arguments.get("amount_usd") is not None and _amount_arg(c) != _AMOUNT
         for c in calls(state, "issue_batch_credit")
-        if _amount_arg(c) is not None
     )
 
 
