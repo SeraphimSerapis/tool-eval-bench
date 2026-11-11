@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from collections.abc import Mapping
 from typing import Any
@@ -10,10 +11,14 @@ from typing import Any
 from rich.console import Console
 from rich.markup import escape
 
+from tool_eval_bench.adapters.factory import build_adapter
 from tool_eval_bench.adapters.requests import minimal_request
 from tool_eval_bench.cli.helpers import emit_headless_error
+from tool_eval_bench.domain.adapters import BackendAdapter
 from tool_eval_bench.domain.errors import CONNECTION_FAILED, INVALID_RESPONSE, MODEL_NOT_AVAILABLE
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
+from tool_eval_bench.domain.wire_hygiene import format_tool_parser_advice
+from tool_eval_bench.runner.orchestrator import ToolCallWireProbe, probe_tool_call_parsing
 from tool_eval_bench.utils.openai_compat import (
     max_tokens_retry_payload,
     output_token_limit_reached,
@@ -211,3 +216,103 @@ def warmup_server(
             if display_url is not None and display_url != base_url:
                 message = redact_urls(message)
             console.print(f"  [bold yellow]⚠[/] Warm-up failed [dim]({escape(message)})[/]")
+
+
+def check_tool_call_wire_parsing(
+    console: Console,
+    base_url: str,
+    model: str,
+    api_key: str | None,
+    *,
+    backend: str | None = None,
+    engine_name: str | None = None,
+    headless: bool = False,
+    timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    extra_params: dict[str, Any] | None = None,
+    wire_format: str = "openai",
+    headers: Mapping[str, str] | None = None,
+    display_url: str | None = None,
+    adapter: BackendAdapter | None = None,
+    exit_on_failure: bool = False,
+) -> ToolCallWireProbe:
+    """Verify that the endpoint parses a simple tool call into structured tool_calls."""
+    show_url = display_url or base_url
+
+    async def _check() -> ToolCallWireProbe:
+        owned = adapter is None
+        active_adapter = (
+            adapter
+            if adapter is not None
+            else build_adapter(
+                base_url,
+                wire_format=wire_format,
+                default_headers=headers,
+            )
+        )
+        try:
+            return await probe_tool_call_parsing(
+                active_adapter,
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                timeout_seconds=timeout_seconds,
+                extra_params=extra_params,
+            )
+        finally:
+            if owned:
+                aclose = getattr(active_adapter, "aclose", None)
+                if aclose is not None:
+                    await aclose()
+
+    probe = asyncio.run(_check())
+    ok = probe.parsed and probe.arguments_intact
+    advice = (
+        None
+        if ok
+        else format_tool_parser_advice(
+            backend=backend,
+            engine_name=engine_name,
+            parser_family=probe.parser_family,
+        )
+    )
+
+    if headless:
+        event: dict[str, Any] = {
+            "event": "tool_call_probe",
+            "status": "ok" if ok else "failed",
+            "parsed": probe.parsed,
+            "arguments_intact": probe.arguments_intact,
+            "detail": redact_urls(probe.detail),
+        }
+        if probe.unparsed_marker is not None:
+            event["unparsed_marker"] = probe.unparsed_marker
+        if probe.parser_family is not None:
+            event["parser_family"] = probe.parser_family
+        if advice is not None:
+            event["advice"] = advice
+        sys.stderr.write(json.dumps(event) + "\n")
+        sys.stderr.flush()
+    elif ok:
+        console.print(
+            "  [bold green]✓[/] Tool-call wire parsing verified: "
+            "structured tool_calls arrived with intact arguments"
+        )
+    elif probe.unparsed_marker is not None:
+        console.print(
+            f"  [bold yellow]⚠[/] [yellow]Unparsed tool-call output detected: endpoint emitted "
+            f"{escape(probe.unparsed_marker)} in content instead of tool_calls.[/]"
+        )
+        if advice is not None:
+            console.print(f"  [yellow]  {escape(advice)}[/]")
+    else:
+        shown_detail = redact_urls(probe.detail) if show_url != base_url else probe.detail
+        console.print(
+            f"  [bold yellow]⚠[/] [yellow]Tool-call wire check did not confirm structured "
+            f"tool_calls: {escape(shown_detail)}[/]"
+        )
+        if advice is not None:
+            console.print(f"  [yellow]  {escape(advice)}[/]")
+
+    if exit_on_failure and not ok:
+        sys.exit(1)
+    return probe

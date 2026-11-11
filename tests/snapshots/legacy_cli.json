@@ -105,6 +105,16 @@
     "required": false
   },
   {
+    "choices": null,
+    "default": false,
+    "dest": "check_tools",
+    "flags": [
+      "--check-tools"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
     "choices": [
       "recommended",
       "all"
@@ -225,6 +235,16 @@
       "--scenarios"
     ],
     "nargs": "*",
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "scenarios_from_diff",
+    "flags": [
+      "--scenarios-from-diff"
+    ],
+    "nargs": 2,
     "required": false
   },
   {
@@ -1133,6 +1153,56 @@
       "--compare"
     ],
     "nargs": 2,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": false,
+    "dest": "retest_diffs",
+    "flags": [
+      "--retest-diffs"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "base_url_a",
+    "flags": [
+      "--base-url-a"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "base_url_b",
+    "flags": [
+      "--base-url-b"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "api_key_a",
+    "flags": [
+      "--api-key-a"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "api_key_b",
+    "flags": [
+      "--api-key-b"
+    ],
+    "nargs": null,
     "required": false
   },
   {

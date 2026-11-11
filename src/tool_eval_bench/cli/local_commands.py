@@ -132,8 +132,14 @@ def handle_local_command(
     elif args.export:
         export_runs(console, fmt=args.export, output=args.export_output)
     elif args.compare:
-        _reject_json(args, "--compare")
-        compare_runs(console, args.compare[0], args.compare[1])
+        if getattr(args, "retest_diffs", False):
+            _reject_json(args, "--retest-diffs")
+            from tool_eval_bench.cli.retest_diffs import run_retest_diffs_command
+
+            run_retest_diffs_command(args, console)
+        else:
+            _reject_json(args, "--compare")
+            compare_runs(console, args.compare[0], args.compare[1])
     elif getattr(args, "serve", False):
         _reject_json(args, "--serve")
         from tool_eval_bench.web import run_web_server

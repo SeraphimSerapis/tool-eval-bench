@@ -80,11 +80,7 @@ def _command_help(command: str, *, include_legacy_options: bool = True) -> argpa
         parser.add_argument("benchmark", choices=spec.choices)
         _add_plugin_options(parser)
     elif command == "compare":
-        parser.add_argument("--report", action="store_true")
-        parser.add_argument("left", help="Run ID, or Markdown report with --report")
-        parser.add_argument("right", help="Run ID, or Markdown report with --report")
-        parser.add_argument("-o", "--output", help="Required with --report")
-        parser.add_argument("--kind", choices=("auto", "summary", "tool-eval"), default="auto")
+        _add_compare_options(parser)
     elif command == "export":
         parser.add_argument("--format", choices=("csv", "json"), default="json")
         parser.add_argument("-o", "--output")
@@ -234,15 +230,144 @@ def _plugin_argv(argv: list[str]) -> list[str]:
     return translated + remainder
 
 
+def _add_compare_options(parser: argparse.ArgumentParser) -> None:
+    """The ``compare`` subcommand's own options, translated by :func:`_compare_argv`."""
+    parser.add_argument("--report", action="store_true", help="Compare two Markdown reports")
+    parser.add_argument(
+        "--retest-diffs",
+        action="store_true",
+        help="Re-run discordant scenarios on both runs across multiple trials",
+    )
+    parser.add_argument("left", help="Run ID, or Markdown report with --report")
+    parser.add_argument("right", help="Run ID, or Markdown report with --report")
+    parser.add_argument("-o", "--output", help="Required with --report")
+    parser.add_argument("--kind", choices=("auto", "summary", "tool-eval"), default="auto")
+    parser.add_argument(
+        "--trials",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Trials per side for --retest-diffs (default: 5)",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        metavar="URL",
+        help="Shared server base URL for --retest-diffs",
+    )
+    parser.add_argument(
+        "--base-url-a",
+        default=None,
+        metavar="URL",
+        help="Baseline Run A server URL for --retest-diffs",
+    )
+    parser.add_argument(
+        "--base-url-b",
+        default=None,
+        metavar="URL",
+        help="Candidate Run B server URL for --retest-diffs",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        metavar="KEY",
+        help="Shared API key for --retest-diffs",
+    )
+    parser.add_argument(
+        "--api-key-a",
+        default=None,
+        metavar="KEY",
+        help="Baseline Run A API key for --retest-diffs",
+    )
+    parser.add_argument(
+        "--api-key-b",
+        default=None,
+        metavar="KEY",
+        help="Candidate Run B API key for --retest-diffs",
+    )
+    parser.add_argument(
+        "--backend",
+        default=None,
+        metavar="BACKEND",
+        help="Override backend label for both --retest-diffs runs",
+    )
+    parser.add_argument(
+        "--scenario-pack",
+        action="append",
+        default=None,
+        metavar="DIR",
+        help="Held-out YAML scenario pack directory for --retest-diffs (repeatable)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="DIR",
+        help="Directory for --retest-diffs Markdown reports (default: ./runs/)",
+    )
+    parser.add_argument(
+        "--redact-url",
+        action="store_true",
+        help="Mask server URLs in console output during --retest-diffs",
+    )
+
+
 def _compare_argv(argv: list[str]) -> list[str]:
     parser = _command_help("compare")
     args = parser.parse_args(argv)
+    if args.report and args.retest_diffs:
+        parser.error("--retest-diffs cannot be combined with --report")
+    if not args.retest_diffs:
+        for flag, value in (
+            ("--trials", args.trials),
+            ("--base-url", args.base_url),
+            ("--base-url-a", args.base_url_a),
+            ("--base-url-b", args.base_url_b),
+            ("--api-key", args.api_key),
+            ("--api-key-a", args.api_key_a),
+            ("--api-key-b", args.api_key_b),
+            ("--backend", args.backend),
+            ("--scenario-pack", args.scenario_pack),
+            ("--output-dir", args.output_dir),
+            ("--redact-url", True if args.redact_url else None),
+        ):
+            if value is not None:
+                parser.error(f"{flag} requires --retest-diffs")
     if not args.report:
         if args.output:
             parser.error("--output requires --report")
         if args.kind != "auto":
             parser.error("--kind requires --report")
-        return ["--compare", args.left, args.right]
+        if not args.retest_diffs:
+            return ["--compare", args.left, args.right]
+        trials = 5 if args.trials is None else args.trials
+        translated = [
+            "--compare",
+            args.left,
+            args.right,
+            "--retest-diffs",
+            f"--trials={trials}",
+        ]
+        if args.base_url is not None:
+            translated.append(f"--base-url={args.base_url}")
+        if args.base_url_a is not None:
+            translated.append(f"--base-url-a={args.base_url_a}")
+        if args.base_url_b is not None:
+            translated.append(f"--base-url-b={args.base_url_b}")
+        if args.api_key is not None:
+            translated.append(f"--api-key={args.api_key}")
+        if args.api_key_a is not None:
+            translated.append(f"--api-key-a={args.api_key_a}")
+        if args.api_key_b is not None:
+            translated.append(f"--api-key-b={args.api_key_b}")
+        if args.backend is not None:
+            translated.append(f"--backend={args.backend}")
+        for pack in args.scenario_pack or ():
+            translated.append(f"--scenario-pack={pack}")
+        if args.output_dir is not None:
+            translated.append(f"--output-dir={args.output_dir}")
+        if args.redact_url:
+            translated.append("--redact-url")
+        return translated
     if not args.output:
         parser.error("--output is required with --report")
     return [
@@ -421,11 +546,24 @@ def translate_argv(argv: Sequence[str]) -> list[str]:
     raise AssertionError(f"Unhandled command: {command}")
 
 
+def _has_explicit_trials_flag(argv: Sequence[str]) -> bool:
+    for token in argv:
+        if token == "--":
+            break
+        if token == "--trials" or token.startswith("--trials="):
+            return True
+    return False
+
+
 def parse_cli_args(
     legacy_parser_factory: Callable[[], argparse.ArgumentParser],
     argv: Sequence[str] | None = None,
 ) -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     """Parse new or legacy arguments into the legacy runtime namespace."""
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     parser = legacy_parser_factory()
-    translated = translate_argv(sys.argv[1:] if argv is None else argv)
-    return parser, parser.parse_args(translated)
+    translated = translate_argv(raw_argv)
+    args = parser.parse_args(translated)
+    if getattr(args, "retest_diffs", False) and not _has_explicit_trials_flag(raw_argv):
+        args.trials = 5
+    return parser, args

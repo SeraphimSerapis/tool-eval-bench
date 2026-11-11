@@ -166,9 +166,9 @@ def test_pre_rename_decision_flags_are_rejected(
     assert error in capsys.readouterr().err
 
 
-def test_schema_v10_describes_every_command() -> None:
+def test_schema_v11_describes_every_command() -> None:
     schema = get_schema()
-    assert schema["schema_version"] == "10"
+    assert schema["schema_version"] == "11"
     assert schema["commands"] is COMMANDS_SCHEMA
     assert set(COMMANDS_SCHEMA) == KNOWN_COMMANDS
 
@@ -230,7 +230,7 @@ def test_plugin_only_lifecycle_stops_before_tool_scenarios() -> None:
         ("bench", "--perf-only", "--dry-run"),
         ("spec-live", "--metrics-url", "--short"),
         ("plugin", "--shots", "--perf-only"),
-        ("compare", "--report", "--base-url"),
+        ("compare", "--report", "--perf-only"),
         ("history", "List recent runs", "--base-url"),
         ("leaderboard", "model leaderboard", "--base-url"),
         ("export", "--format", "--base-url"),

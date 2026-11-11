@@ -17,6 +17,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from tool_eval_bench import __version__
+from tool_eval_bench.application.comparison import compute_paired_comparison
 from tool_eval_bench.application.leaderboard import (
     compute_mcnemar_stats,
     extract_leaderboard_rows,
@@ -309,6 +310,17 @@ def _build_comparison_payload(raw_a: Mapping[str, Any], raw_b: Mapping[str, Any]
     mcnemar["chi2"] = round(mcnemar["chi2"], 4)
     mcnemar["p_value"] = round(mcnemar["p_value"], 6)
 
+    paired_stats = compute_paired_comparison(map_a, map_b, all_ids)
+    paired_stats["mean_pct_delta"] = round(paired_stats["mean_pct_delta"], 2)
+    paired_stats["ci95_low_pct"] = round(paired_stats["ci95_low_pct"], 2)
+    paired_stats["ci95_high_pct"] = round(paired_stats["ci95_high_pct"], 2)
+    paired_stats["sign_p_value"] = round(paired_stats["sign_p_value"], 6)
+    paired_stats["mcnemar"] = {
+        **paired_stats["mcnemar"],
+        "chi2": round(paired_stats["mcnemar"]["chi2"], 4),
+        "p_value": round(paired_stats["mcnemar"]["p_value"], 6),
+    }
+
     return {
         "run_a": run_a,
         "run_b": run_b,
@@ -326,6 +338,7 @@ def _build_comparison_payload(raw_a: Mapping[str, Any], raw_b: Mapping[str, Any]
             "score_delta": score_delta,
         },
         "mcnemar": mcnemar,
+        "paired_stats": paired_stats,
         "deltas": deltas,
     }
 

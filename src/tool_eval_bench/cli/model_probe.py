@@ -259,7 +259,7 @@ def _detect_model(
             sys.exit(1)
 
 
-def _probe_server(
+def probe_server_models(
     console: Console,
     base_url: str,
     api_key: str | None,
@@ -268,18 +268,11 @@ def _probe_server(
     headless: bool = False,
     wire_format: str = "openai",
     headers: Mapping[str, str] | None = None,
-) -> None:
-    """Check if a server is reachable and responsive, then exit.
+) -> list[str]:
+    """Verify the server's model listing and return discovered model IDs.
 
-    Useful for CI/CD pipelines and sparkrun recipes where the benchmark
-    step runs right after server startup — this lets the orchestrator
-    wait until the server is ready.
-
-    Exits 0 if the server answers the model listing with a JSON object, 1 if
-    it is unreachable or answers with an error, and 2 (``invalid_response``)
-    if it redirects or answers 2xx with anything else, such as a proxy
-    sending the request to a sign-in page.
-    Console lines show *display_url* (the ``--redact-url`` form) when given.
+    Exits 1 when the server is unreachable or returns an HTTP error, and 2
+    when it redirects or returns a non-JSON-object body.
     """
     import httpx
 
@@ -354,6 +347,40 @@ def _probe_server(
         console.print(f"[bold green]✓[/] Server at {escape(show_url)} is ready")
         if model_ids:
             console.print(f"  Models: {', '.join(escape(m) for m in model_ids)}")
+    return model_ids
+
+
+def _probe_server(
+    console: Console,
+    base_url: str,
+    api_key: str | None,
+    *,
+    display_url: str | None = None,
+    headless: bool = False,
+    wire_format: str = "openai",
+    headers: Mapping[str, str] | None = None,
+) -> None:
+    """Check if a server is reachable and responsive, then exit.
+
+    Useful for CI/CD pipelines and sparkrun recipes where the benchmark
+    step runs right after server startup — this lets the orchestrator
+    wait until the server is ready.
+
+    Exits 0 if the server answers the model listing with a JSON object, 1 if
+    it is unreachable or answers with an error, and 2 (``invalid_response``)
+    if it redirects or answers 2xx with anything else, such as a proxy
+    sending the request to a sign-in page.
+    Console lines show *display_url* (the ``--redact-url`` form) when given.
+    """
+    probe_server_models(
+        console,
+        base_url,
+        api_key,
+        display_url=display_url,
+        headless=headless,
+        wire_format=wire_format,
+        headers=headers,
+    )
     sys.exit(0)
 
 

@@ -117,6 +117,8 @@ class FailureKind:
     REASONING_TRUNCATED = "reasoning_truncated"
     # A turn ended normally with no visible text and no tool call.
     EMPTY_TURN = "empty_turn"
+    # Raw tool-call markup or JSON call envelope arrived in content instead of tool_calls.
+    UNPARSED_TOOL_CALL = "unparsed_tool_call"
     TIMEOUT = "timeout"
     CONNECTION_ERROR = "connection_error"
     SERVER_ERROR = "server_error"

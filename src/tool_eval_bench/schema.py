@@ -37,7 +37,7 @@ from tool_eval_bench.domain.engines import BACKEND_LABELS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 # Argument schema version — bump when adding/removing/renaming args.
-SCHEMA_VERSION = "10"
+SCHEMA_VERSION = "11"
 
 COMMANDS_SCHEMA: dict[str, dict[str, Any]] = commands_schema()
 
@@ -110,6 +110,12 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "type": "bool",
         "default": False,
         "description": "Check server reachability and exit (0 = ready, 1 = not found)",
+    },
+    {
+        "name": "check_tools",
+        "type": "bool",
+        "default": False,
+        "description": "With probe, send one tool-call request to verify structured tool_calls parsing",
     },
     # -- Decision judge audit --
     {
@@ -197,6 +203,12 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "type": "list[string]",
         "default": None,
         "description": "Specific scenario IDs to run (e.g. TC-01 TC-07)",
+    },
+    {
+        "name": "scenarios_from_diff",
+        "type": "list[string]",
+        "default": None,
+        "description": "Run only the discordant scenarios between two stored runs",
     },
     {
         "name": "categories",
@@ -789,6 +801,36 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "type": "list[string]",
         "default": None,
         "description": "Compare two stored runs by ID (provide exactly two run IDs)",
+    },
+    {
+        "name": "retest_diffs",
+        "type": "bool",
+        "default": False,
+        "description": "With --compare, re-run discordant scenarios across multiple trials",
+    },
+    {
+        "name": "base_url_a",
+        "type": "string",
+        "default": None,
+        "description": "Baseline Run A server URL for --retest-diffs",
+    },
+    {
+        "name": "base_url_b",
+        "type": "string",
+        "default": None,
+        "description": "Candidate Run B server URL for --retest-diffs",
+    },
+    {
+        "name": "api_key_a",
+        "type": "string",
+        "default": None,
+        "description": "Baseline Run A API key for --retest-diffs",
+    },
+    {
+        "name": "api_key_b",
+        "type": "string",
+        "default": None,
+        "description": "Candidate Run B API key for --retest-diffs",
     },
     {
         "name": "history",

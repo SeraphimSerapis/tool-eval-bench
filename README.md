@@ -71,7 +71,9 @@ tool-eval-bench run --short --base-url http://localhost:8000
 
 Drop `--base-url` and it scans the common localhost ports used by vLLM,
 llama.cpp, TensorFold, SGLang, LiteLLM, Ollama, and TGI. `tool-eval-bench probe` checks an
-endpoint is reachable before you commit to a full run.
+endpoint is reachable before you commit to a full run, and `tool-eval-bench probe --check-tools`
+also verifies that a test tool call arrives as structured `tool_calls` rather than raw markup in
+`content`.
 
 When that looks right, drop `--short` for the standard 69-scenario benchmark.
 Pass `--seed` so the run is reproducible, and add `--hardmode` for all 104:
@@ -169,7 +171,11 @@ runs:
   `max_completion_tokens`, and Gemini's `maxOutputTokens` (top level or in
   `generationConfig`) in backend kwargs. Repeated truncation is reported
   as inconclusive, not non-enforcement. The `tool_choice` diagnostic records
-  each attempt's finish reason, completion tokens, and retry outcome. A run
+  each attempt's finish reason, completion tokens, and retry outcome. By
+  contrast, scenarios where an unconfigured tool parser leaks raw markup or JSON
+  call objects into `content` record `failure_kind="unparsed_tool_call"`, remain
+  in the score denominator as zero points, and name the vLLM, SGLang, or
+  llama.cpp flags that fix the server. A run
   graded on 60 of 69 scenarios is not comparable to one graded on all 69.
 - **Safety warnings.** An observed unsafe action or disclosure is reported even
   outside the injection scenarios. Harmless incomplete work is not a safety
@@ -193,7 +199,9 @@ To read past runs back:
 ```bash
 tool-eval-bench history          # recent runs
 tool-eval-bench leaderboard      # ranked, grouped by comparable configuration
-tool-eval-bench compare A B      # two persisted runs, side by side
+tool-eval-bench compare A B      # paired 95% CI, 3-tier sign test, and McNemar's test
+tool-eval-bench compare A B --retest-diffs --trials 5   # re-test discordant scenarios on both endpoints
+tool-eval-bench run --scenarios-from-diff A B --trials 5 # re-test discordant scenarios on one active server
 tool-eval-bench serve            # all of the above in a browser (needs the web extra)
 ```
 
@@ -305,7 +313,7 @@ design, and per-scenario acceptance notes: [docs/methodology.md](https://github.
 | Command | Purpose |
 |---|---|
 | `run` | Run tool-call scenarios |
-| `probe` | Check inference-server reachability |
+| `probe` | Check inference-server reachability, or add `--check-tools` to verify structured tool-call parsing |
 | `bench` | Throughput, speculative-decoding, or context-pressure benchmarks |
 | `plugin` | Run GSM8K, MMLU, IFEval, needle-in-a-haystack, toolscale, or decision models |
 | `spec-live` | Monitor speculative-decoding metrics |
