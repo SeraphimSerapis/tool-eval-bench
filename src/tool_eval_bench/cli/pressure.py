@@ -10,10 +10,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import functools
-import inspect
 import logging
 import sys
-from typing import Any, cast
+from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
@@ -505,15 +504,9 @@ def run_pressure_sweep(
         },
         status="completed",
     )
-    extra_report_kwargs: dict[str, Any] = {}
-    report_params = inspect.signature(pressure_sweep_report).parameters
-    if "scenario_metadata" in report_params:
-        extra_report_kwargs["scenario_metadata"] = scenario_report_metadata(scenarios)
-    if "scenario_packs" in report_params:
-        extra_report_kwargs["scenario_packs"] = pack_attestations
     finalized = finalize_mode_run(
         run,
-        cast(Any, pressure_sweep_report)(
+        pressure_sweep_report(
             model=display_name,
             backend=backend,
             # The report is a shareable artifact: redacted whatever --redact-url says.
@@ -527,7 +520,8 @@ def run_pressure_sweep(
             interrupted=interrupted,
             stop_reason=stop_reason,
             breaking_point_lower_bound=breaking_point_lower_bound,
-            **extra_report_kwargs,
+            scenario_metadata=scenario_report_metadata(scenarios),
+            scenario_packs=pack_attestations,
         ),
         run_context=run_context,
         output_dir=getattr(args, "output_dir", None),

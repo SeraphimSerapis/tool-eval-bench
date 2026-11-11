@@ -1206,7 +1206,7 @@ def test_multi_trial_summary_reports_receive_throughput_samples_and_resumed_meta
         assert len(summaries) == 2
 
 
-def test_pressure_sweep_records_pack_attestations_and_forwards_metadata_when_supported(
+def test_pressure_sweep_records_pack_attestations_and_redacts_held_out_report_end_to_end(
     isolated_env: dict[str, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     ho = _held_out_scenario("HO-88")
@@ -1222,11 +1222,30 @@ def test_pressure_sweep_records_pack_attestations_and_forwards_metadata_when_sup
         "tool_eval_bench.runner.orchestrator.run_all_scenarios",
         AsyncMock(
             return_value=ModelScoreSummary(
-                scenario_results=[ScenarioResult("HO-88", ScenarioStatus.PASS, 2, "secret")],
+                scenario_results=[
+                    ScenarioResult(
+                        "TC-01",
+                        ScenarioStatus.PASS,
+                        2,
+                        "Public weather summary",
+                        expected_behavior="Public expected behavior",
+                        tool_calls_made=["get_weather"],
+                        raw_log="public weather trace",
+                    ),
+                    ScenarioResult(
+                        "HO-88",
+                        ScenarioStatus.PASS,
+                        2,
+                        "secret-ho-summary",
+                        expected_behavior="secret-ho-expected",
+                        tool_calls_made=["secret_canary_tool"],
+                        raw_log="secret-ho-trace",
+                    ),
+                ],
                 category_scores=[],
                 final_score=100,
-                total_points=2,
-                max_points=2,
+                total_points=4,
+                max_points=4,
                 rating="★★★★★ Excellent",
             )
         ),
@@ -1235,46 +1254,13 @@ def test_pressure_sweep_records_pack_attestations_and_forwards_metadata_when_sup
     real_pressure_report = pressure.pressure_sweep_report
     captured_report_kwargs: list[dict[str, Any]] = []
 
-    def fake_pressure_report(
-        *,
-        model: str,
-        backend: str,
-        server: str,
-        context_size: int,
-        level_results: list[dict[str, Any]],
-        breaking_point: float | None,
-        first_degradation: float | None,
-        label: str | None = None,
-        planned_levels: int | None = None,
-        interrupted: bool = False,
-        stop_reason: str | None = None,
-        breaking_point_lower_bound: bool = False,
-        scenario_metadata: dict[str, Any] | None = None,
-        scenario_packs: list[dict[str, Any]] | None = None,
-    ) -> Any:
-        captured_report_kwargs.append(
-            {
-                "scenario_metadata": scenario_metadata,
-                "scenario_packs": scenario_packs,
-            }
-        )
-        return real_pressure_report(
-            model=model,
-            backend=backend,
-            server=server,
-            context_size=context_size,
-            level_results=level_results,
-            breaking_point=breaking_point,
-            first_degradation=first_degradation,
-            label=label,
-            planned_levels=planned_levels,
-            interrupted=interrupted,
-            stop_reason=stop_reason,
-            breaking_point_lower_bound=breaking_point_lower_bound,
-        )
+    def spy_pressure_report(**kwargs: Any) -> Any:
+        captured_report_kwargs.append(kwargs)
+        return real_pressure_report(**kwargs)
 
-    monkeypatch.setattr(pressure, "pressure_sweep_report", fake_pressure_report)
+    monkeypatch.setattr(pressure, "pressure_sweep_report", spy_pressure_report)
 
+    runs_out = tmp_path / "runs[brackets]"
     args = make_parser().parse_args(
         [
             "--context-pressure-sweep",
@@ -1283,9 +1269,11 @@ def test_pressure_sweep_records_pack_attestations_and_forwards_metadata_when_sup
             "2",
             "--context-size",
             "32768",
-            "--pack-only",
+            "--scenarios",
+            "TC-01",
+            "HO-88",
             "--output-dir",
-            str(tmp_path / "runs[brackets]"),
+            str(runs_out),
         ]
     )
     args._resolved_scenario_packs = [_scenario_pack(ho, name="sweep-pack", tmp_path=tmp_path)]
@@ -1303,10 +1291,37 @@ def test_pressure_sweep_records_pack_attestations_and_forwards_metadata_when_sup
     )
 
     assert len(captured_report_kwargs) == 1
+    assert captured_report_kwargs[0]["scenario_metadata"]["TC-01"].held_out is False
     assert captured_report_kwargs[0]["scenario_metadata"]["HO-88"].held_out is True
     assert captured_report_kwargs[0]["scenario_packs"][0]["name"] == "sweep-pack"
+
+    report_files = list(runs_out.rglob("*.md"))
+    assert len(report_files) == 1
+    report_md = report_files[0].read_text(encoding="utf-8")
+    assert "Public weather summary" in report_md
+    assert "public weather trace" in report_md
+    assert "### HO-88" in report_md
+    assert "_Held-out scenario: title, summary, and trace withheld._" in report_md
+    assert "sweep-pack" in report_md
+    assert "a" * 64 in report_md
+    for secret_token in (
+        "Secret Held-Out Canary Title",
+        "Confidential",
+        "secret-ho-summary",
+        "secret-ho-expected",
+        "secret_canary_tool",
+        "secret-ho-trace",
+    ):
+        assert secret_token not in report_md
+
     stored = recent_runs(limit=1)[0]
     assert stored["config"]["scenario_packs"][0]["name"] == "sweep-pack"
+    stored_ho = next(
+        sr
+        for sr in stored["scores"]["level_results"][0]["scenario_results"]
+        if sr["scenario_id"] == "HO-88"
+    )
+    assert stored_ho["raw_log"] == "secret-ho-trace"
 
 
 # ---------------------------------------------------------------------------
