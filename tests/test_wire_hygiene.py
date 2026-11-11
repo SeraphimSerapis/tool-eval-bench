@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Sequence
 from io import StringIO
 from pathlib import Path
@@ -281,6 +282,7 @@ def test_detect_unparsed_tool_call_template_markers(
         '{"type": "function", "function": {"name": "get_weather", "arguments": {"location": "Tokyo"}}}',
         '{"function": {"name": "get_weather", "parameters": {"location": "Tokyo"}}}',
         '[{"name": "get_weather", "arguments": {"location": "Tokyo"}}]',
+        '{"tool_call": {"name": "get_weather", "arguments": {"location": "Tokyo"}}}',
         '{"tool_calls": [{"name": "get_weather", "arguments": {"location": "Tokyo"}}]}',
         'Prefix {"broken_json": [} then {"name": "get_weather", "arguments": {"location": "Tokyo"}}',
         'Let me check that.\n```json\n{"name": "get_weather", "arguments": {"location": "Tokyo"}}\n```',
@@ -336,6 +338,30 @@ def test_detect_unparsed_tool_call_returns_none_when_no_tools_are_advertised() -
     assert detect_unparsed_tool_call(raw, None) is None
     assert advertised_tool_names([]) == set()
     assert advertised_tool_names([{"name": "flat_tool"}]) == {"flat_tool"}
+
+
+def test_detect_unparsed_tool_call_is_linear_on_repeated_unclosed_tags() -> None:
+    for payload in (
+        "<tool_call>abc " * 4000,
+        "<tool_calls>abc " * 4000,
+        "<think>abc " * 4000,
+    ):
+        t0 = time.perf_counter()
+        match = detect_unparsed_tool_call(payload, UNIVERSAL_TOOLS)
+        elapsed = time.perf_counter() - t0
+        assert match is None
+        assert elapsed < 0.1
+
+    nested = '<tool_calls>abc <tool_calls>  <tool_call>{"name": "get_weather"}'
+    assert detect_unparsed_tool_call(nested, UNIVERSAL_TOOLS) == UnparsedToolCallMatch(
+        marker="<tool_call>",
+        parser_family="hermes/qwen",
+    )
+    unclosed_plural = '<tool_calls>abc <tool_calls> [{"name": "get_weather"}]'
+    assert detect_unparsed_tool_call(unclosed_plural, UNIVERSAL_TOOLS) == UnparsedToolCallMatch(
+        marker="<tool_calls>",
+        parser_family="hermes/qwen",
+    )
 
 
 @pytest.mark.parametrize(
@@ -603,6 +629,43 @@ async def test_run_scenario_does_not_override_passing_result_with_unparsed_failu
 
 
 @pytest.mark.asyncio
+async def test_run_scenario_skips_unparsed_detection_when_tool_choice_is_none() -> None:
+    scenario = ScenarioDefinition(
+        id="WH-NONE-01",
+        title="Tool choice none restraint",
+        category=Category.D,
+        user_message="Do not call tools.",
+        description="Answer without tools.",
+        handle_tool_call=lambda state, call: {},
+        evaluate=lambda state: ScenarioEvaluation(
+            ScenarioStatus.FAIL,
+            0,
+            "Disobeyed tool_choice=none constraint.",
+            failure_kind=FailureKind.FORBIDDEN_ACTION,
+        ),
+        tool_choice_override="none",
+    )
+    adapter = _ScriptedAdapter(
+        [
+            ChatCompletionResult(
+                content='<tool_call>{"name": "get_weather", "arguments": {"location": "Tokyo"}}</tool_call>',
+                finish_reason="stop",
+            )
+        ]
+    )
+    result = await run_scenario(
+        adapter,
+        model="disobedient-model",
+        base_url="http://localhost:8000/v1",
+        api_key=None,
+        scenario=scenario,
+    )
+    assert result.failure_kind == FailureKind.FORBIDDEN_ACTION
+    assert "unparsed_tool_call=" not in result.raw_log
+    assert result.note is None
+
+
+@pytest.mark.asyncio
 async def test_probe_tool_choice_required_reports_unparsed_markup_instead_of_prose() -> None:
     adapter = _ScriptedAdapter(
         [
@@ -625,6 +688,25 @@ async def test_probe_tool_choice_required_reports_unparsed_markup_instead_of_pro
     assert "--enable-auto-tool-choice" in probe.detail
     assert "--tool-call-parser hermes" in probe.detail
     assert "answered in prose" not in probe.detail
+
+    raw_json_probe = await probe_tool_choice_required(
+        _ScriptedAdapter(
+            [
+                ChatCompletionResult(
+                    content='{"name": "probe_ping", "arguments": {"value": "ok"}}',
+                    finish_reason="stop",
+                )
+            ]
+        ),
+        model="m",
+        base_url="http://localhost:8000/v1",
+        api_key=None,
+        timeout_seconds=5.0,
+    )
+    assert raw_json_probe.enforced is False
+    assert 'emitted unparsed raw JSON call to "probe_ping" in content' in raw_json_probe.detail
+    assert "markup raw JSON" not in raw_json_probe.detail
+    assert "raw raw" not in raw_json_probe.detail
 
 
 @pytest.mark.asyncio
@@ -677,6 +759,25 @@ async def test_probe_tool_call_parsing_covers_parsed_unparsed_and_prose() -> Non
     assert raw_probe.unparsed_marker == "[TOOL_CALLS]"
     assert raw_probe.parser_family == "mistral"
     assert "--tool-call-parser mistral" in raw_probe.detail
+
+    raw_json_wire = await probe_tool_call_parsing(
+        _ScriptedAdapter(
+            [
+                ChatCompletionResult(
+                    content='{"name": "probe_ping", "arguments": {"value": "ok"}}',
+                    finish_reason="stop",
+                )
+            ]
+        ),
+        model="m",
+        base_url="http://localhost:8000/v1",
+        api_key=None,
+        timeout_seconds=5.0,
+    )
+    assert raw_json_wire.parsed is False
+    assert raw_json_wire.parser_family == "raw_json"
+    assert 'the endpoint emitted raw JSON call to "probe_ping" in content' in raw_json_wire.detail
+    assert "raw raw" not in raw_json_wire.detail
 
     retry_adapter = _ScriptedAdapter(
         [

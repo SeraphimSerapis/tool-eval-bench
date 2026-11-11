@@ -13,14 +13,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-_CLOSED_THINK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
-_QWEN3_CODER_FUNCTION_RE = re.compile(r"<function=[A-Za-z_][A-Za-z0-9_.-]*\s*>")
-_TOOL_CALL_TAG_RE = re.compile(r"<tool_call>(?:\s*(?:\{|\[|<function=)|[\s\S]*?</tool_call>)")
-_TOOL_CALLS_TAG_RE = re.compile(
-    r"<tool_calls>(?:\s*(?:\{|\[|<tool_call\b|<function=)|[\s\S]*?</tool_calls>)"
-)
+_QWEN3_CODER_FUNCTION_RE = re.compile(r"<function=[A-Za-z_][A-Za-z0-9_.-]*[ \t\r\n]*>")
 _FENCED_TOOL_CALL_RE = re.compile(r"```tool_calls?\b")
-_JSON_START_RE = re.compile(r"\{\s*\"|\[\s*\{")
+_JSON_START_RE = re.compile(r"\{[ \t\r\n]*\"|\[[ \t\r\n]*\{")
 
 _LITERAL_MARKERS: tuple[tuple[str, str, str], ...] = (
     ("<|tool_calls_begin|>", "<|tool_calls_begin|>", "deepseek"),
@@ -133,6 +128,11 @@ def _match_json_tool_call_value(data: Any, advertised_names: set[str]) -> str | 
         return direct
 
     if isinstance(data, Mapping):
+        single_tc = data.get("tool_call")
+        if single_tc is not None:
+            matched = _match_json_call_object(single_tc, advertised_names)
+            if matched is not None:
+                return matched
         tc_list = data.get("tool_calls")
         if isinstance(tc_list, list):
             for item in tc_list:
@@ -170,6 +170,58 @@ def _detect_raw_json_call(text: str, advertised_names: set[str]) -> str | None:
     return None
 
 
+def _strip_closed_think_blocks(text: str) -> str:
+    """Remove closed <think>...</think> blocks in one linear pass."""
+    lower = text.lower()
+    open_idx = lower.find("<think>")
+    if open_idx == -1:
+        return text
+    out: list[str] = []
+    cursor = 0
+    while open_idx != -1:
+        close_idx = lower.find("</think>", open_idx + 7)
+        if close_idx == -1:
+            break
+        out.append(text[cursor:open_idx])
+        cursor = close_idx + 8
+        open_idx = lower.find("<think>", cursor)
+    if cursor == 0:
+        return text
+    out.append(text[cursor:])
+    return "".join(out)
+
+
+def _has_tool_tag(
+    text: str,
+    open_tag: str,
+    close_tag: str,
+    *,
+    allow_nested_tool_call: bool = False,
+) -> bool:
+    """Check for a closed tool-call XML block or an unclosed tag before payload start."""
+    first_open = text.find(open_tag)
+    if first_open == -1:
+        return False
+    open_len = len(open_tag)
+    if text.find(close_tag, first_open + open_len) != -1:
+        return True
+    n = len(text)
+    prefixes: tuple[str, ...] = (
+        ("{", "[", "<function=", "<tool_call>", "<tool_call ")
+        if allow_nested_tool_call
+        else ("{", "[", "<function=")
+    )
+    idx = first_open
+    while idx != -1:
+        pos = idx + open_len
+        while pos < n and text[pos].isspace():
+            pos += 1
+        if text.startswith(prefixes, pos):
+            return True
+        idx = text.find(open_tag, idx + open_len)
+    return False
+
+
 def detect_unparsed_tool_call(
     content: str | None,
     tools: Sequence[Mapping[str, Any]] | None,
@@ -177,7 +229,7 @@ def detect_unparsed_tool_call(
     """Detect raw tool-call markup or JSON tool-call envelopes leaked into content."""
     if not content or not tools:
         return None
-    cleaned = _CLOSED_THINK_RE.sub("", content)
+    cleaned = _strip_closed_think_blocks(content)
     if not cleaned.strip():
         return None
 
@@ -191,10 +243,10 @@ def detect_unparsed_tool_call(
     if _FENCED_TOOL_CALL_RE.search(cleaned):
         return UnparsedToolCallMatch(marker="```tool_call", parser_family="hermes/qwen")
 
-    if _TOOL_CALL_TAG_RE.search(cleaned):
+    if _has_tool_tag(cleaned, "<tool_call>", "</tool_call>"):
         return UnparsedToolCallMatch(marker="<tool_call>", parser_family="hermes/qwen")
 
-    if _TOOL_CALLS_TAG_RE.search(cleaned):
+    if _has_tool_tag(cleaned, "<tool_calls>", "</tool_calls>", allow_nested_tool_call=True):
         return UnparsedToolCallMatch(marker="<tool_calls>", parser_family="hermes/qwen")
 
     advertised = advertised_tool_names(tools)

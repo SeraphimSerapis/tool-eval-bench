@@ -708,7 +708,7 @@ async def run_scenario(
             # No tool calls → model finished this conversational phase
             if not result.tool_calls:
                 recent_turn_signatures.clear()
-                if scenario_tools and unparsed_stop is None:
+                if scenario_tools and active_tool_choice != "none" and unparsed_stop is None:
                     unparsed_match = detect_unparsed_tool_call(result.content, scenario_tools)
                     if unparsed_match is not None:
                         marker = unparsed_match.display_marker(held_out=scenario.held_out)
@@ -1221,11 +1221,17 @@ async def probe_tool_choice_required(
         unparsed_match = detect_unparsed_tool_call(result.content, _TOOL_CHOICE_PROBE_TOOLS)
         if unparsed_match is not None:
             advice = format_tool_parser_advice(parser_family=unparsed_match.parser_family)
-            detail = (
-                f"not enforced; the endpoint emitted raw unparsed tool-call markup "
-                f"{unparsed_match.marker} in content instead of structured tool_calls. "
-                f"{advice}"
-            )
+            if unparsed_match.parser_family == "raw_json":
+                detail = (
+                    f"not enforced; the endpoint emitted unparsed {unparsed_match.marker} "
+                    f"in content instead of structured tool_calls. {advice}"
+                )
+            else:
+                detail = (
+                    f"not enforced; the endpoint emitted raw unparsed tool-call markup "
+                    f"{unparsed_match.marker} in content instead of structured tool_calls. "
+                    f"{advice}"
+                )
         elif result.finish_reason == "length":
             detail = "inconclusive; probe exhausted both token budgets without a tool call"
             # Truncated text may be prose or a call cut off before it parsed,
@@ -1315,10 +1321,17 @@ async def probe_tool_call_parsing(
         unparsed_match = detect_unparsed_tool_call(result.content, _TOOL_CHOICE_PROBE_TOOLS)
         if unparsed_match is not None:
             advice = format_tool_parser_advice(parser_family=unparsed_match.parser_family)
-            detail = (
-                f"unparsed tool call; the endpoint emitted raw {unparsed_match.marker} "
-                f"in content instead of structured tool_calls. {advice}"
-            )
+            if unparsed_match.parser_family == "raw_json":
+                detail = (
+                    f"unparsed tool call; the endpoint emitted {unparsed_match.marker} "
+                    f"in content instead of structured tool_calls. {advice}"
+                )
+            else:
+                detail = (
+                    f"unparsed tool call; the endpoint emitted raw tool-call markup "
+                    f"{unparsed_match.marker} in content instead of structured tool_calls. "
+                    f"{advice}"
+                )
             return ToolCallWireProbe(
                 False,
                 False,
