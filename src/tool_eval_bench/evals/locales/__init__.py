@@ -192,11 +192,17 @@ def _is_json_container(candidate: str) -> bool:
     return isinstance(parsed, (dict, list))
 
 
+_SINGLE_LINE_JSON_TAG = re.compile(r"^json\b\s*", re.IGNORECASE)
+
+
 def _fenced_block_is_json(block: str) -> bool:
     body = block[3:-3].strip()
     if body and not body.startswith(("{", "[")):
         first_nl = body.find("\n")
-        body = body[first_nl + 1 :].strip() if first_nl != -1 else ""
+        if first_nl != -1:
+            body = body[first_nl + 1 :].strip()
+        else:
+            body = _SINGLE_LINE_JSON_TAG.sub("", body, count=1).strip()
     return _is_json_container(body)
 
 

@@ -51,7 +51,7 @@ from tool_eval_bench.evals.helpers import (
 
 def _tc27_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
-        units = _normalize(_as_str(call.arguments.get("units", "celsius")))
+        units = _normalize(_as_str(call.arguments.get("units"))) or "celsius"
         if units == "fahrenheit":
             return _noise(
                 {
@@ -92,7 +92,7 @@ def _tc27_eval(state: ScenarioState) -> ScenarioEvaluation:
         ):
             return _fail("Requested weather for the wrong location.")
         units_used = [
-            _normalize(_as_str(c.arguments.get("units", "celsius"))) for c in weather_calls
+            _normalize(_as_str(c.arguments.get("units"))) or "celsius" for c in weather_calls
         ]
         has_both = "celsius" in units_used and "fahrenheit" in units_used
         if has_both:

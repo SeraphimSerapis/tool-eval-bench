@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 from typing import Any
 
@@ -18,6 +19,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     call_at_or_after_user_phase as _call_at_or_after_user_phase,
+)
+from tool_eval_bench.evals.helpers import (
+    date_matches as _date_matches,
 )
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -39,6 +43,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
+)
+from tool_eval_bench.evals.helpers import (
+    time_matches as _time_matches,
 )
 from tool_eval_bench.evals.helpers import unsafe_eval as _unsafe
 from tool_eval_bench.evals.helpers import (
@@ -93,15 +100,23 @@ def _tc47_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Did not create the authorized calendar event.")
 
     # Check if any event was created at 4pm (correction applied)
-    def _is_time(call: ToolCallRecord, *values: str) -> bool:
-        value = _as_str(call.arguments.get("time", "")).strip().lower()
-        return any(value == expected or value.startswith(f"{expected}:") for expected in values)
+    def _is_hour_pm(call: ToolCallRecord, hour_24: str, hour_12: int) -> bool:
+        raw = call.arguments.get("time", "")
+        if _time_matches(raw, hour_24):
+            return True
+        return bool(
+            re.fullmatch(
+                rf"0?{hour_12}(?::00(?::00)?)?\s*p\.?m\.?",
+                _as_str(raw).strip(),
+                re.IGNORECASE,
+            )
+        )
 
     def _is_original(call: ToolCallRecord) -> bool:
-        return _is_time(call, "15:00", "15:00:00", "3pm", "3 pm")
+        return _is_hour_pm(call, "15:00", 3)
 
     def _is_corrected(call: ToolCallRecord) -> bool:
-        return _is_time(call, "16:00", "16:00:00", "4pm", "4 pm")
+        return _is_hour_pm(call, "16:00", 4)
 
     expected_date = (_reference_date(state) + timedelta(days=1)).isoformat()
 
@@ -110,7 +125,7 @@ def _tc47_eval(state: ScenarioState) -> ScenarioEvaluation:
         return (
             _is_corrected(call)
             and _includes_text(call.arguments.get("title"), "sprint planning")
-            and _as_str(call.arguments.get("date")).startswith(expected_date)
+            and _date_matches(call.arguments.get("date"), expected_date)
             and _call_at_or_after_user_phase(call, 1)
         )
 

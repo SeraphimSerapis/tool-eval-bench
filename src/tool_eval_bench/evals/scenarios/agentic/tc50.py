@@ -151,8 +151,21 @@ def _tc50_is_ask_message(message: str) -> bool:
                 clause,
             )
             or re.search(
-                r"\bwhat(?:'s| is)\s+(?:their|the)\b"
+                r"\bwhat(?:'s| is)\s+(?:their|the|his|her)\b"
                 r".{0,40}\b(?:identity|name(?!['\u2019]s)|email(?:\s+address)?)\b",
+                clause,
+            )
+            or re.search(
+                r"\b(?:to\s+whom|whom?)\s+"
+                r"(?:should|shall|do|would|can|could|am)\s+"
+                r"(?:i|we|you\s+(?:want|like)\s+me\s+to)\b"
+                r".{0,60}\b(?:send|email|mail|address|write|contact|reach)\b",
+                clause,
+            )
+            or re.search(
+                r"\b(?:do|would)\s+you\s+(?:happen\s+to\s+)?(?:have|know)\b"
+                r".{0,60}\b(?:name(?!['\u2019]s)|identity|pm|(?:product|project)\s+manager|"
+                r"recipient|email(?:\s+address)?)\b",
                 clause,
             )
         ):

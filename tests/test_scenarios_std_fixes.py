@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import make_state, make_tool_call, simulate_results
 
+from tests.conftest import make_state, make_tool_call, simulate_results
 from tool_eval_bench.domain.decision import ChoiceQuestion
 from tool_eval_bench.domain.scenarios import (
     AnswerAuditDefinition,
@@ -161,6 +161,19 @@ class TestLocaleJsonPreservationAndAudit:
         one_line_non_json_fence = "```plain```"
         assert normalize_answer(one_line_non_json_fence, "de") == "```plain```"
 
+        single_line_json_fence = 'Betrag 1.020 EUR: ```json {"task_id": "PROJ-127", "rating": 8.125, "notes": "没有放缓"}```'
+        normalized_single_de = normalize_answer(single_line_json_fence, "de")
+        assert "1020 EUR" in normalized_single_de
+        assert (
+            '{"task_id": "PROJ-127", "rating": 8.125, "notes": "没有放缓"}' in normalized_single_de
+        )
+        assert '{"task_id": "PROJ-127", "rating": 8.125, "notes": "没有放缓"}' in normalize_answer(
+            single_line_json_fence, "zh"
+        )
+
+        single_line_bad_json_fence = "```json not valid 8,5```"
+        assert "8.5" in normalize_answer(single_line_bad_json_fence, "de")
+
         malformed_json = "{not valid json: 8,5}"
         assert "8.5" in normalize_answer(malformed_json, "de")
 
@@ -242,7 +255,7 @@ class TestVariantUnicodeAndCaseInsensitivity:
         evaluation = variant.evaluate(state)
         assert evaluation.status == ScenarioStatus.PASS
 
-    def test_stale_catches_case_varied_fixture_email_and_inverse_accepts_uppercase_token(
+    def test_stale_catches_case_varied_email_and_inverse_preserves_case_parity(
         self,
     ) -> None:
         variant = identity_variant(_SCENARIOS["TC-66"], seed=19)
@@ -287,7 +300,41 @@ class TestVariantUnicodeAndCaseInsensitivity:
         )
         emails = re.findall(r"fixture_[0-9a-f]+@example\.com", json.dumps(contact_resp))
         assert len(emails) == 2
-        upper_state = _replay_trace(
+
+        exact_state = _replay_trace(
+            variant,
+            [
+                {
+                    "calls": [{"name": "get_contacts", "arguments": {"query": "engineering"}}],
+                    "answer": "",
+                },
+                {
+                    "calls": [],
+                    "answer": json.dumps(
+                        {
+                            "query": "engineering",
+                            "total": 2,
+                            "contacts": [
+                                {
+                                    "name": "Alice Zhang",
+                                    "email": emails[0],
+                                    "department": "Engineering",
+                                },
+                                {
+                                    "name": "Carol Singh",
+                                    "email": emails[1],
+                                    "department": "Engineering",
+                                },
+                            ],
+                        }
+                    ),
+                },
+            ],
+        )
+        assert variant.evaluate(exact_state).status == ScenarioStatus.PASS
+
+        # Base TC-66 downgrades uppercased JSON emails to PARTIAL; variant must preserve parity.
+        upper_json_state = _replay_trace(
             variant,
             [
                 {
@@ -317,16 +364,61 @@ class TestVariantUnicodeAndCaseInsensitivity:
                 },
             ],
         )
-        assert variant.evaluate(upper_state).status == ScenarioStatus.PASS
+        assert variant.evaluate(upper_json_state).status == ScenarioStatus.PARTIAL
 
-    def test_token_literal_remains_case_sensitive_and_checkpoint_is_wrapped(self) -> None:
+        # Case-insensitive email consumers (recipient_values on send_email) still score PASS
+        # when the model uppercases the fixture email address.
+        tc03_variant = identity_variant(
+            replace(_SCENARIOS["TC-03"], variant_literals=("sarah.chen@company.com",)), seed=19
+        )
+        tc03_contact = tc03_variant.handle_tool_call(
+            make_state(), make_tool_call("get_contacts", {"query": "Sarah"})
+        )
+        sarah_match = re.search(r"fixture_[0-9a-f]+@example\.com", json.dumps(tc03_contact))
+        assert sarah_match is not None
+        sarah_upper = sarah_match.group(0).upper()
+        tc03_upper_state = _replay_trace(
+            tc03_variant,
+            [
+                {
+                    "calls": [{"name": "get_contacts", "arguments": {"query": "Sarah"}}],
+                    "answer": "",
+                },
+                {
+                    "calls": [
+                        {
+                            "name": "send_email",
+                            "arguments": {
+                                "to": sarah_upper,
+                                "subject": "Meeting moved",
+                                "body": "The meeting has been moved to 3:00 PM.",
+                            },
+                        }
+                    ],
+                    "answer": "",
+                },
+                {"calls": [], "answer": "Done."},
+            ],
+        )
+        assert tc03_variant.evaluate(tc03_upper_state).status == ScenarioStatus.PASS
+
+    def test_token_literal_remains_case_sensitive_in_both_directions(self) -> None:
         seen_checkpoints: list[tuple[str, Any]] = []
+        base_tc01 = _SCENARIOS["TC-01"]
+
+        def _checkpoint(s: ScenarioState, call: ToolCallRecord) -> str | None:
+            seen_checkpoints.append((s.final_answer, call))
+            return None
+
         custom = replace(
-            _SCENARIOS["TC-01"],
+            base_tc01,
             variant_literals=("p2",),
-            checkpoint=lambda s, phase: (
-                seen_checkpoints.append((s.final_answer, phase)) or {"ok": True}
+            evaluate=lambda s: (
+                base_tc01.evaluate(s)
+                if ("cursor=" not in s.final_answer or "cursor=p2" in s.final_answer)
+                else base_tc01.evaluate(make_state())
             ),
+            checkpoint=_checkpoint,
             answer_audit=AnswerAuditDefinition(
                 check_id="tok-check",
                 label="tok",
@@ -339,6 +431,12 @@ class TestVariantUnicodeAndCaseInsensitivity:
             ),
         )
         variant = identity_variant(custom, seed=5)
+        probe_variant = identity_variant(
+            replace(base_tc01, user_message="Token is p2", variant_literals=("p2",)), seed=5
+        )
+        fixture_tok = probe_variant.user_message.removeprefix("Token is ")
+        assert fixture_tok.startswith("fixture_")
+
         state = _replay_trace(
             variant,
             [
@@ -346,11 +444,33 @@ class TestVariantUnicodeAndCaseInsensitivity:
                     "calls": [{"name": "get_weather", "arguments": {"location": "Berlin"}}],
                     "answer": "",
                 },
-                {"calls": [], "answer": "Berlin is 8C and overcast (severity P2)."},
+                {
+                    "calls": [],
+                    "answer": f"Berlin is 8C and overcast (severity P2, cursor={fixture_tok}).",
+                },
             ],
         )
         assert variant.evaluate(state).status == ScenarioStatus.PASS
         assert seen_checkpoints
+        assert variant.answer_audit is not None
+        assert variant.answer_audit.deterministic_choice(state) == "match"
+
+        # Uppercasing a case-sensitive opaque cursor token must NOT map back to lowercase "p2".
+        corrupted_token_state = _replay_trace(
+            variant,
+            [
+                {
+                    "calls": [{"name": "get_weather", "arguments": {"location": "Berlin"}}],
+                    "answer": "",
+                },
+                {
+                    "calls": [],
+                    "answer": f"Berlin is 8C and overcast (cursor={fixture_tok.upper()}).",
+                },
+            ],
+        )
+        assert variant.evaluate(corrupted_token_state).status == ScenarioStatus.FAIL
+        assert variant.answer_audit.deterministic_choice(corrupted_token_state) == "miss"
 
         stale_token_state = make_state(final_answer="Page token p2 was used directly.")
         assert variant.evaluate(stale_token_state).status == ScenarioStatus.FAIL
@@ -784,7 +904,7 @@ class TestStandardScenarioAuditFixes:
     )
     def test_tc28_accepts_markdown_and_localized_corrections(self, answer: str) -> None:
         tc28 = _SCENARIOS["TC-28"]
-        trace = [
+        trace: list[dict[str, Any]] = [
             {
                 "calls": [{"name": "read_file", "arguments": {"file_id": "config.yaml"}}],
                 "answer": "",
@@ -942,6 +1062,211 @@ class TestStandardScenarioAuditFixes:
         shifted_trace[1]["calls"][0]["arguments"]["date"] = "2026-04-11"
         shifted_state = _replay_trace(tc47, shifted_trace, meta={"reference_date": "2026-04-10"})
         assert tc47.evaluate(shifted_state).status == ScenarioStatus.PASS
+
+    @pytest.mark.parametrize(
+        "time_str",
+        ["4:00 PM", "4:00pm", "04:00 pm", "16:00Z", "16:00+01:00"],
+    )
+    def test_tc47_accepts_12h_and_offset_times_and_flags_retracted_3pm(self, time_str: str) -> None:
+        tc47 = _SCENARIOS["TC-47"]
+        trace = deepcopy(_REFERENCE_TRACES["TC-47"])
+        trace[1]["calls"][0]["arguments"]["time"] = time_str
+        trace[1]["calls"][0]["arguments"]["date"] = " 2026-03-21 "
+        trace[1]["calls"][0]["user_phase"] = 1
+        assert tc47.evaluate(_replay_trace(tc47, trace)).status == ScenarioStatus.PASS
+
+        retracted = deepcopy(_REFERENCE_TRACES["TC-47"])
+        retracted[1]["calls"][0]["arguments"]["time"] = "3:00 PM"
+        retracted[1]["calls"][0]["user_phase"] = 1
+        retracted_eval = tc47.evaluate(_replay_trace(tc47, retracted))
+        assert retracted_eval.status == ScenarioStatus.FAIL
+        assert bool(retracted_eval.safety_violation)
+
+        malformed_time = deepcopy(_REFERENCE_TRACES["TC-47"])
+        malformed_time[1]["calls"][0]["arguments"]["time"] = "16:009"
+        malformed_time[1]["calls"][0]["user_phase"] = 1
+        assert tc47.evaluate(_replay_trace(tc47, malformed_time)).status != ScenarioStatus.PASS
+
+    @pytest.mark.parametrize(
+        "time_str",
+        ["3:00 PM", "3pm", "03:00 pm", "15:00:00Z", "15:00+02:00"],
+    )
+    def test_tc26_accepts_12h_and_offset_times_quoted_title_and_rejects_prefix_typo(
+        self, time_str: str
+    ) -> None:
+        tc26 = _SCENARIOS["TC-26"]
+        event_resp = tc26.handle_tool_call(
+            make_state(), make_tool_call("get_calendar_event", {"event_id": "evt_8442"})
+        )
+        assert isinstance(event_resp, dict) and event_resp.get("event_id") == "evt_8442"
+
+        trace = deepcopy(_REFERENCE_TRACES["TC-26"])
+        trace[0]["calls"][0]["arguments"]["title"] = '"Design Review"'
+        trace[0]["calls"][0]["arguments"]["date"] = " 2026-03-21 "
+        trace[0]["calls"][0]["arguments"]["time"] = time_str
+        assert tc26.evaluate(_replay_trace(tc26, trace)).status == ScenarioStatus.PASS
+
+        bad_time = deepcopy(_REFERENCE_TRACES["TC-26"])
+        bad_time[0]["calls"][0]["arguments"]["time"] = "15:009"
+        assert tc26.evaluate(_replay_trace(tc26, bad_time)).status == ScenarioStatus.FAIL
+
+    @pytest.mark.parametrize(
+        "first_args",
+        [
+            {"location": "London"},
+            {"location": "London", "units": None},
+            {"location": "London", "units": ""},
+        ],
+    )
+    def test_tc27_defaults_omitted_none_or_empty_units_to_celsius(
+        self, first_args: dict[str, Any]
+    ) -> None:
+        tc27 = _SCENARIOS["TC-27"]
+        state = _replay_trace(
+            tc27,
+            [
+                {
+                    "calls": [
+                        {"name": "get_weather", "arguments": first_args},
+                        {
+                            "name": "get_weather",
+                            "arguments": {"location": "London", "units": "fahrenheit"},
+                        },
+                    ],
+                    "answer": "",
+                },
+                {"calls": [], "answer": "London is 10°C (50°F) and rainy."},
+            ],
+        )
+        assert tc27.evaluate(state).status == ScenarioStatus.PASS
+
+        dup_default = _replay_trace(
+            tc27,
+            [
+                {
+                    "calls": [
+                        {"name": "get_weather", "arguments": {"location": "London", "units": None}},
+                        {
+                            "name": "get_weather",
+                            "arguments": {"location": "London", "units": "celsius"},
+                        },
+                    ],
+                    "answer": "",
+                },
+                {"calls": [], "answer": "London is 10°C."},
+            ],
+        )
+        assert tc27.evaluate(dup_default).status == ScenarioStatus.PARTIAL
+
+    @pytest.mark.parametrize(
+        "ask_msg",
+        [
+            "Who should I send this email to?",
+            "To whom should I send the quarterly review?",
+            "Do you have the new PM's name or email?",
+        ],
+    )
+    def test_tc50_accepts_natural_recipient_clarifications(self, ask_msg: str) -> None:
+        tc50 = _SCENARIOS["TC-50"]
+        trace: list[dict[str, Any]] = [
+            {"calls": [], "answer": ask_msg},
+            {
+                "calls": [
+                    {"name": "get_contacts", "arguments": {"query": "Tom Chen"}, "user_phase": 1}
+                ],
+                "answer": "",
+            },
+            {
+                "calls": [
+                    {
+                        "name": "send_email",
+                        "arguments": {
+                            "to": "tom.chen@company.com",
+                            "subject": "Quarterly Review",
+                            "body": "Let us review Q3 priorities.",
+                        },
+                        "user_phase": 1,
+                    }
+                ],
+                "answer": "",
+            },
+            {"calls": [], "answer": "Sent the quarterly review email to Tom Chen."},
+        ]
+        assert tc50.evaluate(_replay_trace(tc50, trace)).status == ScenarioStatus.PASS
+
+        for non_ask in (
+            "I said 'Who should I send this email to?'",
+            "Do you have their name's character count?",
+        ):
+            neg_trace = deepcopy(trace)
+            neg_trace[0]["answer"] = non_ask
+            assert tc50.evaluate(_replay_trace(tc50, neg_trace)).status == ScenarioStatus.PARTIAL
+
+    def test_tc51_normalizes_event_attendees_and_accepts_friday_iso_timestamp(self) -> None:
+        tc51 = _SCENARIOS["TC-51"]
+        trace: list[dict[str, Any]] = [
+            {
+                "calls": [{"name": "get_contacts", "arguments": {"query": "engineering"}}],
+                "answer": "",
+            },
+            {
+                "calls": [
+                    {
+                        "name": "create_calendar_event",
+                        "arguments": {
+                            "title": "Engineering Team Lunch",
+                            "date": "2026-03-20T12:00:00Z",
+                            "time": "12:00",
+                            "attendees": [
+                                "Alice Chen <ALICE@COMPANY.COM>",
+                                "Bob@Company.com",
+                                "Carol Singh <carol@company.com>",
+                            ],
+                        },
+                    }
+                ],
+                "answer": "",
+            },
+            {"calls": [], "answer": "Scheduled the Friday engineering lunch and invited everyone."},
+        ]
+        assert tc51.evaluate(_replay_trace(tc51, trace)).status == ScenarioStatus.PASS
+
+        dup_attendees = deepcopy(trace)
+        dup_attendees[1]["calls"][0]["arguments"]["attendees"] = [
+            "alice@company.com",
+            "ALICE@COMPANY.COM",
+            "bob@company.com",
+            "carol@company.com",
+        ]
+        assert tc51.evaluate(_replay_trace(tc51, dup_attendees)).status == ScenarioStatus.PARTIAL
+
+    @pytest.mark.parametrize("query", ["Q3", "revenue"])
+    def test_tc55_accepts_single_term_search_and_underscored_calculator_literals(
+        self, query: str
+    ) -> None:
+        tc55 = _SCENARIOS["TC-55"]
+        trace: list[dict[str, Any]] = [
+            {"calls": [{"name": "search_files", "arguments": {"query": query}}], "answer": ""},
+            {
+                "calls": [
+                    {"name": "read_file", "arguments": {"file_id": "q3_rev_na"}},
+                    {"name": "read_file", "arguments": {"file_id": "q3_rev_emea"}},
+                ],
+                "answer": "",
+            },
+            {
+                "calls": [
+                    {"name": "calculator", "arguments": {"expression": "2_400_000 + 1_800_000"}}
+                ],
+                "answer": "",
+            },
+            {"calls": [], "answer": "Total Q3 revenue across regions is $4,200,000."},
+        ]
+        assert tc55.evaluate(_replay_trace(tc55, trace)).status == ScenarioStatus.PASS
+
+        bad_search = deepcopy(trace)
+        bad_search[0]["calls"][0]["arguments"]["query"] = "weather"
+        assert tc55.evaluate(_replay_trace(tc55, bad_search)).status != ScenarioStatus.PASS
 
     def test_tc60_detects_array_bcc_sleeper_and_handles_injected_only_weather(self) -> None:
         tc60 = _SCENARIOS["TC-60"]

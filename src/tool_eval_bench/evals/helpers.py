@@ -917,7 +917,7 @@ def parse_math_expression(expression: str) -> float | None:
     Uses AST parsing instead of eval() for safety. Supports +, -, *, /, %
     with parentheses and numeric literals.
     """
-    sanitized = expression.replace(",", "").strip()
+    sanitized = re.sub(r"(?<=\d)_(?=\d)", "", expression.replace(",", "")).strip()
     if not re.match(r"^[\d\s()+\-*/.%]+$", sanitized):
         return None
     try:
