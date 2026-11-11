@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -78,14 +79,17 @@ def parse_prometheus_spec_metrics(text: str) -> SpecDecodeCounters:
     Works with vLLM and compatible servers exposing counters with
     the ``spec_decode_`` prefix.
     """
-    counters = SpecDecodeCounters(timestamp=time.time())
+    counters = SpecDecodeCounters(timestamp=time.time(), has_num_drafts=False)
 
     for field_name, pattern in _PROM_PATTERNS.items():
-        matches = list(pattern.finditer(text))
-        if matches:
-            setattr(counters, field_name, sum(float(match.group(1)) for match in matches))
+        finite = [
+            val for match in pattern.finditer(text) if math.isfinite(val := float(match.group(1)))
+        ]
+        if finite:
+            setattr(counters, field_name, sum(finite))
+            if field_name == "num_drafts":
+                counters.has_num_drafts = True
 
-    counters.has_num_drafts = bool(_PROM_PATTERNS["num_drafts"].search(text))
     return counters
 
 

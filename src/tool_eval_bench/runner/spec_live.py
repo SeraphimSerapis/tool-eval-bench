@@ -25,6 +25,7 @@ Design note:
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from collections.abc import Mapping, Sequence
@@ -202,6 +203,17 @@ _MODEL_NAME_LABEL = re.compile(
 )
 
 
+def _parse_position_index(raw: str | None) -> int | None:
+    """Parse a non-negative integer ``position`` label, or return None when malformed."""
+    if raw is None:
+        return None
+    try:
+        index = int(raw)
+    except ValueError:
+        return None
+    return index if index >= 0 else None
+
+
 def _metric_series(text: str, metric_name: str) -> list[tuple[dict[str, str], float]]:
     """Return all ``(labels, value)`` series for one exact metric name."""
     pattern = re.compile(
@@ -210,10 +222,12 @@ def _metric_series(text: str, metric_name: str) -> list[tuple[dict[str, str], fl
         rf"(?P<value>{_NUM_VALUE})(?:[ \t]+.*)?$",
         re.MULTILINE,
     )
-    return [
-        (_parse_labels(match.group("labels")), float(match.group("value")))
-        for match in pattern.finditer(text)
-    ]
+    series: list[tuple[dict[str, str], float]] = []
+    for match in pattern.finditer(text):
+        val = float(match.group("value"))
+        if math.isfinite(val):
+            series.append((_parse_labels(match.group("labels")), val))
+    return series
 
 
 def _is_rank_label(name: str) -> bool:
@@ -248,10 +262,12 @@ def _select_gauge_series(
 
 def _sum_pattern_values(pattern: re.Pattern[str], text: str) -> tuple[float | None, int]:
     """Sum all numeric matches for a metric pattern and return count too."""
-    matches = list(pattern.finditer(text))
-    if not matches:
+    finite = [
+        val for match in pattern.finditer(text) if math.isfinite(val := float(match.group(1)))
+    ]
+    if not finite:
         return None, 0
-    return sum(float(match.group(1)) for match in matches), len(matches)
+    return sum(finite), len(finite)
 
 
 def counter_delta(previous: float, current: float) -> float:
@@ -531,9 +547,16 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
         if name in _SUM_COUNTER_KEYS or name in _SUM_GAUGE_KEYS:
             setattr(snap, name, value)
         else:
-            first = pattern.search(text)
-            if first is not None:
-                setattr(snap, name, float(first.group(1)))
+            first_finite = next(
+                (
+                    val
+                    for match in pattern.finditer(text)
+                    if math.isfinite(val := float(match.group(1)))
+                ),
+                None,
+            )
+            if first_finite is not None:
+                setattr(snap, name, first_finite)
         if name in {"accepted_tokens", "draft_tokens", "num_drafts"}:
             for match in pattern.finditer(text):
                 if match.group(0).startswith(TENSORFOLD.metrics_prefixes):
@@ -580,9 +603,9 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
     for metric_name in _PER_POSITION_RATE_METRIC_NAMES:
         by_position: dict[int, list[tuple[dict[str, str], float]]] = {}
         for labels, value in _metric_series(text, metric_name):
-            position_text = labels.get("position")
-            if position_text is not None:
-                by_position.setdefault(int(position_text), []).append((labels, value))
+            position_index = _parse_position_index(labels.get("position"))
+            if position_index is not None:
+                by_position.setdefault(position_index, []).append((labels, value))
         for position_index, series in by_position.items():
             selected = _select_gauge_series(series)
             if selected is not None:
@@ -593,10 +616,9 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
         *_LLAMACPP_PER_POSITION_COUNTER_METRIC_NAMES,
     ):
         for labels, value in _metric_series(text, metric_name):
-            position = labels.get("position")
-            if position is None:
+            position_index = _parse_position_index(labels.get("position"))
+            if position_index is None:
                 continue
-            position_index = int(position)
             if metric_name in _LLAMACPP_PER_POSITION_COUNTER_METRIC_NAMES:
                 snap.llamacpp_per_position_counters[position_index] = (
                     snap.llamacpp_per_position_counters.get(position_index, 0.0) + value
@@ -610,10 +632,9 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
 
     for metric_name in _PER_POSITION_DRAFTED_METRIC_NAMES:
         for labels, value in _metric_series(text, metric_name):
-            position = labels.get("position")
-            if position is None:
+            position_index = _parse_position_index(labels.get("position"))
+            if position_index is None:
                 continue
-            position_index = int(position)
             snap.per_position_drafted_counters[position_index] = (
                 snap.per_position_drafted_counters.get(position_index, 0.0) + value
             )

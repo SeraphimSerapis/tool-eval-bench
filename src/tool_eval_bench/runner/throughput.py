@@ -225,7 +225,9 @@ async def calibrate(
             resp = await measurement.completion(retry_payload)
         resp.raise_for_status()
         data = resp.json()
-        prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
+        usage = data.get("usage") if isinstance(data, dict) else None
+        raw_pt = usage.get("prompt_tokens", 0) if isinstance(usage, dict) else 0
+        prompt_tokens = int(raw_pt) if isinstance(raw_pt, (int, float)) else 0
         if prompt_tokens > 10:
             content_tokens = prompt_tokens - 4  # subtract chat template overhead
             cfg.chars_per_token = len(probe_text) / content_tokens
@@ -577,7 +579,7 @@ def _count_chunk_tokens(
 
     Returns the number of tokens in this chunk (≥ 1).
     """
-    if choices:
+    if choices and isinstance(choices[0], dict):
         token_ids = choices[0].get("token_ids")
         if token_ids and isinstance(token_ids, list):
             return len(token_ids)
@@ -596,10 +598,17 @@ async def _completion_lines(response: Any) -> Any:
     """Yield SSE lines, or normalize a non-streaming JSON response once."""
     content_type = response.headers.get("content-type", "").lower()
     if "text/event-stream" not in content_type:
-        yield f"data: {json.dumps(response.json())}"
-        return
+        await response.aread()
+        try:
+            data = response.json()
+        except (ValueError, TypeError):
+            pass
+        else:
+            if isinstance(data, dict):
+                yield f"data: {json.dumps(data)}"
+                return
     async for line in response.aiter_lines():
-        yield line
+        yield line.rstrip("\r")
 
 
 # ---------------------------------------------------------------------------
@@ -682,18 +691,36 @@ async def _stream_one(
                 await response.aread()
             response.raise_for_status()
 
+            pending_data: list[str] = []
             async for raw_line in _completion_lines(response):
                 data_payload = _sse_payload(raw_line)
                 if data_payload is None:
+                    if raw_line == "" or raw_line.startswith(("event:", "id:", "retry:")):
+                        pending_data.clear()
                     continue
                 data_str = data_payload.strip()
                 if data_str == "[DONE]":
+                    pending_data.clear()
                     end_of_stream_time = time.perf_counter()
                     break
 
-                try:
-                    chunk = json.loads(data_str)
-                except json.JSONDecodeError:
+                if not pending_data:
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        if data_str.startswith("{"):
+                            pending_data.append(data_payload)
+                        continue
+                else:
+                    combined = "\n".join([*pending_data, data_payload])
+                    try:
+                        chunk = json.loads(combined)
+                        pending_data.clear()
+                    except json.JSONDecodeError:
+                        pending_data.append(data_payload)
+                        continue
+
+                if not isinstance(chunk, dict):
                     continue
 
                 error = completion_stream_error(chunk)
@@ -706,9 +733,13 @@ async def _stream_one(
 
                 # Check for usage in final chunk
                 usage = chunk.get("usage")
-                if usage:
-                    prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
-                    server_completion_tokens = usage.get("completion_tokens", 0)
+                if isinstance(usage, dict):
+                    raw_pt = usage.get("prompt_tokens")
+                    if isinstance(raw_pt, int) and raw_pt >= 0:
+                        prompt_tokens = raw_pt
+                    raw_ct = usage.get("completion_tokens")
+                    if isinstance(raw_ct, int) and raw_ct > 0:
+                        server_completion_tokens = raw_ct
 
                 # vLLM per-request spec decode metrics ride on the same
                 # final chunk as usage, and only when include_usage is set.
@@ -735,14 +766,15 @@ async def _stream_one(
                     if dna is not None:
                         sample.draft_n_accepted = int(dna)
 
-                choices = chunk.get("choices", [])
-                if not choices:
+                choices = chunk.get("choices")
+                if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
                     continue
 
                 # Some OpenAI-compatible endpoints accept ``stream=true``
                 # but return a normal JSON completion. Treat its ``message``
                 # as one generated event instead of scoring zero tokens.
-                delta = choices[0].get("delta") or choices[0].get("message", {})
+                raw_delta = choices[0].get("delta") or choices[0].get("message")
+                delta = raw_delta if isinstance(raw_delta, dict) else {}
                 content = delta.get("content")
                 reasoning = delta.get("reasoning_content") or delta.get("reasoning")
                 tool_delta = delta.get("tool_calls")
@@ -985,6 +1017,9 @@ async def measure_concurrent(
         for _ in range(concurrency)
     ]
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+    for r in raw_results:
+        if isinstance(r, BaseException) and not isinstance(r, Exception):
+            raise r
     # Convert any bare exceptions to error samples
     results: list[ThroughputSample] = [
         r

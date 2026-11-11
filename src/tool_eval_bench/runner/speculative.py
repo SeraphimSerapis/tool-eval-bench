@@ -405,6 +405,8 @@ def pool_spec_samples(samples: list[SpecDecodeSample]) -> SpecDecodeSample:
     Failed runs are dropped and counted in ``failed_runs``; when every run
     failed the first failure is returned as-is.
     """
+    if not samples:
+        return SpecDecodeSample(error="no samples", runs=0)
     ok = [s for s in samples if s.error is None]
     if not ok:
         return samples[0]
@@ -621,12 +623,17 @@ async def measure_spec_single(
         counters_after = await scrape_spec_metrics(
             client, base_url, api_key, metrics_url=metrics_url
         )
-        if counters_after is not None:
-            steps_delta = (
+        if (
+            counters_after is not None
+            and counters_after.draft_tokens >= counters_before.draft_tokens
+            and counters_after.accepted_tokens >= counters_before.accepted_tokens
+        ):
+            raw_steps = (
                 int(counters_after.num_drafts - counters_before.num_drafts)
                 if counters_before.has_num_drafts and counters_after.has_num_drafts
                 else None
             )
+            steps_delta = raw_steps if raw_steps is None or raw_steps >= 0 else None
             prometheus_delta = (
                 int(counters_after.draft_tokens - counters_before.draft_tokens),
                 int(counters_after.accepted_tokens - counters_before.accepted_tokens),
