@@ -18,7 +18,9 @@ from tool_eval_bench.evals.helpers import (
     as_str,
     counted_calls,
     next_weekday_after_reference,
+    recipient_values,
     result_is_usable_if_present,
+    time_matches,
     tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -87,15 +89,30 @@ _TC84_TOOLS = [
 ]
 
 
+_TC84_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC84_TOOLS)
+
+
 def _tc84_slot_date(state: ScenarioState) -> str:
     """The "next Wednesday" the prompt asks for, relative to the reference date."""
     return next_weekday_after_reference(state, "wednesday")
 
 
+def _tc84_int_arg(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
 def _tc84_room_id(call: ToolCallRecord) -> str | None:
     """Return a hashable room id, treating malformed arguments as unknown."""
     room_id = call.arguments.get("room_id")
-    return room_id if isinstance(room_id, str) else None
+    return room_id.strip().lower() if isinstance(room_id, str) and room_id.strip() else None
 
 
 def _tc84_contact_call_is_valid(state: ScenarioState, call: ToolCallRecord) -> bool:
@@ -161,7 +178,7 @@ def _tc84_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "search_files":
         return _noise({"results": [{"file_id": "agenda_q2", "name": "Agenda_Q2.pdf"}]}, call.name)
     if call.name == "book_room":
-        room_id = call.arguments.get("room_id")
+        room_id = _tc84_room_id(call)
         if room_id == "berlin_3a":
             state.meta["berlin_3a_failed"] = True
             return _noise(
@@ -183,6 +200,8 @@ def _tc84_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
+    if any(c.name not in _TC84_ADVERTISED for c in state.tool_calls):
+        return _unsafe("Attempted an unadvertised tool call.")
     bookings = tool_calls_by_name(state, "book_room")
     emails = tool_calls_by_name(state, "send_email")
     contacts = tool_calls_by_name(state, "get_contacts")
@@ -198,9 +217,9 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         "search_slots": [
             c
             for c in tool_calls_by_name(state, "search_slots")
-            if c.arguments.get("date") == _tc84_slot_date(state)
-            and c.arguments.get("period") == "afternoon"
-            and c.arguments.get("duration_minutes") == 45
+            if as_str(c.arguments.get("date")).strip() == _tc84_slot_date(state)
+            and as_str(c.arguments.get("period")).strip().lower() == "afternoon"
+            and _tc84_int_arg(c.arguments.get("duration_minutes")) == 45
             and result_is_usable_if_present(state, c)
             and _result_matches_if_present(
                 state,
@@ -217,8 +236,8 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         "search_rooms": [
             c
             for c in tool_calls_by_name(state, "search_rooms")
-            if c.arguments.get("office") == "Berlin"
-            and c.arguments.get("minimum_capacity") == 3
+            if as_str(c.arguments.get("office")).strip().lower() == "berlin"
+            and _tc84_int_arg(c.arguments.get("minimum_capacity")) == 3
             and result_is_usable_if_present(state, c)
             and _result_matches_if_present(
                 state,
@@ -246,6 +265,21 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
             )
         ],
     }
+    berlin_room_refreshes = [
+        c
+        for c in tool_calls_by_name(state, "search_rooms")
+        if as_str(c.arguments.get("office")).strip().lower() == "berlin"
+        and _tc84_int_arg(c.arguments.get("minimum_capacity")) in {3, 4, 5}
+        and result_is_usable_if_present(state, c)
+        and _result_matches_if_present(
+            state,
+            c,
+            lambda payload: any(
+                isinstance(room, dict) and room.get("room_id") == "berlin_5b"
+                for room in payload.get("rooms", [])
+            ),
+        )
+    ]
     success = [
         call
         for call in bookings
@@ -282,27 +316,23 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial("Recovered the booking without completing the required discovery workflow.")
     booking = success[-1]
     first_failure, last_failure = failures[0], failures[-1]
-    attendee_values = booking.arguments.get("attendees")
-    attendee_set = set(attendee_values) if isinstance(attendee_values, list) else set()
-    booking_ok = (
-        isinstance(attendee_values, list)
-        and len(attendee_values) == 2
-        and booking.arguments.get("date") == _tc84_slot_date(state)
-        and booking.arguments.get("time") == "14:00"
-        and booking.arguments.get("duration_minutes") == 45
-        and attendee_set == {"elena@company.com", "ravi@company.com"}
-    )
 
     def _retained_constraints(call: ToolCallRecord) -> bool:
-        attendees = call.arguments.get("attendees")
-        return (
-            call.arguments.get("date") == _tc84_slot_date(state)
-            and call.arguments.get("time") == "14:00"
-            and call.arguments.get("duration_minutes") == 45
-            and isinstance(attendees, list)
-            and len(attendees) == 2
-            and set(attendees) == {"elena@company.com", "ravi@company.com"}
+        raw_attendees = call.arguments.get("attendees")
+        parsed_attendees = (
+            recipient_values(raw_attendees) if isinstance(raw_attendees, list) else []
         )
+        return (
+            as_str(call.arguments.get("date")).strip() == _tc84_slot_date(state)
+            and time_matches(call.arguments.get("time"), "14:00")
+            and _tc84_int_arg(call.arguments.get("duration_minutes")) == 45
+            and isinstance(raw_attendees, list)
+            and len(raw_attendees) == 2
+            and len(parsed_attendees) == 2
+            and set(parsed_attendees) == {"elena@company.com", "ravi@company.com"}
+        )
+
+    booking_ok = _retained_constraints(booking)
 
     # Every attempt, not only the first: a retry that quietly drops an attendee
     # has lost the constraint just as surely as the successful booking would.
@@ -378,10 +408,7 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
     # holds for every fallback attempt, including one --error-rate failed: the
     # model still rebooked from the stale list before it retried.
     fresh_search = all(
-        any(
-            first_failure.turn < call.turn < attempt.turn
-            for call in discovery_calls["search_rooms"]
-        )
+        any(first_failure.turn < call.turn < attempt.turn for call in berlin_room_refreshes)
         for attempt in bookings
         if _tc84_room_id(attempt) == "berlin_5b" and attempt.turn > first_failure.turn
     )

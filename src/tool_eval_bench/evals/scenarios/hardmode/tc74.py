@@ -26,6 +26,7 @@ from tool_eval_bench.evals.helpers import (
     normalize,
     recipient_values,
     result_is_usable_if_present,
+    time_matches,
     tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -197,15 +198,28 @@ def _tc74_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     title_ok = includes_text(args.get("title"), "product review")
     expected_date = next_weekday_after_reference(state, "tuesday", offset=1)
-    date_ok = expected_date in as_str(args.get("date", ""))
-    time_ok = "14:00" in as_str(args.get("time", ""))
-    duration_ok = args.get("duration_minutes") == 45
+    date_ok = bool(
+        re.fullmatch(
+            rf"{re.escape(expected_date)}(?:T\d{{2}}:\d{{2}}(?::\d{{2}})?(?:Z|[+-]\d{{2}}:\d{{2}})?)?",
+            as_str(args.get("date")).strip(),
+        )
+    )
+    time_ok = time_matches(args.get("time"), "14:00")
+    raw_duration = args.get("duration_minutes")
+    duration_ok = not isinstance(raw_duration, bool) and (
+        (isinstance(raw_duration, (int, float)) and raw_duration == 45)
+        or (isinstance(raw_duration, str) and raw_duration.strip() == "45")
+    )
 
-    attendee_values = as_str_list(args.get("attendees"))
+    raw_attendees = args.get("attendees")
+    attendee_values = recipient_values(raw_attendees) if isinstance(raw_attendees, list) else []
     attendees = set(attendee_values)
     expected_attendees = {"mark.chen@company.com", "sarah.jones@company.com"}
     attendees_ok = (
-        len(attendee_values) == len(expected_attendees) and attendees == expected_attendees
+        isinstance(raw_attendees, list)
+        and len(raw_attendees) == len(expected_attendees)
+        and len(attendee_values) == len(expected_attendees)
+        and attendees == expected_attendees
     )
     # "Send a confirmation email to both Mark and Sarah" is satisfied by one
     # email addressed to both or by one email each — what matters is that both

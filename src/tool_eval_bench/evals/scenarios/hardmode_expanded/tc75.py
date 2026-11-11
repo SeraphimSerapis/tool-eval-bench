@@ -18,8 +18,10 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     _is_negated,
+    as_str,
     counted_calls,
     full_assistant_transcript,
+    reference_date,
 )
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -277,10 +279,10 @@ def _tc75_eval(state: ScenarioState) -> ScenarioEvaluation:
     requests_date = _tc75_requested_parameter(transcript, "date")
     requests_time = _tc75_requested_parameter(transcript, "time")
     if _tc75_asks_date_and_time(state):
-        reference_date = str(state.meta.get("reference_date", "2026-03-20"))
+        ref_date = reference_date(state).isoformat()
         # Restating the supplied current date does not propose a booking date.
         proposal_text = re.sub(
-            rf"\btoday\s+is\s+(?:[a-z]+,?\s+)?{re.escape(reference_date)}\b",
+            rf"\btoday\s+is\s+(?:[a-z]+,?\s+)?{re.escape(ref_date)}\b",
             "today",
             transcript,
             flags=re.IGNORECASE,
@@ -308,22 +310,30 @@ def _tc75_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
     def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         if call.user_phase != 1:
             return {"error": "Ask for the missing scheduling details first."}
+        raw_cap = call.arguments.get("minimum_capacity")
+        min_cap: int | None
+        if raw_cap is None:
+            min_cap = 0
+        elif isinstance(raw_cap, bool):
+            min_cap = None
+        elif isinstance(raw_cap, int):
+            min_cap = raw_cap
+        elif isinstance(raw_cap, float) and raw_cap.is_integer():
+            min_cap = int(raw_cap)
+        else:
+            min_cap = None
         if (
             call.name == "search_rooms"
-            and call.arguments.get("date") == "2026-03-25"
+            and as_str(call.arguments.get("date")).strip() == "2026-03-25"
             and call.arguments.get("time") == "14:00"
-            and isinstance(call.arguments.get("minimum_capacity", 0), int)
-            and call.arguments.get("minimum_capacity", 0) >= 0
+            and min_cap is not None
+            and min_cap >= 0
         ):
-            return {
-                "rooms": [
-                    r for r in rooms if r["capacity"] >= call.arguments.get("minimum_capacity", 0)
-                ]
-            }
+            return {"rooms": [r for r in rooms if r["capacity"] >= min_cap]}
         if (
             call.name == "book_room"
-            and call.arguments.get("room_id") == expected
-            and call.arguments.get("date") == "2026-03-25"
+            and as_str(call.arguments.get("room_id")).strip() == expected
+            and as_str(call.arguments.get("date")).strip() == "2026-03-25"
             and call.arguments.get("time") == "14:00"
         ):
             return {"status": "booked", "room_id": expected}

@@ -14,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_text,
+)
+from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
@@ -53,7 +56,7 @@ def _tc77_eval(state: ScenarioState) -> ScenarioEvaluation:
     # violation, which is what this Hard Mode scenario measures.
     if not state.tool_calls and re.fullmatch(r"tokyo[.!]?", answer, re.IGNORECASE):
         return _pass("Answered the stable factual question directly with the requested format.")
-    if not state.tool_calls and "tokyo" in answer.lower():
+    if not state.tool_calls and answer_affirms_text(answer, "tokyo"):
         return _partial("Answered correctly but violated the city-only output format.")
     return _fail("Called an unnecessary tool or did not answer Tokyo.")
 

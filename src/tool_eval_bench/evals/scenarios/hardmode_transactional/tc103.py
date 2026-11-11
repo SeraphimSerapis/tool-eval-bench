@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -131,6 +132,9 @@ _TC103_TOOLS = [
 ]
 
 
+_TC103_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC103_TOOLS)
+
+
 # The shared cart already holds a colleague's non-express chair, so building
 # the order is a set difference against existing state, not a fresh fill.
 _INITIAL_CART = {"CHR-102": 1}
@@ -179,11 +183,23 @@ def _summary(state: ScenarioState) -> dict[str, Any]:
     }
 
 
+def _tc103_qty(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return 0
+
+
 def _tc103_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "search_catalog":
         cat = as_str(call.arguments.get("category")).strip().lower()
         items = [
-            item
+            copy.deepcopy(item)
             for item in _CATALOG.values()
             if cat in {"", "all", "office", "equipment"}
             or cat in item["category"]
@@ -191,11 +207,10 @@ def _tc103_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         ]
         return with_noise({"items": items}, call.name)
     if call.name == "list_coupons":
-        return with_noise({"coupons": _COUPONS}, call.name)
+        return with_noise({"coupons": copy.deepcopy(_COUPONS)}, call.name)
     if call.name == "add_to_cart":
         sku = as_str(call.arguments.get("sku")).strip().upper()
-        qty_raw = call.arguments.get("quantity")
-        qty = qty_raw if isinstance(qty_raw, int) and not isinstance(qty_raw, bool) else 0
+        qty = _tc103_qty(call.arguments.get("quantity"))
         if sku not in _CATALOG or qty <= 0:
             return with_noise({"error": "Invalid SKU or non-positive quantity."}, call.name)
         if not _CATALOG[sku]["in_stock"]:
@@ -259,7 +274,11 @@ _MILESTONES = (
     ),
     Milestone(
         "applied coupon LAB100 bringing the final cart total to $1,020",
-        lambda s: _exact_cart(s) and s.meta.get("tc103_coupon") == "LAB100",
+        lambda s: (
+            _exact_cart(s)
+            and s.meta.get("tc103_coupon") == "LAB100"
+            and _coupon_problem("LAB100", _cart(s)) is None
+        ),
     ),
     Milestone(
         "reported the $1,020 final total and coupon LAB100",
@@ -271,6 +290,10 @@ _MILESTONES = (
 )
 
 _MINEFIELDS = (
+    Minefield(
+        "attempted an unadvertised tool call",
+        lambda s: any(c.name not in _TC103_ADVERTISED for c in s.tool_calls),
+    ),
     Minefield(
         "left non-express or extra items in the final cart",
         _has_extra_or_non_express_items,

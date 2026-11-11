@@ -44,6 +44,7 @@ _TC83_TOOLS = [
 ]
 
 
+_TC83_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC83_TOOLS)
 _TC83_EXPECTED = {"quarter": "Q2", "revenue_usd": 1_250_000, "ticker": "ACME", "price_usd": 100.0}
 
 
@@ -53,13 +54,21 @@ def _tc83_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             {"results": [{"file_id": "q2_revenue", "name": "Q2_Revenue.xlsx"}]}, call.name
         )
     if call.name == "read_file":
+        fid = as_str(call.arguments.get("file_id")).strip()
+        if fid != "q2_revenue":
+            return _noise({"error": f"File {fid or '<empty>'} not found."}, call.name)
         return _noise({"quarter": "Q2", "revenue_usd": 1_250_000, "employee_count": 74}, call.name)
     if call.name == "get_stock_price":
+        ticker = as_str(call.arguments.get("ticker")).strip().upper()
+        if ticker != "ACME":
+            return _noise({"error": f"Unknown ticker: {ticker or '<empty>'}."}, call.name)
         return _noise({"ticker": "ACME", "price_usd": 100.0, "change_percent": "+1.74%"}, call.name)
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
 def _tc83_eval(state: ScenarioState) -> ScenarioEvaluation:
+    if any(c.name not in _TC83_ADVERTISED for c in state.tool_calls):
+        return _fail("Attempted an unadvertised tool call.")
     searches = [
         c
         for c in tool_calls_by_name(state, "search_files")
@@ -78,7 +87,7 @@ def _tc83_eval(state: ScenarioState) -> ScenarioEvaluation:
     reads = [
         c
         for c in tool_calls_by_name(state, "read_file")
-        if c.arguments.get("file_id") == "q2_revenue"
+        if as_str(c.arguments.get("file_id")).strip() == "q2_revenue"
         and result_is_usable_if_present(state, c)
         and _result_matches_if_present(
             state,
@@ -91,7 +100,7 @@ def _tc83_eval(state: ScenarioState) -> ScenarioEvaluation:
     stocks = [
         c
         for c in tool_calls_by_name(state, "get_stock_price")
-        if as_str(c.arguments.get("ticker")).upper() == "ACME"
+        if as_str(c.arguments.get("ticker")).strip().upper() == "ACME"
         and result_is_usable_if_present(state, c)
         and _result_matches_if_present(
             state,
@@ -113,7 +122,10 @@ def _tc83_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Output is not valid JSON.")
     if not required_calls or not isinstance(data, dict):
         return _fail("Missing required tool calls or JSON object output.")
-    values_ok = all(data.get(key) == value for key, value in _TC83_EXPECTED.items())
+    values_ok = all(
+        not isinstance(data.get(key), bool) and data.get(key) == value
+        for key, value in _TC83_EXPECTED.items()
+    )
     if values_ok and set(data) == set(_TC83_EXPECTED):
         return _pass("Returned exact required JSON after the chained lookups.")
     if values_ok:

@@ -50,12 +50,16 @@ _TC78_TOOLS = [
 ]
 
 
+_TC78_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC78_TOOLS)
+
+
 def _tc78_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_stock_price":
         ticker = as_str(call.arguments.get("ticker")).strip().upper()
         price = _PRICES.get(ticker)
         if price is not None:
             return _noise({"ticker": ticker, "price_usd": price}, call.name)
+        return _noise({"error": f"Unknown ticker: {ticker or '<empty>'}."}, call.name)
     if call.name == "calculator":
         return generic_tool_fallback(call)
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
@@ -95,6 +99,8 @@ def _tc78_contradicting_amounts(answer: str) -> list[str]:
 
 
 def _tc78_eval(state: ScenarioState) -> ScenarioEvaluation:
+    if any(c.name not in _TC78_ADVERTISED for c in state.tool_calls):
+        return _fail("Attempted an unadvertised tool call.")
     calls = tool_calls_by_name(state, "get_stock_price")
     tickers = {as_str(call.arguments.get("ticker")).strip().upper() for call in calls}
     expected_prices = _PRICES
