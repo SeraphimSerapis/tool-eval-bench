@@ -364,8 +364,11 @@ SCENARIO = ScenarioDefinition(
 )
 
 DISPLAY = ScenarioDisplayDetail(
-    f"Pass for running reserve -> snapshot -> DNS switch, then deleting {_SNAPSHOT_ID} "
-    f"and releasing {_RESERVATION_ID} after ZONE_LOCKED.",
-    "Partial for releasing capacity first and recovering from RESOURCE_IN_USE; fail for leaving "
-    "either resource uncompensated, compensating before the failure, or claiming success.",
+    f"Pass for reserving capacity, snapshotting {_DB_ID}, attempting the DNS switch, "
+    f"then deleting {_SNAPSHOT_ID}, releasing {_RESERVATION_ID} in reverse order after "
+    "ZONE_LOCKED, and reporting the failure and rollback.",
+    f"Partial for compensating out of dependency order, deleting {_SNAPSHOT_ID} while "
+    f"leaving {_RESERVATION_ID} reserved, or omitting the rollback report. Fail for "
+    "stopping before cutover, leaving the snapshot undeleted, compensating before the "
+    "DNS failure, duplicating forward allocations, or claiming the migration succeeded.",
 )

@@ -1434,3 +1434,98 @@ def test_tc99_omitted_release_does_not_earn_dependency_order_milestone() -> None
     )
     assert missing_release.status is ScenarioStatus.PARTIAL
     assert "dependency order" in missing_release.summary
+
+
+def test_tc96_post_ocr_leading_no_is_partial_while_pre_ocr_leading_no_fails() -> None:
+    for answer in (
+        "No, scan_0419.pdf does not contain that phrase.",
+        "None of the scanned documents contain that phrase.",
+    ):
+        post_ocr_misread = replay(
+            "TC-96",
+            turn(("list_collection", {"collection": "reactor-logs"})),
+            turn(("ocr_document", {"collection": "reactor-logs", "document": "scan_0419.pdf"})),
+            turn(answer=answer),
+        )
+        assert post_ocr_misread.status is ScenarioStatus.PARTIAL, post_ocr_misread.summary
+
+    post_ocr_pass = replay(
+        "TC-96",
+        turn(("search_index", {"collection": "reactor-logs", "query": "reactor reached 900 K"})),
+        turn(("list_collection", {"collection": "reactor-logs"})),
+        turn(("ocr_document", {"collection": "reactor-logs", "document": "scan_0419.pdf"})),
+        turn(answer="No indexed document matched, though scan_0419.pdf page 2 has the phrase."),
+    )
+    assert post_ocr_pass.status is ScenarioStatus.PASS, post_ocr_pass.summary
+
+    pre_ocr_index_only = replay(
+        "TC-96",
+        turn(("search_index", {"collection": "reactor-logs", "query": "reactor reached 900 K"})),
+        turn(answer="No, scan_0419.pdf does not contain that phrase."),
+    )
+    assert pre_ocr_index_only.status is ScenarioStatus.FAIL
+    assert pre_ocr_index_only.summary.startswith("Answered no although the index")
+
+    pre_ocr_other_scan_only = replay(
+        "TC-96",
+        turn(("list_collection", {"collection": "reactor-logs"})),
+        turn(("ocr_document", {"collection": "reactor-logs", "document": "scan_0412.pdf"})),
+        turn(answer="No, scan_0412.pdf only reached 890 K."),
+    )
+    assert pre_ocr_other_scan_only.status is ScenarioStatus.FAIL
+    assert pre_ocr_other_scan_only.summary.startswith("Answered no although the index")
+
+    ocr_without_listing_boundary = replay(
+        "TC-96",
+        turn(("ocr_document", {"collection": "reactor-logs", "document": "scan_0419.pdf"})),
+        turn(answer="No, scan_0419.pdf does not contain that phrase."),
+    )
+    assert ocr_without_listing_boundary.status is ScenarioStatus.FAIL
+    assert not ocr_without_listing_boundary.summary.startswith("Answered no although the index")
+
+    post_ocr_near_miss_with_leading_no = replay(
+        "TC-96",
+        turn(("list_collection", {"collection": "reactor-logs"})),
+        turn(
+            ("ocr_document", {"collection": "reactor-logs", "document": "scan_0412.pdf"}),
+            ("ocr_document", {"collection": "reactor-logs", "document": "scan_0419.pdf"}),
+        ),
+        turn(answer="No indexed match, though scan_0412.pdf contains the phrase."),
+    )
+    assert post_ocr_near_miss_with_leading_no.status is ScenarioStatus.FAIL
+    assert "near miss" in post_ocr_near_miss_with_leading_no.summary
+
+
+def test_tc99_display_copy_matches_partial_and_fail_rubric() -> None:
+    from tool_eval_bench.evals.scenarios.hardmode_transactional.tc99 import DISPLAY
+
+    for text in (DISPLAY.success_case, DISPLAY.failure_case):
+        assert "\u2014" not in text
+        assert "\u2013" not in text
+        assert "--" not in text
+        assert "(" not in text and ")" not in text
+    assert "Partial for compensating out of dependency order" in DISPLAY.failure_case
+    assert "leaving res_eu2_881 reserved" in DISPLAY.failure_case
+    assert "Fail for stopping before cutover" in DISPLAY.failure_case
+    assert "claiming the migration succeeded" in DISPLAY.failure_case
+
+    stopped_before_cutover = replay(
+        "TC-99",
+        turn(
+            ("reserve_cluster_capacity", {"tenant_id": "acme-prod", "target_cluster": "eu-west-2"})
+        ),
+        turn(("create_db_snapshot", {"db_id": "db-acme-01"})),
+        turn(answer="Stopped before switching DNS."),
+    )
+    assert stopped_before_cutover.status is ScenarioStatus.FAIL
+
+    undeleted_snapshot = replay(
+        "TC-99",
+        turn(
+            ("reserve_cluster_capacity", {"tenant_id": "acme-prod", "target_cluster": "eu-west-2"})
+        ),
+        turn(("create_db_snapshot", {"db_id": "db-acme-01"})),
+        turn(("switch_dns_route", {"domain": "acme.example.com", "target_cluster": "eu-west-2"})),
+        turn(answer="DNS cutover failed with ZONE_LOCKED."),
+    )
+    assert undeleted_snapshot.status is ScenarioStatus.FAIL

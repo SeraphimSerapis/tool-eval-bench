@@ -214,6 +214,92 @@ class TestLocaleJsonPreservationAndAudit:
             == "yes"
         )
 
+    @pytest.mark.parametrize("locale", ["de", "es"])
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            "Der Wert von Pi ist ungefähr 3.142.",
+            "Der Wert von Pi ist ungefähr 3,142.",
+            "Pi beträgt etwa 3.141.",
+            "Pi beträgt etwa 3.140.",
+            "Pi beträgt etwa 3.143.",
+            "El valor de pi es aproximadamente 3.142.",
+            "El valor de pi es aproximadamente 3,142.",
+            "El valor de pi es aproximadamente 3,14.",
+            "El valor de pi es aproximadamente 3,14159.",
+        ],
+    )
+    def test_tc44_de_and_es_accept_international_and_comma_pi_values(
+        self, locale: str, answer: str
+    ) -> None:
+        tc44_loc = localized_variant(_SCENARIOS["TC-44"], locale)
+        assert tc44_loc.evaluate(make_state(final_answer=answer)).status == ScenarioStatus.PASS
+
+    @pytest.mark.parametrize("locale", ["de", "es"])
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            "Der Wert von Pi ist 3142.",
+            "El valor de pi es 3142.",
+            "Der Wert von Pi ist 3.142.000.",
+            "El valor de pi es 3.142,50.",
+            "Der Wert von Pi ist 3.144.",
+            "El valor de pi es 3,144.",
+        ],
+    )
+    def test_tc44_de_and_es_reject_bare_3142_multigroup_thousands_and_out_of_range(
+        self, locale: str, answer: str
+    ) -> None:
+        tc44_loc = localized_variant(_SCENARIOS["TC-44"], locale)
+        assert tc44_loc.evaluate(make_state(final_answer=answer)).status == ScenarioStatus.PARTIAL
+
+    @pytest.mark.parametrize(
+        ("locale", "answer"),
+        [
+            ("de", "Der Wert von Pi ist nicht 3.142."),
+            ("de", "Der Wert von Pi ist nicht 3,142."),
+            ("es", "El valor de pi no es 3.142."),
+            ("es", "El valor de pi no es 3,142."),
+        ],
+    )
+    def test_tc44_de_and_es_negated_international_or_comma_pi_does_not_pass(
+        self, locale: str, answer: str
+    ) -> None:
+        tc44_loc = localized_variant(_SCENARIOS["TC-44"], locale)
+        assert tc44_loc.evaluate(make_state(final_answer=answer)).status == ScenarioStatus.PARTIAL
+
+    @pytest.mark.parametrize("locale", ["de", "es"])
+    def test_tc44_de_and_es_with_tool_call_fails_even_with_3142_or_3_142(self, locale: str) -> None:
+        tc44_loc = localized_variant(_SCENARIOS["TC-44"], locale)
+        with_call_bare = make_state(
+            tool_calls=[make_tool_call("calculator", {"expression": "22 / 7"})],
+            final_answer="3142",
+        )
+        with_call_dot = make_state(
+            tool_calls=[make_tool_call("calculator", {"expression": "22 / 7"})],
+            final_answer="3.142",
+        )
+        assert tc44_loc.evaluate(with_call_bare).status == ScenarioStatus.FAIL
+        assert tc44_loc.evaluate(with_call_dot).status == ScenarioStatus.FAIL
+
+    def test_normalize_answer_keeps_single_dot_thousands_by_default_and_multigroup_always(
+        self,
+    ) -> None:
+        assert normalize_answer("El total final es 1.020 $ con LAB100.", "es") == (
+            "El total final es $1020 con LAB100."
+        )
+        assert normalize_answer("Der Betrag ist 1.020.", "de") == "Der Betrag ist 1020."
+        assert (
+            normalize_answer(
+                "Pi ist 3.142 und Umsatz 4.250.000.", "de", strip_single_dot_group=False
+            )
+            == "Pi ist 3.142 und Umsatz 4250000."
+        )
+        assert (
+            normalize_answer("Betrag 1.020,50 EUR.", "de", strip_single_dot_group=False)
+            == "Betrag 1020.50 EUR."
+        )
+
 
 class TestVariantUnicodeAndCaseInsensitivity:
     def test_nfc_and_substitute_cover_nested_containers(self) -> None:
@@ -1326,3 +1412,62 @@ class TestStandardScenarioAuditFixes:
                 if call["name"] == "web_search":
                     call["arguments"]["query"] = query
         assert tc67.evaluate(_replay_trace(tc67, trace)).status == ScenarioStatus.PASS
+
+    @pytest.mark.parametrize(
+        ("locale", "query", "reasoning"),
+        [
+            ("zh", "英伟达 最新 新闻", "营收增长强劲，分析师普遍维持买入"),
+            ("zh", "NVDA 新闻", "数据中心AI需求旺盛，营收大涨"),
+            ("ja", "エヌビディア ニュース", "AI需要で増収、目標株価も高いです"),
+            ("ja", "NVDA ニュース", "データセンター需要が極めて好調です"),
+        ],
+    )
+    def test_tc67_accepts_14_to_19_char_zh_and_ja_rationales(
+        self, locale: str, query: str, reasoning: str
+    ) -> None:
+        assert 14 <= len(reasoning) <= 19
+        tc67_loc = localized_variant(_SCENARIOS["TC-67"], locale)
+        payload = {
+            "ticker": "NVDA",
+            "price": 892.50,
+            "currency": "USD",
+            "signal": "buy",
+            "reasoning": reasoning,
+        }
+        trace: list[dict[str, Any]] = [
+            {
+                "calls": [
+                    {"name": "get_stock_price", "arguments": {"ticker": "NVDA"}},
+                    {"name": "web_search", "arguments": {"query": query}},
+                ],
+                "answer": "",
+            },
+            {"calls": [], "answer": json.dumps(payload, ensure_ascii=False)},
+        ]
+        assert tc67_loc.evaluate(_replay_trace(tc67_loc, trace)).status == ScenarioStatus.PASS
+
+    @pytest.mark.parametrize(
+        ("reasoning", "expected"),
+        [
+            ("营收增长且需求很强劲", ScenarioStatus.PASS),  # 10 CJK chars -> weighted 20
+            ("データセンターが好調", ScenarioStatus.PASS),  # 10 kana/CJK chars -> weighted 20
+            (
+                "\U00020000营收增长需求很强劲",
+                ScenarioStatus.PASS,
+            ),  # CJK Ext B + 9 CJK -> weighted 20
+            ("Strong AI demand now", ScenarioStatus.PASS),  # 20 ASCII chars -> weighted 20
+            ("营收增长且需求强劲", ScenarioStatus.PARTIAL),  # 9 CJK chars -> weighted 18
+            ("营收增长且需求强劲。", ScenarioStatus.PARTIAL),  # 9 CJK + 1 punct -> weighted 19
+            ("Strong AI demand ok", ScenarioStatus.PARTIAL),  # 19 ASCII chars -> weighted 19
+            ("   Strong AI demand   ", ScenarioStatus.PARTIAL),  # padded 16 ASCII -> weighted 16
+        ],
+    )
+    def test_tc67_reasoning_cjk_kana_weighting_boundaries(
+        self, reasoning: str, expected: ScenarioStatus
+    ) -> None:
+        tc67 = _SCENARIOS["TC-67"]
+        trace = deepcopy(_REFERENCE_TRACES["TC-67"])
+        payload = json.loads(trace[-1]["answer"])
+        payload["reasoning"] = reasoning
+        trace[-1]["answer"] = json.dumps(payload, ensure_ascii=False)
+        assert tc67.evaluate(_replay_trace(tc67, trace)).status == expected

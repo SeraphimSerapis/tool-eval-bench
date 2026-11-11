@@ -152,9 +152,10 @@ _MINEFIELDS = (
     Minefield(
         "answered no although the index had not covered the whole collection",
         lambda s: (
-            (
+            not _ocred_match(s)
+            and (
                 bool(_LEADING_NO.match(s.final_answer))
-                or (not _ocred_match(s) and bool(_EMPTY_COLLECTION_CLAIM.search(s.final_answer)))
+                or bool(_EMPTY_COLLECTION_CLAIM.search(s.final_answer))
             )
             and not _affirms_0419(s.final_answer)
         ),

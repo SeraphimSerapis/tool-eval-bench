@@ -1,5 +1,1 @@
-**Hard Mode scenario handlers and evaluators (TC-70 to TC-104)**: hardened state machines,
-compensation preconditions, mock-payload isolation, argument normalization, negation-aware
-answer checks, and unadvertised-tool guards across all five Category P scenario packages so
-valid type/casing/phrasing variations stop false-failing and negated, out-of-order, or
-exfiltrating tool calls stop false-passing.
+**Hard Mode scenario handlers and evaluators across TC-70 through TC-104.** Category P scenarios now isolate mutable mock payloads across calls, enforce compensation preconditions, normalize valid numeric, casing, and phrasing variations, apply negation-aware answer checks, and flag unadvertised tools. In TC-96, leading `"No"` answers trigger the stale-index failure only when the model skipped OCR on `scan_0419.pdf`, so post-OCR misreads score `PARTIAL` consistently. In TC-99, display metadata now matches the partial-credit rubric for out-of-order or incomplete rollback.
