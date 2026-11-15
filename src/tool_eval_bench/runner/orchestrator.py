@@ -1079,9 +1079,8 @@ async def run_scenario(
 # ---------------------------------------------------------------------------
 
 
-# A tool the probe below can force a call to. Deliberately trivial: the probe
-# asks whether the *endpoint* honours tool_choice, not whether the model can
-# choose well, so the request must be one no capable model would decline.
+# A trivial call for checking the endpoint's required-tool-call response path.
+# Success does not prove server-side enforcement rather than model cooperation.
 _TOOL_CHOICE_PROBE_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -1103,8 +1102,9 @@ _TOOL_CHOICE_PROBE_TOOLS: list[dict[str, Any]] = [
 class ToolChoiceProbe:
     """What the forced-call probe established about the endpoint.
 
-    ``enforced`` is whether a tool call came back at all. False also covers
-    inconclusive probes; ``detail`` explains why. ``arguments_intact``
+    ``enforced`` is a legacy name for whether a tool call came back at all,
+    not proof of server-side enforcement. False also covers inconclusive
+    probes; ``detail`` explains why. ``arguments_intact``
     is whether that call carried the schema's required argument: an endpoint
     whose tool parser drops arguments under a forced call produces ``{}``,
     which a scenario would otherwise grade as the model sending an empty
@@ -1154,21 +1154,13 @@ async def probe_tool_choice_required(
     timeout_seconds: float,
     extra_params: dict[str, Any] | None = None,
 ) -> ToolChoiceProbe:
-    """Ask the endpoint, not the model, whether ``tool_choice="required"`` holds.
+    """Check for a parsed call with ``tool_choice="required"``, without gating scoring.
 
-    Two stacks fail this in different ways and only one of them is visible after
-    the fact. An endpoint that rejects the parameter answers with a 4xx, which
-    the adapter surfaces. An endpoint that accepts the parameter and then drops
-    it is indistinguishable, once a scenario is running, from a model that chose
-    not to call a tool, and the scenario that depends on it would record the
-    model as having ignored an instruction it was never given.
-
-    The prompt tells the model not to call anything. A model that obeys the
-    prompt on an enforcing endpoint still produces a call, because the grammar
-    leaves it no other output; on a non-enforcing endpoint it answers in prose.
-    Asking the model to call the tool would only prove it was willing to.
-    A reasoning model can exhaust the initial budget before reaching the call.
-    Retry that case once with more tokens before drawing a conclusion.
+    The prompt agrees with the wire constraint. Contradictory instructions can
+    derail reasoning models even when the scenario's own request works.
+    A successful probe confirms a parsed call, not server-side enforcement;
+    a failed probe cannot establish that a different prompt would fail.
+    Retry truncation once because reasoning can consume the initial budget.
     """
     probe_extra = _strip_probe_max_tokens(extra_params)
     attempts: list[str] = []
@@ -1180,7 +1172,7 @@ async def probe_tool_choice_required(
                 messages=[
                     {
                         "role": "user",
-                        "content": "Reply with the single word OK. Do not call any tools.",
+                        "content": "Call probe_ping with value 'ok'.",
                     }
                 ],
                 tools=_TOOL_CHOICE_PROBE_TOOLS,
@@ -1223,12 +1215,12 @@ async def probe_tool_choice_required(
             advice = format_tool_parser_advice(parser_family=unparsed_match.parser_family)
             if unparsed_match.parser_family == "raw_json":
                 detail = (
-                    f"not enforced; the endpoint emitted unparsed {unparsed_match.marker} "
+                    f"unverified; the endpoint emitted unparsed {unparsed_match.marker} "
                     f"in content instead of structured tool_calls. {advice}"
                 )
             else:
                 detail = (
-                    f"not enforced; the endpoint emitted raw unparsed tool-call markup "
+                    f"unverified; the endpoint emitted raw unparsed tool-call markup "
                     f"{unparsed_match.marker} in content instead of structured tool_calls. "
                     f"{advice}"
                 )
@@ -1239,7 +1231,7 @@ async def probe_tool_choice_required(
             if result.content.strip():
                 detail += ", leaving partial text"
         elif result.content.strip():
-            detail = "not enforced; the endpoint answered in prose when told not to call"
+            detail = "unverified; the endpoint answered in prose instead of calling the tool"
         else:
             detail = "inconclusive; probe returned no tool call or answer"
     else:
@@ -1249,10 +1241,10 @@ async def probe_tool_choice_required(
             str(call.arguments.get("value", "")).strip()
         )
         if arguments_intact:
-            detail = "enforced by the endpoint; probe call carried arguments"
+            detail = "parsed tool call observed with tool_choice='required'; probe call carried arguments"
         else:
             detail = (
-                "enforced by the endpoint, but the probe call arrived with empty arguments; "
+                "parsed tool call observed with tool_choice='required', but it arrived with empty arguments; "
                 "empty-argument calls in this scenario may be the tool parser rather than the model"
             )
     return ToolChoiceProbe(enforced, arguments_intact, f"{detail}; " + "; ".join(attempts))
@@ -1369,7 +1361,7 @@ async def supports_tool_choice_required(
     timeout_seconds: float,
     extra_params: dict[str, Any] | None = None,
 ) -> bool:
-    """Compatibility wrapper: whether the endpoint enforces ``tool_choice="required"``."""
+    """Compatibility wrapper: whether a required-tool probe returned a parsed call."""
     probe = await probe_tool_choice_required(
         adapter,
         model=model,
@@ -1379,26 +1371,6 @@ async def supports_tool_choice_required(
         extra_params=extra_params,
     )
     return probe.enforced
-
-
-def _unsupported_tool_choice_result(scenario: ScenarioDefinition) -> ScenarioResult:
-    """Build the excluded result when the probe did not establish enforcement."""
-    summary = (
-        "The probe did not establish enforcement of tool_choice='required', so this scenario "
-        "cannot distinguish a model that ignored the constraint from one that "
-        "never received it. Excluded from scoring."
-    )
-    return ScenarioResult(
-        scenario_id=scenario.id,
-        status=ScenarioStatus.FAIL,
-        points=0,
-        summary=summary,
-        raw_log=_format_trace(
-            "", scenario, {"status": "fail", "summary": summary}, ["assistant=not attempted"]
-        ),
-        expected_behavior=scenario.description,
-        failure_kind=FailureKind.SERVER_ERROR,
-    )
 
 
 class _CallbackError(Exception):
@@ -1497,23 +1469,22 @@ async def run_all_scenarios(
     system_prompt: str | None = None,
     on_scenario_evaluated: OnScenarioEvaluated | None = None,
     on_scenario_turn: OnScenarioTurn | None = None,
+    probe_engine: bool = True,
 ) -> ModelScoreSummary:
     """Run every scenario and produce an aggregate score summary.
 
     Args:
         concurrency: max parallel scenario runs. 1 = sequential (default).
         system_prompt: replaces the built-in system prompt for every scenario.
+        probe_engine: whether to run the diagnostic required-tool probe.
     """
     target_scenarios = scenarios
     total = len(target_scenarios)
 
-    # Scenarios that force a tool call only mean something on an endpoint that
-    # enforces the constraint. Probe only when such a scenario was selected,
-    # with one retry on truncation, so an ordinary run pays nothing.
+    # The probe describes its own request, not whether a scenario can run.
     forced_tool_choice = [s for s in target_scenarios if s.tool_choice_override == "required"]
-    unsupported_ids: set[str] = set()
     probe: ToolChoiceProbe | None = None
-    if forced_tool_choice:
+    if forced_tool_choice and probe_engine:
         probe = await probe_tool_choice_required(
             adapter,
             model=model,
@@ -1523,10 +1494,8 @@ async def run_all_scenarios(
             extra_params=extra_params,
         )
         if not probe.enforced:
-            unsupported_ids = {s.id for s in forced_tool_choice}
             logger.warning(
-                "Excluding %s from scoring: tool_choice='required' probe: %s",
-                ", ".join(sorted(unsupported_ids)),
+                "tool_choice='required' probe: %s; running selected scenarios regardless",
                 probe.detail,
             )
     forced_ids = {s.id for s in forced_tool_choice}
@@ -1547,12 +1516,12 @@ async def run_all_scenarios(
         )
 
     def _attach_probe(result: ScenarioResult) -> ScenarioResult:
-        # The verdict stays the model's; the diagnostic tells the reader what
-        # the endpoint did with the constraint so an empty call or a missing
-        # call can be attributed. Reports render these under "Capability
-        # diagnostics", next to the response_format line.
-        if probe is not None and result.scenario_id in forced_ids:
-            result.diagnostics["tool_choice"] = probe.detail
+        # Preserve the scenario verdict; a separate probe cannot establish
+        # whether the model or endpoint caused a missing call or argument.
+        if result.scenario_id in forced_ids:
+            result.diagnostics["tool_choice"] = (
+                probe.detail if probe is not None else "unverified; probe disabled"
+            )
         return result
 
     if concurrency <= 1:
@@ -1564,28 +1533,25 @@ async def run_all_scenarios(
         for idx, scenario in enumerate(target_scenarios):
             if on_scenario_start:
                 await on_scenario_start(scenario, idx, total)
-            if scenario.id in unsupported_ids:
-                result = _unsupported_tool_choice_result(scenario)
-            else:
-                result = await run_scenario(
-                    adapter,
-                    model=model,
-                    base_url=base_url,
-                    api_key=api_key,
-                    scenario=scenario,
-                    max_turns=max_turns,
-                    timeout_seconds=timeout_seconds,
-                    temperature=temperature,
-                    seed=seed,
-                    reference_date=reference_date,
-                    reference_day=reference_day,
-                    error_rate=error_rate,
-                    extra_params=extra_params,
-                    context_pressure_messages=context_pressure_messages,
-                    system_prompt=system_prompt,
-                    on_scenario_evaluated=on_scenario_evaluated,
-                    **turn_kwargs,
-                )
+            result = await run_scenario(
+                adapter,
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                scenario=scenario,
+                max_turns=max_turns,
+                timeout_seconds=timeout_seconds,
+                temperature=temperature,
+                seed=seed,
+                reference_date=reference_date,
+                reference_day=reference_day,
+                error_rate=error_rate,
+                extra_params=extra_params,
+                context_pressure_messages=context_pressure_messages,
+                system_prompt=system_prompt,
+                on_scenario_evaluated=on_scenario_evaluated,
+                **turn_kwargs,
+            )
             results.append(_attach_probe(result))
             if on_scenario_result:
                 await on_scenario_result(scenario, result, idx, total)
@@ -1627,28 +1593,25 @@ async def run_all_scenarios(
         async with sem:
             if start_cb:
                 await start_cb(scenario, idx, total)
-            if scenario.id in unsupported_ids:
-                result = _unsupported_tool_choice_result(scenario)
-            else:
-                result = await run_scenario(
-                    adapter,
-                    model=model,
-                    base_url=base_url,
-                    api_key=api_key,
-                    scenario=scenario,
-                    max_turns=max_turns,
-                    timeout_seconds=timeout_seconds,
-                    temperature=temperature,
-                    seed=seed,
-                    reference_date=reference_date,
-                    reference_day=reference_day,
-                    error_rate=error_rate,
-                    extra_params=extra_params,
-                    context_pressure_messages=context_pressure_messages,
-                    system_prompt=system_prompt,
-                    on_scenario_evaluated=evaluated_cb,
-                    **parallel_turn_kwargs,
-                )
+            result = await run_scenario(
+                adapter,
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                scenario=scenario,
+                max_turns=max_turns,
+                timeout_seconds=timeout_seconds,
+                temperature=temperature,
+                seed=seed,
+                reference_date=reference_date,
+                reference_day=reference_day,
+                error_rate=error_rate,
+                extra_params=extra_params,
+                context_pressure_messages=context_pressure_messages,
+                system_prompt=system_prompt,
+                on_scenario_evaluated=evaluated_cb,
+                **parallel_turn_kwargs,
+            )
             ordered_results[idx] = _attach_probe(result)
             if result_cb:
                 async with progress_lock:

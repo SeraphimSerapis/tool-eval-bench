@@ -320,9 +320,10 @@ with RunRepository() as repo:
   `unknown`, and a failed probe never fails the run. Any other value, such as
   `halogen` behind a proxy that hides `/metrics`, is kept as given and skips detection.
   Engine metadata is still read for an explicit label, as the CLI does.
-- `probe_engine=False` sends no detection or engine metadata requests, like the CLI's
-  `--no-probe-engine`. A hosted endpoint is still named by its wire format; any other
-  label stays as passed, and `metadata` carries no engine facts.
+- `probe_engine=False` skips detection, engine metadata requests, and the diagnostic
+  required-tool probe, like the CLI's `--no-probe-engine`. Selected scenarios still
+  run regardless of probe results. A hosted endpoint is still named by its wire
+  format; any other label stays as passed, and `metadata` carries no engine facts.
 - The backend label and engine facts are part of the comparison fingerprint. Runs that
   recorded `unknown` before detection existed do not share a fingerprint with new runs
   against the same server.

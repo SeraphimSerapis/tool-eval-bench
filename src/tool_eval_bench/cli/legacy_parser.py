@@ -368,7 +368,7 @@ def _make_parser() -> argparse.ArgumentParser:
     output.add_argument(
         "--no-probe-engine",
         action="store_true",
-        help="Skip inference engine probing (no /version, /health HTTP calls)",
+        help="Skip inference engine metadata and required-tool capability probes",
     )
     output.add_argument(
         "--output-dir",

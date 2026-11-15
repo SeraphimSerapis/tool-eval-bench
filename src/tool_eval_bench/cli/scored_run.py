@@ -100,6 +100,7 @@ class ScoredRun:
     perf_passes: list[dict[str, Any]] | None = None
     #: Whether a planned throughput pass was interrupted, failed, or skipped.
     perf_incomplete: bool = False
+    probe_engine: bool = True
 
     @classmethod
     def from_args(
@@ -160,6 +161,7 @@ class ScoredRun:
                 else getattr(args, "_resume_scenarios", None)
             ),
             judge=JudgeConnection.from_args(args),
+            probe_engine=not getattr(args, "no_probe_engine", False),
             **_perf_fields(args),
         )
 
@@ -222,6 +224,7 @@ class ScoredRun:
             "perf_preset": self.perf_preset,
             "perf_passes": self.perf_passes,
             "perf_incomplete": self.perf_incomplete,
+            "probe_engine": self.probe_engine,
             **(self.judge.service_kwargs() if self.judge is not None else {}),
         }
 

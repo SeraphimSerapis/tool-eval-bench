@@ -164,14 +164,18 @@ runs:
   timeouts, connection errors, a request the endpoint rejected before the model
   produced anything, known backend initialization failures such as llama.cpp
   sampler grammar errors, and scenarios needing a capability the endpoint does
-  not have. TC-45 forces a tool call, so it is excluded when a probe cannot
-  establish enforcement of `tool_choice="required"`. The probe starts with a
+  not have. TC-45 always runs its own request, regardless of the
+  `tool_choice="required"` probe outcome. That probe asks for a tool call
+  without contradicting the wire constraint and is diagnostic-only, not proof
+  of server-side enforcement. `--no-probe-engine` skips it. The probe starts with a
   256-token budget and retries once at 4096 tokens if it is truncated without
   a tool call. These budgets are independent of `max_tokens`,
   `max_completion_tokens`, and Gemini's `maxOutputTokens` (top level or in
   `generationConfig`) in backend kwargs. Repeated truncation is reported
   as inconclusive, not non-enforcement. The `tool_choice` diagnostic records
-  each attempt's finish reason, completion tokens, and retry outcome. By
+  each attempt's finish reason, completion tokens, and retry outcome.
+  Terminal summaries name excluded IDs, including with `--no-live`; JSON
+  reports list them under `scores.excluded_scenarios` when any are excluded. By
   contrast, scenarios where an unconfigured tool parser leaks raw markup or JSON
   call objects into `content` record `failure_kind="unparsed_tool_call"`, remain
   in the score denominator as zero points, and name the vLLM, SGLang, or

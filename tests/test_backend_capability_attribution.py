@@ -249,8 +249,8 @@ async def test_probe_reports_support_when_a_tool_call_comes_back() -> None:
 
 
 @pytest.mark.asyncio
-async def test_probe_reports_no_support_when_the_parameter_is_silently_dropped() -> None:
-    """The failure mode nothing else can detect: accepted, then ignored."""
+async def test_probe_reports_unverified_when_no_call_is_parsed() -> None:
+    """A prose response does not establish why the required call is missing."""
     adapter = ScriptedAdapter(
         [ChatCompletionResult(content="56", finish_reason="stop", completion_tokens=1)]
     )
@@ -261,7 +261,7 @@ async def test_probe_reports_no_support_when_the_parameter_is_silently_dropped()
 
     assert not probe.enforced
     assert adapter.calls == 1
-    assert "not enforced" in probe.detail
+    assert "unverified" in probe.detail
     assert "finish_reason=stop" in probe.detail
     assert "completion_tokens=1" in probe.detail
 
@@ -405,13 +405,14 @@ async def test_truncated_probe_recovery_keeps_forced_scenario_in_score(concurren
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("concurrency", [1, 2])
-async def test_repeated_probe_truncation_is_inconclusive(concurrency: int, caplog) -> None:
+async def test_repeated_probe_truncation_does_not_skip_scenario(concurrency: int) -> None:
     adapter = ScriptedAdapter(
         [
             ChatCompletionResult(content="", finish_reason="length", completion_tokens=256),
             ChatCompletionResult(
                 content="unfinished", finish_reason="length", completion_tokens=4096
             ),
+            ChatCompletionResult(content="56"),
         ]
     )
     summary = await run_all_scenarios(
@@ -422,22 +423,19 @@ async def test_repeated_probe_truncation_is_inconclusive(concurrency: int, caplo
         concurrency=concurrency,
     )
 
-    assert adapter.calls == 2
-    assert summary.excluded_scenarios == ["TC-45"]
-    assert summary.max_points == 0
+    assert adapter.calls == 3
+    assert summary.excluded_scenarios == []
+    assert summary.max_points == summary.total_points == 2
     result = summary.scenario_results[0]
     assert "inconclusive" in result.diagnostics["tool_choice"]
     assert "completion_tokens=4096" in result.diagnostics["tool_choice"]
-    assert "does not enforce" not in result.summary
-    assert "does not enforce" not in caplog.text
-    assert "inconclusive" in caplog.text
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("reply", "expected"),
     [
-        (ChatCompletionResult(content="OK", finish_reason="stop"), "not enforced"),
+        (ChatCompletionResult(content="OK", finish_reason="stop"), "unverified"),
         (ChatCompletionResult(content="", finish_reason="stop"), "inconclusive"),
         (
             ChatCompletionResult(content=" \n\t", finish_reason="stop"),
@@ -521,25 +519,41 @@ async def test_probe_treats_an_exception_as_unsupported() -> None:
 
 
 @pytest.mark.asyncio
-async def test_forced_tool_choice_scenario_is_excluded_on_an_endpoint_that_ignores_it() -> None:
-    """TC-45 scored zero for answering 7x8 correctly. Now it is excluded."""
+@pytest.mark.parametrize("concurrency", [1, 2])
+@pytest.mark.parametrize(
+    "probe_reply",
+    [
+        ChatCompletionResult(content="56"),
+        ChatCompletionResult(content="", transport_error_status=400),
+        ChatCompletionResult(content="", malformed=True),
+        RuntimeError("connection reset"),
+        ChatCompletionResult(content='<｜DSML｜invoke name="probe_ping">ok</｜DSML｜invoke>'),
+    ],
+)
+async def test_failed_probe_does_not_skip_forced_scenario(
+    concurrency: int, probe_reply: ChatCompletionResult | Exception
+) -> None:
+    """Probe failure is not evidence that the scenario itself cannot run."""
     forced = _trivial_scenario("TC-45", tool_choice_override="required")
     adapter = ScriptedAdapter(
         [
-            ChatCompletionResult(content="56"),  # the probe, no tool call
+            probe_reply,
+            ChatCompletionResult(content="56"),  # the scenario itself
         ]
     )
 
-    summary = await run_all_scenarios(adapter, model="m", base_url="http://x", scenarios=[forced])
+    summary = await run_all_scenarios(
+        adapter, model="m", base_url="http://x", scenarios=[forced], concurrency=concurrency
+    )
 
-    assert summary.excluded_scenarios == ["TC-45"]
-    assert summary.max_points == 0
-    assert summary.completion_rate == 0.0
-    assert adapter.calls == 1, "the excluded scenario must not be run"
+    assert summary.excluded_scenarios == []
+    assert summary.max_points == 2
+    assert summary.completion_rate == 100.0
+    assert adapter.calls == 2
 
 
 @pytest.mark.asyncio
-async def test_forced_tool_choice_scenario_runs_when_the_endpoint_enforces_it() -> None:
+async def test_forced_tool_choice_scenario_runs_when_the_probe_returns_a_call() -> None:
     forced = _trivial_scenario("TC-45", tool_choice_override="required")
     adapter = ScriptedAdapter(
         [
@@ -556,8 +570,24 @@ async def test_forced_tool_choice_scenario_runs_when_the_endpoint_enforces_it() 
 
 
 @pytest.mark.asyncio
-async def test_probe_tells_the_model_not_to_call() -> None:
-    """A model that would call anyway proves nothing about the endpoint."""
+async def test_unverified_probe_does_not_excuse_a_real_tc45_failure() -> None:
+    adapter = ScriptedAdapter(
+        [ChatCompletionResult(content="56"), ChatCompletionResult(content="56")]
+    )
+    summary = await run_all_scenarios(
+        adapter, model="m", base_url="http://x", scenarios=[BY_ID["TC-45"]]
+    )
+
+    assert summary.excluded_scenarios == []
+    assert summary.max_points == 2
+    assert summary.total_points == 0
+    assert summary.scenario_results[0].status == ScenarioStatus.FAIL
+    assert "No tool calls" in summary.scenario_results[0].summary
+
+
+@pytest.mark.asyncio
+async def test_probe_does_not_contradict_required_tool_choice() -> None:
+    """The probe must not forbid the very call it requests on the wire."""
     adapter = ScriptedAdapter([ChatCompletionResult(content="", tool_calls=[_tool_call()])])
     messages: list[Any] = []
 
@@ -571,7 +601,7 @@ async def test_probe_tells_the_model_not_to_call() -> None:
     )
 
     assert probe.enforced and probe.arguments_intact
-    assert "Do not call any tools" in messages[0][0]["content"]
+    assert messages[0][0]["content"] == "Call probe_ping with value 'ok'."
 
 
 @pytest.mark.asyncio
@@ -606,7 +636,7 @@ async def test_probe_verdict_is_attached_to_forced_scenarios_only() -> None:
     )
 
     by_id = {r.scenario_id: r for r in summary.scenario_results}
-    assert by_id["TC-45"].diagnostics["tool_choice"].startswith("enforced by the endpoint")
+    assert by_id["TC-45"].diagnostics["tool_choice"].startswith("parsed tool call observed")
     assert "tool_choice" not in by_id["TC-OTHER"].diagnostics
 
 
@@ -624,12 +654,13 @@ async def test_probe_is_skipped_when_no_scenario_forces_a_tool_call() -> None:
 
 
 @pytest.mark.asyncio
-async def test_exclusion_also_applies_on_the_parallel_path() -> None:
+async def test_failed_probe_does_not_skip_other_scenarios_on_parallel_path() -> None:
     forced = _trivial_scenario("TC-45", tool_choice_override="required")
     other = _trivial_scenario("TC-OTHER")
     adapter = ScriptedAdapter(
         [
-            ChatCompletionResult(content="56"),  # probe: unsupported
+            ChatCompletionResult(content="56"),  # probe: unverified
+            ChatCompletionResult(content="56"),
             ChatCompletionResult(content="done"),
         ]
     )
@@ -638,8 +669,9 @@ async def test_exclusion_also_applies_on_the_parallel_path() -> None:
         adapter, model="m", base_url="http://x", scenarios=[forced, other], concurrency=2
     )
 
-    assert summary.excluded_scenarios == ["TC-45"]
-    assert summary.max_points == 2
+    assert summary.excluded_scenarios == []
+    assert summary.max_points == 4
+    assert adapter.calls == 3
 
 
 def test_only_tc45_forces_a_tool_call() -> None:

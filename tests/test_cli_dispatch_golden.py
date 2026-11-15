@@ -380,6 +380,7 @@ FULL_RUN_KWARGS: dict[str, Any] = {
     "perf_preset": None,
     "perf_passes": None,
     "perf_incomplete": False,
+    "probe_engine": True,
 }
 
 LIVE_CALLBACKS = {
@@ -513,6 +514,7 @@ DEFAULT_RUN_KWARGS: dict[str, Any] = {
     "perf_preset": None,
     "perf_passes": None,
     "perf_incomplete": False,
+    "probe_engine": True,
 }
 
 
