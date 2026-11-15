@@ -196,6 +196,7 @@ class BenchmarkService:
         perf_preset: str | None = None,
         perf_passes: list[dict[str, Any]] | None = None,
         perf_incomplete: bool = False,
+        probe_engine: bool = True,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
 
@@ -211,6 +212,8 @@ class BenchmarkService:
         are attached. ``perf_incomplete`` marks a plan with a pass that did not
         finish. Throughput never changes the scored status: a failed cell or
         an unfinished pass is recorded under ``scores["throughput"]``.
+        ``probe_engine=False`` skips the required-tool diagnostic probe and
+        the legacy engine metadata probe when no run context was supplied.
         """
         validate_run_parameters(max_turns=max_turns, error_rate=error_rate, alpha=alpha)
         stored_perf_preset = perf_preset if throughput_samples else None
@@ -277,8 +280,10 @@ class BenchmarkService:
         # Build metadata from RunContext (preferred) or legacy probe
         if run_context:
             metadata = run_context.to_dict()
-        else:
+        elif probe_engine:
             metadata = await _collect_metadata_safe(model, backend, base_url, api_key)
+        else:
+            metadata = {}
 
         # Resume executes only the unresolved subset, but the durable run
         # configuration must keep the original complete protocol.  Otherwise a
@@ -361,6 +366,7 @@ class BenchmarkService:
                 context_pressure_messages=context_pressure_messages,
                 weight_by_difficulty=weight_by_difficulty,
                 system_prompt=system_prompt,
+                probe_engine=probe_engine,
                 **evaluated_hook,
             )
         except BaseException:

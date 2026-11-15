@@ -445,6 +445,13 @@ or `unavailable`; number occurrence alone does not prove private verification.
 Structured-output scenarios record that a response format was requested. The tool
 cannot independently attribute success to the model versus constrained decoding.
 
+TC-45 records a diagnostic probe using `tool_choice="required"` and a prompt that
+asks for the same tool call. A parsed call confirms that request worked, not that
+the endpoint enforces the constraint independently of the model. Failed or
+inconclusive probes never skip TC-45; its own request determines the score and
+any infrastructure exclusion. `--no-probe-engine` or `probe_engine=False` skips
+this probe and records `unverified; probe disabled` instead.
+
 Paired `toolset_deltas` report crowded minus small-toolset points for TC-37/TC-01,
 TC-38/TC-07, and TC-39/TC-11 when both were graded. These are within-run controls;
 one trial does not calibrate task difficulty or establish a causal model ranking.

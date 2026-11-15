@@ -2767,6 +2767,13 @@ def _run_plain(
         console.print(
             f"[bold]Weighted Score: {scores['weighted_score']} / 100[/]  [dim](difficulty-weighted)[/]"
         )
+    excluded = scores.get("excluded_scenarios") or []
+    if excluded:
+        console.print(
+            f"[yellow]{len(excluded)} scenario(s) excluded from scoring: "
+            f"{escape(', '.join(excluded))}; "
+            f"completion rate {scores.get('completion_rate', 100.0)}%[/]"
+        )
     console.print(f"[dim]Completed in {elapsed:.1f}s[/]\n")
     if getattr(args, "diff", None):
         # The diff follows the score above, so it compares the same (last) trial.

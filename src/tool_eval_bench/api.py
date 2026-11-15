@@ -279,8 +279,9 @@ async def run_benchmark(
             Phases are started, completed, and reused. Not called for skipped audits.
         probe_engine: When *True* (default), identify the server and read its
             engine metadata (name, version, context window, quantization) into
-            ``metadata``. *False* sends no detection requests, like the CLI's
-            ``--no-probe-engine``.
+            ``metadata``. *False* skips detection requests and the diagnostic
+            required-tool probe, like the CLI's ``--no-probe-engine``. Selected
+            scenarios still run regardless of probe results.
 
     Returns:
         A versioned JSON-serializable dict containing ``run_id``, ``config``,
@@ -377,6 +378,7 @@ async def run_benchmark(
             extra_params=extra_params,
             run_context=run_context,
             wire_format=wire_format,
+            probe_engine=probe_engine,
             extra_headers=extra_headers,
             session_header=session_header,
             system_prompt=system_prompt,
