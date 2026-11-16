@@ -80,6 +80,25 @@ def test_translated_prompts_do_not_read_as_english(locale: str) -> None:
     assert [sid for sid, lang in detected.items() if lang == "en"] == []
 
 
+@pytest.mark.parametrize(
+    ("locale", "json_only_cue", "stop_tools_cue"),
+    [
+        ("de", "NUR mit gültigem JSON", "ohne weitere Tool-Aufrufe"),
+        ("es", "SOLO con JSON válido", "ni más llamadas a herramientas"),
+        ("zh", "仅回复符合此架构的有效 JSON", "不要再调用其他工具"),
+        ("ja", "有効なJSONのみを返し", "追加のツール呼び出しは行わないでください"),
+    ],
+)
+def test_tc67_translations_state_json_only_and_stop_tools_rules(
+    locale: str, json_only_cue: str, stop_tools_cue: str
+) -> None:
+    prompt = load_pack(locale)["scenarios"]["TC-67"]["user_message"]
+    preamble = prompt.split("```json", 1)[0]
+    assert "NVDA" in preamble
+    assert json_only_cue in preamble
+    assert stop_tools_cue in preamble
+
+
 # --- end to end: reference traces still grade under every locale -------------
 
 
@@ -144,7 +163,7 @@ def test_locale_changes_the_variant_metadata_that_feeds_the_fingerprint() -> Non
     plain = prepare_scenarios([SCENARIOS["TC-02"]], variant_seed=None)
     german = prepare_scenarios([SCENARIOS["TC-02"]], variant_seed=None, locale="de")
     assert plain[0].variant_metadata == {}
-    assert german[0].variant_metadata == {"locale": "de", "locale_version": 1}
+    assert german[0].variant_metadata == {"locale": "de", "locale_version": 2}
 
 
 # --- answer normalization -----------------------------------------------------

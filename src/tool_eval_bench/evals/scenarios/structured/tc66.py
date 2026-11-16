@@ -193,7 +193,9 @@ SCENARIO = ScenarioDefinition(
     category=Category.O,
     user_message=(
         "Look up all engineering contacts and return the results "
-        "as a JSON object matching this schema.\n\n"
+        "as a JSON object matching this schema. "
+        "Once you have the contact data, reply with ONLY valid JSON matching this schema, "
+        "with no extra text and no further tool calls.\n\n"
         f"Schema:\n```json\n{_schema_text(_TC66_SCHEMA)}\n```"
     ),
     description="Call get_contacts and format as nested JSON with array of objects.",

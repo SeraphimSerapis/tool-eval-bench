@@ -65,7 +65,7 @@
       "follow_up_messages": []
     },
     "TC-67": {
-      "user_message": "NVDAの現在の株価を取得し、このスキーマに一致するJSONで株式分析を作成してください。シグナルの判断材料として、最近のニュースを調べてください。\n\nスキーマ：\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"ticker\": {\n      \"type\": \"string\"\n    },\n    \"price\": {\n      \"type\": \"number\"\n    },\n    \"currency\": {\n      \"type\": \"string\"\n    },\n    \"signal\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"strong_buy\",\n        \"buy\",\n        \"hold\",\n        \"sell\",\n        \"strong_sell\"\n      ]\n    },\n    \"reasoning\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"ticker\",\n    \"price\",\n    \"currency\",\n    \"signal\",\n    \"reasoning\"\n  ],\n  \"additionalProperties\": false\n}\n```",
+      "user_message": "NVDAの現在の株価を取得し、このスキーマに一致するJSONで株式分析を作成してください。シグナルの判断材料として、最近のニュースを調べてください。株価とニュースを取得したら、このスキーマに準拠する有効なJSONのみを返し、余分なテキストや追加のツール呼び出しは行わないでください。\n\nスキーマ：\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"ticker\": {\n      \"type\": \"string\"\n    },\n    \"price\": {\n      \"type\": \"number\"\n    },\n    \"currency\": {\n      \"type\": \"string\"\n    },\n    \"signal\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"strong_buy\",\n        \"buy\",\n        \"hold\",\n        \"sell\",\n        \"strong_sell\"\n      ]\n    },\n    \"reasoning\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"ticker\",\n    \"price\",\n    \"currency\",\n    \"signal\",\n    \"reasoning\"\n  ],\n  \"additionalProperties\": false\n}\n```",
       "follow_up_messages": []
     },
     "TC-68": {
