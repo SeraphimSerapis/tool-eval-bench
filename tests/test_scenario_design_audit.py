@@ -271,6 +271,153 @@ def test_tc30_still_rejects_an_ungrounded_branch() -> None:
     assert result.status is ScenarioStatus.FAIL
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        'print(2+2)\nresult = 2+2\nif result == 4:\n    print("correct")\nelse:\n    print("wrong")',
+        'print(result := 2 + 2)\nif result == 4:\n    print("correct")\nelse:\n    print("wrong")',
+    ],
+)
+def test_tc30_accepts_print_before_assign_and_walrus_combined_workflows(code: str) -> None:
+    scenario = _SCENARIOS["TC-30"]
+    call = ToolCallRecord(
+        id="call_0",
+        name="run_code",
+        raw_arguments=json.dumps({"code": code}),
+        arguments={"code": code},
+        turn=1,
+    )
+    tool_result = scenario.handle_tool_call(ScenarioState(), call)
+    assert tool_result["exit_code"] == 0
+    assert tool_result["stdout"] == "4\ncorrect"
+    assert replay("TC-30", [(1, 0, "run_code", {"code": code})], ["4 and correct."]).status is (
+        ScenarioStatus.PASS
+    )
+
+
+def test_tc30_accepts_walrus_in_two_call_first_step() -> None:
+    result = replay(
+        "TC-30",
+        [
+            (1, 0, "run_code", {"code": "print(result := 2 + 2)"}),
+            (2, 0, "run_code", {"code": 'print("correct")'}),
+        ],
+        ["4 and correct."],
+    )
+    assert result.status is ScenarioStatus.PASS
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        'print(2+2)\nresult = 4\nif result == 4:\n    print("correct")\nelse:\n    print("wrong")',
+        'print(2+2)\nprint(2+2)\nif 2+2 == 4:\n    print("correct")\nelse:\n    print("wrong")',
+        (
+            "print(result := 2 + 2)\nprint(result)\nif result == 4:\n"
+            '    print("correct")\nelse:\n    print("wrong")'
+        ),
+        (
+            'if True:\n    print("extra")\nprint(2+2)\nresult = 2+2\nif result == 4:\n'
+            '    print("correct")\nelse:\n    print("wrong")'
+        ),
+    ],
+)
+def test_tc30_still_rejects_invalid_combined_workflows(code: str) -> None:
+    scenario = _SCENARIOS["TC-30"]
+    call = ToolCallRecord(
+        id="call_0",
+        name="run_code",
+        raw_arguments=json.dumps({"code": code}),
+        arguments={"code": code},
+        turn=1,
+    )
+    tool_result = scenario.handle_tool_call(ScenarioState(), call)
+    assert tool_result["exit_code"] == 1
+    assert replay("TC-30", [(1, 0, "run_code", {"code": code})], ["Done."]).status is (
+        ScenarioStatus.PARTIAL
+    )
+
+
+@pytest.mark.parametrize(
+    "first_code",
+    [
+        'print("hello")',
+        'print(2+2)\nresult = 4\nif result == 4:\n    print("correct")\nelse:\n    print("wrong")',
+    ],
+)
+def test_tc30_two_call_recovery_with_complete_workflow_is_partial(first_code: str) -> None:
+    combined = (
+        'print(2+2)\nresult = 2+2\nif result == 4:\n    print("correct")\nelse:\n    print("wrong")'
+    )
+    result = replay(
+        "TC-30",
+        [
+            (1, 0, "run_code", {"code": first_code}),
+            (2, 0, "run_code", {"code": combined}),
+        ],
+        ["4 and correct."],
+    )
+    assert result.status is ScenarioStatus.PARTIAL
+
+
+@pytest.mark.parametrize(
+    "second_result",
+    [
+        {"error": "execution timed out"},
+        {"stdout": "", "stderr": "runtime failure", "exit_code": 1},
+    ],
+)
+def test_tc30_two_call_recovery_with_errored_combined_call_is_partial(
+    second_result: dict[str, Any],
+) -> None:
+    combined = (
+        'print(2+2)\nresult = 2+2\nif result == 4:\n    print("correct")\nelse:\n    print("wrong")'
+    )
+    state = ScenarioState(
+        tool_calls=[
+            ToolCallRecord(
+                id="c1",
+                name="run_code",
+                raw_arguments=json.dumps({"code": 'print("hello")'}),
+                arguments={"code": 'print("hello")'},
+                turn=1,
+            ),
+            ToolCallRecord(
+                id="c2",
+                name="run_code",
+                raw_arguments=json.dumps({"code": combined}),
+                arguments={"code": combined},
+                turn=2,
+            ),
+        ],
+        tool_results=[
+            ToolResultRecord(
+                call_id="c1",
+                name="run_code",
+                result={"stdout": "", "stderr": "Unknown code", "exit_code": 1},
+            ),
+            ToolResultRecord(call_id="c2", name="run_code", result=second_result),
+        ],
+        final_answer="Could not finish.",
+    )
+    assert _SCENARIOS["TC-30"].evaluate(state).status is ScenarioStatus.PARTIAL
+
+
+def test_tc30_two_call_same_turn_complete_workflow_is_fail() -> None:
+    combined = (
+        'print(2+2)\nresult = 2+2\nif result == 4:\n    print("correct")\nelse:\n    print("wrong")'
+    )
+    result = replay(
+        "TC-30",
+        [
+            (1, 0, "run_code", {"code": 'print("hello")'}),
+            (1, 0, "run_code", {"code": combined}),
+        ],
+        ["4 and correct."],
+    )
+    assert result.status is ScenarioStatus.FAIL
+
+
 # ---------------------------------------------------------------------------
 # 7. TC-41 — enum membership is case-insensitive
 # ---------------------------------------------------------------------------

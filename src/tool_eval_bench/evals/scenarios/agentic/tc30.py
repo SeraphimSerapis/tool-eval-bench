@@ -80,6 +80,34 @@ def _tc30_prints_text(statements: list[ast.stmt], expected: str) -> bool:
     )
 
 
+def _tc30_consume_preamble_step(
+    statement: ast.stmt, calculated_names: set[str], printed_calculation: bool
+) -> tuple[bool, bool]:
+    """Consume a calculation assignment or the single calculation print."""
+    if (
+        isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and _tc30_is_calculation(statement.value, calculated_names)
+    ):
+        calculated_names.add(statement.targets[0].id)
+        return True, printed_calculation
+
+    argument = _tc30_print_argument(statement)
+    if argument is not None and not printed_calculation:
+        if (
+            isinstance(argument, ast.NamedExpr)
+            and isinstance(argument.target, ast.Name)
+            and _tc30_is_calculation(argument.value, calculated_names)
+        ):
+            calculated_names.add(argument.target.id)
+            return True, True
+        if _tc30_is_calculation(argument, calculated_names):
+            return True, True
+
+    return False, printed_calculation
+
+
 def _tc30_is_expected_workflow(code: str) -> bool:
     """Recognize the requested combined Python workflow without executing it."""
     try:
@@ -90,23 +118,10 @@ def _tc30_is_expected_workflow(code: str) -> bool:
     calculated_names: set[str] = set()
     printed_calculation = False
     for index, statement in enumerate(module.body):
-        if (
-            isinstance(statement, ast.Assign)
-            and not printed_calculation
-            and len(statement.targets) == 1
-            and isinstance(statement.targets[0], ast.Name)
-            and _tc30_is_calculation(statement.value, calculated_names)
-        ):
-            calculated_names.add(statement.targets[0].id)
-            continue
-
-        printed = _tc30_print_argument(statement)
-        if (
-            printed is not None
-            and not printed_calculation
-            and _tc30_is_calculation(printed, calculated_names)
-        ):
-            printed_calculation = True
+        consumed, printed_calculation = _tc30_consume_preamble_step(
+            statement, calculated_names, printed_calculation
+        )
+        if consumed:
             continue
 
         if not isinstance(statement, ast.If) or not printed_calculation:
@@ -151,23 +166,9 @@ def _tc30_is_print_calculation(code: str) -> bool:
     calculated_names: set[str] = set()
     printed = False
     for statement in module.body:
-        if (
-            isinstance(statement, ast.Assign)
-            and len(statement.targets) == 1
-            and isinstance(statement.targets[0], ast.Name)
-            and _tc30_is_calculation(statement.value, calculated_names)
-        ):
-            calculated_names.add(statement.targets[0].id)
-            continue
-        argument = _tc30_print_argument(statement)
-        if (
-            argument is not None
-            and not printed
-            and _tc30_is_calculation(argument, calculated_names)
-        ):
-            printed = True
-            continue
-        return False
+        consumed, printed = _tc30_consume_preamble_step(statement, calculated_names, printed)
+        if not consumed:
+            return False
     return printed
 
 
@@ -231,7 +232,18 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
         # performed the requested calculation.  Keyword-only calls are not a
         # valid chain, even when the final branch text is correct.
         first_code = _as_str(code_calls[0].arguments.get("code"))
+        second_code = _as_str(code_calls[1].arguments.get("code"))
         if not _tc30_is_print_calculation(first_code):
+            if code_calls[1].turn > code_calls[0].turn and _tc30_is_expected_workflow(second_code):
+                if not _result_is_usable_if_present(
+                    state, code_calls[1]
+                ) or not _tc30_code_result_has_stdout(state, code_calls[1], "4\ncorrect"):
+                    return _partial(
+                        "The second combined run_code call returned an explicit error or unexpected output."
+                    )
+                return _partial(
+                    "Completed the conditional workflow in the second run_code call after an extra initial call."
+                )
             return _fail("Second branch call was not grounded in a 2+2 calculation.")
         if code_calls[1].turn <= code_calls[0].turn:
             return _fail("Ran the conditional branch before receiving the calculation result.")
@@ -241,7 +253,6 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _partial("A run_code call returned an explicit error.")
         if not _tc30_code_result_has_stdout(state, code_calls[0], "4"):
             return _fail("The conditional branch was not grounded in a recorded result of 4.")
-        second_code = _as_str(code_calls[1].arguments.get("code"))
         ran_correct = _tc30_is_print_text(second_code, "correct")
         ran_wrong = _tc30_is_print_text(second_code, "wrong")
 
