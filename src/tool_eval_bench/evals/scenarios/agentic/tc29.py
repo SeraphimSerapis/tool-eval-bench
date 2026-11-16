@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ast
+import operator
 import re
+from collections.abc import Callable
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -72,6 +75,39 @@ _TC29_EXAMPLE_MARKER = re.compile(
 )
 # "e.g." and "i.e." do not end the sentence the marker has to sit in.
 _TC29_SENTENCE_END = re.compile(r"(?<!\be\.g)(?<!\bi\.e)[.!?](?=\s)|\n", re.IGNORECASE)
+_TC29_MAX_COMP_LEN = 150
+_TC29_COMP_RESULT = re.compile(r"[^\[\].!?\n]{1,40}?" + _TC29_INT_LIST.pattern)
+_TC29_VARIATION_MARKER = re.compile(
+    r"\b(?:variations?|variants?|filter\w*|instead|chang\w*|modif\w*|replac\w*|contrast\w*|whereas|unlike)\b",
+    re.IGNORECASE,
+)
+
+
+class _Tc29InvalidExpr(Exception):
+    """Raised when a comprehension uses disallowed or out-of-bounds syntax."""
+
+
+def _tc29_pow(left: int, right: int) -> int:
+    return int(left**right)
+
+
+_TC29_BIN_OPS: dict[type[ast.operator], Callable[[int, int], int]] = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: _tc29_pow,
+}
+
+_TC29_CMP_OPS: dict[type[ast.cmpop], Callable[[int, int], bool]] = {
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+}
 
 
 def _tc29_ints(items: str) -> tuple[int, ...] | None:
@@ -87,13 +123,224 @@ def _tc29_ints(items: str) -> tuple[int, ...] | None:
     return tuple(int(part) for part in parts)
 
 
+def _tc29_sentence_prefix(answer: str, pos: int) -> str:
+    prefix = answer[:pos]
+    sentence_start = max((end.end() for end in _TC29_SENTENCE_END.finditer(prefix)), default=0)
+    return prefix[sentence_start:]
+
+
+def _tc29_find_closing_bracket(
+    text: str, start: int, max_len: int = _TC29_MAX_COMP_LEN
+) -> int | None:
+    """Find the matching ']' for text[start] on the same line within max_len chars."""
+    depth = 0
+    limit = min(len(text), start + max_len)
+    for idx in range(start, limit):
+        ch = text[idx]
+        if ch == "\n":
+            return None
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return idx + 1
+    return None
+
+
+def _tc29_const_int(node: ast.AST) -> int | None:
+    """Extract an integer literal (excluding bool), allowing unary +/-."""
+    if isinstance(node, ast.Constant) and type(node.value) is int:
+        return node.value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        inner = _tc29_const_int(node.operand)
+        if inner is not None:
+            return inner if isinstance(node.op, ast.UAdd) else -inner
+    return None
+
+
+def _tc29_eval_comp_iter(node: ast.AST) -> tuple[int, ...] | None:
+    """Evaluate a bounded constant range() or list/tuple iterable in a comprehension."""
+    if isinstance(node, (ast.List, ast.Tuple)):
+        if len(node.elts) > 20:
+            return None
+        values: list[int] = []
+        for elt in node.elts:
+            val = _tc29_const_int(elt)
+            if val is None or abs(val) > 1000:
+                return None
+            values.append(val)
+        return tuple(values)
+
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "range"
+        and not node.keywords
+        and 1 <= len(node.args) <= 3
+    ):
+        args: list[int] = []
+        for arg in node.args:
+            val = _tc29_const_int(arg)
+            if val is None:
+                return None
+            args.append(val)
+        start, stop, step = (
+            (0, args[0], 1)
+            if len(args) == 1
+            else (args[0], args[1], 1)
+            if len(args) == 2
+            else (args[0], args[1], args[2])
+        )
+        if step == 0 or abs(start) > 100 or abs(stop) > 100:
+            return None
+        seq = range(start, stop, step)
+        if len(seq) > 20:
+            return None
+        return tuple(seq)
+
+    return None
+
+
+def _tc29_eval_ast(node: ast.AST, var_name: str, var_value: int) -> int | bool:
+    """Safely evaluate a bounded integer/boolean AST expression without eval()."""
+    if isinstance(node, ast.Constant):
+        if type(node.value) is int and abs(node.value) <= 10_000:
+            return node.value
+        raise _Tc29InvalidExpr
+
+    if isinstance(node, ast.Name):
+        if node.id == var_name:
+            return var_value
+        raise _Tc29InvalidExpr
+
+    if isinstance(node, ast.UnaryOp):
+        operand = _tc29_eval_ast(node.operand, var_name, var_value)
+        if isinstance(node.op, ast.Not):
+            return not operand
+        if type(operand) is not int:
+            raise _Tc29InvalidExpr
+        if isinstance(node.op, ast.UAdd):
+            return +operand
+        if isinstance(node.op, ast.USub):
+            return -operand
+        raise _Tc29InvalidExpr
+
+    if isinstance(node, ast.BinOp):
+        op_fn = _TC29_BIN_OPS.get(type(node.op))
+        if op_fn is None:
+            raise _Tc29InvalidExpr
+        left = _tc29_eval_ast(node.left, var_name, var_value)
+        right = _tc29_eval_ast(node.right, var_name, var_value)
+        if type(left) is not int or type(right) is not int:
+            raise _Tc29InvalidExpr
+        if isinstance(node.op, (ast.FloorDiv, ast.Mod)) and right == 0:
+            raise _Tc29InvalidExpr
+        if isinstance(node.op, ast.Pow) and not (0 <= right <= 10 and abs(left) <= 1000):
+            raise _Tc29InvalidExpr
+        return op_fn(left, right)
+
+    if isinstance(node, ast.BoolOp):
+        is_and = isinstance(node.op, ast.And)
+        for sub in node.values[:-1]:
+            val = _tc29_eval_ast(sub, var_name, var_value)
+            if (is_and and not val) or (not is_and and val):
+                return val
+        return _tc29_eval_ast(node.values[-1], var_name, var_value)
+
+    if isinstance(node, ast.Compare):
+        left_val = _tc29_eval_ast(node.left, var_name, var_value)
+        if type(left_val) is not int:
+            raise _Tc29InvalidExpr
+        for op, cmp_node in zip(node.ops, node.comparators, strict=True):
+            cmp_fn = _TC29_CMP_OPS.get(type(op))
+            if cmp_fn is None:
+                raise _Tc29InvalidExpr
+            right_val = _tc29_eval_ast(cmp_node, var_name, var_value)
+            if type(right_val) is not int:
+                raise _Tc29InvalidExpr
+            if not cmp_fn(left_val, right_val):
+                return False
+            left_val = right_val
+        return True
+
+    raise _Tc29InvalidExpr
+
+
+def _tc29_eval_listcomp(expr: str) -> tuple[tuple[int, ...], bool] | None:
+    """Safely evaluate a single-generator bounded integer list comprehension."""
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except (SyntaxError, ValueError):
+        return None
+    comp = tree.body
+    if not isinstance(comp, ast.ListComp) or len(comp.generators) != 1:
+        return None
+    gen = comp.generators[0]
+    if gen.is_async or not isinstance(gen.target, ast.Name):
+        return None
+    items = _tc29_eval_comp_iter(gen.iter)
+    if items is None:
+        return None
+    var_name = gen.target.id
+    out: list[int] = []
+    try:
+        for item in items:
+            if not all(_tc29_eval_ast(cond, var_name, item) for cond in gen.ifs):
+                continue
+            val = _tc29_eval_ast(comp.elt, var_name, item)
+            if type(val) is not int:
+                return None
+            out.append(val)
+    except _Tc29InvalidExpr:
+        return None
+    return tuple(out), bool(gen.ifs)
+
+
+def _tc29_comp_example_spans(answer: str) -> list[tuple[int, int]]:
+    """Spans covering valid modified list comprehensions and their stated results."""
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    while (start := answer.find("[", pos)) != -1:
+        expr_end = _tc29_find_closing_bracket(answer, start)
+        if expr_end is None:
+            pos = start + 1
+            continue
+        result_match = _TC29_COMP_RESULT.match(answer, expr_end)
+        if result_match is None:
+            pos = start + 1
+            continue
+        result = _tc29_ints(result_match.group(1))
+        if result is None:
+            pos = start + 1
+            continue
+        evaluated = _tc29_eval_listcomp(answer[start:expr_end])
+        if evaluated is None:
+            pos = start + 1
+            continue
+        computed, has_filter = evaluated
+        if computed != result or computed in _TC29_ALLOWED_LISTS:
+            pos = start + 1
+            continue
+        if not has_filter:
+            sent = _tc29_sentence_prefix(answer, start)
+            if not (_TC29_EXAMPLE_MARKER.search(sent) or _TC29_VARIATION_MARKER.search(sent)):
+                pos = start + 1
+                continue
+        spans.append((start, result_match.end()))
+        pos = result_match.end()
+    return spans
+
+
 def _tc29_example_spans(answer: str) -> list[tuple[int, int]]:
     """Spans of worked examples on input other than range(5).
 
     Only an example that squares its own input is exempt, so a cubed example
-    ("[1, 2, 3] becomes [1, 8, 27]") still states a wrong list.
+    ("[1, 2, 3] becomes [1, 8, 27]") still states a wrong list. A modified
+    list comprehension shown alongside its exact computed integer result is
+    also exempt when it has a filter or an example/variation marker.
     """
-    spans = []
+    spans: list[tuple[int, int]] = []
     for match in _TC29_EXAMPLE_PAIR.finditer(answer):
         result = _tc29_ints(match["result"])
         if result is None:
@@ -108,10 +355,9 @@ def _tc29_example_spans(answer: str) -> list[tuple[int, int]]:
             continue  # Unreadable, or the real input whose output is the stated result.
         if result != tuple(value * value for value in inputs):
             continue
-        prefix = answer[: match.start()]
-        sentence_start = max((end.end() for end in _TC29_SENTENCE_END.finditer(prefix)), default=0)
-        if _TC29_EXAMPLE_MARKER.search(prefix[sentence_start:]):
+        if _TC29_EXAMPLE_MARKER.search(_tc29_sentence_prefix(answer, match.start())):
             spans.append(match.span())
+    spans.extend(_tc29_comp_example_spans(answer))
     return spans
 
 
