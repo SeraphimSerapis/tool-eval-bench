@@ -257,7 +257,9 @@ SCENARIO = ScenarioDefinition(
     user_message=(
         "Create my daily briefing: check the weather in San Francisco "
         "and look up AAPL stock price. Output as JSON matching this schema "
-        "with actionable items.\n\n"
+        "with actionable items. "
+        "Once you have the weather and stock data, reply with ONLY valid JSON matching this schema, "
+        "with no extra text and no further tool calls.\n\n"
         f"Schema:\n```json\n{_schema_text(_TC69_SCHEMA)}\n```"
     ),
     description="Call multiple tools and synthesize into complex nested schema.",

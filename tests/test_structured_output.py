@@ -950,3 +950,46 @@ class TestOrchestratorEvaluatorSafetyNet:
         # itself handles list values.  The safety net is a second layer.
         assert result.status == ScenarioStatus.PARTIAL
         assert "genre" in result.summary
+
+
+class TestCategoryOPromptInstructions:
+    """Verify Category O prompts state JSON-only and stop-calling-tools rules (#339)."""
+
+    def test_all_structured_prompts_require_json_only_no_extra_text(self) -> None:
+        from tool_eval_bench.evals.scenarios import STRUCTURED_SCENARIOS
+
+        assert [s.id for s in STRUCTURED_SCENARIOS] == [
+            "TC-64",
+            "TC-65",
+            "TC-66",
+            "TC-67",
+            "TC-68",
+            "TC-69",
+        ]
+        for scenario in STRUCTURED_SCENARIOS:
+            preamble, sep, _ = scenario.user_message.partition("\n\nSchema:\n```json\n")
+            assert sep, f"{scenario.id} should separate instructions from fenced JSON schema"
+            assert "ONLY valid JSON matching this schema" in preamble, scenario.id
+            assert "no extra text" in preamble, scenario.id
+
+    def test_tool_using_structured_prompts_forbid_further_tool_calls(self) -> None:
+        from tool_eval_bench.evals.scenarios import STRUCTURED_SCENARIOS
+
+        expected_entities = {
+            "TC-65": ("Tokyo",),
+            "TC-66": ("engineering",),
+            "TC-67": ("NVDA",),
+            "TC-69": ("San Francisco", "AAPL"),
+        }
+        by_id = {s.id: s for s in STRUCTURED_SCENARIOS}
+        for sid, entities in expected_entities.items():
+            preamble, _, _ = by_id[sid].user_message.partition("\n\nSchema:\n```json\n")
+            assert "Once you have" in preamble, sid
+            assert "no further tool calls" in preamble, sid
+            for entity in entities:
+                assert entity in preamble, f"{sid} prompt must preserve {entity!r}"
+
+    def test_tc64_and_tc68_prompts_do_not_mention_further_tool_calls(self) -> None:
+        for sid in ("TC-64", "TC-68"):
+            preamble, _, _ = _get_scenario(sid).user_message.partition("\n\nSchema:\n```json\n")
+            assert "further tool calls" not in preamble, sid

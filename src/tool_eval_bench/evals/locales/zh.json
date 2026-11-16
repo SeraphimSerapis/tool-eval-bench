@@ -65,7 +65,7 @@
       "follow_up_messages": []
     },
     "TC-67": {
-      "user_message": "获取 NVDA 的当前股价，并按下面的 schema 生成一份 JSON 格式的股票分析。查一下近期新闻，作为你给出信号的依据。\n\nSchema：\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"ticker\": {\n      \"type\": \"string\"\n    },\n    \"price\": {\n      \"type\": \"number\"\n    },\n    \"currency\": {\n      \"type\": \"string\"\n    },\n    \"signal\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"strong_buy\",\n        \"buy\",\n        \"hold\",\n        \"sell\",\n        \"strong_sell\"\n      ]\n    },\n    \"reasoning\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"ticker\",\n    \"price\",\n    \"currency\",\n    \"signal\",\n    \"reasoning\"\n  ],\n  \"additionalProperties\": false\n}\n```",
+      "user_message": "获取 NVDA 的当前股价，并按下面的 schema 生成一份 JSON 格式的股票分析。查一下近期新闻，作为你给出信号的依据。获取股价和新闻后，仅回复符合此架构的有效 JSON，不要添加任何额外文本，也不要再调用其他工具。\n\nSchema：\n```json\n{\n  \"type\": \"object\",\n  \"properties\": {\n    \"ticker\": {\n      \"type\": \"string\"\n    },\n    \"price\": {\n      \"type\": \"number\"\n    },\n    \"currency\": {\n      \"type\": \"string\"\n    },\n    \"signal\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"strong_buy\",\n        \"buy\",\n        \"hold\",\n        \"sell\",\n        \"strong_sell\"\n      ]\n    },\n    \"reasoning\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\n    \"ticker\",\n    \"price\",\n    \"currency\",\n    \"signal\",\n    \"reasoning\"\n  ],\n  \"additionalProperties\": false\n}\n```",
       "follow_up_messages": []
     },
     "TC-68": {

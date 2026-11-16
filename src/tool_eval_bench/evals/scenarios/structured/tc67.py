@@ -205,7 +205,9 @@ SCENARIO = ScenarioDefinition(
     user_message=(
         "Get the current stock price for NVDA and produce a stock analysis "
         "as JSON matching this schema. Research recent news "
-        "to inform your signal.\n\n"
+        "to inform your signal. "
+        "Once you have the price and news, reply with ONLY valid JSON matching this schema, "
+        "with no extra text and no further tool calls.\n\n"
         f"Schema:\n```json\n{_schema_text(_TC67_SCHEMA)}\n```"
     ),
     description="Call tools and produce JSON with enum-constrained signal field.",

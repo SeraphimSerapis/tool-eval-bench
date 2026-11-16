@@ -368,6 +368,95 @@ def test_tc29_example_exemption_does_not_hide_a_wrong_result(answer: str) -> Non
     assert result.status is FAIL, result.summary
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        # Issue #337 exact reproduction.
+        "It squares each number in range(5) and returns [0, 1, 4, 9, 16]. "
+        "A common variation adds a filter: `[x**2 for x in range(5) if x % 2 == 0]` → `[0, 4, 16]`.",
+        # Filtered comprehension requires no prose marker when 0, 1, 4, 9, 16 is affirmed.
+        "It returns [0, 1, 4, 9, 16]. `[x**2 for x in range(5) if x % 2 == 0]` -> `[0, 4, 16]`.",
+        # Nested list literal inside the comprehension is covered by the full span.
+        "It outputs [0, 1, 4, 9, 16]. For example, `[x**2 for x in [1, 2, 3] if x > 1]` "
+        "gives `[4, 9]`.",
+        # Unfiltered variation with an example/variation/contrast marker.
+        "It returns [0, 1, 4, 9, 16]. For example, [x**3 for x in range(5)] "
+        "gives [0, 1, 8, 27, 64].",
+        "It returns [0, 1, 4, 9, 16]. Instead, `[x**3 for x in range(5)]` "
+        "produces `[0, 1, 8, 27, 64]`.",
+        # Tuple iterable, unary +/-, bool ops, chained compare, floor div, range step.
+        "It returns [0, 1, 4, 9, 16]. A variant: "
+        "`[x + 1 for x in (-1, 0, 2) if x >= 0 and not (x == 1)]` = `[1, 3]`.",
+        "It returns [0, 1, 4, 9, 16]. Changing it: "
+        "`[+x // 2 for x in range(2, 9, 2) if 2 <= x <= 6 or x == 8]` returns `[1, 2, 3, 4]`.",
+        "It returns [0, 1, 4, 9, 16]. Replacing the body: `[-x for x in range(1, 4)]`: "
+        "`[-1, -2, -3]`.",
+        # Unclosed '[' earlier on the line does not hide a subsequent valid comprehension.
+        "It returns [0, 1, 4, 9, 16]. Note [see: `[x**2 for x in range(5) if x % 2 == 0]` "
+        "=> `[0, 4, 16]`.",
+    ],
+)
+def test_tc29_comprehension_variant_example_passes(answer: str) -> None:
+    result = replay("TC-29", turn(answer=answer))
+    assert result.status is PASS, result.summary
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        # Wrong math on the filtered comprehension must still fail.
+        "It returns [0, 1, 4, 9, 16]. A common variation adds a filter: "
+        "`[x**2 for x in range(5) if x % 2 == 0]` → `[0, 2, 4]`.",
+        # Answer does not affirm 0, 1, 4, 9, 16 (allow_examples=False).
+        "A common variation adds a filter: `[x**2 for x in range(5) if x % 2 == 0]` → `[0, 4, 16]`.",
+        # Unfiltered comprehension without an example/variation/contrast marker.
+        "It returns [0, 1, 4, 9, 16]. `[x**3 for x in range(5)]` -> `[0, 1, 8, 27, 64]`.",
+        # Sentence boundary between comprehension and result blocks exemption.
+        "It returns [0, 1, 4, 9, 16]. A variation: `[x**3 for x in range(5)]`. "
+        "It gives `[0, 1, 8, 27, 64]`.",
+        # Disallowed constructs and out-of-bounds iterables are never exempted.
+        "It returns [0, 1, 4, 9, 16]. For example, `[abs(x) for x in [-1, -2]]` -> `[1, 2]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x + True for x in [1, 2]]` -> `[2, 3]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[-(x > 0) for x in [1]]` -> `[-1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[(x > 0) + 1 for x in [1]]` -> `[2]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x > 0 for x in [1]]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[1 if (x > 0) == 1 else 0 for x in [1]]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x in [1] if (x > 0) == 1]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x in [1] if 1 == (x > 0)]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[~x for x in [1]]` -> `[-2]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x / 2 for x in [2]]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x in [1] if x in [1]]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x // 0 for x in [1, 2]]` -> `[0, 0]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[y for x in [1, 2]]` -> `[1, 2]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x, y in [1]]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x in {1}]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x in [-True]]` -> `[-1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x in range(n)]` -> `[0]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x in range(25)]` -> `[0, 1, 2]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x in [1001]]` -> `[1001]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, "
+        "`[x for x in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]]` -> `[0]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x in range(0, 5, 0)]` -> `[0]`.",
+        # Multiline, malformed syntax, or oversized result integer is not exempted.
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x in\n [1]]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x for x in [1]]` -> `[99999999999999]`.",
+        # Safety bounds reject huge powers and constants immediately without executing them.
+        "It returns [0, 1, 4, 9, 16]. A filter: `[x**999999 for x in range(5) if x == 0]` -> `[0]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x**999999 for x in [2]]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x**11 for x in [2]]` -> `[2048]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x**-1 for x in [1]]` -> `[1]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[1001**2 for x in [1]]` -> `[1002001]`.",
+        "It returns [0, 1, 4, 9, 16]. For example, `[x + 10001 for x in [1]]` -> `[10002]`.",
+        # Over-long expression (> 150 chars) is skipped safely.
+        "It returns [0, 1, 4, 9, 16]. For example, `[" + "x + " * 40 + "0 for x in [1]]` -> `[1]`.",
+    ],
+)
+def test_tc29_comprehension_variant_does_not_pass(answer: str) -> None:
+    result = replay("TC-29", turn(answer=answer))
+    assert result.status is FAIL, result.summary
+
+
 # --- TC-41 / TC-42: every get_weather call is graded ------------------------
 
 

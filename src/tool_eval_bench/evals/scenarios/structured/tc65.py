@@ -144,7 +144,9 @@ SCENARIO = ScenarioDefinition(
     category=Category.O,
     user_message=(
         "Get the current weather in Tokyo and output it as JSON "
-        "matching this schema. Include a recommendation for what to wear.\n\n"
+        "matching this schema. Include a recommendation for what to wear. "
+        "Once you have the weather data, reply with ONLY valid JSON matching this schema, "
+        "with no extra text and no further tool calls.\n\n"
         f"Schema:\n```json\n{_schema_text(_TC65_SCHEMA)}\n```"
     ),
     description="Call get_weather, then format the result as schema-compliant JSON.",

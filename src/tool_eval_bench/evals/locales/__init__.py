@@ -39,7 +39,7 @@ from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
 SUPPORTED_LOCALES: tuple[str, ...] = ("de", "es", "zh", "ja")
 # Bump when a pack's meaning changes, so runs on different translations land
 # in different fingerprint cohorts.
-LOCALE_VERSION = 1
+LOCALE_VERSION = 2
 
 # Eligible scenarios and the literals each translation must keep verbatim.
 ANCHORS: dict[str, tuple[str, ...]] = {
