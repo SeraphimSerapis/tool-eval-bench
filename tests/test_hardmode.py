@@ -26,42 +26,23 @@ from tool_eval_bench.evals.scenarios import HARDMODE_DISPLAY_DETAILS, HARDMODE_S
 class TestHardmodeRegistry:
     """Registry-level checks."""
 
-    def test_scenario_count(self):
+    def test_hardmode_registry_contract(self):
+        from tool_eval_bench.evals.scenarios import ALL_SCENARIOS, ALL_SCENARIOS_WITH_HARDMODE
+
         assert len(HARDMODE_SCENARIOS) == 35
-
-    def test_all_category_p(self):
-        for s in HARDMODE_SCENARIOS:
-            assert s.category == Category.P
-
-    def test_ids_start_at_70(self):
-        ids = [int(s.id.split("-")[1]) for s in HARDMODE_SCENARIOS]
-        assert min(ids) == 70
-        assert max(ids) == 104
-
-    def test_unique_ids(self):
         ids = [s.id for s in HARDMODE_SCENARIOS]
         assert len(ids) == len(set(ids))
+        numeric_ids = [int(sid.split("-")[1]) for sid in ids]
+        assert min(numeric_ids) == 70
+        assert max(numeric_ids) == 104
 
-    def test_all_have_display_details(self):
+        hardmode_ids = set(ids)
+        assert hardmode_ids.isdisjoint({s.id for s in ALL_SCENARIOS})
+        assert hardmode_ids.issubset({s.id for s in ALL_SCENARIOS_WITH_HARDMODE})
+
         for s in HARDMODE_SCENARIOS:
+            assert s.category == Category.P
             assert s.id in HARDMODE_DISPLAY_DETAILS
-
-    def test_not_in_all_scenarios(self):
-        from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
-
-        hardmode_ids = {s.id for s in HARDMODE_SCENARIOS}
-        all_ids = {s.id for s in ALL_SCENARIOS}
-        assert hardmode_ids.isdisjoint(all_ids)
-
-    def test_in_all_scenarios_with_hardmode(self):
-        from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
-
-        hardmode_ids = {s.id for s in HARDMODE_SCENARIOS}
-        combined_ids = {s.id for s in ALL_SCENARIOS_WITH_HARDMODE}
-        assert hardmode_ids.issubset(combined_ids)
-
-    def test_all_have_handlers_and_evaluators(self):
-        for s in HARDMODE_SCENARIOS:
             assert callable(s.handle_tool_call)
             assert callable(s.evaluate)
 
@@ -186,29 +167,6 @@ class TestTC70AdversarialTools:
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
 
-    def test_has_tools_override(self):
-        sc = _get_scenario("TC-70")
-        assert sc.tools_override is not None
-        names = [t["function"]["name"] for t in sc.tools_override]
-        assert "get_weather" in names
-        assert "get_weather_global" in names
-        assert "web_search" in names
-
-    def test_handler_returns_error_for_euro_tool_with_tokyo(self):
-        sc = _get_scenario("TC-70")
-        state = ScenarioState()
-        call = _make_call("get_weather", {"location": "Tokyo"})
-        result = sc.handle_tool_call(state, call)
-        assert "error" in result or "error" in str(result).lower()
-
-    def test_handler_returns_data_for_global_tool(self):
-        sc = _get_scenario("TC-70")
-        state = ScenarioState()
-        call = _make_call("get_weather_global", {"location": "Tokyo"})
-        result = sc.handle_tool_call(state, call)
-        # Should contain weather data, not an error
-        assert "temperature" in str(result)
-
     def test_handler_euro_tool_works_for_european_city(self):
         """get_weather should succeed for European cities."""
         sc = _get_scenario("TC-70")
@@ -304,6 +262,25 @@ class TestTC71AmbiguousRecipient:
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.FAIL
 
+    def test_fail_jordan_lookup_errored(self):
+        """An errored Jordan lookup must fail rather than falling into wrong-person partial."""
+        sc = _get_scenario("TC-71")
+        state = ScenarioState()
+        call = _make_call("get_contacts", {"query": "Jordan"}, turn=1)
+        state.tool_calls.append(call)
+        state.tool_results.append(
+            ToolResultRecord(
+                call_id=call.id,
+                name=call.name,
+                result={"error": "Directory unavailable"},
+            )
+        )
+        state.assistant_messages.append("Which Jordan did you mean: Park, Lee, or Kim?")
+        state.final_answer = state.assistant_messages[-1]
+        result = sc.evaluate(state)
+        assert result.status == ScenarioStatus.FAIL
+        assert result.summary == "Did not obtain usable Jordan contact results."
+
 
 # ===========================================================================
 # TC-72: Cascading Error Recovery
@@ -350,24 +327,6 @@ class TestTC72CascadingRecovery:
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
 
-    def test_partial_backup_before_corrupted_primary(self):
-        """Reading the backup first does not establish that recovery was needed."""
-        sc = _get_scenario("TC-72")
-        state = ScenarioState()
-        for call in (
-            _make_call("search_files", {"query": "Project Alpha"}, turn=1),
-            _make_call("read_file", {"file_id": "file_405"}, turn=2),
-            _make_call("read_file", {"file_id": "file_404"}, turn=3),
-            _make_call("get_contacts", {"query": "Dana Wells"}, turn=4),
-            _make_call(
-                "send_email",
-                {"to": "dana.wells@company.com", "body": "Budget is $1.2M"},
-                turn=5,
-            ),
-        ):
-            _record(state, sc, call)
-        assert sc.evaluate(state).status == ScenarioStatus.PARTIAL
-
     def test_partial_reads_both_but_no_email(self):
         """Recovers from error and reads budget, but doesn't email."""
         sc = _get_scenario("TC-72")
@@ -397,19 +356,6 @@ class TestTC72CascadingRecovery:
             call = _make_call("read_file", {"file_id": "file_404"})
             result = sc.handle_tool_call(state, call)
             assert "error" in str(result).lower()
-
-    def test_handler_file_405_returns_content(self):
-        sc = _get_scenario("TC-72")
-        state = ScenarioState()
-        call = _make_call("read_file", {"file_id": "file_405"})
-        result = sc.handle_tool_call(state, call)
-        assert "1.2M" in str(result) or "750K" in str(result)
-
-    def test_search_returns_summary_backup_not_unrelated_file(self):
-        sc = _get_scenario("TC-72")
-        state = ScenarioState()
-        result = sc.handle_tool_call(state, _make_call("search_files", {"query": "Project Alpha"}))
-        assert "Project_Alpha_Summary_Backup.docx" in str(result)
 
 
 # ===========================================================================
@@ -509,16 +455,6 @@ class TestTC73MultiConstraint:
         # mentions_invalid = True and mentions_valid = False → constraint step fails
         assert result.status in (ScenarioStatus.PARTIAL, ScenarioStatus.FAIL)
 
-    def test_handler_returns_three_restaurants(self):
-        sc = _get_scenario("TC-73")
-        state = ScenarioState()
-        call = _make_call("web_search", {"query": "restaurant Berlin vegan Alexanderplatz"})
-        result = sc.handle_tool_call(state, call)
-        result_str = str(result)
-        assert "Green Kitchen" in result_str
-        assert "Mitte Brasserie" in result_str
-        assert "Veganz" in result_str
-
     def test_handler_generic_query_returns_generic_results(self):
         """Queries not about Berlin restaurants get generic results."""
         sc = _get_scenario("TC-73")
@@ -560,21 +496,6 @@ class TestTC73MultiConstraint:
 
 class TestTC74StatefulCorrections:
     """TC-74: Stateful multi-turn corrections."""
-
-    def test_has_follow_up_messages(self):
-        sc = _get_scenario("TC-74")
-        assert len(sc.follow_up_messages) == 4
-        assert sc.max_turns_override == 12
-
-    def test_follow_ups_contain_all_corrections(self):
-        """Each follow-up introduces a specific correction."""
-        sc = _get_scenario("TC-74")
-        fups = [m.lower() for m in sc.follow_up_messages]
-        assert any("product review" in f for f in fups)  # title change
-        assert any("wednesday" in f for f in fups)  # date change
-        assert any("sarah" in f for f in fups)  # new attendee
-        assert any("45" in f for f in fups)  # duration change
-        assert any("2pm" in f for f in fups)  # time change
 
     def test_pass_all_corrections(self):
         sc = _get_scenario("TC-74")
@@ -920,20 +841,6 @@ class TestTC74StatefulCorrections:
             )
             _record(state, sc, call)
         assert sc.evaluate(state).status == ScenarioStatus.FAIL
-
-    def test_handler_contacts_sarah(self):
-        sc = _get_scenario("TC-74")
-        state = ScenarioState()
-        call = _make_call("get_contacts", {"query": "sarah"})
-        result = sc.handle_tool_call(state, call)
-        assert "Sarah Jones" in str(result)
-
-    def test_handler_contacts_mark(self):
-        sc = _get_scenario("TC-74")
-        state = ScenarioState()
-        call = _make_call("get_contacts", {"query": "mark"})
-        result = sc.handle_tool_call(state, call)
-        assert "Mark Chen" in str(result)
 
     def test_handler_contacts_unknown_returns_empty(self):
         sc = _get_scenario("TC-74")

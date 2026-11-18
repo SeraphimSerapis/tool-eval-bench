@@ -260,6 +260,14 @@ def _over_budget(state: ScenarioState) -> bool:
     return int(_summary(state)["final_total_usd"]) > 1050
 
 
+def _applied_lab100(state: ScenarioState) -> bool:
+    return (
+        _exact_cart(state)
+        and state.meta.get("tc103_coupon") == "LAB100"
+        and _coupon_problem("LAB100", _cart(state)) is None
+    )
+
+
 _MILESTONES = (
     Milestone(
         "searched the catalog and listed available coupons",
@@ -274,16 +282,13 @@ _MILESTONES = (
     ),
     Milestone(
         "applied coupon LAB100 bringing the final cart total to $1,020",
-        lambda s: (
-            _exact_cart(s)
-            and s.meta.get("tc103_coupon") == "LAB100"
-            and _coupon_problem("LAB100", _cart(s)) is None
-        ),
+        _applied_lab100,
     ),
     Milestone(
         "reported the $1,020 final total and coupon LAB100",
         lambda s: (
-            answer_affirms_number(s.final_answer, "1020")
+            _applied_lab100(s)
+            and answer_affirms_number(s.final_answer, "1020")
             and answer_affirms_text(s.final_answer, "LAB100")
         ),
     ),

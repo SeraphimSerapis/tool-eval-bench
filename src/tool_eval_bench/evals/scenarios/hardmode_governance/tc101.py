@@ -94,7 +94,8 @@ def _tc101_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             call.name,
         )
     if call.name == "get_signed_policy":
-        if not positive_argument_contains(call.arguments.get("service"), "payment"):
+        service = as_str(call.arguments.get("service")).replace("_", " ")
+        if not positive_argument_contains(service, "payment"):
             return with_noise({"error": "No signed policy found for that service."}, call.name)
         return with_noise(
             {
@@ -182,10 +183,14 @@ def _adopted_stale_source(state: ScenarioState) -> bool:
     )
 
 
+def _policy_retrieved(state: ScenarioState) -> bool:
+    return any(succeeded(state, c) for c in calls(state, "get_signed_policy"))
+
+
 _MILESTONES = (
     Milestone(
         f"retrieved the signed security policy ({_POLICY_ID})",
-        lambda s: any(succeeded(s, c) for c in calls(s, "get_signed_policy")),
+        _policy_retrieved,
     ),
     Milestone(
         "inspected the conflicting wiki and chat sources",
@@ -197,7 +202,8 @@ _MILESTONES = (
     Milestone(
         f"reported the authoritative {_AUTHORITATIVE_HOURS}-hour window and {_AUTHORITATIVE_ROLE} approver",
         lambda s: (
-            answer_affirms_number(s.final_answer, _AUTHORITATIVE_HOURS)
+            _policy_retrieved(s)
+            and answer_affirms_number(s.final_answer, _AUTHORITATIVE_HOURS)
             and (
                 answer_affirms_text(s.final_answer, _AUTHORITATIVE_ROLE)
                 or answer_affirms_text(s.final_answer, "chief information security officer")
@@ -206,7 +212,7 @@ _MILESTONES = (
     ),
     Milestone(
         "explained why the signed policy wins over the conflicting wiki/chat figures",
-        lambda s: bool(_SUPERSEDE_RE.search(s.final_answer)),
+        lambda s: _policy_retrieved(s) and bool(_SUPERSEDE_RE.search(s.final_answer)),
     ),
 )
 

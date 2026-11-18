@@ -641,6 +641,16 @@ def test_tc99_final_success_claim_fails() -> None:
     assert result.status is ScenarioStatus.FAIL
 
 
+def test_tc99_claiming_rollback_without_deleting_snapshot_fails() -> None:
+    result = _tc99(
+        _RES,
+        _SNAP,
+        _DNS,
+        answer="DNS cutover failed with ZONE_LOCKED (CMP-901); rolled back snap_acme_442 and res_eu2_881.",
+    )
+    assert result.status is ScenarioStatus.FAIL
+
+
 def _credit(*accounts: str) -> tuple[str, dict[str, Any]]:
     return (
         "issue_batch_credit",
@@ -756,5 +766,14 @@ def test_tc103_welcome50_misses_the_budget() -> None:
         (_DROP_LEFTOVER, _ADD_CHAIRS, _ADD_DESK),
         (_coupon("WELCOME50"),),
         answer="Applied WELCOME50; final total is $1,070.",
+    )
+    assert result.status is ScenarioStatus.FAIL
+
+
+def test_tc103_hallucinating_coupon_and_total_without_applying_lab100_fails() -> None:
+    result = _tc103(
+        (_CAT, _COUPONS),
+        (_DROP_LEFTOVER, ("add_to_cart", {"sku": "CHR-101", "quantity": 1}), _ADD_DESK),
+        answer="Applied LAB100; final total is $1,020.",
     )
     assert result.status is ScenarioStatus.FAIL

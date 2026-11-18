@@ -274,6 +274,8 @@ _LOCK_REASON_RE = re.compile(
 
 
 def _reported_failure_and_rollback(state: ScenarioState) -> bool:
+    if not _deleted_snapshot_after_dns(state):
+        return False
     text = state.final_answer
     return bool(answer_affirms_pattern(text, _ROLLBACK_REPORT_RE) and _LOCK_REASON_RE.search(text))
 

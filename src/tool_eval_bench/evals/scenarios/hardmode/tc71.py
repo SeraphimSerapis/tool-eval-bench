@@ -119,6 +119,8 @@ def _tc71_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not contacts:
         return _fail("Did not look up contacts for Jordan.")
     if not valid_contacts:
+        if any("jordan" in normalize(as_str(c.arguments.get("query"))) for c in contact_calls):
+            return _fail("Did not obtain usable Jordan contact results.")
         return _partial("Looked up the wrong person instead of Jordan.")
 
     # Best outcome: looked up contacts, found ambiguity, asked for clarification

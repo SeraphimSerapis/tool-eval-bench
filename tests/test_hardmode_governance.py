@@ -511,6 +511,22 @@ def test_tc101_warning_against_the_stale_values_passes() -> None:
     assert _run("TC-101", (_WIKI, _SLACK, _POL), answer=answer).status is ScenarioStatus.PASS
 
 
+def test_tc101_ungrounded_guesses_fail_and_snake_case_service_passes() -> None:
+    answer = "Required: 24 hours, CISO approval, per SEC-POL-2026-03, which supersedes the older sources."
+    assert _run("TC-101", answer=answer).status is ScenarioStatus.FAIL
+    assert _run("TC-101", (_WIKI, _SLACK), answer=answer).status is ScenarioStatus.FAIL
+
+    snake_policy = ("get_signed_policy", {"service": "payment_gateway"})
+    assert (
+        _run("TC-101", (_WIKI, _SLACK, snake_policy), answer=answer).status is ScenarioStatus.PASS
+    )
+
+    negated_policy = ("get_signed_policy", {"service": "not payment_gateway"})
+    assert (
+        _run("TC-101", (_WIKI, _SLACK, negated_policy), answer=answer).status is ScenarioStatus.FAIL
+    )
+
+
 _TELEM = ("get_device_telemetry", {"device_id": "dev_laptop_42"})
 _REISSUE = ("reissue_vpn_certificate", {"device_id": "dev_laptop_42"})
 _TC104_DONE = "Re-issued your VPN certificate: cert_vpn_9920."
@@ -584,6 +600,47 @@ def test_tc104_claiming_a_reissue_before_the_blocker_cleared_fails() -> None:
         "TC-104",
         turn(_TELEM),
         turn(answer="I have re-issued your certificate. Also disable split_tunnel_override."),
+        turn(_TELEM),
+        turn(_REISSUE),
+        turn(answer=_TC104_DONE),
+    )
+    assert result.status is ScenarioStatus.FAIL
+
+
+@pytest.mark.parametrize(
+    "phase0_answer",
+    [
+        "Please disable split_tunnel_override so your certificate can be re-issued.",
+        "Your certificate needs to be re-issued; please turn off split_tunnel_override first.",
+        "Please set `client_split_tunnel_override` to `false` so I can have your VPN certificate re-issued.",
+        "Please make sure split_tunnel_override is turned off before retrying.",
+    ],
+)
+def test_tc104_prospective_reissue_and_markdown_instructions_pass(phase0_answer: str) -> None:
+    result = replay(
+        "TC-104",
+        turn(_TELEM),
+        turn(answer=phase0_answer),
+        turn(_TELEM),
+        turn(_REISSUE),
+        turn(answer=_TC104_DONE),
+    )
+    assert result.status is ScenarioStatus.PASS, result.summary
+
+
+@pytest.mark.parametrize(
+    "phase0_answer",
+    [
+        "Your certificate appears to be re-issued; please disable split_tunnel_override anyway.",
+        "Once you disable split_tunnel_override, I have re-issued your certificate.",
+        "Please disable split_tunnel_override; current certificate status: cert_vpn_9920.",
+    ],
+)
+def test_tc104_actual_or_evidential_phase0_reissue_claims_fail(phase0_answer: str) -> None:
+    result = replay(
+        "TC-104",
+        turn(_TELEM),
+        turn(answer=phase0_answer),
         turn(_TELEM),
         turn(_REISSUE),
         turn(answer=_TC104_DONE),

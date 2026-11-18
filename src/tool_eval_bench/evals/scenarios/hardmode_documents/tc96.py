@@ -136,7 +136,7 @@ def _affirms_0419(answer: str) -> bool:
 
 
 def _reported(state: ScenarioState) -> bool:
-    return _affirms_0419(state.final_answer)
+    return _ocred_match(state) and _affirms_0419(state.final_answer)
 
 
 _MILESTONES = (
