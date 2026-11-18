@@ -14,6 +14,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioResult,
     ScenarioStatus,
 )
+from tool_eval_bench.runner.speculative import SpecDecodeSample
 from tool_eval_bench.storage.reports import MarkdownReporter
 
 # ---------------------------------------------------------------------------
@@ -837,3 +838,59 @@ def test_summary_report_handles_empty_summaries(tmp_path):
         "empty-sum", "m", [], {"trials": 0}
     )
     assert "Cross-Trial Summary" in out.read_text(encoding="utf-8")
+
+
+class TestSpecDecodeReport:
+    def test_basic_spec_report(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        samples = [
+            SpecDecodeSample(
+                tg_tokens=128,
+                total_ms=2000,
+                ttft_ms=200,
+                tg_tps=50.0,
+                spec_method="mtp",
+                prompt_type="code",
+            ),
+            SpecDecodeSample(
+                tg_tokens=128,
+                total_ms=3000,
+                ttft_ms=300,
+                tg_tps=40.0,
+                spec_method="mtp",
+                prompt_type="structured",
+            ),
+        ]
+        path = reporter.write_spec_decode_report("spec_001", "test-model", samples)
+        content = path.read_text(encoding="utf-8")
+        assert "Speculative Decoding Benchmark" in content
+        assert "mtp" in content
+        assert "Interpretation Guide" in content
+
+    def test_spec_report_with_acceptance_rate(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        samples = [
+            SpecDecodeSample(
+                tg_tokens=128,
+                total_ms=2000,
+                ttft_ms=200,
+                tg_tps=50.0,
+                spec_method="mtp",
+                prompt_type="code",
+                acceptance_rate=0.85,
+                acceptance_length=3.2,
+            ),
+        ]
+        path = reporter.write_spec_decode_report("spec_002", "test-model", samples)
+        content = path.read_text(encoding="utf-8")
+        assert "α (accept)" in content
+        assert "85.0%" in content
+        assert "Acceptance Rate by Prompt Type" in content
+
+    def test_spec_report_no_acceptance_rate(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        samples = [SpecDecodeSample(tg_tokens=64, total_ms=1000, tg_tps=30.0)]
+        path = reporter.write_spec_decode_report("spec_003", "model", samples)
+        content = path.read_text(encoding="utf-8")
+        assert "[!NOTE]" in content
+        assert "not available" in content

@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.console import Console
 
+from tests.conftest import open_repository
 from tool_eval_bench.cli import history
 
 
@@ -152,3 +153,87 @@ def test_context_manager_closes_connection_on_exit(tmp_path) -> None:
 
     with pytest.raises(sqlite3.ProgrammingError):
         conn.execute("SELECT 1")
+
+
+class TestRunRepositoryExtended:
+    def test_get_nonexistent(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        assert repo.get("no_such_id") is None
+        repo.close()
+
+    def test_get_latest_empty(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        assert repo.get_latest() is None
+        repo.close()
+
+    def test_get_latest_with_data(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run(
+            {"run_id": "r1", "config": {"model": "m"}, "scores": {}, "metadata": {}}
+        )
+        latest = repo.get_latest()
+        assert latest is not None and latest["run_id"] == "r1"
+        repo.close()
+
+    def test_get_latest_filtered_by_model(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run(
+            {"run_id": "r1", "config": {"model": "a"}, "scores": {}, "metadata": {}}
+        )
+        repo.upsert_scenario_run(
+            {"run_id": "r2", "config": {"model": "b"}, "scores": {}, "metadata": {}}
+        )
+        assert repo.get_latest(model="a")["run_id"] == "r1"
+        assert repo.get_latest(model="c") is None
+        repo.close()
+
+    def test_get_scenario_results(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run(
+            {
+                "run_id": "r1",
+                "config": {"model": "m"},
+                "scores": {"scenario_results": [{"id": "TC-01", "status": "pass"}]},
+                "metadata": {},
+            }
+        )
+        results = repo.get_scenario_results("r1")
+        assert results is not None and len(results) == 1
+        repo.close()
+
+    def test_get_scenario_results_missing(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        assert repo.get_scenario_results("missing") is None
+        repo.close()
+
+    def test_get_scenario_results_no_scores(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run({"run_id": "r1", "config": {"model": "m"}, "metadata": {}})
+        assert repo.get_scenario_results("r1") is None
+        repo.close()
+
+    def test_upsert_updates_existing(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run(
+            {"run_id": "r1", "config": {"model": "m"}, "scores": {"v": 1}, "metadata": {}}
+        )
+        repo.upsert_scenario_run(
+            {"run_id": "r1", "config": {"model": "m"}, "scores": {"v": 2}, "metadata": {}}
+        )
+        assert repo.get("r1")["scores"]["v"] == 2
+        repo.close()
+
+    def test_list_filter_by_model(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run(
+            {"run_id": "r1", "config": {"model": "a"}, "scores": {}, "metadata": {}}
+        )
+        repo.upsert_scenario_run(
+            {"run_id": "r2", "config": {"model": "b"}, "scores": {}, "metadata": {}}
+        )
+        assert len(repo.list(model="a")) == 1
+        repo.close()
+
+    def test_del_safety_net(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        del repo  # should not raise

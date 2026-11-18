@@ -820,3 +820,26 @@ class TestDryRun:
         scenarios = _resolve_scenarios(args)
         assert all(s.category.value == "A" for s in scenarios)
         assert len(scenarios) >= 1
+
+
+class TestReferenceDateValidation:
+    def test_invalid_date_raises(self) -> None:
+        """Invalid --reference-date should raise ValueError, not silently fall through."""
+        import asyncio
+
+        from tool_eval_bench.application.service import BenchmarkService
+
+        service = BenchmarkService(
+            repo=MagicMock(),
+            reporter=MagicMock(),
+        )
+
+        with pytest.raises(ValueError, match="Invalid --reference-date"):
+            asyncio.run(
+                service.run_benchmark(
+                    model="test",
+                    backend="vllm",
+                    base_url="http://localhost:9999",
+                    reference_date="not-a-date",
+                )
+            )
