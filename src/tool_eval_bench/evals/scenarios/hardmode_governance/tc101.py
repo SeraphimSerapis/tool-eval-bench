@@ -163,6 +163,31 @@ _CONTRAST_SUBCLAUSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Describing a historical tightening *from* a stale rule *to* the current 24h /
+# CISO rule reports the transition rather than endorsing the old requirement.
+_WINDOW_TRANSITION_TO_AUTH_RE = re.compile(
+    r"\b(?:mov\w*|chang\w*|tighten\w*|reduc\w*|shorten\w*|lower\w*|updat\w*|"
+    r"shift\w*|switch\w*|went|dropp\w*)\s+"
+    r"from\s+(?:a\s+)?(?:72|48)(?:\s*(?:-|\s)?hours?|h)?(?:\s+window)?\s+"
+    r"to\s+(?:a\s+)?24(?:\s*(?:-|\s)?hours?|h)?(?:\s+window)?\b",
+    re.IGNORECASE,
+)
+_ROLE_TRANSITION_TO_AUTH_RE = re.compile(
+    r"\b(?:mov\w*|chang\w*|escalat\w*|updat\w*|shift\w*|switch\w*|went)\s+"
+    r"from\s+(?:an?\s+)?(?:engineering\s+manager|team\s+lead)\s+"
+    r"to\s+(?:the\s+|an?\s+)?(?:ciso|chief\s+information\s+security\s+officer)\b",
+    re.IGNORECASE,
+)
+
+
+def _subclause_excused(sub: str) -> bool:
+    if _DISCOUNT_CUE_RE.search(sub):
+        return True
+    if _REPORTS_RE.search(sub) and not _ENDORSE_RE.search(sub):
+        return True
+    stripped = _ROLE_TRANSITION_TO_AUTH_RE.sub(" ", _WINDOW_TRANSITION_TO_AUTH_RE.sub(" ", sub))
+    return stripped != sub and not _asserts_stale_value(stripped)
+
 
 def _reports_rather_than_adopts(clause: str) -> bool:
     if _DISCOUNT_CUE_RE.search(clause):
@@ -170,11 +195,7 @@ def _reports_rather_than_adopts(clause: str) -> bool:
     if _REPORTS_RE.search(clause) and not _ENDORSE_RE.search(clause):
         return True
     sub_clauses = [sub for sub in _CONTRAST_SUBCLAUSE_RE.split(clause) if _asserts_stale_value(sub)]
-    return bool(sub_clauses) and all(
-        bool(_DISCOUNT_CUE_RE.search(sub))
-        or (bool(_REPORTS_RE.search(sub)) and not _ENDORSE_RE.search(sub))
-        for sub in sub_clauses
-    )
+    return bool(sub_clauses) and all(_subclause_excused(sub) for sub in sub_clauses)
 
 
 def _adopted_stale_source(state: ScenarioState) -> bool:

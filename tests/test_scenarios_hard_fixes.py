@@ -1516,3 +1516,35 @@ def test_tc99_display_copy_matches_partial_and_fail_rubric() -> None:
         turn(answer="DNS cutover failed with ZONE_LOCKED."),
     )
     assert undeleted_snapshot.status is ScenarioStatus.FAIL
+
+
+def test_tc101_transition_from_stale_to_authoritative_passes_while_mixed_endorsement_fails() -> (
+    None
+):
+    def _replay_tc101(answer: str):
+        return replay(
+            "TC-101",
+            turn(
+                ("search_wiki", {"query": "payment-gateway signing key rotation"}),
+                ("read_slack_thread", {"channel": "#sec-ops"}),
+                ("get_signed_policy", {"service": "payment-gateway"}),
+            ),
+            turn(answer=answer),
+        )
+
+    base = "Required: 24 hours, CISO approval per SEC-POL-2026-03, which supersedes the older sources. "
+    for pass_note in (
+        "The registry change history may show when the window moved from 72 to 24 hours.",
+        "Approval changed from Engineering Manager to CISO and the window dropped from 72 hours to 24 hours.",
+    ):
+        result = _replay_tc101(base + pass_note)
+        assert result.status is ScenarioStatus.PASS, result.summary
+
+    for fail_note in (
+        "You can choose from 24 to 72 hours.",
+        "The window moved from 72 to 48 hours.",
+        "The window moved from 72 to 24 hours, so use 72 hours.",
+        "Use 48 hours even though the window moved from 72 to 24 hours.",
+    ):
+        result = _replay_tc101(base + fail_note)
+        assert result.status is ScenarioStatus.FAIL, (fail_note, result.summary)
