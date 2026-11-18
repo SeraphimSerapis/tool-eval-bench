@@ -164,7 +164,7 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer.lower()
     mentions_status = _answer_affirms_text(answer, "shipped")
 
-    if used_order and total_calls == 1 and mentions_status:
+    if used_order and total_calls == 1:
         order_call = cast(
             ToolCallRecord,
             _first_counted(state.tool_calls, lambda c: c.name == "get_order_status"),
@@ -173,32 +173,38 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _partial(
                 "get_order_status returned an error, so order details cannot be confirmed."
             )
-        return _pass("Selected get_order_status precisely from similar-named tools.")
-    if used_order and total_calls == 1:
+        if mentions_status:
+            return _pass("Selected get_order_status precisely from similar-named tools.")
         return _partial(
             "Used get_order_status correctly but did not surface the order details in the answer.",
         )
-    if (
-        used_order
-        and used_customer
-        and total_calls == 2
-        and resolved_by_lookup
-        and mentions_status
-        and all(
+    if used_order and used_customer and total_calls == 2:
+        all_usable = all(
             _result_is_usable_if_present(state, call) for call in _counted_calls(state.tool_calls)
         )
-    ):
-        return _pass(
-            "Resolved the customer's order id, then read its status with get_order_status."
-        )
-    if used_order and used_customer and total_calls == 2:
+        if resolved_by_lookup:
+            if not all_usable:
+                return _partial(
+                    "A lookup or order status call returned an error, "
+                    "so order details cannot be confirmed."
+                )
+            if mentions_status:
+                return _pass(
+                    "Resolved the customer's order id, then read its status with get_order_status."
+                )
+            return _partial(
+                "Resolved and checked the order, but did not surface the order details in the answer."
+            )
         return _partial(
             "Used get_order_status + get_customer_profile — "
             "customer lookup was unnecessary but not wrong."
         )
     if used_order and total_calls >= 2:
-        extras = ", ".join(c.name for c in state.tool_calls if c.name != "get_order_status")
-        return _partial(f"Found the right tool but also called: {extras}")
+        counted = _counted_calls(state.tool_calls)
+        extras = ", ".join(c.name for c in counted if c.name != "get_order_status")
+        if extras:
+            return _partial(f"Found the right tool but also called: {extras}")
+        return _partial("Used get_order_status, but called it multiple times unnecessarily.")
     if not used_order and used_shipping:
         return _partial(
             "Used get_shipping_status instead of get_order_status — "

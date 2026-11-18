@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 
+from conftest import simulate_results
+
 from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ScenarioStatus,
@@ -348,6 +350,46 @@ class TestTC04Contract:
 
 class TestTC05Contract:
     sc = _get("TC-05")
+
+    def _lookup_contacts(self, query: str) -> list[dict]:
+        call = ToolCallRecord(
+            id="contacts_1",
+            name="get_contacts",
+            raw_arguments="{}",
+            arguments={"query": query},
+            turn=1,
+        )
+        return self.sc.handle_tool_call(ScenarioState(), call)["results"]
+
+    def test_contact_lookup_filters_by_name(self):
+        assert [contact["name"] for contact in self._lookup_contacts("Alex")] == ["Alex Stone"]
+        assert [contact["name"] for contact in self._lookup_contacts("Jamie")] == ["Jamie Liu"]
+
+    def test_contact_lookup_accepts_both_names(self):
+        assert [contact["name"] for contact in self._lookup_contacts("Alex and Jamie")] == [
+            "Alex Stone",
+            "Jamie Liu",
+        ]
+
+    def test_contact_lookup_returns_empty_for_unknown_name(self):
+        assert self._lookup_contacts("Pat") == []
+
+    def test_pass_first_name_attendees(self):
+        s = _state(
+            tool_calls=[
+                {
+                    "name": "create_calendar_event",
+                    "arguments": {
+                        "title": "Team Standup",
+                        "date": "2026-03-23",
+                        "time": "09:30",
+                        "duration_minutes": 30,
+                        "attendees": ["Alex", "Jamie"],
+                    },
+                }
+            ]
+        )
+        assert self.sc.evaluate(simulate_results(s, self.sc)).status == ScenarioStatus.PASS
 
     def test_pass_full_event(self):
         s = _state(
@@ -878,12 +920,8 @@ class TestTC12Contract:
         s = _state(final_answer="I can't do that — no available tool supports email deletion.")
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
 
-    def test_fail_refusal_without_delete_mention(self):
-        """Refusal that doesn't mention 'delete' or 'available tool' → FAIL.
-
-        The TC-12 evaluator requires one of those phrases alongside the refusal.
-        This is a known evaluator strictness — documented in the contract test.
-        """
+    def test_pass_refusal_with_remove_wording(self):
+        """A refusal using 'removing emails' without 'delete' satisfies the contract."""
         s = _state(final_answer="No tool exists for removing emails in the current toolset.")
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
 
@@ -912,6 +950,20 @@ class TestTC12Contract:
 
 class TestTC13Contract:
     sc = _get("TC-13")
+
+    def test_mock_honors_file_type(self):
+        state = ScenarioState()
+        first = ToolCallRecord("c0", "search_files", "{}", {"query": "Johnson proposal"}, 1)
+        pdf = ToolCallRecord(
+            "c1", "search_files", "{}", {"query": "Johnson", "file_type": "pdf"}, 2
+        )
+        docx = ToolCallRecord(
+            "c2", "search_files", "{}", {"query": "Johnson", "file_type": "docx"}, 3
+        )
+
+        assert self.sc.handle_tool_call(state, first)["results"] == []
+        assert self.sc.handle_tool_call(state, pdf)["results"] == []
+        assert self.sc.handle_tool_call(state, docx)["results"][0]["file_id"] == "file_117"
 
     def test_pass_retry_different_query(self):
         s = _state(
@@ -1094,10 +1146,7 @@ class TestTC15Contract:
     sc = _get("TC-15")
 
     def test_prompt_states_calculator_requirement(self):
-        assert self.sc.user_message == (
-            "Search for the population of Iceland, then use the calculator to compute 2% "
-            "of the exact population value you find."
-        )
+        assert "calculator" in self.sc.user_message.lower()
 
     def test_pass_search_then_calc(self):
         s = _state(

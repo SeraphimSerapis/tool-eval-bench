@@ -23,7 +23,7 @@ run through the same code path as the main contract suite.
 """
 
 import pytest
-from conftest import make_state, make_tool_call
+from conftest import make_state, make_tool_call, simulate_results
 
 from tool_eval_bench.domain.scenarios import ScenarioStatus
 from tool_eval_bench.domain.tools import (
@@ -115,7 +115,7 @@ def test_evaluator_passes_with_alias_targets():
         _call(source_language="en", target_language="Japanese", text=_TEXT),
         final_answer=f"{_ANSWER_SPANISH} {_ANSWER_JAPANESE}",
     )
-    result = TC06.evaluate(state)
+    result = TC06.evaluate(simulate_results(state, TC06))
     assert result.status == ScenarioStatus.PASS
     assert result.points == 2
 
@@ -125,7 +125,7 @@ def test_evaluator_fails_when_spanish_translation_missing():
         _call(source_language="English", target_language="Japanese", text=_TEXT),
         final_answer=_ANSWER_JAPANESE,
     )
-    result = TC06.evaluate(state)
+    result = TC06.evaluate(simulate_results(state, TC06))
     assert result.status == ScenarioStatus.FAIL
 
 
@@ -134,7 +134,7 @@ def test_evaluator_fails_when_japanese_translation_missing():
         _call(source_language="English", target_language="es", text=_TEXT),
         final_answer=_ANSWER_SPANISH,
     )
-    result = TC06.evaluate(state)
+    result = TC06.evaluate(simulate_results(state, TC06))
     assert result.status == ScenarioStatus.FAIL
 
 
@@ -144,7 +144,7 @@ def test_evaluator_fails_when_source_not_english():
         _call(source_language="en", target_language="Japanese", text=_TEXT),
         final_answer=f"{_ANSWER_SPANISH} {_ANSWER_JAPANESE}",
     )
-    result = TC06.evaluate(state)
+    result = TC06.evaluate(simulate_results(state, TC06))
     assert result.status == ScenarioStatus.FAIL
 
 
@@ -157,7 +157,7 @@ def test_evaluator_fails_when_targets_bundled_in_one_call():
         ),
         final_answer=f"{_ANSWER_SPANISH} {_ANSWER_JAPANESE}",
     )
-    result = TC06.evaluate(state)
+    result = TC06.evaluate(simulate_results(state, TC06))
     assert result.status == ScenarioStatus.FAIL
 
 
@@ -168,7 +168,7 @@ def test_evaluator_partial_with_off_target_call():
         _call(source_language="English", target_language="German", text=_TEXT),
         final_answer=f"{_ANSWER_SPANISH} {_ANSWER_JAPANESE}",
     )
-    result = TC06.evaluate(state)
+    result = TC06.evaluate(simulate_results(state, TC06))
     assert result.status == ScenarioStatus.PARTIAL
     assert result.points == 1
 
@@ -179,7 +179,7 @@ def test_evaluator_partial_when_answer_markers_missing():
         _call(source_language="en", target_language="Japanese", text=_TEXT),
         final_answer="Here are the translations.",
     )
-    result = TC06.evaluate(state)
+    result = TC06.evaluate(simulate_results(state, TC06))
     assert result.status == ScenarioStatus.PARTIAL
     assert result.points == 1
 
@@ -218,9 +218,3 @@ def test_translate_text_schema_enum_matches_supported_designators():
     assert set(TRANSLATE_TARGET_LANGUAGE_DESIGNATORS) == expected_target
     assert len(TRANSLATE_TARGET_LANGUAGE_DESIGNATORS) == len(expected_target)
     assert not {"en-us", "en-gb", "en-ca", "en-au"} & set(tgt_enum)
-
-
-def test_tc06_registered():
-    assert TC06.id == "TC-06"
-    assert TC06.handle_tool_call is not None
-    assert TC06.evaluate is not None

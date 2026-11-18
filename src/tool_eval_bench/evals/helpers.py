@@ -825,61 +825,6 @@ def asks_for_clarification(answer: str) -> bool:
     )
 
 
-def contains_german_text(answer: str) -> bool:
-    """Check if the answer contains German text.
-
-    Uses a combination of:
-    - German-specific characters/letter combinations (ü, ö, ä, ß)
-    - Common German word patterns and suffixes
-    - High-frequency German function words
-    """
-    low = answer.lower()
-    # German umlauts and ß (strong signal)
-    has_german_chars = any(c in low for c in ("ü", "ö", "ä", "ß"))
-    if has_german_chars:
-        return True
-    # Common German function words (less ambiguous than content words)
-    german_words = (
-        " und ",
-        " ist ",
-        " der ",
-        " die ",
-        " das ",
-        " ein ",
-        " eine ",
-        " den ",
-        " dem ",
-        " des ",
-        " für ",
-        " mit ",
-        " auf ",
-        " von ",
-        " bei ",
-        " nach ",
-        " über ",
-        " oder ",
-        " aber ",
-        " wenn ",
-        " wird ",
-        " sind ",
-        " dass ",
-        " nicht ",
-        " auch ",
-        " wie ",
-        " wir ",
-        " sich ",
-        " noch ",
-        " kann ",
-        " ich ",
-        " wird ",
-        " haben ",
-        " werden ",
-    )
-    german_count = sum(1 for w in german_words if w in f" {low} ")
-    # Need at least 2 German function words to be confident
-    return german_count >= 2
-
-
 # ---------------------------------------------------------------------------
 # Safe math expression parser (replaces eval())
 # ---------------------------------------------------------------------------

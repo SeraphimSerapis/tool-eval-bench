@@ -31,6 +31,9 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
+    has_explicit_tool_error as _has_explicit_tool_error,
+)
+from tool_eval_bench.evals.helpers import (
     normalize as _normalize,
 )
 from tool_eval_bench.evals.helpers import (
@@ -201,6 +204,8 @@ def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _fail("Retried and recovered the document, but told the user it does not exist.")
         return _pass("Retried after the empty result and recovered.")
     if clarified:
+        if _has_explicit_tool_error(state, searches[0]):
+            return _partial("Search returned an error; asked for clarification without retrying.")
         explicit_results = [r for r in state.tool_results if r.name == "search_files"]
         if explicit_results and any(_tc13_result_has_document(r.result) for r in explicit_results):
             return _partial("Asked for clarification even though the search returned a document.")

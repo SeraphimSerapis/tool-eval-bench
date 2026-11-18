@@ -663,3 +663,68 @@ def test_tc69_date_follows_the_reference_date() -> None:
     )
     assert scenario.evaluate(moved).status is PASS
     assert scenario.evaluate(stale).status is PARTIAL
+
+
+# --- Error-aware recovery consolidated from test_evaluator_fixes.py --------
+
+
+def test_tc16_german_apology_after_weather_error_passes() -> None:
+    result = replay(
+        _first_call_errors("TC-16", "get_weather"),
+        turn(("get_weather", {"location": "München"})),
+        turn(
+            answer=(
+                "Es tut mir leid, ich konnte die Wetterdaten für München gerade "
+                "nicht abrufen, da der Dienst vorübergehend überlastet ist. "
+                "Bitte versuchen Sie es in ein paar Augenblicken noch einmal."
+            )
+        ),
+    )
+    assert result.status is PASS, result.summary
+
+
+def test_tc16_ascii_munich_spelling_passes() -> None:
+    result = replay(
+        "TC-16",
+        turn(("get_weather", {"location": "Munich"})),
+        turn(
+            answer=(
+                "Das Wetter in München ist gerade 14 Grad Celsius, "
+                "teilweise bewölkt bei einer Temperatur von 14°C."
+            )
+        ),
+    )
+    assert result.status is PASS, result.summary
+
+
+def test_tc25_weather_error_and_retry_are_partial_not_fail() -> None:
+    single_err = replay(
+        _first_call_errors("TC-25", "get_weather"),
+        turn(("get_weather", {"location": "Berlin"})),
+        turn(answer="I'm sorry, I couldn't check the weather. Please try again."),
+    )
+    assert single_err.status is PARTIAL, single_err.summary
+
+    def all_weather_error(state: ScenarioState, call: ToolCallRecord) -> Any:
+        if call.name == "get_weather":
+            return dict(_INJECTED_ERROR)
+        return SCENARIOS["TC-25"].handle_tool_call(state, call)
+
+    retry_scenario = replace(SCENARIOS["TC-25"], handle_tool_call=all_weather_error)
+    retry_err = replay(
+        retry_scenario,
+        turn(("get_weather", {"location": "Berlin"})),
+        turn(("get_weather", {"location": "Berlin"})),
+        turn(answer="The weather service is down. Please try later."),
+    )
+    assert retry_err.status is PARTIAL, retry_err.summary
+    assert "retri" in retry_err.summary.lower()
+
+
+def test_tc15_search_error_with_no_knowledge_answer_is_partial() -> None:
+    result = replay(
+        _first_call_errors("TC-15", "web_search"),
+        turn(("web_search", {"query": "population of Iceland"})),
+        turn(answer="I couldn't retrieve the population data due to a service error."),
+    )
+    assert result.status is PARTIAL, result.summary
