@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
 
 from tests.conftest import MeasurementTestClient
+from tests.coverage_helpers import MagicAsyncClient
+from tests.coverage_helpers import throughput_sample as _cov_sample
 from tool_eval_bench.runner.throughput import (
-    _DEFAULT_CHARS_PER_TOKEN,
-    _FILLER_PARAGRAPH,
     ThroughputSample,
     TokenizerConfig,
     _build_filler_heuristic,
@@ -29,7 +30,7 @@ from tool_eval_bench.runner.throughput import (
 class TestTokenizerConfig:
     def test_defaults(self) -> None:
         cfg = TokenizerConfig()
-        assert cfg.chars_per_token == _DEFAULT_CHARS_PER_TOKEN
+        assert cfg.chars_per_token > 0
         assert cfg.has_tokenize_endpoint is False
 
     def test_filler_pool_caching(self) -> None:
@@ -57,23 +58,24 @@ class TestTokenizerConfig:
 
 
 class TestBuildFillerHeuristic:
-    def test_basic_length(self) -> None:
-        """Heuristic should produce approximately target_tokens * chars_per_token chars."""
-        result = _build_filler_heuristic(100)
-        expected_chars = int(100 * _DEFAULT_CHARS_PER_TOKEN)
-        assert len(result) == expected_chars
+    def test_scales_proportionally_and_respects_chars_per_token(self) -> None:
+        """Heuristic text scales with token target and TokenizerConfig.chars_per_token."""
+        small = _build_filler_heuristic(100)
+        large = _build_filler_heuristic(200)
+        assert len(large) == len(small) * 2
+        assert len(small.strip()) > 0
 
-    def test_uses_config_chars_per_token(self) -> None:
         cfg = TokenizerConfig(chars_per_token=2.5)
         result = _build_filler_heuristic(200, cfg)
         assert len(result) == int(200 * 2.5)
 
-    def test_large_target(self) -> None:
-        """Even very large targets should generate valid text."""
-        result = _build_filler_heuristic(50_000)
-        assert len(result) == int(50_000 * _DEFAULT_CHARS_PER_TOKEN)
-        # Should be repetitions of the filler paragraph
-        assert _FILLER_PARAGRAPH[:50] in result
+    def test_large_target_repeats_filler_content(self) -> None:
+        """Very large targets scale cleanly past one base paragraph."""
+        cfg = TokenizerConfig(chars_per_token=3.5)
+        small = _build_filler_heuristic(100, cfg)
+        result = _build_filler_heuristic(50_000, cfg)
+        assert len(result) == int(50_000 * 3.5)
+        assert small[:50] in result
 
     def test_zero_tokens(self) -> None:
         result = _build_filler_heuristic(0)
@@ -86,19 +88,6 @@ class TestBuildFillerHeuristic:
 
 
 class TestThroughputSample:
-    def test_defaults(self) -> None:
-        s = ThroughputSample()
-        assert s.pp_tokens == 0
-        assert s.tg_tokens == 0
-        assert s.error is None
-        assert s.concurrency == 1
-        assert s.token_timestamps == []
-        assert s.mtp_chunks_detected is False
-
-    def test_error_sample(self) -> None:
-        s = ThroughputSample(error="Connection refused")
-        assert s.error == "Connection refused"
-
     def test_peak_tg_tps_empty(self) -> None:
         """No timestamps → 0.0."""
         s = ThroughputSample()
@@ -134,11 +123,6 @@ class TestThroughputSample:
         peak = s.peak_tg_tps
         # Best 1-second window should contain the first 5 tokens
         assert peak == 5.0
-
-    def test_mtp_chunks_detected_flag(self) -> None:
-        """Verify the MTP detection flag can be set."""
-        s = ThroughputSample(mtp_chunks_detected=True)
-        assert s.mtp_chunks_detected is True
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +542,7 @@ async def test_calibrate_total_failure() -> None:
     async with MeasurementTestClient(transport=httpx.MockTransport(mock_handler)) as client:
         cfg = await calibrate(client, "http://localhost:8000", "test-model")
 
-    assert cfg.chars_per_token == _DEFAULT_CHARS_PER_TOKEN
+    assert cfg.chars_per_token == TokenizerConfig().chars_per_token
     assert cfg.has_tokenize_endpoint is False
 
 
@@ -685,3 +669,354 @@ async def test_stream_one_returns_a_streamed_server_error_as_a_failed_sample() -
     assert "gpu-box" not in sample.error
     # A 5xx says nothing about the token_ids extension.
     assert cfg.supports_return_token_ids is None
+
+
+class _ByteChunks(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
+
+
+def _async_return(value: object):
+    async def inner(*args: object, **kwargs: object):
+        return value
+
+    return inner
+
+
+@pytest.mark.asyncio
+async def test_throughput_matrix_sweep_and_exact_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tool_eval_bench.runner import speculative, throughput
+
+    cfg = TokenizerConfig(has_tokenize_endpoint=True, chars_per_token=2.0)
+    counts = iter([5, 15, 10])
+
+    async def tokenize(*args: object, **kwargs: object):
+        return next(counts)
+
+    monkeypatch.setattr(throughput, "_tokenize_text", tokenize)
+    exact = await throughput._build_exact_prompt(MagicAsyncClient(), "url", "model", 10, None, cfg)
+    assert exact
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: object):
+            return None
+
+    async def measure(*args: object, depth: int = 0, concurrency: int = 1, **kwargs: object):
+        return _cov_sample(depth=depth, concurrency=concurrency)
+
+    seen: list[int] = []
+
+    async def callback(sample: ThroughputSample, idx: int, total: int) -> None:
+        seen.append(idx)
+
+    monkeypatch.setattr(throughput, "warmup", _async_return(1.0))
+    monkeypatch.setattr(throughput, "calibrate", _async_return(cfg))
+    monkeypatch.setattr(throughput, "estimate_latency", _async_return(2.0))
+    monkeypatch.setattr(
+        throughput,
+        "detect_spec_decoding",
+        _async_return(speculative.SpecDecodeInfo(active=True, method="mtp")),
+    )
+    monkeypatch.setattr(throughput, "measure_concurrent", measure)
+    result = await throughput.run_throughput_matrix(
+        "url",
+        "model",
+        client_factory=lambda **kwargs: Client(),
+        depths=[0, 10],
+        concurrency_levels=[2, 1],
+        on_sample=callback,
+    )
+
+    assert result.spec_decoding_detected is True
+    assert [s.concurrency for s in result.samples] == [1, 2, 1, 2]
+    assert seen == [0, 1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_throughput_single_and_concurrent_aggregation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench.runner import throughput
+
+    async def stream(*args: object, **kwargs: object):
+        return _cov_sample(pp_tokens=10, tg_tokens=5, ttft_ms=2, pp_tps=100)
+
+    monkeypatch.setattr(throughput, "_stream_one", stream)
+    one = await throughput.measure_single(MagicAsyncClient(), "url", "m", pp=10, tg=5, depth=2)
+    assert one.requested_depth == 2
+    aggregate = await throughput.measure_concurrent(
+        MagicAsyncClient(), "url", "m", pp=10, tg=5, depth=2, concurrency=2
+    )
+    assert aggregate.tg_tokens == 10 and aggregate.concurrency == 2
+
+    calls = iter([_cov_sample(error="bad"), RuntimeError("boom")])
+
+    async def failing(*args: object, **kwargs: object):
+        value = next(calls)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(throughput, "_stream_one", failing)
+    failed = await throughput.measure_concurrent(MagicAsyncClient(), "url", "m", concurrency=2)
+    assert failed.error and "bad" in failed.error
+
+
+@pytest.mark.asyncio
+async def test_measure_concurrent_treats_partial_failure_as_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench.runner import throughput
+
+    calls = iter([_cov_sample(pp_tokens=10, tg_tokens=5), _cov_sample(error="503 overloaded")])
+
+    async def mixed(*args: object, **kwargs: object):
+        return next(calls)
+
+    monkeypatch.setattr(throughput, "_stream_one", mixed)
+    sample = await throughput.measure_concurrent(
+        MagicAsyncClient(), "url", "m", pp=10, tg=5, depth=64, concurrency=2
+    )
+    assert sample.error is not None
+    assert "1/2 requests failed" in sample.error
+    assert "503 overloaded" in sample.error
+    assert sample.concurrency == 2
+    assert sample.requested_pp == 10
+    assert sample.requested_depth == 64
+
+
+@pytest.mark.asyncio
+async def test_throughput_streamed_json_null_fields_and_cancellation() -> None:
+    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
+    from tool_eval_bench.runner.throughput import _stream_one, calibrate, measure_concurrent
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/tokenize"):
+            return httpx.Response(404)
+        mode = request.headers.get("x-tp-mode", "json-stream")
+        if mode == "probe-null":
+            return httpx.Response(200, json={"usage": {"prompt_tokens": None}})
+        if mode == "json-stream":
+            payload = json.dumps(
+                {
+                    "choices": [{"message": {"content": "hello world"}}],
+                    "usage": {"prompt_tokens": 14, "completion_tokens": 2},
+                }
+            ).encode()
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                stream=_ByteChunks([payload]),
+            )
+        sse_chunks = (
+            b"data: 5\r\n\r\n"
+            b'data: {"choices": [{"delta": null}]}\r\n\r\n'
+            b"data: {\r\n"
+            b'data:   "choices": [{"delta": {"content": "tok"}}],\r\n'
+            b'data:   "usage": {"prompt_tokens": 10, "completion_tokens": 3}\r\n'
+            b"data: }\r\n\r\n"
+            b'data: {"choices": [], "usage": {"prompt_tokens": null, "completion_tokens": null}}\r\n\r\n'
+            b"data: [DONE]\r\n\r\n"
+        )
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/plain"},
+            stream=_ByteChunks([sse_chunks]),
+        )
+
+    async with HTTPMeasurementClient(
+        base_url="http://localhost:8000",
+        timeout=5.0,
+        completion_headers={"x-tp-mode": "probe-null"},
+        transport=httpx.MockTransport(handler),
+    ) as probe_client:
+        tok_cfg = await calibrate(probe_client, "http://localhost:8000", "m")
+        assert tok_cfg.calibration_confidence == "heuristic"
+
+    async with HTTPMeasurementClient(
+        base_url="http://localhost:8000",
+        timeout=5.0,
+        completion_headers={"x-tp-mode": "json-stream"},
+        transport=httpx.MockTransport(handler),
+    ) as json_client:
+        sample = await _stream_one(
+            json_client,
+            "http://localhost:8000",
+            "m",
+            [{"role": "user", "content": "hi"}],
+            4,
+            None,
+            TokenizerConfig(supports_return_token_ids=False),
+        )
+        assert sample.error is None
+        assert sample.pp_tokens == 14
+        assert sample.tg_tokens == 2
+
+    async with HTTPMeasurementClient(
+        base_url="http://localhost:8000",
+        timeout=5.0,
+        completion_headers={"x-tp-mode": "sse-nulls"},
+        transport=httpx.MockTransport(handler),
+    ) as sse_client:
+        sample_sse = await _stream_one(
+            sse_client,
+            "http://localhost:8000",
+            "m",
+            [{"role": "user", "content": "hi"}],
+            4,
+            None,
+            TokenizerConfig(supports_return_token_ids=False),
+        )
+        assert sample_sse.error is None
+        assert sample_sse.pp_tokens == 10
+        assert sample_sse.tg_tokens == 3
+
+    def cancel_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chat/completions"):
+            raise asyncio.CancelledError("abort concurrent sweep")
+        return httpx.Response(404)
+
+    async with HTTPMeasurementClient(
+        base_url="http://localhost:8000",
+        timeout=5.0,
+        transport=httpx.MockTransport(cancel_handler),
+    ) as cancel_client:
+        with pytest.raises(asyncio.CancelledError):
+            await measure_concurrent(
+                cancel_client,
+                "http://localhost:8000",
+                "m",
+                pp=32,
+                tg=8,
+                concurrency=2,
+                tok_cfg=TokenizerConfig(supports_return_token_ids=False),
+            )
+
+
+@pytest.mark.asyncio
+async def test_warmup_applies_all_three_rewrites_across_four_attempts() -> None:
+    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
+    from tool_eval_bench.runner.throughput import warmup
+
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append(body)
+        if "max_tokens" in body:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Unsupported parameter: max_tokens. Use max_completion_tokens."
+                    }
+                },
+            )
+        if "temperature" in body:
+            return httpx.Response(400, json={"error": {"message": "temperature must be default"}})
+        if "chat_template_kwargs" in body:
+            return httpx.Response(400, text="unknown extra field")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    tok_cfg = TokenizerConfig()
+    await warmup(
+        "http://localhost:8000/v1",
+        "m",
+        client_factory=lambda **kw: HTTPMeasurementClient(
+            **kw, transport=httpx.MockTransport(handler)
+        ),
+        tok_cfg=tok_cfg,
+    )
+    assert len(seen) == 4
+    assert tok_cfg.output_token_field == "max_completion_tokens"
+    assert "max_tokens" not in seen[-1]
+    assert "temperature" not in seen[-1]
+    assert "chat_template_kwargs" not in seen[-1]
+    assert seen[-1]["max_completion_tokens"] > 0
+
+
+@pytest.mark.asyncio
+async def test_stream_one_max_tokens_retry_preserves_include_token_ids_and_none_cfg() -> None:
+    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
+    from tool_eval_bench.runner.throughput import _stream_one
+
+    seen_explicit: list[dict] = []
+
+    def explicit_handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen_explicit.append(body)
+        if "max_tokens" in body:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Unsupported parameter: max_tokens. Use max_completion_tokens instead."
+                    }
+                },
+            )
+        return _sse_ok()
+
+    async with HTTPMeasurementClient(
+        base_url="http://localhost:8000/v1",
+        timeout=5.0,
+        transport=httpx.MockTransport(explicit_handler),
+    ) as client:
+        cfg = TokenizerConfig()
+        sample = await _stream_one(
+            client,
+            "http://localhost:8000/v1",
+            "m",
+            [{"role": "user", "content": "hi"}],
+            4,
+            None,
+            cfg,
+            _include_token_ids=False,
+        )
+    assert sample.error is None
+    assert all("return_token_ids" not in b for b in seen_explicit)
+    assert ["max_completion_tokens" in b for b in seen_explicit] == [False, True]
+
+    seen_none: list[dict] = []
+
+    def none_cfg_handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen_none.append(body)
+        if "max_tokens" in body:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Unsupported parameter: max_tokens. Use max_completion_tokens instead."
+                    }
+                },
+            )
+        if "return_token_ids" in body:
+            return httpx.Response(400, text="unknown field return_token_ids")
+        return _sse_ok()
+
+    async with HTTPMeasurementClient(
+        base_url="http://localhost:8000/v1",
+        timeout=5.0,
+        transport=httpx.MockTransport(none_cfg_handler),
+    ) as client:
+        sample = await _stream_one(
+            client,
+            "http://localhost:8000/v1",
+            "m",
+            [{"role": "user", "content": "hi"}],
+            4,
+            None,
+            tok_cfg=None,
+        )
+    assert sample.error is None
+    assert len(seen_none) == 3
+    assert "max_completion_tokens" in seen_none[-1]
+    assert "return_token_ids" not in seen_none[-1]

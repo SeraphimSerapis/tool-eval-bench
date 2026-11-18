@@ -528,7 +528,8 @@ async def warmup(
         completion_headers=completion_headers,
     ) as client:
         measurement = client
-        for _ in range(3):
+        # Up to 3 compatibility rewrites (max_tokens, sampling, optional hints) plus initial try.
+        for _ in range(4):
             resp = await measurement.completion(payload)
             if output_token_limit_reached(resp.status_code, resp.text):
                 logger.debug("Warm-up reached the model's output-token limit")
@@ -826,10 +827,19 @@ async def _stream_one(
         retry_payload = max_tokens_retry_payload(
             payload, error_response.status_code, error_response.text
         )
-        if retry_payload is not None and tok_cfg is not None:
-            tok_cfg.output_token_field = "max_completion_tokens"
+        if retry_payload is not None:
+            retry_cfg = tok_cfg if tok_cfg is not None else TokenizerConfig()
+            retry_cfg.output_token_field = "max_completion_tokens"
             return await _stream_one(
-                client, base_url, model, messages, tg, api_key, tok_cfg, temperature=temperature
+                client,
+                base_url,
+                model,
+                messages,
+                tg,
+                api_key,
+                retry_cfg,
+                _include_token_ids=_include_token_ids,
+                temperature=temperature,
             )
         # ``return_token_ids`` is not part of the OpenAI API contract.  Probe
         # it once, then remember the endpoint cannot accept it for this run.
@@ -1033,9 +1043,17 @@ async def measure_concurrent(
     errors: list[ThroughputSample] = [r for r in results if r.error]
     successes: list[ThroughputSample] = [r for r in results if not r.error]
 
-    if not successes:
+    if errors:
         error_msg = "; ".join(e.error or "?" for e in errors[:3])
-        return ThroughputSample(error=error_msg, concurrency=concurrency)
+        if successes:
+            error_msg = f"{len(errors)}/{len(results)} requests failed: {error_msg}"
+        return ThroughputSample(
+            error=error_msg,
+            depth=depth,
+            concurrency=concurrency,
+            requested_pp=pp,
+            requested_depth=depth,
+        )
 
     # Average per-request metrics
     avg_ttft = sum(s.ttft_ms for s in successes) / len(successes)

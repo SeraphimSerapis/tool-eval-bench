@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from tool_eval_bench.adapters import http_retry
-from tool_eval_bench.adapters.http_retry import _daily_quota_exhaustion
+from tool_eval_bench.adapters.http_retry import RetryingHTTPAdapter, _daily_quota_exhaustion
 from tool_eval_bench.adapters.openai_compat import (
     DEFAULT_MAX_RATE_LIMIT_RETRIES,
     DEFAULT_MAX_RETRIES,
@@ -26,6 +26,7 @@ from tool_eval_bench.adapters.openai_compat import (
 from tool_eval_bench.adapters.openai_compat import (
     OpenAICompatibleAdapter as Adapter,
 )
+from tool_eval_bench.domain.adapters import ChatCompletionResult
 from tool_eval_bench.domain.scenarios import FailureKind
 from tool_eval_bench.runner.orchestrator import _classify_runtime_error
 
@@ -600,3 +601,56 @@ class TestDisplayReporting:
 
         assert "3 rate limits" in footer
         assert "pacing 1.0s" in footer
+
+
+@pytest.mark.asyncio
+async def test_http_retry_nan_slot_rollback_and_stream_error_pacing() -> None:
+    for header_val in ("nan", "inf", "-inf"):
+        resp = httpx.Response(429, headers={"Retry-After": header_val})
+        assert _retry_after_seconds(resp) is None
+
+    body_inf = httpx.Response(
+        429,
+        json={
+            "error": {
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                        "retryDelay": "Infinitys",
+                    }
+                ]
+            }
+        },
+    )
+    assert _retry_after_seconds(body_inf) is None
+
+    coord = RateLimitCoordinator(step_seconds=5.0, max_interval_seconds=10.0)
+    await coord.on_rate_limited(5.0)
+    slot_before = coord._next_slot
+    waiter = asyncio.create_task(coord.acquire())
+    await asyncio.sleep(0)
+    assert coord._next_slot > slot_before
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert coord._next_slot <= coord._pause_until
+
+    retrying = RetryingHTTPAdapter()
+    await retrying._rate_limits.on_rate_limited(0.0)
+    assert retrying._rate_limits.min_interval == 0.5
+    for _ in range(10):
+        await retrying._with_retries(
+            lambda: asyncio.sleep(
+                0,
+                result=ChatCompletionResult(content="[err]", transport_error_status=503),
+            ),
+            url="http://localhost:8000/v1/chat/completions",
+        )
+    assert retrying._rate_limits.min_interval == 0.5
+
+    for _ in range(8):
+        await retrying._with_retries(
+            lambda: asyncio.sleep(0, result=ChatCompletionResult(content="ok")),
+            url="http://localhost:8000/v1/chat/completions",
+        )
+    assert retrying._rate_limits.min_interval == 0.0

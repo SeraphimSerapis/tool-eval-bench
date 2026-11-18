@@ -298,3 +298,27 @@ async def test_service_rejects_a_blank_override(monkeypatch: pytest.MonkeyPatch)
             scenarios=[_scenario("TC-01")],
             system_prompt="   ",
         )
+
+
+def test_custom_system_prompt_is_marked_in_report_without_exposing_text() -> None:
+    """--system-prompt and --system-prompt-file produce one marker and never echo raw text."""
+    from tool_eval_bench.domain.models import RunContext
+    from tool_eval_bench.storage.reports import _render_run_context
+
+    base_ctx = dict(
+        tool_version="1.3.0",
+        git_sha="abc1234",
+        hostname="testhost",
+        platform_info="Linux-6.1",
+        python_version="3.11.5",
+        model="test-model",
+        backend="vllm",
+        base_url="http://localhost:8000",
+    )
+    custom_text = "\n".join(_render_run_context(RunContext(**base_ctx, system_prompt="Be strict.")))
+    assert "| System Prompt | custom (built-in prompt replaced) |" in custom_text
+    assert "--system-prompt" not in custom_text
+    assert "Be strict." not in custom_text
+
+    default_text = "\n".join(_render_run_context(RunContext(**base_ctx)))
+    assert "System Prompt" not in default_text

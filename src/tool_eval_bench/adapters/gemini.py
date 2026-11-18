@@ -347,8 +347,11 @@ def _generation_config(
             if value.get("enable_thinking") is False:
                 config["thinkingConfig"] = {"thinkingBudget": 0}
         elif key in _GENERATION_CONFIG_ALIASES:
-            config[_GENERATION_CONFIG_ALIASES[key]] = value
-        elif key in ("max_tokens", "maxOutputTokens"):
+            mapped = _GENERATION_CONFIG_ALIASES[key]
+            config[mapped] = (
+                [value] if mapped == "stopSequences" and isinstance(value, str) else value
+            )
+        elif key in ("max_tokens", "max_completion_tokens", "maxOutputTokens"):
             config["maxOutputTokens"] = value
         elif key == "temperature":
             config["temperature"] = value

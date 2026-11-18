@@ -333,23 +333,9 @@ async def detect_spec_decoding(
 
     # Accept user hint
     if backend_hint not in ("auto", ""):
-        if backend_hint in {
-            "mtp",
-            "nextn",
-            "draft",
-            "standalone",
-            "dflash",
-            "dspark",
-            "ngram",
-            "ngram_gpu",
-            "eagle",
-            "eagle3",
-            "medusa",
-            "mlp_speculator",
-            "suffix",
-            "custom_class",
-        }:
-            info.method = canonical_spec_method_hint(backend_hint) or backend_hint
+        canonical = _canonical_spec_method(backend_hint)
+        if canonical is not None:
+            info.method = canonical
             if not info.active:
                 info.active = True
                 # Only assume per-request timings if we positively identified
