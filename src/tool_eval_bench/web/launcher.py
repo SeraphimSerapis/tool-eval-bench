@@ -169,7 +169,12 @@ def _integer(
 
 def _optional_text(payload: Mapping[str, Any], key: str) -> str | None:
     raw = payload.get(key)
-    return raw.strip() if isinstance(raw, str) and raw.strip() else None
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError(f"{key} must be a string")
+    stripped = raw.strip()
+    return stripped or None
 
 
 def _api_key(payload: Mapping[str, Any]) -> str | None:

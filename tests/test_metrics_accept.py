@@ -250,3 +250,24 @@ async def test_engine_namespace_inside_a_vllm_label_names_no_engine(model: str) 
     assert info.active is True
     assert info.method == "unknown"
     assert info.detail == "Detected via Prometheus /metrics (spec_decode counters present)"
+
+
+def test_parse_snapshot_rejects_non_finite_counters_and_invalid_positions() -> None:
+    prom_text = (
+        "vllm:spec_decode_num_draft_tokens_total 1e400\n"
+        "vllm:spec_decode_num_accepted_tokens_total 12\n"
+        "vllm:spec_decode_num_drafts_total 1e400\n"
+        'vllm:spec_decode_per_position_acceptance_rate{position="bad"} 0.8\n'
+        'vllm:spec_decode_per_position_acceptance_rate{position="-1"} 0.7\n'
+        'vllm:spec_decode_per_position_acceptance_rate{position="0"} 0.9\n'
+        'vllm:spec_decode_num_accepted_tokens_per_pos_total{position="nope"} 5\n'
+        'vllm:spec_decode_num_draft_tokens_per_pos_total{position="nope"} 5\n'
+        "vllm:gpu_cache_usage_perc 1e400\n"
+    )
+    snap = _parse_snapshot(prom_text)
+    assert snap.accepted_tokens == 12.0
+    assert snap.draft_tokens == 0.0
+    assert snap.gpu_cache_usage is None
+    assert snap.per_position_rates == {0: 0.9}
+    assert snap.per_position_counters == {}
+    assert snap.per_position_drafted_counters == {}

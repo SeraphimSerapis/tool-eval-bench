@@ -210,6 +210,11 @@ def test_tc96_bare_scan_name_is_accepted() -> None:
     assert result.status is ScenarioStatus.PASS, result.summary
 
 
+def test_tc96_guessing_scan_0419_after_list_without_ocr_fails() -> None:
+    result = _run("TC-96", _LIST, answer=_TC96_ANSWER)
+    assert result.status is ScenarioStatus.FAIL
+
+
 # ---------------------------------------------------------------------------
 # TC-97: redact every layer of a copy
 # ---------------------------------------------------------------------------
@@ -283,6 +288,33 @@ def test_tc97_deleting_the_unrelated_annotation_fails() -> None:
     result = _tc97(_redact("remove"), _DELETE, other)
     assert result.status is ScenarioStatus.FAIL
     assert result.summary == "Deleted the unrelated annotation ANN-8."
+
+
+def test_tc97_per_layer_verification_passes_and_later_unverified_text_edit_is_partial() -> None:
+    per_layer = _run(
+        "TC-97",
+        _MAKE_COPY,
+        _redact("remove"),
+        _FIND,
+        _ANNOTATIONS,
+        _DELETE,
+        _ANNOTATIONS,
+        answer=_TC97_ANSWER,
+    )
+    assert per_layer.status is ScenarioStatus.PASS, per_layer.summary
+
+    stale_text = _run(
+        "TC-97",
+        _MAKE_COPY,
+        _redact("overlay"),
+        _FIND,
+        _DELETE,
+        _ANNOTATIONS,
+        _redact("remove"),
+        answer=_TC97_ANSWER,
+    )
+    assert stale_text.status is ScenarioStatus.PARTIAL
+    assert "re-checked" in stale_text.summary
 
 
 # ---------------------------------------------------------------------------

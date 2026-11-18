@@ -139,3 +139,27 @@ def test_the_caller_is_told_about_every_retry(urlopen) -> None:
     # ladder stays conservative once an endpoint has started refusing.
     assert [wait for _, _, wait in seen] == [3.0, 4.0, 8.0]
     assert {total for _, total, _ in seen} == {6}
+
+
+def test_retry_after_handles_floats_clamping_http_dates_and_bad_headers(urlopen) -> None:
+    import email.utils
+    from datetime import datetime, timedelta, timezone
+
+    future = email.utils.format_datetime(
+        datetime.now(timezone.utc) + timedelta(seconds=10), usegmt=True
+    )
+    slept = urlopen(
+        [
+            _http_error(429, retry_after="4.5"),
+            _http_error(429, retry_after="9999"),
+            _http_error(429, retry_after="not-a-date"),
+            _http_error(429, retry_after=future),
+            {"ok": True},
+        ]
+    )
+
+    assert hf_utils._fetch_with_retry(URL, max_retries=8) == {"ok": True}
+    assert slept[0] == pytest.approx(4.5)
+    assert slept[1] == hf_utils._MAX_BACKOFF_S
+    assert slept[2] == 8.0  # fell back to attempt-3 exponential backoff (2 * 2^2)
+    assert 5.0 <= slept[3] <= 15.0

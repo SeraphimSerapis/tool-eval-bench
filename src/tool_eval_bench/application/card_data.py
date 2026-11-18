@@ -377,7 +377,7 @@ def _path_model_name(value: str) -> str:
     parts = [part for part in value.strip().replace("\\", "/").split("/") if part]
     for part in parts:
         if part.startswith("models--"):
-            return part.split("--")[-1]
+            return part.split("--", 2)[-1]
     named = [part for part in parts if part not in {"snapshots", "~"} and not _HEX_SHA.match(part)]
     return named[-1] if named else ""
 
@@ -734,7 +734,13 @@ def needle_summary(run: Mapping[str, Any]) -> NeedleSummary:
         accuracy = found / answered if answered > 0 else 0.0
     else:
         stored = scores.get("accuracy")
-        accuracy = float(stored) / 100 if isinstance(stored, (int, float)) else 0.0
+        accuracy = (
+            float(stored) / 100
+            if isinstance(stored, (int, float))
+            and not isinstance(stored, bool)
+            and math.isfinite(stored)
+            else 0.0
+        )
     return NeedleSummary(
         cells=cells,
         accuracy=accuracy,

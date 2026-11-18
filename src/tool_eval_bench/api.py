@@ -73,7 +73,7 @@ def format_result(run_data: dict[str, Any]) -> dict[str, Any]:
       excluded from scoring as infrastructure failures)
     - ``weighted_score`` (int 0–100 or None)
     """
-    scores = run_data.get("scores", {})
+    scores = run_data.get("scores") or {}
     scenario_results = scores.get("scenario_results")
     envelope: dict[str, Any] = {
         "schema_version": OUTPUT_SCHEMA_VERSION,

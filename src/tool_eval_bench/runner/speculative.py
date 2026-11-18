@@ -435,8 +435,12 @@ def pool_spec_samples(samples: list[SpecDecodeSample]) -> SpecDecodeSample:
         draft_tokens_delta=mean_counter([s.draft_tokens_delta for s in ok]),
         accepted_tokens_delta=mean_counter([s.accepted_tokens_delta for s in ok]),
         num_drafts_delta=mean_counter([s.num_drafts_delta for s in ok]),
-        acceptance_source=first.acceptance_source,
-        num_spec_tokens=first.num_spec_tokens,
+        acceptance_source=next(
+            (s.acceptance_source for s in ok if s.acceptance_source is not None), None
+        ),
+        num_spec_tokens=next(
+            (s.num_spec_tokens for s in ok if s.num_spec_tokens is not None), None
+        ),
         spec_method=first.spec_method,
         baseline_tg_tps=first.baseline_tg_tps,
         prompt_type=first.prompt_type,

@@ -227,6 +227,21 @@ class TestLiveStats:
         assert len(counts) == HISTOGRAM_BINS
         assert counts[0] == 1 and counts[-1] == 1 and sum(counts) == 2
 
+    def test_histogram_clamps_negative_and_non_finite_confidences(self) -> None:
+        stats = LiveStats()
+        stats.record(
+            _probe(
+                _event(confidence=-0.2),
+                _event(confidence=float("nan")),
+                _event(confidence=float("inf")),
+                _event(confidence=1.5),
+            )
+        )
+        counts = stats.confidence_histogram()
+        assert counts[0] == 3
+        assert counts[-1] == 1
+        assert sum(counts) == 4
+
     def test_trends_are_bounded(self) -> None:
         stats = LiveStats()
         for _ in range(200):

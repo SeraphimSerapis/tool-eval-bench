@@ -250,6 +250,66 @@ def test_a_plugin_failure_is_a_redacted_run_failed_event(cli: Cli) -> None:
     assert "hunter2" not in outcome.err
 
 
+def test_plugin_dataset_download_failure_emits_run_failed_without_building_adapter(
+    cli: Cli, tmp_path: Path
+) -> None:
+    from tool_eval_bench.adapters import factory
+    from tool_eval_bench.plugins.gsm8k import dataset as gsm8k_dataset
+
+    _patch_everywhere(
+        cli.monkeypatch,
+        "tool_eval_bench.cli.plugin_runners",
+        "run_selected_plugins",
+        run_selected_plugins,
+    )
+    built_adapters: list[object] = []
+    cli.monkeypatch.setattr(
+        factory, "build_adapter", lambda *a, **k: built_adapters.append(object())
+    )
+    cli.monkeypatch.setattr(
+        gsm8k_dataset, "_find_cache_file", lambda: tmp_path / "missing-gsm8k.jsonl"
+    )
+
+    def fail_download(**_kwargs: Any) -> Any:
+        raise RuntimeError(f"429 from {SECRET_URL}")
+
+    cli.monkeypatch.setattr(gsm8k_dataset, "load_dataset", fail_download)
+
+    outcome = cli.run(*CONNECTION, "--gsm8k-only", "--json")
+
+    assert outcome.code == 1
+    assert built_adapters == []
+    events, envelope = _contract(outcome.out, outcome.err)
+    assert envelope is None
+    assert events[-1]["error"] == "run_failed"
+    assert events[-1]["message"].startswith("Failed to download GSM8K dataset:")
+    assert "hunter2" not in outcome.err
+
+
+def test_needle_undetectable_context_emits_run_failed_under_json(cli: Cli) -> None:
+    from tool_eval_bench.runner import context_pressure
+
+    _patch_everywhere(
+        cli.monkeypatch,
+        "tool_eval_bench.cli.plugin_runners",
+        "run_selected_plugins",
+        run_selected_plugins,
+    )
+
+    async def no_context(*_a: Any, **_k: Any) -> None:
+        return None
+
+    cli.monkeypatch.setattr(context_pressure, "detect_context_size", no_context)
+
+    outcome = cli.run(*CONNECTION, "--needle-only", "--json")
+
+    assert outcome.code == 1
+    events, envelope = _contract(outcome.out, outcome.err)
+    assert envelope is None
+    assert events[-1]["error"] == "run_failed"
+    assert "Could not auto-detect the context window" in events[-1]["message"]
+
+
 def test_spec_bench_reports_the_saved_run(cli: Cli) -> None:
     from tool_eval_bench.runner import speculative
 

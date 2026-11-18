@@ -133,6 +133,26 @@ class TestDeleteRuns:
         result = delete_runs([PARTIAL])
         assert (result.deleted, result.reports_removed, result.reports_kept) == ((PARTIAL,), (), ())
 
+    def test_symlink_report_file_is_never_unlinked(self, workdir: Path) -> None:
+        victim = workdir / "precious.md"
+        victim.write_text("do not delete", encoding="utf-8")
+
+        report_dir = workdir / "runs" / "2026" / "10"
+        report_dir.mkdir(parents=True)
+        link = report_dir / f"{PARTIAL}.md"
+        link.symlink_to(victim)
+
+        assert not is_run_report(link, PARTIAL)
+        _store(PARTIAL, status="interrupted", report=link)
+
+        result = delete_runs([PARTIAL])
+        assert result.deleted == (PARTIAL,)
+        assert result.reports_removed == ()
+        assert len(result.reports_kept) == 1
+        assert result.reports_kept[0].reason == "not a report this tool wrote"
+        assert victim.read_text(encoding="utf-8") == "do not delete"
+        assert link.is_symlink()
+
 
 class TestIsRunReport:
     @pytest.mark.parametrize(
@@ -160,6 +180,36 @@ class TestIsRunReport:
 
     def test_an_empty_run_id_matches_nothing(self, tmp_path: Path) -> None:
         assert not is_run_report(_report(tmp_path, PARTIAL), "")
+
+    def test_symlink_month_dir_traversal_and_invalid_months_are_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / f"{PARTIAL}.md").write_text("x", encoding="utf-8")
+
+        year_dir = tmp_path / "runs" / "2026"
+        year_dir.mkdir(parents=True)
+        month_link = year_dir / "10"
+        month_link.symlink_to(outside)
+        assert not is_run_report(month_link / f"{PARTIAL}.md", PARTIAL)
+
+        for bad_month in ("13", "00"):
+            bad_path = tmp_path / "runs" / "2026" / bad_month / f"{PARTIAL}.md"
+            bad_path.parent.mkdir(parents=True)
+            bad_path.write_text("x", encoding="utf-8")
+            assert not is_run_report(bad_path, PARTIAL)
+
+        valid = tmp_path / "runs" / "2026" / "12" / f"{PARTIAL}.md"
+        valid.parent.mkdir(parents=True)
+        valid.write_text("x", encoding="utf-8")
+        assert is_run_report(valid, PARTIAL)
+        assert not is_run_report(
+            tmp_path / "runs" / "2026" / ".." / "2026" / "12" / f"{PARTIAL}.md",
+            PARTIAL,
+        )
+        assert not is_run_report(valid, "../evil")
+        assert not is_run_report(valid, "2026/evil")
 
 
 class TestFindRuns:

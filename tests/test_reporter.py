@@ -14,6 +14,7 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioResult,
     ScenarioStatus,
 )
+from tool_eval_bench.runner.speculative import SpecDecodeSample
 from tool_eval_bench.storage.reports import MarkdownReporter
 
 # ---------------------------------------------------------------------------
@@ -803,3 +804,93 @@ def test_spec_decode_report_renders_the_probed_engine(tmp_path):
     # would claim 0.7 here, stays out of the report.
     assert "| Temperature |" not in text
     assert "- **Temperature**: 0 (greedy" in text
+
+
+def test_run_context_escapes_pipes_and_backticks_roundtrip(tmp_path):
+    from tool_eval_bench.compare_reports.tool_eval import parse_md
+    from tool_eval_bench.domain.models import RunContext
+
+    tricky = "org/model`v1|beta"
+    ctx = RunContext(
+        tool_version="1.0",
+        git_sha=None,
+        hostname="h",
+        platform_info="linux",
+        python_version="3.13",
+        model=tricky,
+        backend="vllm",
+        base_url="http://***:8000",
+        extra_params={"stop": ["<|im_end|>", "```"]},
+    )
+    reporter = MarkdownReporter(root=str(tmp_path))
+    path = reporter.write_scenario_report("run_pipe", tricky, _make_summary(), run_context=ctx)
+    content = path.read_text(encoding="utf-8")
+    assert parse_md(str(path))["model_api"] == tricky
+    extra_line = next(line for line in content.splitlines() if "Extra Params" in line)
+    unescaped_pipes = len(extra_line.replace("\\|", "")) - len(
+        extra_line.replace("\\|", "").replace("|", "")
+    )
+    assert unescaped_pipes == 3
+
+
+def test_summary_report_handles_empty_summaries(tmp_path):
+    out = MarkdownReporter(root=str(tmp_path)).write_summary_report(
+        "empty-sum", "m", [], {"trials": 0}
+    )
+    assert "Cross-Trial Summary" in out.read_text(encoding="utf-8")
+
+
+class TestSpecDecodeReport:
+    def test_basic_spec_report(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        samples = [
+            SpecDecodeSample(
+                tg_tokens=128,
+                total_ms=2000,
+                ttft_ms=200,
+                tg_tps=50.0,
+                spec_method="mtp",
+                prompt_type="code",
+            ),
+            SpecDecodeSample(
+                tg_tokens=128,
+                total_ms=3000,
+                ttft_ms=300,
+                tg_tps=40.0,
+                spec_method="mtp",
+                prompt_type="structured",
+            ),
+        ]
+        path = reporter.write_spec_decode_report("spec_001", "test-model", samples)
+        content = path.read_text(encoding="utf-8")
+        assert "Speculative Decoding Benchmark" in content
+        assert "mtp" in content
+        assert "Interpretation Guide" in content
+
+    def test_spec_report_with_acceptance_rate(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        samples = [
+            SpecDecodeSample(
+                tg_tokens=128,
+                total_ms=2000,
+                ttft_ms=200,
+                tg_tps=50.0,
+                spec_method="mtp",
+                prompt_type="code",
+                acceptance_rate=0.85,
+                acceptance_length=3.2,
+            ),
+        ]
+        path = reporter.write_spec_decode_report("spec_002", "test-model", samples)
+        content = path.read_text(encoding="utf-8")
+        assert "α (accept)" in content
+        assert "85.0%" in content
+        assert "Acceptance Rate by Prompt Type" in content
+
+    def test_spec_report_no_acceptance_rate(self, tmp_path):
+        reporter = MarkdownReporter(root=str(tmp_path))
+        samples = [SpecDecodeSample(tg_tokens=64, total_ms=1000, tg_tps=30.0)]
+        path = reporter.write_spec_decode_report("spec_003", "model", samples)
+        content = path.read_text(encoding="utf-8")
+        assert "[!NOTE]" in content
+        assert "not available" in content

@@ -140,7 +140,7 @@ def run_web_server(
         raise SystemExit(1) from None
 
     bound_port = sock.getsockname()[1]
-    clean_host = host.strip("[]")
+    clean_host = host.strip("[]").lower()
     allowed_hosts: Iterable[str] | None = None
     if clean_host not in _LOOPBACK_HOSTS:
         allowed_hosts = (*_LOOPBACK_HOSTS, clean_host)

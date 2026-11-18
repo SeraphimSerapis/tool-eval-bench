@@ -383,65 +383,74 @@ class BenchmarkService:
                     status.total_wait_seconds,
                 )
             if hasattr(adapter, "aclose"):
-                await adapter.aclose()
+                try:
+                    await adapter.aclose()
+                except Exception as exc:  # noqa: BLE001 - cleanup cannot fail or mask a run
+                    logger.warning("Could not close inference adapter: %s", type(exc).__name__)
 
         # Merge prior results for resumed runs
         if resume_prior_results:
             from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
 
-            merged_results = list(summary.scenario_results)
-            existing_ids = {r.scenario_id for r in merged_results}
-            prior_by_id: dict[str, ScenarioResult] = {}
-            for pr in resume_prior_results:
-                sid = pr.get("scenario_id")
-                if sid and sid not in existing_ids:
-                    prior_by_id[str(sid)] = ScenarioResult.from_dict(pr)
-            merged_results.extend(prior_by_id.values())
-            # The registry is only a fallback for callers that omit
-            # resume_scenarios. It ranks below the run's own definitions and
-            # gets the run's variants, or preserved outcomes would be recorded
-            # as unvarianted and move the run's fingerprint.
-            registry = prepare_scenarios(
-                ALL_SCENARIOS_WITH_HARDMODE, variant_seed=variant_seed, locale=locale
-            )
-            scenario_by_id = {s.id: s for s in [*registry, *(resume_scenarios or []), *resolved]}
-            missing_ids = {r.scenario_id for r in merged_results} - scenario_by_id.keys()
-            if missing_ids:
-                raise ValueError(
-                    "Cannot resume unknown scenarios: " + ", ".join(sorted(missing_ids))
+            try:
+                merged_results = list(summary.scenario_results)
+                existing_ids = {r.scenario_id for r in merged_results}
+                prior_by_id: dict[str, ScenarioResult] = {}
+                for pr in resume_prior_results:
+                    sid = pr.get("scenario_id")
+                    if sid and sid not in existing_ids:
+                        prior_by_id[str(sid)] = ScenarioResult.from_dict(pr)
+                merged_results.extend(prior_by_id.values())
+                # The registry is only a fallback for callers that omit
+                # resume_scenarios. It ranks below the run's own definitions and
+                # gets the run's variants, or preserved outcomes would be recorded
+                # as unvarianted and move the run's fingerprint.
+                registry = prepare_scenarios(
+                    ALL_SCENARIOS_WITH_HARDMODE, variant_seed=variant_seed, locale=locale
                 )
-            result_by_id = {r.scenario_id: r for r in merged_results}
-            ordered_ids = list(
-                dict.fromkeys(
-                    s.id
-                    for s in [*(resume_scenarios or []), *registry, *resolved]
-                    if s.id in result_by_id
+                scenario_by_id = {
+                    s.id: s for s in [*registry, *(resume_scenarios or []), *resolved]
+                }
+                missing_ids = {r.scenario_id for r in merged_results} - scenario_by_id.keys()
+                if missing_ids:
+                    raise ValueError(
+                        "Cannot resume unknown scenarios: " + ", ".join(sorted(missing_ids))
+                    )
+                result_by_id = {r.scenario_id: r for r in merged_results}
+                ordered_ids = list(
+                    dict.fromkeys(
+                        s.id
+                        for s in [*(resume_scenarios or []), *registry, *resolved]
+                        if s.id in result_by_id
+                    )
                 )
-            )
-            merged_results = [result_by_id[scenario_id] for scenario_id in ordered_ids]
-            merged_scenarios = [scenario_by_id[scenario_id] for scenario_id in ordered_ids]
-            report_scenarios = merged_scenarios
-            summary = score_results(
-                merged_results,
-                merged_scenarios,
-                alpha=alpha,
-                weight_by_difficulty=weight_by_difficulty,
-            )
-            run_config = build_run_config(
-                settings,
-                scenarios=merged_scenarios,
-                metadata=metadata,
-                scenario_packs=scenario_packs,
-                perf_preset=stored_perf_preset,
-                perf_passes=stored_perf_passes,
-            )
-            logger.info(
-                "Resume merge: %d prior + %d new = %d total scenarios (score: %d)",
-                len(merged_results) - len(existing_ids),
-                len(existing_ids),
-                len(merged_results),
-                summary.final_score,
-            )
+                merged_results = [result_by_id[scenario_id] for scenario_id in ordered_ids]
+                merged_scenarios = [scenario_by_id[scenario_id] for scenario_id in ordered_ids]
+                report_scenarios = merged_scenarios
+                summary = score_results(
+                    merged_results,
+                    merged_scenarios,
+                    alpha=alpha,
+                    weight_by_difficulty=weight_by_difficulty,
+                )
+                run_config = build_run_config(
+                    settings,
+                    scenarios=merged_scenarios,
+                    metadata=metadata,
+                    scenario_packs=scenario_packs,
+                    perf_preset=stored_perf_preset,
+                    perf_passes=stored_perf_passes,
+                )
+                logger.info(
+                    "Resume merge: %d prior + %d new = %d total scenarios (score: %d)",
+                    len(merged_results) - len(existing_ids),
+                    len(existing_ids),
+                    len(merged_results),
+                    summary.final_score,
+                )
+            except BaseException:
+                self._mark_interrupted(run_id)
+                raise
 
         # Audit after all benchmark requests so judge latency cannot distort
         # per-scenario timing or delay sibling model requests under concurrency.

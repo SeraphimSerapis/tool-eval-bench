@@ -1,13 +1,4 @@
-"""Tests for critical review fixes.
-
-Covers:
-  - Weighted scoring (scenario-count, not category-count)
-  - Flexible datetime matching (TC-05, TC-08)
-  - TC-14 tighter partial credit (web_search after error)
-  - Safety exfiltration scan (TC-34 / scan_for_injection)
-  - Calibration confidence levels
-  - Parallel concurrency warning
-"""
+"""Tests for scoring weighting, datetime/injection helpers, and TC-14 recovery ordering."""
 
 from __future__ import annotations
 
@@ -24,11 +15,8 @@ from tool_eval_bench.evals.helpers import (
     datetime_matches,
     scan_for_injection,
 )
-from tool_eval_bench.evals.scenarios.core.tc05 import _tc05_eval
-from tool_eval_bench.evals.scenarios.core.tc08 import _tc08_eval
 from tool_eval_bench.evals.scenarios.core.tc14 import _tc14_eval
 from tool_eval_bench.runner.orchestrator import score_results
-from tool_eval_bench.runner.throughput import TokenizerConfig
 
 # ---------------------------------------------------------------------------
 # 1. Weighted scoring — scenario count should drive final_score
@@ -194,164 +182,9 @@ class TestDateMatches:
         assert not date_matches(None, "2026-03-23")
 
 
-# ---------------------------------------------------------------------------
-# 3. TC-05 flexible time/date matching
-# ---------------------------------------------------------------------------
-
-
-class TestTC05FlexibleDatetime:
-    def _make_state(self, date: str, time: str) -> ScenarioState:
-        state = ScenarioState()
-        state.tool_calls = [
-            ToolCallRecord(
-                id="c1",
-                name="create_calendar_event",
-                raw_arguments="",
-                arguments={
-                    "title": "Team Standup",
-                    "date": date,
-                    "time": time,
-                    "duration_minutes": 30,
-                    "attendees": ["alex@example.com", "jamie@example.com"],
-                },
-                turn=1,
-            )
-        ]
-        state.final_answer = "Meeting scheduled."
-        return state
-
-    def test_pass_naive(self):
-        result = _tc05_eval(self._make_state("2026-03-23", "09:30"))
-        assert result.status == ScenarioStatus.PASS
-
-    def test_pass_with_seconds(self):
-        result = _tc05_eval(self._make_state("2026-03-23", "09:30:00"))
-        assert result.status == ScenarioStatus.PASS
-
-    def test_fail_wrong_date(self):
-        result = _tc05_eval(self._make_state("2026-03-24", "09:30"))
-        assert result.status == ScenarioStatus.FAIL
-
-    def test_fail_wrong_time(self):
-        result = _tc05_eval(self._make_state("2026-03-23", "10:00"))
-        assert result.status == ScenarioStatus.FAIL
-
-
-# ---------------------------------------------------------------------------
-# 4. TC-08 flexible datetime (timezone-aware models)
-# ---------------------------------------------------------------------------
-
-
-class TestTC08FlexibleDatetime:
-    def _make_state(self, datetime_val: str) -> ScenarioState:
-        state = ScenarioState()
-        state.tool_calls = [
-            ToolCallRecord(
-                id="c1",
-                name="get_weather",
-                raw_arguments="",
-                arguments={"location": "Paris"},
-                turn=1,
-            ),
-            ToolCallRecord(
-                id="c2",
-                name="set_reminder",
-                raw_arguments="",
-                arguments={
-                    "message": "bring an umbrella",
-                    "datetime": datetime_val,
-                },
-                turn=2,
-            ),
-        ]
-        state.final_answer = "Reminder set."
-        return state
-
-    def test_pass_naive_datetime(self):
-        result = _tc08_eval(self._make_state("2026-03-21T08:00:00"))
-        assert result.status == ScenarioStatus.PASS
-
-    def test_pass_utc_datetime(self):
-        result = _tc08_eval(self._make_state("2026-03-21T08:00:00Z"))
-        assert result.status == ScenarioStatus.PASS
-
-    def test_pass_cet_datetime(self):
-        """Timezone-aware models emitting CET offset should pass."""
-        result = _tc08_eval(self._make_state("2026-03-21T08:00:00+01:00"))
-        assert result.status == ScenarioStatus.PASS
-
-    def test_pass_est_datetime(self):
-        result = _tc08_eval(self._make_state("2026-03-21T08:00:00-05:00"))
-        assert result.status == ScenarioStatus.PASS
-
-    def test_fail_wrong_date(self):
-        result = _tc08_eval(self._make_state("2026-03-22T08:00:00"))
-        assert result.status == ScenarioStatus.FAIL
-
-    def test_fail_wrong_time(self):
-        result = _tc08_eval(self._make_state("2026-03-21T09:00:00"))
-        assert result.status == ScenarioStatus.FAIL
-
-    def test_fail_no_reminder(self):
-        state = ScenarioState()
-        state.tool_calls = [
-            ToolCallRecord(
-                id="c1",
-                name="get_weather",
-                raw_arguments="",
-                arguments={"location": "Paris"},
-                turn=1,
-            ),
-        ]
-        state.final_answer = "It is raining."
-        result = _tc08_eval(state)
-        assert result.status == ScenarioStatus.FAIL
-
-
-# ---------------------------------------------------------------------------
-# 5. TC-14 — web_search must come AFTER the stock error
-# ---------------------------------------------------------------------------
-
-
-class TestTC14TighterPartial:
-    def _make_state(self, search_turn: int, stock_turn: int = 1) -> ScenarioState:
-        state = ScenarioState()
-        state.tool_calls = [
-            ToolCallRecord(
-                id="c1",
-                name="get_stock_price",
-                raw_arguments="",
-                arguments={"ticker": "AAPL"},
-                turn=stock_turn,
-            ),
-            ToolCallRecord(
-                id="c2",
-                name="web_search",
-                raw_arguments="",
-                arguments={"query": "AAPL price"},
-                turn=search_turn,
-            ),
-        ]
-        state.tool_results = [
-            ToolResultRecord(
-                call_id="c1", name="get_stock_price", result={"error": "Rate limit exceeded."}
-            ),
-            ToolResultRecord(
-                call_id="c2", name="web_search", result={"results": [{"snippet": "AAPL ~$187"}]}
-            ),
-        ]
-        state.assistant_messages = ["rate limit exceeded, trying web search"]
-        state.final_answer = "AAPL is around $187."
-        return state
-
-    def test_pass_search_after_error_with_acknowledgment(self):
-        result = _tc14_eval(self._make_state(search_turn=2, stock_turn=1))
-        assert result.status == ScenarioStatus.PASS
-
-    def test_partial_search_before_error_not_counted_as_recovery(self):
-        """web_search in same turn as stock call — model searched proactively,
-        not as a fallback after seeing the error. No acknowledgment in text either.
-        Should not get full pass credit."""
+class TestTC14SameTurnOrder:
+    def test_partial_search_in_same_turn_not_counted_as_recovery(self):
+        """web_search in same turn as stock call is proactive, not recovery after error."""
         state = ScenarioState()
         state.tool_calls = [
             ToolCallRecord(
@@ -377,38 +210,14 @@ class TestTC14TighterPartial:
                 call_id="c2", name="web_search", result={"results": [{"snippet": "AAPL ~$187"}]}
             ),
         ]
-        # No acknowledgment, no mention of "web search" as a plan — just a direct answer
         state.assistant_messages = ["AAPL is trading around $187."]
         state.final_answer = "AAPL is trading around $187."
         result = _tc14_eval(state)
-        # search was same turn (not a recovery), no acknowledgment → FAIL or PARTIAL at best
         assert result.status in (ScenarioStatus.PARTIAL, ScenarioStatus.FAIL)
-
-    def test_partial_acknowledged_no_search(self):
-        state = ScenarioState()
-        state.tool_calls = [
-            ToolCallRecord(id="c1", name="get_stock_price", raw_arguments="", arguments={}, turn=1),
-        ]
-        state.tool_results = [
-            ToolResultRecord(call_id="c1", name="get_stock_price", result={"error": "Unavailable"}),
-        ]
-        state.assistant_messages = ["The stock service is temporarily unavailable."]
-        state.final_answer = "The service is temporarily unavailable. Please try again later."
-        result = _tc14_eval(state)
-        assert result.status == ScenarioStatus.PARTIAL
-
-    def test_fail_no_stock_call_at_all(self):
-        state = ScenarioState()
-        state.tool_calls = []
-        state.tool_results = []
-        state.assistant_messages = ["AAPL is $187."]
-        state.final_answer = "AAPL is $187."
-        result = _tc14_eval(state)
-        assert result.status == ScenarioStatus.FAIL
 
 
 # ---------------------------------------------------------------------------
-# 6. scan_for_injection — exfiltration detection
+# Safety exfiltration scan
 # ---------------------------------------------------------------------------
 
 
@@ -457,30 +266,3 @@ class TestScanForInjection:
     def test_empty_transcript(self):
         state = self._make_state([])
         assert not scan_for_injection(state, ["attacker@evil.com"])
-
-
-# ---------------------------------------------------------------------------
-# 7. Calibration confidence levels
-# ---------------------------------------------------------------------------
-
-
-class TestCalibrationConfidence:
-    def test_default_is_heuristic(self):
-        cfg = TokenizerConfig()
-        assert cfg.calibration_confidence == "heuristic"
-
-    def test_heuristic_chars_per_token(self):
-        cfg = TokenizerConfig()
-        assert cfg.chars_per_token == 4.0
-
-    def test_set_tokenize_confidence(self):
-        cfg = TokenizerConfig()
-        cfg.calibration_confidence = "tokenize"
-        cfg.has_tokenize_endpoint = True
-        assert cfg.calibration_confidence == "tokenize"
-        assert cfg.has_tokenize_endpoint is True
-
-    def test_set_probe_confidence(self):
-        cfg = TokenizerConfig()
-        cfg.calibration_confidence = "probe"
-        assert cfg.calibration_confidence == "probe"

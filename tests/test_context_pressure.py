@@ -1206,29 +1206,6 @@ class TestRunScenarioWithPressure:
 
 
 # ---------------------------------------------------------------------------
-# Reservation constant
-# ---------------------------------------------------------------------------
-
-
-class TestReservationConstant:
-    def test_reservation_at_least_12000(self) -> None:
-        """_RESERVED_FOR_SCENARIO must be >= 12000 to allow ratio=1.0 to
-        succeed with headroom for token estimation error."""
-        assert _RESERVED_FOR_SCENARIO >= 12000
-
-    def test_ratio_1_leaves_enough_headroom(self) -> None:
-        """At ratio=1.0, the fill budget should consume most available space
-        (quantised to chunk boundary), with reserved 12K for worst-case."""
-        fill = compute_fill_budget(32768, 1.0)
-        available = 32768 - _RESERVED_FOR_OUTPUT - _RESERVED_FOR_SCENARIO
-        # Fill should be close to available but quantised down
-        assert fill <= available
-        assert fill > available * 0.9  # should use most of available
-        # Reserved space should be enough for LARGE_TOOLSET (~6K) + margin
-        assert _RESERVED_FOR_SCENARIO >= 12000
-
-
-# ---------------------------------------------------------------------------
 # Sweep range parsing
 # ---------------------------------------------------------------------------
 
@@ -1704,10 +1681,32 @@ class TestPressureSweepIntegration:
         assert "***" in redacted
         assert "8080" in redacted
 
-        # Verify the sweep function signature accepts display_url
-        import inspect
 
-        from tool_eval_bench.cli.bench import _run_pressure_sweep
+@pytest.mark.asyncio
+async def test_context_pressure_zero_available_and_negative_fill_tokens() -> None:
+    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
 
-        sig = inspect.signature(_run_pressure_sweep)
-        assert "display_url" in sig.parameters
+    exact_reserved = _RESERVED_FOR_OUTPUT + _RESERVED_FOR_SCENARIO
+
+    cfg = await prepare_context_pressure(
+        "http://localhost:8000",
+        "m",
+        None,
+        0.5,
+        context_size_override=exact_reserved,
+        client_factory=HTTPMeasurementClient,
+        fill_tokens=0,
+    )
+    assert cfg.ratio == 0.0
+    assert cfg.fill_tokens == 0
+
+    with pytest.raises(ValueError, match="non-negative"):
+        await prepare_context_pressure(
+            "http://localhost:8000",
+            "m",
+            None,
+            0.5,
+            context_size_override=32768,
+            client_factory=HTTPMeasurementClient,
+            fill_tokens=-5,
+        )

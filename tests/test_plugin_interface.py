@@ -52,6 +52,7 @@ class TestPluginRegistry:
         plugin = get_plugin("gsm8k")
         assert isinstance(plugin, BenchmarkPlugin)
         assert plugin.name == "gsm8k"
+        assert len(plugin.description) > 0
 
     def test_unknown_plugin(self):
         from tool_eval_bench.plugins.registry import get_plugin
@@ -64,15 +65,3 @@ class TestPluginRegistry:
 
         plugins = available_plugins()
         assert "gsm8k" in plugins
-
-    def test_gsm8k_plugin_is_benchmark_plugin(self):
-        """GSM8KPlugin must implement the full BenchmarkPlugin interface."""
-        from tool_eval_bench.plugins.gsm8k.plugin import GSM8KPlugin
-
-        plugin = GSM8KPlugin()
-        assert hasattr(plugin, "name")
-        assert hasattr(plugin, "description")
-        assert hasattr(plugin, "run")
-        assert hasattr(plugin, "render_report_section")
-        assert plugin.name == "gsm8k"
-        assert len(plugin.description) > 0

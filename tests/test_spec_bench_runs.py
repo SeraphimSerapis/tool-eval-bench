@@ -393,6 +393,33 @@ def test_report_never_suggests_reducing_a_window_of_two_to_two(tmp_path: Path) -
     assert "num_speculative_tokens" not in text
 
 
+def test_report_omits_missing_waste_and_clamps_utilization_bar(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    # Over-1.0 acceptance rate with missing waste_ratio must render cleanly and clamp the bar.
+    sample = SimpleNamespace(
+        spec_method="mtp",
+        runs=1,
+        prompt_type="code",
+        depth=0,
+        effective_tg_tps=100.0,
+        tg_tps=80.0,
+        acceptance_rate=1.5,
+        acceptance_rate_range=None,
+        waste_ratio=None,
+        acceptance_length=2.5,
+        draft_window=4.0,
+        draft_tps=None,
+        speedup_ratio=1.25,
+        ttft_ms=20.0,
+        total_ms=200.0,
+        tg_tokens=64,
+    )
+    text = _report(tmp_path, sample)  # type: ignore[arg-type]
+    assert "| Avg Waste | — |" in text
+    assert "█" * 40 in text
+
+
 # ---------------------------------------------------------------------------
 # dispatch wiring
 # ---------------------------------------------------------------------------

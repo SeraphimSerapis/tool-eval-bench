@@ -123,6 +123,9 @@ def build_messages(
     n_shots : int
         Number of few-shot examples (0 = zero-shot, max 8).
     """
+    if n_shots < 0:
+        raise ValueError("n_shots must be >= 0")
+
     messages: list[ChatMessage] = [
         {"role": "system", "content": SYSTEM_PROMPT},
     ]

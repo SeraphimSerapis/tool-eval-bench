@@ -171,25 +171,30 @@ def _annotation_removed(state: ScenarioState) -> bool:
 
 
 def _verified(state: ScenarioState) -> bool:
-    """Both layers were re-read on the copy after its last successful edit."""
-    on_copy = [
+    """Each layer was re-read on the copy after its own last successful edit."""
+    text_edits = [
         c
-        for name in _MUTATIONS
-        for c in calls(state, name, lambda c: _doc_id(c) == _COPY)
+        for c in calls(state, "apply_redaction", lambda c: _doc_id(c) == _COPY)
         if succeeded(state, c)
     ]
-    if not on_copy:
+    annotation_edits = [
+        c
+        for c in calls(state, "delete_annotation", lambda c: _doc_id(c) == _COPY)
+        if succeeded(state, c)
+    ]
+    if not text_edits or not annotation_edits:
         return False
-    last_edit = max(c.turn for c in on_copy)
+    last_text_edit = max(c.turn for c in text_edits)
+    last_annotation_edit = max(c.turn for c in annotation_edits)
     clean_search = any(
-        c.turn > last_edit
+        c.turn > last_text_edit
         and succeeded(state, c)
         and _names_number(c.arguments.get("text"))
         and any(p.get("matches") == [] for p in result_payloads(state, c))
         for c in calls(state, "find_text", lambda c: _doc_id(c) == _COPY)
     )
     annotations_checked = any(
-        c.turn > last_edit and succeeded(state, c)
+        c.turn > last_annotation_edit and succeeded(state, c)
         for c in calls(state, "list_annotations", lambda c: _doc_id(c) == _COPY)
     )
     return clean_search and annotations_checked

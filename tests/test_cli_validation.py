@@ -46,3 +46,21 @@ def test_parallel_must_be_positive_at_parse_time(argv: list[str]) -> None:
         parse_cli_args(_make_parser, argv)
 
     assert exc_info.value.code == 2
+
+
+def test_resolve_scenarios_filtering_and_hardmode_precedence() -> None:
+    from tool_eval_bench.cli.commands import resolve_scenarios
+    from tool_eval_bench.domain.scenarios import Category
+    from tool_eval_bench.evals.scenarios import HARDMODE_SCENARIOS
+
+    _, short_cat_a = parse_cli_args(_make_parser, ["--short", "--categories", "a"])
+    short_a = resolve_scenarios(short_cat_a)
+    assert short_a and all(s.category == Category.A for s in short_a)
+
+    _, hm_only_cat_p = parse_cli_args(
+        _make_parser, ["--hardmode-only", "--short", "--categories", "P"]
+    )
+    assert len(resolve_scenarios(hm_only_cat_p)) == len(HARDMODE_SCENARIOS)
+
+    _, hm_only_cat_a = parse_cli_args(_make_parser, ["--hardmode-only", "--categories", "A"])
+    assert resolve_scenarios(hm_only_cat_a) == []

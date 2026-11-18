@@ -495,7 +495,11 @@ def _add_delete_options(parser: argparse.ArgumentParser) -> None:
 
 def _delete_argv(argv: list[str]) -> list[str]:
     args = _command_help("delete").parse_args(argv)
-    translated = ["--delete", *args.run_ids]
+    if any(run_id.startswith("-") for run_id in args.run_ids):
+        # Attached with "=" so a run ID that starts with "-" stays a value.
+        translated = [f"--delete={run_id}" for run_id in args.run_ids]
+    else:
+        translated = ["--delete", *args.run_ids]
     for status in args.status or ():
         translated.append(f"--delete-status={status}")
     if args.before is not None:

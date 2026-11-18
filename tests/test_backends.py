@@ -39,12 +39,6 @@ def test_endpoint_paths_are_appended_before_base_query_parameters() -> None:
     )
 
 
-def test_llamacpp_backend_supported() -> None:
-    service = BenchmarkService()
-    adapter = service._adapter_for("llamacpp")  # noqa: SLF001
-    assert isinstance(adapter, OpenAICompatibleAdapter)
-
-
 def test_all_backends_return_same_adapter() -> None:
     service = BenchmarkService()
     for backend in ("vllm", "litellm", "llamacpp", "llama.cpp", "llama_cpp", "sglang"):
@@ -52,12 +46,3 @@ def test_all_backends_return_same_adapter() -> None:
         assert isinstance(adapter, OpenAICompatibleAdapter), (
             f"Backend {backend} should return OpenAICompatibleAdapter"
         )
-
-
-def test_sglang_backend_supported() -> None:
-    # Regression: sglang can now be auto-detected via its /metrics namespace
-    # (see utils.metadata.probe_backend_hint) and must not be rejected as
-    # "Unsupported backend" once it reaches the service layer.
-    service = BenchmarkService()
-    adapter = service._adapter_for("sglang")  # noqa: SLF001
-    assert isinstance(adapter, OpenAICompatibleAdapter)

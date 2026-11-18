@@ -817,3 +817,30 @@ class TestDecisionRunner:
         a = with_config_fingerprint({**config, "dataset_revision": "aaa"})
         b = with_config_fingerprint({**config, "dataset_revision": "bbb"})
         assert a["config_fingerprint"] != b["config_fingerprint"]
+
+    @pytest.mark.asyncio
+    async def test_decision_plugin_error_row_redacts_credentialed_url(self) -> None:
+        from tool_eval_bench.domain.decision import DecisionBackend
+        from tool_eval_bench.plugins.decision.plugin import DecisionPlugin
+
+        secret_base = "http://admin:s3cretP@ss@internal-llm.corp:8000/v1"
+        secret_url = f"{secret_base}?api_key=sk-super-secret"
+
+        class FailingDecisionBackend(DecisionBackend):
+            async def decide(self, *args: Any, **kwargs: Any) -> Any:
+                raise RuntimeError(
+                    f"503 from {secret_base}/chat/completions?api_key=sk-super-secret"
+                )
+
+        case = load_cases()[0]
+        res = await DecisionPlugin().run(
+            FailingDecisionBackend(),  # type: ignore[arg-type]
+            model="m",
+            base_url=secret_url,
+            cases=[case],
+        )
+        assert res.item_results
+        err_msg = res.item_results[0]["error"]
+        assert "s3cretP@ss" not in err_msg
+        assert "sk-super-secret" not in err_msg
+        assert "http://***:8000/v1/chat/completions" in err_msg

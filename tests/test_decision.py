@@ -212,6 +212,13 @@ class TestMetrics:
         assert percentile([7], 95) == 7
         assert percentile([], 50) == 0.0
 
+    def test_reliability_bins_rejects_bad_count_and_clamps_non_finite_values(self) -> None:
+        with pytest.raises(ValueError, match="n_bins"):
+            reliability_bins([0.5], [True], n_bins=0)
+        bins = reliability_bins([-0.2, float("nan"), 1.2], [False, False, True], n_bins=10)
+        assert bins[0].low == 0.0 and bins[0].count == 2
+        assert bins[-1].low == pytest.approx(0.9) and bins[-1].count == 1
+
 
 class TestBar:
     def test_bar_is_fixed_width_and_clamped(self) -> None:

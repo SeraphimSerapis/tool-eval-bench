@@ -356,7 +356,10 @@ def test_rest_download_records_an_unknown_revision(tmp_path: Path) -> None:
     write_cache_manifest(
         cache, dataset="cais/mmlu", config="all", split="test", method="rest_api", revision="abc"
     )
-    assert json.loads((tmp_path / "test.manifest.json").read_text())["revision"] is None
+    assert (
+        json.loads((tmp_path / "test.manifest.json").read_text(encoding="utf-8"))["revision"]
+        is None
+    )
     assert read_cache_revision(cache) == "unknown"
 
 
@@ -366,7 +369,7 @@ def test_missing_or_bad_manifest_reads_as_unknown(tmp_path: Path, manifest: str 
 
     cache = tmp_path / "test.jsonl"
     if manifest is not None:
-        (tmp_path / "test.manifest.json").write_text(manifest)
+        (tmp_path / "test.manifest.json").write_text(manifest, encoding="utf-8")
     assert read_cache_revision(cache) == "unknown"
 
 

@@ -7,12 +7,17 @@ tool call dispatch, trace capture, and evaluation.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
+import httpx
 import pytest
 
+from tool_eval_bench.adapters.anthropic import _to_anthropic_messages
 from tool_eval_bench.adapters.base import BackendAdapter, ChatCompletionResult, ProviderToolCall
+from tool_eval_bench.adapters.gemini import _to_gemini_contents
+from tool_eval_bench.domain.models import ChatMessage
 from tool_eval_bench.domain.scenarios import (
     Category,
     FailureKind,
@@ -1710,3 +1715,414 @@ async def test_context_pressure_warms_the_shared_prefix_unscored(warmup_fails: b
     assert scored["messages"][-1]["content"] == MOCK_SCENARIO.user_message
     assert [r.scenario_id for r in summary.scenario_results] == ["TEST-01"]
     assert summary.scenario_results[0].turn_count == 1
+
+
+class _ScriptedAdapter(BackendAdapter):
+    """Deterministic adapter returning scripted results or raising exceptions."""
+
+    def __init__(self, steps: list[ChatCompletionResult | BaseException]) -> None:
+        self._steps = list(steps)
+        self.recorded_messages: list[list[ChatMessage]] = []
+
+    async def chat_completion(
+        self,
+        *,
+        model: str,
+        messages: list[ChatMessage],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = "auto",
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        timeout_seconds: float = 120.0,
+        api_key: str | None = None,
+        base_url: str = "",
+        extra_params: dict[str, Any] | None = None,
+        stream: bool = False,
+        response_format: dict[str, Any] | None = None,
+        parallel_tool_calls: bool | None = True,
+        conversation_id: str | None = None,
+    ) -> ChatCompletionResult:
+        self.recorded_messages.append(json.loads(json.dumps(messages)))
+        if not self._steps:
+            return ChatCompletionResult(content="done", finish_reason="stop")
+        step = self._steps.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        return step
+
+
+def _fix_scenario(
+    scenario_id: str = "FIX-01",
+    *,
+    evaluate: Any = None,
+    handle_tool_call: Any = None,
+) -> ScenarioDefinition:
+    return ScenarioDefinition(
+        id=scenario_id,
+        title="Regression test scenario",
+        description="Expected test tool workflow.",
+        category=Category.A,
+        user_message="Run the workflow.",
+        handle_tool_call=handle_tool_call or (lambda state, call: {"ok": True, "id": call.id}),
+        evaluate=evaluate or (lambda state: ScenarioEvaluation(ScenarioStatus.PASS, 2, "ok")),
+    )
+
+
+def test_repair_json_str_requires_json_object() -> None:
+    assert _repair_json_str('{"city": "Berlin"}') == '{"city": "Berlin"}'
+    assert json.loads(_repair_json_str('{"city": "Ber')) == {"city": "Ber"}
+
+    for non_object in ("null", "[1, 2, 3]", "42", "true", '"plain"', "[1, 2"):
+        assert _repair_json_str(non_object) == "{}"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_normalizes_non_object_tool_args_for_history_only() -> None:
+    seen_records: list[ToolCallRecord] = []
+
+    def handle(state: ScenarioState, call: ToolCallRecord) -> dict[str, Any]:
+        seen_records.append(call)
+        return {"status": "handled"}
+
+    adapter = _ScriptedAdapter(
+        [
+            ChatCompletionResult(
+                content="",
+                tool_calls=[ProviderToolCall(id="c1", name="get_weather", arguments_str="[1, 2]")],
+                finish_reason="tool_calls",
+            ),
+            ChatCompletionResult(content="Done.", finish_reason="stop"),
+        ]
+    )
+    result = await run_scenario(
+        adapter,
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=_fix_scenario("FIX-ARGS", handle_tool_call=handle),
+    )
+
+    assert result.status == ScenarioStatus.PASS
+    assert seen_records[0].raw_arguments == "[1, 2]"
+    assert seen_records[0].arguments == {}
+    turn_two_assistant = next(
+        msg for msg in adapter.recorded_messages[1] if msg["role"] == "assistant"
+    )
+    assert turn_two_assistant["tool_calls"] is not None
+    assert turn_two_assistant["tool_calls"][0]["function"]["arguments"] == "{}"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_deduplicates_and_populates_tool_call_ids_across_turns() -> None:
+    shared_fixture_call = ProviderToolCall(id="toolu_1", name="get_weather", arguments_str="{}")
+    adapter = _ScriptedAdapter(
+        [
+            ChatCompletionResult(
+                content="",
+                tool_calls=[
+                    shared_fixture_call,
+                    ProviderToolCall(id="toolu_1", name="get_weather", arguments_str="{}"),
+                    ProviderToolCall(id="", name="get_weather", arguments_str="{}"),
+                ],
+                finish_reason="tool_calls",
+            ),
+            ChatCompletionResult(
+                content="",
+                tool_calls=[
+                    ProviderToolCall(id="toolu_1", name="send_email", arguments_str="{}"),
+                    ProviderToolCall(id="ctx_call_1", name="send_email", arguments_str="{}"),
+                ],
+                finish_reason="tool_calls",
+            ),
+            ChatCompletionResult(content="All set.", finish_reason="stop"),
+        ]
+    )
+    pressure_messages: list[ChatMessage] = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "ctx_call_1",
+                    "type": "function",
+                    "function": {"name": "search_files", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "ctx_call_1", "name": "search_files", "content": "{}"},
+    ]
+
+    await run_scenario(
+        adapter,
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=_fix_scenario("FIX-IDS"),
+        context_pressure_messages=pressure_messages,
+    )
+
+    assert shared_fixture_call.id == "toolu_1"
+
+    final_history = adapter.recorded_messages[2]
+    all_assistant_ids = [
+        tc["id"]
+        for msg in final_history
+        if msg["role"] == "assistant"
+        for tc in (msg.get("tool_calls") or [])
+    ]
+    assert len(all_assistant_ids) == 6
+    assert len(set(all_assistant_ids)) == 6
+    assert all(bool(cid) for cid in all_assistant_ids)
+
+    anthropic_msgs, _ = _to_anthropic_messages(final_history)
+    tool_use_ids = [
+        block["id"]
+        for msg in anthropic_msgs
+        if msg["role"] == "assistant"
+        for block in msg["content"]
+        if isinstance(block, dict) and block.get("type") == "tool_use"
+    ]
+    assert len(tool_use_ids) == len(set(tool_use_ids)) == 6
+
+    gemini_contents, _ = _to_gemini_contents(final_history)
+    func_responses = [
+        part["functionResponse"]["name"]
+        for entry in gemini_contents
+        for part in entry["parts"]
+        if "functionResponse" in part
+    ]
+    assert func_responses == [
+        "search_files",
+        "get_weather",
+        "get_weather",
+        "get_weather",
+        "send_email",
+        "send_email",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_early_returns_preserve_prior_turn_metrics() -> None:
+    first_turn = ChatCompletionResult(
+        content="",
+        tool_calls=[
+            ProviderToolCall(id="c1", name="get_weather", arguments_str='{"city": "Paris"}')
+        ],
+        prompt_tokens=120,
+        completion_tokens=30,
+        ttft_ms=15.0,
+        finish_reason="tool_calls",
+    )
+
+    res_malformed = await run_scenario(
+        _ScriptedAdapter([first_turn, ChatCompletionResult(content="[malformed]", malformed=True)]),
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=_fix_scenario("FIX-METRIC-1"),
+    )
+    assert res_malformed.failure_kind == FailureKind.SERVER_ERROR
+    assert res_malformed.prompt_tokens == 120
+    assert res_malformed.completion_tokens == 30
+    assert res_malformed.tool_call_arg_bytes == len(b'{"city": "Paris"}')
+    assert res_malformed.tool_calls_made == ["get_weather(city=Paris)"]
+    assert res_malformed.expected_behavior == "Expected test tool workflow."
+
+    res_timeout = await run_scenario(
+        _ScriptedAdapter([first_turn, httpx.ReadTimeout("timed out")]),
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=_fix_scenario("FIX-METRIC-2"),
+    )
+    assert res_timeout.failure_kind == FailureKind.TIMEOUT
+    assert res_timeout.prompt_tokens == 120
+    assert res_timeout.completion_tokens == 30
+    assert res_timeout.tool_calls_made == ["get_weather(city=Paris)"]
+
+    def broken_eval(state: ScenarioState) -> ScenarioEvaluation:
+        raise RuntimeError("boom in evaluator")
+
+    res_eval = await run_scenario(
+        _ScriptedAdapter([first_turn, ChatCompletionResult(content="Sunny", finish_reason="stop")]),
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=_fix_scenario("FIX-METRIC-3", evaluate=broken_eval),
+    )
+    assert res_eval.failure_kind == FailureKind.EVALUATOR_ERROR
+    assert res_eval.prompt_tokens == 120
+    assert res_eval.completion_tokens == 30
+    assert res_eval.tool_calls_made == ["get_weather(city=Paris)"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_zero_max_turns_boundary() -> None:
+    scenario = _fix_scenario(
+        "FIX-ZERO-TURNS",
+        evaluate=lambda state: ScenarioEvaluation(ScenarioStatus.FAIL, 0, "no turns"),
+    )
+    result = await run_scenario(
+        _ScriptedAdapter([]),
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=scenario,
+        max_turns=0,
+    )
+    assert result.turn_count == 0
+    assert result.turn_budget_exceeded is True
+    assert result.failure_kind == FailureKind.BUDGET_EXCEEDED
+
+
+@pytest.mark.asyncio
+async def test_run_all_scenarios_parallel_propagates_cancelled_error() -> None:
+    adapter = _ScriptedAdapter([asyncio.CancelledError("user abort")])
+    scenarios = [_fix_scenario("FIX-CANCEL-1"), _fix_scenario("FIX-CANCEL-2")]
+    with pytest.raises(asyncio.CancelledError):
+        await run_all_scenarios(
+            adapter,
+            model="m",
+            base_url="http://localhost:8000",
+            api_key=None,
+            scenarios=scenarios,
+            concurrency=2,
+        )
+
+
+@pytest.mark.asyncio
+async def test_post_tool_call_transport_error_stops_before_follow_ups_and_evaluator() -> None:
+    seen_evaluations: list[str] = []
+
+    def evaluate(state: ScenarioState) -> ScenarioEvaluation:
+        seen_evaluations.append(state.final_answer)
+        return ScenarioEvaluation(ScenarioStatus.PASS, 2, "graded transport error")
+
+    scenario = _fix_scenario("FIX-POST-TOOL-400", evaluate=evaluate)
+    scenario.follow_up_messages = ["Now summarize the weather."]
+
+    adapter = _ScriptedAdapter(
+        [
+            ChatCompletionResult(
+                content="",
+                tool_calls=[
+                    ProviderToolCall(
+                        id="c1",
+                        name="get_weather",
+                        arguments_str='{"city": "Paris"}',
+                    )
+                ],
+                prompt_tokens=80,
+                completion_tokens=20,
+                ttft_ms=12.5,
+                finish_reason="tool_calls",
+            ),
+            ChatCompletionResult(
+                content="[server error 400] bad args",
+                transport_error_status=400,
+            ),
+            ChatCompletionResult(content="Should never be requested", finish_reason="stop"),
+        ]
+    )
+
+    result = await run_scenario(
+        adapter,
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=scenario,
+        max_turns=6,
+    )
+
+    assert seen_evaluations == []
+    assert len(adapter.recorded_messages) == 2
+    assert result.status == ScenarioStatus.FAIL
+    assert result.points == 0
+    assert result.failure_kind == FailureKind.MODEL_CRASH
+    assert not result.is_infrastructure_failure
+    assert "after model-authored tool-call history" in result.summary
+    assert "400" in result.summary
+    assert result.turn_count == 2
+    assert result.prompt_tokens == 80
+    assert result.completion_tokens == 20
+    assert result.ttft_ms == 12.5
+    assert result.tool_calls_made == ["get_weather(city=Paris)"]
+
+
+@pytest.mark.asyncio
+async def test_loop_guard_resets_across_non_tool_turns_and_follow_up_phases() -> None:
+    def same_call() -> ChatCompletionResult:
+        return ChatCompletionResult(
+            content="",
+            tool_calls=[
+                ProviderToolCall(id="c1", name="get_weather", arguments_str='{"city": "Paris"}')
+            ],
+            finish_reason="tool_calls",
+        )
+
+    scenario_ok = _fix_scenario(
+        "FIX-LOOP-PHASE-OK",
+        handle_tool_call=lambda state, call: {"temp_c": 21},
+        evaluate=lambda state: ScenarioEvaluation(
+            ScenarioStatus.FAIL,
+            0,
+            "wrong summary",
+            failure_kind=FailureKind.WRONG_ARGS,
+        ),
+    )
+    scenario_ok.follow_up_messages = ["Check Paris once more."]
+
+    adapter_ok = _ScriptedAdapter(
+        [
+            same_call(),
+            same_call(),
+            ChatCompletionResult(content="21C right now.", finish_reason="stop"),
+            same_call(),
+            same_call(),
+            ChatCompletionResult(content="Still 21C.", finish_reason="stop"),
+        ]
+    )
+    res_ok = await run_scenario(
+        adapter_ok,
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=scenario_ok,
+        max_turns=8,
+    )
+    assert res_ok.turn_count == 6
+    assert res_ok.failure_kind == FailureKind.WRONG_ARGS
+    assert "loop_guard=" not in res_ok.raw_log
+
+    scenario_loop = _fix_scenario(
+        "FIX-LOOP-PHASE-TRIP",
+        handle_tool_call=lambda state, call: {"temp_c": 21},
+        evaluate=lambda state: ScenarioEvaluation(
+            ScenarioStatus.FAIL,
+            0,
+            "never finished",
+            failure_kind=FailureKind.WRONG_ARGS,
+        ),
+    )
+    scenario_loop.follow_up_messages = ["Try again."]
+    adapter_loop = _ScriptedAdapter(
+        [
+            same_call(),
+            ChatCompletionResult(content="21C.", finish_reason="stop"),
+            same_call(),
+            same_call(),
+            same_call(),
+            ChatCompletionResult(content="Unreachable", finish_reason="stop"),
+        ]
+    )
+    res_loop = await run_scenario(
+        adapter_loop,
+        model="m",
+        base_url="http://localhost:8000",
+        api_key=None,
+        scenario=scenario_loop,
+        max_turns=8,
+    )
+    assert res_loop.turn_count == 5
+    assert res_loop.failure_kind == FailureKind.REPEATED_CALL_LOOP
+    assert "loop_guard=" in res_loop.raw_log

@@ -203,6 +203,10 @@ class TestContainsRefusal:
             "The requested functionality does not exist.",
             "That isn't part of my available toolset.",
             "I lack the necessary tools.",
+            "I must decline this request.",
+            "I'm not designed to handle destructive operations.",
+            "There is no mechanism for me to delete files.",
+            "I can't do that. Instead, I can help you find a safer approach.",
         ],
     )
     def test_detects_refusal(self, phrase):
@@ -306,6 +310,9 @@ class TestAsksForClarification:
             "What date is the interview?",
             "What day should I reserve?",
             "When should I book the room?",
+            "Can you elaborate on what you need?",
+            "Could you be more specific about the target?",
+            "Which one would you prefer?",
         ],
     )
     def test_detects_clarification(self, phrase):

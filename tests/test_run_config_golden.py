@@ -844,3 +844,140 @@ def test_leaderboard_groups_stored_configs() -> None:
         (row["run_id"], row["config_fingerprint"], row["cohort_fingerprint"], row["num_runs"])
         for row in rows
     ) == sorted(EXPECTED_ROWS)
+
+
+def test_leaderboard_handles_nulls_and_rejects_bool_scenario_count() -> None:
+    from tool_eval_bench.application.leaderboard import is_rank_eligible
+
+    assert not is_rank_eligible(
+        {"status": "completed"},
+        {"scenario_count": True},
+        {"completion_rate": 100, "scenario_results": [{"scenario_id": "TC-01"}]},
+    )
+    assert not is_rank_eligible(
+        {"status": "completed"},
+        {"scenario_count": 1},
+        {"completion_rate": float("nan"), "scenario_results": [{"scenario_id": "TC-01"}]},
+    )
+
+    rows = _extract_leaderboard_rows(
+        [
+            {
+                "run_id": "r1",
+                "model": "m1",
+                "status": "completed",
+                "created_at": None,
+                "config": {"backend": "vllm", "scenario_count": 1, "config_fingerprint": "fp1"},
+                "scores": {
+                    "final_score": float("nan"),
+                    "completion_rate": 100,
+                    "scenario_results": [{"scenario_id": "TC-01", "status": "pass"}],
+                },
+                "metadata": {},
+            }
+        ]
+    )
+    assert len(rows) == 1
+    assert rows[0]["final_score"] == 0
+    assert rows[0]["date"] == "?"
+
+
+def test_cohort_ignores_operational_keys_while_fingerprint_and_resume_keep_them() -> None:
+    from dataclasses import replace
+
+    from tool_eval_bench.application.resume import ResumeRejected, plan_stored_resume
+    from tool_eval_bench.application.run_config import COHORT_EXCLUDED_KEYS, resume_mismatches
+
+    assert {"concurrency", "timeout_seconds", "alpha"} <= COHORT_EXCLUDED_KEYS
+
+    metadata = {"tool_version": GOLDEN_VERSION, "git_sha": "abc1234"}
+    base_settings = _settings(model="model-a", concurrency=1, timeout_seconds=30.0, alpha=0.7)
+    cfg_base = build_run_config(base_settings, scenarios=TWO[:1], metadata=metadata)
+    cfg_parallel = build_run_config(
+        replace(base_settings, concurrency=8), scenarios=TWO[:1], metadata=metadata
+    )
+    cfg_timeout = build_run_config(
+        replace(base_settings, timeout_seconds=600.0), scenarios=TWO[:1], metadata=metadata
+    )
+    cfg_alpha = build_run_config(
+        replace(base_settings, alpha=0.2), scenarios=TWO[:1], metadata=metadata
+    )
+    cfg_model_b_operational = build_run_config(
+        replace(base_settings, model="model-b", concurrency=8, timeout_seconds=600.0, alpha=0.2),
+        scenarios=TWO[:1],
+        metadata=metadata,
+    )
+
+    base_cohort = _cohort_fingerprint(cfg_base, metadata)
+    assert _cohort_fingerprint(cfg_parallel, metadata) == base_cohort
+    assert _cohort_fingerprint(cfg_timeout, metadata) == base_cohort
+    assert _cohort_fingerprint(cfg_alpha, metadata) == base_cohort
+    assert _cohort_fingerprint(cfg_model_b_operational, metadata) == base_cohort
+
+    assert cfg_parallel["config_fingerprint"] != cfg_base["config_fingerprint"]
+    assert cfg_timeout["config_fingerprint"] != cfg_base["config_fingerprint"]
+    assert cfg_alpha["config_fingerprint"] != cfg_base["config_fingerprint"]
+
+    for scoring_override in (
+        {"temperature": 0.7},
+        {"max_turns": 4},
+        {"seed": 42},
+        {"error_rate": 0.1},
+        {"weight_by_difficulty": True},
+        {"system_prompt": "Be concise."},
+    ):
+        cfg_scoring = build_run_config(
+            replace(base_settings, **scoring_override), scenarios=TWO[:1], metadata=metadata
+        )
+        assert _cohort_fingerprint(cfg_scoring, metadata) != base_cohort
+
+    assert resume_mismatches(cfg_base, cfg_parallel, base_url=base_settings.base_url) == [
+        "concurrency"
+    ]
+    assert resume_mismatches(cfg_base, cfg_timeout, base_url=base_settings.base_url) == [
+        "timeout_seconds"
+    ]
+    assert resume_mismatches(cfg_base, cfg_alpha, base_url=base_settings.base_url) == ["alpha"]
+
+    cfg_interrupted = build_run_config(
+        replace(base_settings, concurrency=4, timeout_seconds=180.0, alpha=0.4),
+        scenarios=TWO[:1],
+        metadata=metadata,
+    )
+    plan = plan_stored_resume(
+        {"status": "interrupted", "config": cfg_interrupted},
+        [],
+        base_url=base_settings.base_url,
+    )
+    assert plan.settings.concurrency == 4
+    assert plan.settings.timeout_seconds == 180.0
+    assert plan.settings.alpha == 0.4
+    for bad_key, bad_val in (
+        ("concurrency", True),
+        ("timeout_seconds", float("nan")),
+        ("alpha", None),
+    ):
+        with pytest.raises(ResumeRejected, match=bad_key):
+            plan_stored_resume(
+                {"status": "interrupted", "config": {**cfg_base, bad_key: bad_val}},
+                [],
+                base_url=base_settings.base_url,
+            )
+
+    rows = _extract_leaderboard_rows(
+        [
+            _run("run-a", "model-a", cfg_base, "2026-01-01T00:00:00Z") | {"metadata": metadata},
+            {
+                **_run("run-b", "model-b", cfg_model_b_operational, "2026-01-01T00:05:00Z"),
+                "metadata": metadata,
+                "scores": {
+                    "final_score": 91.0,
+                    "completion_rate": 100,
+                    "scenario_results": [{"scenario_id": "TC-01", "status": "pass"}],
+                },
+            },
+        ]
+    )
+    assert [r["model"] for r in rows] == ["model-b", "model-a"]
+    assert [r["cohort_rank"] for r in rows] == [1, 2]
+    assert rows[0]["cohort_fingerprint"] == rows[1]["cohort_fingerprint"] == base_cohort

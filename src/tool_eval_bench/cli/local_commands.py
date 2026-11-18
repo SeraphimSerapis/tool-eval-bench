@@ -130,6 +130,8 @@ def handle_local_command(
         _reject_json(args, "--leaderboard")
         print_leaderboard(console)
     elif args.export:
+        if args.export != "json":
+            _reject_json(args, f"--export {args.export}")
         export_runs(console, fmt=args.export, output=args.export_output)
     elif args.compare:
         if getattr(args, "retest_diffs", False):

@@ -86,6 +86,7 @@ _CAT_LABELS = {
     "M": "Pln",  # Autonomous Planning
     "N": "Crt",  # Creative Composition
     "O": "Out",  # Structured Output
+    "P": "Hrd",  # Hard Mode
 }
 
 _CAT_FULL = {
@@ -104,6 +105,7 @@ _CAT_FULL = {
     "M": "Planning",
     "N": "Creative",
     "O": "Structured Output",
+    "P": "Hard Mode",
 }
 
 
@@ -415,13 +417,15 @@ def export_runs(
                 "backend": row["backend"],
                 "total_tokens": row["total_tokens"],
                 "num_runs": row["num_runs"],
-                "tool_version": row.get("tool_version", ""),
-                "engine_name": row.get("engine_name", ""),
-                "engine_version": row.get("engine_version", ""),
-                "quantization": row.get("quantization", ""),
-                "max_model_len": row.get("max_model_len", ""),
-                "temperature": row.get("temperature", ""),
-                "server_model_root": row.get("server_model_root", ""),
+                "tool_version": row.get("tool_version") or "",
+                "engine_name": row.get("engine_name") or "",
+                "engine_version": row.get("engine_version") or "",
+                "quantization": row.get("quantization") or "",
+                "max_model_len": row.get("max_model_len")
+                if row.get("max_model_len") is not None
+                else "",
+                "temperature": row.get("temperature") if row.get("temperature") is not None else "",
+                "server_model_root": row.get("server_model_root") or "",
                 "cohort": row["cohort_label"],
                 "cohort_fingerprint": row["cohort_fingerprint"],
             }

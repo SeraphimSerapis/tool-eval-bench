@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.console import Console
 
+from tests.conftest import open_repository
 from tool_eval_bench.cli import history
 
 
@@ -53,3 +54,206 @@ def test_compare_runs_closes_the_repository_when_it_exits_on_a_missing_run() -> 
             history.compare_runs(_console(), "missing-a", "missing-b")
 
     repo.close.assert_called_once()
+
+
+def test_init_closes_connection_when_wal_setup_fails(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+
+    from tool_eval_bench.storage import db as db_mod
+
+    closed = {"count": 0}
+    real_connect = sqlite3.connect
+
+    class SpyConnection:
+        def __init__(self, inner: sqlite3.Connection) -> None:
+            self._inner = inner
+
+        def execute(self, *args, **kwargs):
+            return self._inner.execute(*args, **kwargs)
+
+        def close(self) -> None:
+            closed["count"] += 1
+            self._inner.close()
+
+    created: list[SpyConnection] = []
+
+    def spy_connect(path, **kwargs):
+        spy = SpyConnection(real_connect(path, **kwargs))
+        created.append(spy)
+        return spy
+
+    monkeypatch.setattr(db_mod.sqlite3, "connect", spy_connect)
+    monkeypatch.setattr(
+        db_mod.RunRepository,
+        "_enable_wal",
+        lambda self: (_ for _ in ()).throw(sqlite3.OperationalError("wal locked")),
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="wal locked"):
+        db_mod.RunRepository(str(tmp_path / "fail.sqlite"))
+
+    assert created and closed["count"] >= 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        created[0]._inner.execute("SELECT 1")
+
+
+def test_close_still_closes_connection_when_writer_shutdown_fails(tmp_path) -> None:
+    import sqlite3
+
+    from tool_eval_bench.storage.db import RunRepository
+
+    repo = RunRepository(str(tmp_path / "writer-fail.sqlite"))
+    failing_writer = MagicMock()
+    failing_writer.shutdown.side_effect = RuntimeError("shutdown failed")
+    repo._writer = failing_writer
+
+    with pytest.raises(RuntimeError, match="shutdown failed"):
+        repo.close()
+
+    assert repo._writer is None
+    with pytest.raises(sqlite3.ProgrammingError):
+        repo._conn.execute("SELECT 1")
+
+
+def test_persist_run_closes_repository_on_exit(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sqlite3
+
+    from tool_eval_bench.application import run_queries
+    from tool_eval_bench.storage.db import RunRepository
+
+    opened: list[RunRepository] = []
+
+    def make_repo() -> RunRepository:
+        repo = RunRepository(str(tmp_path / "persist.sqlite"))
+        opened.append(repo)
+        return repo
+
+    monkeypatch.setattr(run_queries, "_repository", make_repo)
+
+    run_queries.persist_run(
+        {"run_id": "r-close", "status": "completed", "config": {"model": "m"}, "scores": {}}
+    )
+
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        opened[0]._conn.execute("SELECT 1")
+
+
+def test_context_manager_closes_connection_on_exit(tmp_path) -> None:
+    import sqlite3
+
+    from tool_eval_bench.storage.db import RunRepository
+
+    db_path = tmp_path / "ctx.sqlite"
+    with RunRepository(str(db_path)) as repo:
+        assert db_path.exists()
+        conn = repo._conn
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        conn.execute("SELECT 1")
+
+
+class TestRunRepositoryExtended:
+    def test_get_nonexistent(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        assert repo.get("no_such_id") is None
+        repo.close()
+
+    def test_get_latest_empty(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        assert repo.get_latest() is None
+        repo.close()
+
+    def test_get_latest_with_data(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run(
+            {"run_id": "r1", "config": {"model": "m"}, "scores": {}, "metadata": {}}
+        )
+        latest = repo.get_latest()
+        assert latest is not None and latest["run_id"] == "r1"
+        repo.close()
+
+    def test_get_latest_filtered_by_model(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run(
+            {"run_id": "r1", "config": {"model": "a"}, "scores": {}, "metadata": {}}
+        )
+        repo.upsert_scenario_run(
+            {"run_id": "r2", "config": {"model": "b"}, "scores": {}, "metadata": {}}
+        )
+        assert repo.get_latest(model="a")["run_id"] == "r1"
+        assert repo.get_latest(model="c") is None
+        repo.close()
+
+    def test_get_scenario_results(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run(
+            {
+                "run_id": "r1",
+                "config": {"model": "m"},
+                "scores": {"scenario_results": [{"id": "TC-01", "status": "pass"}]},
+                "metadata": {},
+            }
+        )
+        results = repo.get_scenario_results("r1")
+        assert results is not None and len(results) == 1
+        repo.close()
+
+    def test_get_scenario_results_missing(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        assert repo.get_scenario_results("missing") is None
+        repo.close()
+
+    def test_get_scenario_results_no_scores(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run({"run_id": "r1", "config": {"model": "m"}, "metadata": {}})
+        assert repo.get_scenario_results("r1") is None
+        repo.close()
+
+    def test_upsert_updates_existing(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run(
+            {"run_id": "r1", "config": {"model": "m"}, "scores": {"v": 1}, "metadata": {}}
+        )
+        repo.upsert_scenario_run(
+            {"run_id": "r1", "config": {"model": "m"}, "scores": {"v": 2}, "metadata": {}}
+        )
+        assert repo.get("r1")["scores"]["v"] == 2
+        repo.close()
+
+    def test_list_filter_by_model(self, tmp_path):
+        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
+        repo.upsert_scenario_run(
+            {"run_id": "r1", "config": {"model": "a"}, "scores": {}, "metadata": {}}
+        )
+        repo.upsert_scenario_run(
+            {"run_id": "r2", "config": {"model": "b"}, "scores": {}, "metadata": {}}
+        )
+        assert len(repo.list(model="a")) == 1
+        repo.close()
+
+    def test_del_safety_net(self, tmp_path, recwarn: pytest.WarningsRecorder) -> None:
+        import gc
+        import sqlite3
+
+        from tool_eval_bench.storage.db import RunRepository
+
+        def open_unclosed() -> sqlite3.Connection:
+            repo = RunRepository(str(tmp_path / "test.sqlite"))
+            return repo._conn
+
+        conn = open_unclosed()
+        gc.collect()
+        with pytest.raises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")
+
+        bad_path = tmp_path / "dir.sqlite"
+        bad_path.mkdir()
+        with pytest.raises(sqlite3.OperationalError):
+            RunRepository(str(bad_path))
+        gc.collect()
+        assert [
+            w for w in recwarn if issubclass(w.category, pytest.PytestUnraisableExceptionWarning)
+        ] == []

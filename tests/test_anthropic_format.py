@@ -33,7 +33,14 @@ from tool_eval_bench.adapters.wire_format import (
 )
 from tool_eval_bench.application.service import BenchmarkService
 from tool_eval_bench.domain.adapters import ChatCompletionResult
-from tool_eval_bench.runner.orchestrator import _assistant_message
+from tool_eval_bench.domain.scenarios import (
+    Category,
+    FailureKind,
+    ScenarioDefinition,
+    ScenarioEvaluation,
+    ScenarioStatus,
+)
+from tool_eval_bench.runner.orchestrator import _assistant_message, run_scenario
 from tool_eval_bench.utils.headers import USER_AGENT
 from tool_eval_bench.utils.openai_compat import sampling_retry_payload
 
@@ -792,3 +799,156 @@ class TestModelListing:
             "https://proxy.example/inference/v1?tenant=research", None, "openai"
         )
         assert url == "https://proxy.example/inference/v1/models?tenant=research"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_signature_concat_input_preservation_and_refusal() -> None:
+    events = [
+        {"type": "message_start", "message": {"usage": {"input_tokens": 12}}},
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "plan"},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "sig-A-"},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "sig-B"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {
+                "type": "tool_use",
+                "id": "toolu_pre",
+                "name": "get_weather",
+                "input": {"city": "Tokyo"},
+            },
+        },
+        {"type": "content_block_stop", "index": 1},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "tool_use"},
+            "usage": {"output_tokens": 8},
+        },
+    ]
+    first_pretty = "\r\n".join(
+        f"data: {line}" for line in json.dumps(events[0], indent=2).splitlines()
+    )
+    rest_lines = "\r\n\r\n".join(f"data: {json.dumps(ev)}" for ev in events[1:])
+    sse_payload = f"{first_pretty}\r\n\r\n{rest_lines}\r\n\r\n".encode()
+
+    refusal_events = "\n\n".join(
+        f"data: {json.dumps(ev)}"
+        for ev in [
+            {"type": "message_start", "message": {"usage": {"input_tokens": 4}}},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "refusal", "stop_details": {"category": "cyber"}},
+                "usage": {"output_tokens": 0},
+            },
+        ]
+    ).encode()
+
+    truncated_events = "\n\n".join(
+        f"data: {json.dumps(ev)}"
+        for ev in [
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_cut",
+                    "name": "get_weather",
+                    "input": {},
+                },
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": '{"city": "San Fr'},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "max_tokens"},
+                "usage": {"output_tokens": 20},
+            },
+        ]
+    ).encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        mode = request.headers.get("x-case", "normal")
+        if mode == "refusal":
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, content=refusal_events
+            )
+        if mode == "truncated":
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, content=truncated_events
+            )
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"}, content=sse_payload
+        )
+
+    scenario = ScenarioDefinition(
+        id="FIX-ANTH-TRUNC",
+        title="Truncation regression",
+        description="Expected test tool workflow.",
+        category=Category.A,
+        user_message="Run the workflow.",
+        handle_tool_call=lambda state, call: {"ok": True, "id": call.id},
+        evaluate=lambda state: ScenarioEvaluation(ScenarioStatus.FAIL, 0, "wrong"),
+    )
+
+    for case in ("normal", "refusal", "truncated"):
+        adapter = AnthropicAdapter(default_headers={"x-case": case})
+        adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            if case == "normal":
+                res = await adapter.chat_completion(
+                    model="claude",
+                    messages=[{"role": "user", "content": "hi"}],
+                    base_url="https://api.anthropic.com",
+                    stream=True,
+                )
+                assert res.tool_calls[0].arguments == {"city": "Tokyo"}
+                blocks = res.message_extra_content["anthropic"]["thinking_blocks"]  # type: ignore[index]
+                assert blocks[0]["signature"] == "sig-A-sig-B"
+            elif case == "refusal":
+                res = await adapter.chat_completion(
+                    model="claude",
+                    messages=[{"role": "user", "content": "hi"}],
+                    base_url="https://api.anthropic.com",
+                    stream=True,
+                )
+                assert res.content == "[no content: refusal (cyber)]"
+            else:
+                scen_res = await run_scenario(
+                    adapter,
+                    model="claude",
+                    base_url="https://api.anthropic.com",
+                    api_key="k",
+                    scenario=scenario,
+                )
+                assert scen_res.failure_kind == FailureKind.REASONING_TRUNCATED
+        finally:
+            await adapter.aclose()
+
+    err_unstreamed = AnthropicAdapter._parse_response(
+        {"type": "error", "error": {"type": "overloaded_error", "message": "busy"}},
+        3.0,
+    )
+    assert err_unstreamed.transport_error_status == 529
+    assert err_unstreamed.transport_error_is_infrastructure is True

@@ -106,6 +106,12 @@ class TestStatMean:
     def test_non_dict(self):
         assert _stat_mean(None) == 0.0
 
+    def test_non_finite_and_invalid_strings(self):
+        assert _stat_mean({"mean": None}) == 0.0
+        assert _stat_mean({"mean": "nan"}) == 0.0
+        assert _stat_mean({"mean": "inf"}) == 0.0
+        assert _stat_mean({"mean": "not-a-number"}) == 0.0
+
 
 class TestParseBenchmarkEntry:
     def test_single_stream(self):
@@ -920,6 +926,49 @@ class TestRunLlamaBenchy:
         assert result.samples[2].error == (
             "pp2048 tg512 @ d161792 c3: no usable throughput metrics"
         )
+
+    async def test_boolean_total_tokens_in_progress_event_is_ignored(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """bool is an int subclass in Python and must not count as 1 generated token."""
+        from tool_eval_bench.runner.llama_benchy import run_llama_benchy
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.shutil.which",
+            lambda name: "/usr/bin/llama-benchy" if name == "llama-benchy" else None,
+        )
+        output_file_ref = _capture_output_file(monkeypatch)
+        progress_events = [
+            {
+                "type": "request_start",
+                "request_id": 1,
+                "prompt_size": 2048,
+                "response_size": 32,
+                "context_size": 0,
+                "concurrency": 1,
+            },
+            {
+                "type": "request_end",
+                "request_id": 1,
+                "total_tokens": True,
+            },
+            {"type": "bench_complete", "status": "ok"},
+        ]
+
+        async def mock_create(*args: object, **kwargs: object) -> _MockProcess:
+            return _MockProcess(
+                stdout_lines=[f"{json.dumps(event)}\n" for event in progress_events],
+                output_file=output_file_ref[0],
+                write_json={"benchmarks": [SAMPLE_BENCHMARK_ENTRY]},
+            )
+
+        monkeypatch.setattr(
+            "tool_eval_bench.runner.llama_benchy.asyncio.create_subprocess_exec",
+            mock_create,
+        )
+
+        result = await run_llama_benchy("http://localhost:8888/v1", "test-model")
+        assert result.samples[0].tg_tokens == 32
 
     async def test_on_output_receives_stderr_lines(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """on_output callback should receive every stderr line."""

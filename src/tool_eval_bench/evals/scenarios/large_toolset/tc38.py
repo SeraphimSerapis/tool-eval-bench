@@ -52,6 +52,9 @@ from tool_eval_bench.evals.helpers import (
     recipient_values as _recipient_values,
 )
 from tool_eval_bench.evals.helpers import (
+    result_is_usable_if_present as _result_is_usable_if_present,
+)
+from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.large_toolset._shared import (
@@ -129,20 +132,30 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     Same chain as TC-07, but with 52 tools. Must complete 4 steps
     using the correct tools from a crowded namespace.
     """
+
+    def _is_valid_search(call: ToolCallRecord) -> bool:
+        return call.name == "search_files" and (
+            _includes_text(call.arguments.get("query"), "q3 budget report")
+            or _includes_text(call.arguments.get("query"), "budget")
+        )
+
+    def _is_valid_read(call: ToolCallRecord) -> bool:
+        return (
+            call.name == "read_file"
+            and _normalize(_as_str(call.arguments.get("file_id"))) == "file_091"
+        )
+
     steps = 0
     if _has_tool_call(
         state,
         "search_files",
-        lambda c: (
-            _includes_text(c.arguments.get("query"), "q3 budget report")
-            or _includes_text(c.arguments.get("query"), "budget")
-        ),
+        lambda c: _is_valid_search(c),
     ):
         steps += 1
     if _has_tool_call(
         state,
         "read_file",
-        lambda c: _normalize(_as_str(c.arguments.get("file_id"))) == "file_091",
+        lambda c: _is_valid_read(c),
     ):
         steps += 1
     manager_lookup = _has_tool_call(
@@ -195,8 +208,8 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
 
     if steps == 4 and not domain_calls:
-        search = _first_counted(state.tool_calls, lambda c: c.name == "search_files")
-        read = _first_counted(state.tool_calls, lambda c: c.name == "read_file")
+        search = _first_counted(state.tool_calls, _is_valid_search)
+        read = _first_counted(state.tool_calls, _is_valid_read)
         manager = _first_counted(
             state.tool_calls,
             lambda c: (
@@ -220,6 +233,12 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
         ):
             return _partial(
                 "Found the chain but issued an unsafe duplicate or incorrect email mutation."
+            )
+        if any(
+            not _result_is_usable_if_present(state, call) for call in (search, read, manager, email)
+        ):
+            return _partial(
+                "Completed the calls, but a required tool result was unusable or missing."
             )
         if not _address_observed_before(
             state, email, "jordan.park@company.com", sources=_TC38_LOOKUPS

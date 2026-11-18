@@ -1471,3 +1471,170 @@ class TestStandardScenarioAuditFixes:
         payload["reasoning"] = reasoning
         trace[-1]["answer"] = json.dumps(payload, ensure_ascii=False)
         assert tc67.evaluate(_replay_trace(tc67, trace)).status == expected
+
+    def test_tc13_clarify_after_search_error_is_partial_not_pass(self) -> None:
+        tc13 = _SCENARIOS["TC-13"]
+        state = make_state(
+            tool_calls=[
+                make_tool_call("search_files", {"query": "Johnson proposal"}, call_id="c0")
+            ],
+            tool_results=[
+                ToolResultRecord(
+                    call_id="c0",
+                    name="search_files",
+                    result={"error": "Rate limit exceeded.", "status": 429},
+                )
+            ],
+            final_answer="The search failed. Could you tell me which folder it is in?",
+        )
+        result = tc13.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    @pytest.mark.parametrize(
+        ("call_name", "bad_result"),
+        [
+            ("search_files", {"error": "Service unavailable", "status": 503}),
+            ("read_file", {"error": "File read failed", "status": 500}),
+            ("send_email", {"error": "SMTP timeout", "status": 503}),
+            ("send_email", {"status": "failed"}),
+        ],
+    )
+    def test_tc38_unusable_chain_tool_result_is_partial_not_pass(
+        self, call_name: str, bad_result: dict[str, Any]
+    ) -> None:
+        tc38 = _SCENARIOS["TC-38"]
+        state = _replay_trace(tc38, deepcopy(_REFERENCE_TRACES["TC-38"]))
+        for res in state.tool_results:
+            if res.name == call_name:
+                res.result = bad_result
+                break
+        result = tc38.evaluate(state)
+        assert result.status == ScenarioStatus.PARTIAL
+
+    def test_tc38_earlier_unrelated_search_does_not_satisfy_order_for_later_valid_search(
+        self,
+    ) -> None:
+        tc38 = _SCENARIOS["TC-38"]
+        state = _replay_trace(
+            tc38,
+            [
+                {
+                    "calls": [{"name": "search_files", "arguments": {"query": "lunch menu"}}],
+                    "answer": "",
+                },
+                {
+                    "calls": [{"name": "read_file", "arguments": {"file_id": "file_091"}}],
+                    "answer": "",
+                },
+                {
+                    "calls": [{"name": "get_contacts", "arguments": {"query": "manager"}}],
+                    "answer": "",
+                },
+                {
+                    "calls": [{"name": "search_files", "arguments": {"query": "Q3 budget report"}}],
+                    "answer": "",
+                },
+                {
+                    "calls": [
+                        {
+                            "name": "send_email",
+                            "arguments": {
+                                "to": "jordan.park@company.com",
+                                "subject": "Budget",
+                                "body": "Total is $4.4M",
+                            },
+                        }
+                    ],
+                    "answer": "",
+                },
+                {"calls": [], "answer": "Sent."},
+            ],
+        )
+        assert tc38.evaluate(state).status == ScenarioStatus.PARTIAL
+
+    def test_tc40_duplicate_order_call_and_error_and_lookup_summaries(self) -> None:
+        tc40 = _SCENARIOS["TC-40"]
+        dup_state = _replay_trace(
+            tc40,
+            [
+                {
+                    "calls": [
+                        {"name": "get_order_status", "arguments": {"order_id": "Sarah Chen"}}
+                    ],
+                    "answer": "",
+                },
+                {
+                    "calls": [
+                        {"name": "get_order_status", "arguments": {"order_id": "Sarah Chen"}}
+                    ],
+                    "answer": "",
+                },
+                {"calls": [], "answer": "Order ORD-2026-1847 has shipped."},
+            ],
+        )
+        dup_eval = tc40.evaluate(dup_state)
+        assert dup_eval.status == ScenarioStatus.PARTIAL
+        assert not dup_eval.summary.endswith(": ")
+        assert "multiple times" in dup_eval.summary
+
+        silent_error_state = make_state(
+            tool_calls=[
+                make_tool_call("get_order_status", {"order_id": "Sarah Chen"}, call_id="c0")
+            ],
+            tool_results=[
+                ToolResultRecord(
+                    call_id="c0",
+                    name="get_order_status",
+                    result={"error": "Service unavailable", "status": 503},
+                )
+            ],
+            final_answer="Checking.",
+        )
+        silent_err_eval = tc40.evaluate(silent_error_state)
+        assert silent_err_eval.status == ScenarioStatus.PARTIAL
+        assert "returned an error" in silent_err_eval.summary
+
+        lookup_no_surface = _replay_trace(
+            tc40,
+            [
+                {
+                    "calls": [
+                        {"name": "get_customer_profile", "arguments": {"customer_id": "Sarah Chen"}}
+                    ],
+                    "answer": "",
+                },
+                {
+                    "calls": [
+                        {"name": "get_order_status", "arguments": {"order_id": "ORD-2026-1847"}}
+                    ],
+                    "answer": "",
+                },
+                {"calls": [], "answer": "Checked her order."},
+            ],
+        )
+        lookup_eval = tc40.evaluate(lookup_no_surface)
+        assert lookup_eval.status == ScenarioStatus.PARTIAL
+        assert "unnecessary" not in lookup_eval.summary
+
+        lookup_error = _replay_trace(
+            tc40,
+            [
+                {
+                    "calls": [
+                        {"name": "get_customer_profile", "arguments": {"customer_id": "Sarah Chen"}}
+                    ],
+                    "answer": "",
+                },
+                {
+                    "calls": [
+                        {"name": "get_order_status", "arguments": {"order_id": "ORD-2026-1847"}}
+                    ],
+                    "answer": "",
+                },
+                {"calls": [], "answer": "Order ORD-2026-1847 has shipped."},
+            ],
+        )
+        lookup_error.tool_results[1].result = {"error": "Rate limit exceeded.", "status": 429}
+        lookup_err_eval = tc40.evaluate(lookup_error)
+        assert lookup_err_eval.status == ScenarioStatus.PARTIAL
+        assert "returned an error" in lookup_err_eval.summary

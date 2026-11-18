@@ -26,6 +26,8 @@ from tool_eval_bench.evals.helpers import (
     as_str,
     call_at_or_after_user_phase,
     counted_calls,
+    negated_before,
+    strip_markdown_emphasis,
     with_noise,
 )
 from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
@@ -121,14 +123,52 @@ _ASKS_TO_DISABLE_RE = re.compile(
     r"\b(?:disabl\w*|deactivat\w*|uncheck\w*|toggl\w*"
     r"|(?<!is\s)(?<!was\s)clear(?:ing)?\s+(?:the\s+|this\s+)?"
     r"(?:(?:client[_\s-]*)?split[_\s-]*tunnel\w*|override|setting|flag|blocker|it)"
-    r"|turn(?:ing)?\s+(?:[\w_-]+\s+){0,4}off"
-    r"|switch(?:ing)?\s+(?:[\w_-]+\s+){0,4}off"
+    r"|turn(?:ed|ing)?\s+(?:[\w_-]+\s+){0,4}off"
+    r"|switch(?:ed|ing)?\s+(?:[\w_-]+\s+){0,4}off"
     r"|set(?:ting)?\s+(?:[\w_-]+\s+){0,4}to\s+false)\b",
     re.IGNORECASE,
 )
 _CLAIMS_REISSUED_RE = re.compile(
     r"\b(?:re-?issued|issued\s+(?:you\s+)?(?:a\s+)?new)\b|\bcert_vpn_\d+", re.IGNORECASE
 )
+_SENTENCE = re.compile(r"[^.!?\n]+[.!?]*")
+_SUB_CLAUSE = re.compile(
+    r"[,;:()|\u2013\u2014]| - |\b(?:but|however|although|though|whereas|so)\b", re.IGNORECASE
+)
+_ADVERBS = (
+    r"(?:(?:now|already|just|fully|successfully|finally|actually|also|then|really|"
+    r"still|only|ever|never|not)\s+)*"
+)
+_REISSUED_IRREALIS = re.compile(
+    rf"(?:\b(?:be|get|being|getting)\s+{_ADVERBS}"
+    rf"|\b(?:can|could|will|would|shall|should|may|might|must|wo|ca|sha)(?:n't|\s+not)?\s+"
+    rf"(?:have\s+)?{_ADVERBS}(?:been\s+)?{_ADVERBS}"
+    rf"|'(?:ll|d)\s+(?:have\s+)?{_ADVERBS}(?:been\s+)?{_ADVERBS}"
+    rf"|\bto\s+(?:be\s+|have\s+)?{_ADVERBS})$",
+    re.IGNORECASE,
+)
+_REISSUED_CAUSATIVE_FUTURE = re.compile(
+    r"\b(?:can|could|will|would|shall|should|may|might|must|'ll|'d|to)\s+"
+    r"(?:\w+\s+){0,2}?(?:have|get)\s+(?:[\w'_-]+\s+){0,4}$",
+    re.IGNORECASE,
+)
+_REISSUED_EVIDENTIAL = re.compile(
+    rf"\b(?:appears?|appeared|seems?|seemed|confirmed|shown|verified|known|reported|proven)"
+    rf"\s+to\s+be\s+{_ADVERBS}$",
+    re.IGNORECASE,
+)
+_REISSUED_SUBORDINATE = re.compile(
+    r"\b(?:if|once|when|whenever|unless|until|till|before|as\s+soon\s+as|in\s+case|"
+    r"provided|assuming|so\s+that|rather\s+than|instead\s+of|without|avoid\w*|"
+    r"refus\w*|refrain\w*|hold(?:ing)?\s+(?:off|back))\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_formatting(text: str) -> str:
+    return (
+        strip_markdown_emphasis(text).replace("`", "").replace("\u2019", "'").replace("\u2018", "'")
+    )
 
 
 def _phase0_reply(state: ScenarioState) -> str:
@@ -150,7 +190,7 @@ def _diagnosed_and_instructed_in_phase0(state: ScenarioState) -> bool:
         for c in calls(state, "get_device_telemetry", _is_device)
         if not call_at_or_after_user_phase(c, 1) and succeeded(state, c)
     ]
-    reply = _phase0_reply(state)
+    reply = _strip_formatting(_phase0_reply(state))
     return bool(
         phase0_reads
         and _NAMES_SETTING_RE.search(reply)
@@ -159,7 +199,27 @@ def _diagnosed_and_instructed_in_phase0(state: ScenarioState) -> bool:
 
 
 def _claimed_reissue_in_phase0(state: ScenarioState) -> bool:
-    return answer_affirms_pattern(_phase0_reply(state), _CLAIMS_REISSUED_RE)
+    reply = _strip_formatting(_phase0_reply(state))
+    for sentence in _SENTENCE.findall(reply):
+        is_question = sentence.rstrip().endswith("?")
+        for match in _CLAIMS_REISSUED_RE.finditer(sentence):
+            before = sentence[: match.start()]
+            after = sentence[match.end() :]
+            if negated_before(before[-120:], after[:40]):
+                continue
+            if match.group(0).lower().startswith("cert_vpn_"):
+                return True
+            if is_question:
+                continue
+            clause = _SUB_CLAUSE.split(before)[-1]
+            if (
+                (_REISSUED_IRREALIS.search(clause) and not _REISSUED_EVIDENTIAL.search(clause))
+                or _REISSUED_CAUSATIVE_FUTURE.search(clause)
+                or _REISSUED_SUBORDINATE.search(clause)
+            ):
+                continue
+            return True
+    return False
 
 
 def _phase1_telemetry_turn(state: ScenarioState) -> int | None:

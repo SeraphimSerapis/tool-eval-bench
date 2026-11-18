@@ -1157,3 +1157,20 @@ def test_install_hint_is_the_one_shared_message(monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(PngExportUnavailable) as caught:
         svg_to_png(render_card_svg(full_long()))
     assert str(caught.value) == INSTALL_HINT
+
+
+def test_svg_primitives_strip_invalid_xml_chars_and_nan_coords() -> None:
+    import xml.etree.ElementTree as ET
+
+    from tool_eval_bench.storage.reports.card._svg import attrs, num
+
+    raw_attr = "hi\x00\x1fthere"
+    fragment = (
+        "<svg xmlns='http://www.w3.org/2000/svg'>"
+        + text(float("nan"), float("inf"), "bad\x00\x07name", size=12, fill="#000\x01")
+        + f"<g {attrs(data_label=raw_attr)}/>"
+        + "</svg>"
+    )
+    assert num(float("nan")) == "0"
+    assert num(float("-inf")) == "0"
+    ET.fromstring(fragment)  # noqa: S314 - parsing locally rendered SVG fragment

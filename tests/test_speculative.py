@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
+import httpx
 import pytest
 
 from tests.conftest import MeasurementTestClient
+from tests.coverage_helpers import MagicAsyncClient
+from tests.coverage_helpers import throughput_sample as _cov_sample
+from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
 from tool_eval_bench.domain.spec_decode import suggested_draft_window, window_utilization
 from tool_eval_bench.runner.speculative import (
     SpecDecodeCounters,
     SpecDecodeInfo,
     SpecDecodeSample,
+    detect_spec_decoding,
     parse_prometheus_spec_metrics,
+    pool_spec_samples,
+    scrape_spec_metrics,
 )
-from tool_eval_bench.runner.throughput import ThroughputSample
+from tool_eval_bench.runner.throughput import ThroughputSample, TokenizerConfig
 
 # ---------------------------------------------------------------------------
 # SpecDecodeCounters
@@ -243,6 +252,10 @@ class TestSpecDecodeSample:
         s = SpecDecodeSample(tg_tokens=100, total_ms=2000, ttft_ms=500, accepted_tokens_delta=0)
         assert s.goodput == 0.0
 
+    def test_goodput_zero_total_ms(self):
+        s = SpecDecodeSample(tg_tokens=50, total_ms=0, accepted_tokens_delta=40)
+        assert s.goodput == 0.0
+
     def test_speedup_ratio(self):
         """Speedup ratio = effective / baseline."""
         s = SpecDecodeSample(
@@ -409,24 +422,6 @@ class TestWindowUtilization:
 
     def test_suggestion_none_when_window_is_already_small_enough(self):
         assert suggested_draft_window(3.0, 3.0) is None
-
-
-# ---------------------------------------------------------------------------
-# SpecDecodeInfo
-# ---------------------------------------------------------------------------
-
-
-class TestSpecDecodeInfo:
-    def test_default_not_active(self):
-        info = SpecDecodeInfo()
-        assert info.active is False
-        assert info.has_prometheus is False
-        assert info.method == "unknown"
-
-    def test_active_with_prometheus(self):
-        info = SpecDecodeInfo(active=True, has_prometheus=True, method="mtp")
-        assert info.active is True
-        assert info.method == "mtp"
 
 
 # ---------------------------------------------------------------------------
@@ -654,140 +649,404 @@ class TestDetectSpecDecodingVLLMNonRegression:
         assert info.has_per_request_timings is False
 
 
-class TestLlamaCppTimings:
-    """Tests for llama.cpp speculative decoding via per-request timings."""
+async def _detect_from_metrics(body: str) -> SpecDecodeInfo:
+    transport = httpx.MockTransport(lambda r: httpx.Response(200, text=body))
+    async with MeasurementTestClient(transport=transport) as client:
+        return await detect_spec_decoding(client, "http://host:8000/v1")
 
-    def test_spec_decode_info_has_per_request_timings(self):
-        """SpecDecodeInfo tracks llama.cpp per-request timings flag."""
-        info = SpecDecodeInfo(has_per_request_timings=True)
-        assert info.has_per_request_timings is True
-        assert info.has_prometheus is False
-        assert info.active is False  # not auto-detected from /metrics
 
-    def test_spec_decode_info_default_no_per_request(self):
-        """Default SpecDecodeInfo has no per-request timings."""
-        info = SpecDecodeInfo()
-        assert info.has_per_request_timings is False
+_VLLM_SPEC_LINES = """\
+# HELP vllm:spec_decode_num_drafts_total Number of spec decoding drafts.
+# TYPE vllm:spec_decode_num_drafts_total counter
+vllm:spec_decode_num_drafts_total{{engine="0",model_name="{model}"}} 50.0
+# HELP vllm:spec_decode_num_draft_tokens_total Number of draft tokens.
+# TYPE vllm:spec_decode_num_draft_tokens_total counter
+vllm:spec_decode_num_draft_tokens_total{{engine="0",model_name="{model}"}} 200.0
+vllm:spec_decode_num_accepted_tokens_total{{engine="0",model_name="{model}"}} 100.0
+"""
 
-    def test_throughput_sample_draft_fields(self):
-        """ThroughputSample has draft_n and draft_n_accepted from llama.cpp."""
-        ts = ThroughputSample(
-            pp_tokens=2048,
-            tg_tokens=128,
-            draft_n=156,
-            draft_n_accepted=120,
+
+@pytest.mark.asyncio
+async def test_scrape_spec_metrics_states() -> None:
+    ok_body = (
+        "spec_decode_num_accepted_tokens 100\n"
+        "spec_decode_num_draft_tokens 200\n"
+        "spec_decode_num_drafts 50\n"
+    )
+    async with MeasurementTestClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, text=ok_body))
+    ) as client:
+        c = await scrape_spec_metrics(client, "http://host:8000/v1")
+    assert c is not None and c.accepted_tokens == pytest.approx(100)
+
+    async with MeasurementTestClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(
+                200, text="spec_decode_num_accepted_tokens 0\nspec_decode_num_draft_tokens 0\n"
+            )
         )
-        assert ts.draft_n == 156
-        assert ts.draft_n_accepted == 120
+    ) as client:
+        zero_c = await scrape_spec_metrics(client, "http://host:8000/v1")
+    assert zero_c is not None
 
-    def test_throughput_sample_draft_fields_default_none(self):
-        """draft_n fields default to None."""
-        ts = ThroughputSample()
-        assert ts.draft_n is None
-        assert ts.draft_n_accepted is None
+    for transport in (
+        httpx.MockTransport(lambda r: httpx.Response(200, text="some_other_metric 42\n")),
+        httpx.MockTransport(lambda r: httpx.Response(404)),
+        httpx.MockTransport(lambda r: (_ for _ in ()).throw(ConnectionError("down"))),
+    ):
+        async with MeasurementTestClient(transport=transport) as client:
+            assert await scrape_spec_metrics(client, "http://host:8000/v1") is None
 
-    def test_spec_sample_from_llamacpp_timings(self):
-        """SpecDecodeSample populated from llama.cpp per-request timings.
 
-        When Prometheus counters are absent, measure_spec_single() should
-        fall back to ThroughputSample.draft_n / draft_n_accepted.
-        """
-        # Simulate what _stream_one returns for a llama.cpp server
-        ts = ThroughputSample(
-            pp_tokens=2048,
-            tg_tokens=128,
-            depth=0,
-            concurrency=1,
-            ttft_ms=200,
-            total_ms=3000,
-            pp_tps=10000,
-            tg_tps=42.0,
-            draft_n=156,
-            draft_n_accepted=120,
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model",
+    [
+        "acme/eagle-7b",
+        "/models/ngram-lookup-test",
+        "deepseek-ai/DeepSeek-V3-MTP",
+        "qwen-multi_token-preview",
+        'org/method=\\"eagle\\"',
+    ],
+)
+async def test_detect_spec_decoding_ignores_method_words_in_model_name(model: str) -> None:
+    info = await _detect_from_metrics(_VLLM_SPEC_LINES.format(model=model))
+
+    assert info.active is True
+    assert info.method == "unknown"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        "# HELP vllm:spec_decode_num_draft_tokens_total EAGLE draft tokens.\n"
+        "vllm:spec_decode_num_draft_tokens_total 200\n",
+        "spec_decode_eagle_accepted 100\nspec_decode_num_draft_tokens 200\n",
+        'vllm:spec_decode_num_draft_tokens_total 200\nhttp_requests_total{method="ngram"} 1\n',
+    ],
+    ids=["help-text", "metric-name", "method-label-off-spec-series"],
+)
+async def test_detect_spec_decoding_ignores_method_words_outside_labels(body: str) -> None:
+    info = await _detect_from_metrics(body)
+
+    assert info.active is True
+    assert info.method == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_detect_spec_decoding_reads_llamacpp_scrape_as_unknown_method() -> None:
+    body = (
+        "# HELP llamacpp:spec_decode_num_draft_tokens_total Speculative: Total draft tokens\n"
+        "# TYPE llamacpp:spec_decode_num_draft_tokens_total counter\n"
+        "llamacpp:spec_decode_num_draft_tokens_total 5017\n"
+        "llamacpp:spec_decode_num_accepted_tokens_total 1787\n"
+        "llamacpp:spec_decode_num_drafts_total 1261\n"
+        'llamacpp:spec_decode_num_accepted_tokens_per_pos_total{position="0"} 737\n'
+    )
+
+    info = await _detect_from_metrics(body)
+
+    assert info.active is True
+    assert info.method == "unknown"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        ('model_name="acme/ngram-7b",spec_method="eagle3"', "eagle3"),
+        ('speculative_method="NEXTN"', "mtp"),
+        ('method="ngram",model_name="acme/eagle-7b"', "ngram"),
+    ],
+)
+async def test_detect_spec_decoding_reads_explicit_method_label(labels: str, expected: str) -> None:
+    body = f"vllm:spec_decode_num_draft_tokens_total{{{labels}}} 200\n"
+
+    info = await _detect_from_metrics(body)
+
+    assert info.method == expected
+
+
+@pytest.mark.asyncio
+async def test_detect_spec_decoding_reads_spec_method_label_on_any_series() -> None:
+    body = (
+        "vllm:spec_decode_num_draft_tokens_total 200\n"
+        'exporter:speculative_config{spec_method="suffix"} 1\n'
+    )
+
+    info = await _detect_from_metrics(body)
+
+    assert info.method == "suffix"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("hint", "expected"),
+    [
+        ("mtp", "mtp"),
+        ("draft_model", "draft_model"),
+        ("extract_hidden_states", "extract_hidden_states"),
+        ("DRAFT", "draft_model"),
+        ("eagle_parallel", "eagle_parallel"),
+    ],
+)
+async def test_detect_spec_decoding_accepts_canonical_and_variant_hints(
+    hint: str, expected: str
+) -> None:
+    transport = httpx.MockTransport(lambda r: httpx.Response(404))
+    async with MeasurementTestClient(transport=transport) as client:
+        info = await detect_spec_decoding(client, "http://host:8000/v1", backend_hint=hint)
+    assert info.active is True
+    assert info.method == expected
+
+
+@pytest.mark.asyncio
+async def test_detect_spec_decoding_ignores_unknown_hint_and_errors() -> None:
+    for transport in (
+        httpx.MockTransport(lambda r: httpx.Response(404)),
+        httpx.MockTransport(lambda r: (_ for _ in ()).throw(ConnectionError("down"))),
+    ):
+        async with MeasurementTestClient(transport=transport) as client:
+            info = await detect_spec_decoding(
+                client, "http://host:8000/v1", backend_hint="unknown_method"
+            )
+        assert info.active is False
+
+
+@pytest.mark.asyncio
+async def test_speculative_measurement_prometheus_and_llamacpp_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench.runner import speculative
+
+    counters = iter(
+        [
+            speculative.SpecDecodeCounters(accepted_tokens=10, draft_tokens=20, num_drafts=5),
+            speculative.SpecDecodeCounters(accepted_tokens=24, draft_tokens=40, num_drafts=9),
+        ]
+    )
+
+    async def scrape(*args: object, **kwargs: object):
+        return next(counters)
+
+    async def stream(*args: object, **kwargs: object):
+        return _cov_sample()
+
+    monkeypatch.setattr(speculative, "scrape_spec_metrics", scrape)
+    monkeypatch.setattr(speculative, "_stream_one", stream)
+    sample = await speculative.measure_spec_single(
+        MagicAsyncClient(),
+        "url",
+        "model",
+        prompt_type="code",
+        spec_info=SpecDecodeInfo(has_prometheus=True, method="mtp"),
+    )
+    assert sample.acceptance_source == "prometheus"
+    assert sample.acceptance_rate == 0.7
+    assert sample.acceptance_length == 4.5
+
+    seen_messages: list[list[dict[str, object]]] = []
+
+    async def stream_with_timings(
+        client, base_url, model, messages, *args: object, **kwargs: object
+    ):
+        seen_messages.append(messages)
+        return _cov_sample(draft_n=10, draft_n_accepted=6)
+
+    monkeypatch.setattr(speculative, "_stream_one", stream_with_timings)
+    monkeypatch.setattr(speculative, "scrape_spec_metrics", lambda *args, **kwargs: None)
+    cfg = TokenizerConfig(chars_per_token=2.0)
+    fallback = await speculative.measure_spec_single(
+        MagicAsyncClient(),
+        "url",
+        "model",
+        depth=512,
+        prompt_type="structured",
+        tok_cfg=cfg,
+        spec_info=SpecDecodeInfo(),
+    )
+    assert fallback.acceptance_source == "timings"
+    assert fallback.acceptance_rate == 0.6
+    assert len(str(seen_messages[0][0]["content"])) >= 512
+
+
+@pytest.mark.asyncio
+async def test_speculative_full_sweep_invokes_callback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tool_eval_bench.runner import speculative
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: object):
+            return None
+
+    async def calibrate_stub(*args: object, **kwargs: object) -> TokenizerConfig:
+        return TokenizerConfig()
+
+    async def detect_stub(*args: object, **kwargs: object) -> SpecDecodeInfo:
+        return SpecDecodeInfo(has_per_request_timings=True)
+
+    async def measure(*args: object, depth=0, prompt_type="filler", **kwargs: object):
+        return SpecDecodeSample(depth=depth, prompt_type=prompt_type)
+
+    seen: list[tuple[int, int]] = []
+
+    async def callback(sample: SpecDecodeSample, idx: int, total: int) -> None:
+        seen.append((idx, total))
+
+    monkeypatch.setattr(speculative, "calibrate", calibrate_stub)
+    monkeypatch.setattr(speculative, "detect_spec_decoding", detect_stub)
+    monkeypatch.setattr(speculative, "measure_spec_single", measure)
+    samples = await speculative.run_spec_bench(
+        "url",
+        "model",
+        client_factory=lambda **kwargs: Client(),
+        depths=[0, 1024],
+        prompt_types=["filler", "code"],
+        on_sample=callback,
+    )
+
+    assert len(samples) == 4
+    assert seen == [(0, 4), (1, 4), (2, 4), (3, 4)]
+
+
+@pytest.mark.asyncio
+async def test_speculative_prometheus_reset_and_metric_parsers() -> None:
+    empty_pooled = pool_spec_samples([])
+    assert empty_pooled.error == "no samples"
+    assert empty_pooled.runs == 0
+
+    scrapes = [
+        (
+            "vllm:spec_decode_num_draft_tokens_total 100\n"
+            "vllm:spec_decode_num_accepted_tokens_total 80\n"
+            "vllm:spec_decode_num_drafts_total 25\n"
+        ),
+        (
+            "vllm:spec_decode_num_draft_tokens_total 10\n"
+            "vllm:spec_decode_num_accepted_tokens_total 8\n"
+            "vllm:spec_decode_num_drafts_total 2\n"
+        ),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/metrics"):
+            return httpx.Response(200, text=scrapes.pop(0))
+        if request.url.path.endswith("/tokenize"):
+            return httpx.Response(200, json={"count": 16})
+        sse = (
+            'data: {"choices": [{"delta": {"content": "hello"}}], '
+            '"usage": {"prompt_tokens": 16, "completion_tokens": 4}}\n\n'
+            "data: [DONE]\n\n"
         )
-        spec = SpecDecodeSample.from_throughput_sample(ts, spec_method="mtp")
-
-        # Simulate the fallback path in measure_spec_single
-        # (no Prometheus data → use per-request timings)
-        if spec.draft_tokens_delta is None and ts.draft_n is not None:
-            spec.draft_tokens_delta = ts.draft_n
-            spec.accepted_tokens_delta = ts.draft_n_accepted or 0
-            if ts.draft_n > 0:
-                spec.acceptance_rate = (ts.draft_n_accepted or 0) / ts.draft_n
-
-        assert spec.draft_tokens_delta == 156
-        assert spec.accepted_tokens_delta == 120
-        assert spec.acceptance_rate == pytest.approx(120 / 156)
-        assert spec.waste_ratio == pytest.approx(1.0 - 120 / 156)
-        # acceptance_length and draft_window remain None (llama.cpp doesn't expose num_drafts)
-        assert spec.acceptance_length is None
-        assert spec.draft_window is None
-        # effective t/s still works
-        assert spec.effective_tg_tps > 0
-
-    def test_spec_sample_llamacpp_zero_drafts(self):
-        """When draft_n=0, acceptance_rate should not be set."""
-        ts = ThroughputSample(
-            tg_tokens=128,
-            total_ms=3000,
-            ttft_ms=200,
-            draft_n=0,
-            draft_n_accepted=0,
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=sse.encode(),
         )
-        spec = SpecDecodeSample.from_throughput_sample(ts, spec_method="mtp")
 
-        # Simulate fallback: draft_n=0 should not set acceptance_rate
-        if spec.draft_tokens_delta is None and ts.draft_n is not None:
-            spec.draft_tokens_delta = ts.draft_n
-            spec.accepted_tokens_delta = ts.draft_n_accepted or 0
-            if ts.draft_n > 0:
-                spec.acceptance_rate = (ts.draft_n_accepted or 0) / ts.draft_n
+    from tool_eval_bench.runner.speculative import measure_spec_single
 
-        assert spec.draft_tokens_delta == 0
-        assert spec.acceptance_rate is None  # no drafts → no rate
-
-    def test_spec_sample_llamacpp_all_accepted(self):
-        """Perfect acceptance: draft_n == draft_n_accepted."""
-        ts = ThroughputSample(
-            tg_tokens=128,
-            total_ms=3000,
-            ttft_ms=200,
-            draft_n=100,
-            draft_n_accepted=100,
+    async with HTTPMeasurementClient(
+        base_url="http://localhost:8000",
+        timeout=5.0,
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        spec_sample: SpecDecodeSample = await measure_spec_single(
+            client,
+            "http://localhost:8000",
+            "m",
+            pp=32,
+            tg=4,
+            tok_cfg=TokenizerConfig(
+                has_tokenize_endpoint=True,
+                supports_return_token_ids=False,
+            ),
+            spec_info=SpecDecodeInfo(method="eagle", has_prometheus=True),
         )
-        spec = SpecDecodeSample.from_throughput_sample(ts, spec_method="draft")
+        assert spec_sample.error is None
+        assert spec_sample.draft_tokens_delta is None
+        assert spec_sample.accepted_tokens_delta is None
 
-        if spec.draft_tokens_delta is None and ts.draft_n is not None:
-            spec.draft_tokens_delta = ts.draft_n
-            spec.accepted_tokens_delta = ts.draft_n_accepted or 0
-            if ts.draft_n > 0:
-                spec.acceptance_rate = (ts.draft_n_accepted or 0) / ts.draft_n
+    prom_text = (
+        "vllm:spec_decode_num_draft_tokens_total 1e400\n"
+        "vllm:spec_decode_num_accepted_tokens_total 12\n"
+        "vllm:spec_decode_num_drafts_total 1e400\n"
+    )
+    counters = parse_prometheus_spec_metrics(prom_text)
+    assert counters.accepted_tokens == 12.0
+    assert counters.draft_tokens == 0.0
+    assert counters.has_num_drafts is False
 
-        assert spec.acceptance_rate == pytest.approx(1.0)
-        assert spec.waste_ratio == pytest.approx(0.0)
 
-    def test_prometheus_takes_precedence_over_timings(self):
-        """When Prometheus deltas are available, they should win over timings."""
-        ts = ThroughputSample(
-            tg_tokens=128,
-            total_ms=3000,
-            ttft_ms=200,
-            draft_n=100,  # llama.cpp timings present
-            draft_n_accepted=80,
+def test_pool_spec_samples_keeps_non_null_acceptance_metadata_from_later_runs() -> None:
+    s1 = SpecDecodeSample(
+        pp_tokens=100,
+        tg_tokens=20,
+        ttft_ms=50.0,
+        total_ms=250.0,
+        pp_tps=2000.0,
+        tg_tps=100.0,
+        acceptance_source=None,
+        num_spec_tokens=None,
+    )
+    s2 = SpecDecodeSample(
+        pp_tokens=100,
+        tg_tokens=20,
+        ttft_ms=50.0,
+        total_ms=250.0,
+        pp_tps=2000.0,
+        tg_tps=100.0,
+        draft_tokens_delta=30,
+        accepted_tokens_delta=24,
+        acceptance_rate=0.8,
+        acceptance_source="prometheus",
+        num_spec_tokens=4,
+    )
+    pooled = pool_spec_samples([s1, s2])
+    assert pooled.acceptance_rate == pytest.approx(0.8)
+    assert pooled.acceptance_source == "prometheus"
+    assert pooled.num_spec_tokens == 4
+
+
+class TestMetricsUrlOverride:
+    @pytest.mark.asyncio
+    async def test_scrape_uses_override(self) -> None:
+        """scrape_spec_metrics should use metrics_url when provided."""
+        client = AsyncMock()
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = (
+            "spec_decode_num_accepted_tokens_total 100\nspec_decode_num_draft_tokens_total 200\n"
         )
-        spec = SpecDecodeSample.from_throughput_sample(ts, spec_method="mtp")
+        client.metrics = AsyncMock(return_value=resp)
 
-        # Simulate Prometheus data being available (vLLM path)
-        spec.draft_tokens_delta = 200  # from Prometheus
-        spec.accepted_tokens_delta = 150  # from Prometheus
-        spec.acceptance_rate = 150 / 200
+        result = await scrape_spec_metrics(
+            client,
+            "http://litellm:4000",
+            metrics_url="http://vllm:8080/metrics",
+        )
+        # The semantic port receives the override, not a runner-built URL.
+        client.metrics.assert_awaited_once_with(metrics_url="http://vllm:8080/metrics")
+        assert result is not None
+        assert result.accepted_tokens == 100.0
 
-        # Now the fallback check should NOT override
-        if spec.draft_tokens_delta is None and ts.draft_n is not None:
-            spec.draft_tokens_delta = ts.draft_n
-            spec.accepted_tokens_delta = ts.draft_n_accepted or 0
+    @pytest.mark.asyncio
+    async def test_detect_uses_override(self) -> None:
+        """detect_spec_decoding should use metrics_url when provided."""
+        client = AsyncMock()
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = "spec_decode_num_accepted_tokens_total 50\n"
+        client.metrics = AsyncMock(return_value=resp)
 
-        # Prometheus values should persist
-        assert spec.draft_tokens_delta == 200
-        assert spec.accepted_tokens_delta == 150
-        assert spec.acceptance_rate == pytest.approx(0.75)
+        info = await detect_spec_decoding(
+            client,
+            "http://litellm:4000",
+            metrics_url="http://vllm:8080/metrics",
+        )
+        assert info.active is True
+        assert info.has_prometheus is True
+        client.metrics.assert_awaited_once_with(metrics_url="http://vllm:8080/metrics")

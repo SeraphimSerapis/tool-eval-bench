@@ -498,7 +498,7 @@ Each evaluator has unit tests covering at minimum:
 
 | File | Purpose |
 |---|---|
-| `tests/test_scenario_runner_contracts.py` | All 97 curated references replayed through production dispatch; empty-work, dependency, and raw-JSON mutations |
+| `tests/test_scenario_runner_contracts.py` | All 104 curated references replayed through production dispatch; empty-work, dependency, and raw-JSON mutations |
 | `tests/test_scenario_variants.py` | Seeded alternate outcomes, stale identifiers, and premature mutations |
 | `tests/test_scenarios.py` | Registry integrity, scoring, safety gating, trial aggregation |
 | `tests/test_evaluator_contract.py` | **Golden-trace contract tests** — PASS/FAIL/PARTIAL fixtures for all 15 base scenarios (TC-01–TC-15), including paraphrased refusals, wrong-order dependency chains, and common malformed argument patterns |
@@ -766,7 +766,7 @@ suggestion, `max(⌊1.5 × (τ − 1)⌋, 2)`, is smaller than the current windo
 
 | Feature | tool-eval-bench | BFCL | ToolBench | Claw-Eval |
 |---|---|---|---|---|
-| Scenarios | 69 (+28 Hard Mode; 97 combined) | 2000+ | 16000+ | 300 |
+| Scenarios | 69 (+35 Hard Mode; 104 combined) | 2000+ | 16000+ | 300 |
 | Mock tools | ✓ (deterministic) | ✗ (real APIs) | Partial | ✓ (Docker sandbox) |
 | Multi-turn | ✓ (10+ scenarios) | Limited | ✓ | ✓ (38 dialogue) |
 | Safety testing | ✓ (Category K) | ✗ | ✗ | ✓ (multiplicative gate) |

@@ -795,7 +795,11 @@ async def run_llama_benchy(
                     total_tokens = event.get("total_tokens")
                     if cell is not None and isinstance(error, str) and error:
                         cell_errors.setdefault(cell, []).append(error)
-                    elif cell is not None and isinstance(total_tokens, int):
+                    elif (
+                        cell is not None
+                        and isinstance(total_tokens, int)
+                        and not isinstance(total_tokens, bool)
+                    ):
                         cell_tokens.setdefault(cell, []).append(total_tokens)
                 if on_progress:
                     on_progress(event)

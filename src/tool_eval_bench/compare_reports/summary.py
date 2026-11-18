@@ -487,9 +487,8 @@ def generate_html(da: dict, db: dict, out: str) -> None:
             vp.append("More reliable")
         elif r_gap < w_gap:
             vp.append("Lower variance")
-    if mt_g and mt_r and mt_g != "\u2014" and mt_r != "\u2014":
-        if float(mt_g.rstrip("s")) < float(mt_r.rstrip("s")):
-            vp.append("Faster")
+    if wmt is not None and rmt is not None and wmt < rmt:
+        vp.append("Faster")
     if r_safe_max > w_safe_max:
         vp.append("Safer")
     vp_text = " \u2022 ".join(esc(v) for v in vp)

@@ -172,6 +172,111 @@ class TestFinalAnswerText:
         result = ChatCompletionResult(content=" \n", reasoning="#### 4", finish_reason="stop")
         assert final_answer_text(result) == "#### 4"
 
+    def test_strip_thinking_and_unclosed_truncation_cases(self) -> None:
+        from tool_eval_bench.domain.plugin import strip_thinking
+        from tool_eval_bench.plugins._thinking import plugin_answer_text
+
+        assert plugin_answer_text is final_answer_text
+
+        raw_closed = ChatCompletionResult(
+            content="<think>thought</think>\n42", finish_reason="stop"
+        )
+        assert final_answer_text(raw_closed) == "42"
+        assert raw_closed.content == "<think>thought</think>\n42"
+        assert strip_thinking('<THINK mode="fast">step 1</THINK>Answer: B') == "Answer: B"
+        assert strip_thinking("<think>done</think>   ", fallback_to_thought=False) is None
+        assert (
+            final_answer_text(
+                ChatCompletionResult(content="<think>#### 12</think>", finish_reason="stop")
+            )
+            == "#### 12"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(content="<think>#### 12</think>", finish_reason="length")
+            )
+            is None
+        )
+
+        # Multiple and inline <think> blocks
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>plan</think>Result: <think>recheck</think>42",
+                    finish_reason="stop",
+                )
+            )
+            == "Result: 42"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>part 1</think>  <think>#### 7</think>\n",
+                    finish_reason="stop",
+                )
+            )
+            == "part 1\n#### 7"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>part 1</think>  <think>#### 7</think>\n",
+                    finish_reason="length",
+                )
+            )
+            is None
+        )
+
+        # Unclosed <think> truncation vs prefix preservation
+        assert strip_thinking("<think>unfinished reasoning", fallback_to_thought=False) is None
+        assert strip_thinking("<think>unfinished reasoning", fallback_to_thought=True) == ""
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>cut off mid-thought 42", finish_reason="length"
+                )
+            )
+            is None
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="Answer: C\n<think>post-answer scratchpad", finish_reason="length"
+                )
+            )
+            == "Answer: C"
+        )
+
+        # Fallback interaction when content has only <think>
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="<think>unfinished", reasoning="#### 4", finish_reason="stop"
+                )
+            )
+            == "#### 4"
+        )
+        assert (
+            final_answer_text(
+                ChatCompletionResult(
+                    content="", reasoning="<think>inner</think>#### 8", finish_reason="stop"
+                )
+            )
+            == "#### 8"
+        )
+
+        # Literal prose and non-think tags remain untouched
+        for literal in (
+            "The answer is 42.",
+            "<thinking>keep me</thinking> 42",
+            "if a < think and b > 0: return 42",
+        ):
+            assert strip_thinking(literal) == literal
+            assert (
+                final_answer_text(ChatCompletionResult(content=literal, finish_reason="stop"))
+                == literal
+            )
+
 
 @pytest.mark.asyncio
 class TestTruncatedTurns:
@@ -578,3 +683,120 @@ def test_cli_config_separates_runs_by_extra_params(
     configs = [row["config"] for row in persisted]
     assert [c["extra_params"] for c in configs] == [None, {"top_k": 20}]
     assert configs[0]["config_fingerprint"] != configs[1]["config_fingerprint"]
+
+
+@pytest.mark.asyncio
+async def test_plugins_reject_negative_params_and_handle_unclosed_think_truncation() -> None:
+    adapter = _FixedAdapter(
+        ChatCompletionResult(
+            content="<think>I think the answer is 12, A, K7QM-2XPD-9WLR",
+            finish_reason="length",
+        )
+    )
+    for plugin in (GSM8KPlugin(), MMLUPlugin(), IFEvalPlugin()):
+        with pytest.raises(ValueError, match="limit"):
+            await plugin.run(adapter, model="m", base_url="http://x", limit=-1)
+    for plugin in (GSM8KPlugin(), MMLUPlugin()):
+        with pytest.raises(ValueError, match="n_shots"):
+            await plugin.run(adapter, model="m", base_url="http://x", n_shots=-1)
+
+    g_res = await GSM8KPlugin().run(
+        adapter,
+        model="m",
+        base_url="http://x",
+        n_shots=0,
+        _preloaded_items=[GSM8KItem(0, "Q?", "#### 12", 12.0)],
+    )
+    assert g_res.details["correct"] == 0
+    assert g_res.details["truncated"] == 1
+
+    m_res = await MMLUPlugin().run(
+        adapter,
+        model="m",
+        base_url="http://x",
+        n_shots=0,
+        _preloaded_items={"test": [_mmlu_item(0, "anatomy")], "dev": []},
+    )
+    assert m_res.details["correct"] == 0
+    assert m_res.details["truncated"] == 1
+
+    i_res = await IFEvalPlugin().run(
+        adapter,
+        model="m",
+        base_url="http://x",
+        _preloaded_items=[IFEvalItem(1, "No commas.", ["punctuation:no_comma"], [{}])],
+    )
+    assert i_res.details["prompts_passed"] == 0
+    assert i_res.details["truncated"] == 1
+
+    n_case = build_cases([1024], [0.5], seed=1)[0]
+    n_res = await NeedlePlugin().run(adapter, model="m", base_url="http://x", cases=[n_case])
+    assert n_res.details["retrieved"] == 0
+
+
+@pytest.mark.asyncio
+async def test_gsm8k_parallel_task_crash_records_error_item_instead_of_dropping() -> None:
+    items = [
+        GSM8KItem(0, "Q1?", "#### 2", 2.0),
+        GSM8KItem(1, "Q2?", "#### 4", 4.0),
+    ]
+
+    async def on_progress(done: int, total: int, result: dict[str, Any]) -> None:
+        if result["index"] == 1:
+            raise RuntimeError("progress crash for http://user:pw@host:8000/v1")
+
+    result = await GSM8KPlugin().run(
+        _FixedAdapter(ChatCompletionResult(content="#### 2", finish_reason="stop")),
+        model="m",
+        base_url="http://x",
+        n_shots=0,
+        concurrency=2,
+        on_progress=on_progress,
+        _preloaded_items=items,
+    )
+
+    assert len(result.item_results) == 2
+    assert result.details["total"] == 2
+    assert result.details["correct"] == 1
+    assert result.details["errors"] == 0
+
+    class BoomAdapter(_FixedAdapter):
+        async def chat_completion(self, **kwargs: Any) -> ChatCompletionResult:
+            raise AssertionError("not reached")
+
+    async def broken_eval(self: GSM8KPlugin, adapter: Any, *, item: GSM8KItem, **kw: Any) -> Any:
+        if item.index == 1:
+            raise RuntimeError("boom at http://user:pw@host:8000/v1")
+        return {
+            "index": item.index,
+            "question": item.question,
+            "correct": True,
+            "ground_truth": item.ground_truth,
+            "extracted_answer": 2.0,
+            "extraction_method": "marker",
+            "model_response": "#### 2",
+            "tokens": 5,
+        }
+
+    plugin = GSM8KPlugin()
+    monkey_orig = GSM8KPlugin._evaluate_one
+    try:
+        GSM8KPlugin._evaluate_one = broken_eval  # type: ignore[method-assign]
+        crashed = await plugin.run(
+            BoomAdapter(ChatCompletionResult(content="ok")),
+            model="m",
+            base_url="http://x",
+            n_shots=0,
+            concurrency=2,
+            _preloaded_items=items,
+        )
+    finally:
+        GSM8KPlugin._evaluate_one = monkey_orig  # type: ignore[method-assign]
+
+    assert len(crashed.item_results) == 2
+    assert crashed.details["correct"] == 1
+    assert crashed.details["errors"] == 1
+    err_item = crashed.item_results[1]
+    assert err_item["is_error"] is True
+    assert "pw" not in err_item["error"]
+    assert "http://***:8000/v1" in err_item["error"]

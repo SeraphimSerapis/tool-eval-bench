@@ -8,6 +8,7 @@ without needing a real server.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
@@ -15,7 +16,10 @@ import pytest
 from tool_eval_bench.adapters.openai_compat import (
     OpenAICompatibleAdapter,
     _normalize_tool_calls,
+    _repair_streamed_tool_args,
 )
+from tool_eval_bench.adapters.systemone import SystemOneAdapter
+from tool_eval_bench.domain.decision import YesNoQuestion
 from tool_eval_bench.runner.orchestrator import _assistant_message
 
 # ---------------------------------------------------------------------------
@@ -1883,3 +1887,133 @@ async def test_malformed_json_warning_redacts_the_url(caplog) -> None:
     assert result.content == "[malformed response]"
     assert "Malformed JSON" in caplog.text
     assert "S3CR3T" not in caplog.text
+
+
+class _ByteChunks(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
+
+
+def test_openai_normalize_tool_calls_and_parse_response_null_safety() -> None:
+    calls = _normalize_tool_calls(
+        [
+            "not-a-dict",  # type: ignore[list-item]
+            {"id": None, "function": None, "extra_content": "bad"},
+            {"id": "", "function": {"name": None, "arguments": None}},
+            {"id": "c3", "function": {"name": "calc", "arguments": [1, 2]}},
+        ]
+    )
+    assert len(calls) == 3
+    assert calls[0].id == "tool_call_2"
+    assert calls[0].name == "unknown_tool"
+    assert calls[0].arguments_str == "{}"
+    assert calls[0].extra_content is None
+    assert calls[1].id == "tool_call_3"
+    assert calls[1].arguments_str == "{}"
+    assert calls[2].arguments_str == "[1, 2]"
+    assert calls[2].arguments == {}
+
+    assert _repair_streamed_tool_args("[1, 2") == "[1, 2"
+
+    for payload in (
+        {"choices": None, "usage": "bad"},
+        {"choices": [None]},
+        {"choices": [{"message": None}]},
+    ):
+        parsed = OpenAICompatibleAdapter._parse_response(payload, 1.0)
+        assert parsed.content == ""
+        assert parsed.tool_calls == []
+
+    err_parsed = OpenAICompatibleAdapter._parse_response(
+        {"error": {"message": "Backend overloaded", "code": 503}},
+        2.0,
+    )
+    assert err_parsed.transport_error_status == 500
+    assert err_parsed.transport_error_is_infrastructure is True
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_multiline_sse_crlf_and_non_dict_json() -> None:
+    sse_bytes = (
+        b"data: {broken\r\n"
+        b"\r\n"
+        b"data: {\r\n"
+        b": keepalive\r\n"
+        b'data:   "choices": [\r\n'
+        b'data:     {"delta": {"content": "Hel", "tool_calls": ["skip"]}}\r\n'
+        b"data:   ]\r\n"
+        b"data: }\r\n\r\n"
+        b"data: {\r\n"
+        b'data:   "choices": [{"delta": {"content": "lo"}, "finish_reason": "stop"}],\r\n'
+        b'data:   "usage": {"prompt_tokens": 9, "completion_tokens": 2}\r\n'
+        b"data: }"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("x-mode") == "json-list":
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                content=b"[1, 2, 3]",
+            )
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_ByteChunks([sse_bytes]),
+        )
+
+    adapter = OpenAICompatibleAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        ok = await adapter.chat_completion(
+            model="m",
+            messages=[{"role": "user", "content": "hi"}],
+            base_url="http://localhost:8000",
+            stream=True,
+        )
+        assert ok.content == "Hello"
+        assert ok.prompt_tokens == 9
+        assert ok.completion_tokens == 2
+        assert ok.finish_reason == "stop"
+
+        bad_adapter = OpenAICompatibleAdapter(default_headers={"x-mode": "json-list"})
+        bad_adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        try:
+            malformed = await bad_adapter.chat_completion(
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                base_url="http://localhost:8000",
+                stream=True,
+            )
+            assert malformed.malformed is True
+        finally:
+            await bad_adapter.aclose()
+    finally:
+        await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_systemone_handles_null_input_tokens() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"answers": {"go": {"noul": 0.9}}, "usage": {"input_tokens": None}},
+        )
+
+    adapter = SystemOneAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        res = await adapter.decide(
+            model="m",
+            state="ready",
+            questions={"go": YesNoQuestion(instructions="Proceed?")},
+            base_url="http://localhost:8000",
+        )
+        assert res.answers["go"].probability_yes == pytest.approx(0.9)  # type: ignore[union-attr]
+        assert res.input_tokens == 0
+    finally:
+        await adapter.aclose()

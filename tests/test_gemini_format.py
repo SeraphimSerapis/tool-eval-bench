@@ -11,6 +11,7 @@ import asyncio
 import json
 from typing import Any
 
+import httpx
 import pytest
 
 from tool_eval_bench.adapters.factory import build_adapter
@@ -30,6 +31,7 @@ from tool_eval_bench.adapters.wire_format import (
     resolve_wire_format,
 )
 from tool_eval_bench.application.service import BenchmarkService
+from tool_eval_bench.runner.orchestrator import _assistant_message
 
 NATIVE_URL = "https://generativelanguage.googleapis.com"
 COMPAT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/v1"
@@ -677,3 +679,96 @@ class TestStreamParsing:
         )
 
         assert result.content == "ok"
+
+
+@pytest.mark.asyncio
+async def test_gemini_thought_signature_round_trip_and_stream_block_reason() -> None:
+    stream_chunks = [
+        {"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]},
+        {
+            "candidates": [
+                {
+                    "content": {"parts": [{"text": "", "thoughtSignature": "sig-final-chunk"}]},
+                    "finishReason": "STOP",
+                }
+            ]
+        },
+    ]
+    pretty_first = "\r\n".join(
+        f"data: {line}" for line in json.dumps(stream_chunks[0], indent=2).splitlines()
+    )
+    sse_body = f"{pretty_first}\r\n\r\ndata: {json.dumps(stream_chunks[1])}\r\n\r\n".encode()
+    blocked_body = f"data: {json.dumps({'promptFeedback': {'blockReason': 'SAFETY'}})}\n\n".encode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("x-blocked") == "1":
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, content=blocked_body
+            )
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=sse_body)
+
+    adapter = GeminiAdapter()
+    adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        res = await adapter.chat_completion(
+            model="gemini-3-pro",
+            messages=[{"role": "user", "content": "hi"}],
+            base_url="https://generativelanguage.googleapis.com",
+            stream=True,
+        )
+        assert res.content == "Hello"
+        assert res.message_extra_content == {"thoughtSignature": "sig-final-chunk"}
+
+        rebuilt = _assistant_message(res)
+        contents, _ = _to_gemini_contents([{"role": "user", "content": "hi"}, rebuilt])
+        assert contents[1]["parts"] == [{"text": "Hello", "thoughtSignature": "sig-final-chunk"}]
+    finally:
+        await adapter.aclose()
+
+    blocked_adapter = GeminiAdapter(default_headers={"x-blocked": "1"})
+    blocked_adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        blocked = await blocked_adapter.chat_completion(
+            model="gemini-3-pro",
+            messages=[{"role": "user", "content": "hi"}],
+            base_url="https://generativelanguage.googleapis.com",
+            stream=True,
+        )
+        assert blocked.content == "[no content: SAFETY]"
+    finally:
+        await blocked_adapter.aclose()
+
+    parallel_contents, _ = _to_gemini_contents(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "extra_content": {"thoughtSignature": "sig-shared"},
+                "tool_calls": [
+                    {"id": "c1", "function": {"name": "a", "arguments": "{}"}},
+                    {"id": "c2", "function": {"name": "b", "arguments": "{}"}},
+                ],
+            }
+        ]
+    )
+    parts = parallel_contents[0]["parts"]
+    assert parts[0].get("thoughtSignature") == "sig-shared"
+    assert "thoughtSignature" not in parts[1]
+
+    err_resp = GeminiAdapter._parse_response(
+        {"error": {"code": 503, "message": "Service unavailable"}},
+        1.5,
+    )
+    assert err_resp.transport_error_status == 503
+    assert err_resp.transport_error_is_infrastructure is True
+
+
+def test_generation_config_supports_max_completion_tokens_and_scalar_stop() -> None:
+    cfg = _generation_config(
+        temperature=0.0,
+        max_tokens=1024,
+        response_format=None,
+        extra_params={"max_completion_tokens": 256, "stop": "END"},
+    )
+    assert cfg["maxOutputTokens"] == 256
+    assert cfg["stopSequences"] == ["END"]

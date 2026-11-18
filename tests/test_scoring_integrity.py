@@ -14,6 +14,7 @@ from copy import deepcopy
 import pytest
 
 from tool_eval_bench.domain.scenarios import (
+    ScenarioResult,
     ScenarioState,
     ScenarioStatus,
     ToolCallRecord,
@@ -323,3 +324,53 @@ def test_tc28_typo_without_correction_does_not_pass() -> None:
 def test_tc28_typo_with_correction_passes() -> None:
     answer = "The database host is misspelled: change 'localhsot' to 'localhost'."
     assert _status("TC-28", _TC28_READ, answer) == ScenarioStatus.PASS
+
+
+# ---------------------------------------------------------------------------
+# Tool-call argument size tracking on ScenarioResult.
+# ---------------------------------------------------------------------------
+
+
+class TestArgBytesTracking:
+    """Tests for per-tool-call argument size tracking."""
+
+    def test_arg_bytes_in_scenario_result(self) -> None:
+        result = ScenarioResult(
+            scenario_id="TC-01",
+            status=ScenarioStatus.PASS,
+            points=2,
+            summary="ok",
+            tool_call_arg_bytes=150,
+        )
+        assert result.tool_call_arg_bytes == 150
+
+    def test_arg_bytes_in_to_dict(self) -> None:
+        result = ScenarioResult(
+            scenario_id="TC-01",
+            status=ScenarioStatus.PASS,
+            points=2,
+            summary="ok",
+            tool_call_arg_bytes=250,
+        )
+        d = result.to_dict()
+        assert d["tool_call_arg_bytes"] == 250
+
+    def test_arg_bytes_zero_not_in_dict(self) -> None:
+        result = ScenarioResult(
+            scenario_id="TC-01",
+            status=ScenarioStatus.PASS,
+            points=2,
+            summary="ok",
+            tool_call_arg_bytes=0,
+        )
+        d = result.to_dict()
+        assert "tool_call_arg_bytes" not in d
+
+    def test_arg_bytes_default_zero(self) -> None:
+        result = ScenarioResult(
+            scenario_id="TC-01",
+            status=ScenarioStatus.PASS,
+            points=2,
+            summary="ok",
+        )
+        assert result.tool_call_arg_bytes == 0

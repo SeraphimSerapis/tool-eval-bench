@@ -91,4 +91,19 @@ def test_result_requires_rerun_for_corrupt_checkpoints() -> None:
     assert result_requires_rerun({}) is True
     assert result_requires_rerun(_result("TC-01", raw_log=" ")) is True
     assert result_requires_rerun(_result("TC-01", status="weird")) is True
+    assert result_requires_rerun(_result("TC-01", status="pass", points=True)) is True
     assert result_requires_rerun(_result("TC-01")) is False
+
+
+def test_stored_resume_guards_completed_runs_and_corrupt_numbers() -> None:
+    completed = _stored()
+    completed["status"] = "completed"
+    with pytest.raises(ResumeRejected, match="already completed"):
+        plan_stored_resume(completed, [], base_url=_URL)
+
+    for key, value in (("temperature", float("nan")), ("max_turns", None)):
+        bad = _stored()
+        bad["status"] = "interrupted"
+        bad["config"] = {**bad["config"], key: value}
+        with pytest.raises(ResumeRejected, match=key):
+            plan_stored_resume(bad, [], base_url=_URL)

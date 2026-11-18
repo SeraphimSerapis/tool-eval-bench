@@ -1020,3 +1020,13 @@ def test_service_stores_no_preset_without_samples() -> None:
     )
     # The builder writes whatever it is given; the service passes None without samples.
     assert "perf_preset" not in build_run_config(request.run_settings(), scenarios=[], metadata={})
+
+
+def test_estimate_pass_seconds_returns_zero_without_positive_speeds() -> None:
+    preset_pass = PerfPass(depths=(0, 4096), concurrency=(1, 2))
+    assert (
+        estimate_pass_seconds(preset_pass, pp=512, tg=128, runs=2, pp_tps=0.0, tg_tps=50.0) == 0.0
+    )
+    assert (
+        estimate_pass_seconds(preset_pass, pp=512, tg=128, runs=2, pp_tps=500.0, tg_tps=0.0) == 0.0
+    )

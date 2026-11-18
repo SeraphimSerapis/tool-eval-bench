@@ -11,7 +11,7 @@ from typing import Any
 from rich.console import Console
 
 from tool_eval_bench.cli.command_registry import PLUGIN_FLAG_STEMS
-from tool_eval_bench.cli.headless import report_run_failed
+from tool_eval_bench.cli.headless import HeadlessConsole, report_run_failed
 from tool_eval_bench.cli.plugin_datasets import load_dataset_with_progress
 from tool_eval_bench.cli.plugin_lifecycle import (
     execute_plugin as _execute_plugin_impl,
@@ -92,7 +92,6 @@ def _run_gsm8k_benchmark(
     )
 
     plugin = GSM8KPlugin()
-    adapter = build_adapter(base_url, **adapter_options(args))
     result_holder: list = []
 
     # -- Phase 1: Load dataset (with visible progress) --
@@ -107,7 +106,9 @@ def _run_gsm8k_benchmark(
         cache_note="data/gsm8k/test.jsonl",
     )
     if dataset_items is None:
-        return
+        sys.exit(1)
+
+    adapter = build_adapter(base_url, **adapter_options(args))
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
@@ -290,7 +291,6 @@ def _run_mmlu_benchmark(
     )
 
     plugin = MMLUPlugin()
-    adapter = build_adapter(base_url, **adapter_options(args))
     result_holder: list = []
 
     # -- Phase 1: Load dataset (with visible progress) --
@@ -306,7 +306,7 @@ def _run_mmlu_benchmark(
         partial_path=Path("data") / "mmlu" / "test.partial.jsonl",
     )
     if test_items is None:
-        return
+        sys.exit(1)
 
     # Load dev split for few-shot.  Same loader as the test split, so a failed
     # download is reported and resumable instead of escaping as a traceback.
@@ -322,8 +322,9 @@ def _run_mmlu_benchmark(
             partial_path=Path("data") / "mmlu" / "dev.partial.jsonl",
         )
         if dev_items is None:
-            return
+            sys.exit(1)
 
+    adapter = build_adapter(base_url, **adapter_options(args))
     preloaded = {"test": test_items, "dev": dev_items}
 
     # -- Phase 2: Evaluate with model --
@@ -489,7 +490,6 @@ def _run_ifeval_benchmark(
     )
 
     plugin = IFEvalPlugin()
-    adapter = build_adapter(base_url, **adapter_options(args))
     result_holder: list = []
 
     # -- Phase 1: Load dataset --
@@ -505,7 +505,9 @@ def _run_ifeval_benchmark(
         partial_path=Path("data") / "ifeval" / "prompts.partial.jsonl",
     )
     if dataset_items is None:
-        return
+        sys.exit(1)
+
+    adapter = build_adapter(base_url, **adapter_options(args))
 
     # -- Phase 2: Evaluate with model --
     async def run() -> None:
@@ -715,9 +717,10 @@ def _resolve_needle_context_size(
         )
     )
     if context_size is None:
-        console.print(
+        report_run_failed(
+            console,
             "\n[bold red]Error:[/] Could not auto-detect the context window. "
-            "Use --context-size to specify it."
+            "Use --context-size to specify it.",
         )
         return None
 
@@ -767,6 +770,8 @@ def _run_needle_benchmark(
         console, base_url, model, api_key, args, run_context=run_context
     )
     if context_size is None:
+        if isinstance(console, HeadlessConsole):
+            sys.exit(1)
         return
 
     lengths = _needle_context_lengths(context_size, max(1, args.needle_lengths))

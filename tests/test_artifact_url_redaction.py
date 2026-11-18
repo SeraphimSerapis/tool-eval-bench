@@ -459,3 +459,71 @@ def test_headless_json_error_envelope_never_carries_the_credentialed_url(
     assert "503" in envelope
     assert REDACTED in envelope
     _assert_redacted(envelope, capsys.readouterr().out)
+
+
+def test_throughput_report_redacts_sample_error_urls() -> None:
+    from types import SimpleNamespace
+
+    from tool_eval_bench.storage.reports.throughput import throughput_report
+
+    secret_base = "http://admin:hunter2@leaky-host.internal:8000/v1"
+    bad_sample = SimpleNamespace(
+        error=f"HTTP 502 at {secret_base}/chat/completions?api_key=sk-leak"
+    )
+    rep = throughput_report(
+        "m",
+        [bad_sample],
+        label=None,
+        backend="vllm",
+        server=SECRET_URL,
+        served_model="m",
+        model_root=None,
+    )
+    text = "\n".join([*rep.header, *rep.body])
+    _assert_redacted(text)
+    assert f"{REDACTED}/chat/completions" in text
+
+
+@pytest.mark.asyncio
+async def test_service_probe_error_metadata_redacts_credentialed_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tool_eval_bench.application import service as service_module
+    from tool_eval_bench.application.service import BenchmarkService
+    from tool_eval_bench.domain.scenarios import ScenarioResult, ScenarioStatus
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
+    from tool_eval_bench.runner.orchestrator import score_results
+    from tool_eval_bench.utils import metadata as meta_mod
+
+    async def boom(_cfg: Any) -> dict[str, Any]:
+        req = httpx.Request("GET", f"{SECRET_URL}")
+        httpx.Response(503, request=req).raise_for_status()
+        raise AssertionError("unreachable")
+
+    scenario = next(s for s in ALL_SCENARIOS if s.id == "TC-01")
+    summary = score_results(
+        [ScenarioResult(scenario.id, ScenarioStatus.PASS, 2, "ok", raw_log="trace")],
+        [scenario],
+    )
+
+    async def fake_run(adapter: Any, **kwargs: Any) -> Any:
+        return summary
+
+    monkeypatch.setattr(meta_mod, "collect_run_metadata", boom)
+    monkeypatch.setattr(service_module, "run_all_scenarios", fake_run)
+
+    with open_repository(db_path=str(tmp_path / "bench.sqlite")) as repo:
+        svc = BenchmarkService(repo=repo, reporter=None)
+        monkeypatch.setattr(svc, "_adapter_for", lambda *_a, **_k: object())
+        run_data = await svc.run_benchmark(
+            model="m",
+            backend="vllm",
+            base_url=SECRET_URL,
+            scenarios=[scenario],
+            probe_engine=True,
+            run_context=None,
+        )
+
+    err = run_data["metadata"]["error"]
+    _assert_redacted(err)
+    assert REDACTED in err
