@@ -234,6 +234,26 @@ class TestRunRepositoryExtended:
         assert len(repo.list(model="a")) == 1
         repo.close()
 
-    def test_del_safety_net(self, tmp_path):
-        repo = open_repository(db_path=str(tmp_path / "test.sqlite"))
-        del repo  # should not raise
+    def test_del_safety_net(self, tmp_path, recwarn: pytest.WarningsRecorder) -> None:
+        import gc
+        import sqlite3
+
+        from tool_eval_bench.storage.db import RunRepository
+
+        def open_unclosed() -> sqlite3.Connection:
+            repo = RunRepository(str(tmp_path / "test.sqlite"))
+            return repo._conn
+
+        conn = open_unclosed()
+        gc.collect()
+        with pytest.raises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")
+
+        bad_path = tmp_path / "dir.sqlite"
+        bad_path.mkdir()
+        with pytest.raises(sqlite3.OperationalError):
+            RunRepository(str(bad_path))
+        gc.collect()
+        assert [
+            w for w in recwarn if issubclass(w.category, pytest.PytestUnraisableExceptionWarning)
+        ] == []
