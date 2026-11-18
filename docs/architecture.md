@@ -10,7 +10,8 @@ For adding new scenarios, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ```mermaid
 graph TD
-    CLI["cli/ — Delivery Layer"]
+    CLI["cli/ - Delivery Layer"]
+    Web["web/ - Web Delivery Layer"]
     Application["application/ — Composition"]
     Runner["runner/ — Orchestration"]
     Evals["evals/ — Scenarios & Evaluators"]
@@ -23,6 +24,8 @@ graph TD
     CLI --> Application
     CLI --> Runner
     CLI --> Plugins
+    Web --> Application
+    Web --> CLI
     Application --> Runner
     Application --> Storage
     Application --> Adapters
@@ -118,10 +121,10 @@ different helpers under the same name.
 |---|---|---|
 | `scenarios/core/` | A–E (the original 15) | TC-01 – TC-15 |
 | `scenarios/extended/` | F–G | TC-16 – TC-21 |
-| `scenarios/agentic/` | H–K (partial) | TC-22 – TC-50, TC-62–TC-63 |
+| `scenarios/agentic/` | H–K (partial) | TC-22 – TC-36, TC-41 – TC-50 |
 | `scenarios/adversarial/` | K (safety extras) | TC-57 – TC-60 |
 | `scenarios/large_toolset/` | L | TC-37 – TC-40 |
-| `scenarios/planning/` | M–N | TC-51 – TC-56 |
+| `scenarios/planning/` | M–N | TC-51 – TC-56, TC-61 – TC-63 |
 | `scenarios/structured/` | O | TC-64 – TC-69 |
 | `scenarios/hardmode/` | P (opt-in) | TC-70 – TC-74 |
 | `scenarios/hardmode_expanded/` | P (opt-in expansion) | TC-75 – TC-84 |
@@ -161,7 +164,7 @@ single call, a two-call chain, and restraint.
 
 This exists for [held-out packs](scenario-packs.md), where a third party needs
 private scenarios without shipping executable Python. It is not a migration
-path for the 97 public scenarios: the subset matches tool calls positionally
+path for the 104 public scenarios: the subset matches tool calls positionally
 and cannot inspect tool results, while 77% of the Python evaluators read the
 model's free text and 33% read what a tool returned. `answer_contains` reaches
 the PARTIAL tier, which is the one gap worth closing; the rest of the
@@ -273,6 +276,23 @@ Shared infrastructure:
 | `leaderboard.py` | `--leaderboard`, `--export` rendering |
 | `spec_live_display.py` | Live spec-decode Textual dashboard |
 | `spec_live_rendering.py` | Rich component rendering for spec-live |
+| `decision_live_display.py` | Live Rich terminal dashboard for `--decision-live` |
+| `held_out.py` | Redacts held-out scenario titles, summaries, and traces from machine-readable output |
+| `modes.py` | Determines which benchmark modes execute from parsed flags and whether scenarios run |
+| `provider_env.py` | Provider-scoped endpoint configuration resolved from `.env` and environment variables |
+| `retest_diffs.py` | Multi-trial targeted re-testing of discordant scenarios between two stored runs |
+| `timeout_advice.py` | Diagnostic explanations and suggested remediations when infrastructure timeouts occur |
+
+### `web/` - Web Delivery Layer
+
+| Module | Purpose |
+|---|---|
+| `__init__.py` | `run_web_server()` startup entry point, socket binding, loopback/host warning, and startup banner |
+| `app.py` | Starlette ASGI app, API endpoints for runs, leaderboard, comparison, export, and static asset serving |
+| `launcher.py` | Endpoint probing, preset/scenario resolution, and background run/resume lifecycle management |
+| `live.py` | In-memory live run SSE hub and cross-process SQLite checkpoint tailing |
+| `sanitize.py` | Held-out scenario redaction, URL masking, and summary enrichment for web responses |
+| `security.py` | Bearer token and `HttpOnly` cookie session gate, Host/Origin checks, and CSP headers |
 
 ### `compare_reports/` Report comparisons
 

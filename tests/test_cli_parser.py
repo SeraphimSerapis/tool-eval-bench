@@ -489,6 +489,21 @@ def test_a_dash_run_id_without_the_separator_is_a_usage_error(
 
 
 @pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["delete", "--", "-abc"], ["-abc"]),
+        (["delete", "--yes", "--", "-abc", "run-2"], ["-abc", "run-2"]),
+        (["delete", "--yes", "--", "-abc", "-xyz"], ["-abc", "-xyz"]),
+        (["--delete=-abc", "--delete=-xyz", "--yes"], ["-abc", "-xyz"]),
+    ],
+)
+def test_delete_accepts_run_ids_starting_with_a_dash(argv: list[str], expected: list[str]) -> None:
+    _, args = parse_cli_args(_make_parser, argv)
+    assert args.delete == expected
+    assert args.yes is True if "--yes" in argv else args.yes is False
+
+
+@pytest.mark.parametrize(
     ("argv", "missing"),
     [
         (["resume", "--json"], "run_id"),

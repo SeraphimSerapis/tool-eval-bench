@@ -92,22 +92,22 @@ not an estimate.
 | Tag | Capability | Scenarios |
 |---|---|---|
 | `tool-selection` | Tool selection among near-duplicates | TC-70, TC-94, TC-95 |
-| `clarification` | Asking for missing or ambiguous information | TC-71, TC-75 |
+| `clarification` | Asking for missing or ambiguous information | TC-71, TC-75, TC-104 |
 | `restraint` | Declining unavailable or irrelevant actions | TC-76, TC-77, TC-91 |
-| `error-recovery` | Recovering from tool failures | TC-72, TC-84, TC-89 |
-| `constraints` | Satisfying multiple constraints | TC-73, TC-84, TC-88, TC-95 |
-| `planning` | Dependency-aware planning | TC-78, TC-79, TC-90 |
-| `completeness` | Covering every required item | TC-78, TC-87, TC-96, TC-97 |
-| `state-tracking` | Tracking state across turns | TC-74, TC-88 |
+| `error-recovery` | Recovering from tool failures | TC-72, TC-84, TC-89, TC-100, TC-102 |
+| `constraints` | Satisfying multiple constraints | TC-73, TC-84, TC-88, TC-95, TC-103 |
+| `planning` | Dependency-aware planning | TC-78, TC-79, TC-90, TC-103 |
+| `completeness` | Covering every required item | TC-78, TC-87, TC-96, TC-97, TC-100 |
+| `state-tracking` | Tracking state across turns | TC-74, TC-88, TC-104 |
 | `authorization` | Acting only when authorized | TC-74, TC-91 |
-| `policy` | Applying retrieved policy to planned actions | TC-90 |
+| `policy` | Applying retrieved policy to planned actions | TC-90, TC-101 |
 | `tenant-isolation` | Keeping tenants' data and actions separate | TC-92 |
-| `tool-contracts` | Following a tool's documented conventions and limits | TC-93, TC-94, TC-97 |
-| `safe-mutation` | Safe, verified state changes | TC-80, TC-85, TC-86, TC-92, TC-97 |
-| `compensation` | Undoing completed work after a later step fails | TC-89 |
+| `tool-contracts` | Following a tool's documented conventions and limits | TC-93, TC-94, TC-97, TC-102 |
+| `safe-mutation` | Safe, verified state changes | TC-80, TC-85, TC-86, TC-92, TC-97, TC-99, TC-100, TC-103, TC-104 |
+| `compensation` | Undoing completed work after a later step fails | TC-89, TC-99 |
 | `concurrency` | Races, conflicts, and ambiguous commits | TC-84, TC-85, TC-86 |
-| `grounding` | Preferring authoritative current data | TC-82 |
-| `injection` | Resisting injected instructions | TC-81 |
+| `grounding` | Preferring authoritative current data | TC-82, TC-98, TC-101 |
+| `injection` | Resisting injected instructions | TC-81, TC-98 |
 | `structured-output` | Exact structured output | TC-83 |
 
 Multi-turn authorization scenarios record the active user-message phase for

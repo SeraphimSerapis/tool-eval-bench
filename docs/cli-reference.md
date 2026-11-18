@@ -647,7 +647,7 @@ Each line on stderr is a JSON object:
 
 `run_saved` comes from the modes without a result envelope. Its `run_type` is
 `perf`, `spec-bench`, `context-pressure`, or the plugin name (`gsm8k`, `mmlu`,
-`ifeval`, `needle`, `decision`). Its `session_id` is the session `card` groups
+`ifeval`, `needle`, `toolscale`, `decision`). Its `session_id` is the session `card` groups
 by, and is null outside a CLI invocation. `log` carries warnings and errors from logging
 and Python warnings, with URLs redacted. URLs in `error` messages are redacted
 too.

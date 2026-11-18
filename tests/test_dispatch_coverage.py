@@ -39,54 +39,6 @@ def test_dispatch_legacy_parser_builds_every_argument_group() -> None:
     assert args.perf and args.gsm8k and args.mmlu and args.ifeval and args.spec_bench
 
 
-@pytest.mark.parametrize("json_mode", [False, True])
-def test_dispatch_main_dry_run_without_server(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], json_mode: bool
-) -> None:
-    import sys
-
-    from tool_eval_bench.cli import dispatch
-
-    argv = ["tool-eval-bench", "--dry-run", "--short"]
-    if json_mode:
-        argv.append("--json")
-    monkeypatch.setattr(sys, "argv", argv)
-    monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
-
-    with pytest.raises(SystemExit) as exc:
-        dispatch.main()
-
-    assert exc.value.code == 0
-    output = capsys.readouterr().out
-    assert ("total_scenarios" if json_mode else "Dry run") in output
-
-
-@pytest.mark.parametrize(
-    ("argv", "target"),
-    [
-        (["--history"], "_print_history"),
-        (["--leaderboard"], "_print_leaderboard"),
-        (["--export", "json"], "_export_runs"),
-        (["--compare", "a", "b"], "_compare_runs"),
-    ],
-)
-def test_dispatch_main_routes_storage_commands(
-    monkeypatch: pytest.MonkeyPatch, argv: list[str], target: str
-) -> None:
-    import sys
-
-    from tool_eval_bench.cli import dispatch
-
-    called: list[tuple] = []
-    monkeypatch.setattr(sys, "argv", ["tool-eval-bench", *argv])
-    monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
-    monkeypatch.setattr(dispatch, target, lambda *args, **kwargs: called.append((args, kwargs)))
-
-    dispatch.main()
-
-    assert called
-
-
 def _dispatch_args(**overrides: object):
     import argparse
 
@@ -1051,71 +1003,6 @@ def test_dispatch_preflight_can_be_skipped_and_receives_merged_config(
     dispatch.main()
     assert len(calls) == 1
     assert len(warmup_calls) == 2
-
-
-def test_dispatch_spec_and_sweep_modes(monkeypatch: pytest.MonkeyPatch) -> None:
-    import sys
-
-    from tool_eval_bench.cli import dispatch, plugin_runners
-    from tool_eval_bench.utils import metadata
-
-    async def context(**kwargs):
-        return None
-
-    monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
-    monkeypatch.setattr(dispatch, "_preflight_model_check", lambda *a, **k: None)
-    monkeypatch.setattr(dispatch, "_do_warmup", lambda *a, **k: None)
-    monkeypatch.setattr(metadata, "collect_run_context", context)
-    monkeypatch.setattr(plugin_runners, "run_selected_plugins", lambda *a, **k: False)
-
-    called: list[tuple[str, dict]] = []
-    monkeypatch.setattr(
-        dispatch,
-        "_run_spec_bench",
-        lambda *a, **k: called.append(("spec", k)) or [],
-    )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "tool-eval-bench",
-            "--model",
-            "m",
-            "--base-url",
-            "url",
-            "--spec-bench",
-            "--label",
-            "spec A",
-            "--no-warmup",
-        ],
-    )
-    dispatch.main()
-    monkeypatch.setattr(
-        dispatch,
-        "_run_pressure_sweep",
-        lambda *a, **k: called.append(("sweep", k)),
-    )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "tool-eval-bench",
-            "--model",
-            "m",
-            "--base-url",
-            "url",
-            "--context-pressure-sweep",
-            "0.5-0.8",
-            "--label",
-            "sweep A",
-            "--no-warmup",
-        ],
-    )
-    dispatch.main()
-    assert [(name, kwargs["label"]) for name, kwargs in called] == [
-        ("spec", "spec A"),
-        ("sweep", "sweep A"),
-    ]
 
 
 # ---------------------------------------------------------------------------

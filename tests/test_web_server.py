@@ -158,3 +158,17 @@ def test_default_port_avoids_inference_discovery_ports() -> None:
     discovery = {port for port, _hint, _label in DISCOVERY_PORTS}
     fallback = set(range(web.DEFAULT_WEB_PORT, web.DEFAULT_WEB_PORT + 10))
     assert not fallback & discovery
+
+
+def test_uppercase_localhost_is_treated_as_loopback(
+    monkeypatch: pytest.MonkeyPatch, stub_uvicorn: list[dict[str, Any]]
+) -> None:
+    real_bind = web.bind_web_socket
+    monkeypatch.setattr(web, "bind_web_socket", lambda host, port: real_bind("127.0.0.1", 0))
+    console = Console(record=True, width=300)
+
+    run_web_server(console, host="LOCALHOST", port=0)
+
+    output = console.export_text()
+    assert len(stub_uvicorn) == 1
+    assert "non-loopback" not in output

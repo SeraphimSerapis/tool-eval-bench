@@ -15,6 +15,8 @@ from typing import Any
 from rich.console import Console
 from rich.markup import escape
 
+from tool_eval_bench.cli.headless import HeadlessConsole, emit_run_failed
+
 
 def _download_method_hint() -> str:
     """Say which transport the loader will use, so a slow download is explicable."""
@@ -71,6 +73,9 @@ def load_dataset_with_progress(
         try:
             items = load(on_progress=on_download)
         except Exception as exc:
+            if isinstance(console, HeadlessConsole):
+                emit_run_failed(f"Failed to download {name} dataset: {exc}")
+                return None
             resume_hint = (
                 "  Progress is saved — re-run to resume from where it stopped.\n"
                 if partial_path is not None

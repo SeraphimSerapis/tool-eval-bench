@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 from subprocess import run
+
+import pytest
 
 from tool_eval_bench.utils.metadata import _git_env_without_repository
 
@@ -120,3 +123,25 @@ def test_sdist_keeps_the_files_a_source_build_reads() -> None:
     assert "*" in _manifest_commands("exclude")
     assert {"pyproject.toml", project["readme"], "LICENSE"} <= _manifest_commands("include")
     assert "src" not in _manifest_commands("prune")
+
+
+class TestVersionConsistency:
+    def test_init_version_is_pep440(self) -> None:
+        from tool_eval_bench import __version__
+
+        assert re.fullmatch(r"\d+\.\d+\.\d+(\.[a-z0-9]+)*(\+[a-zA-Z0-9.]+)?", __version__), (
+            f"Not a PEP 440 version: {__version__}"
+        )
+
+    def test_version_is_derived_from_git_not_hardcoded(self) -> None:
+        from tool_eval_bench import __version__
+
+        pyproject = ROOT / "pyproject.toml"
+        with pyproject.open("rb") as f:
+            data = tomllib.load(f)
+        assert "version" in data["project"]["dynamic"]
+        assert "version" not in data["project"]
+        assert "setuptools_scm" in data["tool"]
+        if ".dev" not in __version__:
+            pytest.skip("this is a tagged release build")
+        assert "+g" in __version__, f"Dev build must identify its commit, got {__version__}"

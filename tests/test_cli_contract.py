@@ -644,6 +644,16 @@ def test_export_json_is_still_allowed_with_json(cli: Cli) -> None:
     assert len(exports) == 1
 
 
+def test_export_csv_rejects_json(cli: Cli) -> None:
+    outcome = cli.run("--export", "csv", "--json")
+
+    assert outcome.code == 2
+    assert outcome.out == ""
+    (event,) = _events(outcome.err)
+    assert event["error"] == "invalid_arguments"
+    assert event["message"].startswith("--export csv does not support --json")
+
+
 # --dry-run ---------------------------------------------------------------------
 
 

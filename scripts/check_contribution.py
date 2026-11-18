@@ -17,7 +17,9 @@ FRAGMENT_NAME = re.compile(
 RUNTIME_FILES = {
     ".env.example",
     "Dockerfile",
+    "MANIFEST.in",
     "compose.yaml",
+    "docker-compose.yaml",
     "docker-compose.yml",
     "pyproject.toml",
     "uv.lock",

@@ -300,6 +300,12 @@ class TestParseIntList:
 
         assert _parse_int_list("  1 ,  2  ") == [1, 2]
 
+    def test_invalid_raises(self) -> None:
+        from tool_eval_bench.cli.bench import _parse_int_list
+
+        with pytest.raises(ValueError):
+            _parse_int_list("1,abc,3")
+
 
 # ---------------------------------------------------------------------------
 # _parse_sweep_range
@@ -568,3 +574,89 @@ class TestArgumentValidation:
         parser = _make_parser()
         args = parser.parse_args(["--categories", "Z"])
         assert args.categories == ["Z"]
+
+
+class TestBootstrapCI:
+    def test_single_value_and_identical_values(self) -> None:
+        from tool_eval_bench.cli.bench import _bootstrap_ci
+
+        assert _bootstrap_ci([85.0]) == (85.0, 85.0)
+        assert _bootstrap_ci([90.0, 90.0, 90.0, 90.0]) == (90.0, 90.0)
+
+    def test_ci_contains_mean_is_deterministic_and_narrows(self) -> None:
+        from statistics import mean
+
+        from tool_eval_bench.cli.bench import _bootstrap_ci
+
+        values = [80.0, 85.0, 90.0, 82.0, 88.0]
+        lo, hi = _bootstrap_ci(values)
+        assert lo <= mean(values) <= hi
+        assert _bootstrap_ci([70.0, 80.0, 90.0]) == _bootstrap_ci([70.0, 80.0, 90.0])
+
+        narrow = _bootstrap_ci([89.0, 90.0, 91.0, 90.0, 90.0])
+        wide = _bootstrap_ci([60.0, 80.0, 100.0, 70.0, 90.0])
+        assert (narrow[1] - narrow[0]) < (wide[1] - wide[0])
+
+
+class TestMedian:
+    def test_median_odd_even_and_single(self) -> None:
+        from tool_eval_bench.cli.bench import _median
+
+        assert _median([1.0, 3.0, 5.0]) == 3.0
+        assert _median([1.0, 2.0, 3.0, 4.0]) == 2.5
+        assert _median([42.0]) == 42.0
+
+
+class TestPassAtKMetrics:
+    """Verify Pass@k / Pass^k computation in trial aggregation."""
+
+    def test_pass_at_k_computation(self) -> None:
+        from tool_eval_bench.cli.bench import _aggregate_trials
+        from tool_eval_bench.domain.scenarios import (
+            Category,
+            CategoryScore,
+            ModelScoreSummary,
+            ScenarioResult,
+            ScenarioStatus,
+        )
+
+        def make_summary(results: list[tuple[str, int]]) -> ModelScoreSummary:
+            return ModelScoreSummary(
+                final_score=50.0,
+                total_points=sum(p for _, p in results),
+                max_points=6,
+                rating="★★ Below Average",
+                scenario_results=[
+                    ScenarioResult(
+                        scenario_id=sid,
+                        status=ScenarioStatus.PASS if pts == 2 else ScenarioStatus.FAIL,
+                        points=pts,
+                        summary="",
+                    )
+                    for sid, pts in results
+                ],
+                category_scores=[
+                    CategoryScore(
+                        category=Category.A,
+                        label="A",
+                        earned=sum(p for _, p in results),
+                        max_points=6,
+                        percent=50.0,
+                    ),
+                ],
+            )
+
+        trial_1 = make_summary([("SC-A", 2), ("SC-B", 2), ("SC-C", 0)])
+        trial_2 = make_summary([("SC-A", 2), ("SC-B", 0), ("SC-C", 0)])
+
+        agg = _aggregate_trials([trial_1, trial_2])
+
+        assert agg["per_scenario"]["SC-A"]["pass_at_k"] is True
+        assert agg["per_scenario"]["SC-A"]["pass_hat_k"] is True
+        assert agg["per_scenario"]["SC-B"]["pass_at_k"] is True
+        assert agg["per_scenario"]["SC-B"]["pass_hat_k"] is False
+        assert agg["per_scenario"]["SC-C"]["pass_at_k"] is False
+        assert agg["per_scenario"]["SC-C"]["pass_hat_k"] is False
+        assert agg["pass_at_k"] == round(100 * 2 / 3, 1)
+        assert agg["pass_hat_k"] == round(100 * 1 / 3, 1)
+        assert agg["reliability_gap"] == round(agg["pass_at_k"] - agg["pass_hat_k"], 1)

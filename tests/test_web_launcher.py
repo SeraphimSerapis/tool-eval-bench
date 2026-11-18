@@ -460,3 +460,15 @@ def test_numeric_defaults_have_the_declared_types() -> None:
     assert type(_number({}, "temperature", 0)) is float
     assert type(_integer({}, "max_turns", 8, minimum=1)) is int
     assert _integer({"max_turns": ""}, "max_turns", 8) == 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["system_prompt", "label", "api_key"])
+async def test_launch_rejects_non_string_optional_text_fields(
+    launcher_env: dict[str, str], field: str
+) -> None:
+    app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
+    async with web_client(app) as client:
+        resp = await client.post("/api/runs", json={**_LAUNCH, field: 123})
+    assert resp.status_code == 400
+    assert f"{field} must be a string" in resp.json()["error"]

@@ -218,7 +218,12 @@ class TestPrintLeaderboard:
     def test_shows_category_heatmap(self) -> None:
         runs = [
             _make_run(
-                cat_scores=[{"category": "A", "percent": 100}, {"category": "B", "percent": 50}]
+                cat_scores=[
+                    {"category": "A", "percent": 100},
+                    {"category": "B", "percent": 50},
+                    {"category": "O", "percent": 80},
+                    {"category": "P", "percent": 65},
+                ]
             )
         ]
         with patch("tool_eval_bench.storage.db.RunRepository") as MockRepo:
@@ -226,12 +231,14 @@ class TestPrintLeaderboard:
             repo.list.return_value = runs
             MockRepo.return_value = repo
 
-            console = Console(file=StringIO(), width=200, no_color=True)
+            console = Console(file=StringIO(), width=240, no_color=True)
             print_leaderboard(console)
 
             output = console.file.getvalue()
             assert "Sel" in output  # Category A label
             assert "Prm" in output  # Category B label
+            assert "Out=Structured Output" in output
+            assert "Hrd=Hard Mode" in output
 
     def test_shows_legend(self) -> None:
         runs = [_make_run()]
@@ -431,6 +438,16 @@ class TestPrintLeaderboard:
         incomplete["scores"]["completion_rate"] = 67
 
         assert _extract_leaderboard_rows([incomplete]) == []
+
+    def test_separates_runs_with_different_config_fingerprints(self) -> None:
+        first = _make_run(model="same", final_score=90)
+        first["config"]["config_fingerprint"] = "first"
+        second = _make_run(model="same", final_score=70)
+        second["config"]["config_fingerprint"] = "second"
+
+        rows = _extract_leaderboard_rows([first, second])
+
+        assert len(rows) == 2
 
 
 # ===========================================================================
@@ -691,6 +708,23 @@ class TestExportRuns:
         assert data["model-b"]["cohort_label"] == data["model-c"]["cohort_label"]
         assert data["model-a"]["cohort_label"] != data["model-b"]["cohort_label"]
         assert data["model-b"]["cohort_fingerprint"] == data["model-c"]["cohort_fingerprint"]
+
+    def test_export_csv_preserves_zero_temperature_and_omits_missing_metadata(
+        self, monkeypatch, capsys
+    ) -> None:
+        zero_temp = _make_run(model="zero-temp")
+        zero_temp["config"]["temperature"] = 0.0
+        zero_temp["metadata"] = {"temperature": 0.0}
+        missing_temp = _make_run(model="missing-temp")
+        monkeypatch.setattr(
+            "tool_eval_bench.application.run_queries.recent_runs",
+            lambda limit=500: [zero_temp, missing_temp],
+        )
+        export_runs(MagicMock(), fmt="csv")
+        rows = {r["model"]: r for r in csv.DictReader(io.StringIO(capsys.readouterr().out))}
+        assert rows["zero-temp"]["temperature"] == "0.0"
+        assert rows["missing-temp"]["temperature"] == ""
+        assert rows["missing-temp"]["max_model_len"] == ""
 
 
 class TestLeaderboardMarkup:

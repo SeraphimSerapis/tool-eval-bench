@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from datetime import date
+from typing import Any
 
 from tool_eval_bench.adapters.wire_format import WIRE_FORMATS
 from tool_eval_bench.application.decision_audit import (
@@ -39,6 +41,25 @@ def _tcp_port(value: str) -> int:
 
 # Every status a stored run can carry, as the web UI's status filter lists them.
 RUN_STATUSES = ("completed", "failed", "interrupted", "running")
+
+
+class _ExtendOptionalAction(argparse.Action):
+    """Support repeatable ``--delete=-id`` alongside ``--delete [ID ...]``."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: str | None = None,
+    ) -> None:
+        current = getattr(namespace, self.dest, None)
+        merged = [] if current is None else list(current)
+        if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+            merged.extend(values)
+        elif values is not None:
+            merged.append(values)
+        setattr(namespace, self.dest, merged)
 
 
 def iso_date(value: str) -> str:
@@ -914,6 +935,7 @@ def _make_parser() -> argparse.ArgumentParser:
     delete_grp.add_argument(
         "--delete",
         nargs="*",
+        action=_ExtendOptionalAction,
         default=None,
         metavar="RUN_ID",
         help="Delete stored runs and their Markdown reports, then exit. Name run IDs, or "

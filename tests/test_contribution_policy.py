@@ -146,15 +146,42 @@ def test_fork_with_maintainer_edits_and_same_repo_branch_pass() -> None:
     assert same_repo_errors == []
 
 
-def test_packaging_change_requires_changelog_but_not_python_test() -> None:
+@pytest.mark.parametrize(
+    "runtime_file",
+    [
+        "pyproject.toml",
+        "uv.lock",
+        "MANIFEST.in",
+        "Dockerfile",
+        "docker-compose.yaml",
+        ".env.example",
+    ],
+)
+def test_packaging_change_requires_changelog_but_not_python_test(runtime_file: str) -> None:
     errors = evaluate_policy(
         event=_event(),
-        changed_files={"pyproject.toml"},
+        changed_files={runtime_file},
         written_files=set(),
         fragment_contents={},
     )
 
     assert errors == [MISSING_FRAGMENT]
+
+
+def test_checked_in_packaging_and_container_files_are_covered_by_runtime_files() -> None:
+    from scripts.check_contribution import RUNTIME_FILES
+
+    repo_root = Path(__file__).parents[1]
+    for filename in (
+        ".env.example",
+        "Dockerfile",
+        "MANIFEST.in",
+        "docker-compose.yaml",
+        "pyproject.toml",
+        "uv.lock",
+    ):
+        assert (repo_root / filename).is_file(), filename
+        assert filename in RUNTIME_FILES
 
 
 def test_bot_pull_request_is_exempt_from_mechanical_rules() -> None:

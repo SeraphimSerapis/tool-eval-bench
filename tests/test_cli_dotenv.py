@@ -36,7 +36,9 @@ def test_dotenv_discovery_from_installed_module(
 
     variable = "TOOL_EVAL_DOTENV_TEST_VALUE"
     for relative_path, value in files.items():
-        (tmp_path / relative_path).write_text(f"{variable}={value}\n" if value else "")
+        (tmp_path / relative_path).write_text(
+            f"{variable}={value}\n" if value else "", encoding="utf-8"
+        )
 
     # dotenv's legacy lookup follows the caller's file, so relocate the real helper.
     shutil.copyfile(helpers.__file__, install / "dotenv_helper.py")
@@ -45,7 +47,8 @@ def test_dotenv_discovery_from_installed_module(
         "import os\n"
         "from dotenv_helper import load_dotenv_file\n"
         "load_dotenv_file()\n"
-        f"print(os.getenv({variable!r}))\n"
+        f"print(os.getenv({variable!r}))\n",
+        encoding="utf-8",
     )
     env = {
         key: value

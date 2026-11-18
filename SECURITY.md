@@ -3,7 +3,11 @@
 ## Scope
 
 `tool-eval-bench` is a **local benchmarking tool** that connects to
-user-specified LLM endpoints. It does not expose any network services itself.
+user-specified LLM endpoints. By default, benchmark commands make outbound requests only.
+The optional local web UI (`tool-eval-bench serve`) binds to loopback (`127.0.0.1`) with
+per-session bearer tokens, `HttpOnly` session cookies, Host/Origin validation, and a strict
+Content Security Policy; binding beyond loopback with `--serve-host` exposes plain HTTP
+access to stored traces and local API keys and prints a warning at startup.
 
 The primary security considerations are:
 

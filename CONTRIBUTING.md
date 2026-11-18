@@ -156,7 +156,7 @@ from a misleading or hallucinated answer.
 
 Scenario definitions live in `src/tool_eval_bench/evals/scenarios/`, one file
 per scenario, grouped by pack: `core/`, `extended/`, `agentic/`,
-`large_toolset/`, `planning/`, `adversarial/`, `structured/`, and the three
+`large_toolset/`, `planning/`, `adversarial/`, `structured/`, and the five
 Hard Mode groups. Each group package discovers its own files, so a scenario is
 registered by existing.
 
@@ -246,7 +246,7 @@ Keep the layered architecture intact:
 - `runner` orchestrates scenarios through adapter interfaces.
 - `plugins` owns external benchmark datasets, evaluation, and rendering.
 - `application` composes concrete adapters, orchestration, storage, and reports.
-- `cli` is the delivery layer for the application service and plugin runners.
+- `cli` and `web` are the delivery layers for the application service, query modules, and plugin runners; neither may import `storage.db`.
 
 Prefer composition over global state. Keep backend-specific behavior in
 adapters, and preserve the OpenAI-compatible wire format used by vLLM, LiteLLM,

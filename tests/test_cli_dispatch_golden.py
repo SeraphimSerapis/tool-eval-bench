@@ -1175,7 +1175,7 @@ def test_json_file_keeps_stdout_empty(cli: Cli) -> None:
         "json_file": str(target),
         "final_score": 90,
     }
-    assert json.loads(target.read_text())["run_id"] == "run-1"
+    assert json.loads(target.read_text(encoding="utf-8"))["run_id"] == "run-1"
 
 
 # ---------------------------------------------------------------------------
@@ -1517,7 +1517,7 @@ def test_perf_only_config_keeps_only_the_basename_of_a_local_tokenizer(
     cli: Cli, monkeypatch: pytest.MonkeyPatch, tokenizer: str, stored: str
 ) -> None:
     (cli.tmp_path / "local-tok").mkdir()
-    (cli.tmp_path / "local-tok" / "tokenizer.json").write_text("{}")
+    (cli.tmp_path / "local-tok" / "tokenizer.json").write_text("{}", encoding="utf-8")
     monkeypatch.chdir(cli.tmp_path)
     cli.record("tool_eval_bench.cli.perf", "run_llama_benchy", lambda: [ThroughputSample()])
 
