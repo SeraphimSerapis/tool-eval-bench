@@ -39,6 +39,28 @@ def test_dispatch_legacy_parser_builds_every_argument_group() -> None:
     assert args.perf and args.gsm8k and args.mmlu and args.ifeval and args.spec_bench
 
 
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_dispatch_main_dry_run_without_server(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], json_mode: bool
+) -> None:
+    import sys
+
+    from tool_eval_bench.cli import dispatch
+
+    argv = ["tool-eval-bench", "--dry-run", "--short"]
+    if json_mode:
+        argv.append("--json")
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
+
+    with pytest.raises(SystemExit) as exc:
+        dispatch.main()
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert ("total_scenarios" if json_mode else "Dry run") in output
+
+
 def _dispatch_args(**overrides: object):
     import argparse
 

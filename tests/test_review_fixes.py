@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tool_eval_bench.evals.helpers import parse_math_expression
 from tool_eval_bench.evals.noise import _seed_from_payload, enrich_payload
 
@@ -100,3 +102,27 @@ class TestNoiseVariation:
         s1 = _seed_from_payload({"key": "value"}, "a")
         s2 = _seed_from_payload({"key": "value"}, "b")
         assert s1 != s2
+
+
+class TestReferenceDateValidation:
+    def test_invalid_date_raises(self) -> None:
+        """Invalid --reference-date should raise ValueError, not silently fall through."""
+        import asyncio
+        from unittest.mock import MagicMock
+
+        from tool_eval_bench.runner.service import BenchmarkService
+
+        service = BenchmarkService(
+            repo=MagicMock(),
+            reporter=MagicMock(),
+        )
+
+        with pytest.raises(ValueError, match="Invalid --reference-date"):
+            asyncio.run(
+                service.run_benchmark(
+                    model="test",
+                    backend="vllm",
+                    base_url="http://localhost:9999",
+                    reference_date="not-a-date",
+                )
+            )
