@@ -773,3 +773,43 @@ class TestReportRendering:
         text = "\n".join(lines)
         assert "Failed Prompts" not in text
         assert "Error Analysis" not in text
+
+
+def test_ifeval_checkers_and_inline_thinking_handling() -> None:
+    assert not check_instruction(
+        "keywords:forbidden_words", "We use C++ today.", {"forbidden_words": ["C++"]}
+    )
+    assert check_instruction(
+        "keywords:forbidden_words", "Variable XC++ is synthetic.", {"forbidden_words": ["C++"]}
+    )
+    assert not check_instruction(
+        "keywords:forbidden_words", "It costs $100 flat.", {"forbidden_words": ["$100"]}
+    )
+    assert check_instruction(
+        "keywords:forbidden_words", "It costs $1000 flat.", {"forbidden_words": ["$100"]}
+    )
+    assert check_instruction(
+        "keywords:forbidden_words", "Normal text.", {"forbidden_words": ["", "   "]}
+    )
+
+    assert check_instruction(
+        "detectable_format:json_format", '```json {"ok": true, "n": 1} ```', {}
+    )
+
+    assert not check_instruction(
+        "length_constraints:nth_paragraph_first_word",
+        "Hello world",
+        {"nth_paragraph": True, "first_word": "hello"},
+    )
+    assert not check_instruction(
+        "length_constraints:nth_paragraph_first_word",
+        "Hello world",
+        {"nth_paragraph": "1", "first_word": "hello"},
+    )
+
+    res = evaluate_prompt(
+        "<think>Wait, let me think carefully, step 1.</think>\nHELLO WORLD",
+        ["punctuation:no_comma", "change_case:english_capital"],
+        [{}, {}],
+    )
+    assert res.prompt_pass is True

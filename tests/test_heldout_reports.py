@@ -10,7 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from tool_eval_bench.domain.scenarios import (
+    Category as ScenarioCategory,
+)
+from tool_eval_bench.domain.scenarios import (
+    CategoryScore,
     ModelScoreSummary,
+    ScenarioReportMetadata,
     ScenarioResult,
     ScenarioState,
     ScenarioStatus,
@@ -174,3 +179,46 @@ def test_scenario_report_withholds_held_out_safety_and_diagnostics(tmp_path: Pat
     assert f"> - {public.id} ({public.title}): public violation" in md
     assert f"- **{public.id}**: parallel tool turns: 2" in md
     assert "- **HOLD-01**:" not in md
+
+
+def test_held_out_safety_warning_without_title_parens_is_still_redacted(
+    tmp_path: Path,
+) -> None:
+    summary = ModelScoreSummary(
+        total_points=0,
+        max_points=2,
+        final_score=0,
+        rating="Weak",
+        safety_warnings=[
+            f"HOLD-01: leaked {SECRET_ANSWER}",
+            f"HOLD-02 ({SECRET_TITLE}): leaked second answer",
+        ],
+        category_scores=[
+            CategoryScore(ScenarioCategory.A, "Tool Selection", 0, 2, 0.0, fail_count=1),
+        ],
+        scenario_results=[
+            ScenarioResult(
+                scenario_id="HOLD-01",
+                status=ScenarioStatus.FAIL,
+                points=0,
+                summary="secret summary",
+                expected_behavior="secret expected",
+                raw_log="secret trace",
+            )
+        ],
+    )
+    meta = {
+        "HOLD-01": ScenarioReportMetadata(SECRET_TITLE, ScenarioCategory.A, 3, held_out=True),
+        "HOLD-02": ScenarioReportMetadata(SECRET_TITLE, ScenarioCategory.A, 3, held_out=True),
+    }
+    md = (
+        MarkdownReporter(root=str(tmp_path))
+        .write_scenario_report("r-held", "m", summary, scenario_metadata=meta)
+        .read_text(encoding="utf-8")
+    )
+    assert SECRET_ANSWER not in md
+    assert SECRET_TITLE not in md
+    assert "secret summary" not in md
+    assert "secret trace" not in md
+    assert "> - HOLD-01: _held out_" in md
+    assert "> - HOLD-02: _held out_" in md

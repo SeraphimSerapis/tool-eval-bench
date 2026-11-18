@@ -89,3 +89,30 @@ def test_close_shuts_down_the_writer_thread(tmp_path) -> None:
     assert repository._writer is not None
     repository.close()
     assert repository._writer is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_async_checkpoints_and_main_thread_writes_do_not_race(
+    tmp_path,
+) -> None:
+    with open_repository(db_path=str(tmp_path / "race.sqlite")) as repo:
+        repo.upsert_scenario_run(
+            {"run_id": "r1", "status": "running", "config": {"model": "m"}, "scores": {}}
+        )
+
+        def hammer_sync() -> None:
+            for i in range(25):
+                repo.mark_run_status("r1", "running" if i % 2 == 0 else "interrupted")
+                _ = repo.get("r1")
+                _ = repo.list(limit=5)
+
+        await asyncio.gather(
+            asyncio.to_thread(hammer_sync),
+            *(
+                repo.acheckpoint_scenario_result(
+                    "r1", {"scenario_id": f"TC-{i:02d}", "status": "pass", "points": 2}
+                )
+                for i in range(1, 26)
+            ),
+        )
+        assert len(repo.get_checkpoints("r1")) == 25

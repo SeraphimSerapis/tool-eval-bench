@@ -16,7 +16,6 @@ from tool_eval_bench.api import (
 )
 from tool_eval_bench.schema import ARGS_SCHEMA as SCHEMA_DIRECT
 from tool_eval_bench.schema import get_schema
-from tool_eval_bench.storage.db import RunRepository
 
 # ---------------------------------------------------------------------------
 # format_result tests
@@ -96,6 +95,13 @@ class TestFormatResult:
         result = format_result({"scores": {}})
         assert result["final_score"] is None
         assert result["rating"] is None
+        assert result["safety_warnings"] == []
+        assert result["total_scenarios"] is None
+
+    def test_null_scores_falls_back_to_none_fields(self):
+        result = format_result({"run_id": "null-scores", "scores": None})
+        assert result["run_id"] == "null-scores"
+        assert result["final_score"] is None
         assert result["safety_warnings"] == []
         assert result["total_scenarios"] is None
 
@@ -202,7 +208,7 @@ class TestRunBenchmark:
 
     @pytest.fixture(autouse=True)
     def no_detection(self, monkeypatch):
-        """These tests cover forwarding; detection has its own module."""
+        """These tests cover orchestration and envelope; detection has its own module."""
 
         async def keep(backend, **kwargs):
             return backend
@@ -210,103 +216,92 @@ class TestRunBenchmark:
         monkeypatch.setattr("tool_eval_bench.api.detect_backend", keep)
         monkeypatch.setattr("tool_eval_bench.api.build_run_context", AsyncMock(return_value=None))
 
-    @pytest.fixture()
-    def mock_service(self):
-        """Create a mock BenchmarkService that returns a fake run_data."""
-        service = MagicMock()
-        service.run_benchmark = AsyncMock(
-            return_value={
-                "run_id": "mock-run",
-                "status": "completed",
-                "config": {"model": "test-model"},
-                "scores": {
-                    "final_score": 100,
-                    "max_points": 30,
-                    "rating": "★★★★★ Excellent",
-                },
-                "metadata": {},
-            }
-        )
-        return service
-
     @pytest.mark.asyncio
-    async def test_returns_versioned_envelope(self, mock_service):
-        with patch("tool_eval_bench.api.BenchmarkService", return_value=mock_service):
-            result = await run_benchmark(
-                model="test-model",
-                base_url="http://localhost:8000",
-                persist=False,
-            )
-        assert result["schema_version"] == OUTPUT_SCHEMA_VERSION
-        assert result["run_id"] == "mock-run"
-        assert result["final_score"] == 100
-
-    @pytest.mark.asyncio
-    async def test_short_flag_uses_core_scenarios(self, mock_service):
+    async def test_runs_selected_scenarios_without_persistence_and_forwards_options(
+        self, monkeypatch, tmp_path
+    ):
+        from tool_eval_bench.adapters.base import BackendAdapter, ChatCompletionResult
+        from tool_eval_bench.application.service import BenchmarkService
         from tool_eval_bench.evals.scenarios import SCENARIOS
 
-        with patch("tool_eval_bench.api.BenchmarkService", return_value=mock_service):
-            await run_benchmark(
-                model="test-model",
-                base_url="http://localhost:8000",
-                short=True,
-                persist=False,
-            )
-        call_kwargs = mock_service.run_benchmark.call_args.kwargs
-        assert len(call_kwargs["scenarios"]) == len(SCENARIOS)
+        monkeypatch.chdir(tmp_path)
 
-    @pytest.mark.asyncio
-    async def test_persist_false_skips_storage(self, mock_service):
-        with patch("tool_eval_bench.api.BenchmarkService", return_value=mock_service) as mock_cls:
-            await run_benchmark(
-                model="test-model",
-                base_url="http://localhost:8000",
-                persist=False,
-            )
-        # When persist=False, service is constructed with repo=None, reporter=None
-        mock_cls.assert_called_once_with(repo=None, reporter=None)
+        class StaticAdapter(BackendAdapter):
+            async def chat_completion(self, **kwargs):
+                return ChatCompletionResult(content="ok", finish_reason="stop")
 
-    @pytest.mark.asyncio
-    async def test_callbacks_forwarded(self, mock_service):
-        start_cb = AsyncMock()
-        result_cb = AsyncMock()
-        with patch("tool_eval_bench.api.BenchmarkService", return_value=mock_service):
-            await run_benchmark(
-                model="test-model",
-                base_url="http://localhost:8000",
-                on_scenario_start=start_cb,
-                on_scenario_result=result_cb,
-                persist=False,
-            )
-        call_kwargs = mock_service.run_benchmark.call_args.kwargs
-        assert call_kwargs["on_scenario_start"] is start_cb
-        assert call_kwargs["on_scenario_result"] is result_cb
+        monkeypatch.setattr(BenchmarkService, "_adapter_for", lambda *a, **k: StaticAdapter())
+        started: list[str] = []
+        finished: list[str] = []
 
-    @pytest.mark.asyncio
-    async def test_weight_by_difficulty_is_forwarded(self, mock_service):
-        with patch("tool_eval_bench.api.BenchmarkService", return_value=mock_service):
-            await run_benchmark(
-                model="test-model",
-                base_url="http://localhost:8000",
-                weight_by_difficulty=True,
-                persist=False,
-            )
-        assert mock_service.run_benchmark.call_args.kwargs["weight_by_difficulty"] is True
+        async def on_start(sc, idx, total):
+            started.append(sc.id)
 
-    @pytest.mark.asyncio
-    async def test_system_prompt_is_forwarded(self, mock_service):
-        """The override is reachable from the public API, not only the CLI."""
-        with patch("tool_eval_bench.api.BenchmarkService", return_value=mock_service):
-            await run_benchmark(
-                model="test-model",
-                base_url="http://localhost:8000",
-                system_prompt="You are a strict evaluator.",
-                persist=False,
-            )
-        assert (
-            mock_service.run_benchmark.call_args.kwargs["system_prompt"]
-            == "You are a strict evaluator."
+        async def on_result(sc, res, idx, total):
+            finished.append(sc.id)
+
+        result = await run_benchmark(
+            model="test-model",
+            base_url="http://localhost:8000",
+            scenarios=[SCENARIOS[0]],
+            weight_by_difficulty=True,
+            system_prompt="You are a strict evaluator.",
+            on_scenario_start=on_start,
+            on_scenario_result=on_result,
+            persist=False,
         )
+
+        assert result["schema_version"] == OUTPUT_SCHEMA_VERSION
+        assert result["total_scenarios"] == 1
+        assert result["config"]["weight_by_difficulty"] is True
+        assert result["config"]["system_prompt"] == "You are a strict evaluator."
+        assert started == [SCENARIOS[0].id]
+        assert finished == [SCENARIOS[0].id]
+        assert not (tmp_path / "data" / "benchmarks.sqlite").exists()
+
+    @pytest.mark.asyncio
+    async def test_short_preset_resolves_core_scenarios_and_persists_when_enabled(
+        self, monkeypatch, tmp_path
+    ):
+        from tool_eval_bench.application import service as service_module
+        from tool_eval_bench.domain.scenarios import ScenarioResult, ScenarioStatus
+        from tool_eval_bench.evals.scenarios import SCENARIOS
+        from tool_eval_bench.runner.orchestrator import score_results
+
+        monkeypatch.chdir(tmp_path)
+        seen_ids: list[str] = []
+
+        async def fake_run(adapter, *, scenarios, **kwargs):
+            seen_ids[:] = [s.id for s in scenarios]
+            results = [
+                ScenarioResult(
+                    scenario_id=s.id,
+                    status=ScenarioStatus.PASS,
+                    points=2,
+                    summary="ok",
+                    raw_log="trace",
+                )
+                for s in scenarios
+            ]
+            return score_results(results, scenarios)
+
+        monkeypatch.setattr(service_module, "run_all_scenarios", fake_run)
+        monkeypatch.setattr(
+            service_module.BenchmarkService, "_adapter_for", lambda *a, **k: object()
+        )
+
+        result = await run_benchmark(
+            model="test-model",
+            base_url="http://localhost:8000",
+            short=True,
+            persist=True,
+            output_dir=str(tmp_path / "runs"),
+        )
+
+        assert seen_ids == [s.id for s in SCENARIOS]
+        assert result["total_scenarios"] == len(SCENARIOS)
+        assert Path(result["report_path"]).exists()
+        assert (tmp_path / "data" / "benchmarks.sqlite").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -642,31 +637,6 @@ class TestProbeServer:
 
 
 # ---------------------------------------------------------------------------
-# Stdout cleanliness in --json mode
-# ---------------------------------------------------------------------------
-
-
-class TestJsonStdoutCleanliness:
-    """Verify that non-JSON output is suppressed when --json is active."""
-
-    def test_warmup_suppressed_in_json_mode(self):
-        """Warmup should not run in --json mode."""
-        # The guard is: `if not args.no_warmup and not args.json:`
-        # We verify the condition directly since we can't easily invoke main()
-        args = MagicMock()
-        args.no_warmup = False
-        args.json = True
-        # The condition `not args.no_warmup and not args.json` should be False
-        assert not (not args.no_warmup and not args.json)
-
-    def test_warmup_runs_in_normal_mode(self):
-        args = MagicMock()
-        args.no_warmup = False
-        args.json = False
-        assert not args.no_warmup and not args.json
-
-
-# ---------------------------------------------------------------------------
 # BenchmarkService persistence bypass (regression test)
 # ---------------------------------------------------------------------------
 
@@ -681,10 +651,11 @@ class TestServicePersistence:
         assert service.repo is None
         assert service.reporter is None
 
-    def test_default_repo_created_when_omitted(self):
+    def test_default_repo_created_when_omitted(self, tmp_path, monkeypatch):
         from tool_eval_bench.runner.service import BenchmarkService
         from tool_eval_bench.storage.db import RunRepository
 
+        monkeypatch.chdir(tmp_path)
         service = BenchmarkService()
         assert isinstance(service.repo, RunRepository)
         service.repo.close()
@@ -778,7 +749,7 @@ class TestAsyncReExport:
 class TestErrorConstants:
     """Verify the structured error taxonomy is consistent."""
 
-    def test_all_constants_are_strings(self):
+    def test_codes_are_normalized_and_unique(self):
         from tool_eval_bench.domain import errors
 
         codes = [
@@ -791,58 +762,9 @@ class TestErrorConstants:
         ]
         for code in codes:
             assert isinstance(code, str)
-            assert code == code.lower()  # all lowercase
-            assert " " not in code  # no spaces
-
-    def test_no_duplicate_codes(self):
-        from tool_eval_bench.domain import errors
-
-        codes = [
-            errors.CONNECTION_FAILED,
-            errors.HTTP_ERROR,
-            errors.DETECTION_FAILED,
-            errors.INVALID_RESPONSE,
-            errors.NO_MODELS,
-            errors.NO_SERVER,
-        ]
-        assert len(codes) == len(set(codes)), "Duplicate error codes found"
-
-
-# ---------------------------------------------------------------------------
-# RunRepository context manager
-# ---------------------------------------------------------------------------
-
-
-class TestRunRepositoryContextManager:
-    """Verify RunRepository supports 'with' usage.
-
-    Constructs the class directly rather than through `open_repository`: the
-    protocol under test is what guarantees the close.
-    """
-
-    def test_context_manager_protocol(self, tmp_path):
-
-        db_path = tmp_path / "test.sqlite"
-        with RunRepository(str(db_path)) as repo:
-            assert db_path.exists()
-            # Should be usable inside the context
-            assert repo._conn is not None
-
-    def test_context_manager_closes_on_exit(self, tmp_path):
-
-        db_path = tmp_path / "test.sqlite"
-        with RunRepository(str(db_path)) as repo:
-            conn = repo._conn
-        # After exit, close() was called
-        # SQLite connections may not have a reliable .closed attribute,
-        # but attempting an operation should fail
-        import sqlite3
-
-        try:
-            conn.execute("SELECT 1")
-            # Some SQLite builds don't raise on closed connections
-        except sqlite3.ProgrammingError:
-            pass  # Expected — connection was closed
+            assert code == code.lower()
+            assert " " not in code
+        assert len(codes) == len(set(codes))
 
 
 # ---------------------------------------------------------------------------

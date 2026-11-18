@@ -202,3 +202,30 @@ def test_first_parseable_marker_wins_over_a_hallucinated_exemplar() -> None:
     # The model answered, then kept going and invented the next exemplar.
     response = "3 * 6 = 18\n#### 18\n\nQ: Tom has 40 apples...\nA: 40 + 2 = 42\n#### 42"
     assert extract_answer(response) == (18.0, "marker")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_val", "expected_method"),
+    [
+        (r"Therefore we obtain \boxed{42}.", 42.0, "boxed"),
+        (r"First \boxed{10}, wait actually \boxed{-1,250.5}", -1250.5, "boxed"),
+        (r"Result: \boxed{\text{\$18}}", 18.0, "boxed"),
+        ("#### **42**", 42.0, "marker"),
+        ("#### 25%", 25.0, "marker"),
+        ("The answer is $-18.", -18.0, "answer_pattern"),
+        ("The answer is -$18.", -18.0, "answer_pattern"),
+        ("Net balance: €1,250.50", 1250.5, "last_number"),
+        (
+            "<think>#### 999\nthe answer is 888</think>\nThe answer is **42**.",
+            42.0,
+            "answer_pattern",
+        ),
+    ],
+)
+def test_gsm8k_answer_extraction_edge_cases(
+    text: str, expected_val: float, expected_method: str
+) -> None:
+    val, method = extract_answer(text)
+    assert val == pytest.approx(expected_val)
+    assert method == expected_method
+    assert evaluate_answer(text, expected_val).correct is True

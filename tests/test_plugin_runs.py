@@ -341,3 +341,164 @@ async def test_ifeval_plugin_run() -> None:
     assert result_par.plugin_name == "ifeval"
     assert result_par.score == 0.0  # both fail instructions
     assert len(adapter_par.calls) == 2
+
+
+def test_plugin_runners_complete_cached_lifecycles(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    import argparse
+
+    from rich.console import Console
+
+    from tool_eval_bench.cli import plugin_runners
+    from tool_eval_bench.domain.plugin import BenchmarkResult
+    from tool_eval_bench.plugins.gsm8k import dataset as gd
+    from tool_eval_bench.plugins.ifeval import dataset as idata
+    from tool_eval_bench.plugins.mmlu import dataset as md
+
+    cache = tmp_path / "cache"
+    cache.write_text("cached", encoding="utf-8")
+    monkeypatch.setattr(gd, "_find_cache_file", lambda: cache)
+    monkeypatch.setattr(gd, "load_dataset", lambda **kw: [GSM8KItem(0, "q", "#### 1", 1)])
+    monkeypatch.setattr(md, "_find_cache_file", lambda split="test": cache)
+    monkeypatch.setattr(
+        md,
+        "load_dataset",
+        lambda split="test", **kw: [MMLUItem(0, "q", "anatomy", ["a"] * 4, 0)],
+    )
+    monkeypatch.setattr(idata, "_find_cache_file", lambda: cache)
+    monkeypatch.setattr(idata, "load_dataset", lambda **kw: [IFEvalItem(0, "p", ["x"], [{}])])
+
+    async def gsm_run(self, adapter, *, on_progress=None, **kw):
+        await on_progress(
+            1, 3, {"correct": True, "question": "q", "extracted_answer": 1, "ground_truth": 1}
+        )
+        await on_progress(2, 3, {"correct": False, "question": "x" * 100})
+        await on_progress(3, 3, {"is_error": True, "question": "bad"})
+        return BenchmarkResult(
+            "gsm8k",
+            50,
+            "50%",
+            "Weak",
+            details={
+                "total": 3,
+                "correct": 1,
+                "errors": 1,
+                "answered": 2,
+                "completion_rate": 66.67,
+            },
+            duration_seconds=1,
+            total_tokens=10,
+        )
+
+    async def mmlu_run(self, adapter, *, on_progress=None, **kw):
+        await on_progress(
+            1,
+            3,
+            {
+                "correct": True,
+                "subject": "anatomy",
+                "question": "q",
+                "extracted_answer": "A",
+                "ground_truth": "A",
+            },
+        )
+        await on_progress(2, 3, {"correct": False, "subject": "anatomy", "question": "x" * 100})
+        await on_progress(3, 3, {"is_error": True, "subject": "anatomy", "question": "bad"})
+        return BenchmarkResult(
+            "mmlu",
+            50,
+            "50%",
+            "Weak",
+            details={
+                "total": 3,
+                "correct": 1,
+                "errors": 1,
+                "answered": 2,
+                "completion_rate": 66.67,
+                "categories": {"STEM": {"accuracy": 50.0}},
+            },
+            duration_seconds=1,
+            total_tokens=10,
+        )
+
+    async def ifeval_run(self, adapter, *, on_progress=None, **kw):
+        await on_progress(
+            1,
+            3,
+            {"prompt_pass": True, "instructions_passed": 2, "instructions_total": 2, "prompt": "p"},
+        )
+        await on_progress(
+            2,
+            3,
+            {
+                "prompt_pass": False,
+                "instructions_passed": 1,
+                "instructions_total": 2,
+                "prompt": "x" * 100,
+            },
+        )
+        await on_progress(3, 3, {"is_error": True, "prompt": "bad"})
+        return BenchmarkResult(
+            "ifeval",
+            50,
+            "50%",
+            "Weak",
+            details={
+                "total": 3,
+                "prompts_passed": 1,
+                "errors": 1,
+                "answered": 2,
+                "completion_rate": 66.67,
+                "prompt_accuracy": 50.0,
+                "instructions_passed": 3,
+                "instructions_total": 4,
+                "instruction_accuracy": 75.0,
+            },
+            duration_seconds=1,
+            total_tokens=10,
+        )
+
+    for cls, run in (
+        (GSM8KPlugin, gsm_run),
+        (MMLUPlugin, mmlu_run),
+        (IFEvalPlugin, ifeval_run),
+    ):
+        monkeypatch.setattr(cls, "run", run)
+        monkeypatch.setattr(cls, "render_report_section", lambda self, result: ["report"])
+    monkeypatch.setattr(
+        "tool_eval_bench.application.mode_runs.with_config_fingerprint", lambda value, *_: value
+    )
+    persisted: list[dict] = []
+    monkeypatch.setattr("tool_eval_bench.application.run_queries.persist_run", persisted.append)
+    args = argparse.Namespace(
+        gsm8k_shots=1,
+        gsm8k_limit=3,
+        gsm8k_shuffle=True,
+        mmlu_shots=1,
+        mmlu_limit=3,
+        mmlu_subjects="STEM",
+        ifeval_limit=3,
+        seed=1,
+        parallel=2,
+        temperature=0.0,
+        timeout=1.0,
+    )
+    console = Console(record=True, width=180)
+
+    plugin_runners._run_gsm8k_benchmark(
+        console, "m", "Display", "url", None, args, output_dir=str(tmp_path)
+    )
+    plugin_runners._run_mmlu_benchmark(
+        console, "m", "Display", "url", None, args, output_dir=str(tmp_path)
+    )
+    plugin_runners._run_ifeval_benchmark(
+        console, "m", "Display", "url", None, args, output_dir=str(tmp_path)
+    )
+
+    assert [item["run_type"] for item in persisted] == ["gsm8k", "mmlu", "ifeval"]
+    output = console.export_text()
+    assert "IFEval Prompt Accuracy" in output
+    assert output.count("counted in accuracy; 2/3 answered") == 3
+    assert "excluded from accuracy" not in output
+    assert all(item["scores"]["completion_rate"] == 66.67 for item in persisted)

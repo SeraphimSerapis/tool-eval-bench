@@ -978,6 +978,15 @@ class TestNeedleCounts:
         assert needle is not None
         assert (needle.errors, needle.accuracy, len(needle.cells)) == (4, 0.0, 4)
 
+    @pytest.mark.parametrize("bad_accuracy", [True, float("nan")])
+    def test_non_finite_or_bool_accuracy_fallback_is_ignored(self, bad_accuracy: Any) -> None:
+        run = _needle_run(cells=False)
+        del run["scores"]["retrieved"], run["scores"]["total"]
+        run["scores"]["accuracy"] = bad_accuracy
+        needle = build_card_data([run]).needle
+        assert needle is not None
+        assert needle.accuracy == 0.0
+
 
 class TestPerfState:
     def test_failed_cells_and_an_unfinished_pass(self) -> None:
@@ -1053,6 +1062,14 @@ class TestModelName:
                 },
                 None,
                 "Qwen3-8B",
+            ),
+            (
+                {
+                    "server_model_root": "/root/.cache/huggingface/hub/models--Org--Model--v2/"
+                    "snapshots/0123456789abcdef0123456789abcdef01234567"
+                },
+                None,
+                "Model--v2",
             ),
             # A bare snapshot hash is never shown.
             (

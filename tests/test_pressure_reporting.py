@@ -12,6 +12,8 @@ import pytest
 from rich.console import Console
 
 from tool_eval_bench.domain.models import RunContext
+from tool_eval_bench.domain.scenarios import Category as ScenarioCategory
+from tool_eval_bench.domain.scenarios import ScenarioReportMetadata
 from tool_eval_bench.storage.reports import MarkdownReporter
 
 
@@ -182,3 +184,51 @@ def test_sweep_report_without_run_context_keeps_its_header(tmp_path: Path) -> No
     assert "tool-eval-bench" not in markdown
     assert "## Inference Engine" not in markdown
     assert "## Environment" not in markdown
+
+
+def test_pressure_sweep_withholds_held_out_scenarios_and_redacts_level_error(
+    tmp_path: Path,
+) -> None:
+    secret_url = "http://admin:s3cretP@ss@internal-llm.corp:8000/v1?api_key=sk-super-secret"
+    md_path = MarkdownReporter(root=str(tmp_path)).write_pressure_sweep_report(
+        run_id="pressure-held",
+        model="m",
+        backend="vllm",
+        display_url=secret_url,
+        context_size=8192,
+        level_results=[
+            {
+                "ratio": 0.5,
+                "fill_tokens": 4096,
+                "score_pct": 0.0,
+                "error": f"503 from {secret_url}/chat/completions",
+                "scenario_results": [
+                    {
+                        "scenario_id": "HOLD-99",
+                        "status": "fail",
+                        "points": 0,
+                        "summary": "top-secret-pack-summary",
+                        "expected_behavior": "top-secret-expected",
+                        "tool_calls_made": ["secret_tool"],
+                        "raw_log": "top-secret-raw-trace",
+                    }
+                ],
+            }
+        ],
+        breaking_point=0.5,
+        first_degradation=0.5,
+        scenario_metadata={
+            "HOLD-99": ScenarioReportMetadata(
+                "Pack Title", ScenarioCategory.A, difficulty=4, held_out=True
+            )
+        },
+    )
+    full = md_path.read_text(encoding="utf-8")
+    assert "s3cretP@ss" not in full
+    assert "sk-super-secret" not in full
+    assert "internal-llm.corp" not in full
+    assert "top-secret-pack-summary" not in full
+    assert "top-secret-expected" not in full
+    assert "secret_tool" not in full
+    assert "top-secret-raw-trace" not in full
+    assert "HOLD-99" in full

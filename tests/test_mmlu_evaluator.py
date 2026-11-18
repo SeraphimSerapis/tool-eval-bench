@@ -401,3 +401,25 @@ def test_lowercase_letter_ending_the_response_is_an_answer(response: str, expect
 def test_lowercase_letter_mid_text_is_not_an_answer(response: str) -> None:
     letter, _method = extract_answer(response)
     assert letter is None
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_letter", "expected_method"),
+    [
+        ("**B**", "B", "exact"),
+        ("**(D)**", "D", "exact"),
+        ("`A`", "A", "exact"),
+        (r"Hence \boxed{C}.", "C", "answer_pattern"),
+        (r"Hence \boxed{\text{(b)}}.", "B", "answer_pattern"),
+        ("The answer is **D**.", "D", "answer_pattern"),
+        ("**Answer:** **A**", "A", "answer_pattern"),
+        ("<think>Maybe A or C? Answer: A</think>\nB", "B", "exact"),
+    ],
+)
+def test_mmlu_answer_extraction_and_ground_truth_bounds(
+    response: str, expected_letter: str, expected_method: str
+) -> None:
+    assert extract_answer(response) == (expected_letter, expected_method)
+    for bad_gt in (-1, 4, True):
+        with pytest.raises(ValueError, match="ground_truth"):
+            evaluate_answer("A", bad_gt)

@@ -67,48 +67,52 @@ def _make_pre_v1_database(path: Path) -> None:
     conn.close()
 
 
-def _open_after_barrier(path: str, barrier: Any, outcomes: Any) -> None:
+def _open_after_barrier(paths: tuple[str, ...], barrier: Any, outcomes: Any) -> None:
     from tool_eval_bench.storage.db import RunRepository
 
-    barrier.wait()
-    try:
-        with RunRepository(path) as repo:
-            repo.list()
-        outcomes.put("ok")
-    except Exception as exc:  # noqa: BLE001 - the parent asserts on the message
-        outcomes.put(f"{type(exc).__name__}: {exc}")
+    results: list[str] = []
+    for path in paths:
+        try:
+            barrier.wait()
+            with RunRepository(path) as repo:
+                repo.list()
+            results.append("ok")
+        except Exception as exc:  # noqa: BLE001 - the parent asserts on the message
+            results.append(f"{type(exc).__name__}: {exc}")
+    outcomes.put(results)
 
 
-@pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(),
-    reason="needs fork so the children share no interpreter state with pytest",
-)
 @pytest.mark.parametrize("legacy", [False, True], ids=["new-file", "pre-v1"])
 def test_concurrent_first_open_neither_locks_nor_duplicates_columns(
     tmp_path: Path, legacy: bool
 ) -> None:
-    # Separate processes, because SQLite file locks do not contend between
-    # connections the same way inside one process. Before the fix, about a
-    # quarter of openers failed with "database is locked" on the WAL switch or
-    # "duplicate column name" on the migration.
-    ctx = multiprocessing.get_context("fork")
-    failures: list[str] = []
+    # Separate spawned processes, because SQLite file locks do not contend
+    # between connections the same way inside one process and fork() emits
+    # DeprecationWarning in multi-threaded runs. Reuse 4 workers across the
+    # 6 per-trial DBs so each open still hits the barrier together without 48
+    # interpreter startups.
+    ctx = multiprocessing.get_context("spawn")
+    db_paths: list[str] = []
     for trial in range(6):
         db_path = tmp_path / f"trial{trial}.sqlite"
         if legacy:
             _make_pre_v1_database(db_path)
-        barrier = ctx.Barrier(4)
-        outcomes = ctx.Queue()
-        workers = [
-            ctx.Process(target=_open_after_barrier, args=(str(db_path), barrier, outcomes))
-            for _ in range(4)
-        ]
-        for worker in workers:
-            worker.start()
-        results = [outcomes.get(timeout=30) for _ in workers]
-        for worker in workers:
-            worker.join(timeout=30)
-        failures.extend(r for r in results if r != "ok")
+        db_paths.append(str(db_path))
+
+    barrier = ctx.Barrier(4, timeout=30)
+    outcomes = ctx.Queue()
+    workers = [
+        ctx.Process(target=_open_after_barrier, args=(tuple(db_paths), barrier, outcomes))
+        for _ in range(4)
+    ]
+    for worker in workers:
+        worker.start()
+    failures: list[str] = []
+    for _ in workers:
+        failures.extend(r for r in outcomes.get(timeout=30) if r != "ok")
+    for worker in workers:
+        worker.join(timeout=30)
+        assert worker.exitcode == 0
     assert failures == []
 
 

@@ -94,6 +94,8 @@ class GSM8KPlugin(BenchmarkPlugin):
             raise ValueError("concurrency must be at least 1")
         if limit < 0:
             raise ValueError("limit must be >= 0")
+        if n_shots < 0:
+            raise ValueError("n_shots must be >= 0")
 
         # Load dataset (or use preloaded items from the CLI layer)
         if preloaded is not None:
@@ -196,6 +198,19 @@ class GSM8KPlugin(BenchmarkPlugin):
             for i, exc in enumerate(gather_results):
                 if isinstance(exc, BaseException):
                     logger.error("GSM8K question %d crashed: %s", i, exc)
+                    if ordered[i] is None:
+                        item = items[i]
+                        ordered[i] = {
+                            "index": item.index,
+                            "question": item.question[:200],
+                            "correct": False,
+                            "is_error": True,
+                            "ground_truth": item.ground_truth,
+                            "extracted_answer": None,
+                            "extraction_method": "error",
+                            "error": redact_urls(str(exc)),
+                            "tokens": 0,
+                        }
 
             for r in ordered:
                 if r is not None:

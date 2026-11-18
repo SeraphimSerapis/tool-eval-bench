@@ -803,3 +803,37 @@ def test_spec_decode_report_renders_the_probed_engine(tmp_path):
     # would claim 0.7 here, stays out of the report.
     assert "| Temperature |" not in text
     assert "- **Temperature**: 0 (greedy" in text
+
+
+def test_run_context_escapes_pipes_and_backticks_roundtrip(tmp_path):
+    from tool_eval_bench.compare_reports.tool_eval import parse_md
+    from tool_eval_bench.domain.models import RunContext
+
+    tricky = "org/model`v1|beta"
+    ctx = RunContext(
+        tool_version="1.0",
+        git_sha=None,
+        hostname="h",
+        platform_info="linux",
+        python_version="3.13",
+        model=tricky,
+        backend="vllm",
+        base_url="http://***:8000",
+        extra_params={"stop": ["<|im_end|>", "```"]},
+    )
+    reporter = MarkdownReporter(root=str(tmp_path))
+    path = reporter.write_scenario_report("run_pipe", tricky, _make_summary(), run_context=ctx)
+    content = path.read_text(encoding="utf-8")
+    assert parse_md(str(path))["model_api"] == tricky
+    extra_line = next(line for line in content.splitlines() if "Extra Params" in line)
+    unescaped_pipes = len(extra_line.replace("\\|", "")) - len(
+        extra_line.replace("\\|", "").replace("|", "")
+    )
+    assert unescaped_pipes == 3
+
+
+def test_summary_report_handles_empty_summaries(tmp_path):
+    out = MarkdownReporter(root=str(tmp_path)).write_summary_report(
+        "empty-sum", "m", [], {"trials": 0}
+    )
+    assert "Cross-Trial Summary" in out.read_text(encoding="utf-8")

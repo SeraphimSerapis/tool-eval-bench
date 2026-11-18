@@ -1042,6 +1042,53 @@ class TestToolscalePlugin:
             assert heading in report
         assert "±" in report  # trial spread appears with more than one trial
 
+    async def test_error_report_redacts_urls_and_abstain_reply_strips_thinking(self) -> None:
+        from tool_eval_bench.adapters.base import BackendAdapter, ChatCompletionResult
+
+        secret_base = "http://admin:s3cretP@ss@internal-llm.corp:8000/v1"
+        secret_url = f"{secret_base}?api_key=sk-super-secret"
+
+        class StaticAdapter(BackendAdapter):
+            def __init__(self, outcome: ChatCompletionResult | Exception) -> None:
+                self._outcome = outcome
+
+            async def chat_completion(self, **kwargs: Any) -> ChatCompletionResult:
+                if isinstance(self._outcome, Exception):
+                    raise self._outcome
+                return self._outcome
+
+        catalog = load_builtin_catalog()
+        items = build_items(
+            catalog, counts=[8], similarities=["distinct"], limit=1, trials=1, seed=1
+        )[:1]
+        ts_res = await ToolscalePlugin().run(
+            StaticAdapter(RuntimeError(f"503 from {secret_url}/chat/completions")),
+            model="m",
+            base_url=secret_url,
+            items=items,
+            catalog=catalog,
+        )
+        ts_report = "\n".join(ToolscalePlugin().render_report_section(ts_res))
+        assert "s3cretP@ss" not in ts_report
+        assert "sk-super-secret" not in ts_report
+
+        ts_reply_msg = ChatCompletionResult(
+            content="<think>missing optional filter</think>Which region should I query?",
+            finish_reason="stop",
+        )
+        ts_abstain = await ToolscalePlugin().run(
+            StaticAdapter(ts_reply_msg),
+            model="m",
+            base_url="http://localhost:8000/v1",
+            items=items,
+            catalog=catalog,
+        )
+        assert ts_abstain.item_results[0]["reply"] == "Which region should I query?"
+        assert (
+            ts_reply_msg.content
+            == "<think>missing optional filter</think>Which region should I query?"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Built-in catalog
@@ -1270,7 +1317,7 @@ class TestToolscaleRunner:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         path = tmp_path / "private.json"
-        path.write_text(json.dumps(_catalog_data()))
+        path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
         output, persisted = self._run(
             monkeypatch, tmp_path, _runner_args(toolscale_catalog=str(path))
         )
@@ -1285,7 +1332,7 @@ class TestToolscaleRunner:
         assert "Accuracy when called / call rate (%)" in output
         reports = list(tmp_path.rglob("*.md"))
         assert reports, "a Markdown report is written"
-        text = reports[0].read_text()
+        text = reports[0].read_text(encoding="utf-8")
         assert "Toolscale" in text
         assert "op0_dom0_alpha" not in text
 
@@ -1296,7 +1343,7 @@ class TestToolscaleRunner:
 
         monkeypatch.setattr(plugin_runners, "_OPENAI_TOOL_CAP", 4)
         path = tmp_path / "private.json"
-        path.write_text(json.dumps(_catalog_data()))
+        path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
         output, _ = self._run(monkeypatch, tmp_path, _runner_args(toolscale_catalog=str(path)))
         assert "some providers cap tools per request" in output
 
@@ -1304,7 +1351,7 @@ class TestToolscaleRunner:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         path = tmp_path / "private.json"
-        path.write_text(json.dumps(_catalog_data()))
+        path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
         with pytest.raises(SystemExit):
             self._run(
                 monkeypatch,
@@ -1318,7 +1365,7 @@ class TestToolscaleRunner:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         path = tmp_path / "private.json"
-        path.write_text(json.dumps(_catalog_data()))
+        path.write_text(json.dumps(_catalog_data()), encoding="utf-8")
         with pytest.raises(SystemExit):
             self._run(
                 monkeypatch,

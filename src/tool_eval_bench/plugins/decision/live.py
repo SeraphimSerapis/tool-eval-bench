@@ -10,6 +10,7 @@ clients too.
 
 from __future__ import annotations
 
+import math
 import random
 import re
 import time
@@ -217,7 +218,9 @@ class LiveStats:
         """Decision counts per confidence bin over the rolling window."""
         counts = [0] * HISTOGRAM_BINS
         for e in self.events:
-            counts[min(int(e.confidence * HISTOGRAM_BINS), HISTOGRAM_BINS - 1)] += 1
+            c = e.confidence if math.isfinite(e.confidence) else 0.0
+            idx = max(0, min(int(c * HISTOGRAM_BINS), HISTOGRAM_BINS - 1))
+            counts[idx] += 1
         return counts
 
     def latency_percentiles(self) -> tuple[float, float]:

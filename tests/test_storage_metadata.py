@@ -65,3 +65,46 @@ def test_upsert_replaces_config_for_resumed_run(tmp_path: Path) -> None:
     out = repo.get("resumed")
     assert out is not None
     assert out["config"]["scenario_ids"] == ["TC-01", "TC-02"]
+
+
+def test_null_config_scores_and_metadata_persist_safely(tmp_path: Path) -> None:
+    with open_repository(db_path=str(tmp_path / "db.sqlite")) as repo:
+        repo.upsert_scenario_run(
+            {
+                "run_id": "null-fields",
+                "model": "fallback-model",
+                "status": "running",
+                "config": None,
+                "scores": None,
+                "metadata": None,
+            }
+        )
+        stored = repo.get("null-fields")
+        assert stored is not None
+        assert stored["model"] == "fallback-model"
+        assert stored["config"] == {}
+        assert stored["scores"] is None
+        assert stored["metadata"] == {}
+
+
+def test_non_finite_floats_serialize_as_valid_json_for_sqlite_search(tmp_path: Path) -> None:
+    with open_repository(db_path=str(tmp_path / "db.sqlite")) as repo:
+        repo.upsert_scenario_run(
+            {
+                "run_id": "nan-run",
+                "config": {"model": "qwen", "backend": "vllm", "weird": float("nan")},
+                "scores": {"final_score": float("inf"), "nested": [1.0, float("-inf")]},
+                "metadata": {"label": "canary-nightly", "ratio": float("nan")},
+            }
+        )
+        repo.checkpoint_scenario_result(
+            "nan-run",
+            {"scenario_id": "TC-01", "status": "pass", "latency": float("nan")},
+        )
+        # SQLite json_valid() must accept metadata_json and config_json so search works.
+        found = repo.list(search="canary-nightly")
+        assert [r["run_id"] for r in found] == ["nan-run"]
+        assert found[0]["scores"]["final_score"] is None
+        assert found[0]["scores"]["nested"] == [1.0, None]
+        cp = repo.get_checkpoints("nan-run")
+        assert cp[0]["latency"] is None

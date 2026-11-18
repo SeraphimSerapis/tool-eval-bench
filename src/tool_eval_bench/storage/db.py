@@ -206,10 +206,14 @@ class RunRepository:
         self._conn: sqlite3.Connection = sqlite3.connect(self.db_path, check_same_thread=False)
         self._write_lock = threading.RLock()
         self._writer: ThreadPoolExecutor | None = None
-        self._conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
-        # WAL mode: crash-safe and allows concurrent reads during active runs
-        self._enable_wal()
-        self._init_db()
+        try:
+            self._conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+            # WAL mode: crash-safe and allows concurrent reads during active runs
+            self._enable_wal()
+            self._init_db()
+        except BaseException:
+            self._conn.close()
+            raise
 
     def _enable_wal(self) -> None:
         """Switch to WAL, retrying while another process holds the lock.
@@ -231,12 +235,14 @@ class RunRepository:
     def close(self) -> None:
         """Close the underlying SQLite connection and any writer thread."""
         writer = self._writer
-        if writer is not None:
-            self._writer = None
-            writer.shutdown(wait=True)
-        with self._write_lock:
-            if self._conn:
-                self._conn.close()
+        try:
+            if writer is not None:
+                self._writer = None
+                writer.shutdown(wait=True)
+        finally:
+            with self._write_lock:
+                if self._conn:
+                    self._conn.close()
 
     def __enter__(self) -> "RunRepository":
         return self

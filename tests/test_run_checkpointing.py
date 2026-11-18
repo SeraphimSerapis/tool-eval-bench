@@ -426,3 +426,124 @@ class TestServiceCheckpointing:
         )
 
         assert seen == ["TC-01"]
+
+    @pytest.mark.asyncio
+    async def test_empty_resume_without_prior_results_is_rejected(self, tmp_path: Path) -> None:
+        from tool_eval_bench.storage.reports import MarkdownReporter
+
+        with open_repository(db_path=str(tmp_path / "db.sqlite")) as repo:
+            svc = BenchmarkService(repo=repo, reporter=MarkdownReporter(root=str(tmp_path)))
+            with pytest.raises(ValueError, match="No scenarios to run"):
+                await svc.run_benchmark(
+                    model="m",
+                    backend="vllm",
+                    base_url="http://localhost:8000",
+                    scenarios=[],
+                    resume_run_id="r-empty",
+                    resume_prior_results=[],
+                )
+
+    @pytest.mark.asyncio
+    async def test_resume_deduplicates_prior_results_and_supports_hardmode_fallback(
+        self, tmp_path: Path
+    ) -> None:
+        from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
+        from tool_eval_bench.storage.reports import MarkdownReporter
+
+        tc70 = next(s for s in ALL_SCENARIOS_WITH_HARDMODE if s.id == "TC-70")
+        prior_old = ScenarioResult(
+            scenario_id=tc70.id,
+            status=ScenarioStatus.PARTIAL,
+            points=1,
+            summary="older checkpoint",
+            expected_behavior="exp",
+            raw_log="trace 1",
+        ).to_dict()
+        prior_latest = ScenarioResult(
+            scenario_id=tc70.id,
+            status=ScenarioStatus.PASS,
+            points=2,
+            summary="newer checkpoint",
+            expected_behavior="exp",
+            raw_log="trace 2",
+        ).to_dict()
+
+        with open_repository(db_path=str(tmp_path / "db.sqlite")) as repo:
+            svc = BenchmarkService(repo=repo, reporter=MarkdownReporter(root=str(tmp_path)))
+            run_data = await svc.run_benchmark(
+                model="m",
+                backend="vllm",
+                base_url="http://localhost:8000",
+                scenarios=[],
+                resume_run_id="r-hm",
+                resume_prior_results=[prior_old, prior_latest],
+            )
+        results = run_data["scores"]["scenario_results"]
+        assert len(results) == 1
+        assert results[0]["scenario_id"] == "TC-70"
+        assert results[0]["points"] == 2
+        assert results[0]["summary"] == "newer checkpoint"
+
+    @pytest.mark.asyncio
+    async def test_adapter_aclose_failure_does_not_abort_run_or_mask_error(
+        self, monkeypatch: pytest.MonkeyPatch, scenario
+    ) -> None:
+        from tool_eval_bench.application import service as service_module
+        from tool_eval_bench.runner.orchestrator import score_results
+
+        result = ScenarioResult(
+            scenario_id="TC-01", status=ScenarioStatus.PASS, points=2, summary="ok"
+        )
+        summary = score_results([result], [scenario])
+
+        class BrokenCloseAdapter:
+            async def aclose(self) -> None:
+                raise RuntimeError("close boom")
+
+        async def fake_run_ok(adapter, **kwargs):
+            return summary
+
+        monkeypatch.setattr(service_module, "run_all_scenarios", fake_run_ok)
+        svc = BenchmarkService(repo=None, reporter=None)
+        monkeypatch.setattr(svc, "_adapter_for", lambda *_a, **_k: BrokenCloseAdapter())
+        run_data = await svc.run_benchmark(
+            model="m", backend="vllm", base_url="http://localhost:8000", scenarios=[scenario]
+        )
+        assert run_data["scores"]["final_score"] == 100
+
+        async def fake_run_boom(adapter, **kwargs):
+            raise ValueError("run boom")
+
+        monkeypatch.setattr(service_module, "run_all_scenarios", fake_run_boom)
+        with pytest.raises(ValueError, match="run boom"):
+            await svc.run_benchmark(
+                model="m", backend="vllm", base_url="http://localhost:8000", scenarios=[scenario]
+            )
+
+    @pytest.mark.asyncio
+    async def test_resume_unknown_scenario_marks_claimed_run_interrupted(
+        self, repo: RunRepository, scenario
+    ) -> None:
+        svc = BenchmarkService(repo=repo, reporter=None)
+        prior_unknown = ScenarioResult(
+            scenario_id="TC-NONEXISTENT",
+            status=ScenarioStatus.PASS,
+            points=2,
+            summary="unknown",
+            expected_behavior="exp",
+            raw_log="trace",
+        ).to_dict()
+
+        with pytest.raises(ValueError, match="Cannot resume unknown scenarios: TC-NONEXISTENT"):
+            await svc.run_benchmark(
+                model="m",
+                backend="vllm",
+                base_url="http://localhost:8000",
+                scenarios=[],
+                resume_run_id="r-missing-scenario",
+                resume_prior_results=[prior_unknown],
+            )
+
+        stored = repo.get("r-missing-scenario", include_traces=False)
+        assert stored is not None
+        assert stored["status"] == RUN_STATUS_INTERRUPTED

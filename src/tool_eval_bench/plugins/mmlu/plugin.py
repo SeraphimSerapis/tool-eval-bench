@@ -167,6 +167,8 @@ class MMLUPlugin(BenchmarkPlugin):
             raise ValueError("concurrency must be at least 1")
         if limit < 0:
             raise ValueError("limit must be >= 0")
+        if n_shots < 0:
+            raise ValueError("n_shots must be >= 0")
         if subjects_filter:
             # Fail on a typo before downloading anything.
             resolve_subjects(subjects_filter)

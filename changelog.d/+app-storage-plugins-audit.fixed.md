@@ -1,0 +1,5 @@
+- Close SQLite connections cleanly if `RunRepository` initialization or writer-thread shutdown fails.
+- Guard `BenchmarkService` against `adapter.aclose()` cleanup errors and mark resumed runs interrupted if post-run scenario merging fails.
+- Preserve full multi-segment Hugging Face cache model names and ignore booleans and non-finite accuracy values in card extraction.
+- Avoid `ValueError` in summary comparison HTML reports when `median_turn` contains non-numeric strings.
+- Guard `api.format_result` against `scores=None`, reject negative `n_shots` in GSM8K and MMLU, record GSM8K parallel task crashes as item errors instead of dropping them, and clamp negative or non-finite confidences in the live decision monitor histogram.
