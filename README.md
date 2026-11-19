@@ -43,6 +43,19 @@ uv tool install 'tool-eval-bench[perf,web,card] @ git+https://github.com/Seraphi
 Also available via [Docker](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/docker.md) if you would rather not have a local
 Python, or as a [development checkout](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/CONTRIBUTING.md#development-setup).
 
+### Upgrading from 3.0 to 3.1
+
+- Re-run score baselines. `--hardmode` now runs 35 Hard Mode scenarios (104 in
+  total, adding TC-98 through TC-104), and evaluator hardening across standard
+  and Hard Mode scenarios moves scores for affected traces.
+- Update argument-schema consumers for version 11 (adds `delete`,
+  `compare --retest-diffs`, and `run --scenarios-from-diff`).
+- Re-run localized baselines under `LOCALE_VERSION` 2 after the structured
+  output prompt updates in TC-67.
+- Expect broader cross-model leaderboard cohorts. Cohorts now ignore
+  `concurrency`, `timeout_seconds`, and `alpha` while per-model
+  `config_fingerprint` values and `--resume` checks still include them.
+
 ### Upgrading from 2.8 to 3.0
 
 - Re-run score baselines. TC-21 now grades explicit field and rule IDs, and TC-89
