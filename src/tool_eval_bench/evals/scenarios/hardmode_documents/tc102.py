@@ -174,7 +174,7 @@ _MILESTONES = (
     ),
     Milestone(
         f"reported archive receipt ID {_RECEIPT_ID}",
-        lambda s: answer_affirms_text(s.final_answer, _RECEIPT_ID),
+        lambda s: _v2_after_manifest(s) and answer_affirms_text(s.final_answer, _RECEIPT_ID),
     ),
 )
 

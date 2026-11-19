@@ -13,7 +13,13 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.helpers import answer_affirms_number, as_str, counted_calls, with_noise
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_number,
+    as_str,
+    counted_calls,
+    strip_markdown_emphasis,
+    with_noise,
+)
 from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
 from tool_eval_bench.evals.scenarios.hardmode_documents._shared import _DOCUMENT_ID, _INTEGER, _tool
 
@@ -131,11 +137,12 @@ def _grounded(state: ScenarioState) -> bool:
 
 
 def _reported(state: ScenarioState) -> bool:
-    return answer_affirms_number(state.final_answer, "24")
+    return bool(_target_extractions(state)) and answer_affirms_number(state.final_answer, "24")
 
 
 def _wrong_value(state: ScenarioState) -> bool:
-    return not _reported(state) and _WRONG_TORQUE.search(state.final_answer) is not None
+    plain = strip_markdown_emphasis(state.final_answer)
+    return not _reported(state) and _WRONG_TORQUE.search(plain) is not None
 
 
 _MILESTONES = (

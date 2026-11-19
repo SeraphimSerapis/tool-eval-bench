@@ -12,9 +12,11 @@ from typing import Any
 _STRING = {"type": "string"}
 _EMAIL = {"type": "string", "description": "Email address"}
 
-# Sentence and clause ends. A period counts only before whitespace or the end,
-# so email domains and version strings such as "external-ops.net" stay whole.
-_CLAUSE_BREAK = re.compile(r"[.!?;](?=\s|$)|\n")
+# Sentence and clause ends. Punctuation counts only before optional closing
+# quotes/brackets/emphasis followed by whitespace or the end, so email domains
+# and version strings such as "external-ops.net" stay whole while sentences
+# ending in ".**" or ".)" still split cleanly.
+_CLAUSE_BREAK = re.compile(r"[.!?;]['\"\u201d\u2019)\]}>*_~`]*(?=\s|$)|\n")
 
 
 def _asserted_without_cue(

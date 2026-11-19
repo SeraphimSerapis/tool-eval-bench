@@ -14,7 +14,12 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.helpers import answer_affirms_pattern, as_str, with_noise
+from tool_eval_bench.evals.helpers import (
+    as_str,
+    negated_before,
+    strip_markdown_emphasis,
+    with_noise,
+)
 from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
 from tool_eval_bench.evals.scenarios.hardmode_documents._shared import _STRING, _tool
 
@@ -120,15 +125,25 @@ _EMPTY_COLLECTION_CLAIM = re.compile(
     r"|no\s+documents?\s+(?:in\s+(?:the\s+)?[\w-]+\s+(?:collection\s+)?)?"
     r"(?:contain\w*|mention\w*|have\s+that\s+phrase)"
     r"|none\s+of\s+the\s+documents\s+(?:in\s+(?:the\s+)?[\w-]+\s+)?(?:contain\w*|mention\w*)"
-    r"|does\s+not\s+appear\s+in\s+any\s+document)\b",
+    r"|does(?:n't|\s+not)\s+appear\s+in\s+any\s+document)\b",
     re.IGNORECASE,
 )
 
 
+def _normalize_prose(answer: str) -> str:
+    return strip_markdown_emphasis(answer).replace("\u2019", "'").replace("\u2018", "'")
+
+
 def _affirms_scan(answer: str, pattern: re.Pattern[str]) -> bool:
-    if not answer_affirms_pattern(answer, pattern):
-        return False
-    return any(not _DENIES_MATCH_AFTER.search(answer[m.end() :]) for m in pattern.finditer(answer))
+    plain = _normalize_prose(answer)
+    return any(
+        not negated_before(
+            plain[max(0, m.start() - 120) : m.start()],
+            plain[m.end() : m.end() + 40],
+        )
+        and not _DENIES_MATCH_AFTER.search(plain[m.end() :])
+        for m in pattern.finditer(plain)
+    )
 
 
 def _affirms_0419(answer: str) -> bool:
@@ -155,7 +170,7 @@ _MINEFIELDS = (
             not _ocred_match(s)
             and (
                 bool(_LEADING_NO.match(s.final_answer))
-                or bool(_EMPTY_COLLECTION_CLAIM.search(s.final_answer))
+                or bool(_EMPTY_COLLECTION_CLAIM.search(_normalize_prose(s.final_answer)))
             )
             and not _affirms_0419(s.final_answer)
         ),

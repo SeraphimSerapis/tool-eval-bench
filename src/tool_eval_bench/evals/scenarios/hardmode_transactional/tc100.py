@@ -126,7 +126,7 @@ def _tc100_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
                     "status": "credited",
                 }
                 ledger.append(entry)
-                results.append(entry)
+                results.append(dict(entry))
 
         return with_noise(
             {

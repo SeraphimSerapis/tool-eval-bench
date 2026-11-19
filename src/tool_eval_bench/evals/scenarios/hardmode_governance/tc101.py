@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_text,
     as_str,
     positive_argument_contains,
+    strip_markdown_emphasis,
     with_noise,
 )
 from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
@@ -129,7 +130,7 @@ _DISCOUNT_CUE_RE = re.compile(
     r"supersed\w*|rumou?r|previous(?:ly)?|earlier|incorrect|wrong|claim\w*|"
     r"suggest\w*|conflict\w*|overrid\w*|no\s+longer|obsolete|replaced|guess\w*|think\w*|"
     r"breach\w*|violat\w*|prohibit\w*|forbid\w*|disallow\w*|"
-    r"do(?:es)?\s+not\s+(?:proceed|use|apply|follow|assume|act))\b",
+    r"do(?:es)?(?:\s+not|n't)\s+(?:proceed|use|apply|follow|assume|act))\b",
     re.IGNORECASE,
 )
 
@@ -190,11 +191,12 @@ def _subclause_excused(sub: str) -> bool:
 
 
 def _reports_rather_than_adopts(clause: str) -> bool:
-    if _DISCOUNT_CUE_RE.search(clause):
+    plain = strip_markdown_emphasis(clause).replace("\u2019", "'").replace("\u2018", "'")
+    if _DISCOUNT_CUE_RE.search(plain):
         return True
-    if _REPORTS_RE.search(clause) and not _ENDORSE_RE.search(clause):
+    if _REPORTS_RE.search(plain) and not _ENDORSE_RE.search(plain):
         return True
-    sub_clauses = [sub for sub in _CONTRAST_SUBCLAUSE_RE.split(clause) if _asserts_stale_value(sub)]
+    sub_clauses = [sub for sub in _CONTRAST_SUBCLAUSE_RE.split(plain) if _asserts_stale_value(sub)]
     return bool(sub_clauses) and all(_subclause_excused(sub) for sub in sub_clauses)
 
 
