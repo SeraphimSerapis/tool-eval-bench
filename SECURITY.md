@@ -37,5 +37,5 @@ You should receive an acknowledgment within 48 hours.
 
 | Version | Supported |
 |---|---|
-| 2.x | ✅ |
-| < 2.0 | ❌ |
+| 3.x | ✅ |
+| < 3.0 | ❌ |

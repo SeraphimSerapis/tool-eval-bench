@@ -196,7 +196,7 @@ deployment compatibility. A skipped live canary or a mock-backed run does not
 satisfy this gate. Record the tool commit, backend and model versions, command,
 and run ID in the release notes, without credentials or private endpoint URLs.
 
-Include Hard Mode so all 97 public scenarios exercise the deployment:
+Include Hard Mode so all 104 public scenarios exercise the deployment:
 
 ```bash
 # vLLM

@@ -4,6 +4,175 @@ All notable changes to `tool-eval-bench` are documented here.
 
 <!-- towncrier release notes start -->
 
+## [3.1.0] — 2026-11-19
+
+### Added
+
+- **Toolscale sweep with `--toolscale` / `plugin toolscale`.** A new plugin measures tool
+  selection as three things vary independently: the number of offered tools (a 1-tool control up
+  to 64, or 248 with crowded fillers), the similarity of the target's nearest neighbours (near, related, distinct), and whether
+  the user's query names the distinguishing qualifier or only implies it, with opt-in conditions that fill
+  the list with whole near-duplicate families or degrade the descriptions to one shared line per
+  family or none at all. A 272-tool catalog of 17
+  domains, 4 families each, and 4 near-duplicate variants per family defines the tiers, and a
+  TF-IDF check confirms the ordering. The headline reports accuracy when a tool was called apart
+  from the call rate, so a clarifying question is never read as tool confusion. The report adds
+  Wilson intervals and trial spread per cell, paired similarity, count, and cue effects with
+  bootstrap intervals, density and description effects, an error mix that separates neighbour
+  confusion from filler picks, a query
+  check showing how much each cue gives away, accuracy by target position, and where Category L's
+  52-tool set sits on the same similarity scale. `--toolscale-catalog PATH` runs a private catalog
+  whose items the report withholds. In calibration, degraded descriptions were the only condition that
+  made a model confuse near-duplicate tools. Category L scores are unchanged. See `docs/toolscale.md`. ([#319](https://github.com/SeraphimSerapis/tool-eval-bench/issues/319))
+- **Delete stored runs with `delete` and from the web UI.** `tool-eval-bench delete` removes runs by id
+  or by `--status`, `--before`, and `--model`, lists them, and asks before deleting; `--dry-run`
+  previews and `--yes` skips the prompt. The web UI gains a **Delete** button on each run and a
+  **Select** mode on the run list for deleting several at once. Deleting a run removes its database
+  row, traces, checkpoints, and Markdown report. A report path that does not look like one the tool
+  wrote is left alone. The argument schema moves to version 10.
+- **Empty turns get their own failure kind.** A turn that ends normally with no visible text and no
+  tool call, which reasoning models produce when they think and then stop, now adds an `empty_turn=`
+  line to the trace and a note to the evaluation. A failing result gets the failure kind `empty_turn`
+  instead of a generic `missing_step` or `wrong_args`, so a batch of them points at the chat template
+  or reasoning parser rather than the model's judgement. Scores do not change. The idea comes from the
+  empty-turn diagnostics in QwenLM BabelArena.
+- **Locale runs with `--locale de|es|zh|ja`.** The user messages and tool descriptions of 26
+  language-neutral scenarios can now be sent in German, Spanish, Simplified Chinese, or Japanese
+  from checked-in translation packs, while identifiers, schemas, invariant anchors, and English mock
+  data stay fixed. Answers are normalized for locale number formats and negation before the usual
+  evaluators run, and each result records the first and final reply language so drift back into
+  English shows up in the report. Scenarios that grade English prose are skipped. The locale is part
+  of the run's fingerprint, so locale runs form their own leaderboard cohort and are not comparable
+  with English runs. The Python API takes `locale=`. Adapted from QwenLM BabelArena's localized task
+  families and its language-consistency audit. See `docs/locales.md`.
+- **Paired signal-vs-noise analysis and targeted discordant re-tests in `compare`.** `tool-eval-bench compare` and the web Compare view now report paired percentage-point deltas, deterministic 95% paired bootstrap confidence intervals, and an exact two-sided 3-tier sign test that detects partial-credit shifts alongside binary McNemar's test, while excluding shared scenarios that hit a timeout, connection error, or server error. When a single-run gap falls within noise, `compare <left> <right> --retest-diffs` re-runs only the discordant scenarios across multiple trials on one or two endpoints and renders a multi-trial Pass@k and Pass^k verdict table, and `run --scenarios-from-diff <run_a> <run_b>` selects those discordant scenarios for single-server setups where only one model fits in VRAM at a time. The argument schema moves to version 11.
+- **Seven new Hard Mode scenarios (TC-98 to TC-104).** `--hardmode` now runs 35 Category P
+  scenarios, 104 in total. The additions cover a prompt injection planted two hops away in a
+  runbook comment (TC-98), saga rollback where the compensation order has to be read from tool
+  results (TC-99), a partially failed non-idempotent batch that must not be resubmitted whole
+  (TC-100), conflicting sources where a signed policy outranks a newer chat message (TC-101), a
+  sunset v1 endpoint whose migration contract leads to v2 (TC-102), reconciling a pre-filled shared
+  cart under stock, shipping, coupon, and budget rules (TC-103), and a fix only the user can make on
+  their own device, which the agent has to hand over and then verify (TC-104). TC-103 and TC-104
+  adapt task patterns from QwenLM BabelArena's DeepPlanning and tau-cubed families. Hard Mode
+  totals and the capability breakdown change for any run that includes `--hardmode`.
+- **The web UI shows throughput, spec-decode, needle, and accuracy runs as what they are.** These runs
+  used to appear as "completed · unknown" with an empty score ring, and opening one showed
+  "0 / 0 / 0" and no results. Each now carries a type label and its main figure in the run list, such
+  as effective decode speed for spec decode or retrieval for needle, and its page shows its
+  measurements as a table. A **Same session** panel links every run to the other runs its command
+  stored, so the spec-decode run of a `--spec-bench` invocation is one click from its scored run.
+- **Unparsed tool-call diagnostics and server flag hints.** When an endpoint runs without its tool
+  parser enabled, models emit native tool markup such as `<tool_call>`, `<function=...>`,
+  `[TOOL_CALLS]`, `<|python_tag|>`, `<|tool_calls_begin|>`, or raw JSON call objects inside
+  `content` while `tool_calls` stays empty. Failing scenarios now record
+  `failure_kind="unparsed_tool_call"` and an `unparsed_tool_call=` trace line instead of a generic
+  `missing_step`, while keeping full denominator points so a broken parser cannot inflate scores.
+  Live output prints a one-time warning on the first affected scenario, `tool-eval-bench probe --check-tools` verifies structured `tool_calls` parsing before a run and exits 1 when raw markup leaks into `content`, and final panels, Markdown reports, and tool probes name the server flags that fix it, such as
+  `--enable-auto-tool-choice --tool-call-parser <parser>` on vLLM, `--tool-call-parser <parser>` on
+  SGLang, and `--jinja` on llama.cpp.
+
+### Changed
+
+- **Leaderboard cohorts ignore operational execution flags.** Cross-model leaderboard cohorts now exclude `concurrency`, `timeout_seconds`, and `alpha` so runs with different `--parallel` counts, `--timeout` budgets, or `--alpha` deployability weights rank together when evaluation settings match. Per-model `config_fingerprint` values and `--resume` checks still include all three keys.
+
+### Fixed
+
+- **TC-45 probe and exclusion reporting.** The required-tool probe no longer contradicts its own wire constraint or excludes scenarios when it fails. TC-45 runs its own request, with probe results retained as diagnostics rather than proof of server-side enforcement. `--no-probe-engine` and the Python API's `probe_engine=False` now skip this probe. Plain terminal summaries also name excluded scenario IDs; JSON continues to record them under `scores.excluded_scenarios`. ([#335](https://github.com/SeraphimSerapis/tool-eval-bench/issues/335))
+- **TC-29 comprehension variant examples.** Answers that state `[0, 1, 4, 9, 16]` and also illustrate a modified Python list comprehension alongside its exact computed integer list, such as a filtered variant `[x**2 for x in range(5) if x % 2 == 0]` producing `[0, 4, 16]`, now score `PASS` instead of `FAIL`. Unfiltered variations require an example or contrast cue in the same sentence, wrong computed lists and bare misreadings still fail, and AST evaluation stays bounded without calling `eval()`. ([#337](https://github.com/SeraphimSerapis/tool-eval-bench/issues/337))
+- **TC-30 combined workflow order and two-call recovery.** TC-30 now accepts combined `run_code` programs that print `2 + 2` before assigning the result variable or use walrus assignment inside `print(result := 2 + 2)`, returning `4\ncorrect` instead of an `Unknown code` error. When an earlier `run_code` call fails or goes unrecognized and a later turn recovers with the full conditional workflow, TC-30 scores `PARTIAL` rather than `FAIL`, while ungrounded branch calls remain `FAIL`. ([#338](https://github.com/SeraphimSerapis/tool-eval-bench/issues/338))
+- **Structured-output prompts in TC-65, TC-66, TC-67, and TC-69.** These four scenarios now instruct the model to reply with only valid JSON matching the schema, with no extra text and no further tool calls, once it has the tool data. Previously, whether a model received that rule on turn 2 depended on the inference server injecting it alongside `response_format`. The German, Spanish, Chinese, and Japanese packs carry the matching TC-67 update, and `LOCALE_VERSION` moves to 2. ([#339](https://github.com/SeraphimSerapis/tool-eval-bench/issues/339))
+- **Attachment file names and TC-82 partial scoring.** `attachment_matches_observed_file` now accepts the observed `name` field alongside `file_id` and `path`, so runs attaching `Launch_Checklist.pdf` in TC-82 or `Q4_Report_2025.pdf` in TC-71 pass instead of failing attachment validation. In TC-82, sends addressed exclusively to the verified current manager after prior directory and file discovery now score `PARTIAL` without a `safety_violation` for missing or wrong attachments, duplicate sends, empty subject or body, or failed delivery, while unverified recipients and out-of-order sends still record `safety_violation`. ([#341](https://github.com/SeraphimSerapis/tool-eval-bench/issues/341))
+- **TC-92 and TC-98 two-sentence disclosure scoring.** Models that mention the other tenant in TC-92 or the injected region or attacker address in TC-98 when attributing or explaining the refusal across two sentences in the same paragraph now score `PASS` instead of `FAIL`. TC-92 recognizes skip and tenant-scoping cues in the following sentence, and TC-98 recognizes reporting attributions followed by a flag or refusal cue while reporting recovery-token leaks and unflagged attacker-address mentions with distinct failure summaries. Unqualified mentions, adoption claims, paragraph-separated explanations, and any secret-token disclosure still fail with a safety violation. ([#342](https://github.com/SeraphimSerapis/tool-eval-bench/issues/342))
+- **Agentic scenario handler and evaluator fixes (TC-22 to TC-36, TC-41 to TC-50):** tightened side-effect guards, fabricated-action rejection, recipient allowlists, numeric boundaries, AST/language checks, and Markdown/curly-apostrophe normalization across the agentic scenarios. In particular, TC-49 now accepts "I will not send" confirmations while flagging attempted post-cancellation sends even on tool errors, TC-48 blocks non-TLD addresses and unauthorized bare recipients, TC-30 validates Python language and accepts equivalent `!=` and conditional-expression forms while failing `print("wrong")` calls, TC-31 and TC-36 reject fabricated send claims, TC-26 catches Markdown-emphasized invented attendees, and TC-22, TC-24, TC-25, TC-29, and TC-32 fail unrequested side effects instead of awarding partial credit.
+- **Application, storage, report, and plugin reliability.** `RunRepository` now closes SQLite connections cleanly if initialization or writer-thread shutdown fails; `BenchmarkService` guards `adapter.aclose()` errors and marks resumed runs interrupted if post-run scenario merging fails; card extraction preserves full multi-segment Hugging Face cache model names and ignores boolean or non-finite accuracy values; summary comparison HTML reports handle non-numeric `median_turn` strings without raising `ValueError`; `api.format_result` guards against `scores=None`; GSM8K and MMLU reject negative `n_shots`; GSM8K records parallel task crashes as item errors instead of dropping them; and the live decision monitor clamps negative or non-finite confidences to bin 0.
+- **CLI, web UI, and contributor tooling**: plugin dataset download failures and undetectable Needle context windows now emit `run_failed` events and exit non-zero under `--json`, without allocating an unused adapter first; `--export csv --json` is rejected cleanly; `delete` supports run IDs beginning with `-`; the leaderboard renders Category P labels and preserves zero or null CSV metadata fields accurately; the web launcher rejects non-string optional text fields; `--serve-host` recognizes `LOCALHOST` case-insensitively; and contributor/release checks cover `docker-compose.yaml`, `MANIFEST.in`, and the 104-scenario registry count.
+- **Card filenames no longer collide within a day.** The default card name now carries the UTC time
+  of the newest run, as `<model>-<YYYYMMDD-HHMM>-<fingerprint>.svg`. A second session on the same day
+  with the same tool-call configuration, such as a rerun that only adds `--needle`, used to get the
+  same name and overwrite the first card and its PNG. Rendering one session again still writes the
+  same file.
+- **Hard Mode evaluator and guardrail fixes (TC-71, TC-96, TC-97, TC-99, TC-101, TC-103, TC-104).** Tightened grounding and ordering checks across seven Hard Mode scenarios: `TC-71` no longer returns partial credit for wrong-person lookups when a `"Jordan"` contact query itself errored without usable results; `TC-96` no longer grants partial credit for naming `scan_0419.pdf` after `list_collection` without running OCR on it; `TC-97` verifies the copy's text redactions with `find_text` and annotation deletions with `list_annotations` independently against the latest edit to each layer rather than requiring both checks after the later of the two edits; `TC-99` withholds rollback credit when `snap_acme_442` was not deleted after the DNS failure; `TC-101` matches underscored service names like `payment_gateway` in `get_signed_policy` while still rejecting negated queries, refuses partial credit without calling `get_signed_policy`, and recognizes phrasing describing a transition from stale figures to the authoritative 24-hour CISO rule without forgiving mixed stale endorsements; `TC-103` requires `apply_coupon("LAB100")` on the exact cart before granting partial credit for claiming the coupon or final total; and `TC-104` accepts Markdown formatting, `"turned off"`, and prospective certificate-reissue phrasing during phase-0 triage while still failing actual, evidential, or `cert_vpn_*` reissue claims before the blocker clears.
+- **Hard Mode scenario handlers and evaluators across TC-70 through TC-104.** Category P scenarios now isolate mutable mock payloads across calls, enforce compensation preconditions, normalize valid numeric, casing, and phrasing variations, apply negation-aware answer checks, and flag unadvertised tools. In TC-96, leading `"No"` answers trigger the stale-index failure only when the model skipped OCR on `scan_0419.pdf`, so post-OCR misreads score `PARTIAL` consistently. In TC-99, display metadata now matches the partial-credit rubric for out-of-order or incomplete rollback.
+- **Hard Mode scenarios TC-71 through TC-84 scoring and turn-budget fixes:** tightened safety and provenance checks while removing formatting brittleness across the first 15 Hard Mode scenarios. TC-84 now sets `max_turns_override=12` so sequential runs finish under the 8-turn CLI default, requires both attendees to be resolved before the first booking attempt, and flags non-list unauthorized attachments as unsafe. TC-71 marks unverified sends as unsafe even when contact lookup was skipped or failed, strips Markdown emphasis when checking option counts, and scopes clarified-variant questions to phase 0. TC-72 requires reading the backup file before emailing for partial credit. TC-73 strips Markdown emphasis in exclusion clauses and rejects negated picks. TC-74 marks confirmations sent without a created event as unsafe, normalizes curly apostrophes and Markdown formatting in confirmation emails, isolates subject from body on a newline boundary, and rejects negated event titles. TC-75 normalizes curly apostrophes and keeps time colons and `confirm` phrasing valid inside format examples. TC-76 catches adverbial false completion claims such as "have successfully cancelled". TC-78 strips Markdown emphasis when checking contradicting amounts and rejects non-zero fractional totals without currency symbols. TC-79 requires usable event creation for partial credit, checks every creation attempt against dependencies, and rejects negated contact queries. TC-80 deep-copies returned event state to prevent attendee list aliasing. TC-81 accepts relevant travel and hotel queries plus curly apostrophes in injection warnings. TC-82 and TC-83 accept snake_case file search queries, and TC-83 accepts uppercase `JSON` code fences.
+- **Hard Mode transactional, governance, and document evaluators**: closed false-pass and false-partial loopholes and fixed markdown, apostrophe, and ordering edge cases across TC-85 through TC-104. TC-85 and TC-86 now catch affirmative false confirmation claims, enforce false-claim checks in variants, preserve harmless post-notification or batched re-reads, catch stale version 7 retries after version 9, and copy-isolate returned credential scopes. TC-87 strips Markdown emphasis before checking false completeness claims and enforces on-call route lookup before every email attempt. TC-89, TC-93, TC-94, TC-95, TC-97, TC-98, TC-102, and TC-103 now require the underlying succeeded tool calls before crediting reported outcomes or catalog discovery. TC-90 strips Markdown emphasis before checking negated explanations; TC-91 catches adverbial false revocation claims; TC-92, TC-96, TC-98, and TC-101 normalize typographic apostrophes, Markdown emphasis, and sentence breaks after closing punctuation; TC-100 copy-isolates batch credit results from the internal ledger; and TC-104 inspects all phase-0 turns for premature reissue claims and requires phase-1 telemetry verification strictly before phase-1 re-issue.
+- **Planning, adversarial, and structured scenario evaluation (TC-51 through TC-69):** Fixed
+  grading and handler defects found during end-to-end review. Planning fixes align TC-51's
+  contact handler with its evaluator and reject empty or unauthorized emails beside a valid
+  event, allow retried injected event failures and block errored lookup authorization and negated
+  weather claims in TC-53, check premature injected calculations in TC-54, accept two-decimal
+  million totals such as `$4.20 million` in TC-55, reject negated freezing/constraint/failure
+  claims in TC-56, TC-61, TC-62, and TC-63, normalize Markdown emphasis in TC-61 anomaly counts,
+  fix case-insensitive corrected file reads and curly-apostrophe negations in TC-62, scan all
+  late-hour clauses in TC-63, and enforce unrequested side-effect guards on TC-54, TC-55, TC-61's
+  failed variant, and TC-63. Adversarial fixes normalize curly apostrophes in shared refusal
+  matching (TC-57, TC-58, TC-60), prevent unrefused injection disclosures from bypassing safety
+  checks when a search query omits `event` in TC-57 or when action items are omitted in TC-58,
+  fix an inverted slice in TC-58 that misclassified safe summaries where `API key` preceded
+  `I included`, strip Markdown emphasis in TC-59 refusals, and reject negated `Paris` queries in
+  TC-60. Structured-output fixes reject non-standard `NaN`/`Infinity` JSON constants across
+  TC-64 through TC-69, reject whitespace-only strings in TC-64 and TC-65, reject negated
+  `engineering` queries in TC-66, enforce unrequested side-effect guards on TC-65 through TC-67
+  and TC-69, and parse paired Markdown fences cleanly in TC-68.
+- **Runner and adapter edge cases**: fixed several reliability bugs across throughput, speculative decoding, llama-benchy, and native Gemini requests. Canonical spec-decoding method hints (`draft_model`, `extract_hidden_states`, and variants) are no longer ignored when `/metrics` is unreachable. `warmup` now completes up to three compatibility rewrites sequentially, `_stream_one` preserves `_include_token_ids` and retry field updates when `tok_cfg` is omitted, `measure_concurrent` reports a cell error when any concurrent request fails instead of reporting survivors as full concurrency, and `pool_spec_samples` retains acceptance metadata when the first run lacked metrics. `llama_benchy` ignores boolean `total_tokens` values in progress events, and native Gemini requests honor `max_completion_tokens` and scalar `stop` strings.
+- **Scenario execution and evaluation infrastructure fixes**: hardened multi-turn orchestration, shared evaluators, payload noise enrichment, fixture variants, locale normalization, and YAML scenario packs. Post-tool 5xx and retryable transport errors now classify as infrastructure failures instead of model crashes, `tool_choice_after_first_call` waits for a non-injected tool call, harness-injected retries no longer trigger the loop guard, and dependency violations preserve evaluator and harness notes. Shared helpers now reject negative-subject number denials in `answer_affirms_number`, normalize Unicode and CJK-adjacent negations in `positive_argument_contains`, reject non-finite overflow in `parse_math_expression`, and tag unrequested side effects as `forbidden_action`. Noise enrichment preserves payload key order in `enrich_contacts` and guards against non-numeric or non-dict values, `identity_variant` inverts checkpoint calls and re-substitutes checkpoint diagnostics, locale normalization handles fullwidth minus signs and digit-grouping commas without swallowing trailing punctuation before `USD`, and YAML scenario packs reject unretried injected tool errors, deep-copy mock responses, and skip `.yaml` subdirectories.
+- **Scenario grading review: false passes and false failures fixed across 27 scenarios.** Scores
+  for these scenarios can move in either direction against earlier runs.
+
+  Correct answers that used to fail or drop to partial now get credit: a short reply such as
+  "It's 30." or "**30**" (TC-11, TC-39); a parse attempt batched in the same turn as the file
+  inspection, or a blind parse followed by inspection and OCR (TC-94); telling the user that the
+  other tenant's search hit was skipped (TC-92); natural security wording such as "flagged as
+  suspicious" when quoting injected content (TC-81); permission explanations wrapped in Markdown or
+  phrased as "holds only" (TC-91); owner lookup after credential confirmation (TC-85); pipe-table
+  comparisons and "Chief Financial Officer" queries (TC-62); "Apple" as a stock fallback query
+  (TC-14); a running subtotal of two holdings (TC-78); and several identity-conversion and clarification phrasings (TC-26, TC-35, TC-50,
+  TC-96). Contact mocks keep roles through noise and return both people on combined queries (TC-48,
+  TC-50, TC-53, TC-74). TC-68 gives partial credit for schema-compliant JSON inside a code fence.
+
+  Weak traces that used to pass are now caught: TC-37 needs both the temperature and the condition,
+  as TC-01 does; TC-37 to TC-40 fail any unrequested mutation among the 52 tools; TC-51 and TC-74
+  require the notification email in a later turn than the calendar event, matching their declared
+  dependency; and TC-80 fails any `update_event` call.
+
+  Prompt and budget changes: TC-90 tells the model to finish both actions in a policy-compliant
+  order, TC-97 asks for the post-redaction check explicitly, and TC-86, TC-87, and TC-97 get 12
+  turns. String matching in `includes_text`, `normalize`, and variant substitution now applies
+  Unicode NFC, so a decomposed accent matches its composed form.
+- **Standard scenario evaluator and helper fixes**: repaired three false-PASS and misleading-diagnostic bugs across TC-13, TC-38, and TC-40, and removed the unused `contains_german_text` helper from `evals/helpers.py`. TC-13 no longer awards PASS when a single `search_files` call returns an explicit error and the assistant clarifies without retrying. TC-38 now enforces dependency predicates and result usability across all four chain calls so failed `search_files`, `read_file`, or `send_email` calls cannot pass. TC-40 checks `get_order_status` result usability before checking answer text, reports lookup-resolution failures accurately, and avoids a trailing colon when `get_order_status` is called multiple times.
+- **Standard scenario grading fixes (TC-01 to TC-21, TC-37 to TC-40)**: hardened numeric,
+  result-grounding, side-effect, and formatting checks across the core, extended, and large-toolset
+  packs. Negative or wrong-decimal values no longer pass TC-01, TC-02, TC-04, TC-07, TC-09, TC-10,
+  TC-11, TC-14, TC-15, TC-16, TC-20, TC-37, TC-38, or TC-39; stray side-effect calls on TC-02,
+  TC-04, TC-08, TC-09, and TC-11 now fail instead of receiving partial credit; TC-03 catches
+  curly-apostrophe and Markdown-emphasized move denials; TC-07 and TC-38 accept `$4.40M` and
+  `$4,400,000.00`; TC-08's dry variant, TC-10's terse year, TC-15's underscore-separated numbers,
+  TC-17's hyphenated title, and TC-19's `message_1` JSON keys and bold headings are handled without
+  false penalties; TC-13 requires a relevant initial search before clarification passes; TC-14
+  validates the stock ticker and stops treating a bare `get_stock_price` mention or negated Markdown
+  as error acknowledgement; TC-37, TC-38, and TC-40 validate argument boundaries and tool payloads
+  against fabricated results; TC-39's calculator mock evaluates the input expression instead of
+  hardcoding 30; and TC-06, TC-08, and TC-17 report accurate partial-credit summaries.
+- **Standard scenario grading, locale normalization, variants, and YAML packs.** Evaluators in TC-03, TC-07, TC-18, TC-38, TC-46, TC-48, TC-50, TC-56, and TC-60 now block `PASS` when `send_email` calls include unauthorized `cc` or `bcc` recipients, and accept array-typed recipient fields where the schema allows them. Calendar, weather, planning, and clarification checks in TC-26, TC-27, TC-47, TC-50, TC-51, and TC-55 accept ISO date and time suffixes, 12-hour PM times, default temperature units, numeric underscores, single-term file searches, and natural recipient questions. Negation guards strip Markdown emphasis and fold Unicode apostrophes so emphasized denials no longer register as false confirmations. Locale runs preserve raw and fenced JSON payloads during prose normalization, recognize localized cues in TC-21, TC-28, and TC-67, accept international `3.14x` decimal notation alongside `3,14x` in TC-44 under `de` and `es` without altering dot-grouped thousands normalization, and count CJK ideographs and kana at 2x toward the 20-character `reasoning` minimum in TC-67. Variant runs normalize decomposed Unicode before stale-identifier checks and keep case-sensitivity parity across fixture tokens and email addresses. YAML scenarios distinguish booleans from integers and ignore retried transient failures in call counts.
+- **Storage, reporting, and plugin hardening.** SQLite checkpoint and query operations no longer race across worker threads or write invalid `NaN` or `Infinity` JSON, and run deletion rejects symlinked report directories. Pressure-sweep and comparison reports preserve held-out scenario redaction and multi-backtick parameter cells, while error strings in mode and plugin artifacts redact credentialed URLs. `domain.plugin.final_answer_text` now strips inline `<think>` blocks and flags unclosed `<think>` truncation across GSM8K, MMLU, IFEval, Needle, and Toolscale without mutating `ChatCompletionResult.content`, and the GSM8K and MMLU extractors parse LaTeX `\boxed{}` and currency-prefixed answers.
+- **TC-98 and TC-101 warning-vs-assertion scoring**: answers that name a bad value only to
+  forbid using it no longer fail as assertions. TC-98 recognises more prohibiting verbs,
+  Markdown emphasis, and passive refusals such as "must not be transmitted" or "was never
+  emailed". TC-101 recognises explicit prohibitions and policy breaches without treating bare
+  words such as "assumption" or "warning" as rejection of a stale rule. Disclosing the token,
+  relaying an unflagged attacker address, or adopting a stale requirement still fails.
+- **Web UI type filter.** "Spec decode" and "Context pressure" in the run list's type filter matched
+  no runs, because they asked for `spec_decode` and `context_pressure` while runs are stored as
+  `spec-bench` and `context-pressure`. Both now match, and Toolscale is listed.
+- **Web UI, CLI, and Python API hardening**: `tool-eval-bench serve` now validates `Host` headers against a loopback allowlist by default, rejects duplicate or malformed `Host` and `Origin` headers, sets `Secure` on HTTPS session cookies, refuses cross-port `Sec-Fetch-Site: same-site` requests, validates endpoint URL schemes, backend labels, and preset names on probe, launch, and resume, rejects CLI-only held-out pack keys in web launch payloads, bounds live SSE subscriber queues, offsets resumed live scenario indices after preserved outcomes, evicts deleted sessions from the live hub, prevents duplicate concurrent resumes while preserving run labels and session IDs, neutralizes spreadsheet formula prefixes in CSV exports, and withholds non-public held-out scenario details even when pack attestations are absent. The CLI and `run_benchmark()` now reject invalid, non-finite, or boolean numeric arguments before probing any endpoint, parse negative and scientific sweep bounds accurately, reject unsupported few-shot options on the `needle` plugin, redact URLs on interactive plugin and spec-decode errors, redact held-out warnings on non-JSON safety-gate stderr, pass held-out pack metadata to context-pressure sweeps, escape dynamic text for Rich markup, and include throughput samples and resumed scenario metadata in multi-trial summary reports.
+- Hardened multi-turn orchestration, benchmark runners, and backend adapters against malformed SSE frames, multi-line `data:` events, non-object JSON tool arguments, missing or duplicate tool-call IDs across turns, post-tool-call HTTP rejections reaching follow-ups or scenario evaluators, repeated-call loop signatures leaking across non-tool turns, truncated streamed Anthropic `tool_use` inputs, multi-chunk thinking signatures, non-tool Gemini thought signatures, HTTP-200 error payloads, non-finite retry delays and Prometheus counters, mid-scenario metric loss on early exits, and swallowed task cancellations.
+- The web launcher now fills a model dropdown from `/api/probe` instead of a
+  `<datalist>`. Browsers filter datalist options by the input's current value, so
+  the auto-selected first model hid every other entry and the list could not be
+  clicked through. A "Custom model ID…" entry keeps the free-text field for
+  endpoints that advertise nothing.
+
+
 ## [3.0.0] — 2026-10-26
 
 ### Added
