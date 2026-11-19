@@ -14,9 +14,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.domain.tools_large import LARGE_TOOLSET
-from tool_eval_bench.evals.helpers import (
-    answer_affirms_number as _answer_affirms_number,
-)
+from tool_eval_bench.evals.helpers import as_str as _as_str
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -28,6 +26,9 @@ from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
 from tool_eval_bench.evals.helpers import (
+    parse_math_expression as _parse_math_expression,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
@@ -36,13 +37,18 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
-from tool_eval_bench.evals.scenarios.large_toolset._shared import LARGE_SIDE_EFFECT_TOOLS
+from tool_eval_bench.evals.scenarios.large_toolset._shared import (
+    LARGE_SIDE_EFFECT_TOOLS,
+    _answer_affirms_exact_value,
+)
 
 
 def _tc39_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     """Any tool call here is unnecessary — the answer is trivially 30."""
     if call.name == "calculator":
-        return _noise({"result": 30}, "calculator")
+        result = _parse_math_expression(_as_str(call.arguments.get("expression", "")))
+        payload = {"error": "Invalid expression."} if result is None else {"result": result}
+        return _noise(payload, "calculator")
     if call.name == "run_code":
         return _noise(
             {"stdout": "30.0", "stderr": "", "exit_code": 0},
@@ -61,7 +67,7 @@ def _tc39_eval(state: ScenarioState) -> ScenarioEvaluation:
     Same as TC-11, but with 52 tools. The question is trivial arithmetic.
     With many more tools available, the temptation to use one is even higher.
     """
-    correct = _answer_affirms_number(state.final_answer, "30")
+    correct = _answer_affirms_exact_value(state.final_answer, "30")
     contextual = bool(
         re.search(
             r"15\s*%|(?<!\d)200(?!\d)|percent|prozent|por\s+ciento|porcentaje|百分之|パーセント"

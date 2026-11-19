@@ -147,7 +147,10 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     generic_score = sum(1 for w in generic_german if w in answer_lower)
     answer_in_german = _answer_in_german(state)
     # Check the model surfaced actual weather data (temp 14 or condition).
-    facts = re.compile(r"(?<!\d)14(?!\d)|\bbewölkt\w*", re.IGNORECASE)
+    facts = re.compile(
+        r"(?<![\d.,\-\u2212])14(?:[.,]0+)?(?![\d]|[.,]\d)|\bbewölkt\w*",
+        re.IGNORECASE,
+    )
     affirmed = []
     for match in facts.finditer(answer_lower):
         # A denial reaches only its own clause. "Es regnet nicht und es hat 14
@@ -160,7 +163,9 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
         )[-1]
         denied = re.search(r"\b(?:nicht|kein\w*|weder|not|never)\b(?:\s+\w+){0,5}\s*$", clause)
         affirmed.append(not bool(denied))
-    wrong_units = re.search(r"\b14\s*(?:grad\s*)?(?:°\s*f\b|fahrenheit\b|f\b)", answer_lower)
+    wrong_units = re.search(
+        r"(?<![\d.,])14(?:[.,]0+)?\s*(?:grad\s*)?(?:°\s*f\b|fahrenheit\b|f\b)", answer_lower
+    )
     has_data = bool(affirmed) and all(affirmed) and not wrong_units
     weather_success = any(
         _result_matches_if_present(state, call, _tc16_weather_result_is_munich)

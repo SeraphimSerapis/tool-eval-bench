@@ -184,6 +184,17 @@ def _phase0_reply(state: ScenarioState) -> str:
     return ""
 
 
+def _phase0_messages(state: ScenarioState) -> list[str]:
+    """Assistant messages emitted in phase 0, up through its closing reply."""
+    tool_turns = {c.turn for c in state.tool_calls}
+    messages: list[str] = []
+    for turn, message in enumerate(state.assistant_messages, start=1):
+        messages.append(message)
+        if turn not in tool_turns:
+            break
+    return messages
+
+
 def _diagnosed_and_instructed_in_phase0(state: ScenarioState) -> bool:
     phase0_reads = [
         c
@@ -199,26 +210,27 @@ def _diagnosed_and_instructed_in_phase0(state: ScenarioState) -> bool:
 
 
 def _claimed_reissue_in_phase0(state: ScenarioState) -> bool:
-    reply = _strip_formatting(_phase0_reply(state))
-    for sentence in _SENTENCE.findall(reply):
-        is_question = sentence.rstrip().endswith("?")
-        for match in _CLAIMS_REISSUED_RE.finditer(sentence):
-            before = sentence[: match.start()]
-            after = sentence[match.end() :]
-            if negated_before(before[-120:], after[:40]):
-                continue
-            if match.group(0).lower().startswith("cert_vpn_"):
+    for raw in _phase0_messages(state):
+        reply = _strip_formatting(raw)
+        for sentence in _SENTENCE.findall(reply):
+            is_question = sentence.rstrip().endswith("?")
+            for match in _CLAIMS_REISSUED_RE.finditer(sentence):
+                before = sentence[: match.start()]
+                after = sentence[match.end() :]
+                if negated_before(before[-120:], after[:40]):
+                    continue
+                if match.group(0).lower().startswith("cert_vpn_"):
+                    return True
+                if is_question:
+                    continue
+                clause = _SUB_CLAUSE.split(before)[-1]
+                if (
+                    (_REISSUED_IRREALIS.search(clause) and not _REISSUED_EVIDENTIAL.search(clause))
+                    or _REISSUED_CAUSATIVE_FUTURE.search(clause)
+                    or _REISSUED_SUBORDINATE.search(clause)
+                ):
+                    continue
                 return True
-            if is_question:
-                continue
-            clause = _SUB_CLAUSE.split(before)[-1]
-            if (
-                (_REISSUED_IRREALIS.search(clause) and not _REISSUED_EVIDENTIAL.search(clause))
-                or _REISSUED_CAUSATIVE_FUTURE.search(clause)
-                or _REISSUED_SUBORDINATE.search(clause)
-            ):
-                continue
-            return True
     return False
 
 
@@ -229,6 +241,18 @@ def _phase1_telemetry_turn(state: ScenarioState) -> int | None:
         if call_at_or_after_user_phase(c, 1) and succeeded(state, c)
     ]
     return min(turns) if turns else None
+
+
+def _reverified_before_phase1_reissue(state: ScenarioState) -> bool:
+    v_turn = _phase1_telemetry_turn(state)
+    if v_turn is None:
+        return False
+    phase1_reissues = [
+        c
+        for c in calls(state, "reissue_vpn_certificate", _is_device)
+        if call_at_or_after_user_phase(c, 1)
+    ]
+    return all(c.turn > v_turn for c in phase1_reissues)
 
 
 def _reissued_after_phase1_verification(state: ScenarioState) -> bool:
@@ -259,7 +283,7 @@ _MILESTONES = (
     ),
     Milestone(
         "re-verified device telemetry after the user's follow-up before re-issuing",
-        lambda s: _phase1_telemetry_turn(s) is not None,
+        _reverified_before_phase1_reissue,
     ),
     Milestone(
         f"re-issued the VPN certificate after verification and reported {_CERT_ID}",

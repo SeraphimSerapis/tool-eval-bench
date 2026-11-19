@@ -14,9 +14,6 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_affirms_number as _answer_affirms_number,
-)
-from tool_eval_bench.evals.helpers import (
     answer_contains_number as _answer_contains_number,
 )
 from tool_eval_bench.evals.helpers import (
@@ -29,6 +26,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     first_call as _first_call,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback as _generic_tool_fallback,
 )
@@ -45,6 +43,7 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
+    _answer_affirms_rounded_value,
     _numeric_value,
     _positive_argument_contains,
     _result_matches_if_present,
@@ -81,6 +80,7 @@ def _tc04_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects()
 def _tc04_eval(state: ScenarioState) -> ScenarioEvaluation:
     weather = _first_call(state, "get_weather")
     if (
@@ -93,8 +93,8 @@ def _tc04_eval(state: ScenarioState) -> ScenarioEvaluation:
                 "get_weather returned an error, so the temperature cannot be confirmed."
             )
         # The requested unit alone is not returned weather data.
-        has_data = _answer_affirms_number(state.final_answer, "64") and not re.search(
-            r"\b64\s*(?:degrees?\s*)?(?:°\s*c\b|celsius\b|centigrade\b)",
+        has_data = _answer_affirms_rounded_value(state.final_answer, "64") and not re.search(
+            r"\b64(?:\.0+)?\s*(?:(?:degrees?|grad|grados?)\s*)?(?:°\s*c\b|celsius\b|centigrade\b)",
             state.final_answer,
             re.IGNORECASE,
         )

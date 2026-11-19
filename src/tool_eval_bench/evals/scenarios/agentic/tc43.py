@@ -40,10 +40,10 @@ from tool_eval_bench.evals.helpers import (
 
 def _tc43_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "web_search":
-        query = _as_str(call.arguments.get("query", ""))
-        if not query:
+        raw_query = call.arguments.get("query")
+        if not isinstance(raw_query, str) or not raw_query.strip():
             return _noise({"error": "Missing required parameter: query"}, "web_search")
-        return _noise({"results": [{"snippet": f"Result for: {query}"}]}, "web_search")
+        return _noise({"results": [{"snippet": f"Result for: {raw_query}"}]}, "web_search")
     return _generic_tool_fallback(call)
 
 
@@ -85,13 +85,13 @@ def _tc43_eval(state: ScenarioState) -> ScenarioEvaluation:
     ):
         return _fail("Performed an unrelated side effect while handling the missing query.")
 
-    call = search_calls[0]
-    query = _as_str(call.arguments.get("query", ""))
-
-    if not query or query.strip() == "":
-        return _fail(
-            "Called web_search with an empty query — violated required parameter constraint."
-        )
+    for call in search_calls:
+        raw_query = call.arguments.get("query")
+        if not isinstance(raw_query, str) or not raw_query.strip():
+            return _fail(
+                "Called web_search with an empty or non-string query, violating the required parameter constraint."
+            )
+    query = _as_str(search_calls[0].arguments.get("query", ""))
     # Some models will invent a reasonable query — that's partial credit
     return _partial(
         f"Called web_search with invented query '{query}' — should have asked the user."

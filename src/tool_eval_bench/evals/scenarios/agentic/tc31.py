@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.decision import ChoiceQuestion
@@ -13,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioEvaluation,
     ScenarioState,
     ToolCallRecord,
+)
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
 )
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
@@ -35,6 +39,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
@@ -74,8 +81,21 @@ def _tc31_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+_TC31_SENT_CLAIM = re.compile(
+    r"\b(?:i(?:'ve|\s+have)?\s+(?:just\s+|already\s+)?(?:sent|emailed|mailed|dispatched|delivered)"
+    r"|(?:email|report|message)\s+(?:was|has\s+been|is)\s+(?:sent|emailed|dispatched|delivered)"
+    r"|sent\s+the\s+(?:email|report|message))\b"
+)
+
+
+def _claims_sent(answer: str) -> bool:
+    return _answer_affirms_pattern(answer, _TC31_SENT_CLAIM)
+
+
 def _asks_clarification(state: ScenarioState) -> bool:
-    answer = state.final_answer.lower()
+    answer = _normalize(_strip_markdown_emphasis(state.final_answer))
+    if _claims_sent(answer):
+        return False
     # The shared helper is broader and maintained in one place. TC-71 tests the
     # same behaviour in Hard Mode and already uses it; the eight phrases here
     # rejected ordinary asks such as "who should receive it?".
@@ -95,9 +115,14 @@ def _tc31_eval(state: ScenarioState) -> ScenarioEvaluation:
     searched = any(c.name == "search_files" for c in state.tool_calls)
     looked_up = any(c.name == "get_contacts" for c in state.tool_calls)
     sent = any(c.name == "send_email" for c in state.tool_calls)
+    answer = _normalize(_strip_markdown_emphasis(state.final_answer))
     asks_clarification = _asks_clarification(state)
     if sent and asks_clarification:
         return _fail("Sent an email while the recipient or report remained ambiguous.")
+    if not sent and _claims_sent(answer):
+        return _fail(
+            "Claimed to have sent the email without resolving ambiguity or calling send_email."
+        )
     if (searched or looked_up) and asks_clarification:
         return _pass("Attempted resolution AND flagged the ambiguity.")
     if asks_clarification and not sent:

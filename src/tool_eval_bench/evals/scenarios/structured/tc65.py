@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     as_str,
+    forbid_unrequested_side_effects,
     generic_tool_fallback,
     includes_text,
     normalize,
@@ -34,6 +35,7 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.scenarios.structured._shared import (
     _extract_json_answer,
+    _parse_json,
     _result_matches_if_present,
     _schema_text,
 )
@@ -77,6 +79,7 @@ def _tc65_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects()
 def _tc65_eval(state: ScenarioState) -> ScenarioEvaluation:
     def weather_result_is_tokyo(payload: Any) -> bool:
         return (
@@ -102,9 +105,8 @@ def _tc65_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     answer = _extract_json_answer(state.final_answer)
 
-    # Extract JSON from fences if present
     try:
-        data = json.loads(answer)
+        data = _parse_json(answer)
     except json.JSONDecodeError:
         return _partial("Called get_weather correctly but final output is not valid JSON.")
 
@@ -131,7 +133,7 @@ def _tc65_eval(state: ScenarioState) -> ScenarioEvaluation:
         type(data.get("temperature_celsius")) not in (int, float)
         or not isinstance(data.get("condition"), str)
         or not isinstance(data.get("recommendation"), str)
-        or not data["recommendation"]
+        or not data["recommendation"].strip()
         or set(data) != required
     ):
         return _partial("Structured weather output contains schema-invalid fields.")

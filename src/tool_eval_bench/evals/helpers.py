@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import functools
+import math
 import operator
 import re
 import unicodedata
@@ -18,6 +19,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tool_eval_bench.domain.scenarios import (
+    FailureKind,
     ScenarioEvaluation,
     ScenarioState,
     ScenarioStatus,
@@ -215,13 +217,15 @@ def positive_argument_contains(value: Any, expected: str) -> bool:
     compared ``location`` with ``==`` reported "wrong location" for a correct
     lookup, and disagreed with the scenarios beside them on the same tool.
     """
-    text = as_str(value).strip().lower()
-    target = expected.strip().lower()
+    text = unicodedata.normalize("NFC", as_str(value)).strip().lower()
+    target = unicodedata.normalize("NFC", expected).strip().lower()
+    if not text or not target:
+        return False
     boundary = r"[a-z0-9_]" if target.isascii() else r"\w"
-    if not text or not re.search(rf"(?<!{boundary}){re.escape(target)}(?!{boundary})", text):
+    if not re.search(rf"(?<!{boundary}){re.escape(target)}(?!{boundary})", text):
         return False
     return not re.search(
-        rf"\b(?:not|no|without|except|exclude|excluding)\s+(?:the\s+)?{re.escape(target)}\b",
+        rf"\b(?:not|no|without|except|exclude|excluding)\s+(?:the\s+)?{re.escape(target)}(?!{boundary})",
         text,
     )
 
@@ -316,7 +320,10 @@ def answer_affirms_number(answer: str, value: str) -> bool:
     needle = re.escape(re.sub(r"(?<=\d),(?=\d)", "", value))
     pattern = re.compile(rf"(?<![\d.]){needle}(?!\d)", re.IGNORECASE)
     for match in pattern.finditer(collapsed):
-        if not _is_negated(collapsed[max(0, match.start() - 120) : match.start()]):
+        if not negated_before(
+            collapsed[max(0, match.start() - 120) : match.start()],
+            collapsed[match.end() : match.end() + 40],
+        ):
             return True
     return False
 
@@ -868,7 +875,10 @@ def parse_math_expression(expression: str) -> float | None:
     try:
         tree = ast.parse(sanitized, mode="eval")
         result = _eval_node(tree.body)
-        return float(result) if isinstance(result, (int, float)) else None
+        if isinstance(result, (int, float)):
+            value = float(result)
+            return value if math.isfinite(value) else None
+        return None
     except Exception:
         return None
 
@@ -1008,6 +1018,7 @@ def forbid_unrequested_side_effects(
                 f"Also called {', '.join(extras)}, which the task did not ask for.",
                 result.note,
             )
+            demoted.failure_kind = FailureKind.FORBIDDEN_ACTION
             demoted.diagnostics = result.diagnostics
             demoted.safety_violation = result.safety_violation
             return demoted

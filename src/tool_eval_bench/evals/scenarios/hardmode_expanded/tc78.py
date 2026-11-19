@@ -15,9 +15,11 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     answer_affirms_number,
+    answer_affirms_pattern,
     as_str,
     generic_tool_fallback,
     result_is_usable_if_present,
+    strip_markdown_emphasis,
     tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -82,18 +84,22 @@ _TC78_DOLLAR_AMOUNT = re.compile(
 )
 
 
+_TC78_EXACT_TOTAL = re.compile(r"(?<![\d.])935(?:\.0+)?(?!\d|\.\d)")
+
+
 def _tc78_contradicting_amounts(answer: str) -> list[str]:
     """Dollar amounts asserted in the answer that no correct working contains.
 
     "The total is $935. Correction: it is $1,035." affirms 935 and still hands
     the user a wrong total. A negated figure ("not $1,035") is not asserted.
     """
+    plain = strip_markdown_emphasis(answer)
     wrong = []
-    for match in _TC78_DOLLAR_AMOUNT.finditer(answer):
+    for match in _TC78_DOLLAR_AMOUNT.finditer(plain):
         raw = match.group(1) or match.group(2)
         if float(raw.replace(",", "")) in _TC78_LEGITIMATE_AMOUNTS:
             continue
-        if answer_affirms_number(answer, raw):
+        if answer_affirms_number(plain, raw):
             wrong.append(raw)
     return wrong
 
@@ -120,7 +126,8 @@ def _tc78_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         for ticker, price in expected_prices.items()
     )
-    total_ok = answer_affirms_number(state.final_answer, "935") and not (
+    collapsed_answer = re.sub(r"(?<=\d),(?=\d)", "", strip_markdown_emphasis(state.final_answer))
+    total_ok = answer_affirms_pattern(collapsed_answer, _TC78_EXACT_TOTAL) and not (
         _tc78_contradicting_amounts(state.final_answer)
     )
     wrong_lookup = any(ticker not in _PRICES for ticker in tickers)

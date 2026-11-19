@@ -56,7 +56,9 @@ def pack_content_hash(directory: str | Path) -> str:
     bytes are unchanged.
     """
     root = Path(directory)
-    return _digest_files((path.name, path.read_bytes()) for path in sorted(root.glob("*.yaml")))
+    return _digest_files(
+        (path.name, path.read_bytes()) for path in sorted(root.glob("*.yaml")) if path.is_file()
+    )
 
 
 def _digest_files(files: Iterable[tuple[str, bytes]]) -> str:

@@ -49,6 +49,7 @@ from JSON or YAML 1.2, such as ``2026-03-21``, ``14:30``, ``NO``, ``01234``, or
 
 from __future__ import annotations
 
+import copy
 import math
 import re
 from dataclasses import replace
@@ -103,7 +104,7 @@ def _make_handler(
                 k in record.arguments and _json_equal(record.arguments[k], v)
                 for k, v in match.items()
             ):
-                return rule.get("response", {"result": "ok"})
+                return copy.deepcopy(rule.get("response", {"result": "ok"}))
         # No rule matched — return a generic empty success so the conversation
         # can continue; the evaluator will flag the mismatch.
         return {"result": "ok"}
@@ -162,6 +163,15 @@ def _make_evaluator(
                     status=ScenarioStatus.FAIL,
                     points=0,
                     summary=f"Expected {tool}, got {actual.name}.",
+                )
+            if actual.injected:
+                return ScenarioEvaluation(
+                    status=ScenarioStatus.FAIL,
+                    points=0,
+                    summary=(
+                        f"Expected tool call {tool} failed with an injected error "
+                        "and was never retried."
+                    ),
                 )
             for key, val in args.items():
                 if key not in actual.arguments or not _json_equal(actual.arguments[key], val):
@@ -521,6 +531,8 @@ def load_yaml_scenarios_with_bytes(
     root = Path(directory)
     loaded: list[tuple[ScenarioDefinition, Path, bytes]] = []
     for path in sorted(root.glob("*.yaml")):
+        if not path.is_file():
+            continue
         raw_bytes = path.read_bytes()
         scenario = _load_yaml_file(path, raw_bytes)
         if held_out and not scenario.held_out:

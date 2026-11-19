@@ -41,12 +41,30 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    positive_argument_contains as _positive_argument_contains,
+)
+from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
-from tool_eval_bench.evals.scenarios.large_toolset._shared import LARGE_SIDE_EFFECT_TOOLS
+from tool_eval_bench.evals.scenarios.large_toolset._shared import (
+    LARGE_SIDE_EFFECT_TOOLS,
+    _result_matches_if_present,
+)
+
+
+def _names_sarah_chen(value: Any) -> bool:
+    return _positive_argument_contains(value, "sarah") or _positive_argument_contains(value, "chen")
+
+
+def _tc40_order_result_is_shipped(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    if "customer" in payload and not _names_sarah_chen(payload.get("customer")):
+        return False
+    return _normalize(_as_str(payload.get("status"))) == "shipped"
 
 
 def _tc40_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -54,11 +72,7 @@ def _tc40_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         order_id = _as_str(call.arguments.get("order_id", ""))
         # The schema types order_id as "Order ID or customer name", so both the
         # name and the resolved id have to reach the same order.
-        if (
-            _includes_text(order_id, "sarah")
-            or _includes_text(order_id, "chen")
-            or _includes_text(order_id, "ORD-2026-1847")
-        ):
+        if _names_sarah_chen(order_id) or _includes_text(order_id, "ORD-2026-1847"):
             return _noise(
                 {
                     "order_id": "ORD-2026-1847",
@@ -86,7 +100,7 @@ def _tc40_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         )
     if call.name == "get_customer_profile":
         customer_id = _as_str(call.arguments.get("customer_id", ""))
-        if _includes_text(customer_id, "sarah") or _includes_text(customer_id, "chen"):
+        if _names_sarah_chen(customer_id):
             return _noise(
                 {
                     "customer_id": "CUST-8821",
@@ -123,17 +137,23 @@ def _tc40_order_id_reaches_sarah(state: ScenarioState, call: ToolCallRecord) -> 
     order_id = _normalize(_as_str(call.arguments.get("order_id")))
     if not order_id:
         return False
-    if "sarah" in order_id or "chen" in order_id:
+    if _names_sarah_chen(order_id):
         return True
     # Strictly earlier calls only: the failing result of this very call echoes
     # the id back, which would make any guess look resolved.
     position = next((i for i, c in enumerate(state.tool_calls) if c is call), len(state.tool_calls))
-    earlier_ids = {c.id for c in state.tool_calls[:position] if c.turn < call.turn}
+    earlier_ids = {
+        c.id
+        for c in state.tool_calls[:position]
+        if c.turn < call.turn and c.name == "get_customer_profile"
+    }
     return any(
         record.call_id in earlier_ids
         and isinstance(record.result, dict)
         and "error" not in record.result
-        and order_id in [str(value).lower() for value in record.result.get("orders", [])]
+        and (not record.result.get("name") or _names_sarah_chen(record.result.get("name")))
+        and isinstance(record.result.get("orders"), list)
+        and order_id in [str(value).lower() for value in record.result["orders"]]
         for record in state.tool_results
     )
 
@@ -152,9 +172,7 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
     # posting the customer's name into an order_id field, so the second call is
     # a dependency rather than an unnecessary extra.
     resolved_by_lookup = any(
-        not _includes_text(c.arguments.get("order_id"), "sarah")
-        and not _includes_text(c.arguments.get("order_id"), "chen")
-        for c in resolved_order_calls
+        not _names_sarah_chen(c.arguments.get("order_id")) for c in resolved_order_calls
     )
     used_shipping = _has_tool_call(state, "get_shipping_status")
     used_customer = _has_tool_call(state, "get_customer_profile")
@@ -173,15 +191,24 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _partial(
                 "get_order_status returned an error, so order details cannot be confirmed."
             )
+        if not _result_matches_if_present(state, order_call, _tc40_order_result_is_shipped):
+            return _partial(
+                "get_order_status did not return a shipped order for Sarah Chen, "
+                "so order details cannot be confirmed."
+            )
         if mentions_status:
             return _pass("Selected get_order_status precisely from similar-named tools.")
         return _partial(
             "Used get_order_status correctly but did not surface the order details in the answer.",
         )
     if used_order and used_customer and total_calls == 2:
+        order_call = cast(
+            ToolCallRecord,
+            _first_counted(state.tool_calls, lambda c: c.name == "get_order_status"),
+        )
         all_usable = all(
             _result_is_usable_if_present(state, call) for call in _counted_calls(state.tool_calls)
-        )
+        ) and _result_matches_if_present(state, order_call, _tc40_order_result_is_shipped)
         if resolved_by_lookup:
             if not all_usable:
                 return _partial(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -17,6 +18,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     answer_affirms_number as _answer_affirms_number,
+)
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
 )
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
@@ -76,6 +80,12 @@ def _tc56_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "set_reminder":
         return _noise({"status": "set", "reminder_id": "rem_tc56"}, "set_reminder")
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+
+
+_TC56_COLD_RE = re.compile(
+    r"\b(?:below\s+freezing|cold|freez\w*|snow\w*|warning)\b",
+    re.IGNORECASE,
+)
 
 
 @forbid_unrequested_side_effects({"send_email": 1, "set_reminder": 1})
@@ -157,10 +167,8 @@ def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
         _counted_calls(_tool_calls_by_name(state, "set_reminder"))
     )
 
-    answer = state.final_answer.lower()
-    mentions_cold = any(
-        _answer_affirms_number(state.final_answer, "-3") or w in answer
-        for w in ("below freezing", "cold", "freez", "snow", "warning")
+    mentions_cold = _answer_affirms_number(state.final_answer, "-3") or _answer_affirms_pattern(
+        state.final_answer, _TC56_COLD_RE
     )
 
     if (

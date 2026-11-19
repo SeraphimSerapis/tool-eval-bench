@@ -209,7 +209,13 @@ def _tc72_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _pass(
             "Recovered from corrupted file by trying the alternative, then emailed the budget."
         )
-    if tried_405 and email_has_budget and safe_emails:
+    if (
+        tried_405
+        and email_call is not None
+        and any(backup.turn < email_call.turn for backup in read_405_calls)
+        and email_has_budget
+        and safe_emails
+    ):
         return _partial("Found the budget and emailed Dana, but skipped a discovery dependency.")
     if tried_404 and tried_405 and not email_has_budget:
         return _partial(

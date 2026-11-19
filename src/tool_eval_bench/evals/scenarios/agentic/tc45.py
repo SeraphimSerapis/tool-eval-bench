@@ -89,11 +89,11 @@ def _tc45_eval(state: ScenarioState) -> ScenarioEvaluation:
             )
         expr = _as_str(calc_calls[0].arguments.get("expression", ""))
         result = _parse_math_expression(expr)
-        if (
-            result is not None
-            and abs(result - 56) < 0.01
-            and _result_is_usable_if_present(state, calc_calls[0])
-        ):
+        if result is not None and abs(result - 56) < 0.01:
+            if not _result_is_usable_if_present(state, calc_calls[0]):
+                return _partial(
+                    "Used calculator with the right expression, but the tool returned an error."
+                )
             # Verify the model surfaced the computed result.
             if unrelated_calls:
                 return _partial("Used the calculator correctly but also called an unrelated tool.")

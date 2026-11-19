@@ -55,6 +55,15 @@ def _extract_json_answer(answer: str) -> str:
     return answer.strip()
 
 
+def _reject_json_constant(token: str) -> Any:
+    raise json.JSONDecodeError(f"Non-standard JSON constant: {token}", token, 0)
+
+
+def _parse_json(text: str) -> Any:
+    """Parse RFC 8259 JSON, rejecting non-standard NaN and Infinity tokens."""
+    return json.loads(text, parse_constant=_reject_json_constant)
+
+
 def _schema_text(schema_dict: dict) -> str:
     """Extract the JSON schema body from a response_format dict and format it
     as compact text suitable for embedding in a user message.  This ensures

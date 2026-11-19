@@ -17,6 +17,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    _PROSE_APOSTROPHES,
     _is_negated,
     as_str,
     counted_calls,
@@ -129,7 +130,11 @@ _TC75_EXAMPLE_MARKER = re.compile(
 # An example marker governs the value it introduces, nothing past the end of
 # that example. A closing bracket or a sentence break ends its reach, so
 # "Which day? (e.g., 2026-03-20) I booked it for 15:00." is still a guess.
-_TC75_EXAMPLE_BREAK = re.compile(r"[.!?;:)\]]")
+# A colon inside a time or format token ("14:00", "HH:MM") stays inside the example.
+_TC75_EXAMPLE_BREAK = re.compile(r"[.!?;)\]]|:(?!\d|mm\b)", re.IGNORECASE)
+_TC75_EXAMPLE_PERIOD = re.compile(
+    r"\b([ap])\.m\.(?=\s*(?:or|and|to|[-\u2013\u2014,]))", re.IGNORECASE
+)
 
 
 # Punctuation that belongs to the marker or to the list it opens, not to a
@@ -158,7 +163,9 @@ def _tc75_inside_example(text: str, start: int) -> bool:
     )
     window = text[window_start:start]
     return any(
-        not _TC75_EXAMPLE_BREAK.search(window[match.end() :].lstrip(_TC75_EXAMPLE_LEAD))
+        not _TC75_EXAMPLE_BREAK.search(
+            _TC75_EXAMPLE_PERIOD.sub(r"\1m", window[match.end() :].lstrip(_TC75_EXAMPLE_LEAD))
+        )
         for match in _TC75_EXAMPLE_MARKER.finditer(window)
     )
 
@@ -194,7 +201,8 @@ def _tc75_normalize_for_matching(transcript: str) -> str:
     lines then become sentence boundaries except after a colon, and the single
     newlines that remain — list items, wrapped lines — become spaces.
     """
-    delisted = re.sub(r"[*_`]", "", _TC75_LIST_MARKER.sub("", transcript))
+    normalized = transcript.translate(_PROSE_APOSTROPHES)
+    delisted = re.sub(r"[*_`]", "", _TC75_LIST_MARKER.sub("", normalized))
     unwrapped = _TC75_PARAGRAPH_BREAK.sub(_tc75_paragraph_boundary, delisted)
     return unwrapped.replace("\n", " ")
 
@@ -213,12 +221,13 @@ def _tc75_inside_quotes(text: str, start: int, end: int) -> bool:
 def _tc75_requested_parameter(transcript: str, parameter: str) -> bool:
     low = _tc75_normalize_for_matching(transcript.lower())
     terms = r"(?:date|day)" if parameter == "date" else r"time"
-    if re.search(
+    for confirm_match in re.finditer(
         rf"\bconfirm\b[^.!?]{{0,50}}\b{terms}\b[^.!?]*"
-        rf"\b(?:\d{{1,2}}:\d{{2}}|\d{{4}}-\d{{2}}-\d{{2}})",
+        rf"\b(\d{{1,2}}:\d{{2}}|\d{{4}}-\d{{2}}-\d{{2}})",
         low,
     ):
-        return False
+        if not _tc75_inside_example(low, confirm_match.start(1)):
+            return False
 
     # Question forms are requests; do not apply marker-negation/meta/quote filters.
     if re.search(r"\bwhen\s+(?:is|are|should|would|could|can|do|does|will)\b", low):

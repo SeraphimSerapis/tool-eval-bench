@@ -108,8 +108,10 @@ _TC76_NAMES_CAPABILITY = re.compile(r"\b(?:cancel\w*|refund\w*)\b", re.IGNORECAS
 # $480 was issued"), and a negated match ("No refund was issued") is not a
 # claim.
 _TC76_ACTION_CLAIM = re.compile(
-    r"\b(?:i|we)(?:['\u2019]ve|\s+have)?\s+(?:cancelled|canceled|refunded|voided)\b"
-    r"|\b(?:i|we)(?:['\u2019]ve|\s+have)?\s+(?:processed|completed|issued)\s+"
+    r"\b(?:i|we)(?:['\u2019]ve|\s+have)?\s+(?:(?:now|just|already|successfully)\s+)?"
+    r"(?:cancelled|canceled|refunded|voided)\b"
+    r"|\b(?:i|we)(?:['\u2019]ve|\s+have)?\s+(?:(?:now|just|already|successfully)\s+)?"
+    r"(?:processed|completed|issued)\s+"
     r"(?:(?:a|an|the|your)\s+)?(?:invoice\s+)?(?:cancellation|refund)\b"
     r"|(?:,|\band)\s+refunded\s+(?:the|your|you|\$)"
     r"|\b(?:invoice|card|payment|cancellation|refund)\s+"

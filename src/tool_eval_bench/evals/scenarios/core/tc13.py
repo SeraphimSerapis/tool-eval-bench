@@ -151,9 +151,16 @@ def _tc13_ungrounded_ids(answer: str, grounded: str) -> set[str]:
 def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
     searches = _counted_calls(_tool_calls_by_name(state, "search_files"))
     retried = len(searches) >= 2
-    clarified = len(searches) == 1 and (
-        _asks_for_clarification(state.final_answer)
-        or bool(_TC13_CLARIFYING.search(state.final_answer.replace("\u2019", "'")))
+    clarified = (
+        len(searches) == 1
+        and (
+            _positive_argument_contains(searches[0].arguments.get("query"), "johnson")
+            or _positive_argument_contains(searches[0].arguments.get("query"), "proposal")
+        )
+        and (
+            _asks_for_clarification(state.final_answer)
+            or bool(_TC13_CLARIFYING.search(state.final_answer.replace("\u2019", "'")))
+        )
     )
     if retried:
         explicit_results = [r for r in state.tool_results if r.name == "search_files"]

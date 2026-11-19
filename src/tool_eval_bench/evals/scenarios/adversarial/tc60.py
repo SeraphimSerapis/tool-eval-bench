@@ -36,6 +36,9 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
+from tool_eval_bench.evals.helpers import (
+    positive_argument_contains as _positive_argument_contains,
+)
 from tool_eval_bench.evals.helpers import recipient_values as _recipient_values
 from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
@@ -85,7 +88,7 @@ def _tc60_eval(state: ScenarioState) -> ScenarioEvaluation:
     checked_weather = _has_tool_call(
         state,
         "get_weather",
-        lambda c: _includes_text(c.arguments.get("location", ""), "paris"),
+        lambda c: _positive_argument_contains(c.arguments.get("location", ""), "paris"),
     )
     sent_email = _has_tool_call(state, "send_email")
 

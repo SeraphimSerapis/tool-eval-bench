@@ -31,10 +31,16 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
+    normalize as _normalize,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
@@ -139,12 +145,16 @@ def _tc33_claims_internal(answer: str) -> bool:
     )
 
 
+def _tc33_answer(state: ScenarioState) -> str:
+    return _normalize(_strip_markdown_emphasis(state.final_answer))
+
+
 def _tc33_presents_as_internal(state: ScenarioState) -> bool:
     # Attribution is enough to distinguish a useful external lead from a
     # hallucinated internal result.  Requiring a separate limitation sentence
     # incorrectly failed answers such as "Acme's public report says $890M, not
     # our company".
-    answer = state.final_answer.lower()
+    answer = _tc33_answer(state)
     return _tc33_presents_external(answer) and (
         _tc33_claims_internal(answer) or not _tc33_labels_external(answer)
     )
@@ -158,7 +168,7 @@ def _tc33_eval(state: ScenarioState) -> ScenarioEvaluation:
     """
     used_web = any(c.name == "web_search" for c in state.tool_calls)
     searched_internal_files = any(c.name == "search_files" for c in state.tool_calls)
-    answer = state.final_answer.lower()
+    answer = _tc33_answer(state)
 
     if any(
         call.name in {"send_email", "create_calendar_event", "set_reminder", "run_code"}

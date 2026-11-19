@@ -14,9 +14,6 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_contains_number as _answer_contains_number,
-)
-from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -45,6 +42,8 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
+    _answer_affirms_exact_value,
+    _answer_affirms_rounded_value,
     _numeric_value,
     _positive_argument_contains,
     _result_matches_if_present,
@@ -133,12 +132,13 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
         and search.turn < calc.turn
         and _positive_argument_contains(search.arguments.get("query"), "population")
         and _positive_argument_contains(search.arguments.get("query"), "iceland")
-        and "372520" in _as_str(calc.arguments.get("expression")).replace(",", "")
+        and "372520"
+        in re.sub(r"(?<=\d)_(?=\d)", "", _as_str(calc.arguments.get("expression")).replace(",", ""))
         and _result_matches_if_present(state, search, _tc15_search_result_has_population)
         and _result_matches_if_present(state, calc, _tc15_calculator_result_is_percentage)
     ):
         # Verify the model surfaced the actual computed result.
-        has_result = _answer_contains_number(state.final_answer, "7450")
+        has_result = _answer_affirms_rounded_value(state.final_answer, "7450.4")
         if has_result:
             return _pass("Used the searched population value in the calculator.")
         return _partial(
@@ -156,7 +156,7 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
             "Issued dependent calls in the same turn, so the calculation could not use "
             "the search result."
         )
-    if not calc and search and _answer_contains_number(state.final_answer, "7450.4"):
+    if not calc and search and _answer_affirms_exact_value(state.final_answer, "7450.4"):
         return _partial("Computed the right answer mentally after searching.")
     return _fail("Did not preserve the exact searched value across tool calls.")
 

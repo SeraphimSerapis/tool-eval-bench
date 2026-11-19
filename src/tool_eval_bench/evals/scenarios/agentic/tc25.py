@@ -20,6 +20,7 @@ from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import first_counted as _first_counted
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -60,6 +61,7 @@ def _tc25_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects({"set_reminder": 1})
 def _tc25_eval(state: ScenarioState) -> ScenarioEvaluation:
     """Two-part request: 'What's the weather in Berlin? Also, if it's below 10°C, set a reminder to bring a coat.'
 
@@ -72,23 +74,29 @@ def _tc25_eval(state: ScenarioState) -> ScenarioEvaluation:
     if len(weather_calls) == 0:
         return _fail("Did not check the weather.")
 
-    if not any(
-        _positive_argument_contains(call.arguments.get("location"), "berlin")
+    berlin_calls = [
+        call
         for call in weather_calls
-    ):
+        if _positive_argument_contains(call.arguments.get("location"), "berlin")
+    ]
+    if not berlin_calls:
         return _fail("Checked the wrong location for the conditional weather request.")
 
     # Check if the weather tool actually returned data or was error-injected
-    weather_results = _matching_tool_results(state, weather_calls[-1])
-    weather_got_error = not _result_is_usable_if_present(state, weather_calls[-1])
+    weather_results = _matching_tool_results(state, berlin_calls[-1])
+    weather_got_error = not _result_is_usable_if_present(state, berlin_calls[-1])
 
     if weather_got_error:
-        # The model never received the temperature — can't evaluate the conditional.
-        # Credit retry attempts and graceful behavior.
+        if reminder_calls:
+            return _fail(
+                "Set a coat reminder despite get_weather returning an error with no temperature."
+            )
+        # The model never received the temperature, so it cannot evaluate the
+        # conditional. Credit retry attempts and graceful behavior.
         if len(weather_calls) > 1:
-            return _partial("Weather tool failed — retried, good recovery attempt.")
+            return _partial("Weather tool failed, retried, good recovery attempt.")
         return _partial(
-            "Weather tool returned an error — couldn't evaluate the temperature condition."
+            "Weather tool returned an error, so the temperature condition could not be evaluated."
         )
 
     if len(_counted_calls(weather_calls)) > 1:
@@ -98,7 +106,7 @@ def _tc25_eval(state: ScenarioState) -> ScenarioEvaluation:
     for result in weather_results:
         if isinstance(result.result, dict):
             temperature = result.result.get("temperature")
-            if isinstance(temperature, (int, float)):
+            if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
                 recorded_temperatures.append(temperature)
     if recorded_temperatures and not any(temperature < 10 for temperature in recorded_temperatures):
         if reminder_calls:

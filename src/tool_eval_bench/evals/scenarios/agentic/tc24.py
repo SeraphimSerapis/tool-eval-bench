@@ -14,6 +14,12 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_number as _answer_affirms_number,
+)
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
@@ -21,6 +27,7 @@ from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import first_counted as _first_counted
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -48,6 +55,8 @@ def _tc24_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             "search_files",
         )
     if call.name == "read_file":
+        if _as_str(call.arguments.get("file_id")).strip() != "file_q3_report":
+            return _noise({"error": "File not found."}, "read_file")
         return _noise(
             {
                 "content": (
@@ -63,6 +72,10 @@ def _tc24_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+_TC24_SCALED_REVENUE = re.compile(r"(?<![\d.])\$?4\.25\s*(?:m\b|million\b)", re.IGNORECASE)
+
+
+@forbid_unrequested_side_effects()
 def _tc24_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User said: 'Search for the Q3 report, read it, and respond with ONLY the total revenue number — nothing else.'"""
     search_call = _first_counted(state.tool_calls, lambda c: c.name == "search_files")
@@ -73,9 +86,9 @@ def _tc24_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     has_revenue = bool(re.fullmatch(r"\$?(?:4,250,000|4250000)(?:\.00)?", answer))
     # "$4.25 million" is the right value in the wrong (non-terse) format, so it
-    # lands in the extra-text PARTIAL. A bare "4.25" is not accepted.
-    mentions_revenue = "4250000" in answer.replace(",", "") or bool(
-        re.search(r"(?<![\d.])\$?4\.25\s*(?:m\b|million\b)", answer, re.IGNORECASE)
+    # lands in the extra-text PARTIAL. A bare "4.25" or negated figure is not accepted.
+    mentions_revenue = _answer_affirms_number(answer, "4250000") or _answer_affirms_pattern(
+        answer, _TC24_SCALED_REVENUE
     )
 
     if (

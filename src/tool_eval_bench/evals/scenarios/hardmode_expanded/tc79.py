@@ -106,8 +106,10 @@ def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Attempted an unadvertised tool call.")
     weather = tool_calls_by_name(state, "get_weather")
     contacts = tool_calls_by_name(state, "get_contacts")
-    # An event that --error-rate failed and the model retried created nothing.
-    events = counted_calls(tool_calls_by_name(state, "create_calendar_event"))
+    # An event that --error-rate failed and the model retried created nothing,
+    # but every attempt still had to follow weather and contact resolution.
+    attempted_events = tool_calls_by_name(state, "create_calendar_event")
+    events = counted_calls(attempted_events)
     if not events:
         return _fail("Did not create the conditional event.")
     if len(events) > 1:
@@ -132,7 +134,7 @@ def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
     valid_contact_calls = [
         c
         for c in contacts
-        if "priya" in as_str(c.arguments.get("query")).lower()
+        if positive_argument_contains(c.arguments.get("query"), "priya")
         and result_is_usable_if_present(state, c)
         and _result_matches_if_present(
             state,
@@ -147,7 +149,10 @@ def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
     dependencies_first = bool(
         valid_weather_calls
         and valid_contact_calls
-        and max(valid_weather_calls[0].turn, valid_contact_calls[0].turn) < event.turn
+        and all(
+            max(valid_weather_calls[0].turn, valid_contact_calls[0].turn) < attempt.turn
+            for attempt in attempted_events
+        )
     )
     event_usable = result_is_usable_if_present(state, event) and _result_matches_if_present(
         state, event, lambda payload: payload.get("status") == "created"
@@ -177,7 +182,7 @@ def _tc79_eval(state: ScenarioState) -> ScenarioEvaluation:
                 "Created the event correctly but the reply did not report it or contradicted it."
             )
         return _pass("Resolved weather and contact dependencies before creating the Lisbon event.")
-    if dependencies_first and sum(required) >= 5:
+    if dependencies_first and event_usable and sum(required) >= 5:
         return _partial(
             "Created the event after dependency checks but omitted one required parameter."
         )

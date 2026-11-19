@@ -27,6 +27,7 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.scenarios.structured._shared import (
+    _parse_json,
     _schema_text,
 )
 
@@ -70,7 +71,7 @@ def _tc64_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer.strip()
 
     try:
-        data = json.loads(answer)
+        data = _parse_json(answer)
     except json.JSONDecodeError:
         return _fail("Output is not valid JSON.")
 
@@ -99,7 +100,7 @@ def _tc64_eval(state: ScenarioState) -> ScenarioEvaluation:
     genre_val = data.get("genre")
     if not isinstance(genre_val, str) or genre_val not in valid_genres:
         errors.append(f"genre must be one of {sorted(valid_genres)}")
-    if not isinstance(data.get("summary"), str) or not data["summary"]:
+    if not isinstance(data.get("summary"), str) or not data["summary"].strip():
         errors.append("summary must be a non-empty string")
 
     # Check for extra fields (additionalProperties: false)

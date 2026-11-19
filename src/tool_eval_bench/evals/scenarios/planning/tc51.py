@@ -118,7 +118,7 @@ def _tc51_time_is_present(state: ScenarioState, value: Any) -> bool:
 def _tc51_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_contacts":
         query = _as_str(call.arguments.get("query", ""))
-        if _includes_text(query, "engineering") or _includes_text(query, "team"):
+        if _includes_text(query, "engineer") or _includes_text(query, "team"):
             return _noise(
                 {
                     "results": [
@@ -228,10 +228,13 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
     if (
         email_calls
         and not notifications_valid
-        and any(
-            _as_str(call.arguments.get("subject")).strip()
-            or _as_str(call.arguments.get("body")).strip()
-            for call in email_calls
+        and (
+            valid_event is not None
+            or any(
+                _as_str(call.arguments.get("subject")).strip()
+                or _as_str(call.arguments.get("body")).strip()
+                for call in email_calls
+            )
         )
     ):
         return _fail(

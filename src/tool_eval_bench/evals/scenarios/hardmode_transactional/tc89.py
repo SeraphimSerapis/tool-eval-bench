@@ -173,6 +173,7 @@ def _payment_attempts(state: ScenarioState) -> list[ToolCallRecord]:
             bool(reserved)
             and c.turn > reserved[0].turn
             and as_str(c.arguments.get("reservation_id")).strip() == _RESERVATION
+            and as_str(c.arguments.get("invoice_id")).strip().upper() == _INVOICE
         ),
     )
 
@@ -228,6 +229,8 @@ def _reported(state: ScenarioState) -> bool:
     # A denied payment ("wasn't paid", "did not go through") reports the
     # failure as well as a failure word does; "I have not released the hold"
     # reports no release.
+    if _compensating_release(state) is None:
+        return False
     answer = state.final_answer
     failed = bool(_FAILURE_WORDS.search(answer)) or "denied" in _payment_stances(answer)
     return failed and answer_affirms_pattern(answer, _RELEASE_WORDS)

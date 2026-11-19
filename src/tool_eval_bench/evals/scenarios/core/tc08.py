@@ -30,6 +30,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback as _generic_tool_fallback,
 )
@@ -49,6 +50,9 @@ from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
 )
 from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
+)
+from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -60,7 +64,9 @@ from tool_eval_bench.evals.scenarios.core._shared import (
 )
 
 _TC08_NO_RAIN = re.compile(
-    r"\b(?:no|not|isn't|aren't|won't)\s+(?:be\s+|going\s+to\s+)?rain(?:ing|y)?\b(?!\s+yet\b)",
+    r"\b(?:no|not|isn't|aren't|won't)\s+"
+    r"(?:(?:currently|presently|actually)\s+)?"
+    r"(?:be\s+|going\s+to\s+)?rain(?:ing|y)?\b(?!\s+yet\b)",
     re.IGNORECASE,
 )
 # "It's not raining yet, but rain is expected later" forecasts rain, which is
@@ -101,6 +107,7 @@ def _tc08_reminder_result_is_set(payload: Any) -> bool:
     return status in {"accepted", "created", "ok", "scheduled", "set", "success"}
 
 
+@forbid_unrequested_side_effects({"set_reminder": None})
 def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
     weather_calls = [
         call
@@ -140,8 +147,12 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
             or len(_counted_calls(weather_calls)) != 1
             or len(_counted_calls(state.tool_calls)) != 2
         ):
+            if len(_counted_calls(_tool_calls_by_name(state, "set_reminder"))) > 1:
+                return _partial(
+                    "Checked the weather but issued duplicate or additional reminder mutations."
+                )
             return _partial(
-                "Checked the weather but issued duplicate or additional reminder mutations."
+                "Checked the weather and set the reminder, but made unnecessary extra tool calls."
             )
         return _pass("Checked the weather first, then set the rainy-day reminder.")
 
@@ -206,7 +217,7 @@ def _tc08_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
                 state, c, lambda p: isinstance(p, dict) and p.get("condition") == "Clear"
             )
         ]
-        answer = state.final_answer.replace("\u2019", "'")
+        answer = _normalize(_strip_markdown_emphasis(state.final_answer))
         # "Not raining" is itself a negation, so it gets its own pattern rather
         # than going through the negation guard used for the positive words.
         reports_dry = (

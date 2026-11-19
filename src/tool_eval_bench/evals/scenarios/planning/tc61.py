@@ -19,6 +19,9 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_number as _answer_affirms_number,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
@@ -27,10 +30,16 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
+    negated_before as _negated_before,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
 )
 from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
@@ -153,6 +162,7 @@ def _tc61_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 # The word or number right before "anomal...", as in "3 anomalies", "three
 # anomalies", "thirty-three anomalies" or "no anomalies".
 _TC61_ANOMALY_COUNT = re.compile(r"(?<![\w.-])(\d+|[a-z]+(?:-[a-z]+)?)\s+anomal")
+_TC61_FAILED_RE = re.compile(r"\bfailed\b", re.IGNORECASE)
 _TC61_NUMBER_WORDS = {
     "no": 0,
     "zero": 0,
@@ -208,15 +218,21 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
     # submission nor a poll.
     run_calls = _counted_calls(_tool_calls_by_name(state, "run_code"))
 
-    answer = state.final_answer.lower()
+    answer = _strip_markdown_emphasis(state.final_answer).lower()
     # Either the record count or the anomaly count reports the result, but a
     # wrong anomaly count anywhere in the answer ("13 anomalies") is not the
     # result, even beside the right record count.
-    anomaly_counts = [_tc61_count_value(token) for token in _TC61_ANOMALY_COUNT.findall(answer)]
+    anomaly_matches = list(_TC61_ANOMALY_COUNT.finditer(answer))
+    anomaly_counts = [_tc61_count_value(match.group(1)) for match in anomaly_matches]
+    affirmed_three = any(
+        _tc61_count_value(match.group(1)) == 3
+        and not _negated_before(answer[max(0, match.start() - 120) : match.start()])
+        for match in anomaly_matches
+    )
     has_result = (
-        _answer_affirms_number(answer, "15420")
-        or _answer_affirms_number(answer, "15,420")
-        or 3 in anomaly_counts
+        _answer_affirms_number(state.final_answer, "15420")
+        or _answer_affirms_number(state.final_answer, "15,420")
+        or affirmed_three
     ) and all(count in (3, None) for count in anomaly_counts)
 
     def pending_result(payload: Any) -> bool:
@@ -297,6 +313,7 @@ def _tc61_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
                 )
         return result
 
+    @forbid_unrequested_side_effects({"run_code": None})
     def evaluate(state: ScenarioState) -> ScenarioEvaluation:
         if mode != 2:
             return _tc61_eval(state)
@@ -321,7 +338,7 @@ def _tc61_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
             )
             if (
                 failed
-                and "failed" in state.final_answer.lower()
+                and _answer_affirms_pattern(state.final_answer, _TC61_FAILED_RE)
                 and not any(n in state.final_answer for n in ("15420", "15,420"))
             ):
                 return _pass("Stopped polling and reported the terminal analysis failure.")

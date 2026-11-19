@@ -106,15 +106,19 @@ def _parsed_after_inspection(state: ScenarioState) -> bool:
     return turn is not None and any(c.turn > turn for c in calls(state, "parse_pdf"))
 
 
+def _ocred_target(state: ScenarioState) -> bool:
+    return any(succeeded(state, c) for c in calls(state, "ocr_image", _is_target))
+
+
 _MILESTONES = (
     Milestone("inspected the file's format before choosing an extractor", _inspected_first),
     Milestone(
         "OCRed the TIFF pages",
-        lambda s: any(succeeded(s, c) for c in calls(s, "ocr_image", _is_target)),
+        _ocred_target,
     ),
     Milestone(
         f"reported sample ID {_SAMPLE_ID}",
-        lambda s: answer_affirms_text(s.final_answer, _SAMPLE_ID),
+        lambda s: _ocred_target(s) and answer_affirms_text(s.final_answer, _SAMPLE_ID),
     ),
 )
 

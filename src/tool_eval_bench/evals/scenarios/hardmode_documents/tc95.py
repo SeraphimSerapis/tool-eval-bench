@@ -19,6 +19,7 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_text,
     as_str,
     counted_calls,
+    strip_markdown_emphasis,
     with_noise,
 )
 from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
@@ -156,7 +157,12 @@ def _ocr_scanned(state: ScenarioState) -> bool:
 
 
 def _reported(state: ScenarioState) -> bool:
-    answer = re.sub(r"\b([A-Za-z])\.\s+(?=[A-Za-z])", r"\1 ", state.final_answer)
+    if not (
+        _NATIVE <= _covered(state, "extract_text") and _SCANNED <= _covered(state, "ocr_pages")
+    ):
+        return False
+    plain = strip_markdown_emphasis(state.final_answer)
+    answer = re.sub(r"\b([A-Za-z])\.\s*(?=[A-Za-z])", r"\1 ", plain)
     return answer_affirms_text(answer, "okafor") and answer_affirms_pattern(answer, _REJECTED)
 
 

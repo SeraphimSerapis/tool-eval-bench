@@ -19,7 +19,14 @@ from tool_eval_bench.evals.helpers import (
     as_str,
     with_noise,
 )
-from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
+from tool_eval_bench.evals.milestones import (
+    Milestone,
+    Minefield,
+    calls,
+    grade,
+    result_payloads,
+    succeeded,
+)
 from tool_eval_bench.evals.scenarios.hardmode_transactional._shared import _STRING, _tool
 
 _CATALOG: dict[str, dict[str, Any]] = {
@@ -268,11 +275,23 @@ def _applied_lab100(state: ScenarioState) -> bool:
     )
 
 
+def _catalog_observed_required_skus(state: ScenarioState) -> bool:
+    seen_skus = {
+        item.get("sku")
+        for c in calls(state, "search_catalog")
+        if succeeded(state, c)
+        for payload in result_payloads(state, c)
+        for item in payload.get("items", [])
+        if isinstance(item, dict)
+    }
+    return {"CHR-101", "DSK-201"}.issubset(seen_skus)
+
+
 _MILESTONES = (
     Milestone(
         "searched the catalog and listed available coupons",
         lambda s: (
-            any(succeeded(s, c) for c in calls(s, "search_catalog"))
+            _catalog_observed_required_skus(s)
             and any(succeeded(s, c) for c in calls(s, "list_coupons"))
         ),
     ),

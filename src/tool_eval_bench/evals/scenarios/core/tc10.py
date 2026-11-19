@@ -14,9 +14,6 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_affirms_number as _answer_affirms_number,
-)
-from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
@@ -25,6 +22,12 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
+from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
+)
+from tool_eval_bench.evals.scenarios.core._shared import (
+    _answer_affirms_exact_value,
+)
 
 
 def _tc10_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -32,8 +35,10 @@ def _tc10_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc10_eval(state: ScenarioState) -> ScenarioEvaluation:
-    answer = state.final_answer.strip()
-    contextual = bool(re.search(r"\b(?:world\s+war|wwii|war|ended|surrender|year)\b", answer, re.I))
+    answer = _strip_markdown_emphasis(state.final_answer).strip()
+    contextual = bool(
+        re.search(r"\b(?:world\s+war|wwii|ww2|war|ended|surrender|year)\b", answer, re.I)
+    )
     # A terse reply whose whole content is the year: "1945", "1945.",
     # "It was 1945.", "In 1945." An exact-string match on the bare year
     # rejected the ordinary sentence forms of the same reply, while a plain
@@ -47,7 +52,7 @@ def _tc10_eval(state: ScenarioState) -> ScenarioEvaluation:
     )
     if (
         len(state.tool_calls) == 0
-        and _answer_affirms_number(answer, "1945")
+        and _answer_affirms_exact_value(answer, "1945")
         and (contextual or terse_year)
     ):
         return _pass("Answered directly without tool use.")

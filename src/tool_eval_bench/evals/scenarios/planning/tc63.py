@@ -22,6 +22,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
@@ -119,6 +120,15 @@ _TC63_PRICE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?")
 _TC63_CLOCK = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\b|\b(\d{1,2}):(\d{2})\b")
 
 
+_TC63_NEGATED_BUDGET = re.compile(r"(?:\b(?:not|never|no)\b|n't\b)(?:\W+\w+){0,4}\W*$")
+_TC63_NEGATED_PHRASE = re.compile(r"(?:\b(?:not|never|no|without)\b|n't\b)(?:\W+\w+){0,3}\W*$")
+_TC63_NEGATED_LATE = re.compile(r"(?:\b(?:not|never|no|without)\b|n't\b)(?:\W+\w+){0,4}\W*$")
+
+
+def _tc63_prefix(answer: str, index: int) -> str:
+    return answer[max(0, index - 32) : index].lower().replace("\u2019", "'")
+
+
 def _tc63_within_budget(answer: str) -> bool:
     """True when the answer names a per-person price at or under the ceiling."""
     for match in _TC63_PRICE.finditer(answer):
@@ -143,8 +153,7 @@ def _tc63_within_budget(answer: str) -> bool:
             answer, str(int(float(digits)))
         ):
             continue
-        prefix = answer[max(0, match.start() - 32) : match.start()].lower()
-        if re.search(r"\b(?:not|never|no)\b(?:\W+\w+){0,4}\W*$", prefix):
+        if _TC63_NEGATED_BUDGET.search(_tc63_prefix(answer, match.start())):
             continue
         return True
     return False
@@ -153,8 +162,7 @@ def _tc63_within_budget(answer: str) -> bool:
 def _tc63_affirms_phrase(answer: str, phrase: str) -> bool:
     pattern = re.compile(rf"\b{re.escape(phrase)}\b", re.IGNORECASE)
     for match in pattern.finditer(answer):
-        prefix = answer[max(0, match.start() - 32) : match.start()].lower()
-        if not re.search(r"\b(?:not|never|no|without)\b(?:\W+\w+){0,3}\W*$", prefix):
+        if not _TC63_NEGATED_PHRASE.search(_tc63_prefix(answer, match.start())):
             return True
     return False
 
@@ -167,15 +175,12 @@ def _tc63_open_late(answer: str) -> bool:
     exactly does not count, since the request was for somewhere open *past*
     10pm.
     """
-    cutoff = _TC63_PAST_CUTOFF.search(answer)
-    if cutoff:
-        prefix = answer[max(0, cutoff.start() - 32) : cutoff.start()].lower()
-        if not re.search(r"\b(?:not|never|no|without)\b(?:\W+\w+){0,4}\W*$", prefix):
+    for cutoff in _TC63_PAST_CUTOFF.finditer(answer):
+        if not _TC63_NEGATED_LATE.search(_tc63_prefix(answer, cutoff.start())):
             return True
     for match in _TC63_CLOCK.finditer(answer):
         hour12, minute12, meridiem, hour24, minute24 = match.groups()
-        prefix = answer[max(0, match.start() - 32) : match.start()].lower()
-        if re.search(r"\b(?:not|never|no|without)\b(?:\W+\w+){0,4}\W*$", prefix):
+        if _TC63_NEGATED_LATE.search(_tc63_prefix(answer, match.start())):
             continue
         if meridiem:
             hour, minute = int(hour12) % 12 + (12 if meridiem == "p" else 0), int(minute12 or 0)
@@ -215,6 +220,7 @@ def _tc63_recommended_competitor(answer: str) -> str | None:
     return None
 
 
+@forbid_unrequested_side_effects()
 def _tc63_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Find me a restaurant for dinner tonight.'
     Then constraints accumulate: Italian → under $30 → downtown → open past 10pm.

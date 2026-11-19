@@ -16,9 +16,6 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_affirms_number as _answer_affirms_number,
-)
-from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -44,12 +41,16 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
+)
+from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
+    _answer_affirms_rounded_value,
     _positive_argument_contains,
     _result_matches_error_if_present,
     _tc14_result_is_error,
@@ -108,19 +109,24 @@ _ERROR_ACKNOWLEDGEMENT = re.compile(
     r"did not return|timed out|time-?out|"
     r"unable to (?:get|fetch|retrieve|reach|access|load|obtain|pull|return|look up|connect)|"
     r"(?:tool|service|api|endpoint|server|feed)\s+(?:is|was|went|are|were|being)\s+"
-    r"(?:temporarily\s+|currently\s+)?down)\b|get_stock_price",
+    r"(?:temporarily\s+|currently\s+)?down)\b",
     re.IGNORECASE,
 )
 
 
 def _acknowledges_error(state: ScenarioState) -> bool:
-    transcript = _normalize(_full_assistant_transcript(state))
+    transcript = _normalize(_strip_markdown_emphasis(_full_assistant_transcript(state)))
     return bool(_ERROR_ACKNOWLEDGEMENT.search(transcript))
 
 
 @forbid_unrequested_side_effects()
 def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
-    stock_attempts = _tool_calls_by_name(state, "get_stock_price")
+    stock_attempts = [
+        c
+        for c in _tool_calls_by_name(state, "get_stock_price")
+        if _positive_argument_contains(c.arguments.get("ticker"), "aapl")
+        or _positive_argument_contains(c.arguments.get("ticker"), "apple")
+    ]
     search_calls = _tool_calls_by_name(state, "web_search")
     acknowledged = _acknowledges_error(state)
     # Tighter partial credit: web_search must have been called AFTER the stock error was
@@ -158,7 +164,7 @@ def _tc14_eval(state: ScenarioState) -> ScenarioEvaluation:
         if not fallback_usable:
             return _partial("Tried a fallback source, but it also returned an error.")
         # Also verify the model surfaced the actual price from the fallback search.
-        has_price = _answer_affirms_number(state.final_answer, "187")
+        has_price = _answer_affirms_rounded_value(state.final_answer, "187.42")
         if has_price:
             return _pass("Acknowledged the stock tool failure, recovered, and surfaced the price.")
         return _partial(

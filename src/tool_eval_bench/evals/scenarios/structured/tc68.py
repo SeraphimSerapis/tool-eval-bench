@@ -30,6 +30,7 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.scenarios.structured._shared import (
+    _parse_json,
     _schema_text,
 )
 
@@ -71,13 +72,33 @@ def _tc68_near_miss_searches(state: ScenarioState) -> bool:
         return False
     return any(
         result.call_id == call.id
+        and result.name == "search_files"
         and isinstance(result.result, dict)
         and result.result.get("error_code") == "ERR_TOOL_UNAVAILABLE"
         for result in state.tool_results
     )
 
 
-_FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
+_FENCE_BLOCK_RE = re.compile(r"```(.*?)```", re.DOTALL)
+_FENCE_JSON_TAG_RE = re.compile(r"^(?:json\b)?\s*", re.IGNORECASE)
+
+
+def _extract_fenced_json_object(answer: str) -> dict[str, Any] | None:
+    """Extract a JSON object from properly paired Markdown code fences."""
+    for match in _FENCE_BLOCK_RE.finditer(answer):
+        body = match.group(1).strip()
+        if not body.startswith("{"):
+            stripped = _FENCE_JSON_TAG_RE.sub("", body, count=1).strip()
+            if not stripped.startswith("{"):
+                continue
+            body = stripped
+        try:
+            parsed = _parse_json(body)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
@@ -85,14 +106,10 @@ def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
     wrapped_in_fence = False
 
     try:
-        data = json.loads(answer)
+        data = _parse_json(answer)
     except json.JSONDecodeError:
-        fenced = _FENCED_JSON_RE.search(answer)
-        if fenced is None:
-            return _fail("Output is not valid JSON.")
-        try:
-            data = json.loads(fenced.group(1))
-        except json.JSONDecodeError:
+        data = _extract_fenced_json_object(answer)
+        if data is None:
             return _fail("Output is not valid JSON.")
         wrapped_in_fence = True
 

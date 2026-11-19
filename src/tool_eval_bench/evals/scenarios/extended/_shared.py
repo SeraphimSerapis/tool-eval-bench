@@ -7,11 +7,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from decimal import Decimal
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
+)
+from tool_eval_bench.evals.helpers import (
+    _is_negated,
 )
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
@@ -99,3 +103,21 @@ _GERMAN_MARKERS = re.compile(
 # language. A test keeps this a subset of TRANSLATE_LANGUAGE_DESIGNATORS so it
 # cannot drift from the schema.
 _ENGLISH_SOURCE_DESIGNATORS = frozenset({"english", "en", "en-us", "en-gb", "en-ca", "en-au"})
+
+
+_STATED_NUMBER = re.compile(r"(?<![\d.])(?:([-\u2212])[$€£¥]?)?(\d+)(?:\.(\d+))?(?!\d|\.\d)")
+
+
+def _answer_affirms_exact_value(answer: str, value: str) -> bool:
+    """Whether ``answer`` asserts ``value`` with exact numeric equality."""
+    collapsed = re.sub(r"(?<=\d),(?=\d)", "", answer)
+    expected = Decimal(value)
+    for match in _STATED_NUMBER.finditer(collapsed):
+        sign = "-" if match.group(1) else ""
+        fractional = f".{match.group(3)}" if match.group(3) is not None else ""
+        stated = Decimal(f"{sign}{match.group(2)}{fractional}")
+        if stated == expected and not _is_negated(
+            collapsed[max(0, match.start() - 120) : match.start()]
+        ):
+            return True
+    return False

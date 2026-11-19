@@ -15,6 +15,7 @@ noise fields appended after them.
 from __future__ import annotations
 
 import hashlib
+import math
 from typing import Any
 
 
@@ -54,6 +55,29 @@ def _with_results(
     return _with_noise({"results": results, **rest}, noise)
 
 
+def _as_number(value: Any, default: int | float = 0) -> int | float:
+    """Return *value* when it is a finite real number (not a bool), otherwise *default*."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return value
+    return default
+
+
+def _optional_float(value: Any) -> float | None:
+    """Parse a finite numeric value (excluding bools) to float, or return None."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
+    if isinstance(value, str):
+        try:
+            parsed = float(value)
+            return parsed if math.isfinite(parsed) else None
+        except ValueError:
+            return None
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Per-tool enrichment functions
 # ---------------------------------------------------------------------------
@@ -62,6 +86,7 @@ def _with_results(
 def enrich_weather(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to weather responses."""
     seed = _seed_from_payload(payload, "weather")
+    temp = _as_number(payload.get("temperature"), 0)
     return _with_noise(
         payload,
         {
@@ -70,8 +95,8 @@ def enrich_weather(payload: dict[str, Any]) -> dict[str, Any]:
             "uv_index": max(1, seed % 6),
             "visibility_km": 9.8,
             "pressure_hpa": 1008 + seed % 20,
-            "feels_like": payload.get("temperature", 0) - 2,
-            "dew_point": payload.get("temperature", 0) - 5,
+            "feels_like": temp - 2,
+            "dew_point": temp - 5,
             "forecast_summary": "Conditions expected to remain similar for the next 6 hours.",
             "last_updated": "2026-03-20T12:00:00Z",
             "data_source": "National Weather Service",
@@ -84,9 +109,13 @@ def enrich_weather(payload: dict[str, Any]) -> dict[str, Any]:
 def enrich_search(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to web search responses."""
     seed = _seed_from_payload(payload, "search")
-    results = payload.get("results", [])
+    raw_results = payload.get("results", [])
+    results = raw_results if isinstance(raw_results, list) else []
     enriched_results = []
     for i, r in enumerate(results):
+        if not isinstance(r, dict):
+            enriched_results.append(r)
+            continue
         enriched_results.append(
             _with_noise(
                 r,
@@ -119,9 +148,13 @@ def enrich_search(payload: dict[str, Any]) -> dict[str, Any]:
 
 def enrich_file_search(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to file search responses."""
-    results = payload.get("results", [])
+    raw_results = payload.get("results", [])
+    results = raw_results if isinstance(raw_results, list) else []
     enriched_results = []
     for r in results:
+        if not isinstance(r, dict):
+            enriched_results.append(r)
+            continue
         enriched_results.append(
             _with_noise(
                 r,
@@ -213,21 +246,24 @@ def enrich_contacts(payload: dict[str, Any]) -> dict[str, Any]:
     on top would contradict that role, so the noise layer only adds the title
     when the contact declares neither a role nor a title.
     """
-    results = payload.get("results", [])
+    raw_results = payload.get("results", [])
+    results = raw_results if isinstance(raw_results, list) else []
     enriched_results = []
     for i, r in enumerate(results):
-        enriched = {
+        if not isinstance(r, dict):
+            enriched_results.append(r)
+            continue
+        noise_fields: dict[str, Any] = {
             "id": f"contact_{1000 + i}",
             "department": "Engineering",
             "phone": "+1-555-0100",
             "last_contacted": "2026-03-18T15:30:00Z",
             "notes": "",
             "source": "directory",
-            **r,
         }
         if "role" not in r and "title" not in r:
-            enriched["title"] = "Team Member"
-        enriched_results.append(enriched)
+            noise_fields["title"] = "Team Member"
+        enriched_results.append(_with_noise(r, noise_fields))
     return _with_results(
         payload,
         enriched_results,
@@ -241,14 +277,14 @@ def enrich_contacts(payload: dict[str, Any]) -> dict[str, Any]:
 
 def enrich_stock(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to stock price responses."""
-    price = payload.get("price", 0)
+    price = _as_number(payload.get("price"), 0)
     # Derive previous close from the declared change when present so the
     # fixture's change/change_percent/previous_close fields stay coherent
     # (change = price - previous_close). Fall back to the historical
     # price - 1.23 offset for fixtures that don't declare a change field.
-    change = payload.get("change")
+    change_val = _optional_float(payload.get("change"))
     previous_close = (
-        round(price - float(change), 2) if change is not None else round(price - 1.23, 2)
+        round(price - change_val, 2) if change_val is not None else round(price - 1.23, 2)
     )
     return _with_noise(
         payload,

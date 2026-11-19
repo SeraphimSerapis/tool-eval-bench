@@ -13,10 +13,8 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.domain.tools_large import LARGE_TOOLSET
-from tool_eval_bench.evals.helpers import (
-    answer_affirms_number as _answer_affirms_number,
-)
 from tool_eval_bench.evals.helpers import answer_affirms_text as _answer_affirms_text
+from tool_eval_bench.evals.helpers import as_str as _as_str
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -29,7 +27,7 @@ from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
 from tool_eval_bench.evals.helpers import (
-    includes_text as _includes_text,
+    normalize as _normalize,
 )
 from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
@@ -38,16 +36,38 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    positive_argument_contains as _positive_argument_contains,
+)
+from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
-from tool_eval_bench.evals.scenarios.large_toolset._shared import LARGE_SIDE_EFFECT_TOOLS
+from tool_eval_bench.evals.scenarios.large_toolset._shared import (
+    LARGE_SIDE_EFFECT_TOOLS,
+    _answer_affirms_rounded_value,
+    _numeric_value,
+    _result_matches_if_present,
+)
+
+
+def _tc37_weather_result_is_berlin(payload: Any) -> bool:
+    if not isinstance(payload, dict) or "error" in payload:
+        return False
+    if "location" in payload and not _positive_argument_contains(payload.get("location"), "berlin"):
+        return False
+    if "units" in payload and _normalize(_as_str(payload.get("units"))) != "celsius":
+        return False
+    return _numeric_value(payload.get("temperature")) == 8 or _answer_affirms_text(
+        _as_str(payload.get("condition")), "overcast"
+    )
 
 
 def _tc37_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
+        if "units" in call.arguments and call.arguments["units"] not in ("celsius", "fahrenheit"):
+            return _noise({"error": "units must be celsius or fahrenheit"}, call.name)
         return _noise(
             {
                 "location": "Berlin",
@@ -77,10 +97,17 @@ def _tc37_eval(state: ScenarioState) -> ScenarioEvaluation:
     Same as TC-01, but with 52 tools instead of 12.
     Must use get_weather and ignore 50+ distractors.
     """
+    if any(
+        c.name == "get_weather"
+        and "units" in c.arguments
+        and c.arguments["units"] not in ("celsius", "fahrenheit")
+        for c in state.tool_calls
+    ):
+        return _fail("The weather call violated the units enum.")
     used_weather = _has_tool_call(
         state,
         "get_weather",
-        lambda c: _includes_text(c.arguments.get("location"), "berlin"),
+        lambda c: _positive_argument_contains(c.arguments.get("location"), "berlin"),
     )
     used_web = _has_tool_call(state, "web_search")
     total_calls = len(_counted_calls(state.tool_calls))
@@ -95,8 +122,13 @@ def _tc37_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         if not _result_is_usable_if_present(state, weather_call):
             return _partial("get_weather returned an error, so Berlin weather cannot be confirmed.")
+        if not _result_matches_if_present(state, weather_call, _tc37_weather_result_is_berlin):
+            return _partial(
+                "get_weather did not return usable Berlin weather data, "
+                "so Berlin weather cannot be confirmed."
+            )
         # Verify the model surfaced both temperature and condition, matching TC-01.
-        has_temp = _answer_affirms_number(state.final_answer, "8")
+        has_temp = _answer_affirms_rounded_value(state.final_answer, "8")
         has_condition = _answer_affirms_text(state.final_answer, "overcast")
         if has_temp and has_condition:
             return _pass("Used get_weather with Berlin only — perfect selection from 52 tools.")

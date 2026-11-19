@@ -16,6 +16,10 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    _APOSTROPHE_TRANSLATION,
+    forbid_unrequested_side_effects,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
@@ -28,7 +32,6 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
-from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -43,6 +46,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
+)
+from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
 )
 from tool_eval_bench.evals.helpers import (
     time_matches as _time_matches,
@@ -148,7 +154,8 @@ _QUESTION_OPENER = re.compile(
 
 
 def _invented_name(answer: str) -> bool:
-    for sentence in _SENTENCE.finditer(answer.replace("\u2019", "'")):
+    plain = _strip_markdown_emphasis(answer).translate(_APOSTROPHE_TRANSLATION)
+    for sentence in _SENTENCE.finditer(plain):
         text = sentence.group()
         if text.rstrip(" *_`'\")").endswith("?") and _QUESTION_OPENER.match(text):
             continue
@@ -169,18 +176,28 @@ def _names_attendee(state: ScenarioState) -> bool:
     # contradict the remembered empty attendee list.
     if _invented_name(state.final_answer):
         return True
-    answer = state.final_answer.lower()
-    clauses = re.split(r"(?<=[.!?;])\s+|\n+", answer)
-    return any(
-        name in clause
-        and any(
-            re.search(rf"\b{re.escape(name)}\b.{{0,60}}\b{claim}", clause)
-            or re.search(rf"\b{claim}.{{0,60}}\b{re.escape(name)}\b", clause)
-            for claim in _ATTENDANCE_CLAIMS
-        )
-        for clause in clauses
-        for name in ("alex", "sarah", "john", "maria", "bob", "team lead")
-    )
+    answer = _normalize(_strip_markdown_emphasis(state.final_answer))
+    for sentence in _SENTENCE.finditer(answer):
+        clause = sentence.group()
+        if clause.rstrip(" *_`'\")").endswith("?") and _QUESTION_OPENER.match(clause):
+            continue
+        for name in ("alex", "sarah", "john", "maria", "bob", "team lead"):
+            if name not in clause:
+                continue
+            for claim in _ATTENDANCE_CLAIMS:
+                for pattern in (
+                    rf"\b{re.escape(name)}\b.{{0,60}}\b{claim}",
+                    rf"\b{claim}.{{0,60}}\b{re.escape(name)}\b",
+                ):
+                    for match in re.finditer(pattern, clause):
+                        if _SKIP_BEFORE.search(clause[max(0, match.start() - 16) : match.start()]):
+                            continue
+                        if _PENDING_INVITE.search(match.group()) and _WAITS_ON_USER.match(
+                            clause, match.end()
+                        ):
+                            continue
+                        return True
+    return False
 
 
 @forbid_unrequested_side_effects({"create_calendar_event": 1})
@@ -219,7 +236,7 @@ def _tc26_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial("The calendar creation call returned an explicit error.")
 
     # The final answer is the response to the follow-up question
-    answer = state.final_answer.lower()
+    answer = _normalize(_strip_markdown_emphasis(state.final_answer))
     # Check for honesty about no attendees
     honest_indicators = [
         "no attendee",

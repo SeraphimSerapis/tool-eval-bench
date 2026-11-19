@@ -106,9 +106,13 @@ def _status_is_success(payload: Any, *, statuses: set[str] | None = None) -> boo
 
 
 def _attendee_matches(value: str, name: str) -> bool:
-    """Match a requested attendee by name or email local part."""
+    """Match a requested attendee by name or email local part without negation."""
     text = value.strip().lower()
     target = name.strip().lower()
+    if re.search(
+        rf"\b(?:not|no|without|except|exclude|excluding)\s+(?:the\s+)?{re.escape(target)}\b", text
+    ):
+        return False
     if text == target or text.startswith(f"{target}@"):
         return True
     return bool(re.search(rf"(?<!\w){re.escape(target)}(?!\w)", text))
@@ -191,7 +195,13 @@ def _only_error_retries_before_last(state: ScenarioState, calls: list[ToolCallRe
     return all(_has_explicit_tool_error(state, call) for call in calls[:-1])
 
 
-_STATED_NUMBER = re.compile(r"(?<![\d.])(\d+)(?:\.(\d+))?(?!\d)")
+_STATED_NUMBER = re.compile(r"(?<![\d.])(?:([-\u2212])[$€£¥]?)?(\d+)(?:\.(\d+))?(?!\d|\.\d)")
+
+
+def _parsed_stated_number(match: re.Match[str]) -> Decimal:
+    sign = "-" if match.group(1) else ""
+    fractional = f".{match.group(3)}" if match.group(3) is not None else ""
+    return Decimal(f"{sign}{match.group(2)}{fractional}")
 
 
 def _answer_affirms_rounded_value(answer: str, value: str) -> bool:
@@ -199,20 +209,36 @@ def _answer_affirms_rounded_value(answer: str, value: str) -> bool:
 
     A stated number passes when it equals ``value`` rounded or truncated to
     the number of decimals the answer wrote, so 187, 187.4 and 187.42 all
-    report a price of 187.42 while 187.99 does not. ``answer_affirms_number``
-    lets any decimal tail follow an integer needle, which is how a wrong
-    "$187.99" used to pass. Negated mentions ("not 187.42") are rejected.
+    report a price of 187.42 while 187.99 and -187.42 do not. Negated
+    mentions ("not 187.42") are rejected.
     """
     collapsed = re.sub(r"(?<=\d),(?=\d)", "", answer)
     expected = Decimal(value)
     for match in _STATED_NUMBER.finditer(collapsed):
-        stated = Decimal(match.group(0))
-        quantum = Decimal(1).scaleb(-len(match.group(2) or ""))
+        stated = _parsed_stated_number(match)
+        quantum = Decimal(1).scaleb(-len(match.group(3) or ""))
         accepted = {
             expected.quantize(quantum, rounding=ROUND_HALF_UP),
             expected.quantize(quantum, rounding=ROUND_DOWN),
         }
         if stated in accepted and not _is_negated(
+            collapsed[max(0, match.start() - 120) : match.start()]
+        ):
+            return True
+    return False
+
+
+def _answer_affirms_exact_value(answer: str, value: str) -> bool:
+    """Whether ``answer`` asserts ``value`` with exact numeric equality.
+
+    Accepts equivalent trailing zeros such as ``4.40`` for ``4.4`` or
+    ``4,400,000.00`` for ``4400000``, while rejecting rounded-away digits
+    (``4``), wrong decimals (``4.45``), wrong signs (``-4.4``), and negations.
+    """
+    collapsed = re.sub(r"(?<=\d),(?=\d)", "", answer)
+    expected = Decimal(value)
+    for match in _STATED_NUMBER.finditer(collapsed):
+        if _parsed_stated_number(match) == expected and not _is_negated(
             collapsed[max(0, match.start() - 120) : match.start()]
         ):
             return True

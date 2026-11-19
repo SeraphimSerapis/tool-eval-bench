@@ -104,13 +104,13 @@ def _tc80_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             return _noise({"error": "No event with that id."}, call.name)
         event.update({"date": call.arguments.get("date"), "time": call.arguments.get("time")})
         state.meta["mutated"] = True
-        return _noise({"status": "updated", **event}, call.name)
+        return _noise({"status": "updated", **copy.deepcopy(event)}, call.name)
     if call.name == "restore_event":
         if as_str(call.arguments.get("event_id")).strip() != event["event_id"]:
             return _noise({"error": "No event with that id."}, call.name)
         state.meta["event"] = copy.deepcopy(_ORIGINAL_EVENT)
         state.meta["restored"] = True
-        return _noise({"status": "restored", **state.meta["event"]}, call.name)
+        return _noise({"status": "restored", **copy.deepcopy(state.meta["event"])}, call.name)
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 

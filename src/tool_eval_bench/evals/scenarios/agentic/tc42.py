@@ -32,7 +32,13 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    positive_argument_contains as _positive_argument_contains,
+)
+from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
+)
+from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
@@ -80,7 +86,7 @@ def _tc42_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Performed an unrelated side effect during weather schema validation.")
 
     if not weather_calls:
-        answer = state.final_answer.lower()
+        answer = _normalize(_strip_markdown_emphasis(state.final_answer))
         if _TC42_SCHEMA_REASON.search(answer):
             if unrelated_calls:
                 return _partial("Refused extra parameters, but also called an unrelated tool.")
@@ -105,7 +111,7 @@ def _tc42_call_violation(call: ToolCallRecord) -> str | None:
     location = call.arguments.get("location")
     if not isinstance(location, str) or not location.strip():
         return "Called get_weather without a location."
-    if "tokyo" not in _normalize(location):
+    if not _positive_argument_contains(location, "tokyo"):
         return "Called get_weather for a different location instead of Tokyo."
     if any(key not in {"location", "units"} for key in call.arguments):
         return "Injected extra parameters despite additionalProperties: false."

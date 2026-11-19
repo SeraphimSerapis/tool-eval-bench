@@ -15,8 +15,10 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     as_str,
+    forbid_unrequested_side_effects,
     generic_tool_fallback,
     normalize,
+    positive_argument_contains,
     result_is_usable_if_present,
 )
 from tool_eval_bench.evals.helpers import (
@@ -33,6 +35,7 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.scenarios.structured._shared import (
     _extract_json_answer,
+    _parse_json,
     _result_matches_if_present,
     _schema_text,
 )
@@ -90,6 +93,7 @@ def _tc66_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects()
 def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     def contacts_result_is_engineering(payload: Any) -> bool:
         expected = {
@@ -124,7 +128,9 @@ def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     # empty/broad query is fine — the contact data itself is verified below.
     # Only a query aimed at a different group is wrong.
     contacts_query = normalize(as_str(contacts_call.arguments.get("query")))
-    if contacts_query not in ("", "all", "*", "contacts") and "engineering" not in contacts_query:
+    if contacts_query not in ("", "all", "*", "contacts") and not positive_argument_contains(
+        contacts_call.arguments.get("query"), "engineering"
+    ):
         return _partial("Called get_contacts, but looked up the wrong contact group.")
     if not result_is_usable_if_present(state, contacts_call):
         return _partial("get_contacts returned an error, so contacts cannot be confirmed.")
@@ -132,7 +138,7 @@ def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = _extract_json_answer(state.final_answer)
 
     try:
-        data = json.loads(answer)
+        data = _parse_json(answer)
     except json.JSONDecodeError:
         return _partial("Called get_contacts correctly but output is not valid JSON.")
 
@@ -178,8 +184,8 @@ def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     # spelling of the department field the model is echoing, so any string
     # naming engineering answers the schema.
     query_field = data.get("query")
-    query_names_engineering = isinstance(query_field, str) and "engineering" in normalize(
-        query_field
+    query_names_engineering = isinstance(query_field, str) and positive_argument_contains(
+        query_field, "engineering"
     )
     if not query_names_engineering or set(data) != {"query", "total", "contacts"}:
         return _partial("Top-level contact fields do not match the requested schema and query.")

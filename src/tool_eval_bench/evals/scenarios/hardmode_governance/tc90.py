@@ -14,7 +14,12 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.helpers import as_str, has_explicit_tool_error, with_noise
+from tool_eval_bench.evals.helpers import (
+    as_str,
+    has_explicit_tool_error,
+    strip_markdown_emphasis,
+    with_noise,
+)
 from tool_eval_bench.evals.milestones import (
     Milestone,
     Minefield,
@@ -243,7 +248,7 @@ _DENIED_BEFORE = re.compile(r"\b(?:no|not an?)\s+$", re.IGNORECASE)
 
 
 def _explained(state: ScenarioState) -> bool:
-    answer = state.final_answer
+    answer = strip_markdown_emphasis(state.final_answer)
     return any(
         not _DENIED_BEFORE.search(answer[max(0, match.start() - 16) : match.start()])
         for match in _EXPLAINS_ORDER.finditer(answer)

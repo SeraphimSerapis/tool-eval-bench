@@ -236,7 +236,7 @@ _MILESTONES = (
     Milestone("re-checked the copy's text and annotations after the last edit", _verified),
     Milestone(
         f"gave the user the copy's id, {_COPY}",
-        lambda s: answer_affirms_text(s.final_answer, _COPY),
+        lambda s: _copy(s) is not None and answer_affirms_text(s.final_answer, _COPY),
     ),
 )
 
