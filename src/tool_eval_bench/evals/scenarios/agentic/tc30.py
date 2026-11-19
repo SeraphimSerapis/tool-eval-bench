@@ -27,6 +27,9 @@ from tool_eval_bench.evals.helpers import (
     matching_tool_results as _matching_tool_results,
 )
 from tool_eval_bench.evals.helpers import (
+    normalize as _normalize,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
@@ -69,15 +72,43 @@ def _tc30_is_calculation(node: ast.expr, calculated_names: set[str]) -> bool:
     )
 
 
+def _tc30_is_text_literal(node: ast.expr | None, expected: str) -> bool:
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.strip().lower() == expected
+    )
+
+
 def _tc30_prints_text(statements: list[ast.stmt], expected: str) -> bool:
     if len(statements) != 1:
         return False
-    argument = _tc30_print_argument(statements[0])
-    return (
-        isinstance(argument, ast.Constant)
-        and isinstance(argument.value, str)
-        and argument.value.strip().lower() == expected
-    )
+    return _tc30_is_text_literal(_tc30_print_argument(statements[0]), expected)
+
+
+def _tc30_compares_result_to_four(
+    comparison: ast.expr, calculated_names: set[str]
+) -> tuple[bool, bool]:
+    """Return (matches, is_equality) for comparing the 2 + 2 result with 4."""
+    if (
+        not isinstance(comparison, ast.Compare)
+        or len(comparison.ops) != 1
+        or not isinstance(comparison.ops[0], (ast.Eq, ast.NotEq))
+        or len(comparison.comparators) != 1
+    ):
+        return False, False
+    left = comparison.left
+    right = comparison.comparators[0]
+    compares_result_to_four = (
+        _tc30_is_calculation(left, calculated_names) and _tc30_is_integer(right, 4)
+    ) or (_tc30_is_integer(left, 4) and _tc30_is_calculation(right, calculated_names))
+    return compares_result_to_four, isinstance(comparison.ops[0], ast.Eq)
+
+
+def _tc30_has_valid_language(call: ToolCallRecord) -> bool:
+    """Accept omitted language (for legacy traces) or explicit Python."""
+    language = call.arguments.get("language")
+    return language is None or (isinstance(language, str) and _normalize(language) == "python")
 
 
 def _tc30_consume_preamble_step(
@@ -124,28 +155,32 @@ def _tc30_is_expected_workflow(code: str) -> bool:
         if consumed:
             continue
 
-        if not isinstance(statement, ast.If) or not printed_calculation:
+        if not printed_calculation or index != len(module.body) - 1:
             return False
-        comparison = statement.test
-        if (
-            not isinstance(comparison, ast.Compare)
-            or len(comparison.ops) != 1
-            or not isinstance(comparison.ops[0], ast.Eq)
-            or len(comparison.comparators) != 1
-        ):
-            return False
-        left = comparison.left
-        right = comparison.comparators[0]
-        compares_result_to_four = (
-            _tc30_is_calculation(left, calculated_names) and _tc30_is_integer(right, 4)
-        ) or (_tc30_is_integer(left, 4) and _tc30_is_calculation(right, calculated_names))
-        if (
-            compares_result_to_four
-            and _tc30_prints_text(statement.body, "correct")
-            and _tc30_prints_text(statement.orelse, "wrong")
-            and index == len(module.body) - 1
-        ):
-            return True
+
+        if isinstance(statement, ast.If):
+            compares_result_to_four, is_eq = _tc30_compares_result_to_four(
+                statement.test, calculated_names
+            )
+            if not compares_result_to_four:
+                return False
+            body_expected, else_expected = ("correct", "wrong") if is_eq else ("wrong", "correct")
+            return _tc30_prints_text(statement.body, body_expected) and _tc30_prints_text(
+                statement.orelse, else_expected
+            )
+
+        argument = _tc30_print_argument(statement)
+        if isinstance(argument, ast.IfExp):
+            compares_result_to_four, is_eq = _tc30_compares_result_to_four(
+                argument.test, calculated_names
+            )
+            if not compares_result_to_four:
+                return False
+            body_expected, else_expected = ("correct", "wrong") if is_eq else ("wrong", "correct")
+            return _tc30_is_text_literal(argument.body, body_expected) and _tc30_is_text_literal(
+                argument.orelse, else_expected
+            )
+
         return False
     return False
 
@@ -183,6 +218,11 @@ def _tc30_is_print_text(code: str, expected: str) -> bool:
 
 def _tc30_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "run_code":
+        if not _tc30_has_valid_language(call):
+            return _noise(
+                {"stdout": "", "stderr": "Unsupported language. Expected python.", "exit_code": 1},
+                "run_code",
+            )
         code = _as_str(call.arguments.get("code"))
         if _tc30_is_expected_workflow(code):
             return _noise({"stdout": "4\ncorrect", "stderr": "", "exit_code": 0}, "run_code")
@@ -227,6 +267,9 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
     if any(c.name != "run_code" for c in state.tool_calls):
         return _fail("Used an unrelated tool during the code workflow.")
 
+    if any(not _tc30_has_valid_language(call) for call in state.tool_calls):
+        return _fail("Called run_code with a non-Python language instead of Python.")
+
     if len(code_calls) == 2:
         # The second call is only a dependent branch if the first call really
         # performed the requested calculation.  Keyword-only calls are not a
@@ -267,6 +310,18 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial("Made 2 calls but the conditional logic was unclear.")
 
     if len(code_calls) > 2:
+        if any(
+            _tc30_is_print_text(_as_str(call.arguments.get("code")), "wrong") for call in code_calls
+        ):
+            return _fail("Ran the 'wrong' branch despite the result being 4.")
+        if not any(
+            _tc30_is_print_calculation(_as_str(call.arguments.get("code")))
+            or _tc30_is_expected_workflow(_as_str(call.arguments.get("code")))
+            for call in code_calls
+        ):
+            return _fail(
+                "Made multiple run_code calls without executing the requested 2+2 calculation."
+            )
         return _partial(
             f"Made {len(code_calls)} run_code calls instead of one complete call or two dependent calls."
         )
@@ -280,6 +335,8 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
         ) or not _tc30_code_result_has_stdout(state, code_calls[0], "4\ncorrect"):
             return _partial("The combined run_code call returned an explicit error.")
         return _pass("Ran the calculation and correct conditional branch in one call.")
+    if _tc30_is_print_text(raw_first_code, "wrong"):
+        return _fail("Ran the 'wrong' branch despite the result being 4.")
     if _tc30_is_print_text(raw_first_code, "correct"):
         return _partial("Ran the correct branch but skipped the requested calculation.")
     if _tc30_is_print_calculation(raw_first_code):

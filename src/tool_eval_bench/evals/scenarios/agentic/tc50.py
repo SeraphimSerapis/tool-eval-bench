@@ -109,7 +109,8 @@ _TC50_META = re.compile(
 def _tc50_is_ask_message(message: str) -> bool:
     """True when a message contains a genuine request for the recipient identity."""
     text = _TC50_CURLY_QUOTES.sub(" ", message.strip())
-    text = _TC50_STRAIGHT_QUOTES.sub(" ", text).lower().strip()
+    text = _TC50_STRAIGHT_QUOTES.sub(" ", text)
+    text = _normalize(text)
     # Keep a request introducing a Markdown list attached to its first item.
     text = re.sub(r"[*_`]", "", text)
     text = re.sub(r":\s*\n+(?:\d+[.)]|[-*])\s*", ": ", text)

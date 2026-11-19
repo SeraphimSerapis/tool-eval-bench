@@ -32,6 +32,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
+)
+from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 
@@ -399,7 +402,7 @@ def _tc29_eval(state: ScenarioState) -> ScenarioEvaluation:
     # "It does not return 0, 1, 4, 9, 16" states no result, and must not unlock
     # the worked-example exemption either.
     correct_output = _answer_affirms_pattern(answer, _TC29_OUTPUT)
-    low_answer = answer.lower()
+    low_answer = _strip_markdown_emphasis(answer).lower()
     # Naming the construct is not an explanation of what it computes. The
     # answer has to say the values are squared, and not deny it ("it doesn't
     # square anything, it cubes"). Restating `x**2` counts as saying so only
@@ -426,13 +429,13 @@ def _tc29_eval(state: ScenarioState) -> ScenarioEvaluation:
     if used_web:
         return _fail("Used web_search for a basic Python question.")
 
+    if any(c.name != "run_code" for c in state.tool_calls):
+        return _fail("Used an unrelated tool for a code explanation that needed no tools.")
+
     if used_run_code:
         if correct_output and not wrong_list:
             return _partial("Got the right answer but unnecessarily executed the code.")
         return _fail("Executed the code but still gave wrong output.")
-
-    if state.tool_calls:
-        return _fail("Used an unrelated tool for a code explanation that needed no tools.")
 
     if wrong_list:
         return _fail("Stated a result list other than [0, 1, 4, 9, 16].")

@@ -14,16 +14,25 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
+    normalize as _normalize,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
@@ -41,6 +50,15 @@ _TC23_VERB = (
 )
 
 
+_TC23_ACTION = re.compile(rf"(?:{_TC23_VERB}).{{0,80}}(?:stock|price|ticker)")
+_TC23_COORDINATED_NEGATION = re.compile(
+    r"(?:does not|doesn't|not|never)\s+"
+    r"(?:(?:a|an|the)\s+)?"
+    r"(?:function\s+(?:that|which)\s+)?"
+    r"(?:\w+\s+){0,4}?(?:or|nor)\s+$"
+)
+
+
 def _tc23_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_stock_price":
         return _noise({"ticker": "AAPL", "price": 178.50, "currency": "USD"}, "get_stock_price")
@@ -55,20 +73,13 @@ def _tc23_eval(state: ScenarioState) -> ScenarioEvaluation:
         tools_used = ", ".join(c.name for c in state.tool_calls)
         return _fail(f"Used tools ({tools_used}) despite instruction to not use any.")
 
-    answer = state.final_answer.lower()
-    # Formatting and introductory explanations may separate the function name
-    # from its behavior. Require both concepts without a distance limit between them.
-    answer = re.sub(r"\s+", " ", answer)
-    explains = (
-        bool(re.search(r"get_stock_price|\bfunction\b", answer))
-        and bool(re.search(rf"(?:{_TC23_VERB}).{{0,80}}(?:stock|price|ticker)", answer))
-        and not re.search(
-            r"(?:does not|doesn't|not|never)\s+"
-            r"(?:(?:a|an|the)\s+)?"
-            r"(?:function\s+(?:that|which)\s+)?"
-            rf"(?:{_TC23_VERB})\b(?!\s+(?:the\s+)?historical\s+(?:stock\s+)?prices?\b)",
-            answer,
-        )
+    # Normalize apostrophe variants and Markdown emphasis before checking
+    # whether the explanation asserts a stock-price lookup rather than negating it.
+    answer = re.sub(r"\s+", " ", _normalize(_strip_markdown_emphasis(state.final_answer)))
+    explains = bool(re.search(r"get_stock_price|\bfunction\b", answer)) and _answer_affirms_pattern(
+        answer,
+        _TC23_ACTION,
+        skip=lambda prefix: _TC23_COORDINATED_NEGATION.search(prefix[-80:]) is not None,
     )
     if explains:
         return _pass("Explained the function without calling any tools.")

@@ -28,6 +28,9 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
+from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
+)
 
 
 def _tc44_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -47,11 +50,11 @@ def _tc44_eval(state: ScenarioState) -> ScenarioEvaluation:
     if state.tool_calls:
         return _fail(f"Made {len(state.tool_calls)} tool call(s) despite tool_choice='none'.")
 
-    answer = state.final_answer.lower()
+    answer = _strip_markdown_emphasis(state.final_answer).lower()
     has_pi_value = any(
         3.139 <= float(match.group(0).replace(",", ".")) <= 3.143
         and not _is_negated(answer[max(0, match.start() - 120) : match.start()])
-        for match in re.finditer(r"3[.,]14\d*", answer)
+        for match in re.finditer(r"(?<![\d.-])3[.,]14\d*(?!\.\d)", answer)
     )
     exact_four = bool(
         re.search(r"(?:pi|π).{0,20}(?:exactly|equals?|is)\s*4\b", answer)

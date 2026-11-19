@@ -34,6 +34,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    positive_argument_contains as _positive_argument_contains,
+)
+from tool_eval_bench.evals.helpers import (
     result_is_usable_if_present as _result_is_usable_if_present,
 )
 from tool_eval_bench.evals.helpers import (
@@ -104,7 +107,7 @@ def _tc41_eval(state: ScenarioState) -> ScenarioEvaluation:
 def _tc41_call_violation(call: ToolCallRecord) -> str | None:
     """Return the failure summary for a schema-violating call, or None."""
     location = call.arguments.get("location")
-    if not isinstance(location, str) or "berlin" not in _normalize(location):
+    if not isinstance(location, str) or not _positive_argument_contains(location, "berlin"):
         return "Called get_weather for a different or invalid location instead of Berlin."
     units = call.arguments.get("units")
     # Enum membership is case-insensitive everywhere else in the suite (TC-04
@@ -112,7 +115,9 @@ def _tc41_call_violation(call: ToolCallRecord) -> str | None:
     # violation must not invent a stricter schema than the tool advertises.
     if units is None or (isinstance(units, str) and _normalize(units) in ("celsius", "fahrenheit")):
         return None
-    if isinstance(units, int) or (isinstance(units, str) and units.isdigit()):
+    if (isinstance(units, int) and not isinstance(units, bool)) or (
+        isinstance(units, str) and units.isdigit()
+    ):
         return "Passed units as an integer — violated the parameter schema."
     return f"Passed units='{units}' — not a valid enum value."
 

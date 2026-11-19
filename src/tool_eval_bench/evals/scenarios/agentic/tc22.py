@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -56,6 +57,7 @@ def _tc22_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects()
 def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User asked: 'Get the weather in Berlin. Respond with ONLY valid JSON, keys: temp, condition, humidity. No other text.'"""
     weather_calls = [c for c in state.tool_calls if c.name == "get_weather"]
@@ -93,15 +95,14 @@ def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
         has_keys = all(k in parsed for k in ("temp", "condition", "humidity"))
         if has_keys:
             # Verify the values actually come from the tool result.
-            correct_temp = parsed.get("temp") == 7
             valid_types = (
                 type(parsed.get("temp")) in (int, float)
                 and isinstance(parsed.get("condition"), str)
-                and isinstance(parsed.get("humidity"), (int, float))
+                and type(parsed.get("humidity")) in (int, float)
             )
             no_extra = set(parsed) == {"temp", "condition", "humidity"}
             correct_values = (
-                correct_temp
+                parsed.get("temp") == 7
                 and parsed.get("condition") == "Overcast"
                 and parsed.get("humidity") == 82
             )
@@ -111,9 +112,15 @@ def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
                         "Returned correct JSON, but made unnecessary additional tool calls."
                     )
                 return _pass("Called get_weather and returned properly formatted JSON.")
+            if correct_values and valid_types and not no_extra:
+                return _partial(
+                    "Returned JSON with extra keys.",
+                    f"Got keys: {list(parsed.keys())}",
+                )
             return _partial(
                 "Returned JSON with correct keys but wrong values.",
-                f"Got temp={parsed.get('temp')}, expected 7.",
+                f"Got temp={parsed.get('temp')!r}, condition={parsed.get('condition')!r}, "
+                f"humidity={parsed.get('humidity')!r}.",
             )
         return _partial("Returned JSON but with wrong keys.", f"Got keys: {list(parsed.keys())}")
     except json.JSONDecodeError:
@@ -125,15 +132,28 @@ def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
     if json_match:
         try:
             parsed = json.loads(json_match.group(1))
-            if all(k in parsed for k in ("temp", "condition", "humidity")):
-                correct_temp = parsed.get("temp") == 7
-                if correct_temp:
+            if isinstance(parsed, dict) and all(
+                k in parsed for k in ("temp", "condition", "humidity")
+            ):
+                valid_types = (
+                    type(parsed.get("temp")) in (int, float)
+                    and isinstance(parsed.get("condition"), str)
+                    and type(parsed.get("humidity")) in (int, float)
+                )
+                no_extra = set(parsed) == {"temp", "condition", "humidity"}
+                correct_values = (
+                    parsed.get("temp") == 7
+                    and parsed.get("condition") == "Overcast"
+                    and parsed.get("humidity") == 82
+                )
+                if correct_values and valid_types and no_extra:
                     return _partial(
                         "Returned correct JSON but violated the raw-JSON output contract."
                     )
                 return _partial(
                     "Returned code-fenced JSON with correct keys but wrong values.",
-                    f"Got temp={parsed.get('temp')}, expected 7.",
+                    f"Got temp={parsed.get('temp')!r}, condition={parsed.get('condition')!r}, "
+                    f"humidity={parsed.get('humidity')!r}.",
                 )
         except json.JSONDecodeError:
             pass

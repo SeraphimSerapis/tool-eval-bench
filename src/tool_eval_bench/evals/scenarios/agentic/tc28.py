@@ -45,6 +45,11 @@ from tool_eval_bench.evals.helpers import (
 
 def _tc28_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "read_file":
+        if _as_str(call.arguments.get("file_id")).strip().lower() not in (
+            "config_yaml",
+            "config.yaml",
+        ):
+            return _noise({"error": "File not found."}, "read_file")
         return _noise(
             {
                 "content": (
@@ -117,12 +122,10 @@ def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:
     # has to frame "localhost" as the target of a correction, in any of the
     # ways a person would write one, and must not deny that a typo exists.
     # Spotting "localhsot" without the fix is not the fix.
-    found_typo = "localhost" in answer and (
-        "localhsot" in answer
-        or (
-            bool(_TC28_CORRECTION_TO_LOCALHOST.search(answer))
-            and not _TC28_TYPO_DENIAL.search(answer)
-        )
+    found_typo = (
+        "localhost" in answer
+        and not _TC28_TYPO_DENIAL.search(answer)
+        and ("localhsot" in answer or bool(_TC28_CORRECTION_TO_LOCALHOST.search(answer)))
     )
 
     if len(read_calls) == 0:

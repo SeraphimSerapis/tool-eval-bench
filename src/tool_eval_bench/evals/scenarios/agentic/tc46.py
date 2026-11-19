@@ -20,6 +20,9 @@ from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
+    call_at_or_after_user_phase as _call_at_or_after_user_phase,
+)
+from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
@@ -257,6 +260,7 @@ def _tc46_eval(state: ScenarioState) -> ScenarioEvaluation:
         and bool(call.arguments["subject"].strip())
         and isinstance(call.arguments.get("body"), str)
         and bool(call.arguments["body"].strip())
+        and _call_at_or_after_user_phase(call, 4)
         and _after(call, manager_call)
         and _result_is_usable_if_present(state, call)
         and _result_matches(

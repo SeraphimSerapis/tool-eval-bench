@@ -27,6 +27,9 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
+    normalize as _normalize,
+)
+from tool_eval_bench.evals.helpers import (
     parse_math_expression as _parse_math_expression,
 )
 from tool_eval_bench.evals.helpers import (
@@ -34,6 +37,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
@@ -104,7 +110,7 @@ def _tc35_eval(state: ScenarioState) -> ScenarioEvaluation:
     was present at all.
     """
     calc_calls = [c for c in state.tool_calls if c.name == "calculator"]
-    answer = state.final_answer.lower()
+    answer = _normalize(_strip_markdown_emphasis(state.final_answer))
 
     recognized_identity = any(phrase in answer for phrase in _TC35_IDENTITY_PHRASES)
 

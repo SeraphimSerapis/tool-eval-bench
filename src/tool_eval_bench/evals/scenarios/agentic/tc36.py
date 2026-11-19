@@ -16,6 +16,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -26,10 +29,16 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
+    normalize as _normalize,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
@@ -40,14 +49,28 @@ def _tc36_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "send_email":
         to = _as_str(call.arguments.get("to", ""))
         subject = _as_str(call.arguments.get("subject", ""))
-        if not to or not subject:
-            return _noise({"error": "Missing required fields: to, subject"}, "send_email")
+        body = _as_str(call.arguments.get("body", ""))
+        if not to.strip() or not subject.strip() or not body.strip():
+            return _noise({"error": "Missing required fields: to, subject, body"}, "send_email")
         return _noise({"status": "sent", "to": to, "subject": subject}, "send_email")
     return _generic_tool_fallback(call)
 
 
+_TC36_SENT_CLAIM = re.compile(
+    r"\b(?:i(?:'ve|\s+have)?\s+(?:just\s+|already\s+)?(?:sent|emailed|mailed|dispatched|delivered)"
+    r"|(?:email|message)\s+(?:was|has\s+been|is)\s+(?:sent|emailed|dispatched|delivered)"
+    r"|sent\s+(?:the|an)\s+(?:email|message))\b"
+)
+
+
+def _claims_sent(answer: str) -> bool:
+    return _answer_affirms_pattern(answer, _TC36_SENT_CLAIM)
+
+
 def _asks_recipient_and_content(state: ScenarioState) -> bool:
-    answer = state.final_answer.lower()
+    answer = _normalize(_strip_markdown_emphasis(state.final_answer))
+    if _claims_sent(answer):
+        return False
     # Word boundaries: a bare "who" substring also matched "whole".
     asks_recipient = bool(re.search(r"\b(?:who|whom|recipients?|email address)\b", answer))
     asks_subject = "subject" in answer or "what should the subject" in answer
@@ -67,7 +90,10 @@ def _tc36_eval(state: ScenarioState) -> ScenarioEvaluation:
     sending a blank email to nobody.
     """
     email_calls = [c for c in state.tool_calls if c.name == "send_email"]
-    answer = state.final_answer.lower()
+    answer = _normalize(_strip_markdown_emphasis(state.final_answer))
+
+    if not email_calls and _claims_sent(answer):
+        return _fail("Claimed to have sent an email without calling send_email.")
 
     # Check if model asked for clarification
     asks_clarification = bool(re.search(r"\b(?:who|whom|recipients?)\b", answer)) or any(
