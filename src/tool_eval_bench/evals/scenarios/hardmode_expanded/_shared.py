@@ -12,8 +12,10 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    as_str,
     has_explicit_tool_error,
     matching_tool_results,
+    positive_argument_contains,
 )
 
 
@@ -67,6 +69,11 @@ def _result_matches_if_present(
         except (AttributeError, TypeError, KeyError):
             continue
     return False
+
+
+def _query_mentions(value: Any, term: str) -> bool:
+    """Match a search term positively even inside snake_case file names."""
+    return positive_argument_contains(as_str(value).replace("_", " "), term)
 
 
 def _failed_result_if_present(state: ScenarioState, call: ToolCallRecord) -> bool:

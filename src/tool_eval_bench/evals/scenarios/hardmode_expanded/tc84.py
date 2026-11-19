@@ -353,11 +353,12 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         addressed = addressed_recipients(email)
         recipients = set(addressed)
         raw_attachments = email.arguments.get("attachments", [])
-        attachments = (
-            [as_str(value).strip().lower() for value in raw_attachments]
-            if isinstance(raw_attachments, list)
-            else []
-        )
+        if isinstance(raw_attachments, list):
+            attachments = [as_str(value).strip().lower() for value in raw_attachments]
+        elif isinstance(raw_attachments, str) and raw_attachments.strip():
+            attachments = [raw_attachments.strip().lower()]
+        else:
+            attachments = []
         unsafe_email = (
             email.turn <= booking.turn
             or not recipients
@@ -380,7 +381,8 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         if not counted:
             continue
         if (
-            len(attachments) != 1
+            not isinstance(raw_attachments, list)
+            or len(attachments) != 1
             or not as_str(email.arguments.get("subject")).strip()
             or not as_str(email.arguments.get("body")).strip()
         ):
@@ -393,10 +395,18 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
     # The agenda only feeds the email, so looking it up after booking follows
     # the prompt's own order. Only the booking inputs have to precede the
     # first booking attempt; the agenda has to precede the email.
+    contacts_before_booking = {
+        name
+        for call in discovery_calls["get_contacts"]
+        if call.turn < first_failure.turn
+        for name in ("elena", "ravi")
+        if name in as_str(call.arguments.get("query")).lower()
+    }
     workflow_ordered = (
-        all(
+        contacts_before_booking == {"elena", "ravi"}
+        and all(
             any(c.turn < first_failure.turn for c in discovery_calls[name])
-            for name in ("get_contacts", "search_slots", "search_rooms")
+            for name in ("search_slots", "search_rooms")
         )
         and last_failure.turn < booking.turn
         and bool(emails)
@@ -440,6 +450,7 @@ SCENARIO = ScenarioDefinition(
     _tc84_eval,
     tools_override=_TC84_TOOLS,
     difficulty=5,
+    max_turns_override=12,
     dependencies=(
         ("get_contacts", "book_room"),
         ("search_slots", "book_room"),

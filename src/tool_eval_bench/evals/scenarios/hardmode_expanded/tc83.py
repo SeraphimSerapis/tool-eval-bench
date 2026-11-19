@@ -16,7 +16,6 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     as_str,
-    positive_argument_contains,
     result_is_usable_if_present,
     tool_calls_by_name,
 )
@@ -34,6 +33,7 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.scenarios.hardmode_expanded._shared import (
     _STRING,
+    _query_mentions,
     _result_matches_if_present,
     _tool,
 )
@@ -73,9 +73,7 @@ def _tc83_eval(state: ScenarioState) -> ScenarioEvaluation:
     searches = [
         c
         for c in tool_calls_by_name(state, "search_files")
-        if any(
-            positive_argument_contains(c.arguments.get("query"), term) for term in ("q2", "revenue")
-        )
+        if any(_query_mentions(c.arguments.get("query"), term) for term in ("q2", "revenue"))
         and result_is_usable_if_present(state, c)
         and _result_matches_if_present(
             state,
@@ -86,11 +84,15 @@ def _tc83_eval(state: ScenarioState) -> ScenarioEvaluation:
             ),
         )
     ]
-    reads = [
+    read_attempts = [
         c
         for c in tool_calls_by_name(state, "read_file")
         if as_str(c.arguments.get("file_id")).strip() == "q2_revenue"
-        and result_is_usable_if_present(state, c)
+    ]
+    reads = [
+        c
+        for c in read_attempts
+        if result_is_usable_if_present(state, c)
         and _result_matches_if_present(
             state,
             c,
@@ -110,12 +112,17 @@ def _tc83_eval(state: ScenarioState) -> ScenarioEvaluation:
             lambda payload: payload.get("ticker") == "ACME" and payload.get("price_usd") == 100.0,
         )
     ]
-    required_calls = bool(searches and reads and stocks and searches[0].turn < reads[0].turn)
+    required_calls = bool(
+        searches
+        and reads
+        and stocks
+        and all(searches[0].turn < attempt.turn for attempt in read_attempts)
+    )
     answer = state.final_answer.strip()
     # A code fence is stripped and not penalised, matching every other JSON
     # evaluator in the suite. This scenario grades the chained extraction, so
     # scoring a markdown habit here would measure chat tuning instead.
-    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", answer, re.DOTALL)
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", answer, re.DOTALL | re.IGNORECASE)
     if fenced:
         answer = fenced.group(1)
     try:

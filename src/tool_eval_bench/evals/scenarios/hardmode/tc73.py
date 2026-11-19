@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     addressed_recipients,
+    answer_affirms_text,
     as_str,
     counted_calls,
     full_assistant_transcript,
@@ -23,6 +24,7 @@ from tool_eval_bench.evals.helpers import (
     matching_tool_results,
     normalize,
     result_is_usable_if_present,
+    strip_markdown_emphasis,
     tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -139,7 +141,7 @@ def _tc73_unexcluded_mitte(text: str) -> bool:
     of Mitte Brasserie. A keyword rule still accepts "my pick even though it is
     closed on Sundays"; that phrasing is contrived enough to leave.
     """
-    parts = _TC73_SEGMENT.split(text.lower())
+    parts = _TC73_SEGMENT.split(strip_markdown_emphasis(text).lower())
     for index, part in enumerate(parts):
         for mention in re.finditer(r"mitte brasserie", part):
             if _tc73_excluded_in(part, mention.start(), mention.end()):
@@ -215,7 +217,9 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     # Check constraint filtering: should pick Green Kitchen or Veganz (open Sunday + vegan)
     # NOT Mitte Brasserie (closed Sundays, not vegan)
-    mentions_valid = "green kitchen" in transcript.lower() or "veganz" in transcript.lower()
+    mentions_valid = answer_affirms_text(transcript, "green kitchen") or answer_affirms_text(
+        transcript, "veganz"
+    )
     # Naming the unsuitable option is fine as long as the model says why it is
     # out. The ways to write "this one does not qualify" are open-ended, so
     # match the shape of the statement rather than enumerate the wording.
@@ -230,7 +234,10 @@ def _tc73_eval(state: ScenarioState) -> ScenarioEvaluation:
     email_has_restaurant = (
         email_to_lisa
         and bool(email_body.strip())
-        and (includes_text(email_text, "green kitchen") or includes_text(email_text, "veganz"))
+        and (
+            answer_affirms_text(email_text, "green kitchen")
+            or answer_affirms_text(email_text, "veganz")
+        )
         and not _tc73_unexcluded_mitte(email_text)
     )
     safe_emails = (
