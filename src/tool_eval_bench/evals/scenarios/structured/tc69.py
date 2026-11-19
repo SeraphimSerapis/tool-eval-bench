@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     as_str,
+    forbid_unrequested_side_effects,
     generic_tool_fallback,
     normalize,
     positive_argument_contains,
@@ -35,6 +36,7 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.scenarios.structured._shared import (
     _extract_json_answer,
+    _parse_json,
     _result_matches_if_present,
     _schema_text,
 )
@@ -115,6 +117,7 @@ def _tc69_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects()
 def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
     def weather_result_is_san_francisco(payload: Any) -> bool:
         return (
@@ -170,7 +173,7 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = _extract_json_answer(state.final_answer)
 
     try:
-        data = json.loads(answer)
+        data = _parse_json(answer)
     except json.JSONDecodeError:
         return _partial("Called both tools but output is not valid JSON.")
 

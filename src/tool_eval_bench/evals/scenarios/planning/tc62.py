@@ -18,6 +18,9 @@ from tool_eval_bench.evals.helpers import (
     addressed_recipients as _addressed_recipients,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
@@ -77,7 +80,8 @@ def _tc62_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         )
     if call.name == "read_file":
         fid = _as_str(call.arguments.get("file_id", ""))
-        if "latest" in fid or "v2" in fid or "correct" in fid.lower():
+        fid_lower = fid.lower()
+        if "latest" in fid_lower or "v2" in fid_lower or "correct" in fid_lower:
             return _noise(
                 {
                     "content": "Q3 Report (CORRECTED)\nRevenue: $4,150,000\nNote: Previous version showed $4.4M due to accounting error."
@@ -224,6 +228,7 @@ def _tc62_asserts_competitor_amount(body: str) -> bool:
     """
     text = _TC62_ACME_SUFFIX_PERIOD.sub(r"\1", body)
     text = _TC62_QUOTED_TEXT.sub("", text.lower())
+    text = re.sub(r"(?<=\w)\u2019(?=\w)", "'", text)
     text = _TC62_STRAIGHT_SINGLE_QUOTED_TEXT.sub("", text)
     text = _TC62_HEADING_REVENUE.sub(r"acme revenue: \g<amount>", text)
     text = _tc62_normalize_pipe_tables(text)
@@ -358,6 +363,12 @@ def _tc62_q4_improvement_tails(sentence: str) -> Iterator[str]:
             yield sentence[end:]
 
 
+_TC62_CORRECTED_AMOUNT_RE = re.compile(
+    r"(?<![\d.])(?:4\.150?|4,?150,?000)(?!\d|\s*%)",
+    re.IGNORECASE,
+)
+
+
 @forbid_unrequested_side_effects({"send_email": 1})
 def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     """5-turn research chain testing context persistence and revision handling.
@@ -474,12 +485,11 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
         if (email_calls or cfo_email_attempts or email_attempts)
         else ""
     )
-    body_lower = email_body.lower()
     # The corrected figure is asserted anywhere in the body; the competitor
     # amount is associated with Acme via an inline claim or scoped heading. An unrelated
     # negation elsewhere in the email ("we are not behind") must not veto the
     # comparison, so no global negation gate is applied.
-    body_has_corrected = "4.15" in body_lower or "4150000" in body_lower.replace(",", "")
+    body_has_corrected = _answer_affirms_pattern(email_body, _TC62_CORRECTED_AMOUNT_RE)
     body_has_competitor = _tc62_asserts_competitor_amount(email_body)
     body_is_optimistic = _tc62_claims_q4_improvement(email_body)
     phase_data_present = any(call.user_phase is not None for call in state.tool_calls)

@@ -18,6 +18,9 @@ from tool_eval_bench.evals.helpers import (
     addressed_recipients as _addressed_recipients,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -29,7 +32,7 @@ from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
-    includes_text as _includes_text,
+    has_explicit_tool_error as _has_explicit_tool_error,
 )
 from tool_eval_bench.evals.helpers import (
     matching_tool_results as _matching_tool_results,
@@ -42,6 +45,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    positive_argument_contains as _positive_argument_contains,
 )
 from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
@@ -137,6 +143,11 @@ def _tc53_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 _TC53_LOOKUP_TOOLS = frozenset({"get_event", "get_contacts"})
 _TC53_EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+_TC53_RAIN_RE = re.compile(r"\brain\w*\b", re.IGNORECASE)
+_TC53_OFFICE_RE = re.compile(
+    r"\b(?:office|indoors?|inside|moved|relocated)\b",
+    re.IGNORECASE,
+)
 
 
 def _tc53_lookup_addresses_before(state: ScenarioState, call: ToolCallRecord) -> set[str]:
@@ -144,12 +155,15 @@ def _tc53_lookup_addresses_before(state: ScenarioState, call: ToolCallRecord) ->
 
     Whole addresses are compared, so "team@company.com" is not found inside
     "dev-team@company.com". A lookup in the same turn as the send could not
-    have supplied the address.
+    have supplied the address, and errored lookup payloads do not authorize
+    recipients.
     """
     return {
         address.lower()
         for lookup in state.tool_calls
-        if lookup.name in _TC53_LOOKUP_TOOLS and lookup.turn < call.turn
+        if lookup.name in _TC53_LOOKUP_TOOLS
+        and lookup.turn < call.turn
+        and not _has_explicit_tool_error(state, lookup)
         for result in _matching_tool_results(state, lookup)
         for address in _TC53_EMAIL.findall(str(result.result))
     }
@@ -176,7 +190,7 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
     weather_calls = [
         c
         for c in _tool_calls_by_name(state, "get_weather")
-        if _includes_text(c.arguments.get("location", ""), "london")
+        if _positive_argument_contains(c.arguments.get("location", ""), "london")
         and _result_matches_if_present(state, c, weather_result_is_rain)
     ]
     checked_weather = bool(weather_calls)
@@ -185,9 +199,8 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
     if any(call.name in _UNRELATED_UNIVERSAL_MUTATIONS for call in state.tool_calls):
         return _fail("Performed an unrelated side effect while handling the weather plan.")
 
-    answer = state.final_answer.lower()
-    mentions_office = any(w in answer for w in ("office", "indoor", "inside", "moved", "relocated"))
-    mentions_rain = "rain" in answer
+    mentions_office = _answer_affirms_pattern(state.final_answer, _TC53_OFFICE_RE)
+    mentions_rain = _answer_affirms_pattern(state.final_answer, _TC53_RAIN_RE)
 
     # A recipient is authorized only when an earlier get_event or get_contacts
     # result supplied the address. A real attendee the model never looked up
@@ -233,7 +246,8 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         and no_duplicate_recipients
     )
-    if len(_counted_calls(event_calls)) > 1:
+    counted_events = _counted_calls(event_calls)
+    if len(counted_events) > 1:
         return _fail("Created duplicate calendar events while handling the conditional request.")
     # Moving the meeting indoors keeps its day. A title that merely mentions a
     # meeting is not enough: "Team sync" on some other date moved nothing.
@@ -249,8 +263,10 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
             term in _as_str(event.arguments.get("title")).lower()
             for term in ("meeting", "sync", "office", "indoor")
         )
-        and _result_matches_if_present(state, event, event_result_is_created)
         for event in event_calls
+    ) and all(
+        _result_matches_if_present(state, event, event_result_is_created)
+        for event in counted_events
     )
     if event_calls and not valid_events:
         return _fail("Created an unrelated or premature calendar event.")

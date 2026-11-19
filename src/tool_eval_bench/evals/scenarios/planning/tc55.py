@@ -21,6 +21,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     parse_math_expression as _parse_math_expression,
 )
@@ -93,6 +94,7 @@ def _sums_both_regions(call: ToolCallRecord) -> bool:
     )
 
 
+@forbid_unrequested_side_effects()
 def _tc55_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Find all Q3 revenue files and calculate the total revenue
     across all regions.'
@@ -146,8 +148,11 @@ def _tc55_eval(state: ScenarioState) -> ScenarioEvaluation:
     read_na = bool(read_na_calls)
     read_emea = bool(read_emea_calls)
     answer = state.final_answer
-    has_total = any(_answer_affirms_number(answer, value) for value in ("4200000", "4.2")) and any(
-        marker in answer.lower() for marker in ("million", "4.2m", "$4.2", "4200000", "4,200,000")
+    has_total = any(
+        _answer_affirms_number(answer, value) for value in ("4200000", "4.2", "4.20")
+    ) and any(
+        marker in answer.lower()
+        for marker in ("million", "4.2m", "4.20m", "$4.2", "4200000", "4,200,000")
     )
 
     calculator_calls = [

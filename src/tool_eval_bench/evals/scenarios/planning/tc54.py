@@ -21,6 +21,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     parse_math_expression as _parse_math_expression,
 )
@@ -79,6 +80,18 @@ def _tc54_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
 
 
+def _multiplies_msft_by_jpy(call: ToolCallRecord) -> bool:
+    expression = _as_str(call.arguments.get("expression")).replace(",", "")
+    return bool(
+        expression
+        and "425.8" in expression
+        and "149.5" in expression
+        and "*" in expression
+        and _parse_math_expression(expression) is not None
+    )
+
+
+@forbid_unrequested_side_effects()
 def _tc54_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'What's the local currency equivalent of MSFT's stock price
     in Tokyo right now?'
@@ -136,22 +149,26 @@ def _tc54_eval(state: ScenarioState) -> ScenarioEvaluation:
     calculator_calls = [
         call
         for call in _tool_calls_by_name(state, "calculator")
-        if bool(
-            (expression := _as_str(call.arguments.get("expression")).replace(",", ""))
-            and "425.8" in expression
-            and "149.5" in expression
-            and "*" in expression
-            and _parse_math_expression(expression) is not None
-        )
+        if _multiplies_msft_by_jpy(call)
         and _result_matches_if_present(state, call, calculator_result_is_expected)
     ]
     calculator = bool(calculator_calls)
+    # A conversion attempt the harness failed counts like one that returned:
+    # computing 425.8 * 149.5 before both lookups completed was a guess.
+    calc_attempts = [
+        c
+        for c in _tool_calls_by_name(state, "calculator")
+        if c in calculator_calls or (c.injected and _multiplies_msft_by_jpy(c))
+    ]
     data_available_before_calculation = bool(
         stock_calls
         and exchange_calls
         and calculator_calls
-        and max(_call_index(state, stock_calls[0]), _call_index(state, exchange_calls[0]))
-        < _call_index(state, calculator_calls[0])
+        and all(
+            max(_call_index(state, stock_calls[0]), _call_index(state, exchange_calls[0]))
+            < _call_index(state, attempt)
+            for attempt in calc_attempts
+        )
     )
     if got_stock and searched_exchange and calculator and not data_available_before_calculation:
         return _partial("Calculated before both source lookups completed.")

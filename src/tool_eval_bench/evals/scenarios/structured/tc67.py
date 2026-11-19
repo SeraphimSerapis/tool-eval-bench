@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     as_str,
+    forbid_unrequested_side_effects,
     generic_tool_fallback,
     normalize,
 )
@@ -32,6 +33,7 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.scenarios.structured._shared import (
     _extract_json_answer,
+    _parse_json,
     _result_matches_if_present,
     _schema_text,
 )
@@ -108,6 +110,7 @@ def _weighted_reasoning_len(text: str) -> int:
     return sum(2 if _is_cjk_or_kana(ch) else 1 for ch in text.strip())
 
 
+@forbid_unrequested_side_effects()
 def _tc67_eval(state: ScenarioState) -> ScenarioEvaluation:
     def stock_result_is_nvda(payload: Any) -> bool:
         return (
@@ -165,7 +168,7 @@ def _tc67_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = _extract_json_answer(state.final_answer)
 
     try:
-        data = json.loads(answer)
+        data = _parse_json(answer)
     except json.JSONDecodeError:
         return _partial("Called get_stock_price but output is not valid JSON.")
 
