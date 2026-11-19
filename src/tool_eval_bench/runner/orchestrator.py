@@ -557,7 +557,10 @@ async def run_scenario(
                 response_format = None
 
             active_tool_choice = scenario_tool_choice
-            if state.tool_calls and scenario.tool_choice_after_first_call is not None:
+            if (
+                any(not call.injected for call in state.tool_calls)
+                and scenario.tool_choice_after_first_call is not None
+            ):
                 active_tool_choice = scenario.tool_choice_after_first_call
 
             while True:
@@ -611,10 +614,15 @@ async def run_scenario(
             # body that is not JSON is the serving stack's fault at any turn.
             if result.malformed or result.transport_error_status is not None:
                 elapsed = time.perf_counter() - t0
+                is_server_status = result.transport_error_status is not None and (
+                    result.transport_error_status >= 500
+                    or result.transport_error_status in RETRYABLE_STATUS_CODES
+                )
                 is_infrastructure = (
                     result.malformed
                     or not state.tool_calls
                     or result.transport_error_is_infrastructure
+                    or is_server_status
                 )
                 if result.malformed:
                     summary = "Endpoint returned a response body that is not valid JSON."
@@ -622,6 +630,8 @@ async def run_scenario(
                 else:
                     if result.transport_error_is_infrastructure:
                         rejection_stage = "because the serving stack failed before inference"
+                    elif is_server_status:
+                        rejection_stage = "because the serving stack returned a server error"
                     elif not state.tool_calls:
                         rejection_stage = "before the model produced anything"
                     else:
@@ -802,6 +812,7 @@ async def run_scenario(
                 break
 
             turn_results: list[Any] = []
+            turn_had_injection = False
             for tc in result.tool_calls:
                 # Draw before the handler runs: a simulated failure means the
                 # request never took effect, so the handler must not commit a
@@ -811,6 +822,8 @@ async def run_scenario(
                     _draw_injected_error(error_rate, rng=error_rng) if error_rate > 0 else None
                 )
                 injected = injected_error is not None
+                if injected:
+                    turn_had_injection = True
                 record = ToolCallRecord(
                     id=tc.id,
                     name=tc.name,
@@ -848,7 +861,10 @@ async def run_scenario(
                         state.meta.setdefault("state_checkpoints", []).append(diagnostic)
                         trace_lines.append(f"state_checkpoint={diagnostic}")
 
-            recent_turn_signatures.append(_turn_signature(result.tool_calls, turn_results))
+            if turn_had_injection:
+                recent_turn_signatures.clear()
+            else:
+                recent_turn_signatures.append(_turn_signature(result.tool_calls, turn_results))
             if on_scenario_turn is not None:
                 await _notify_turn(
                     on_scenario_turn,
@@ -940,18 +956,6 @@ async def run_scenario(
                 diagnostics=evaluation.diagnostics,
                 safety_violation=evaluation.safety_violation,
             )
-        harness_stop = truncated_stop or loop_stop or unparsed_stop or empty_stop
-        if harness_stop is not None and evaluation.status != ScenarioStatus.PASS:
-            evaluation.note = f"{harness_stop} {evaluation.note or ''}".strip()
-        if response_format_fallback is not None:
-            evaluation.diagnostics["response_format"] = (
-                f"endpoint rejected it; fell back {response_format_fallback}, "
-                "schema enforced only by the prompt"
-            )
-        elif scenario.response_format_override is not None:
-            evaluation.diagnostics["response_format"] = (
-                "requested; backend enforcement is not independently measured"
-            )
         for producer, consumer in scenario.dependencies:
             # An injected producer answered with a simulated error, so it
             # supplied nothing a later consumer could depend on. It was still
@@ -976,6 +980,7 @@ async def run_scenario(
                     ScenarioStatus.FAIL,
                     0,
                     violation,
+                    note=evaluation.note,
                     failure_kind=FailureKind.MISSING_STEP,
                     diagnostics=evaluation.diagnostics,
                     safety_violation=evaluation.safety_violation
@@ -987,6 +992,18 @@ async def run_scenario(
                     ),
                 )
                 break
+        harness_stop = truncated_stop or loop_stop or unparsed_stop or empty_stop
+        if harness_stop is not None and evaluation.status != ScenarioStatus.PASS:
+            evaluation.note = f"{harness_stop} {evaluation.note or ''}".strip()
+        if response_format_fallback is not None:
+            evaluation.diagnostics["response_format"] = (
+                f"endpoint rejected it; fell back {response_format_fallback}, "
+                "schema enforced only by the prompt"
+            )
+        elif scenario.response_format_override is not None:
+            evaluation.diagnostics["response_format"] = (
+                "requested; backend enforcement is not independently measured"
+            )
     except Exception as eval_exc:
         import traceback
 

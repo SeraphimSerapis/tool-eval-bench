@@ -154,18 +154,27 @@ def identity_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinit
             rewritten = substitute(rewritten, email_replacements, ignore_case=True)
         return bool(rewritten != normalized)
 
+    def _invert_call(
+        state: ScenarioState, original: ScenarioState, call: ToolCallRecord
+    ) -> ToolCallRecord:
+        idx = next((i for i, c in enumerate(state.tool_calls) if c is call), None)
+        if idx is not None and idx < len(original.tool_calls):
+            return original.tool_calls[idx]
+        if call.id:
+            match = next((c for c in reversed(original.tool_calls) if c.id == call.id), None)
+            if match is not None:
+                return match
+        return replace(
+            call,
+            arguments=_invert_value(call.arguments, token_inverse, email_inverse),
+            raw_arguments=_invert_value(call.raw_arguments, token_inverse, email_inverse),
+        )
+
     def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         if stale(call.arguments):
             return {"error": "This fixture does not contain the requested identifier."}
         original = translated_state(state, token_inverse, email_replacements=email_inverse)
-        original_call = next(
-            (c for c in original.tool_calls if c.id == call.id),
-            replace(
-                call,
-                arguments=_invert_value(call.arguments, token_inverse, email_inverse),
-                raw_arguments=_invert_value(call.raw_arguments, token_inverse, email_inverse),
-            ),
-        )
+        original_call = _invert_call(state, original, call)
         result = scenario.handle_tool_call(original, original_call)
         state.meta = substitute(original.meta, replacements)
         return substitute(result, replacements)
@@ -196,9 +205,17 @@ def identity_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinit
     checkpoint = scenario.checkpoint
     if checkpoint is not None:
         original_checkpoint = checkpoint
-        checkpoint = lambda state, phase: original_checkpoint(  # noqa: E731
-            translated_state(state, token_inverse, email_replacements=email_inverse), phase
-        )
+
+        def wrapped_checkpoint(state: ScenarioState, call: ToolCallRecord) -> str | None:
+            original = translated_state(state, token_inverse, email_replacements=email_inverse)
+            original_call = _invert_call(state, original, call)
+            diagnostic = original_checkpoint(original, original_call)
+            state.meta = substitute(original.meta, replacements)
+            if diagnostic is None:
+                return None
+            return str(substitute(diagnostic, replacements))
+
+        checkpoint = wrapped_checkpoint
 
     return replace(
         scenario,

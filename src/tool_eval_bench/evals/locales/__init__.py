@@ -150,13 +150,17 @@ def scenario_tools(scenario: ScenarioDefinition) -> list[dict[str, Any]]:
 _FULLWIDTH = str.maketrans(
     {**{chr(0xFF10 + d): str(d) for d in range(10)}, "％": "%", "＄": "$", "．": "."}
 )
+# Fullwidth/Unicode minus before a digit (e.g. "－３０" or "−3.5") -> ASCII "-".
+_UNICODE_MINUS = re.compile(r"(?<!\d)[－−](?=\d)")
+# Fullwidth digit-grouping comma (e.g. "１，０２０" or "４，２５０，０００") -> ASCII ",".
+_FULLWIDTH_GROUP_COMMA = re.compile(r"(?<=\d)，(?=\d{3}(?!\d))")
 # 1.234.567,89 -> 1234567.89 and 1.020 -> 1020 for comma-decimal locales.
 _DOT_GROUPED = re.compile(r"(?<![\d.,])(\d{1,3}(?:\.\d{3})+)(?:,(\d+))?(?!\d|[.,]\d)")
 # 3,14 -> 3.14. Exactly three digits after the comma stays ambiguous and is
 # left for the shared helpers, which read it as a thousands separator.
 _DECIMAL_COMMA = re.compile(r"(?<![\d.,])(\d+),(\d{1,2}|\d{4,})(?!\d|[.,]\d)")
-# 1020 $ or 1.020 € -> $1020: the shared helpers expect a leading symbol.
-_TRAILING_DOLLAR = re.compile(r"(\d[\d.,]*)\s?(?:\$|US-?\$|USD|美元|美金|ドル)(?![A-Za-z])")
+# 1020 $ or 1.020 USD -> $1020: the shared helpers expect a leading symbol.
+_TRAILING_DOLLAR = re.compile(r"(\d(?:[\d.,]*\d)?)\s?(?:\$|US-?\$|USD|美元|美金|ドル)(?![A-Za-z])")
 
 _NEGATORS: dict[str, re.Pattern[str]] = {
     "de": re.compile(r"\b(?:nicht|kein(?:e|en|em|er|es)?|nie(?:mals)?|weder)\b", re.IGNORECASE),
@@ -240,6 +244,8 @@ def normalize_answer(text: str, locale: str, *, strip_single_dot_group: bool = T
 
         text = _FENCED_BLOCK.sub(_stash, text)
     text = text.translate(_FULLWIDTH)
+    text = _UNICODE_MINUS.sub("-", text)
+    text = _FULLWIDTH_GROUP_COMMA.sub(",", text)
     if locale in _COMMA_DECIMAL_LOCALES:
         text = _DOT_GROUPED.sub(
             lambda m: _replace_dot_grouped(m, strip_single_dot_group=strip_single_dot_group),
