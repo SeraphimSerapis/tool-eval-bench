@@ -151,6 +151,10 @@ def _tc06_eval(state: ScenarioState) -> ScenarioEvaluation:
             "Called translate_text correctly for both languages but did not surface "
             "the translations in the answer.",
         )
+    if has_spanish and has_japanese and not (usable_spanish and usable_japanese):
+        return _partial(
+            "Called translate_text for both languages, but a translation result was unusable."
+        )
     if has_spanish and has_japanese:
         return _partial("Made the required translations but added an invalid or extra call.")
     return _fail("Did not split the translation request into two valid tool calls.")

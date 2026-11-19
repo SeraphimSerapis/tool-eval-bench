@@ -108,7 +108,7 @@ def _tc17_eval(state: ScenarioState) -> ScenarioEvaluation:
     correct_date = _date_matches(date_val, expected_date)
     has_title = any(
         _positive_argument_contains(title_val, title)
-        for title in ("standup", "meeting", "besprechung")
+        for title in ("standup", "stand-up", "meeting", "besprechung")
     )
 
     if correct_time and correct_tz and correct_date and has_title:
@@ -116,9 +116,15 @@ def _tc17_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _partial("Created the requested event but issued duplicate calendar mutations.")
         return _pass("Scheduled for 14:00 Europe/Berlin on the correct date.")
     if correct_time and correct_date and not correct_tz:
+        if tz_val in ("", "utc"):
+            return _partial(
+                "Got the time and date right, but defaulted to UTC instead of Europe/Berlin."
+            )
         return _partial(
-            "Got the time and date right, but defaulted to UTC instead of Europe/Berlin."
+            f"Got the time and date right, but used timezone {tz_val!r} instead of Europe/Berlin."
         )
+    if correct_time and correct_tz and correct_date and not has_title:
+        return _partial("Got the date, time, and timezone right, but missed the requested title.")
     if correct_time and correct_tz:
         return _partial("Got the time and timezone right, but the date was wrong.")
     wrong = [

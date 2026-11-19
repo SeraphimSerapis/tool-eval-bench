@@ -16,9 +16,6 @@ from tool_eval_bench.evals.helpers import (
     addressed_recipients as _addressed_recipients,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_affirms_number as _answer_affirms_number,
-)
-from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
@@ -51,6 +48,7 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
+    _answer_affirms_exact_value,
     _positive_argument_contains,
     _result_matches_if_present,
     _tc03_email_result_is_sent,
@@ -120,9 +118,11 @@ def _tc07_contact_result_has_manager(payload: Any) -> bool:
 def _tc07_body_states_total(body: str) -> bool:
     """Return whether an email body reports the $4.4M total.
 
-    The full-dollar spelling ("$4,400,000") is the same value as "$4.4M".
+    Equivalent decimal and full-dollar spellings ("$4.4M", "$4.40M",
+    "$4,400,000", "$4,400,000.00") report the same value; wrong signs or
+    rounded-away digits ("-$4.4M", "$4M") do not.
     """
-    return _answer_affirms_number(body, "4.4") or _answer_affirms_number(body, "4400000")
+    return _answer_affirms_exact_value(body, "4.4") or _answer_affirms_exact_value(body, "4400000")
 
 
 @forbid_unrequested_side_effects({"send_email": 1})

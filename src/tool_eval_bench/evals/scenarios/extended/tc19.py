@@ -37,7 +37,7 @@ def _tc19_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 _TC19_MARKER = re.compile(
-    r"(?:^|\n)[^\S\n]*\|?[^\S\n]*(?:message[^\S\n]*)?\*{0,2}([1-5])\*{0,2}[^\S\n]*[.):\-|]"
+    r"(?:^|\n)[^\S\n]*\|?[^\S\n]*\*{0,2}(?:message[^\S\n]*)?\*{0,2}([1-5])\*{0,2}[^\S\n]*[.):\-|]"
 )
 
 
@@ -80,7 +80,9 @@ def _tc19_flatten(payload: object) -> dict[int, str]:
         return {}
     segments: dict[int, str] = {}
     for key, value in payload.items():
-        digits = re.fullmatch(r"(?:message\s*)?([1-5])", str(key).strip(), re.IGNORECASE)
+        digits = re.fullmatch(
+            r"(?:(?:message|msg)[\s_-]*)?([1-5])", str(key).strip(), re.IGNORECASE
+        )
         if digits:
             segments[int(digits.group(1))] = str(value)
         elif isinstance(value, (list, dict)):
@@ -103,11 +105,13 @@ def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     answer = state.final_answer.lower()
     json_segments = _tc19_json_segments(answer)
+    segments = _tc19_segments(answer)
 
     # Require structured output (numbered list, bullets, table, or per-message labeling)
     has_structure = bool(
         re.search(r"(?:^|\n)\s*(?:1[.)\]]|message\s*1)", answer, re.MULTILINE)
         or re.search(r"(?:^|\n)\s*[-•*|]", answer, re.MULTILINE)
+        or len(segments) >= 4
         or len(json_segments) >= 4
     )
 
@@ -123,13 +127,12 @@ def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
     # that association is the model's choice, so segment on the message marker
     # rather than assuming one list style. This covers "1.", "1)", "Message 1:",
     # "**1**" and markdown table rows alike.
-    segments = _tc19_segments(answer)
     numbered_correct = sum(
         any(_tc19_label_is_asserted(segments[index], label) for label in labels)
         for index, labels in enumerate(expected, start=1)
         if index in segments
     )
-    bullet_lines = re.findall(r"(?:^|\n)\s*[-•*]\s*(.+)", answer)
+    bullet_lines = re.findall(r"(?:^|\n)\s*(?:[-•]\s*|\*\s+)(.+)", answer)
     bullet_correct = sum(
         any(_tc19_label_is_asserted(line, label) for label in labels)
         for line, labels in zip(bullet_lines[:5], expected, strict=False)

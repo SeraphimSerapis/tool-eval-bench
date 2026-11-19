@@ -107,7 +107,9 @@ def _tc05_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Use flexible date matching — accept any ISO 8601 date representation
     correct_date = _date_matches(event.arguments.get("date"), expected_date)
     correct_time = _time_matches(event.arguments.get("time"), "09:30")
-    has_title = _positive_argument_contains(event.arguments.get("title"), "standup")
+    has_title = _positive_argument_contains(
+        event.arguments.get("title"), "standup"
+    ) or _positive_argument_contains(event.arguments.get("title"), "stand-up")
     if correct_date and correct_time and has_duration and has_attendees and has_title:
         if len(event_calls) > 1:
             return _partial("Created the requested event but issued duplicate calendar mutations.")

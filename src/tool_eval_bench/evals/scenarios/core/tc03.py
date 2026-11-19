@@ -42,6 +42,9 @@ from tool_eval_bench.evals.helpers import (
     recipient_values as _recipient_values,
 )
 from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
+)
+from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
@@ -104,11 +107,13 @@ _TC03_MEETING_OR_TIME = re.compile(r"\bmeetings?\b|\btime\b", re.IGNORECASE)
 
 def _tc03_denies_the_move(body: str) -> bool:
     """Return whether a sentence of ``body`` says the meeting did not move."""
-    for sentence in re.split(r"(?<=[.!?;])\s+|\n", body):
-        if not _TC03_UNCHANGED.search(sentence):
+    plain = _strip_markdown_emphasis(body)
+    for sentence in re.split(r"(?<=[.!?;])\s+|\n", plain):
+        normalized = _normalize(sentence)
+        if not _TC03_UNCHANGED.search(normalized):
             continue
-        about_other_subject = bool(_TC03_OTHER_SUBJECT.search(sentence))
-        about_meeting = bool(_TC03_MEETING_OR_TIME.search(sentence)) or _tc03_time_3pm(sentence)
+        about_other_subject = bool(_TC03_OTHER_SUBJECT.search(normalized))
+        about_meeting = bool(_TC03_MEETING_OR_TIME.search(normalized)) or _tc03_time_3pm(normalized)
         if about_other_subject and not about_meeting:
             continue
         return True

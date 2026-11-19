@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
     Category,
@@ -20,9 +20,6 @@ from tool_eval_bench.evals.helpers import (
     addressed_recipients as _addressed_recipients,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_affirms_number as _answer_affirms_number,
-)
-from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -31,11 +28,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
-from tool_eval_bench.evals.helpers import first_counted as _first_counted
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
-from tool_eval_bench.evals.helpers import (
-    has_tool_call as _has_tool_call,
-)
 from tool_eval_bench.evals.helpers import (
     includes_text as _includes_text,
 )
@@ -49,17 +42,20 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
-    recipient_values as _recipient_values,
+    positive_argument_contains as _positive_argument_contains,
 )
 from tool_eval_bench.evals.helpers import (
-    result_is_usable_if_present as _result_is_usable_if_present,
+    recipient_values as _recipient_values,
 )
 from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.large_toolset._shared import (
     LARGE_SIDE_EFFECT_TOOLS,
+    _answer_affirms_exact_value,
     _is_engineering_department,
+    _result_matches_if_present,
+    _status_is_success,
 )
 
 # Either directory can supply the manager address.
@@ -125,6 +121,51 @@ def _tc38_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     )
 
 
+def _tc38_search_result_has_report(payload: Any) -> bool:
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and (
+            _normalize(_as_str(item.get("file_id"))) == "file_091"
+            or (
+                _includes_text(item.get("name"), "q3")
+                and _includes_text(item.get("name"), "budget")
+            )
+        )
+        for item in payload["results"]
+    )
+
+
+def _tc38_read_result_has_total(payload: Any) -> bool:
+    return isinstance(payload, dict) and _includes_text(payload.get("content"), "4.4m")
+
+
+def _tc38_manager_result_has_jordan(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    manager = payload.get("manager")
+    if isinstance(manager, dict) and _normalize(_as_str(manager.get("email"))) == (
+        "jordan.park@company.com"
+    ):
+        return True
+    results = payload.get("results")
+    if isinstance(results, list):
+        return any(
+            isinstance(item, dict)
+            and _normalize(_as_str(item.get("email"))) == "jordan.park@company.com"
+            for item in results
+        )
+    return False
+
+
+def _tc38_email_result_is_sent(payload: Any) -> bool:
+    return _status_is_success(
+        payload,
+        statuses={"accepted", "delivered", "ok", "queued", "sent", "success"},
+    )
+
+
 @forbid_unrequested_side_effects({"send_email": 1}, tools=LARGE_SIDE_EFFECT_TOOLS)
 def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Find the Q3 budget report and email the total to my manager.'
@@ -134,9 +175,8 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     """
 
     def _is_valid_search(call: ToolCallRecord) -> bool:
-        return call.name == "search_files" and (
-            _includes_text(call.arguments.get("query"), "q3 budget report")
-            or _includes_text(call.arguments.get("query"), "budget")
+        return call.name == "search_files" and _positive_argument_contains(
+            call.arguments.get("query"), "budget"
         )
 
     def _is_valid_read(call: ToolCallRecord) -> bool:
@@ -145,59 +185,46 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
             and _normalize(_as_str(call.arguments.get("file_id"))) == "file_091"
         )
 
-    steps = 0
-    if _has_tool_call(
-        state,
-        "search_files",
-        lambda c: _is_valid_search(c),
-    ):
-        steps += 1
-    if _has_tool_call(
-        state,
-        "read_file",
-        lambda c: _is_valid_read(c),
-    ):
-        steps += 1
-    manager_lookup = _has_tool_call(
-        state,
-        "get_contacts",
-        lambda c: _includes_text(c.arguments.get("query"), "manager"),
-    )
-
-    # The org chart is an equivalent authoritative source for the manager.
-    # Keep the dependency semantic: either lookup must precede delivery.
-    manager_lookup = manager_lookup or _has_tool_call(
-        state,
-        "get_org_chart",
-        lambda c: _is_engineering_department(c.arguments.get("department")),
-    )
-    if manager_lookup:
-        steps += 1
-    if _has_tool_call(
-        state,
-        "send_email",
-        lambda c: (
-            _recipient_values(c.arguments.get("to")) == ["jordan.park@company.com"]
-            and _addressed_recipients(c) == ["jordan.park@company.com"]
-            # TC-38 is TC-07 with 52 tools, so a score difference between them
-            # has to mean the toolset size mattered. Spelling the unit out
-            # ("$4.4 million", "$4,400,000") or sending the address as a
-            # one-element array is not a toolset effect, so use TC-07's checks.
-            and (
-                _answer_affirms_number(_as_str(c.arguments.get("body")), "4.4")
-                or _answer_affirms_number(_as_str(c.arguments.get("body")), "4400000")
-            )
-        ),
-    ):
-        steps += 1
-
-    # A get_org_chart lookup for the Engineering department is an accepted
-    # manager-verification step and is not treated as domain-tool contamination.
-    # Unrelated org-chart lookups still count as irrelevant calls.
     def _is_manager_verification(c: ToolCallRecord) -> bool:
         return c.name == "get_org_chart" and _is_engineering_department(
             c.arguments.get("department")
         )
+
+    def _is_valid_manager(c: ToolCallRecord) -> bool:
+        return (
+            c.name == "get_contacts"
+            and _positive_argument_contains(c.arguments.get("query"), "manager")
+        ) or _is_manager_verification(c)
+
+    def _is_valid_email(c: ToolCallRecord) -> bool:
+        body = _as_str(c.arguments.get("body"))
+        return (
+            c.name == "send_email"
+            and _recipient_values(c.arguments.get("to")) == ["jordan.park@company.com"]
+            and _addressed_recipients(c) == ["jordan.park@company.com"]
+            # TC-38 is TC-07 with 52 tools, so a score difference between them
+            # has to mean the toolset size mattered. Spelling the unit out
+            # ("$4.4 million", "$4.40M", "$4,400,000") or sending the address as
+            # a one-element array is not a toolset effect, so use TC-07's checks.
+            and (
+                _answer_affirms_exact_value(body, "4.4")
+                or _answer_affirms_exact_value(body, "4400000")
+            )
+        )
+
+    search_calls = [c for c in state.tool_calls if _is_valid_search(c)]
+    read_calls = [c for c in state.tool_calls if _is_valid_read(c)]
+    manager_calls = [c for c in state.tool_calls if _is_valid_manager(c)]
+    email_calls = [c for c in state.tool_calls if _is_valid_email(c)]
+
+    steps = sum(
+        (
+            bool(search_calls),
+            bool(read_calls),
+            bool(manager_calls),
+            bool(email_calls),
+        )
+    )
 
     # Check for domain-tool contamination
     domain_calls = [
@@ -208,23 +235,6 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
 
     if steps == 4 and not domain_calls:
-        search = _first_counted(state.tool_calls, _is_valid_search)
-        read = _first_counted(state.tool_calls, _is_valid_read)
-        manager = _first_counted(
-            state.tool_calls,
-            lambda c: (
-                c.name == "get_contacts" and _includes_text(c.arguments.get("query"), "manager")
-            ),
-        ) or _first_counted(state.tool_calls, _is_manager_verification)
-        email = _first_counted(state.tool_calls, lambda c: c.name == "send_email")
-        if any(call is None for call in (search, read, manager, email)):
-            return _partial("Completed the calls, but one dependency record was incomplete.")
-        search = cast(ToolCallRecord, search)
-        read = cast(ToolCallRecord, read)
-        manager = cast(ToolCallRecord, manager)
-        email = cast(ToolCallRecord, email)
-        if not (search.turn < read.turn < email.turn and manager.turn < email.turn):
-            return _partial("Completed the calls, but violated a data dependency before email.")
         email_attempts = [c for c in state.tool_calls if c.name == "send_email"]
         if len(_counted_calls(email_attempts)) != 1 or any(
             _recipient_values(c.arguments.get("to")) != ["jordan.park@company.com"]
@@ -234,14 +244,45 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _partial(
                 "Found the chain but issued an unsafe duplicate or incorrect email mutation."
             )
-        if any(
-            not _result_is_usable_if_present(state, call) for call in (search, read, manager, email)
-        ):
+        usable_searches = [
+            c
+            for c in search_calls
+            if _result_matches_if_present(state, c, _tc38_search_result_has_report)
+        ]
+        usable_reads = [
+            c
+            for c in read_calls
+            if _result_matches_if_present(state, c, _tc38_read_result_has_total)
+        ]
+        usable_managers = [
+            c
+            for c in manager_calls
+            if _result_matches_if_present(state, c, _tc38_manager_result_has_jordan)
+        ]
+        usable_emails = [
+            c
+            for c in email_calls
+            if _result_matches_if_present(state, c, _tc38_email_result_is_sent)
+        ]
+        if not (usable_searches and usable_reads and usable_managers and usable_emails):
             return _partial(
                 "Completed the calls, but a required tool result was unusable or missing."
             )
-        if not _address_observed_before(
-            state, email, "jordan.park@company.com", sources=_TC38_LOOKUPS
+        ordered_emails = [
+            email
+            for email in usable_emails
+            if any(
+                search.turn < read.turn < email.turn and manager.turn < email.turn
+                for search in usable_searches
+                for read in usable_reads
+                for manager in usable_managers
+            )
+        ]
+        if not ordered_emails:
+            return _partial("Completed the calls, but violated a data dependency before email.")
+        if not any(
+            _address_observed_before(state, email, "jordan.park@company.com", sources=_TC38_LOOKUPS)
+            for email in ordered_emails
         ):
             return _partial("Emailed the manager at an address no earlier lookup returned.")
         return _pass("Completed the full 4-step chain correctly from 52 tools.")

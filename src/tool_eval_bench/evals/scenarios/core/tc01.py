@@ -40,6 +40,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    result_is_usable_if_present as _result_is_usable_if_present,
+)
+from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
@@ -97,7 +100,14 @@ def _tc01_eval(state: ScenarioState) -> ScenarioEvaluation:
         "get_weather",
         lambda c: _positive_argument_contains(c.arguments.get("location"), "berlin"),
     )
-    used_web = _has_tool_call(state, "web_search")
+    used_web = _has_tool_call(
+        state,
+        "web_search",
+        lambda c: (
+            _positive_argument_contains(c.arguments.get("query"), "berlin")
+            and _result_is_usable_if_present(state, c)
+        ),
+    )
     only_berlin_weather = bool(state.tool_calls) and all(
         c.name == "get_weather"
         and _positive_argument_contains(c.arguments.get("location"), "berlin")

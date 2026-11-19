@@ -13,9 +13,6 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_contains_number as _answer_contains_number,
-)
-from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -47,6 +44,7 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.extended._shared import (
+    _answer_affirms_exact_value,
     _numeric_value,
     _positive_argument_contains,
     _result_matches_if_present,
@@ -153,7 +151,7 @@ def _tc20_eval(state: ScenarioState) -> ScenarioEvaluation:
             read is not None and read.turn < call.turn for call in calculator_calls
         )
     # Average = 707200 / 5 = 141440
-    answer_has_avg = _answer_contains_number(state.final_answer, "141440")
+    answer_has_avg = _answer_affirms_exact_value(state.final_answer, "141440")
 
     search_before_read = bool(searched and search and read and search.turn < read.turn)
     ordered = bool(

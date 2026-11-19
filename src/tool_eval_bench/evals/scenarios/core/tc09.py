@@ -22,6 +22,7 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     first_call as _first_call,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback as _generic_tool_fallback,
 )
@@ -83,6 +84,7 @@ def _tc09_stock_result_is_msft(payload: Any) -> bool:
     )
 
 
+@forbid_unrequested_side_effects()
 def _tc09_eval(state: ScenarioState) -> ScenarioEvaluation:
     weather = _has_tool_call(
         state,

@@ -14,11 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_affirms_number as _answer_affirms_number,
-)
-from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback as _generic_tool_fallback,
 )
@@ -31,14 +29,18 @@ from tool_eval_bench.evals.helpers import (
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
+from tool_eval_bench.evals.scenarios.core._shared import (
+    _answer_affirms_exact_value,
+)
 
 
 def _tc11_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+@forbid_unrequested_side_effects()
 def _tc11_eval(state: ScenarioState) -> ScenarioEvaluation:
-    correct = _answer_affirms_number(state.final_answer, "30")
+    correct = _answer_affirms_exact_value(state.final_answer, "30")
     contextual = bool(
         re.search(
             r"15\s*%|(?<!\d)200(?!\d)|percent|prozent|por\s+ciento|porcentaje|百分之|パーセント"
