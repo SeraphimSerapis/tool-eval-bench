@@ -50,6 +50,7 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > | **TensorFold** | MLX `speculative` or CUDA `tensorfold` request-local counts; otherwise `tensorfold:spec_decode_*` counter deltas | α % and waste ratio; step-based estimates stay unavailable without a step counter |
 > | **SGLang** | No request-local counter contract | Effective t/s remains available; use `spec-live` for the server's current acceptance gauges |
 > | **Strata** | `timings.draft_n` / `draft_n_accepted` in each response; otherwise Prometheus `vllm:spec_decode_*` counter deltas | α % and waste ratio; no draft-step counter, so τ and draft window stay unknown |
+> | **Flare** | Prometheus `/metrics` (`flare_accepted_draft_tokens_total`, `flare_verification_draft_tokens_total`, `flare_draft_request_rounds_total` deltas) | α %, acceptance length (τ), draft window, waste ratio, and Steps/s; `spec-live` adds per-position acceptance from `flare_speculative_drafts_total` |
 >
 > **vLLM per-request metrics** are optional but worth turning on. Prometheus
 > counters are server-wide, so any concurrent traffic lands in the delta
@@ -137,7 +138,7 @@ The dashboard shows:
 - **Draft efficiency gauge** — τ next to the draft window, with a tuning hint when `(τ − 1) ÷ window` utilization is low and a smaller window is worth trying
 - **Method badge** — uses explicit configuration or metric labels only. Generic speculative counters report `unknown`; use `--spec-method` to label a known configuration. Strata is recognised by its `strata:` metrics and shows MTP, the only way it drafts.
 - **Draft model name** — shown only when an explicit server configuration identifies it. Multiple `/v1/models` entries are not treated as a drafter relationship.
-- **Per-position acceptance bars** — shown for vLLM and current llama.cpp builds when their per-position counters are exported. When vLLM also exports `spec_decode_num_draft_tokens_per_pos`, it is the denominator, which keeps rates exact for proposers whose draft length varies (ngram, suffix)
+- **Per-position acceptance bars** — shown for vLLM, current llama.cpp builds, and Flare when their per-position counters are exported. When vLLM also exports `spec_decode_num_draft_tokens_per_pos`, or Flare exports `flare_speculative_drafts_total` (`offered` and `accepted` outcomes across MTP and copy drafts), that offered count is the denominator, which keeps rates exact when draft length varies
 - **Throughput sparklines** — the last 60 polls of rolling-window accept rate, gen t/s, accepted t/s, and waste ratio with min/max annotations
 - **Session averages** — session α (pooled counters), and gen t/s and accepted t/s averaged over the polls that generated or accepted tokens (visible immediately with 0.0 initial values). SGLang exports no token counters, so its accepted and drafted t/s show `—`
 - **Scrape health** — a failed poll turns the header red and dates the numbers on screen (`⚠ 3 failed polls, data 00:42 old`), so a dead server never looks like a quiet one
@@ -172,5 +173,14 @@ Press **Ctrl+R** to reset all session counters and history without restarting.  
 > counters alongside duplicate native names. The monitor reads the aliases
 > once. It does not infer a proposer from `mtp_*` names or treat engine rounds
 > as speculative steps. Without step counters, τ and draft window stay unknown.
+> Flare exports cumulative `flare_accepted_draft_tokens_total`,
+> `flare_verification_draft_tokens_total`, and `flare_draft_request_rounds_total`
+> counters plus `flare_speculative_drafts_total` per-depth outcomes for both MTP
+> learned drafters and shared-history copy drafts. Because Flare always renders
+> these counters, speculation counts as active only once draft tokens are offered,
+> and the method stays unknown unless `--spec-method` is passed. The monitor also
+> reads Flare's token counters, KV page gauges (`flare_total_kv_pages`,
+> `flare_free_kv_pages`), prefix cache lookups/hits, and active/pending request
+> gauges.
 > Acceptance length follows each upstream contract and includes the verifier's
 > bonus token.

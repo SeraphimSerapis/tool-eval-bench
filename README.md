@@ -2,7 +2,7 @@
 
 A tool-calling quality benchmark for LLMs in agentic workflows, built for
 self-hosted serving stacks: **vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**, **Strata**,
-**TabbyAPI**, **NInfer**, **TensorFold**, **TandemLLM**, and hosted **Gemini** and **Anthropic**.
+**TabbyAPI**, **NInfer**, **TensorFold**, **TandemLLM**, **Flare**, and hosted **Gemini** and **Anthropic**.
 
 Each scenario observes one assistant conversation with mock tools. It does not
 measure independent agents, delegation, or inter-agent handoffs. Localization
@@ -116,6 +116,18 @@ tool-eval-bench run --short --base-url http://127.0.0.1:8000 --header X-Tandem=r
 
 See [TandemLLM](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/backends.md#tandemllm) for the conductor, the
 thinking settings, and a run with the conductor on.
+
+Flare ([Hyperflare](https://github.com/NVIDIA/hyperflare-inference)) is detected from its
+`flare_` Prometheus namespace on `/metrics` or the `flare` metadata object on `/v1/models`, and
+uses the existing OpenAI-compatible adapter (or `/v1/messages` with `--format anthropic`). Its
+default port is already scanned:
+
+```bash
+tool-eval-bench run --short --base-url http://127.0.0.1:8000/v1 --seed 42
+```
+
+See [Flare](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/backends.md#flare) for
+probed metadata, sampling-range clamping, prefix caching, and speculative metrics.
 
 Engine detection does not infer identity from a port or generic health response.
 A server's declared identity wins over compatibility shapes: model owner, `Server`

@@ -164,6 +164,19 @@ TANDEMLLM = EngineProfile(
     display_name="TandemLLM",
     declared_names=(("owned_by", "tandemllm"), ("server", "tandemllm")),
 )
+FLARE = EngineProfile(
+    key="flare",
+    display_name="Flare",
+    aliases=("hyperflare",),
+    metrics_prefixes=("flare_",),
+    # Flare always renders its speculative counters (MTP and shared-history copy
+    # drafts), so speculation is active only once draft tokens are offered.
+    spec_counters_always_rendered=True,
+    spec_counter_detail="Flare speculative draft counters available",
+    # helios/src/server/models.rs exposes model.limits.max_sequence_tokens as
+    # max_model_len, the effective prompt+output limit for one request.
+    reports_request_context_window=True,
+)
 
 # Public label order, as the argument schema lists it.
 ENGINE_PROFILES: tuple[EngineProfile, ...] = (
@@ -180,6 +193,7 @@ ENGINE_PROFILES: tuple[EngineProfile, ...] = (
     STRATA,
     TABBYAPI,
     TANDEMLLM,
+    FLARE,
 )
 
 # Which engine a /metrics scrape belongs to when several namespaces appear.
@@ -190,6 +204,7 @@ METRICS_IDENTITY_ORDER: tuple[EngineProfile, ...] = (
     HALOGEN,
     TENSORFOLD,
     STRATA,
+    FLARE,
     VLLM,
     SGLANG,
     LLAMACPP,
@@ -200,7 +215,7 @@ METRICS_IDENTITY_ORDER: tuple[EngineProfile, ...] = (
 # checked before Strata here, so a scrape carrying both namespaces is
 # identified as Strata but read with llama.cpp's counter rules, and Halogen's
 # exported llama.cpp counters are read as llama.cpp's.
-SPEC_COUNTER_ORDER: tuple[EngineProfile, ...] = (TENSORFOLD, LLAMACPP, STRATA)
+SPEC_COUNTER_ORDER: tuple[EngineProfile, ...] = (TENSORFOLD, LLAMACPP, STRATA, FLARE)
 
 # The backend labels the argument schema offers, in order.
 BACKEND_LABELS: tuple[str, ...] = (*(p.key for p in ENGINE_PROFILES), UNKNOWN_BACKEND)

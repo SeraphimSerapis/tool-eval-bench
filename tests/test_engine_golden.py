@@ -47,6 +47,17 @@ SGLANG_SPEC = (
     'sglang:spec_accept_length{tp_rank="0"} 2.5\nsglang:spec_accept_rate{tp_rank="0"} 0.6\n'
 )
 SGLANG_ENGINE = 'sglang:gen_throughput{tp_rank="0"} 12.0\n'
+FLARE_LOAD = "flare_prefill_tokens_total 40\nflare_generated_tokens_total 12\n"
+FLARE_ZERO_SPEC = (
+    "flare_verification_draft_tokens_total 0\n"
+    "flare_accepted_draft_tokens_total 0\n"
+    "flare_draft_request_rounds_total 0\n"
+)
+FLARE_SPEC = (
+    "flare_verification_draft_tokens_total 10\n"
+    "flare_accepted_draft_tokens_total 5\n"
+    "flare_draft_request_rounds_total 4\n"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +73,7 @@ SGLANG_ENGINE = 'sglang:gen_throughput{tp_rank="0"} 12.0\n'
             "tensorfold:requests_total 1\n", ("tensorfold", "TensorFold"), id="tensorfold"
         ),
         pytest.param(STRATA_NS, ("strata", "Strata"), id="strata"),
+        pytest.param(FLARE_LOAD, ("flare", "Flare"), id="flare"),
         pytest.param("vllm:num_requests_running 1\n", ("vllm", "vLLM"), id="vllm"),
         pytest.param("sglang:num_running_reqs 1\n", ("sglang", "SGLang"), id="sglang-colon"),
         pytest.param("sglang_num_running_reqs 1\n", ("sglang", "SGLang"), id="sglang-underscore"),
@@ -90,8 +102,17 @@ SGLANG_ENGINE = 'sglang:gen_throughput{tp_rank="0"} 12.0\n'
             LLAMACPP_LOAD + "vllm:num_requests_running 1\n", ("vllm", "vLLM"), id="llamacpp+vllm"
         ),
         pytest.param(LLAMACPP_LOAD + STRATA_NS, ("strata", "Strata"), id="llamacpp+strata"),
+        pytest.param(
+            "vllm:num_requests_running 1\n" + FLARE_LOAD, ("flare", "Flare"), id="vllm+flare"
+        ),
+        pytest.param(LLAMACPP_LOAD + FLARE_LOAD, ("flare", "Flare"), id="llamacpp+flare"),
         pytest.param(STRATA_NS + HALOGEN_NS, ("halogen", "Halogen Flash"), id="strata+halogen"),
         # A namespace inside a label value names no engine.
+        pytest.param(
+            'vllm:num_requests_running{model_name="acme/flare_7b"} 1\n',
+            ("vllm", "vLLM"),
+            id="flare-in-label",
+        ),
         pytest.param(
             'vllm:num_requests_running{model_name="acme/strata:7b"} 1\n',
             ("vllm", "vLLM"),
@@ -236,6 +257,9 @@ _ENGINE_CASES: list[tuple[str, dict[str, httpx.Response], str | None, list[str]]
     ("strata", {}, "Strata", ["/v1/models", "/props", "/health"]),
     ("tabbyapi", {}, "TabbyAPI", ["/v1/models", "/v1/model", "/props"]),
     ("tandemllm", {}, "TandemLLM", ["/v1/models", "/health"]),
+    ("flare", {}, "Flare", ["/v1/models"]),
+    ("hyperflare", {}, "Flare", ["/v1/models"]),
+    ("HyperFlare", {}, "Flare", ["/v1/models"]),
     ("halogen", {}, "Halogen Flash", ["/v1/models"]),
     ("sglang", {}, "SGLang", ["/v1/models"]),
     (
@@ -287,6 +311,17 @@ _ENGINE_CASES: list[tuple[str, dict[str, httpx.Response], str | None, list[str]]
         {"/health": httpx.Response(200, json={"service": "strata"})},
         "Strata",
         ["/v1/models", "/version", "/health", "/props"],
+    ),
+    (
+        "unknown",
+        {
+            "/v1/models": httpx.Response(
+                200,
+                json={"data": [{"id": "m", "owned_by": "local", "flare": {"max_concurrency": 32}}]},
+            )
+        },
+        "Flare",
+        ["/v1/models", "/version", "/health"],
     ),
     (
         "something-else",
@@ -348,6 +383,7 @@ LC_NO_COUNTERS = (
     "via per-request timings (draft_n/draft_n_accepted)"
 )
 STRATA_DETAIL = "Strata MTP draft counters available"
+FLARE_DETAIL = "Flare speculative draft counters available"
 
 # (active, method, has_prometheus, has_per_request_timings, detail)
 _SPEC_CASES: list[tuple[str, str | None, str, tuple[bool, str, bool, bool, str]]] = [
@@ -411,6 +447,30 @@ _SPEC_CASES: list[tuple[str, str | None, str, tuple[bool, str, bool, bool, str]]
         _counters("vllm:", 10, 5, 4, labels='spec_method="eagle"') + STRATA_NS,
         "auto",
         (True, "eagle", True, False, STRATA_DETAIL),
+    ),
+    (
+        "flare-zero",
+        FLARE_ZERO_SPEC,
+        "auto",
+        (False, "unknown", True, False, FLARE_DETAIL),
+    ),
+    (
+        "flare",
+        FLARE_SPEC,
+        "auto",
+        (True, "unknown", True, False, FLARE_DETAIL),
+    ),
+    (
+        "flare-load-only",
+        FLARE_LOAD,
+        "auto",
+        (False, "unknown", False, False, ""),
+    ),
+    (
+        "flare-in-label",
+        _counters("vllm:", 0, labels='model_name="acme/flare_7b"'),
+        "auto",
+        (True, "unknown", True, False, GENERIC),
     ),
     (
         # Halogen exports llama.cpp metrics, and detection reads them as such.
@@ -548,6 +608,9 @@ _LIVE_CASES: list[tuple[str, str, tuple[str, bool, str]]] = [
         _counters("vllm:", 10, 5, 4) + STRATA_NS + _counters("llamacpp:", 10, 5, 4),
         ("strata", True, "mtp"),
     ),
+    ("flare", FLARE_SPEC, ("flare", True, "unknown")),
+    ("flare-zero", FLARE_ZERO_SPEC, ("flare", True, "unknown")),
+    ("flare-load-only", FLARE_LOAD, ("flare", True, "unknown")),
 ]
 
 
@@ -616,6 +679,7 @@ def _run_context(engine_name: str | None, window: int | None = 81920) -> RunCont
     [
         ("llama.cpp", 81920),
         ("Strata", 81920),
+        ("Flare", 81920),
         ("vLLM", None),
         ("SGLang", None),
         ("TensorFold", None),
@@ -629,6 +693,7 @@ def _run_context(engine_name: str | None, window: int | None = 81920) -> RunCont
         ("Anthropic Messages API", None),
         ("llamacpp", None),
         ("strata", None),
+        ("flare", None),
         ("LLAMA.CPP", None),
         (None, None),
     ],
@@ -660,6 +725,7 @@ _BACKEND_CHOICES = [
     "strata",
     "tabbyapi",
     "tandemllm",
+    "flare",
     "unknown",
 ]
 
@@ -667,7 +733,12 @@ _BACKEND_CHOICES = [
 def test_supported_backend_labels() -> None:
     from tool_eval_bench.application import service
 
-    assert service._SUPPORTED_BACKENDS == {*_BACKEND_CHOICES, "llama.cpp", "llama_cpp"}
+    assert service._SUPPORTED_BACKENDS == {
+        *_BACKEND_CHOICES,
+        "llama.cpp",
+        "llama_cpp",
+        "hyperflare",
+    }
 
 
 def test_schema_backend_choices() -> None:
@@ -686,5 +757,5 @@ def test_unsupported_backend_message() -> None:
     assert str(excinfo.value) == (
         "Unsupported backend: Bogus. "
         "Supported: vllm, litellm, llamacpp, sglang, gemini, openai, anthropic, "
-        "ninfer, tensorfold, halogen, strata, tabbyapi, tandemllm, unknown"
+        "ninfer, tensorfold, halogen, strata, tabbyapi, tandemllm, flare, unknown"
     )

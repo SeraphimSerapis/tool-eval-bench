@@ -27,6 +27,7 @@
         "strata",
         "tabbyapi",
         "tandemllm",
+        "flare",
         "unknown"
       ],
       "default": "unknown",
