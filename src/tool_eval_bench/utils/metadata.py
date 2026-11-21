@@ -25,6 +25,7 @@ import httpx
 
 from tool_eval_bench.domain.engines import (
     ENGINE_PROFILES,
+    FLARE,
     HALOGEN,
     LITELLM,
     LLAMACPP,
@@ -500,7 +501,11 @@ def backend_from_models(body: Any) -> tuple[str, str] | None:
     """Read a distinctive model owner without guessing from its model ID."""
     data = body.get("data") if isinstance(body, dict) else None
     if isinstance(data, list) and data and isinstance(data[0], dict):
-        return _declared("owned_by", data[0].get("owned_by"))
+        owner = _declared("owned_by", data[0].get("owned_by"))
+        if owner:
+            return owner
+        if isinstance(data[0].get("flare"), dict):
+            return FLARE.identity
     return None
 
 
@@ -842,6 +847,34 @@ async def _probe_tandemllm(
     return result
 
 
+async def _probe_flare(
+    base_url: str,
+    api_key: str | None,
+    *,
+    model: str | None = None,
+    session: _ProbeSession,
+) -> dict[str, Any]:
+    """Read Flare's concurrency limit from the memoized ``/v1/models`` card.
+
+    ``max_model_len`` is already captured by ``_probe_models``; Flare exposes
+    no server version over HTTP, so ``engine_version`` stays unset.
+    """
+    result: dict[str, Any] = {"engine_name": FLARE.display_name}
+    body = await _probe_json(
+        session,
+        _models_url(base_url),
+        headers=_auth_headers(api_key),
+        what="Flare /v1/models",
+    )
+    data = body.get("data") if body else None
+    entry = _listing_entry(data, model) if isinstance(data, list) else None
+    flare = entry.get("flare") if entry is not None else None
+    slots = _positive_int(flare.get("max_concurrency")) if isinstance(flare, dict) else None
+    if slots:
+        result["slot_count"] = slots
+    return result
+
+
 async def _identify_unlabelled(
     base_url: str, api_key: str | None, *, session: _ProbeSession
 ) -> tuple[str, str | None]:
@@ -905,6 +938,8 @@ async def _probe_engine(
             result.update(await _probe_tabbyapi(base_url, api_key, session=active))
         elif key == TANDEMLLM.key:
             result.update(await _probe_tandemllm(base_url, api_key, session=active))
+        elif key == FLARE.key:
+            result.update(await _probe_flare(base_url, api_key, model=model, session=active))
         elif key == LLAMACPP.key:
             props = await _probe_props(base_url, api_key, session=active)
             # A GGUF file type cannot tell UD-Q4_K_XL or Q4_K_L from Q4_K_M, so

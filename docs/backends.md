@@ -16,6 +16,9 @@ needs no chat endpoint; see [decision-models.md](decision-models.md).
 - **TandemLLM** — OpenAI-compatible engine, identified by its model owner or `Server` header
 - **TensorFold** serves MLX and CUDA models through the existing OpenAI adapter;
   detected by `owned_by: "tensorfold"` or the `tensorfold:` metrics namespace
+- **Flare** serves models via [Hyperflare](https://github.com/NVIDIA/hyperflare-inference) through
+  the existing OpenAI adapter, and natively serves `/v1/messages` with `--format anthropic`;
+  detected by the `flare_` metrics namespace or the `flare` metadata object on `/v1/models`
 - **Gemini** — supported through its native API as well as its OpenAI-compatible
   endpoint; the native wire format is detected from the URL, and `--format` pins
   it manually
@@ -29,10 +32,10 @@ Detection runs in a fixed order and stops at the first answer. The engine facts
 it relies on, such as namespaces, their precedence and the names servers declare,
 live in one profile per engine in `src/tool_eval_bench/domain/engines.py`:
 
-1. A native Prometheus namespace on `/metrics` (`halogen:`, `tensorfold:`, `strata:`, `vllm:`,
+1. A native Prometheus namespace on `/metrics` (`halogen:`, `tensorfold:`, `strata:`, `flare_`, `vllm:`,
    `sglang:` or `sglang_`, then `llamacpp:`).
 2. vLLM's `/version`.
-3. The identity a server declares about itself: `owned_by` in `/v1/models`, an
+3. The identity a server declares about itself: `owned_by` or a `flare` metadata object in `/v1/models`, an
    identifying `Server` header, `service` in `/health`, `software.name` in
    `/.well-known/serviceinfo`, or the product name at the start of `build_info` in
    `/props`. Names must match exactly, ignoring case: `tabbyAPI` identifies TabbyAPI
@@ -291,6 +294,69 @@ For a speedup comparison, measure an otherwise identical serial run using
 rate through `--baseline-tgs`. Keep checkpoint, backend, prompt, seed, and
 sampling settings fixed. At nonzero temperature, independent repeats require
 different seeds; without a seed TensorFold derives one from the prompt.
+
+## Flare
+
+```bash
+# OpenAI-compatible endpoint (default format; http://127.0.0.1:8000 also works):
+tool-eval-bench run --short --base-url http://127.0.0.1:8000/v1 --seed 42
+# Native Anthropic Messages API on the same server:
+tool-eval-bench run --short --base-url http://127.0.0.1:8000 --format anthropic --seed 42
+# Pin the reporting label when a proxy hides identification endpoints (`hyperflare` is an alias):
+tool-eval-bench run --backend flare --base-url http://127.0.0.1:8000/v1 --seed 42
+```
+
+[Flare](https://github.com/NVIDIA/hyperflare-inference) (Hyperflare) listens on
+`http://127.0.0.1:8000` by default and runs through the existing OpenAI-compatible
+adapter (`--format openai`, the default). The same server also exposes the native
+Anthropic Messages API at `/v1/messages`, selectable with `--format anthropic`.
+
+Automatic detection checks `/metrics` first for the `flare_` Prometheus namespace.
+Flare serves `/metrics` unauthenticated as Prometheus text 0.0.4 by default. When
+`/metrics` is hidden or proxied, detection falls back to the `flare` metadata object
+on `/v1/models` cards; `owned_by: "local"` alone is never treated as Flare. Pass
+`--backend flare` (or its alias `--backend hyperflare`) to pin the reporting label
+explicitly.
+
+The metadata probe reads `max_model_len` (Flare's effective per-request prompt plus
+output token limit) and `flare.max_concurrency` (recorded as `slot_count`) from
+`/v1/models`. Flare does not expose a server version over HTTP, so `engine_version`
+stays unknown. Quantization inferred from the model name remains a heuristic; use
+`--label` to record deployment details such as core build or quantization. Because
+`max_model_len` is the single-request context limit, context pressure, the pressure
+sweep, and the needle benchmark pick it up directly from `/v1/models` (and also fall
+back to the value recorded by the engine probe).
+
+For `--spec-bench` and `spec-live`, Flare exposes Prometheus speculative counters
+(`flare_accepted_draft_tokens_total`, `flare_verification_draft_tokens_total`, and
+`flare_draft_request_rounds_total`) and per-depth draft outcomes
+(`flare_speculative_drafts_total`) covering both MTP learned drafters and
+shared-history copy drafts. Flare renders those counters even when no drafting takes
+place, so speculative decoding counts as active only once draft tokens are offered,
+and the proposer method stays `unknown` unless `--spec-method` is passed. `spec-live`
+also reads Flare's prefill and generation token counters (`flare_prefill_tokens_total`,
+`flare_generated_tokens_total`), KV page utilization (`flare_total_kv_pages` and
+`flare_free_kv_pages`), prefix cache lookups and hits (`flare_cache_lookups_total`,
+`flare_cache_hits_total`), active and pending request gauges (`flare_active_requests`,
+`flare_pending_requests`), and per-position acceptance rates across MTP and copy
+drafts.
+
+Practical serving notes:
+
+- **Sampling clamping.** Flare clamps `temperature`, `top_p`, `top_k`, `min_p`, and
+  penalty parameters to the loaded core's `sampling_ranges`, or fixes them to
+  `sampling_defaults` when a range is null. Passing `--temperature 0` clamps to the
+  core's minimum or default rather than forcing greedy decoding when the core
+  disallows 0. `seed` remains request-controlled.
+- **Prefix caching.** GPU prefix caching (and optional host caching) is always on,
+  with no per-request bypass flag or reset endpoint. `llama-benchy` (used by `--perf`
+  when installed) draws fresh random slices per request to defeat prefix caching,
+  whereas the built-in fallback sweep (`runner/throughput.py`) reuses deterministic
+  filler. Use `llama-benchy` for cold-prefill sweeps, or verify cold prefill via
+  `usage.prompt_tokens_details.cached_tokens == 0`.
+- **Tools and reasoning.** Standard tool calling (`tools`, `tool_choice`,
+  `parallel_tool_calls`) and reasoning (`reasoning_content`) are supported natively.
+  Flare rejects `strict: true` in tool schemas with HTTP 400.
 
 ## LiteLLM and other model routers
 

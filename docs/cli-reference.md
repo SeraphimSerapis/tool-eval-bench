@@ -201,7 +201,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--base-url URL` | Server endpoint |
 | `--redact-url` | Mask the server URL in console output, including `--probe`, pre-flight errors, the auto-discovered localhost URL, and the `spec-live` metrics endpoint, for screenshots and recordings. Reports, stored runs, and `--json` error output are always redacted |
 | `--model NAME` | Model name (auto-detected if omitted) |
-| `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp`, `sglang`, `gemini`, `openai`, `anthropic`, `ninfer`, `tensorfold`, `halogen`, `strata`, `tabbyapi`, `tandemllm`, `unknown`. Auto-detected when omitted; otherwise `unknown`. |
+| `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp`, `sglang`, `gemini`, `openai`, `anthropic`, `ninfer`, `tensorfold`, `halogen`, `strata`, `tabbyapi`, `tandemllm`, `flare`, `unknown`. Auto-detected when omitted; otherwise `unknown`. |
 | `--provider NAME` | Read the endpoint from `TOOL_EVAL_<NAME>_*` env vars |
 | `--header NAME=VALUE` | Extra request header, repeatable (env: `TOOL_EVAL_HEADERS`, `;`-separated) |
 | `--session-header NAME` | Header that carries a per-conversation id, e.g. `x-opencode-session` (env: `TOOL_EVAL_SESSION_HEADER`) |

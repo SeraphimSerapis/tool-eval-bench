@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from tool_eval_bench.domain.engines import (
+    FLARE,
     STRATA,
     TENSORFOLD,
     engine_profile,
@@ -314,6 +315,24 @@ _SGLANG_ENGINE_METRICS = {
     "waiting_reqs": "sglang:num_queue_reqs",
     "prefix_cache_hit": "sglang:cache_hit_rate",
 }
+_FLARE_SPEC_METRICS = {
+    "accepted_tokens": "flare_accepted_draft_tokens_total",
+    "draft_tokens": "flare_verification_draft_tokens_total",
+    "num_drafts": "flare_draft_request_rounds_total",
+}
+_FLARE_ENGINE_SUM_METRICS = {
+    "prompt_tokens_total": "flare_prefill_tokens_total",
+    "generation_tokens_total": "flare_generated_tokens_total",
+    "running_reqs": "flare_active_requests",
+    "waiting_reqs": "flare_pending_requests",
+    "prefix_cache_queries": "flare_cache_lookups_total",
+    "prefix_cache_hits": "flare_cache_hits_total",
+}
+_FLARE_ENGINE_GAUGE_METRICS = {
+    "total_kv_pages": "flare_total_kv_pages",
+    "free_kv_pages": "flare_free_kv_pages",
+}
+_FLARE_PER_POSITION_METRIC_NAME = "flare_speculative_drafts_total"
 _SUM_COUNTER_KEYS = frozenset(
     {
         "accepted_tokens",
@@ -405,12 +424,14 @@ class MetricsSnapshot:
     sglang_spec_metrics_present: bool = False
     llamacpp_spec_metrics_present: bool = False
     llamacpp_metrics_present: bool = False
+    flare_spec_metrics_present: bool = False
+    flare_metrics_present: bool = False
     # Strata exports vLLM's counter names; its own ``strata:`` namespace is
     # what tells the two apart.
     strata_metrics_present: bool = False
 
-    # ``vllm`` / ``strata`` / ``sglang`` / ``llamacpp`` / ``tensorfold``, or
-    # ``unknown``.
+    # ``vllm`` / ``strata`` / ``sglang`` / ``llamacpp`` / ``tensorfold`` /
+    # ``flare``, or ``unknown``.
     spec_backend: str = "unknown"
 
     @property
@@ -420,6 +441,7 @@ class MetricsSnapshot:
             or self.tensorfold_spec_metrics_present
             or self.sglang_spec_metrics_present
             or self.llamacpp_spec_metrics_present
+            or self.flare_spec_metrics_present
             or self.draft_tokens > 0
             or self.accepted_tokens > 0
             or self.num_drafts > 0
@@ -432,6 +454,7 @@ class MetricsSnapshot:
             self.vllm_spec_metrics_present
             or self.tensorfold_spec_metrics_present
             or self.llamacpp_spec_metrics_present
+            or self.flare_spec_metrics_present
             or self.draft_tokens > 0
             or self.accepted_tokens > 0
             or self.num_drafts > 0
@@ -639,6 +662,72 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
                 snap.per_position_drafted_counters.get(position_index, 0.0) + value
             )
 
+    # Flare (NVIDIA/hyperflare-inference) exposes cumulative counters under the
+    # ``flare_`` namespace plus 1-based depth outcomes in
+    # ``flare_speculative_drafts_total``.
+    flare_spec_values: dict[str, float] = {}
+    flare_engine_values: dict[str, float] = {}
+    flare_per_pos_accepted: dict[int, float] = {}
+    flare_per_pos_drafted: dict[int, float] = {}
+    if metrics_namespace_present(text, FLARE):
+        for field_name, metric_name in _FLARE_SPEC_METRICS.items():
+            series = _metric_series(text, metric_name)
+            if series:
+                flare_spec_values[field_name] = sum(val for _, val in series)
+                snap.flare_spec_metrics_present = True
+                snap.flare_metrics_present = True
+
+        for labels, value in _metric_series(text, _FLARE_PER_POSITION_METRIC_NAME):
+            depth = _parse_position_index(labels.get("depth"))
+            if depth is None or depth < 1:
+                continue
+            position_index = depth - 1
+            outcome = labels.get("outcome")
+            if outcome == "accepted":
+                flare_per_pos_accepted[position_index] = (
+                    flare_per_pos_accepted.get(position_index, 0.0) + value
+                )
+                snap.flare_spec_metrics_present = True
+                snap.flare_metrics_present = True
+            elif outcome == "offered":
+                flare_per_pos_drafted[position_index] = (
+                    flare_per_pos_drafted.get(position_index, 0.0) + value
+                )
+                flare_per_pos_accepted.setdefault(position_index, 0.0)
+                snap.flare_spec_metrics_present = True
+                snap.flare_metrics_present = True
+
+        for field_name, metric_name in _FLARE_ENGINE_SUM_METRICS.items():
+            series = _metric_series(text, metric_name)
+            if series:
+                flare_engine_values[field_name] = sum(val for _, val in series)
+                snap.flare_metrics_present = True
+
+        for field_name, metric_name in _FLARE_ENGINE_GAUGE_METRICS.items():
+            value = _select_gauge_series(_metric_series(text, metric_name))
+            if value is not None:
+                flare_engine_values[field_name] = value
+                snap.flare_metrics_present = True
+
+    if flare_engine_values:
+        if snap.prompt_tokens_total == 0:
+            snap.prompt_tokens_total = flare_engine_values.get("prompt_tokens_total", 0.0)
+        if snap.generation_tokens_total == 0:
+            snap.generation_tokens_total = flare_engine_values.get("generation_tokens_total", 0.0)
+        if snap.running_reqs == 0:
+            snap.running_reqs = flare_engine_values.get("running_reqs", 0.0)
+        if snap.waiting_reqs == 0:
+            snap.waiting_reqs = flare_engine_values.get("waiting_reqs", 0.0)
+        if snap.prefix_cache_queries == 0:
+            snap.prefix_cache_queries = flare_engine_values.get("prefix_cache_queries", 0.0)
+        if snap.prefix_cache_hits == 0:
+            snap.prefix_cache_hits = flare_engine_values.get("prefix_cache_hits", 0.0)
+        if snap.kv_cache_usage is None and snap.gpu_cache_usage is None:
+            total_pages = flare_engine_values.get("total_kv_pages")
+            free_pages = flare_engine_values.get("free_kv_pages")
+            if total_pages is not None and free_pages is not None and total_pages > 0:
+                snap.kv_cache_usage = max(0.0, min(1.0, (total_pages - free_pages) / total_pages))
+
     # Use llama.cpp spec counters as the generic counter view when no vLLM
     # counter family is present.  This keeps existing dashboard consumers
     # backend-neutral while retaining explicit fields for mixed scrapes.
@@ -652,15 +741,31 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
         snap.per_position_counters = dict(snap.llamacpp_per_position_counters)
     elif snap.vllm_spec_metrics_present:
         snap.spec_backend = "strata" if snap.strata_metrics_present else "vllm"
+    elif snap.flare_spec_metrics_present and not snap.tensorfold_spec_metrics_present:
+        snap.accepted_tokens = flare_spec_values.get("accepted_tokens", 0.0)
+        snap.draft_tokens = flare_spec_values.get("draft_tokens", 0.0)
+        snap.num_drafts = flare_spec_values.get("num_drafts", 0.0)
+        if flare_per_pos_accepted:
+            snap.per_position_counters = dict(flare_per_pos_accepted)
+        if flare_per_pos_drafted:
+            snap.per_position_drafted_counters = dict(flare_per_pos_drafted)
+        if snap.spec_backend == "unknown":
+            snap.spec_backend = FLARE.key
     if snap.tensorfold_spec_metrics_present and snap.spec_backend == "unknown":
         snap.spec_backend = "tensorfold"
 
     if snap.llamacpp_metrics_present and snap.spec_backend == "unknown":
         snap.spec_backend = "llamacpp"
+    if snap.flare_metrics_present and snap.spec_backend == "unknown":
+        snap.spec_backend = FLARE.key
 
     # If we have per-position counters but no rate gauges, compute rates
     # from counters.
-    if not snap.per_position_rates and snap.per_position_counters and snap.num_drafts > 0:
+    if (
+        not snap.per_position_rates
+        and snap.per_position_counters
+        and (snap.num_drafts > 0 or snap.per_position_drafted_counters)
+    ):
         snap.per_position_rates = per_position_rates_from_counters(
             snap.per_position_counters, snap.per_position_drafted_counters, snap.num_drafts
         )
