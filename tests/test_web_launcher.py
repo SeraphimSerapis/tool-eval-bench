@@ -174,6 +174,7 @@ async def test_schema_and_probe_endpoints(
         return {
             "data": [
                 {"id": "qwen3-8b", "root": "Qwen/Qwen3-8B-FP8"},
+                {"id": "qwen3-8b:fast", "root": "Qwen/Qwen3-8B-FP8"},
                 {"id": "llama3-70b"},
             ]
         }
@@ -195,7 +196,8 @@ async def test_schema_and_probe_endpoints(
         assert probe_data["reachable"] is True
         assert probe_data["resolved_base_url"] == _BASE_URL
         assert probe_data["models"] == [
-            {"id": "qwen3-8b", "display_name": "Qwen/Qwen3-8B-FP8"},
+            {"id": "qwen3-8b", "display_name": "qwen3-8b"},
+            {"id": "qwen3-8b:fast", "display_name": "qwen3-8b:fast"},
             {"id": "llama3-70b", "display_name": "llama3-70b"},
         ]
 
