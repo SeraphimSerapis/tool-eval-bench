@@ -254,11 +254,11 @@ async def probe_endpoint_models(
             api_id = str(item.get("id") or str(item.get("name", "")).removeprefix("models/"))
             if not api_id:
                 continue
-            root = str(
-                item.get("root") or item.get("displayName") or item.get("display_name") or ""
-            )
-            display = root if root and root != api_id else api_id
-            models.append({"id": api_id, "display_name": display})
+            # Label entries with the id, not the server's ``root`` name.
+            # LoRA-style servers report the same root for the base model and
+            # every adapter, which collapsed the picker into duplicate,
+            # indistinguishable entries that could not be selected apart.
+            models.append({"id": api_id, "display_name": api_id})
 
     detection = await identify_backend(
         None,
