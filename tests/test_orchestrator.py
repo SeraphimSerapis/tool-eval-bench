@@ -2126,3 +2126,39 @@ async def test_loop_guard_resets_across_non_tool_turns_and_follow_up_phases() ->
     assert res_loop.turn_count == 5
     assert res_loop.failure_kind == FailureKind.REPEATED_CALL_LOOP
     assert "loop_guard=" in res_loop.raw_log
+
+
+@pytest.mark.asyncio
+async def test_default_turn_budget_is_eight_and_surfaces_budget_stop_notes() -> None:
+    from tool_eval_bench.cli.dispatch import _plain_verdict
+    from tool_eval_bench.cli.display import BenchmarkDisplay
+    from tool_eval_bench.evals.scenarios import HARDMODE_SCENARIOS
+    from tool_eval_bench.runner.orchestrator import MAX_TURNS
+
+    assert MAX_TURNS == 8
+    tc103 = next(s for s in HARDMODE_SCENARIOS if s.id == "TC-103")
+    assert tc103.max_turns_override == 12
+
+    scenario = _tool_failing_evaluator("CAP-01")
+    result = await run_scenario(
+        _stalled_tool_adapter(),
+        model="test-model",
+        base_url="http://localhost:8000",
+        api_key="key",
+        scenario=scenario,
+    )
+    assert result.turn_count == 8
+    assert result.turn_budget_exceeded is True
+    assert result.failure_kind == FailureKind.BUDGET_EXCEEDED
+    assert result.note is not None
+    assert "8-turn limit" in result.note
+    assert "budget_exhausted=turn limit reached (8/8)" in result.raw_log
+    assert "[turn cap]" in _plain_verdict(result)
+
+    display = BenchmarkDisplay(
+        model="test-model",
+        backend="vllm",
+        base_url="http://localhost:8000",
+        scenarios=[scenario],
+    )
+    assert "(turn cap)" in display._format_result_line(scenario, result)

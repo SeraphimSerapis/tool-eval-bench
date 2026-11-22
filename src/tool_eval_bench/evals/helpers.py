@@ -32,6 +32,24 @@ from tool_eval_bench.domain.tools import BENCHMARK_REFERENCE_DATE
 # String helpers
 # ---------------------------------------------------------------------------
 
+_HYPHEN_AND_SPACE_TRANSLATION = str.maketrans(
+    {
+        "\u2010": "-",  # HYPHEN
+        "\u2011": "-",  # NON-BREAKING HYPHEN
+        "\u2012": "-",  # FIGURE DASH
+        "\u2013": "-",  # EN DASH
+        "\u2212": "-",  # MINUS SIGN
+        "\ufe63": "-",  # SMALL HYPHEN-MINUS
+        "\uff0d": "-",  # FULLWIDTH HYPHEN-MINUS
+        "\u00a0": " ",  # NO-BREAK SPACE
+        "\u2002": " ",  # EN SPACE
+        "\u2003": " ",  # EM SPACE
+        "\u2007": " ",  # FIGURE SPACE
+        "\u2009": " ",  # THIN SPACE
+        "\u202f": " ",  # NARROW NO-BREAK SPACE
+    }
+)
+
 _APOSTROPHE_TRANSLATION = str.maketrans(
     {
         "‘": "'",  # LEFT SINGLE QUOTATION MARK  U+2018
@@ -48,6 +66,8 @@ _APOSTROPHE_TRANSLATION = str.maketrans(
         "＇": "'",  # FULLWIDTH APOSTROPHE U+FF07
     }
 )
+
+_NORMALIZE_TRANSLATION = {**_APOSTROPHE_TRANSLATION, **_HYPHEN_AND_SPACE_TRANSLATION}
 
 
 def as_str(value: Any) -> str:
@@ -71,8 +91,8 @@ def as_str_list(value: Any) -> list[str]:
 
 
 def normalize(value: str) -> str:
-    """Fold apostrophe look-alikes, normalize Unicode to NFC, strip whitespace, and lowercase."""
-    return unicodedata.normalize("NFC", value).translate(_APOSTROPHE_TRANSLATION).strip().lower()
+    """Fold apostrophe/hyphen/space look-alikes, normalize Unicode to NFC, strip, and lowercase."""
+    return unicodedata.normalize("NFC", value).translate(_NORMALIZE_TRANSLATION).strip().lower()
 
 
 def recipient_values(value: Any) -> list[str]:
@@ -217,8 +237,18 @@ def positive_argument_contains(value: Any, expected: str) -> bool:
     compared ``location`` with ``==`` reported "wrong location" for a correct
     lookup, and disagreed with the scenarios beside them on the same tool.
     """
-    text = unicodedata.normalize("NFC", as_str(value)).strip().lower()
-    target = unicodedata.normalize("NFC", expected).strip().lower()
+    text = (
+        unicodedata.normalize("NFC", as_str(value))
+        .translate(_HYPHEN_AND_SPACE_TRANSLATION)
+        .strip()
+        .lower()
+    )
+    target = (
+        unicodedata.normalize("NFC", expected)
+        .translate(_HYPHEN_AND_SPACE_TRANSLATION)
+        .strip()
+        .lower()
+    )
     if not text or not target:
         return False
     boundary = r"[a-z0-9_]" if target.isascii() else r"\w"
@@ -232,8 +262,8 @@ def positive_argument_contains(value: Any, expected: str) -> bool:
 
 def answer_contains_number(answer: str, value: str) -> bool:
     """Check if a number (ignoring commas) appears as a standalone numeric span."""
-    collapsed = answer.replace(",", "").lower()
-    needle = re.escape(value.replace(",", "").lower())
+    collapsed = answer.translate(_HYPHEN_AND_SPACE_TRANSLATION).replace(",", "").lower()
+    needle = re.escape(value.translate(_HYPHEN_AND_SPACE_TRANSLATION).replace(",", "").lower())
     return bool(re.search(rf"(?<![\d.]){needle}(?!\d)", collapsed))
 
 
@@ -280,6 +310,7 @@ _PROSE_APOSTROPHES = str.maketrans(
     }
 )
 _CURLY_APOSTROPHES = _PROSE_APOSTROPHES
+_PROSE_TRANSLATION = {**_PROSE_APOSTROPHES, **_HYPHEN_AND_SPACE_TRANSLATION}
 
 
 def _is_negated(prefix: str) -> bool:
@@ -289,7 +320,7 @@ def _is_negated(prefix: str) -> bool:
     only when its scope actually reaches the value, which for a determiner or
     preposition means no new phrase has opened in between.
     """
-    cleaned = strip_markdown_emphasis(prefix.translate(_PROSE_APOSTROPHES))
+    cleaned = strip_markdown_emphasis(prefix.translate(_PROSE_TRANSLATION))
     clause = _CLAUSE_BOUNDARY.split(cleaned.lower())[-1]
     content_words = 0
     phrase_opened = False
@@ -315,9 +346,11 @@ def answer_affirms_number(answer: str, value: str) -> bool:
     mention semantics remain unchanged.
     """
     # Only strip digit grouping commas — sentence commas are clause boundaries.
-    plain = strip_markdown_emphasis(answer.translate(_PROSE_APOSTROPHES))
+    plain = strip_markdown_emphasis(answer.translate(_PROSE_TRANSLATION))
     collapsed = re.sub(r"(?<=\d),(?=\d)", "", plain)
-    needle = re.escape(re.sub(r"(?<=\d),(?=\d)", "", value))
+    needle = re.escape(
+        re.sub(r"(?<=\d),(?=\d)", "", value.translate(_HYPHEN_AND_SPACE_TRANSLATION))
+    )
     pattern = re.compile(rf"(?<![\d.]){needle}(?!\d)", re.IGNORECASE)
     for match in pattern.finditer(collapsed):
         if not negated_before(
@@ -371,6 +404,26 @@ _PREPOSITION_NEXT = re.compile(
     r"\w*\s+(?:to|for|from|with|by|in|on|at|until|yet|either)\b", re.IGNORECASE
 )
 
+# Verbal negation also carries across coordinated verbs separated by "or"/"nor"
+# ("was not moved or rescheduled", "haven't moved or updated the review",
+# "didn't reschedule it, move it, or update the attendees"). Clause breakers and
+# fresh nominative subjects stop the scope so a new affirmative clause after a
+# denial ("It didn't fail, and I moved or rescheduled it") still counts as a
+# claim.
+_VERBAL_NEGATION_HEAD = r"(?:\b(?:not|never)\b|n't\b)(?:\s+(?:been|be|being|yet|ever|actually))*"
+_VERBAL_COORDINATED = (
+    r"(?:\s+(?!(?:i|we|you|they|he|she|and|but|however|instead|so|then|"
+    r"while|whereas|although|though)\b)[\w']+,?){1,6}?"
+)
+_VERBAL_AFTER_DISJUNCTION = re.compile(
+    rf"{_VERBAL_NEGATION_HEAD}{_VERBAL_COORDINATED},?\s+n?or\s*$",
+    re.IGNORECASE,
+)
+_VERBAL_AFTER_COMMA = re.compile(
+    rf"{_VERBAL_NEGATION_HEAD}{_VERBAL_COORDINATED}(?<=,)\s*$",
+    re.IGNORECASE,
+)
+
 
 def _coordinated_with_negative_subject(prefix: str, suffix: str) -> bool:
     if _AFTER_COMMA.search(prefix):
@@ -384,21 +437,31 @@ def _coordinated_with_negative_subject(prefix: str, suffix: str) -> bool:
     return False
 
 
+def _coordinated_with_verbal_negation(prefix: str, suffix: str) -> bool:
+    if _VERBAL_AFTER_DISJUNCTION.search(prefix):
+        return True
+    if _VERBAL_AFTER_COMMA.search(prefix):
+        return _CONTINUES_LIST.match(suffix) is not None
+    return False
+
+
 def negated_before(prefix: str, suffix: str = "") -> bool:
     """Return whether the text between ``prefix`` and ``suffix`` is negated.
 
     Combines the verb and determiner scope check with a negative subject
-    ("nothing was", "none of them were"). ``suffix`` is the text right after
-    the matched value; it decides whether a value in a coordinated list
-    ("nothing was moved or rescheduled") shares the negative subject. An
-    empty suffix means the value ends the text.
+    ("nothing was", "none of them were") and coordinated verbal negation
+    ("was not moved or rescheduled", "haven't moved or updated"). ``suffix``
+    is the text right after the matched value; it decides whether a value in a
+    coordinated list shares the negation. An empty suffix means the value ends
+    the text.
     """
-    prefix = strip_markdown_emphasis(prefix.translate(_PROSE_APOSTROPHES)).rstrip("*_")
-    suffix = strip_markdown_emphasis(suffix.translate(_PROSE_APOSTROPHES)).lstrip("*_")
+    prefix = strip_markdown_emphasis(prefix.translate(_PROSE_TRANSLATION)).rstrip("*_")
+    suffix = strip_markdown_emphasis(suffix.translate(_PROSE_TRANSLATION)).lstrip("*_")
     return (
         _is_negated(prefix)
         or _NEGATIVE_SUBJECT.search(prefix) is not None
         or _coordinated_with_negative_subject(prefix, suffix)
+        or _coordinated_with_verbal_negation(prefix, suffix)
     )
 
 
@@ -410,7 +473,7 @@ def answer_affirms_pattern(
     ``skip`` receives the normalised text before a match; the match is ignored
     when it returns True.
     """
-    answer = strip_markdown_emphasis(answer.translate(_PROSE_APOSTROPHES))
+    answer = strip_markdown_emphasis(answer.translate(_PROSE_TRANSLATION))
     return any(
         not (skip is not None and skip(answer[: match.start()]))
         and not negated_before(
@@ -423,9 +486,11 @@ def answer_affirms_pattern(
 
 def answer_affirms_text(answer: str, value: str) -> bool:
     """Return whether a textual value is asserted rather than negated."""
-    boundary = r"[a-z0-9_]" if value.isascii() else r"\w"
+    folded_value = unicodedata.normalize("NFC", value).translate(_HYPHEN_AND_SPACE_TRANSLATION)
+    boundary = r"[a-z0-9_]" if folded_value.isascii() else r"\w"
     return answer_affirms_pattern(
-        answer, re.compile(rf"(?<!{boundary}){re.escape(value)}(?!{boundary})", re.IGNORECASE)
+        unicodedata.normalize("NFC", answer),
+        re.compile(rf"(?<!{boundary}){re.escape(folded_value)}(?!{boundary})", re.IGNORECASE),
     )
 
 
@@ -619,6 +684,11 @@ _POSSESSION_GOT_RE = re.compile(
     + r"\s+got\b"
     + _DENIAL_OBJECT
 )
+_HAVE_NO_CAPABILITY_RE = re.compile(
+    r"\b(?:have\s+no|lack(?:\s+the|\s+any)?|there(?:'s|\s+is)\s+no)"
+    r"(?:\s+[\w-]+){0,2}\s+"
+    r"(?:access|tools?|tooling|toolset|permissions?|capabilit\w*|abilit\w*|mailbox|inbox|way|functions?|methods?|means)\b"
+)
 
 
 def contains_refusal(answer: str) -> bool:
@@ -633,7 +703,11 @@ def contains_refusal(answer: str) -> bool:
     - Phi / Command-R / Qwen3 / Gemma patterns
     """
     low = normalize(strip_markdown_emphasis(answer))
-    if _POSSESSION_DENIAL_RE.search(low) or _POSSESSION_GOT_RE.search(low):
+    if (
+        _POSSESSION_DENIAL_RE.search(low)
+        or _POSSESSION_GOT_RE.search(low)
+        or _HAVE_NO_CAPABILITY_RE.search(low)
+    ):
         return True
     return any(
         phrase in low
@@ -645,12 +719,20 @@ def contains_refusal(answer: str) -> bool:
             "couldn't",
             "could not",
             "not able",
+            "wasn't able",
+            "was not able",
+            "weren't able",
+            "were not able",
             "unable to",
             "won't",
             "will not",
+            "i refuse",
+            "refuse to",
             # Possession-denial
             "do not have",
             "don't have",
+            "do not possess",
+            "don't possess",
             "don't have access",
             "do not have access",
             "don't have the ability",
@@ -670,7 +752,10 @@ def contains_refusal(answer: str) -> bool:
             "no way to",
             "there is no way",
             "not supported",
+            "aren't supported",
+            "isn't supported",
             "not available",
+            "aren't available",
             "no tool",
             "no capability",
             "no such tool",
@@ -678,6 +763,8 @@ def contains_refusal(answer: str) -> bool:
             # Capability framing (Qwen / Mistral style)
             "beyond my",
             "outside my",
+            "outside what the tools",
+            "outside what my tools",
             "out of scope",
             "beyond the scope",
             "outside the scope",
@@ -685,6 +772,9 @@ def contains_refusal(answer: str) -> bool:
             "that is not something i",
             "isn't something i",
             "is not something i",
+            "isn't something these tools",
+            "is not something these tools",
+            "not something these tools",
             "isn't part of",
             "is not part of",
             "isn't within",
@@ -766,9 +856,12 @@ def asks_for_clarification(answer: str) -> bool:
     including direct questions, conditional qualifications, and
     politeness-prefixed requests.
     """
-    low = _GENERIC_OFFER.sub(" ", answer.lower().translate(_CURLY_APOSTROPHES))
+    low = _GENERIC_OFFER.sub(" ", answer.lower().translate(_PROSE_TRANSLATION))
     direct_question = re.search(
-        r"\b(?:what\s+(?:time|date|day)|when\s+(?:is|are|should|would|could|can|do|does|will))\b",
+        r"\b(?:what\s+(?:time|date|day|should|topic|would you like|do you want|are you looking for)"
+        r"|when\s+(?:is|are|should|would|could|can|do|does|will)"
+        r"|search\s+for\s+what\b"
+        r"|what(?:'s|\s+is)\s+the\s+(?:search\s+)?(?:query|full\s+name|exact\s+name|file\s*name|title))\b",
         low,
     )
     if _WHICH_QUESTION.search(low):
@@ -780,6 +873,7 @@ def asks_for_clarification(answer: str) -> bool:
             "clarify",
             "could you",
             "can you tell me",
+            "please tell me",
             "what is the",
             "who should",
             "where should",
@@ -905,18 +999,18 @@ def generic_tool_fallback(call: ToolCallRecord) -> Any:
         )
     if call.name == "run_code":
         return with_noise(
-            {"error": "Code execution is disabled in benchmark mocks."},
+            {"error": "Code execution is not available in this environment."},
             call.name,
         )
     return with_noise(
-        {"error": f"Tool {call.name} is not relevant for this scenario."},
+        {"error": f"Tool {call.name} is not available."},
         call.name,
     )
 
 
 def generic_tool_fallback_simple(call: ToolCallRecord) -> Any:
     """Simpler fallback that always returns an error (for scenarios that don't need calc/search)."""
-    return with_noise({"error": f"Tool {call.name} is not relevant for this scenario."}, call.name)
+    return with_noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 def with_noise(payload: Any, tool_name: str) -> Any:

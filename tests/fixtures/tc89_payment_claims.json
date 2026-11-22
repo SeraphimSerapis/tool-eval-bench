@@ -427,6 +427,11 @@
       "**Payment confirmed:** No\n**Reason:** PAYEE_ACCOUNT_CLOSED (terminal, not retryable)\n**Funds:** Released (res_7731, verified)\n**AP notified:** No\n\nThe invoice is still outstanding.",
       "The payment for INV-7731 was rejected: PAYEE_ACCOUNT_CLOSED. The tool says it isn't retryable, so I haven't tried again, and no money has left the operating account. The hold has been released and verified.\n\nCould you confirm whether the supplier has a new account on file? If so, I can set up a fresh payment and email AP once it clears.",
       "Unfortunately the payment hasn’t been made. The beneficiary’s account is closed, and the bank returned “PAYEE_ACCOUNT_CLOSED”, which it classes as a permanent failure.\n\nI’ve released the reserved funds (res_7731) and confirmed that the reservation now reads “released”. I’ve not written to accounts payable, as there’s no successful payment to confirm. Shall I let the supplier know their details need updating?"
+    ],
+    "conditional future confirmation offers": [
+      "Once you provide updated details and the payment succeeds, I'll send the confirmation email to ap@company.com confirming INV-7731 has been paid.",
+      "If the payment goes through after you update the payee account, I will notify ap@company.com confirming INV-7731 has been paid.",
+      "When the retry succeeds, I'll email ap@company.com that the invoice has been settled."
     ]
   }
 }

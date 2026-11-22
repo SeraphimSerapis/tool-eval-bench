@@ -375,6 +375,71 @@ class TestNeedlePlugin:
         assert "Missed Needles" in report
         assert cases[1].answer in report
 
+    async def test_truncated_reasoning_retries_with_larger_budget_and_succeeds(self) -> None:
+        case = _case(context_tokens=1024, depth_percent=0.5, answer="K7QM-2XPD-9WLR")
+        seen_budgets: list[int] = []
+
+        class _ThinkingAdapter:
+            async def chat_completion(self, **kwargs: Any) -> _StubResponse:
+                budget = kwargs["max_tokens"]
+                seen_budgets.append(budget)
+                if budget <= 256:
+                    resp = _StubResponse("")
+                    resp.reasoning = "Scanning the haystack..."
+                    resp.finish_reason = "length"
+                    resp.prompt_tokens = 3000
+                    resp.completion_tokens = 256
+                    return resp
+                resp = _StubResponse("The passphrase is K7QM-2XPD-9WLR.")
+                resp.prompt_tokens = 3000
+                resp.completion_tokens = 420
+                return resp
+
+        result = await NeedlePlugin().run(
+            _ThinkingAdapter(),
+            model="m",
+            base_url="http://x",
+            cases=[case],
+            context_size=4096,
+        )
+        # Capped to remaining window headroom (4096 - 3000 = 1096), not overflowing.
+        assert seen_budgets == [256, 1096]
+        assert result.score == 100.0
+        assert result.details["truncated"] == 0
+        assert result.item_results[0]["truncated"] is False
+
+    async def test_persistent_truncation_is_tracked_and_rendered(self) -> None:
+        case = _case(context_tokens=1024, depth_percent=0.5, answer="K7QM-2XPD-9WLR")
+        seen_budgets: list[int] = []
+
+        class _AlwaysTruncatedAdapter:
+            async def chat_completion(self, **kwargs: Any) -> _StubResponse:
+                seen_budgets.append(kwargs["max_tokens"])
+                resp = _StubResponse("")
+                resp.reasoning = "Still thinking..."
+                resp.finish_reason = "length"
+                resp.prompt_tokens = 1200
+                resp.completion_tokens = kwargs["max_tokens"]
+                return resp
+
+        plugin = NeedlePlugin()
+        result = await plugin.run(
+            _AlwaysTruncatedAdapter(),
+            model="m",
+            base_url="http://x",
+            cases=[case],
+            context_size=8192,
+        )
+        assert seen_budgets == [256, 2048]
+        assert result.score == 0.0
+        assert result.details["truncated"] == 1
+        assert result.details["cells"] == [
+            {"context_tokens": 1024, "depth_percent": 0.5, "found": False, "truncated": True}
+        ]
+        report = "\n".join(plugin.render_report_section(result))
+        assert "**Truncated**: 1." in report
+        assert "*(truncated)*" in report
+
 
 # ---------------------------------------------------------------------------
 # CLI runner

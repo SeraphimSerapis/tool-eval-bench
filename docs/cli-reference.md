@@ -265,7 +265,7 @@ records the value, since acceptance falls as sampling temperature rises.
 ### Combining modes
 
 An invocation runs its modes in a fixed order: throughput, spec-bench, the
-context-pressure sweep, the accuracy plugins, then the tool-call scenarios.
+context-pressure sweep, the tool-call scenarios, then the accuracy plugins.
 Combinations where a requested mode would never run exit 2 with
 `invalid_arguments` instead of quietly skipping it:
 

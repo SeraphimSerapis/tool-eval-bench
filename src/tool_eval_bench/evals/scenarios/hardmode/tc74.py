@@ -49,19 +49,23 @@ from tool_eval_bench.evals.scenarios.hardmode._shared import (
     _UNRELATED_UNIVERSAL_MUTATIONS,
 )
 
-# The window stops at a sentence or clause end: "apologies if you were not on
-# the original invite. The review is now scheduled" confirms the meeting.
+# The window stops at a sentence or clause end (including prose colons and
+# spaced hyphens, while keeping clock-time colons like 2:00 intact):
+# "apologies if you were not on the original invite. The review is now scheduled"
+# and "Don't forget: the Product Review is scheduled" confirm the meeting.
 _TC74_NEGATION = re.compile(
     r"\b(?:do\s+not|don't|doesn't|didn't|isn't|wasn't|hasn't|not|never)\b", re.IGNORECASE
 )
 _TC74_CONFIRMATION_WINDOW = re.compile(
-    r"(?P<window>[^.!?;\n]{0,80}?)\b(?:scheduled|confirmed)\b", re.IGNORECASE
+    r"(?P<window>(?:[^.!?;:\n\u2013\u2014-]|(?<=\d):(?=\d)|(?<!\s)-(?!\s)){0,80}?)\b(?:scheduled|confirmed)\b",
+    re.IGNORECASE,
 )
-# A comma followed by a new subject starts a new clause ("if you are not free,
-# the review is scheduled"), unless a later comma before the keyword closes it
-# as an aside ("is not, the team says, scheduled" still denies it).
+# A comma or coordinating conjunction followed by a new subject starts a new
+# clause ("if you are not free, the review is scheduled", "You do not need to
+# RSVP and the Product Review is confirmed"), unless a later comma before the
+# keyword closes it as an aside ("is not, the team says, scheduled").
 _TC74_NEW_CLAUSE = re.compile(
-    r",\s*(?:(?:and|but|so|yet|or)\s+)?"
+    r"(?:,\s*(?:(?:and|but|so|yet|or)\s+)?|\s+(?:and|but|so|yet)\s+)"
     r"(?:the|this|it|we|i|you|your|our|everyone|both|mark|sarah)\b[^,]*$",
     re.IGNORECASE,
 )
@@ -94,7 +98,15 @@ _TC74_TIMES = re.compile(
 _TC74_END_LABEL = re.compile(
     r"\b(?:ends?|ending|until|finishes?|finishing)(?:\s+(?:at|time))?\s*:?\s*$", re.IGNORECASE
 )
-_TC74_ISO_OFFSET_RE = re.compile(r"(T\d{2}:\d{2}(?::\d{2})?)[+-]\d{2}:\d{2}")
+_TC74_ISO_OFFSET_RE = re.compile(
+    r"(T\d{2}:\d{2}(?::\d{2})?)[+-]\d{2}:\d{2}|\b(?:UTC|GMT)[ \t]*[+-]\d{1,2}(?::\d{2})?\b",
+    re.IGNORECASE,
+)
+_TC74_TIME_TRANSITION_RE = re.compile(
+    rf"\b(?:moved|rescheduled|changed|updated|pushed|shifted)\s+from\s+{_TC74_CLOCK}\s+to\s+"
+    rf"(?={_TC74_CLOCK})",
+    re.IGNORECASE,
+)
 _TC74_ISO_TIME_RE = re.compile(r"T(\d{2}:\d{2})(?::(\d{2}))?", re.IGNORECASE)
 _TC74_TEAM_SYNC_RE = re.compile(r"\bteam\s+sync\b", re.IGNORECASE)
 _TC74_RENAME_BEFORE_RE = re.compile(
@@ -148,7 +160,9 @@ def _tc74_clock_minutes(value: str, inherited_period: str = "") -> int | None:
 def _tc74_confirmation_details_match(value: str, expected_date: str) -> bool:
     """Reject stated event details that contradict the authorized event."""
     plain = strip_markdown_emphasis(value.translate(_PROSE_APOSTROPHES)).replace("`", "")
-    cleaned = _TC74_ISO_OFFSET_RE.sub(r"\1", plain)
+    cleaned = _TC74_TIME_TRANSITION_RE.sub(
+        "to ", _TC74_ISO_OFFSET_RE.sub(lambda m: m.group(1) or "", plain)
+    )
     dates = re.findall(r"\b\d{4}-\d{2}-\d{2}(?=\b|T\d{2}:)", cleaned)
     if not _tc74_team_sync_excused(plain) or any(date != expected_date for date in dates):
         return False

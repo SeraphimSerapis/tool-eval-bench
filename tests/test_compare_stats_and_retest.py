@@ -434,6 +434,7 @@ class TestCompareRunsCli:
         compare_runs(console, "ra", "rb")
         output = console.file.getvalue()
         assert expected_snippet in output
+        assert "single-run variance" not in output
 
 
 class TestCompareRetestDiffsCli:

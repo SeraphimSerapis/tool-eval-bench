@@ -130,6 +130,8 @@ _DISCOUNT_CUE_RE = re.compile(
     r"supersed\w*|rumou?r|previous(?:ly)?|earlier|incorrect|wrong|claim\w*|"
     r"suggest\w*|conflict\w*|overrid\w*|no\s+longer|obsolete|replaced|guess\w*|think\w*|"
     r"breach\w*|violat\w*|prohibit\w*|forbid\w*|disallow\w*|"
+    r"insufficient|inadequate|unacceptable|invalid|non-?compliant|too\s+long|"
+    r"(?:not|never)\s+(?:sufficient|enough|allowed|permitted|acceptable|valid|compliant|authoritative)|"
     r"do(?:es)?(?:\s+not|n't)\s+(?:proceed|use|apply|follow|assume|act))\b",
     re.IGNORECASE,
 )

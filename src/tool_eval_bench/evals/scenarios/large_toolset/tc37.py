@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, cast
 
 from tool_eval_bench.domain.scenarios import (
@@ -51,6 +52,11 @@ from tool_eval_bench.evals.scenarios.large_toolset._shared import (
     _result_matches_if_present,
 )
 
+_TC37_CELSIUS_MENTION_RE = re.compile(
+    r"(?<![A-Za-z0-9])-?\d+(?:\.\d+)?\s*(?:°\s*c\b|°(?!\s*f\b)|degrees?\b|\bcelsius\b)",
+    re.IGNORECASE,
+)
+
 
 def _tc37_weather_result_is_berlin(payload: Any) -> bool:
     if not isinstance(payload, dict) or "error" in payload:
@@ -85,7 +91,7 @@ def _tc37_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         )
     # Any other tool — return a generic error with noise
     return _noise(
-        {"error": f"Tool {call.name} is not relevant for this scenario."},
+        {"error": f"Tool {call.name} is not available."},
         call.name,
     )
 
@@ -127,15 +133,19 @@ def _tc37_eval(state: ScenarioState) -> ScenarioEvaluation:
                 "get_weather did not return usable Berlin weather data, "
                 "so Berlin weather cannot be confirmed."
             )
-        # Verify the model surfaced both temperature and condition, matching TC-01.
+        # Verify the model surfaced actual weather data (temp 8 or condition),
+        # matching TC-01, without stating an inaccurate Celsius temperature.
         has_temp = _answer_affirms_rounded_value(state.final_answer, "8")
         has_condition = _answer_affirms_text(state.final_answer, "overcast")
-        if has_temp and has_condition:
-            return _pass("Used get_weather with Berlin only — perfect selection from 52 tools.")
-        if has_temp or has_condition:
+        wrong_temp = not has_temp and bool(
+            _TC37_CELSIUS_MENTION_RE.search(_normalize(state.final_answer))
+        )
+        if wrong_temp:
             return _partial(
-                "Selected get_weather from 52 tools but reported only part of the Berlin weather."
+                "Selected get_weather from 52 tools but reported an inaccurate Berlin temperature."
             )
+        if has_temp or has_condition:
+            return _pass("Used get_weather with Berlin only — perfect selection from 52 tools.")
         return _partial(
             "Selected get_weather perfectly from 52 tools but did not surface "
             "the weather data in the answer.",

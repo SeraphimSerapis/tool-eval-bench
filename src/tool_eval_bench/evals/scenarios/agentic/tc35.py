@@ -67,12 +67,17 @@ _TC35_IDENTITY_PHRASES = (
     "same unit",
     "same units",
     "units are the same",
+    "identical unit",
+    "identical units",
+    "units are identical",
     "same scale",
     "same value",
+    "value is the same",
     "same number",
     "same temperature",
     "no conversion",
     "nothing to convert",
+    "null conversion",
     "no change",
     "doesn't change",
     "does not change",
@@ -82,16 +87,27 @@ _TC35_IDENTITY_PHRASES = (
     "stay the same",
     "remains the same",
     "remain the same",
+    "leaves the value",
+    "leave the value",
     "already in kelvin",
     "already kelvin",
     "both units are kelvin",
-    "converting from kelvin to kelvin",
-    "converting kelvin to kelvin",
+    "kelvin to kelvin",
+    "k to k",
+    "k→k",
+    "k -> k",
     "1:1 conversion",
     "identity",
     "no-op",
     "trivial",
     "terminology",
+)
+_TC35_IDENTITY_RE = re.compile(
+    r"\b(?:stays?|remains?)\s+(?:at\s+)?500\b"
+    r"|\bboth\s+(?:the\s+)?(?:source\s+and\s+target|units)\s+are\s+kelvin\b"
+    r"|\b500\s*(?:degrees?\s*)?(?:°\s*)?k(?:elvins?)?\s*"
+    r"(?:is\s+(?:simply\s+|just\s+|still\s+)?|equals?|=)\s*"
+    r"500\s*(?:degrees?\s*)?(?:°\s*)?k(?:elvins?)?\b"
 )
 
 
@@ -112,7 +128,9 @@ def _tc35_eval(state: ScenarioState) -> ScenarioEvaluation:
     calc_calls = [c for c in state.tool_calls if c.name == "calculator"]
     answer = _normalize(_strip_markdown_emphasis(state.final_answer))
 
-    recognized_identity = any(phrase in answer for phrase in _TC35_IDENTITY_PHRASES)
+    recognized_identity = any(phrase in answer for phrase in _TC35_IDENTITY_PHRASES) or bool(
+        _TC35_IDENTITY_RE.search(answer)
+    )
 
     # An extra conversion is a separate factual claim, judged separately below.
     def _match_is_affirmed(match: re.Match[str]) -> bool:

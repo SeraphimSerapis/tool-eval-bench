@@ -585,19 +585,22 @@ def _print_paired_stats(
     elif verdict == "significant_improvement":
         lines.append(
             "  [bold green]Signal vs noise verdict:[/] Statistically significant improvement "
-            "in B over A; signal exceeds single-run variance."
+            "in B over A across shared scenarios (paired sign test); run --retest-diffs "
+            "or --trials to check run-to-run variance."
         )
     elif verdict == "significant_regression":
         lines.append(
             "  [bold red]Signal vs noise verdict:[/] Statistically significant regression "
-            "in B relative to A; signal exceeds single-run variance."
+            "in B relative to A across shared scenarios (paired sign test); run --retest-diffs "
+            "or --trials to check run-to-run variance."
         )
     else:
         qa = escape(shlex.quote(id_a))
         qb = escape(shlex.quote(id_b))
         lines.append(
-            "  [bold yellow]Signal vs noise verdict:[/] Inconclusive difference; "
-            "observed delta is within single-run variance."
+            "  [bold yellow]Signal vs noise verdict:[/] Inconclusive difference across shared "
+            "scenarios (paired sign test); run --retest-diffs or --trials to measure "
+            "run-to-run variance."
         )
         lines.append("  [dim]Re-test discordant scenarios across multiple trials:[/]")
         lines.append(f"    [cyan]tool-eval-bench compare {qa} {qb} --retest-diffs --trials 5[/]")

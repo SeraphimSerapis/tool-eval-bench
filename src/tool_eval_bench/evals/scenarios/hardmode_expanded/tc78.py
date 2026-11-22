@@ -64,7 +64,7 @@ def _tc78_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         return _noise({"error": f"Unknown ticker: {ticker or '<empty>'}."}, call.name)
     if call.name == "calculator":
         return generic_tool_fallback(call)
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 _TC78_SHARES = {"ACME": 3, "BETA": 2, "CYGN": 5}
@@ -87,18 +87,29 @@ _TC78_DOLLAR_AMOUNT = re.compile(
 _TC78_EXACT_TOTAL = re.compile(r"(?<![\d.])935(?:\.0+)?(?!\d|\.\d)")
 
 
+_TC78_AVERAGE_SHARE_PRICE = 93.5
+_TC78_PER_SHARE_CONTEXT = re.compile(r"\b(?:average|avg\.?|per\s+share|/\s*share)\b", re.IGNORECASE)
+
+
 def _tc78_contradicting_amounts(answer: str) -> list[str]:
     """Dollar amounts asserted in the answer that no correct working contains.
 
     "The total is $935. Correction: it is $1,035." affirms 935 and still hands
-    the user a wrong total. A negated figure ("not $1,035") is not asserted.
+    the user a wrong total. A negated figure ("not $1,035") is not asserted,
+    and the exact derived per-share average ($93.50 across 10 shares) is valid
+    when labelled as an average or per-share figure.
     """
     plain = strip_markdown_emphasis(answer)
     wrong = []
     for match in _TC78_DOLLAR_AMOUNT.finditer(plain):
         raw = match.group(1) or match.group(2)
-        if float(raw.replace(",", "")) in _TC78_LEGITIMATE_AMOUNTS:
+        value = float(raw.replace(",", ""))
+        if value in _TC78_LEGITIMATE_AMOUNTS:
             continue
+        if value == _TC78_AVERAGE_SHARE_PRICE:
+            window = plain[max(0, match.start() - 30) : match.end() + 30]
+            if _TC78_PER_SHARE_CONTEXT.search(window):
+                continue
         if answer_affirms_number(plain, raw):
             wrong.append(raw)
     return wrong

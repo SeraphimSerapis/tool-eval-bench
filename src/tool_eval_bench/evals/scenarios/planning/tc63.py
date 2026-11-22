@@ -95,7 +95,7 @@ def _tc63_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             },
             "web_search",
         )
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 _TC63_BUDGET_CEILING = 30

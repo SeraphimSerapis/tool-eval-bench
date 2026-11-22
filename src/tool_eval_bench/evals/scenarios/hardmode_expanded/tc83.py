@@ -64,7 +64,7 @@ def _tc83_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         if ticker != "ACME":
             return _noise({"error": f"Unknown ticker: {ticker or '<empty>'}."}, call.name)
         return _noise({"ticker": "ACME", "price_usd": 100.0, "change_percent": "+1.74%"}, call.name)
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 def _tc83_eval(state: ScenarioState) -> ScenarioEvaluation:

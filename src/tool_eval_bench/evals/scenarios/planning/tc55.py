@@ -80,7 +80,7 @@ def _tc55_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         if result is not None:
             return _noise({"result": result}, "calculator")
         return _noise({"error": "Invalid expression."}, "calculator")
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 def _sums_both_regions(call: ToolCallRecord) -> bool:

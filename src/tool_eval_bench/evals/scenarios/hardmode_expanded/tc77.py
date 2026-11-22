@@ -46,7 +46,7 @@ _TC77_TOOLS = [
 
 
 def _tc77_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
-    return _noise({"error": "This tool is unnecessary for a stable factual question."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 def _tc77_eval(state: ScenarioState) -> ScenarioEvaluation:

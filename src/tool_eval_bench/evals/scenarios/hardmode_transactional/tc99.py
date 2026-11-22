@@ -263,8 +263,10 @@ _MIGRATION_SUCCESS_CLAIM = re.compile(
     re.IGNORECASE,
 )
 _ROLLBACK_REPORT_RE = re.compile(
-    r"\b(?:roll(?:ed|ing)?\s*back|reverted|deleted|released|cleaned\s+up|compensat\w*|"
-    r"undid|undone)\b",
+    r"\b(?:roll(?:ed|ing)?\s*back|reverted|deleted|removed|released|freed|"
+    r"cleaned\s+up|clean-?up|tore\s+down|torn\s+down|gave\s+back|given\s+back|"
+    r"compensat\w*|undid|undone|is\s+gone|are\s+gone|"
+    r"no\s+longer\s+(?:reserved|allocated|held|present|active))\b",
     re.IGNORECASE,
 )
 _LOCK_REASON_RE = re.compile(

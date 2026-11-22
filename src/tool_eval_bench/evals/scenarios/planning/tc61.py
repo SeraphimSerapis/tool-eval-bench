@@ -117,7 +117,7 @@ def _is_genuine_poll(call: ToolCallRecord) -> bool:
 
 def _tc61_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name != "run_code":
-        return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+        return _noise({"error": f"Tool {call.name} is not available."}, call.name)
     previous = [
         c
         for c in state.tool_calls

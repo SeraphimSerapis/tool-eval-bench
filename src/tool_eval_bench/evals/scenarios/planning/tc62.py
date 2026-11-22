@@ -107,7 +107,7 @@ def _tc62_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             {"results": [{"name": "CFO", "email": "cfo@company.com", "role": "CFO"}]},
             "get_contacts",
         )
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 _TC62_COMPETITOR_AMOUNT = 3_800_000

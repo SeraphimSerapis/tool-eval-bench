@@ -1030,3 +1030,34 @@ def test_estimate_pass_seconds_returns_zero_without_positive_speeds() -> None:
     assert (
         estimate_pass_seconds(preset_pass, pp=512, tg=128, runs=2, pp_tps=500.0, tg_tps=0.0) == 0.0
     )
+
+
+def test_first_pass_failure_under_perf_continues_into_downstream_scenarios(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, persisted: list[dict[str, Any]]
+) -> None:
+    monkeypatch.setattr(dispatch, "_run_llama_benchy", _Benchy(raise_on_call=1))
+    target = _target(["--perf", "--perf-preset", "long"], tmp_path)
+
+    samples, finished = dispatch._run_throughput_mode(target)
+
+    assert finished is False
+    assert persisted == []
+    assert target.args._perf_incomplete is True
+    assert len(samples) == 3
+    assert all(sample.error for sample in samples)
+    output = target.console.export_text()
+    assert "Throughput pass stopped" in output
+    assert "The scored run records this" in output
+
+
+def test_first_pass_interrupt_under_perf_still_exits_without_scenarios(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, persisted: list[dict[str, Any]]
+) -> None:
+    monkeypatch.setattr(dispatch, "_run_llama_benchy", _Benchy(raise_on_call=1, interrupted=True))
+    target = _target(["--perf", "--perf-preset", "long"], tmp_path)
+
+    with pytest.raises(SystemExit) as exited:
+        dispatch._run_throughput_mode(target)
+
+    assert exited.value.code == 1
+    assert persisted == []

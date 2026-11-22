@@ -79,7 +79,7 @@ def _tc56_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         return _noise({"status": "sent"}, "send_email")
     if call.name == "set_reminder":
         return _noise({"status": "set", "reminder_id": "rem_tc56"}, "set_reminder")
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 _TC56_COLD_RE = re.compile(

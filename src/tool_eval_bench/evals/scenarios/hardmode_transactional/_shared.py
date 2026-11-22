@@ -68,7 +68,7 @@ _SUCCESS_CLAIM_RE = re.compile(
     r"has\s+(?:now\s+)?been\s+(?:created|provisioned|updated))\b",
     re.IGNORECASE,
 )
-_CLAUSE_SPLIT_RE = re.compile(r"[.!?;,:\n\u2013\u2014]")
+_CLAUSE_SPLIT_RE = re.compile(r"[.!?;,:\n\u2013\u2014]|\s-\s")
 _UNCERTAIN_PREFIX_RE = re.compile(
     r"\b(?:whether|if|unsure|unclear|uncertain|until|once|"
     r"not\s+sure|cannot\s+tell|can't\s+tell|"

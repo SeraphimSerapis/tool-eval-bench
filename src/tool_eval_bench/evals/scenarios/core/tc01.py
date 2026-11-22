@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -51,6 +52,11 @@ from tool_eval_bench.evals.scenarios.core._shared import (
     _only_error_retries_before_last,
     _positive_argument_contains,
     _result_matches_if_present,
+)
+
+_TC01_CELSIUS_MENTION_RE = re.compile(
+    r"(?<![A-Za-z0-9])-?\d+(?:\.\d+)?\s*(?:°\s*c\b|°(?!\s*f\b)|degrees?\b|\bcelsius\b)",
+    re.IGNORECASE,
 )
 
 
@@ -129,9 +135,17 @@ def _tc01_eval(state: ScenarioState) -> ScenarioEvaluation:
                 "get_weather did not return usable Berlin weather data; the answer cannot "
                 "fabricate weather data."
             )
-        # Verify the model surfaced actual weather data (temp 8 or condition).
+        # Verify the model surfaced actual weather data (temp 8 or condition),
+        # without stating an inaccurate Celsius temperature alongside the condition.
         has_temp = _answer_affirms_rounded_value(state.final_answer, "8")
         has_condition = _answer_affirms_text(state.final_answer, "overcast")
+        wrong_temp = not has_temp and bool(
+            _TC01_CELSIUS_MENTION_RE.search(_normalize(state.final_answer))
+        )
+        if wrong_temp:
+            return _partial(
+                "Called get_weather correctly but reported an inaccurate Berlin temperature."
+            )
         if has_temp or has_condition:
             return _pass("Used get_weather with Berlin only.")
         return _partial(

@@ -60,23 +60,35 @@ def _tc68_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return generic_tool_fallback(call)
 
 
-def _tc68_near_miss_searches(state: ScenarioState) -> bool:
-    """Return whether the trace is the single recognized errored PROJ-127 lookup."""
+_NEAR_MISS_ASSIGNEE_QUERIES = frozenset(
+    {"me", "myself", "current user", "current_user", "current-user", "user", "self", "my"}
+)
+
+
+def _tc68_near_miss_lookup(state: ScenarioState) -> ToolCallRecord | None:
+    """Return the single recognized errored lookup (PROJ-127 or assignee), if any."""
     calls = counted_calls(state.tool_calls)
     if len(calls) != 1:
-        return False
+        return None
     call = calls[0]
-    if call.name != "search_files":
-        return False
-    if as_str(call.arguments.get("query")) != "PROJ-127":
-        return False
-    return any(
+    query = normalize(as_str(call.arguments.get("query")))
+    if call.name == "search_files":
+        if query != "proj-127":
+            return None
+    elif call.name == "get_contacts":
+        if query not in _NEAR_MISS_ASSIGNEE_QUERIES:
+            return None
+    else:
+        return None
+    if any(
         result.call_id == call.id
-        and result.name == "search_files"
+        and result.name == call.name
         and isinstance(result.result, dict)
         and result.result.get("error_code") == "ERR_TOOL_UNAVAILABLE"
         for result in state.tool_results
-    )
+    ):
+        return call
+    return None
 
 
 _FENCE_BLOCK_RE = re.compile(r"```(.*?)```", re.DOTALL)
@@ -147,7 +159,12 @@ def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
     _self_assignees = {
         "me",
         "myself",
+        "self",
+        "user",
+        "the user",
         "current user",
+        "current_user",
+        "current-user",
         "ich",
         "mir",
         "aktueller benutzer",
@@ -171,13 +188,14 @@ def _tc68_eval(state: ScenarioState) -> ScenarioEvaluation:
     ):
         return _violation("Structured task status does not match the requested task update.")
 
-    # Fully compliant JSON reaches the tool-use decision. Only the exact
-    # near-miss — one `search_files` for PROJ-127 that returned an explicit
-    # error — earns PARTIAL; any other tool use stays FAIL.
+    # Fully compliant JSON reaches the tool-use decision. Only a single
+    # recognized errored lookup (search_files for PROJ-127 or get_contacts for
+    # the assignee) earns PARTIAL; any other tool use stays FAIL.
     if len(state.tool_calls) > 0:
-        if _tc68_near_miss_searches(state) and not wrapped_in_fence:
+        near_miss = _tc68_near_miss_lookup(state)
+        if near_miss is not None and not wrapped_in_fence:
             return _partial(
-                "Produced schema-compliant JSON but called one unnecessary search_files that errored."
+                f"Produced schema-compliant JSON but called one unnecessary {near_miss.name} that errored."
             )
         return _fail("Called tools when none were needed.")
     if wrapped_in_fence:

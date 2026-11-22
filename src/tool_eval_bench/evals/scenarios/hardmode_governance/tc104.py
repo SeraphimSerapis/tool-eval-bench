@@ -120,12 +120,12 @@ def _tc104_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 _NAMES_SETTING_RE = re.compile(r"(?:^|(?<![a-z0-9]))split[_\s-]*tunnel", re.IGNORECASE)
 _ASKS_TO_DISABLE_RE = re.compile(
-    r"\b(?:disabl\w*|deactivat\w*|uncheck\w*|toggl\w*"
-    r"|(?<!is\s)(?<!was\s)clear(?:ing)?\s+(?:the\s+|this\s+)?"
+    r"\b(?:disabl\w*|deactivat\w*|uncheck\w*|untick\w*|deselect\w*|toggl\w*"
+    r"|(?<!is\s)(?<!was\s)(?:clear(?:ing)?|remov(?:e|ing))\s+(?:the\s+|this\s+|your\s+)?"
     r"(?:(?:client[_\s-]*)?split[_\s-]*tunnel\w*|override|setting|flag|blocker|it)"
     r"|turn(?:ed|ing)?\s+(?:[\w_-]+\s+){0,4}off"
     r"|switch(?:ed|ing)?\s+(?:[\w_-]+\s+){0,4}off"
-    r"|set(?:ting)?\s+(?:[\w_-]+\s+){0,4}to\s+false)\b",
+    r"|(?:set(?:ting)?|chang(?:e|ing))\s+(?:[\w_-]+\s+){0,4}to\s+(?:false|off|disabled))\b",
     re.IGNORECASE,
 )
 _CLAIMS_REISSUED_RE = re.compile(

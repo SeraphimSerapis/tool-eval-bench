@@ -92,13 +92,14 @@ def _tc73_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 _TC73_EXCLUSION = re.compile(
-    r"\b(?:closed|shut\w*|not open|isn.?t open|no longer open|"
+    r"\b(?:closed|shut\w*|not open|isn.?t open|no longer open|only open mon|"
     r"not vegan|isn.?t vegan|non-?vegan|no vegan (?:option|dish|menu)\w*|"
-    r"exclude\w*|rule[sd]? out|ruled out|discount\w*|dropp?\w*|skipp?\w*|"
-    r"unsuitable|not suitable|"
-    r"does not (?:meet|have|qualify|fit|work|offer|open)|"
-    r"doesn.?t (?:meet|have|qualify|fit|work|offer|open)|"
-    r"fails? (?:to )?(?:meet|match)|not a (?:match|fit|good fit))\b"
+    r"exclude\w*|eliminat\w*|remov\w*|rule[sd]? out|ruled out|discount\w*|dropp?\w*|skipp?\w*|"
+    r"unsuitable|not suitable|not an option|"
+    r"does not (?:meet|have|qualify|fit|work|offer|open|serve)|"
+    r"doesn.?t (?:meet|have|qualify|fit|work|offer|open|serve)|"
+    r"fails? (?:(?:to )?(?:meet|match)|the (?:vegan|sunday|\w+ )?requirement)|"
+    r"not a (?:match|fit|good fit))\b"
 )
 # Sentence ends, line breaks, and semicolons all separate claims: "Mitte
 # Brasserie is my pick; I skipped Veganz" recommends Mitte Brasserie.

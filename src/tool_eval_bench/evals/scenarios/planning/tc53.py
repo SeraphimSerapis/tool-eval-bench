@@ -138,7 +138,7 @@ def _tc53_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             },
             "get_contacts",
         )
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 _TC53_LOOKUP_TOOLS = frozenset({"get_event", "get_contacts"})
