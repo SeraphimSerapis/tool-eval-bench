@@ -444,7 +444,12 @@ STATUS_STYLE = {
 
 def _plain_verdict(result: ScenarioResult) -> str:
     style = STATUS_STYLE.get(result.status, "?")
-    return f"{style}  ({result.points}/2) {DIM}{result.summary}{RESET}"
+    cap = (
+        " [turn cap]"
+        if result.turn_budget_exceeded and result.status != ScenarioStatus.PASS
+        else ""
+    )
+    return f"{style}  ({result.points}/2){cap} {DIM}{result.summary}{RESET}"
 
 
 async def _plain_on_start(scenario: ScenarioDefinition, idx: int, total: int) -> None:
@@ -787,17 +792,30 @@ def _run_perf_plan(target: _Target, plan: PerfPlan) -> _PerfSweep:
                 )
             )
         except PerfPassFailed as failure:
-            if index == 0:
+            has_downstream = not args.perf_only and (
+                _scored_run_follows(args)
+                or args.spec_bench
+                or args.context_pressure_sweep is not None
+                or _any_plugin_selected(args)
+            )
+            if index == 0 and (failure.interrupted or not has_downstream):
                 report_run_failed(console, failure.markup)
                 sys.exit(1)
             unfinished = _unfinished_pass_samples(plan, perf_pass)
             # Ctrl+C is reported once the earlier passes are saved.
             reason = "" if failure.interrupted else f"{failure.markup.strip()}\n"
-            _perf_notice(
-                console,
-                f"{reason}  [yellow]⚠ Pass {index + 1} stopped. Keeping the earlier passes "
-                f"and counting its {len(unfinished)} cell(s) as failed.[/]",
-            )
+            if index == 0:
+                _perf_notice(
+                    console,
+                    f"{reason}  [yellow]⚠ Throughput pass stopped. Counting its "
+                    f"{len(unfinished)} cell(s) as failed and continuing.[/]",
+                )
+            else:
+                _perf_notice(
+                    console,
+                    f"{reason}  [yellow]⚠ Pass {index + 1} stopped. Keeping the earlier passes "
+                    f"and counting its {len(unfinished)} cell(s) as failed.[/]",
+                )
             samples.extend(unfinished)
             return _PerfSweep(
                 samples,
@@ -1383,6 +1401,23 @@ def _run_session(
         return
 
     pressure = _prepare_context_pressure(target)
+    if _scored_run_follows(args):
+        # Combined plugin flags (--gsm8k, --mmlu, --ifeval, --needle,
+        # --toolscale, --decision-bench) run after the tool-call scenarios, as
+        # the CLI help states. Defer a --fail-on-safety exit (2) until any
+        # requested plugins finish so they are not skipped.
+        safety_exit: SystemExit | None = None
+        try:
+            _run_scored_mode(target, throughput_samples, pressure)
+        except SystemExit as exc:
+            if exc.code != 2 or not _any_plugin_selected(args):
+                raise
+            safety_exit = exc
+        _run_plugins_mode(target)
+        if safety_exit is not None:
+            raise safety_exit
+        return
+
     if _run_plugins_mode(target) or _skip_tool_eval_mode(target):
         _exit_if_throughput_failed(target, perf_failed_count)
         return

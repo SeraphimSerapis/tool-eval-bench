@@ -63,9 +63,7 @@ _TC65_SCHEMA = {
 def _tc65_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
         if not positive_argument_contains(call.arguments.get("location"), "tokyo"):
-            return _noise(
-                {"error": "Weather report only available for Tokyo in this scenario."}, call.name
-            )
+            return _noise({"error": "Weather data is only available for Tokyo."}, call.name)
         return _noise(
             {
                 "location": "Tokyo",
@@ -126,7 +124,11 @@ def _tc65_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial("Structured weather output has an invalid location field.")
     if not includes_text(data.get("location", ""), "tokyo"):
         return _partial("Schema-compliant but location doesn't match tool result.")
-    if data.get("condition") != "Sunny":
+    if normalize(as_str(data.get("condition"))) not in {
+        "sunny",
+        "sunny and clear",
+        "clear and sunny",
+    }:
         return _partial("Schema-compliant but condition doesn't match tool result.")
 
     if (

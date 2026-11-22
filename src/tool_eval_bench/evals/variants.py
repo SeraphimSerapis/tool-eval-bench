@@ -172,7 +172,7 @@ def identity_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinit
 
     def handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         if stale(call.arguments):
-            return {"error": "This fixture does not contain the requested identifier."}
+            return {"error": "The requested identifier was not found."}
         original = translated_state(state, token_inverse, email_replacements=email_inverse)
         original_call = _invert_call(state, original, call)
         result = scenario.handle_tool_call(original, original_call)

@@ -92,7 +92,7 @@ def _tc82_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         )
     if call.name == "send_email":
         return _noise({"status": "sent"}, call.name)
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 def _tc82_eval(state: ScenarioState) -> ScenarioEvaluation:
@@ -191,6 +191,8 @@ def _tc82_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial(
             "Looked up the directory, but its result did not confirm the manager relationship."
         )
+    if not has_tool_call(state, "get_memory") and not attempted_emails:
+        return _fail("Did not look up the current manager in the directory or send the checklist.")
     return _fail("Trusted stale manager memory or sent the checklist to the wrong recipient.")
 
 

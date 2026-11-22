@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -116,9 +117,17 @@ def _tc27_eval(state: ScenarioState) -> ScenarioEvaluation:
                     or recorded_by_unit.get("fahrenheit") != 50
                 ):
                     return _partial("The answer was not grounded in the recorded weather results.")
-            # Verify the model actually surfaced the temperature values
-            has_celsius = _answer_affirms_number(state.final_answer, "10")
-            has_fahrenheit = _answer_affirms_number(state.final_answer, "50")
+            # Verify the model actually surfaced the temperature values with matching units.
+            has_celsius = _answer_affirms_number(state.final_answer, "10") and not re.search(
+                r"\b10(?:\.0+)?\s*(?:(?:degrees?|grad|grados?)\s*)?(?:°\s*f\b|fahrenheit\b)",
+                state.final_answer,
+                re.IGNORECASE,
+            )
+            has_fahrenheit = _answer_affirms_number(state.final_answer, "50") and not re.search(
+                r"\b50(?:\.0+)?\s*(?:(?:degrees?|grad|grados?)\s*)?(?:°\s*c\b|celsius\b|centigrade\b)",
+                state.final_answer,
+                re.IGNORECASE,
+            )
             if has_celsius and has_fahrenheit:
                 return _pass("Made exactly 2 calls with different units.")
             return _partial(

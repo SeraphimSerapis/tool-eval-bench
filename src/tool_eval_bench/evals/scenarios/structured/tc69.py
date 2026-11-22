@@ -18,6 +18,7 @@ from tool_eval_bench.evals.helpers import (
     as_str,
     forbid_unrequested_side_effects,
     generic_tool_fallback,
+    includes_text,
     normalize,
     positive_argument_contains,
     reference_date,
@@ -230,12 +231,14 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
     # either served reading is the tool's value; anything else is invented.
     if w.get("temperature") not in _TC69_TEMPERATURES.values():
         return _partial("Weather temperature doesn't match tool result (18°C / 64.4°F).")
-    if w.get("location") != "San Francisco" or w.get("condition") != "Foggy":
+    if not includes_text(w.get("location", ""), "san francisco") or normalize(
+        as_str(w.get("condition"))
+    ) not in {"foggy", "fog"}:
         return _partial("Weather fields don't match the San Francisco tool result.")
 
     if m.get("price") != 192.30:
         return _partial("Stock price doesn't match tool result (192.30).")
-    if m.get("ticker") != "AAPL":
+    if normalize(as_str(m.get("ticker"))) != "aapl":
         return _partial("Market ticker doesn't match the AAPL tool result.")
 
     # Direction should be "down" since change is negative

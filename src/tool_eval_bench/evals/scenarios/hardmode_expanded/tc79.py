@@ -14,6 +14,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern,
     answer_affirms_text,
     as_str,
     counted_calls,
@@ -71,7 +72,7 @@ def _tc79_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         )
     if call.name == "create_calendar_event":
         return _noise({"status": "created", "event_id": "evt_lisbon"}, call.name)
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 _TC79_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC79_TOOLS)
@@ -83,9 +84,13 @@ _TC79_CONFIRMATIONS = (
     "added",
     "confirmed",
     "arranged",
+    "all set",
+    "invited",
+    "made the event",
     "on the calendar",
     "on your calendar",
 )
+_TC79_INVITE_SENT = re.compile(r"\bsent\b[^.!?\n]{0,25}\binvit(?:e|ation)\b", re.IGNORECASE)
 # Bare "rain" would reject "0% chance of rain", which is the correct forecast.
 _TC79_CONTRADICTIONS = ("will rain", "raining", "rainy", "not dry", "not be dry")
 
@@ -96,7 +101,9 @@ def _tc79_answer_is_truthful(answer: str) -> bool:
     The trace can be perfect while the reply says the opposite ("it will rain,
     so I did not schedule anything"), and the user only ever sees the reply.
     """
-    confirms = any(answer_affirms_text(answer, word) for word in _TC79_CONFIRMATIONS)
+    confirms = any(answer_affirms_text(answer, word) for word in _TC79_CONFIRMATIONS) or (
+        answer_affirms_pattern(answer, _TC79_INVITE_SENT)
+    )
     contradicts = any(answer_affirms_text(answer, word) for word in _TC79_CONTRADICTIONS)
     return confirms and not contradicts
 

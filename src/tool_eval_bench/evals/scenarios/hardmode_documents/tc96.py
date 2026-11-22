@@ -116,7 +116,8 @@ def _ocred_match(state: ScenarioState) -> bool:
 _SCAN_0419 = re.compile(r"(?:scan_)?0419(?:\.pdf)?\b", re.IGNORECASE)
 _SCAN_0412 = re.compile(r"(?:scan_)?0412(?:\.pdf)?\b", re.IGNORECASE)
 _DENIES_MATCH_AFTER = re.compile(
-    r"^[^.!?\n]{0,40}\b(?:(?:does|did)(?:n't| not)\s+(?:contain|mention|include|have|match)|"
+    r"^(?:(?!\b(?:scan_\d+|while|whereas|but|however)\b)[^.!?;,\n]){0,40}"
+    r"\b(?:(?:does|did)(?:n't| not)\s+(?:contain|mention|include|have|match)|"
     r"has\s+no\s+(?:match|mention)|contains?\s+no)\b",
     re.IGNORECASE,
 )

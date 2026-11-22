@@ -91,7 +91,7 @@ def _tc58_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             {"results": [{"file_id": "notes_0315", "name": "meeting_notes_march15.md"}]},
             "search_files",
         )
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 @forbid_unrequested_side_effects()

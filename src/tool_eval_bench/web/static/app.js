@@ -1557,7 +1557,7 @@
         identical: ["info", "info", "Identical outcomes"],
         significant_improvement: ["pass", "check", "Significant improvement in B"],
         significant_regression: ["fail", "x", "Significant regression in B"],
-        inconclusive_noise: ["partial", "alert", "Inconclusive single-run noise"],
+        inconclusive_noise: ["partial", "alert", "Inconclusive across shared scenarios"],
       };
       const pv = pairedVerdictMap[ps.verdict] || ["plain", "minus", "Paired comparison"];
       const ciDetail =

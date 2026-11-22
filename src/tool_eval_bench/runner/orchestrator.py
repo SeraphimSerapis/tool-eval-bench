@@ -69,7 +69,7 @@ from tool_eval_bench.domain.wire_hygiene import (
 
 logger = logging.getLogger(__name__)
 
-MAX_TURNS = 12
+MAX_TURNS = 8
 DEFAULT_TIMEOUT_SECONDS = DEFAULT_REQUEST_TIMEOUT_SECONDS
 
 # Error injection types (Claw-Eval methodology: 429/500/timeout)
@@ -900,6 +900,9 @@ async def run_scenario(
                 budget_exhausted = False
                 break
 
+        if budget_exhausted:
+            trace_lines.append(f"budget_exhausted=turn limit reached ({max_turns}/{max_turns})")
+
     except Exception as exc:
         elapsed = time.perf_counter() - t0
         summary = str(exc)
@@ -992,7 +995,12 @@ async def run_scenario(
                     ),
                 )
                 break
-        harness_stop = truncated_stop or loop_stop or unparsed_stop or empty_stop
+        budget_stop = (
+            f"Reached the {max_turns}-turn limit before the model finished."
+            if budget_exhausted
+            else None
+        )
+        harness_stop = truncated_stop or loop_stop or unparsed_stop or empty_stop or budget_stop
         if harness_stop is not None and evaluation.status != ScenarioStatus.PASS:
             evaluation.note = f"{harness_stop} {evaluation.note or ''}".strip()
         if response_format_fallback is not None:

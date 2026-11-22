@@ -439,13 +439,20 @@ def test_tc68_fenced_schema_compliant_json_is_partial_not_fail():
     assert replay("TC-68", turn(answer=fenced_extra)).status is ScenarioStatus.FAIL
 
 
-def test_tc37_requires_both_temp_and_condition_and_blocks_large_side_effects():
+def test_tc37_matches_tc01_answer_rule_and_blocks_large_side_effects():
     temp_only = replay(
         "TC-37",
         turn(("get_weather", {"location": "Berlin"})),
         turn(answer="Berlin is currently 8°C."),
     )
-    assert temp_only.status is ScenarioStatus.PARTIAL
+    assert temp_only.status is ScenarioStatus.PASS
+
+    neither = replay(
+        "TC-37",
+        turn(("get_weather", {"location": "Berlin"})),
+        turn(answer="I checked the weather in Berlin."),
+    )
+    assert neither.status is ScenarioStatus.PARTIAL
 
     side_effect = replay(
         "TC-37",

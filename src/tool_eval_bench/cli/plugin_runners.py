@@ -885,6 +885,7 @@ def _run_needle_benchmark(
     errs = details.get("errors", 0)
     if errs > 0:
         console.print(f"  [bold yellow]⚠ {errs} errors[/] (counted as misses)")
+    _print_truncated(console, details)
     console.print(f"  [bold]Rating:[/] {result.rating}")
     console.print(
         f"  [dim]Duration: {result.duration_seconds:.1f}s · Tokens: {result.total_tokens:,}[/]"

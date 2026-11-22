@@ -139,7 +139,7 @@ def _tc51_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             {"results": [{"snippet": "Popular team lunch restaurants near downtown."}]},
             "web_search",
         )
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:

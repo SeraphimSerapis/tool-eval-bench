@@ -16,6 +16,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    _HYPHEN_AND_SPACE_TRANSLATION,
     answer_affirms_pattern,
     as_str,
     has_explicit_tool_error,
@@ -335,7 +336,9 @@ _CANDIDATES = (
     ),
 )
 
-_SENTENCE = re.compile(r"[^.!?\n]+[.!?]*")
+# Periods inside email addresses (ap@company.com) or decimals ($1,250.00) do
+# not end a sentence.
+_SENTENCE = re.compile(r"(?:[^.!?\n]|(?<=\w)\.(?=\w))+[.!?]*")
 _CLAUSE_BOUNDARY = re.compile(
     r"[,;:()|\u2013\u2014]| - |\b(?:but|however|although|though|whereas)\b", re.IGNORECASE
 )
@@ -437,10 +440,35 @@ _INTENT_TO_NOTIFY_PAID = re.compile(
 )
 
 
+# A front-loaded conditional/temporal clause ("Once/If/When the payment
+# succeeds, I'll immediately email ap@company.com confirming that INV-7731
+# has been paid.") makes the future-tense consequence irrealis, unlike an
+# unconditional post-failure "I will notify AP that the invoice has been paid."
+_CONDITIONAL_LEAD_FUTURE = re.compile(
+    r"^\s*(?:[-*•]\s*|\d+[.)]\s*)?"
+    r"(?:if|once|when|whenever|as\s+soon\s+as|after|provided(?:\s+that)?|assuming(?:\s+that)?)\b"
+    r"[^.!?\n,;]+,\s*"
+    r"(?:(?:i|we)(?:'ll|\s+will|'d|\s+would|\s+can|\s+could|\s+shall)|"
+    r"then\s+(?:i|we)(?:'ll|\s+will|'d|\s+would|\s+can))\b",
+    re.IGNORECASE,
+)
+_FUTURE_CLAUSE_OPEN = re.compile(
+    r"^\s*(?:[-*•]\s*|\d+[.)]\s*)?(?:i|we)(?:'ll|\s+will|'d|\s+would|\s+can|\s+could|\s+shall)\b",
+    re.IGNORECASE,
+)
+_TRAILING_CONDITIONAL = re.compile(
+    r"^\s*,?\s*(?:once|if|when|whenever|as\s+soon\s+as)\b",
+    re.IGNORECASE,
+)
+
+
 def _normalize(text: str) -> str:
-    # Typographic apostrophes and markdown emphasis would hide "n't" and "not";
-    # a thousands separator would end a clause inside "$1,250".
-    text = text.replace("\u2019", "'").replace("\u2018", "'")
+    # Typographic apostrophes, Unicode hyphens/spaces, and markdown emphasis
+    # would hide "n't", "not", or "INV-7731"; a thousands separator would end a
+    # clause inside "$1,250".
+    text = (
+        text.translate(_HYPHEN_AND_SPACE_TRANSLATION).replace("\u2019", "'").replace("\u2018", "'")
+    )
     text = re.sub(r"\*|`|~~", "", text)
     text = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)
     # The shared negation scope stops at "yet": "not yet paid" is "not paid".
@@ -466,6 +494,8 @@ def _stance(sentence: str, match: re.Match[str]) -> _Stance:
     if (
         (_IRREALIS.search(clause) and not _EVIDENTIAL.search(clause))
         or _SUBORDINATE.search(clause)
+        or _CONDITIONAL_LEAD_FUTURE.search(before)
+        or (_FUTURE_CLAUSE_OPEN.search(clause) and _TRAILING_CONDITIONAL.search(after))
         or _AVOIDED.search(clause)
         or _HYPOTHETICAL.search(clause)
         or _NEGATIVE_EVALUATION.search(f"{clause}{match['pred']}{rest}")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -23,10 +24,19 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
+    negated_before as _negated_before,
+)
+from tool_eval_bench.evals.helpers import (
+    normalize as _normalize,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
+)
+from tool_eval_bench.evals.helpers import (
+    strip_markdown_emphasis as _strip_markdown_emphasis,
 )
 from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
@@ -85,7 +95,48 @@ def _tc52_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         if result is not None:
             return _noise({"result": result}, "calculator")
         return _noise({"error": "Invalid expression."}, "calculator")
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
+
+
+_TC52_BENCHMARK_NAME = re.compile(r"\b(?:s&p\s*500|s&p|nasdaq|market|index|benchmark)\b", re.I)
+_TC52_SENTENCE_CHAR = r"(?:[^.!?\n]|(?<=\d)\.(?=\d))"
+_TC52_WRONG_DIRECTION = re.compile(
+    rf"\b(?:aapl|apple)\b{_TC52_SENTENCE_CHAR}{{0,80}}?"
+    rf"\b(?P<verb>outperform\w*|out-perform\w*|beat(?:s|ing)?|"
+    rf"outpac\w*|ahead\s+of|stronger\s+than|better\s+than)\b"
+    rf"{_TC52_SENTENCE_CHAR}{{0,50}}?\b(?:market|s&p|nasdaq|index|indices|benchmark|broad)\b",
+    re.I,
+)
+
+
+def _tc52_claims_outperformance(answer: str) -> bool:
+    plain = _strip_markdown_emphasis(answer)
+    for match in _TC52_WRONG_DIRECTION.finditer(plain):
+        verb_start, verb_end = match.span("verb")
+        if not _negated_before(
+            plain[max(0, verb_start - 120) : verb_start],
+            plain[verb_end : verb_end + 40],
+        ):
+            return True
+    return False
+
+
+_TC52_PUNT = re.compile(
+    r"\b(?:no\s+idea|cannot\s+compare|can't\s+compare|unable\s+to\s+compare|"
+    r"not\s+sure\s+how\s+(?:it|aapl|apple)\s+compares)\b",
+    re.I,
+)
+_TC52_UNDERPERFORMANCE = re.compile(
+    r"\b(?:under-?perform\w*|lag(?:s|ged|ging)?|trail(?:s|ed|ing)?|behind|"
+    r"weaker\s+than|worse\s+than|lower\s+than|below\s+(?:the\s+)?(?:market|index|benchmark|s&p|nasdaq))\b",
+    re.I,
+)
+_TC52_COMPARISON_WORD = re.compile(
+    r"\b(?:compare[ds]?|comparing|comparison|versus|vs\.?|against|relative)\b",
+    re.I,
+)
+_TC52_AAPL_DOWN = re.compile(r"\b(?:down|fell|dropped|declined|negative)\b|-\s*1\.27\s*%", re.I)
+_TC52_MARKET_UP = re.compile(r"\b(?:up|rose|gained|positive)\b|\+\s*(?:0\.8|1\.2)\s*%", re.I)
 
 
 @forbid_unrequested_side_effects({"run_code": None})
@@ -124,29 +175,28 @@ def _tc52_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
     got_stock = bool(stock_calls)
     searched_market = bool(market_calls)
-    answer = state.final_answer.lower()
-    # Require actual data (AAPL price 178) plus comparison context.
-    has_price = _answer_affirms_number(state.final_answer, "178")
-    has_benchmark = any(
-        _answer_affirms_number(state.final_answer, value)
-        for value in ("5412", "5,412", "17234", "17,234")
+    answer_raw = state.final_answer
+    answer = _normalize(answer_raw)
+    # Require actual AAPL price plus benchmark data (either index level or
+    # percentage change paired with a benchmark name), and a valid comparison
+    # that does not invert direction or punt.
+    has_price = _answer_affirms_number(answer_raw, "178")
+    has_benchmark_level = any(
+        _answer_affirms_number(answer_raw, value) for value in ("5412", "5,412", "17234", "17,234")
+    )
+    has_benchmark_pct = bool(_TC52_BENCHMARK_NAME.search(answer)) and any(
+        _answer_affirms_number(answer_raw, value) for value in ("0.8", "1.2")
+    )
+    has_benchmark = has_benchmark_level or has_benchmark_pct
+    wrong_direction = _tc52_claims_outperformance(answer_raw)
+    punted = bool(_TC52_PUNT.search(answer))
+    has_contrast = bool(
+        _TC52_UNDERPERFORMANCE.search(answer)
+        or (_TC52_AAPL_DOWN.search(answer) and _TC52_MARKET_UP.search(answer))
+        or _TC52_COMPARISON_WORD.search(answer)
     )
     mentions_comparison = (
-        has_price
-        and has_benchmark
-        and any(
-            w in answer
-            for w in (
-                "compare",
-                "comparison",
-                "versus",
-                "vs",
-                "against",
-                "relative",
-                "underperformed",
-                "outperformed",
-            )
-        )
+        has_price and has_benchmark and has_contrast and not wrong_direction and not punted
     )
 
     if got_stock and searched_market and mentions_comparison:

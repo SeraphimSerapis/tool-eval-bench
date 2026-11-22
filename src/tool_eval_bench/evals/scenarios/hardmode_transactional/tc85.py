@@ -122,13 +122,31 @@ def _tc85_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             return with_noise({"name": "Rina Patel", "email": _TC85_OWNER}, call.name)
         return with_noise({"error": "Unknown service id."}, call.name)
     if call.name == "list_credentials":
-        if (
-            call.arguments.get("service_id") == "svc_prod_analytics"
-            and call.arguments.get("principal") == "reports-bot"
-        ):
+        service_id = call.arguments.get("service_id")
+        principal = call.arguments.get("principal")
+        if service_id == "svc_prod_analytics" and principal == "reports-bot":
+            checks = state.meta.get("tc85_confirmation_checks", {})
+            listed = [
+                {
+                    "credential_id": cred["credential_id"],
+                    "service_id": cred["service_id"],
+                    "principal": cred["principal"],
+                    "scopes": list(cred["scopes"])
+                    if isinstance(cred["scopes"], list)
+                    else cred["scopes"],
+                    "idempotency_key": cred_key,
+                    "status": (
+                        "confirmed"
+                        if cred.get("confirmed") or int(checks.get(cred_key, 0)) >= 2
+                        else "replication_pending"
+                    ),
+                }
+                for cred_key, cred in state.meta.get("tc85_credentials", {}).items()
+                if cred.get("service_id") == service_id and cred.get("principal") == principal
+            ]
             return with_noise(
                 {
-                    "credentials": [],
+                    "credentials": listed,
                     "unrelated_existing_credential": "cred_platform_reader",
                 },
                 call.name,
@@ -375,6 +393,7 @@ def _tc85_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
             credentials = state.meta.get("tc85_credentials", {})
             key = as_str(call.arguments.get("idempotency_key")).strip()
             if key in credentials:
+                credentials[key]["confirmed"] = True
                 return with_noise(
                     {
                         "status": "created",

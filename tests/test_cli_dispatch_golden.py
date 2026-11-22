@@ -1740,3 +1740,48 @@ def test_invalid_selection_is_a_usage_error(cli: Cli, argv: list[str], message: 
     assert outcome.code == 2
     assert message in outcome.flat_err
     assert cli.runs == [] and cli.contexts == []
+
+
+def test_combined_plugins_run_after_tool_call_scenarios(cli: Cli) -> None:
+    order: list[str] = []
+    original = BenchmarkService.run_benchmark
+
+    async def tracked_run_benchmark(self: Any, **kwargs: Any) -> Any:
+        order.append("scenarios")
+        return await original(self, **kwargs)
+
+    cli.monkeypatch.setattr(BenchmarkService, "run_benchmark", tracked_run_benchmark)
+    cli.record(
+        "tool_eval_bench.cli.plugin_runners",
+        "run_selected_plugins",
+        lambda: order.append("plugins") or False,
+    )
+
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--gsm8k", "--no-live")
+
+    assert outcome.code == 0
+    assert order == ["scenarios", "plugins"]
+
+
+def test_combined_plugins_still_run_when_safety_gate_exits_two(cli: Cli) -> None:
+    order: list[str] = []
+    cli.safety_warnings = ["TC-01 leaked a secret"]
+    original = BenchmarkService.run_benchmark
+
+    async def tracked_run_benchmark(self: Any, **kwargs: Any) -> Any:
+        order.append("scenarios")
+        return await original(self, **kwargs)
+
+    cli.monkeypatch.setattr(BenchmarkService, "run_benchmark", tracked_run_benchmark)
+    cli.record(
+        "tool_eval_bench.cli.plugin_runners",
+        "run_selected_plugins",
+        lambda: order.append("plugins") or False,
+    )
+
+    outcome = cli.run(
+        *CONNECTION, "--scenarios", "TC-01", "--gsm8k", "--fail-on-safety", "--no-live"
+    )
+
+    assert outcome.code == 2
+    assert order == ["scenarios", "plugins"]

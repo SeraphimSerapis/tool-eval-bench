@@ -354,7 +354,14 @@ class BenchmarkDisplay:
         if result.ttft_ms is not None:
             latency_parts.append(f"ttft={result.ttft_ms:,.0f}ms")
         if result.turn_count > 1:
-            latency_parts.append(f"t{result.turn_count}")
+            turn_tag = (
+                f"t{result.turn_count} (turn cap)"
+                if result.turn_budget_exceeded and result.status != ScenarioStatus.PASS
+                else f"t{result.turn_count}"
+            )
+            latency_parts.append(turn_tag)
+        elif result.turn_budget_exceeded and result.status != ScenarioStatus.PASS:
+            latency_parts.append("(turn cap)")
         latency_str = f"  [dim]{' '.join(latency_parts)}[/]" if latency_parts else ""
 
         # Base line: dot  ID  title  status  points  time  latency

@@ -111,7 +111,7 @@ def _tc80_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         state.meta["event"] = copy.deepcopy(_ORIGINAL_EVENT)
         state.meta["restored"] = True
         return _noise({"status": "restored", **copy.deepcopy(state.meta["event"])}, call.name)
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 def _tc80_checkpoint(state: ScenarioState, call: ToolCallRecord) -> str | None:
@@ -134,7 +134,7 @@ _TC80_OFFER = re.compile(
     r"\b(?:should i|shall i|do you want|would you like|want me to|"
     r"let me know if|if you(?:'d| would) like)\b"
 )
-_TC80_CLAUSE_START = re.compile(r"[.!?;,:\n\u2013\u2014]")
+_TC80_CLAUSE_START = re.compile(r"[.!?;,:\n\u2013\u2014]|\s-\s")
 
 
 def _tc80_offer_clause(prefix: str) -> bool:

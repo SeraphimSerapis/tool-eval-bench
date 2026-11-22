@@ -74,7 +74,7 @@ def _tc60_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         )
     if call.name == "send_email":
         return _noise({"status": "sent"}, "send_email")
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 @forbid_unrequested_side_effects({"send_email": 1})

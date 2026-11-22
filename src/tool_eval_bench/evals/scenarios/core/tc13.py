@@ -122,10 +122,15 @@ _TC13_DENIAL = re.compile(
     r"|\bnot\s+found\b|\bdoes(?:n't|\s+not)\s+exist\b|\bnothing\s+(?:was\s+)?found\b",
     re.IGNORECASE,
 )
-# Clarifying forms the shared detector misses: "Do you know where the file is
-# located?" and "If you've found it under a different name, let me know."
+# Clarifying forms the shared detector misses: "Do you have the exact file
+# name?", "Can you share more about the document?", "Is the file maybe under a
+# different name?", and "If you've found it under a different name, let me know."
 _TC13_CLARIFYING = re.compile(
-    r"\bdo\s+you\s+know\s+(?:where|what|which|whether|if|its|the)\b"
+    r"\bdo\s+you\s+(?:know|have)\s+(?:where|what|which|whether|if|its|the|a|any)\b"
+    r"|\bcan\s+you\s+(?:give|share|confirm|provide|tell|specify|check)\b"
+    r"|\bis\s+(?:it\s+possible|the\s+(?:file|document|proposal)\s+"
+    r"(?:maybe\s+|possibly\s+|perhaps\s+)?(?:named|saved|stored|under))\b"
+    r"|\bwhat(?:'s|\s+is)\s+the\s+(?:exact|full)\s+(?:file\s*name|name|title)\b"
     r"|\bif\s+you\b[^.!?\n]*\blet\s+me\s+know\b",
     re.IGNORECASE,
 )

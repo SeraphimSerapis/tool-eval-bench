@@ -360,6 +360,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc103_eval,
     tools_override=_TC103_TOOLS,
     difficulty=4,
+    max_turns_override=12,
     dependencies=(("search_catalog", "add_to_cart"), ("list_coupons", "apply_coupon")),
     capabilities=("constraints", "planning", "safe-mutation"),
 )

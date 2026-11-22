@@ -29,9 +29,11 @@ from tool_eval_bench.plugins.needle.haystack import (
 
 logger = logging.getLogger(__name__)
 
-# A retrieved fact is short.  The budget covers a model that restates the
-# question or thinks briefly before answering, without paying for an essay.
+# A retrieved fact is short.  The initial budget covers a direct answer or brief
+# thinking without paying for an essay; if a reasoning model exhausts it before
+# writing an answer, one retry raises the cap up to _RETRY_ANSWER_TOKENS.
 _MAX_ANSWER_TOKENS = 256
+_RETRY_ANSWER_TOKENS = 2048
 
 
 def _rating_for_accuracy(accuracy: float) -> str:
@@ -93,6 +95,7 @@ class NeedlePlugin(BenchmarkPlugin):
         results: list[dict[str, Any]] = [{} for _ in range(total)]
         retrieved = 0
         error_count = 0
+        truncated_count = 0
         total_tokens = 0
         progress_counter = 0
         progress_lock = asyncio.Lock()
@@ -105,7 +108,7 @@ class NeedlePlugin(BenchmarkPlugin):
             extra.update(extra_params)
 
         async def eval_one(idx: int, case: NeedleCase) -> None:
-            nonlocal retrieved, total_tokens, error_count, progress_counter
+            nonlocal retrieved, total_tokens, error_count, truncated_count, progress_counter
 
             # Vary the haystack per cell so two cells never share a prefix the
             # server could serve from cache instead of actually reading.
@@ -115,6 +118,7 @@ class NeedlePlugin(BenchmarkPlugin):
             messages = await asyncio.to_thread(build_needle_messages, case, seed=case_seed)
 
             content = ""
+            truncated = False
             try:
                 async with sem:
                     response = await adapter.chat_completion(
@@ -128,16 +132,45 @@ class NeedlePlugin(BenchmarkPlugin):
                         base_url=base_url,
                         extra_params=extra or None,
                     )
-                raise_for_transport_error(response)
-                content = final_answer_text(response) or ""
-                total_tokens += (response.prompt_tokens or 0) + (response.completion_tokens or 0)
+                    raise_for_transport_error(response)
+                    total_tokens += (response.prompt_tokens or 0) + (
+                        response.completion_tokens or 0
+                    )
+                    answer_text = final_answer_text(response)
+                    if answer_text is None:
+                        retry_budget = _RETRY_ANSWER_TOKENS
+                        if context_size > 0 and response.prompt_tokens:
+                            retry_budget = min(retry_budget, context_size - response.prompt_tokens)
+                        if retry_budget > _MAX_ANSWER_TOKENS:
+                            response = await adapter.chat_completion(
+                                model=model,
+                                messages=messages,
+                                tools=None,
+                                temperature=temperature,
+                                max_tokens=retry_budget,
+                                timeout_seconds=timeout_seconds,
+                                api_key=api_key,
+                                base_url=base_url,
+                                extra_params=extra or None,
+                            )
+                            raise_for_transport_error(response)
+                            total_tokens += (response.prompt_tokens or 0) + (
+                                response.completion_tokens or 0
+                            )
+                            answer_text = final_answer_text(response)
+                if answer_text is None:
+                    truncated = True
+                    truncated_count += 1
+                    content = ""
+                else:
+                    content = answer_text
                 is_error = False
             except Exception as exc:
                 logger.debug("Error on needle cell %s: %s", case.cell_id, exc)
                 is_error = True
                 error_count += 1
 
-            found = False if is_error else grade_response(case, content)
+            found = False if (is_error or truncated) else grade_response(case, content)
             if found:
                 retrieved += 1
 
@@ -149,6 +182,7 @@ class NeedlePlugin(BenchmarkPlugin):
                 "expected": case.answer,
                 "found": found,
                 "is_error": is_error,
+                "truncated": truncated,
                 "model_response": content[:500],
             }
 
@@ -202,6 +236,7 @@ class NeedlePlugin(BenchmarkPlugin):
                 "total": total,
                 "answered": answered,
                 "errors": error_count,
+                "truncated": truncated_count,
                 "completion_rate": round(answered / total * 100, 2),
                 "status": "incomplete" if error_count else "completed",
                 "incomplete": error_count > 0,
@@ -215,14 +250,15 @@ class NeedlePlugin(BenchmarkPlugin):
                 # The stored row keeps details but not item_results, so this is
                 # the only persisted copy of the grid. Coordinates and outcome
                 # only: question and response text stay out of storage. An
-                # errored cell, such as a context overflow, is marked so a
-                # reader never mistakes it for a retrieval miss.
+                # errored or truncated cell is marked so a reader never
+                # mistakes it for an ordinary retrieval miss.
                 "cells": [
                     {
                         "context_tokens": r["context_tokens"],
                         "depth_percent": r["depth_percent"],
                         "found": r["found"],
                         **({"error": True} if r.get("is_error") else {}),
+                        **({"truncated": True} if r.get("truncated") else {}),
                     }
                     for r in results
                 ],
@@ -296,10 +332,23 @@ class NeedlePlugin(BenchmarkPlugin):
 
         failures = [r for r in result.item_results if not r.get("found")]
         if failures:
+            truncated = [r for r in failures if r.get("truncated")]
             lines.extend(
                 [
                     f"### Missed Needles ({len(failures)} total)",
                     "",
+                ]
+            )
+            if truncated:
+                lines.extend(
+                    [
+                        f"- **Truncated**: {len(truncated)}. The token budget ran out while "
+                        "reasoning before an answer was written.",
+                        "",
+                    ]
+                )
+            lines.extend(
+                [
                     "| Cell | Expected | Model response |",
                     "|---|---|---|",
                 ]
@@ -310,6 +359,8 @@ class NeedlePlugin(BenchmarkPlugin):
                     response = response[:117] + "…"
                 if f.get("is_error"):
                     response = "*(request failed)*"
+                elif f.get("truncated"):
+                    response = "*(truncated)*"
                 lines.append(
                     f"| `{f['cell_id']}` | `{f['expected']}` | {response or '*(empty)*'} |"
                 )

@@ -57,6 +57,25 @@ def _tc22_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+_TC22_TEMP_STR = re.compile(r"7(?:\.0+)?(?:\s*°?\s*c(?:elsius)?)?", re.IGNORECASE)
+_TC22_HUMIDITY_STR = re.compile(r"82(?:\.0+)?(?:\s*%)?")
+
+
+def _tc22_values_match(parsed: dict[str, Any]) -> bool:
+    """Accept raw numbers or unit-qualified strings matching 7°C, Overcast, 82%."""
+    temp = parsed.get("temp")
+    cond = parsed.get("condition")
+    hum = parsed.get("humidity")
+    temp_ok = (type(temp) in (int, float) and temp == 7) or (
+        isinstance(temp, str) and bool(_TC22_TEMP_STR.fullmatch(temp.strip()))
+    )
+    cond_ok = isinstance(cond, str) and cond.strip().lower() == "overcast"
+    hum_ok = (type(hum) in (int, float) and hum == 82) or (
+        isinstance(hum, str) and bool(_TC22_HUMIDITY_STR.fullmatch(hum.strip()))
+    )
+    return temp_ok and cond_ok and hum_ok
+
+
 @forbid_unrequested_side_effects()
 def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User asked: 'Get the weather in Berlin. Respond with ONLY valid JSON, keys: temp, condition, humidity. No other text.'"""
@@ -94,25 +113,15 @@ def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _partial("Returned JSON, but not the required object.")
         has_keys = all(k in parsed for k in ("temp", "condition", "humidity"))
         if has_keys:
-            # Verify the values actually come from the tool result.
-            valid_types = (
-                type(parsed.get("temp")) in (int, float)
-                and isinstance(parsed.get("condition"), str)
-                and type(parsed.get("humidity")) in (int, float)
-            )
             no_extra = set(parsed) == {"temp", "condition", "humidity"}
-            correct_values = (
-                parsed.get("temp") == 7
-                and parsed.get("condition") == "Overcast"
-                and parsed.get("humidity") == 82
-            )
-            if correct_values and valid_types and no_extra:
+            correct_values = _tc22_values_match(parsed)
+            if correct_values and no_extra:
                 if len(_counted_calls(state.tool_calls)) != 1:
                     return _partial(
                         "Returned correct JSON, but made unnecessary additional tool calls."
                     )
                 return _pass("Called get_weather and returned properly formatted JSON.")
-            if correct_values and valid_types and not no_extra:
+            if correct_values and not no_extra:
                 return _partial(
                     "Returned JSON with extra keys.",
                     f"Got keys: {list(parsed.keys())}",
@@ -135,18 +144,9 @@ def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
             if isinstance(parsed, dict) and all(
                 k in parsed for k in ("temp", "condition", "humidity")
             ):
-                valid_types = (
-                    type(parsed.get("temp")) in (int, float)
-                    and isinstance(parsed.get("condition"), str)
-                    and type(parsed.get("humidity")) in (int, float)
-                )
                 no_extra = set(parsed) == {"temp", "condition", "humidity"}
-                correct_values = (
-                    parsed.get("temp") == 7
-                    and parsed.get("condition") == "Overcast"
-                    and parsed.get("humidity") == 82
-                )
-                if correct_values and valid_types and no_extra:
+                correct_values = _tc22_values_match(parsed)
+                if correct_values and no_extra:
                     return _partial(
                         "Returned correct JSON but violated the raw-JSON output contract."
                     )

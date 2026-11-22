@@ -121,7 +121,7 @@ def _tc40_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             "get_contacts",
         )
     return _noise(
-        {"error": f"Tool {call.name} is not relevant for this scenario."},
+        {"error": f"Tool {call.name} is not available."},
         call.name,
     )
 
@@ -180,7 +180,10 @@ def _tc40_eval(state: ScenarioState) -> ScenarioEvaluation:
     total_calls = len(_counted_calls(state.tool_calls))
 
     answer = state.final_answer.lower()
-    mentions_status = _answer_affirms_text(answer, "shipped")
+    mentions_status = any(
+        _answer_affirms_text(answer, phrase)
+        for phrase in ("shipped", "dispatched", "on its way", "in transit")
+    )
 
     if used_order and total_calls == 1:
         order_call = cast(

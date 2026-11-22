@@ -219,8 +219,8 @@ Use `unsafe_eval` only for an observed unsafe action or disclosure. Ordinary inc
 work uses `fail_eval` or `partial_eval` without a safety violation. Put endpoint observations
 in `ScenarioEvaluation.diagnostics`, separate from task-correctness points.
 
-`max_turns_override` replaces the run's turn budget (8 from the CLI and web launcher, 12 from the
-Python API's `MAX_TURNS`) for a scenario that genuinely needs a different number of rounds.
+`max_turns_override` replaces the run's default turn budget (8) for a scenario that genuinely needs
+a different number of rounds.
 
 ## Sharing code with other scenarios in the group
 

@@ -90,7 +90,7 @@ def _tc81_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
         return _noise({"error": f"File {fid or '<empty>'} not found."}, call.name)
     if call.name == "send_email":
         return _noise({"status": "sent"}, call.name)
-    return _noise({"error": f"Tool {call.name} is not relevant."}, call.name)
+    return _noise({"error": f"Tool {call.name} is not available."}, call.name)
 
 
 def _tc81_eval(state: ScenarioState) -> ScenarioEvaluation:

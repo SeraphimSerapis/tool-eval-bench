@@ -518,7 +518,7 @@ def test_tc51_accepts_both_readings_of_this_friday(friday: str) -> None:
         (
             "TC-01",
             [(1, 0, "get_weather", {"location": "Berlin, DE"})],
-            ["Berlin is 7°C, overcast."],
+            ["Berlin is 8°C, overcast."],
         ),
         (
             "TC-22",

@@ -23,7 +23,7 @@ _TC88_NUMBER = re.compile(r"(?<!\d)\d{20}(?!\d)")
 
 
 def _tc88_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
-    return {"error": f"Tool use is forbidden in this scenario: {call.name}"}
+    return {"error": f"Tool {call.name} is not available."}
 
 
 def _tc88_eval(state: ScenarioState) -> ScenarioEvaluation:

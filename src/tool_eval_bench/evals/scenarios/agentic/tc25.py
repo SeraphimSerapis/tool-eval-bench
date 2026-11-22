@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -13,9 +15,15 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_text as _answer_affirms_text,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
+from tool_eval_bench.evals.helpers import (
+    days_after_reference as _days_after_reference,
+)
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
@@ -59,6 +67,23 @@ def _tc25_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "set_reminder":
         return _noise({"status": "created", "reminder_id": "rem_552"}, "set_reminder")
     return _generic_tool_fallback(call)
+
+
+def _tc25_is_tomorrow_morning(datetime_value: Any, state: ScenarioState) -> bool:
+    """Return whether ``datetime_value`` schedules the reminder for tomorrow morning."""
+    dt_str = _as_str(datetime_value).strip().lower()
+    if not dt_str:
+        return False
+    if re.search(r"\btomorrow\s+morning\b", dt_str) and not re.search(
+        r"\b(?:not|never|day\s+after|the\s+day\s+after)\s+tomorrow\b", dt_str
+    ):
+        return True
+    parse_str = dt_str[:-1] if dt_str.endswith("z") else dt_str
+    try:
+        target = datetime.fromisoformat(parse_str)
+    except ValueError:
+        return False
+    return target.date().isoformat() == _days_after_reference(state, 1) and 5 <= target.hour < 12
 
 
 @forbid_unrequested_side_effects({"set_reminder": 1})
@@ -124,11 +149,16 @@ def _tc25_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     coat_call = _first_counted(
         reminder_calls,
-        lambda call: "coat" in _as_str(call.arguments.get("message")).lower(),
+        lambda call: _answer_affirms_text(_as_str(call.arguments.get("message")), "coat"),
     )
     if coat_call is not None:
         if not _result_is_usable_if_present(state, coat_call):
             return _partial("The coat reminder call returned an explicit error.")
+        if not _tc25_is_tomorrow_morning(coat_call.arguments.get("datetime"), state):
+            return _partial(
+                "Set a coat reminder, but the datetime was not tomorrow morning.",
+                f"Got datetime={coat_call.arguments.get('datetime')!r}.",
+            )
         if len(_counted_calls(state.tool_calls)) != 2:
             return _partial("Completed the conditional request with unnecessary additional calls.")
         return _pass("Checked weather once, recognized 5°C < 10°C, set coat reminder.")

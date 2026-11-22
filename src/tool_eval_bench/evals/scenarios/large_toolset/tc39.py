@@ -55,7 +55,7 @@ def _tc39_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             "run_code",
         )
     return _noise(
-        {"error": f"Tool {call.name} is not relevant for this scenario."},
+        {"error": f"Tool {call.name} is not available."},
         call.name,
     )
 
