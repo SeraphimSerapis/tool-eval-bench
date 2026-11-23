@@ -1882,6 +1882,7 @@
         "div",
         { class: "grid-2" },
         field("Temperature", input("launch-temperature", { type: "number", class: "input mono", step: "0.05", min: "0", max: "2", value: defaults.temperature ?? 0 })),
+        field("Seed", input("launch-seed", { type: "number", class: "input mono", step: "1", placeholder: "Unseeded" }), "Optional; blank leaves the run unseeded."),
         field("Concurrency", input("launch-parallel", { type: "number", class: "input mono", step: "1", min: "1", max: "32", value: defaults.concurrency ?? 1 })),
         field("Max turns", input("launch-max-turns", { type: "number", class: "input mono", step: "1", min: "1", max: "25", value: defaults.max_turns ?? 8 })),
         field("Timeout (s)", input("launch-timeout", { type: "number", class: "input mono", step: "5", min: "5", max: "1800", value: defaults.timeout_seconds ?? 120 }))
@@ -1925,6 +1926,22 @@
     return { ok: true, value: num };
   }
 
+  // The seed is optional, so a blank field must stay unseeded instead of turning
+  // into 0, while an explicit 0 is a seed the server accepts. Fractions are
+  // refused here because /api/runs takes a whole number.
+  function readSeedField() {
+    const el = byId("launch-seed");
+    if (!el) return { ok: true, value: undefined };
+    if (el.validity?.badInput) return { ok: false, error: "Seed must be a whole number." };
+    const raw = el.value.trim();
+    if (raw === "") return { ok: true, value: undefined };
+    const num = Number(raw);
+    if (!Number.isFinite(num) || !Number.isInteger(num)) {
+      return { ok: false, error: "Seed must be a whole number." };
+    }
+    return { ok: true, value: num };
+  }
+
   async function submitLaunch(ev) {
     ev.preventDefault();
     const box = byId("launch-error-msg");
@@ -1933,7 +1950,8 @@
     const concurrency = readNumericField("launch-parallel", 1, "Concurrency");
     const maxTurns = readNumericField("launch-max-turns", 8, "Max turns");
     const timeoutSeconds = readNumericField("launch-timeout", 120, "Timeout (s)");
-    for (const parsed of [temperature, concurrency, maxTurns, timeoutSeconds]) {
+    const seed = readSeedField();
+    for (const parsed of [temperature, concurrency, maxTurns, timeoutSeconds, seed]) {
       if (!parsed.ok) {
         showLaunchError(parsed.error);
         return;
@@ -1952,6 +1970,8 @@
       categories: preset === "custom" && categoriesChecked.length ? categoriesChecked : undefined,
       scenarios: preset === "custom" && explicitScenarios.trim() ? explicitScenarios : undefined,
       temperature: temperature.value,
+      // undefined is dropped by JSON.stringify, so a blank field sends no seed.
+      seed: seed.value,
       concurrency: concurrency.value,
       max_turns: maxTurns.value,
       timeout_seconds: timeoutSeconds.value,
