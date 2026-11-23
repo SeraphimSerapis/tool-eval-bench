@@ -10,6 +10,7 @@ import pytest
 
 from tests.web_support import TEST_TOKEN, web_client
 from tool_eval_bench.application.run_config import RunSettings, build_run_config
+from tool_eval_bench.application.run_queries import get_run
 from tool_eval_bench.domain.adapters import ChatCompletionResult
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 from tool_eval_bench.storage.db import RunRepository
@@ -244,6 +245,51 @@ async def test_model_picker_uses_a_select_instead_of_a_datalist(
 
 
 @pytest.mark.asyncio
+async def test_launcher_form_exposes_the_seed_field(launcher_env: dict[str, str]) -> None:
+    """The Launch & Live form omitted the sampling seed the launcher accepts."""
+    app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
+    async with web_client(app) as client:
+        script = (await client.get("/static/app.js")).text
+    assert 'input("launch-seed"' in script
+    assert "function readSeedField(" in script
+    submit_block = script.split("async function submitLaunch(", maxsplit=1)[1].split(
+        "function turnRow(", maxsplit=1
+    )[0]
+    assert "seed: seed.value" in submit_block
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("seed", "expected"),
+    [
+        (None, None),  # no seed key at all
+        ("", None),  # cleared field
+        (0, 0),  # 0 is a seed, not "unset"
+        (1234, 1234),
+    ],
+)
+async def test_launch_stores_the_requested_seed(
+    launcher_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    seed: Any,
+    expected: int | None,
+) -> None:
+    _use_adapter(monkeypatch, _FakeAdapter())
+    app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
+    payload = dict(_LAUNCH) if seed is None else {**_LAUNCH, "seed": seed}
+    async with web_client(app) as client:
+        resp = await client.post("/api/runs", json=payload)
+        assert resp.status_code == 202
+        run_id = resp.json()["run_id"]
+        session = app.state.live_hub.get(run_id)
+        assert session is not None and session.task is not None
+        await session.task
+    stored = await asyncio.to_thread(get_run, run_id, include_traces=False)
+    assert stored is not None
+    assert stored["config"]["seed"] == expected
+
+
+@pytest.mark.asyncio
 async def test_launch_run_executes_and_persists_results(
     launcher_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -282,6 +328,7 @@ async def test_launch_run_executes_and_persists_results(
         ("max_turns", 2.5, "max_turns must be a whole number"),
         ("concurrency", 0, "concurrency must be at least 1"),
         ("seed", [1], "seed must be a number"),
+        ("seed", 2.5, "seed must be a whole number"),
         ("temperature", "nan", "temperature must be finite"),
     ],
 )
