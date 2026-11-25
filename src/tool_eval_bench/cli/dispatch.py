@@ -123,6 +123,9 @@ from tool_eval_bench.cli.pressure import (
     run_pressure_sweep as _run_pressure_sweep,
 )
 from tool_eval_bench.cli.probe import (
+    check_chat_template_fidelity as _check_chat_template_fidelity,
+)
+from tool_eval_bench.cli.probe import (
     check_tool_call_wire_parsing as _check_tool_call_wire_parsing,
 )
 from tool_eval_bench.cli.probe import preflight_model_check as _preflight_model_check
@@ -1495,6 +1498,8 @@ def _prepare_args(
         parser.error("--resume requires a run of tool-call scenarios")
     if getattr(args, "check_tools", False) and not args.probe:
         parser.error("--check-tools requires probe or --probe")
+    if getattr(args, "check_template", False) and not args.probe:
+        parser.error("--check-template requires probe or --probe")
     if getattr(args, "retest_diffs", False) and not getattr(args, "compare", None):
         parser.error("--retest-diffs requires compare <left> <right> or --compare RUN_A RUN_B")
     for retest_flag, retest_attr in (
@@ -1737,9 +1742,11 @@ def _run_probe_mode(
     *,
     parser: argparse.ArgumentParser | None = None,
 ) -> None:
-    """``--probe``: check whether the server is reachable and optionally verify tool parsing."""
+    """``--probe``: check server reachability and optional tool/template fidelity."""
     display_url = _redact_url(endpoint.base_url) if args.redact_url else endpoint.base_url
-    if not getattr(args, "check_tools", False):
+    check_tools = bool(getattr(args, "check_tools", False))
+    check_template = bool(getattr(args, "check_template", False))
+    if not (check_tools or check_template):
         _probe_server(
             console,
             endpoint.base_url,
@@ -1769,39 +1776,77 @@ def _run_probe_mode(
     resolved_model = args.model or endpoint.model or (model_ids[0] if model_ids else None)
     if not resolved_model:
         if args.json:
-            event = {
-                "event": "tool_call_probe",
-                "status": "failed",
-                "parsed": False,
-                "arguments_intact": False,
-                "detail": "No model could be resolved from --model or /v1/models.",
-            }
-            sys.stderr.write(json.dumps(event) + "\n")
+            if check_tools:
+                tool_event = {
+                    "event": "tool_call_probe",
+                    "status": "failed",
+                    "parsed": False,
+                    "arguments_intact": False,
+                    "detail": "No model could be resolved from --model or /v1/models.",
+                }
+                sys.stderr.write(json.dumps(tool_event) + "\n")
+            if check_template:
+                template_event = {
+                    "event": "template_probe",
+                    "status": "failed",
+                    "passed": False,
+                    "diagnosis": "model_or_endpoint_failure",
+                    "detail": "No model could be resolved from --model or /v1/models.",
+                }
+                sys.stderr.write(json.dumps(template_event) + "\n")
             sys.stderr.flush()
         else:
-            console.print(
-                "  [bold red]✗[/] [red]Cannot verify tool-call wire parsing: "
-                "pass --model or ensure /v1/models lists at least one model.[/]"
-            )
+            if check_tools:
+                console.print(
+                    "  [bold red]✗[/] [red]Cannot verify tool-call wire parsing: "
+                    "pass --model or ensure /v1/models lists at least one model.[/]"
+                )
+            if check_template:
+                console.print(
+                    "  [bold red]✗[/] [red]Cannot verify chat-template fidelity: "
+                    "pass --model or ensure /v1/models lists at least one model.[/]"
+                )
         sys.exit(1)
 
     active_parser = parser if parser is not None else _make_parser()
     extra_params = _build_extra_params(args, active_parser)
-    _check_tool_call_wire_parsing(
-        console,
-        endpoint.base_url,
-        resolved_model,
-        endpoint.api_key,
-        backend=endpoint.backend,
-        headless=bool(args.json),
-        timeout_seconds=args.timeout,
-        extra_params=extra_params or None,
-        wire_format=endpoint.wire_format,
-        headers=endpoint.probe_headers,
-        display_url=display_url,
-        exit_on_failure=True,
-    )
-    sys.exit(0)
+    failed = False
+    if check_tools:
+        tool_probe = _check_tool_call_wire_parsing(
+            console,
+            endpoint.base_url,
+            resolved_model,
+            endpoint.api_key,
+            backend=endpoint.backend,
+            headless=bool(args.json),
+            timeout_seconds=args.timeout,
+            extra_params=extra_params or None,
+            wire_format=endpoint.wire_format,
+            headers=endpoint.probe_headers,
+            display_url=display_url,
+            exit_on_failure=not check_template,
+        )
+        if not (tool_probe.parsed and tool_probe.arguments_intact):
+            failed = True
+    if check_template:
+        template_probe = _check_chat_template_fidelity(
+            console,
+            endpoint.base_url,
+            resolved_model,
+            endpoint.api_key,
+            backend=endpoint.backend,
+            headless=bool(args.json),
+            timeout_seconds=args.timeout,
+            extra_params=extra_params or None,
+            wire_format=endpoint.wire_format,
+            headers=endpoint.probe_headers,
+            display_url=display_url,
+            tokenizer=getattr(args, "tokenizer", None),
+            exit_on_failure=not check_tools,
+        )
+        if not template_probe.passed:
+            failed = True
+    sys.exit(1 if failed else 0)
 
 
 def _resolve_target(

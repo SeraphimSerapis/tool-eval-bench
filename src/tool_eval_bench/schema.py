@@ -42,7 +42,7 @@ from tool_eval_bench.domain.review import (
 )
 
 # Argument schema version — bump when adding/removing/renaming args.
-SCHEMA_VERSION = "12"
+SCHEMA_VERSION = "13"
 
 COMMANDS_SCHEMA: dict[str, dict[str, Any]] = commands_schema()
 
@@ -121,6 +121,12 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
         "type": "bool",
         "default": False,
         "description": "With probe, send one tool-call request to verify structured tool_calls parsing",
+    },
+    {
+        "name": "check_template",
+        "type": "bool",
+        "default": False,
+        "description": "With probe, run chat-template replay pairs and special-token leak checks",
     },
     # -- Decision judge audit --
     {

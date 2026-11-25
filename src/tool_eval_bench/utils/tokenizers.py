@@ -30,14 +30,19 @@ Resolution order (see :func:`resolve_tokenizer`):
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+from tool_eval_bench.domain.wire_hygiene import is_control_special_token
 
 logger = logging.getLogger(__name__)
 
 _TOKENIZER_FILE = "tokenizer.json"
+_SPECIAL_TOKENS_MAP_FILE = "special_tokens_map.json"
 _REPO_PREFIX = "models--"
 
 
@@ -318,3 +323,79 @@ def format_candidates(candidates: list[str], limit: int = 10) -> str:
     if len(candidates) > limit:
         lines.append(f"  … and {len(candidates) - limit} more")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Special-token extraction (stdlib-only)
+# ---------------------------------------------------------------------------
+
+
+def _load_json_dict(path: Path) -> dict[str, Any] | None:
+    """Read a JSON object from *path*, returning None if missing or corrupt."""
+    try:
+        if not path.is_file():
+            return None
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _iter_special_map_strings(value: Any) -> list[str]:
+    """Extract string token contents from one ``special_tokens_map.json`` entry."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        content = value.get("content")
+        return [content] if isinstance(content, str) else []
+    if isinstance(value, list):
+        found: list[str] = []
+        for item in value:
+            found.extend(_iter_special_map_strings(item))
+        return found
+    return []
+
+
+def extract_special_tokens(tokenizer_path: str | Path) -> frozenset[str]:
+    """Extract chat-template/control special tokens from a local HuggingFace tokenizer.
+
+    Accepts a path to ``tokenizer.json`` or a directory containing it, and also
+    inspects a sibling ``special_tokens_map.json`` when present. Only entries
+    marked ``special: true`` in ``added_tokens`` (or listed in
+    ``special_tokens_map.json``) that match bracketed/angle-delimited control
+    syntax (see :func:`tool_eval_bench.domain.wire_hygiene.is_control_special_token`)
+    are returned, filtering out plain words, short fragments, and standard HTML
+    tags. Returns ``frozenset()`` on missing, unreadable, or corrupt files.
+    """
+    if not tokenizer_path:
+        return frozenset()
+    raw_path = Path(tokenizer_path).expanduser()
+    try:
+        is_dir = raw_path.is_dir()
+    except OSError:
+        return frozenset()
+
+    tok_file = raw_path / _TOKENIZER_FILE if is_dir else raw_path
+    special_map_file = (raw_path if is_dir else raw_path.parent) / _SPECIAL_TOKENS_MAP_FILE
+
+    tokens: set[str] = set()
+
+    tok_data = _load_json_dict(tok_file)
+    if tok_data is not None:
+        added_tokens = tok_data.get("added_tokens")
+        if isinstance(added_tokens, list):
+            for entry in added_tokens:
+                if not isinstance(entry, dict) or entry.get("special") is not True:
+                    continue
+                content = entry.get("content")
+                if isinstance(content, str) and is_control_special_token(content):
+                    tokens.add(content)
+
+    map_data = _load_json_dict(special_map_file)
+    if map_data is not None:
+        for value in map_data.values():
+            for candidate in _iter_special_map_strings(value):
+                if is_control_special_token(candidate):
+                    tokens.add(candidate)
+
+    return frozenset(tokens)

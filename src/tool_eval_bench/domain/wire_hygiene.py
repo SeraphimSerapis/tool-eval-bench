@@ -9,13 +9,86 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 _QWEN3_CODER_FUNCTION_RE = re.compile(r"<function=[A-Za-z_][A-Za-z0-9_.-]*[ \t\r\n]*>")
+_GEMMA4_CALL_RE = re.compile(
+    r"(?<![A-Za-z0-9_])call:[A-Za-z_][A-Za-z0-9_.-]*(?::[A-Za-z_][A-Za-z0-9_.-]*)?\{"
+)
 _FENCED_TOOL_CALL_RE = re.compile(r"```tool_calls?\b")
 _JSON_START_RE = re.compile(r"\{[ \t\r\n]*\"|\[[ \t\r\n]*\{")
+
+_PIPE_CONTROL_TOKEN_RE = re.compile(
+    r"^(?:<\|[^\s<>]{1,64}\|>|<\|[^\s<>]{2,64}>|<[^\s<>]{2,64}\|>|<｜[^\s<>]{1,64}｜>)$"
+)
+_ANGLE_CONTROL_TOKEN_RE = re.compile(r"^</?[A-Za-z][A-Za-z0-9_.:-]{2,63}>$")
+_BRACKET_CONTROL_TOKEN_RE = re.compile(r"^\[/?[A-Z][A-Z0-9_.:-]{2,63}\]$")
+
+# Standard HTML/Markdown element names that should never be flagged as leaked
+# chat-template control tokens even if a tokenizer marks them special.
+_COMMON_HTML_TAGS: frozenset[str] = frozenset(
+    {
+        "article",
+        "aside",
+        "audio",
+        "blockquote",
+        "body",
+        "button",
+        "canvas",
+        "code",
+        "col",
+        "colgroup",
+        "del",
+        "details",
+        "dialog",
+        "div",
+        "figure",
+        "figcaption",
+        "footer",
+        "form",
+        "head",
+        "header",
+        "html",
+        "iframe",
+        "img",
+        "input",
+        "ins",
+        "kbd",
+        "label",
+        "legend",
+        "link",
+        "main",
+        "mark",
+        "meta",
+        "nav",
+        "noscript",
+        "option",
+        "path",
+        "pre",
+        "script",
+        "section",
+        "select",
+        "small",
+        "source",
+        "span",
+        "strong",
+        "style",
+        "sub",
+        "summary",
+        "sup",
+        "svg",
+        "table",
+        "tbody",
+        "textarea",
+        "tfoot",
+        "thead",
+        "title",
+        "var",
+        "video",
+    }
+)
 
 _LITERAL_MARKERS: tuple[tuple[str, str, str], ...] = (
     ("<|tool_calls_begin|>", "<|tool_calls_begin|>", "deepseek"),
@@ -25,6 +98,60 @@ _LITERAL_MARKERS: tuple[tuple[str, str, str], ...] = (
     ("<|python_tag|>", "<|python_tag|>", "llama3"),
     ("[TOOL_CALLS]", "[TOOL_CALLS]", "mistral"),
     ("<|tool_call|>", "<|tool_call|>", "hermes/qwen"),
+    ("<|tool_call>", "<|tool_call>", "gemma4"),
+    ("<tool_call|>", "<tool_call|>", "gemma4"),
+    ("<channel|>", "<channel|>", "gemma4"),
+    ("<turn|>", "<turn|>", "gemma4"),
+)
+
+# Built-in chat-template, turn, channel, and tool-call control tokens checked
+# even when no local HuggingFace tokenizer.json is available.
+BUILTIN_TEMPLATE_LEAK_TOKENS: frozenset[str] = frozenset(
+    {
+        "<|im_start|>",
+        "<|im_end|>",
+        "<|endoftext|>",
+        "<|tool_call|>",
+        "<|/tool_call|>",
+        "<|begin_of_text|>",
+        "<|end_of_text|>",
+        "<|eot_id|>",
+        "<|eom_id|>",
+        "<|start_header_id|>",
+        "<|end_header_id|>",
+        "<|python_tag|>",
+        "<start_of_turn>",
+        "<end_of_turn>",
+        "<|turn>",
+        "<turn|>",
+        "<|channel>",
+        "<channel|>",
+        "<|thought>",
+        "<thought|>",
+        "<|tool_call>",
+        "<tool_call|>",
+        "<|tool_response>",
+        "<tool_response|>",
+        "<|tool_declaration>",
+        "<tool_declaration|>",
+        "[INST]",
+        "[/INST]",
+        "[TOOL_CALLS]",
+        "[AVAILABLE_TOOLS]",
+        "[/AVAILABLE_TOOLS]",
+        "[TOOL_RESULTS]",
+        "[/TOOL_RESULTS]",
+        "<|tool_calls_begin|>",
+        "<|tool_calls_end|>",
+        "<|tool_call_begin|>",
+        "<|tool_call_end|>",
+        "<｜tool▁calls▁begin｜>",
+        "<｜tool▁calls▁end｜>",
+        "<｜tool▁call▁begin｜>",
+        "<｜tool▁call▁end｜>",
+        "<｜begin▁of▁sentence｜>",
+        "<｜end▁of▁sentence｜>",
+    }
 )
 
 PARSER_FLAG_BY_FAMILY: dict[str, str] = {
@@ -33,6 +160,7 @@ PARSER_FLAG_BY_FAMILY: dict[str, str] = {
     "mistral": "mistral",
     "llama3": "llama3_json",
     "deepseek": "deepseek_v3",
+    "gemma4": "gemma4",
 }
 
 
@@ -170,7 +298,7 @@ def _detect_raw_json_call(text: str, advertised_names: set[str]) -> str | None:
     return None
 
 
-def _strip_closed_think_blocks(text: str) -> str:
+def strip_closed_think_blocks(text: str) -> str:
     """Remove closed <think>...</think> blocks in one linear pass."""
     lower = text.lower()
     open_idx = lower.find("<think>")
@@ -189,6 +317,57 @@ def _strip_closed_think_blocks(text: str) -> str:
         return text
     out.append(text[cursor:])
     return "".join(out)
+
+
+_strip_closed_think_blocks = strip_closed_think_blocks
+
+
+def is_control_special_token(token: str) -> bool:
+    """Return whether *token* matches chat-template/control delimiter syntax.
+
+    Accepts angle-delimited pipe tokens (``<|...|>``, ``<|...>``, ``<...|>``,
+    and fullwidth ``<｜...｜>``), non-HTML angle tokens of length >= 5
+    (such as ``<start_of_turn>``, ``<end_of_turn>``, ``<eos>``), and uppercase
+    bracketed control tokens of length >= 5 (such as ``[INST]``, ``[/INST]``,
+    ``[TOOL_CALLS]``). Plain words, single characters, short fragments
+    (length < 4), and standard HTML/Markdown tags are rejected to avoid
+    false positives in normal assistant prose.
+    """
+    if len(token) < 4 or any(ch.isspace() for ch in token):
+        return False
+    if _PIPE_CONTROL_TOKEN_RE.fullmatch(token):
+        return True
+    if _BRACKET_CONTROL_TOKEN_RE.fullmatch(token):
+        return True
+    if _ANGLE_CONTROL_TOKEN_RE.fullmatch(token):
+        tag = token.lstrip("</").rstrip(">").lower()
+        return tag not in _COMMON_HTML_TAGS
+    return False
+
+
+def detect_special_token_leak(
+    content: str | None,
+    special_tokens: Iterable[str],
+) -> list[str]:
+    """Return sorted unique control/special tokens leaked into assistant content.
+
+    Closed ``<think>...</think>`` blocks are stripped before scanning so normal
+    inline reasoning tags are not misclassified as template leaks, while stray
+    unclosed reasoning tags or leaked turn/channel/tool delimiters are caught.
+    """
+    if not content:
+        return []
+    cleaned = strip_closed_think_blocks(content)
+    if not cleaned:
+        return []
+    eligible = sorted(
+        {
+            token
+            for token in special_tokens
+            if isinstance(token, str) and is_control_special_token(token)
+        }
+    )
+    return [token for token in eligible if token in cleaned]
 
 
 def _has_tool_tag(
@@ -222,14 +401,11 @@ def _has_tool_tag(
     return False
 
 
-def detect_unparsed_tool_call(
-    content: str | None,
-    tools: Sequence[Mapping[str, Any]] | None,
-) -> UnparsedToolCallMatch | None:
-    """Detect raw tool-call markup or JSON tool-call envelopes leaked into content."""
-    if not content or not tools:
+def detect_parser_marker(content: str | None) -> UnparsedToolCallMatch | None:
+    """Detect native tool-call or channel parser markers regardless of advertised tools."""
+    if not content:
         return None
-    cleaned = _strip_closed_think_blocks(content)
+    cleaned = strip_closed_think_blocks(content)
     if not cleaned.strip():
         return None
 
@@ -240,6 +416,9 @@ def detect_unparsed_tool_call(
     if _QWEN3_CODER_FUNCTION_RE.search(cleaned):
         return UnparsedToolCallMatch(marker="<function=...>", parser_family="qwen3_coder")
 
+    if _GEMMA4_CALL_RE.search(cleaned):
+        return UnparsedToolCallMatch(marker="call:<name>{...}", parser_family="gemma4")
+
     if _FENCED_TOOL_CALL_RE.search(cleaned):
         return UnparsedToolCallMatch(marker="```tool_call", parser_family="hermes/qwen")
 
@@ -248,6 +427,24 @@ def detect_unparsed_tool_call(
 
     if _has_tool_tag(cleaned, "<tool_calls>", "</tool_calls>", allow_nested_tool_call=True):
         return UnparsedToolCallMatch(marker="<tool_calls>", parser_family="hermes/qwen")
+
+    return None
+
+
+def detect_unparsed_tool_call(
+    content: str | None,
+    tools: Sequence[Mapping[str, Any]] | None,
+) -> UnparsedToolCallMatch | None:
+    """Detect raw tool-call markup or JSON tool-call envelopes leaked into content."""
+    if not content or not tools:
+        return None
+    marker_match = detect_parser_marker(content)
+    if marker_match is not None:
+        return marker_match
+
+    cleaned = strip_closed_think_blocks(content)
+    if not cleaned.strip():
+        return None
 
     advertised = advertised_tool_names(tools)
     matched_tool = _detect_raw_json_call(cleaned, advertised)
@@ -270,6 +467,8 @@ def infer_parser_family_from_text(text: str | None) -> str | None:
             return family
     if "<function=...>" in text:
         return "qwen3_coder"
+    if "call:<name>{...}" in text or _GEMMA4_CALL_RE.search(text):
+        return "gemma4"
     if "```tool_call" in text or "<tool_call>" in text or "<tool_calls>" in text:
         return "hermes/qwen"
     if 'raw JSON call to "' in text or "raw JSON tool call" in text:

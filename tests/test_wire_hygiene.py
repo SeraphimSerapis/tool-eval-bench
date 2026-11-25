@@ -265,6 +265,36 @@ def test_unparsed_tool_call_remains_in_denominator_when_scoring() -> None:
             "<｜tool▁calls▁begin｜>",
             "deepseek",
         ),
+        (
+            '<|tool_call>call:get_weather{location:<|"|>Tokyo<|"|>}<tool_call|>',
+            "<|tool_call>",
+            "gemma4",
+        ),
+        (
+            'call:get_weather{location:"Tokyo"}<tool_call|>',
+            "<tool_call|>",
+            "gemma4",
+        ),
+        (
+            "<channel|>thought\nCalling get_weather now.",
+            "<channel|>",
+            "gemma4",
+        ),
+        (
+            "Done checking weather.<turn|>",
+            "<turn|>",
+            "gemma4",
+        ),
+        (
+            'call:get_weather{location:"Tokyo"}',
+            "call:<name>{...}",
+            "gemma4",
+        ),
+        (
+            'call:default_api:get_weather{location:"Tokyo"}',
+            "call:<name>{...}",
+            "gemma4",
+        ),
     ],
 )
 def test_detect_unparsed_tool_call_template_markers(
@@ -495,7 +525,21 @@ def test_format_tool_parser_advice_across_engines_and_families() -> None:
     generic_unknown = format_tool_parser_advice(backend="unknown", parser_family="raw_json")
     assert "--tool-call-parser <parser>" in generic_unknown
 
-    for text in (vllm_qwen, sglang_coder, llamacpp, generic_deepseek, generic_unknown):
+    vllm_gemma4 = format_tool_parser_advice(backend="vllm", parser_family="gemma4")
+    assert "--enable-auto-tool-choice --tool-call-parser gemma4" in vllm_gemma4
+
+    sglang_gemma4 = format_tool_parser_advice(engine_name="SGLang", parser_family="gemma4")
+    assert "--tool-call-parser gemma4" in sglang_gemma4
+
+    for text in (
+        vllm_qwen,
+        sglang_coder,
+        llamacpp,
+        generic_deepseek,
+        generic_unknown,
+        vllm_gemma4,
+        sglang_gemma4,
+    ):
         assert "—" not in text
         assert "–" not in text
         assert "(" not in text
@@ -510,6 +554,10 @@ def test_infer_and_dominant_parser_family_helpers() -> None:
     assert infer_parser_family_from_text("markup [TOOL_CALLS] in content") == "mistral"
     assert infer_parser_family_from_text("markup <|python_tag|> in content") == "llama3"
     assert infer_parser_family_from_text("markup <|tool_calls_begin|> in content") == "deepseek"
+    assert infer_parser_family_from_text("markup <|tool_call> in content") == "gemma4"
+    assert infer_parser_family_from_text("markup <channel|> in content") == "gemma4"
+    assert infer_parser_family_from_text("markup <turn|> in content") == "gemma4"
+    assert infer_parser_family_from_text("markup call:<name>{...} in content") == "gemma4"
     assert infer_parser_family_from_text('unparsed raw JSON call to "get_weather"') == "raw_json"
     assert infer_parser_family_from_text("unparsed raw JSON tool call in content") == "raw_json"
 
