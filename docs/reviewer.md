@@ -196,6 +196,20 @@ While a reviewer is configured, the harness masks known credential values as
   records a revision the harness could not use, after which the draft ran.
 - **Report.** The header names the reviewer, and a `## Reviewer` section lists
   the settings, the totals, and one row per scenario.
+- **Score panel.** The CLI's final panel names the reviewer. When the reviewer
+  reviewed turns in scored scenarios and both servers reported usage, its Token
+  Usage counts the pair: the total splits into the model's and the reviewer's
+  tokens, and Efficiency divides the points by both. Both sides skip the
+  scenarios that infrastructure failures took out of scoring. When only one
+  side's server reported usage, the panel names the side that reported none and
+  shows no Efficiency; if every review failed and no reviewer tokens were
+  recorded, it reports the failed reviews and unknown reviewer usage instead. A
+  failed review may have used tokens it never reported, so after one the panel
+  marks the reviewer's count as possibly incomplete, and Efficiency, when
+  shown, as an upper bound. The stored `total_tokens`, which
+  the leaderboard's token column and the web run view show, and
+  `token_efficiency`, which JSON exports carry, count the benchmarked model's
+  tokens only.
 - **Leaderboard.** A paired row reads `model + reviewer <reviewer>`, and its
   cohort label carries `reviewer=<reviewer>`. CSV and JSON exports, from the
   CLI and the web UI, carry a `reviewer_model` field. The `--trials` cross-trial
