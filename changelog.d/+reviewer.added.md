@@ -8,4 +8,6 @@ reviewer error or an unusable revision lets the current draft run and is counted
 a reviewer that fails its startup review stops the run before anything is stored. The pair is the system
 under test: a reviewed run stores its reviewer, gets its own fingerprint and leaderboard cohort, and
 refuses held-out packs. The web launcher has a Reviewer section and resumes paired runs, and the
-Python API takes `reviewer=ReviewerSettings(...)`. See `docs/reviewer.md`.
+Python API takes `reviewer=ReviewerSettings(...)`. The CLI's final score panel names the reviewer, and
+its Token Usage and Efficiency count the reviewer's tokens alongside the model's when both servers
+report usage. See `docs/reviewer.md`.

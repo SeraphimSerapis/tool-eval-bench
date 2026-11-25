@@ -502,3 +502,84 @@ def test_the_final_panel_names_the_reviewer() -> None:
 
     assert "Reviewer: critic" in shown["critic"]
     assert "Reviewer" not in shown[None]
+
+
+def test_the_final_panel_counts_the_reviewers_tokens() -> None:
+    import io
+
+    from rich.console import Console
+
+    from tool_eval_bench.cli.display import _print_final_panel
+    from tool_eval_bench.domain.scenarios import FailureKind, ScenarioResult, ScenarioStatus
+    from tool_eval_bench.evals.scenarios import SCENARIOS
+    from tool_eval_bench.runner.orchestrator import score_results
+
+    first, second = SCENARIOS[0], SCENARIOS[1]
+
+    def result(scenario, review, *, model_tokens=(1500, 500), timed_out=False):
+        return ScenarioResult(
+            scenario.id,
+            ScenarioStatus.FAIL if timed_out else ScenarioStatus.PASS,
+            0 if timed_out else 2,
+            "timed out" if timed_out else "ok",
+            prompt_tokens=model_tokens[0],
+            completion_tokens=model_tokens[1],
+            review=review,
+            failure_kind=FailureKind.TIMEOUT if timed_out else None,
+        )
+
+    def panel(*results):
+        summary = score_results(list(results), [first, second][: len(results)])
+        buf = io.StringIO()
+        _print_final_panel(Console(file=buf, width=160), "m", summary, 1.0)
+        return buf.getvalue(), summary
+
+    review = {"reviews": 3, "prompt_tokens": 1800, "completion_tokens": 200, "latency_ms": 9}
+    paired, paired_summary = panel(result(first, review))
+    # 2 points over 4,000 tokens: the pair's cost, split by who used it.
+    assert "Total: 4,000 tokens (2,000 model + 2,000 reviewer)" in paired
+    assert "Efficiency: 0.5 pts/1K tokens" in paired
+    # The stored metrics stay the benchmarked model's own.
+    assert paired_summary.total_tokens == 2000
+    assert paired_summary.token_efficiency == 1.0
+
+    # After a failed review the reviewer's count is a floor, Efficiency a ceiling.
+    failed_review = {**review, "reviewer_errors": 1}
+    with_failure, _ = panel(result(first, failed_review))
+    assert "2,000 reviewer; usage of 1 failed review may be missing)" in with_failure
+    assert "Efficiency: at most 0.5 pts/1K tokens" in with_failure
+    # 2 points over 16,000 tokens is 0.125: the bound rounds up, not down to 0.1.
+    big_failed = {
+        "reviews": 2,
+        "reviewer_errors": 1,
+        "prompt_tokens": 13000,
+        "completion_tokens": 1000,
+    }
+    rounded, _ = panel(result(first, big_failed))
+    assert "Efficiency: at most 0.2 pts/1K tokens" in rounded
+    reviewer_only, _ = panel(result(first, failed_review, model_tokens=(0, 0)))
+    assert "the model's server reported no token usage; usage of 1 failed review" in reviewer_only
+
+    # A timed-out scenario is out of total_tokens, so its review is out too.
+    with_timeout, _ = panel(result(first, review), result(second, review, timed_out=True))
+    assert "Total: 4,000 tokens (2,000 model + 2,000 reviewer)" in with_timeout
+
+    solo, _ = panel(result(first, None))
+    assert "Total: 2,000 tokens  " in solo
+    assert "Efficiency: 1.0 pts/1K tokens" in solo
+    assert "reviewer" not in solo
+
+    # One side's server reported no usage: the pair's cost is unknown.
+    no_reviewer_usage, _ = panel(result(first, {"reviews": 2}))
+    assert "Model: 2,000 tokens" in no_reviewer_usage
+    assert "the reviewer's server reported no token usage" in no_reviewer_usage
+    assert "Efficiency" not in no_reviewer_usage
+    no_model_usage, _ = panel(result(first, review, model_tokens=(0, 0)))
+    assert "Reviewer: 2,000 tokens" in no_model_usage
+    assert "the model's server reported no token usage" in no_model_usage
+    assert "Efficiency" not in no_model_usage
+
+    # A bool or a negative count is no usage.
+    odd, _ = panel(result(first, {"prompt_tokens": True, "completion_tokens": -5}))
+    assert "reviewer" not in odd
+    assert "Total: 2,000 tokens  " in odd

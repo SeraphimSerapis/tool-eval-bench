@@ -11,6 +11,7 @@ This eliminates flicker because only 1-2 lines are ever rewritten.
 
 from __future__ import annotations
 
+import math
 import time
 from typing import Any
 
@@ -490,6 +491,81 @@ def _print_capability_scores(console: Console, summary: ModelScoreSummary) -> No
     console.print(table)
 
 
+def _count(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def _reviewer_usage(summary: ModelScoreSummary) -> tuple[int, int, int]:
+    """The reviewer's reviews, failed reviews, and tokens over the scored scenarios.
+
+    ``score_results`` drops infrastructure failures from the points and from
+    ``total_tokens``; the reviewer's side skips the same scenarios, so both
+    halves of the pair's total cover one set.
+    """
+    excluded = {r.scenario_id for r in summary.scenario_results if r.is_infrastructure_failure}
+    reviews = failed = tokens = 0
+    for result in summary.scenario_results:
+        if result.scenario_id in excluded or not isinstance(result.review, dict):
+            continue
+        reviews += _count(result.review.get("reviews"))
+        failed += _count(result.review.get("reviewer_errors"))
+        tokens += _count(result.review.get("prompt_tokens"))
+        tokens += _count(result.review.get("completion_tokens"))
+    return reviews, failed, tokens
+
+
+def _token_usage_lines(summary: ModelScoreSummary) -> str:
+    """The panel's Token Usage block; empty when no usage is known.
+
+    A paired score belongs to the pair, so its cost does too: the total adds
+    the reviewer's tokens and Efficiency divides the points by both. The
+    stored ``total_tokens`` and ``token_efficiency`` stay the model's own.
+    When one side's server reported no usage, the pair's cost is unknown, so
+    the block says so and shows no Efficiency. A failed review may have used
+    tokens it never reported (a timeout records none), so after one the
+    reviewer's count is a floor and the pair's Efficiency a ceiling.
+    """
+    header = "\n\n  [bold]📊 Token Usage:[/]\n  "
+    reviews, failed, reviewer_tokens = _reviewer_usage(summary)
+    if not reviews and not reviewer_tokens:
+        # Unchanged for a solo run.
+        if not summary.total_tokens > 0:
+            return ""
+        line = f"{header}[dim]Total:[/] {summary.total_tokens:,} tokens"
+        if summary.token_efficiency is not None:
+            line += f"  [dim]│  Efficiency: {summary.token_efficiency:.1f} pts/1K tokens[/]"
+        return line
+    model_tokens = _count(summary.total_tokens)
+    missing = (
+        f"; usage of {failed} failed review{'' if failed == 1 else 's'} may be missing"
+        if failed
+        else ""
+    )
+    if model_tokens and reviewer_tokens:
+        pair_tokens = model_tokens + reviewer_tokens
+        efficiency = summary.total_points / (pair_tokens / 1000)
+        # An upper bound rounds up, so the shown figure stays a bound.
+        # round() first: 0.3 * 10 is 3.0000000000000004, which must not become 0.4.
+        ceiling = math.ceil(round(efficiency * 10, 9)) / 10
+        shown = f"at most {ceiling:.1f}" if failed else f"{efficiency:.1f}"
+        return (
+            f"{header}[dim]Total:[/] {pair_tokens:,} tokens"
+            f" [dim]({model_tokens:,} model + {reviewer_tokens:,} reviewer{missing})[/]"
+            f"  [dim]│  Efficiency: {shown} pts/1K tokens[/]"
+        )
+    if model_tokens:
+        return (
+            f"{header}[dim]Model:[/] {model_tokens:,} tokens"
+            "  [dim]│  the reviewer's server reported no token usage[/]"
+        )
+    if reviewer_tokens:
+        return (
+            f"{header}[dim]Reviewer:[/] {reviewer_tokens:,} tokens"
+            f"  [dim]│  the model's server reported no token usage{missing}[/]"
+        )
+    return ""
+
+
 def _print_final_panel(
     console: Console,
     model: str,
@@ -611,13 +687,8 @@ def _print_final_panel(
 
     content += f"\n\n  [dim]Completed in {elapsed:.1f}s[/]"
 
-    # Token usage summary (when server reports usage data)
-    if summary.total_tokens > 0:
-        content += (
-            f"\n\n  [bold]📊 Token Usage:[/]\n  [dim]Total:[/] {summary.total_tokens:,} tokens"
-        )
-        if summary.token_efficiency is not None:
-            content += f"  [dim]│  Efficiency: {summary.token_efficiency:.1f} pts/1K tokens[/]"
+    # Token usage summary (when the servers report usage data)
+    content += _token_usage_lines(summary)
 
     # Surface safety-critical failures prominently
     if summary.safety_warnings:
