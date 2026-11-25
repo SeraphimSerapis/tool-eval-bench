@@ -315,7 +315,11 @@ def test_tc46_duplicate_equal_calls_keep_trace_order_identity() -> None:
             _call("get_contacts", {"query": "manager"}),
             _call(
                 "send_email",
-                {"to": "jordan.park@company.com", "subject": "Summary", "body": "Report summary"},
+                {
+                    "to": "jordan.park@company.com",
+                    "subject": "Summary",
+                    "body": "Risks: BetaCorp platform launch in Q4 2025.",
+                },
             ),
         ],
         final_answer="Acme's market share grew from 32% to 35%. Key risk: BetaCorp's platform launch.",

@@ -14,13 +14,13 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    _is_negated,
-)
-from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
+)
+from tool_eval_bench.evals.helpers import (
+    negated_before as _negated_before,
 )
 from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
@@ -30,6 +30,11 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     strip_markdown_emphasis as _strip_markdown_emphasis,
+)
+
+_TC44_NEG_SUBJECT = re.compile(
+    r"\b(?:nothing|none|no\s+[\w'-]+)\s+(?:is|equals?|approximates?|represents?|matches?)\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -51,13 +56,22 @@ def _tc44_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail(f"Made {len(state.tool_calls)} tool call(s) despite tool_choice='none'.")
 
     answer = _strip_markdown_emphasis(state.final_answer).lower()
-    has_pi_value = any(
-        3.139 <= float(match.group(0).replace(",", ".")) <= 3.143
-        and not _is_negated(answer[max(0, match.start() - 120) : match.start()])
-        for match in re.finditer(r"(?<![\d.-])3[.,]14\d*(?!\.\d)", answer)
-    )
+    has_pi_value = False
+    for match in re.finditer(r"(?<![\d.-])3[.,]14\d*(?!\.\d)", answer):
+        if not (3.139 <= float(match.group(0).replace(",", ".")) <= 3.143):
+            continue
+        prefix = answer[max(0, match.start() - 120) : match.start()]
+        suffix = answer[match.end() : match.end() + 40]
+        clause_before = re.split(r"[.!?;,\n\u2014\u2013]|\s-\s", prefix)[-1]
+        if _negated_before(prefix, suffix) or _TC44_NEG_SUBJECT.search(clause_before):
+            continue
+        has_pi_value = True
+        break
     exact_four = bool(
-        re.search(r"(?:pi|π).{0,20}(?:exactly|equals?|is)\s*4\b", answer)
+        re.search(
+            r"(?:pi|π).{0,20}(?:exactly|equals?|is)\s*4\b(?!\s*(?:times|[×*x/]|arctan|atan|\())",
+            answer,
+        )
         and not re.search(r"(?:pi|π).{0,20}\bnot\b.{0,20}\b4\b", answer)
     )
     if has_pi_value and not exact_four:

@@ -17,6 +17,9 @@ from tool_eval_bench.evals.helpers import (
     addressed_recipients as _addressed_recipients,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -69,8 +72,8 @@ def _tc46_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             )
         return _noise({"results": []}, "search_files")
     if call.name == "read_file":
-        fid = _as_str(call.arguments.get("file_id", ""))
-        if "2025" in fid:
+        fid = _normalize(_as_str(call.arguments.get("file_id", "")))
+        if fid == "comp_report_2025":
             return _noise(
                 {
                     "content": (
@@ -82,7 +85,7 @@ def _tc46_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
                 },
                 "read_file",
             )
-        if "2024" in fid:
+        if fid == "comp_report_2024":
             return _noise(
                 {
                     "content": (
@@ -127,6 +130,20 @@ def _tc46_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             )
         return _noise({"results": []}, "get_contacts")
     return _generic_tool_fallback(call)
+
+
+_TC46_RISK_CONTENT = re.compile(
+    r"\b(?:betacorp|platform|q4(?:\s+2025)?|gamma(?:\s+inc)?|cloudfirst|acquir\w*|acquisition)\b",
+    re.IGNORECASE,
+)
+_TC46_SHARE_35 = re.compile(r"\b35(?:\.0+)?\s*(?:%|percent\b)", re.IGNORECASE)
+_TC46_SHARE_32 = re.compile(r"\b32(?:\.0+)?\s*(?:%|percent\b)", re.IGNORECASE)
+_TC46_SHARE_GROWTH = re.compile(
+    r"\b(?:3(?:\.0+)?\s*(?:percentage\s+points?\b|pp\b)"
+    r"|(?:grew|increased|rose|up|gain(?:ed)?)\s+(?:by\s+|of\s+)?3(?:\.0+)?\s*(?:%|pp\b|percentage\s+points?\b)"
+    r"|\+3(?:\.0+)?\s*(?:%|pp\b)|9\.3[78]\s*%|9\.4\s*%)",
+    re.IGNORECASE,
+)
 
 
 @forbid_unrequested_side_effects({"send_email": 1})
@@ -213,7 +230,7 @@ def _tc46_eval(state: ScenarioState) -> ScenarioEvaluation:
             for call in calls
             if call.name == "read_file"
             and _normalize(_as_str(call.arguments.get("file_id", ""))) == "comp_report_2024"
-            and _after(call, read_2025_call)
+            and _after(call, search_call)
             and _result_is_usable_if_present(state, call)
             and _result_matches(
                 call,
@@ -236,6 +253,7 @@ def _tc46_eval(state: ScenarioState) -> ScenarioEvaluation:
                 term in _normalize(_as_str(call.arguments.get("query", "")))
                 for term in ("manager", "boss", "jordan")
             )
+            and _after(call, read_2025_call)
             and _after(call, read_2024_call)
             and _result_is_usable_if_present(state, call)
             and _result_matches(
@@ -260,6 +278,7 @@ def _tc46_eval(state: ScenarioState) -> ScenarioEvaluation:
         and bool(call.arguments["subject"].strip())
         and isinstance(call.arguments.get("body"), str)
         and bool(call.arguments["body"].strip())
+        and _answer_affirms_pattern(call.arguments["body"], _TC46_RISK_CONTENT)
         and _call_at_or_after_user_phase(call, 4)
         and _after(call, manager_call)
         and _result_is_usable_if_present(state, call)
@@ -285,20 +304,21 @@ def _tc46_eval(state: ScenarioState) -> ScenarioEvaluation:
         ]
     )
 
-    # Check for key content recall
+    # Check for key content recall: both market share growth AND concrete risks
+    # must be grounded (not negated and not matched by bare "risk").
     mentions_market_share = (
-        bool(re.search(r"\b35\s*(?:%|percent)", answer))
-        and bool(re.search(r"\b32\s*(?:%|percent)", answer))
-    ) or (
-        "market share" in answer
-        and any(
-            phrase in answer for phrase in ("3 percentage points", "grew by 3", "increased by 3")
-        )
-    )
-    mentions_risk = any(w in answer for w in ("betacorp", "platform", "q4", "risk"))
+        _answer_affirms_pattern(answer, _TC46_SHARE_35)
+        and _answer_affirms_pattern(answer, _TC46_SHARE_32)
+    ) or ("market share" in answer and _answer_affirms_pattern(answer, _TC46_SHARE_GROWTH))
+    mentions_risk = _answer_affirms_pattern(answer, _TC46_RISK_CONTENT)
 
-    if phases_done >= 4 and (mentions_market_share or mentions_risk):
+    if phases_done >= 4 and mentions_market_share and mentions_risk:
         return _pass(f"Completed all {phases_done} tool phases and recalled prior context.")
+    if phases_done >= 4:
+        return _partial(
+            "Completed all 4 tool phases but did not report both the market share growth "
+            "and key risks."
+        )
     if phases_done >= 3:
         return _partial(f"Completed {phases_done}/4 tool phases — good state tracking.")
     if phases_done >= 2:
@@ -316,9 +336,9 @@ SCENARIO = ScenarioDefinition(
     description="5-turn research workflow: search→read→compare→summarize→email. Tests deep state tracking.",
     handle_tool_call=_tc46_handle,
     evaluate=_tc46_eval,
-    # 5 user turns + tool-call rounds need up to 11 assistant turns for the
-    # canonical reference path; 12 keeps it finite with one-turn headroom.
-    max_turns_override=12,
+    # 5 user turns + tool-call rounds need up to 11 assistant turns on the
+    # canonical path; 15 leaves realistic headroom for retries or calculator turns.
+    max_turns_override=15,
     follow_up_messages=[
         "Read the 2025 one.",
         "What's our market share growth compared to last year? Check the 2024 report too.",

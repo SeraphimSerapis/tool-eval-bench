@@ -55,7 +55,7 @@ def _tc35_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
-_TC35_ANSWER = re.compile(r"\b500\s*(?:degrees?\s*)?(?:°\s*)?k(?:elvins?)?\b")
+_TC35_ANSWER = re.compile(r"(?<![\d.\-])\b500(?:\.0+)?\s*(?:degrees?\s*)?(?:°\s*)?k(?:elvins?)?\b")
 
 
 _TC35_OTHER_SCALE = re.compile(
@@ -100,18 +100,18 @@ _TC35_IDENTITY_PHRASES = (
     "identity",
     "no-op",
     "trivial",
-    "terminology",
 )
 _TC35_IDENTITY_RE = re.compile(
-    r"\b(?:stays?|remains?)\s+(?:at\s+)?500\b"
-    r"|\bboth\s+(?:the\s+)?(?:source\s+and\s+target|units)\s+are\s+kelvin\b"
-    r"|\b500\s*(?:degrees?\s*)?(?:°\s*)?k(?:elvins?)?\s*"
+    r"\b(?:stays?|remains?)\s+(?:at\s+)?500(?:\.0+)?\b"
+    r"|\bboth(?:\s+(?:the\s+)?(?:source\s+and\s+target(?:\s+units?)?|units?|scales?|temperatures?|values?))?"
+    r"\s+are\s+(?:already\s+)?(?:in\s+)?kelvin\b"
+    r"|\b500(?:\.0+)?\s*(?:degrees?\s*)?(?:°\s*)?k(?:elvins?)?\s*"
     r"(?:is\s+(?:simply\s+|just\s+|still\s+)?|equals?|=)\s*"
-    r"500\s*(?:degrees?\s*)?(?:°\s*)?k(?:elvins?)?\b"
+    r"500(?:\.0+)?\s*(?:degrees?\s*)?(?:°\s*)?k(?:elvins?)?\b"
 )
 
 
-@forbid_unrequested_side_effects({"run_code": None})
+@forbid_unrequested_side_effects()
 def _tc35_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Convert 500 degrees Kelvin to Kelvin.'
 
@@ -126,6 +126,7 @@ def _tc35_eval(state: ScenarioState) -> ScenarioEvaluation:
     was present at all.
     """
     calc_calls = [c for c in state.tool_calls if c.name == "calculator"]
+    other_calls = [c for c in state.tool_calls if c.name != "calculator"]
     answer = _normalize(_strip_markdown_emphasis(state.final_answer))
 
     recognized_identity = any(phrase in answer for phrase in _TC35_IDENTITY_PHRASES) or bool(
@@ -138,7 +139,10 @@ def _tc35_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     converted_value = any(_match_is_affirmed(match) for match in _TC35_OTHER_SCALE.finditer(answer))
     states_kelvin = any(_match_is_affirmed(match) for match in _TC35_ANSWER.finditer(answer))
-    states_bare_500 = any(_match_is_affirmed(match) for match in re.finditer(r"\b500\b", answer))
+    states_bare_500 = any(
+        _match_is_affirmed(match)
+        for match in re.finditer(r"(?<![\d.\-])\b500(?:\.0+)?\b(?!\.\d)", answer)
+    )
     # A bare "500" counts only alongside identity language, which supplies the
     # unit the number is missing ("the answer is 500, it's the same unit").
     states_answer = states_kelvin or (
@@ -156,6 +160,12 @@ def _tc35_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     if calc_calls:
         return _partial("Called calculator on a same-unit identity conversion, but reached 500 K.")
+    if other_calls:
+        tools = ", ".join(c.name for c in other_calls)
+        return _partial(
+            f"Called unnecessary tool(s) ({tools}) on a same-unit identity conversion, "
+            "but reached 500 K."
+        )
     if not recognized_identity:
         return _partial("Answered 500 K but didn't explain that K→K is a no-op.")
     # Offering the Celsius or Fahrenheit equivalent after stating the identity

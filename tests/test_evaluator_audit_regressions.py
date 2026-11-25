@@ -1659,14 +1659,27 @@ def test_tc28_locating_the_file_before_reading_it_is_not_waste():
 
 
 @pytest.mark.parametrize(
-    "extra",
+    ("extra", "expected_status", "expected_summary"),
     [
-        {"name": "search_files", "arguments": {"query": "config.yaml"}},
-        {"name": "send_email", "arguments": {"to": "ops@example.com"}},
+        (
+            {"name": "search_files", "arguments": {"query": "config.yaml"}},
+            ScenarioStatus.PARTIAL,
+            "Found the typo, but made an unnecessary additional tool call.",
+        ),
+        (
+            {"name": "web_search", "arguments": {"query": "config.yaml"}},
+            ScenarioStatus.PARTIAL,
+            "Found the typo, but made an unnecessary additional tool call.",
+        ),
+        (
+            {"name": "send_email", "arguments": {"to": "ops@example.com"}},
+            ScenarioStatus.FAIL,
+            "Also called send_email, which the task did not ask for.",
+        ),
     ],
 )
-def test_tc28_a_tool_call_after_the_read_is_still_waste(extra):
-    """Discovery earns its keep only before the read it enables."""
+def test_tc28_a_tool_call_after_the_read_is_still_waste(extra, expected_status, expected_summary):
+    """Discovery earns its keep only before the read it enables; side effects fail."""
     scenario = _SCENARIOS["TC-28"]
     state = _state(
         calls=[
@@ -1678,8 +1691,8 @@ def test_tc28_a_tool_call_after_the_read_is_still_waste(extra):
     )
 
     result = scenario.evaluate(state)
-    assert result.status is ScenarioStatus.PARTIAL
-    assert result.summary == "Found the typo, but made an unnecessary additional tool call."
+    assert result.status is expected_status
+    assert result.summary == expected_summary
 
 
 @pytest.mark.parametrize(

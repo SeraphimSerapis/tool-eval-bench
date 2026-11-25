@@ -129,6 +129,10 @@ def _tc27_eval(state: ScenarioState) -> ScenarioEvaluation:
                 re.IGNORECASE,
             )
             if has_celsius and has_fahrenheit:
+                if len(_counted_calls(state.tool_calls)) != 2:
+                    return _partial(
+                        "Made the 2 get_weather calls, but also called unnecessary additional tools."
+                    )
                 return _pass("Made exactly 2 calls with different units.")
             return _partial(
                 "Called get_weather correctly with both units but did not surface "

@@ -1395,9 +1395,9 @@ async def test_tc46_has_scenario_budget_override() -> None:
     assert tc46.max_turns_override is not None
     # Canonical reference path: 5 user turns + tool rounds + final answers.
     # search, read2025, read2024, calc, contacts, email + final answers = 11.
-    # With parallel calls the minimum is 8; the override keeps headroom finite.
+    # With parallel calls the minimum is 8; 15 leaves realistic retry headroom.
     assert tc46.max_turns_override >= 9
-    assert tc46.max_turns_override <= 12
+    assert tc46.max_turns_override <= 15
 
 
 @pytest.mark.asyncio
