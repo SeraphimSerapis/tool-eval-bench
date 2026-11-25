@@ -1906,9 +1906,22 @@
       const models = (res.models || []).filter((m) => m && m.id);
       setChildren(byId("launch-reviewer-models"), ...models.map((m) => h("option", { value: m.id, text: m.display_name || m.id })));
       const modelInput = byId("launch-reviewer-model");
-      if (modelInput && !modelInput.value.trim() && models.length === 1) modelInput.value = models[0].id;
+      const current = modelInput ? modelInput.value.trim() : "";
+      let replaced = "";
+      if (modelInput && models.length && !models.some((m) => m.id === current)) {
+        if (current) {
+          // As in the benchmark picker: a model this server does not list
+          // belongs to the previous one, so the first listed model replaces it.
+          replaced = current;
+          modelInput.value = models[0].id;
+        } else if (models.length === 1) {
+          // A blank model is a solo run: fill it only when the choice is clear.
+          modelInput.value = models[0].id;
+        }
+      }
       const note = cleared ? " · the API key entered for another server was cleared" : "";
-      setStatus("ok", `Reviewer reachable · ${models.length} model${models.length === 1 ? "" : "s"}${note}`);
+      const swap = replaced ? ` · ${replaced} is not listed here, now ${modelInput.value}` : "";
+      setStatus("ok", `Reviewer reachable · ${models.length} model${models.length === 1 ? "" : "s"}${swap}${note}`);
     } catch (err) {
       setStatus("error", err.message);
     }

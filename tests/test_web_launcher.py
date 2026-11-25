@@ -767,6 +767,11 @@ def test_the_launcher_page_never_carries_a_reviewer_key_to_another_server() -> N
     assert "ownKey || (sameOrigin ? runKey" in probe
     # A blank reviewer URL probes the benchmark server with its wire format.
     assert 'wire_format: ownUrl ? undefined : byId("launch-wire-format")' in probe
+    # A model the probed server does not list belonged to the previous server:
+    # the first listed model replaces it, and the status names the swap.
+    assert "!models.some((m) => m.id === current)" in probe
+    assert "modelInput.value = models[0].id;" in probe
+    assert "is not listed here, now" in probe
     # Leaderboard rows name the reviewer of a paired score.
     assert "row.reviewer_model ? h(" in app_js
     for function in ("function bindReviewerKeyToOrigin(", "function forgetReviewerKeyOnNewOrigin("):
