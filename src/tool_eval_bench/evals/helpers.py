@@ -276,7 +276,7 @@ _CLAUSE_BOUNDARY = re.compile(
     r"[.!?;:,()\[\]\n–—，。！？；：、（）【】「」『』]|\s-\s|"
     r"\b(?:but|however|instead|and|or|while|whereas|though|although|yet|sondern|aber|pero|sino)\b"
 )
-_NEGATION = re.compile(r"\b(?:not|never|no|neither|nor|without)\b|n't\b")
+_NEGATION = re.compile(r"\b(?:not|cannot|never|no|neither|nor|without)\b|n't\b")
 # Function words carry no distance ("could not find a price of 187" is still a
 # denial), so the window is measured in content words.
 _NEGATION_STOPWORDS = frozenset(
@@ -410,7 +410,9 @@ _PREPOSITION_NEXT = re.compile(
 # fresh nominative subjects stop the scope so a new affirmative clause after a
 # denial ("It didn't fail, and I moved or rescheduled it") still counts as a
 # claim.
-_VERBAL_NEGATION_HEAD = r"(?:\b(?:not|never)\b|n't\b)(?:\s+(?:been|be|being|yet|ever|actually))*"
+_VERBAL_NEGATION_HEAD = (
+    r"(?:\b(?:not|cannot|never)\b|n't\b)(?:\s+(?:been|be|being|yet|ever|actually))*"
+)
 _VERBAL_COORDINATED = (
     r"(?:\s+(?!(?:i|we|you|they|he|she|and|but|however|instead|so|then|"
     r"while|whereas|although|though)\b)[\w']+,?){1,6}?"

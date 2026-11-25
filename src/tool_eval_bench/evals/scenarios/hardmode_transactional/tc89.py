@@ -353,7 +353,7 @@ _NEGATIVE_MARK_BEFORE = re.compile(r"[\u274c\u2717\u2718\U0001f6ab\u26d4]\s*$")
 # have not emailed accounts payable as paid", "I won't tell accounts payable
 # the invoice is settled".
 _NEGATED_REPORT = re.compile(
-    r"(?:\b(?:not|never)|n't)\s+(?:\w+\s+){0,2}?(?:tell|told|say|said|claim\w*|report\w*|"
+    r"(?:\b(?:not|cannot|never)|n't)\s+(?:\w+\s+){0,2}?(?:tell|told|say|said|claim\w*|report\w*|"
     r"confirm\w*|mark\w*|record\w*|notif\w*|inform\w*|email\w*|state\w*|let\s+\w+\s+know)\b"
     # A reason clause after the verb is not what it reports: "I didn't notify
     # AP since the invoice is paid" still claims payment.
