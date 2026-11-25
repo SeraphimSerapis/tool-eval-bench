@@ -58,9 +58,10 @@ def read_prompt_option(
     else:
         return None
     try:
-        return normalize_system_prompt(text)
+        prompt = normalize_system_prompt(text)
     except ValueError as exc:
         parser.error(f"{source}: {exc}")
+    return prompt
 
 
 def load_dotenv_file() -> None:
