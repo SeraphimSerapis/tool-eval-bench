@@ -11,25 +11,13 @@ from typing import Any
 
 from tool_eval_bench.application.run_summary import headline, run_type, type_label
 from tool_eval_bench.cli.held_out import HELD_OUT, redact_result, redact_run
-from tool_eval_bench.domain.redaction import redact_url
+from tool_eval_bench.domain.redaction import is_sensitive_key, redact_url
 from tool_eval_bench.domain.scenarios import CATEGORY_LABELS
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS_WITH_HARDMODE
 
 _PUBLIC_SCENARIO_MAP = {scenario.id: scenario for scenario in ALL_SCENARIOS_WITH_HARDMODE}
 
-# Key fragments that mark a credential. "token" alone is not one of them:
-# max_tokens, fill_tokens, and token_efficiency are benchmark settings, so only
-# an exact "token" or a "*_token" suffix (hf_token, access_token) counts.
-_SENSITIVE_SUBSTRINGS = ("api_key", "apikey", "secret", "password", "authorization", "credential")
 _URL_KEYS = frozenset({"base_url", "decision_judge_base_url", "metrics_url", "server"})
-
-
-def is_sensitive_key(key: str) -> bool:
-    """Whether a config or metadata key names a credential."""
-    lowered = key.lower()
-    if lowered == "token" or lowered.endswith("_token"):
-        return True
-    return any(part in lowered for part in _SENSITIVE_SUBSTRINGS)
 
 
 def _sanitize_list(items: list[Any]) -> list[Any]:
@@ -210,6 +198,10 @@ def sanitize_run_for_web(run: Mapping[str, Any], *, include_traces: bool = True)
         "created_at": redacted.get("created_at"),
         "status": redacted.get("status", "completed"),
         "model": redacted.get("model") or config.get("model", "unknown"),
+        # A paired run's score belongs to the model and its reviewer together.
+        "reviewer_model": (
+            config["reviewer"].get("model") if isinstance(config.get("reviewer"), Mapping) else None
+        ),
         "run_type": kind,
         "type_label": type_label(kind),
         "headline": headline(redacted),

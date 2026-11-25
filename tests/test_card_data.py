@@ -1087,3 +1087,41 @@ class TestModelName:
         run["config"] = {"model": config_model} if config_model else {}
         run["model"] = None
         assert build_card_data([run]).model == expected
+
+
+def test_a_reviewed_run_card_names_the_pair() -> None:
+    from tool_eval_bench.storage.reports.card import render_card_svg
+    from tool_eval_bench.storage.reports.card._data import paired_wordings, scope_label
+
+    run = _tool_eval_run()
+    run["config"]["reviewer"] = {"model": "prism-ml/Ternary-Bonsai-2-27B-gguf:PQ2_0"}
+
+    data = build_card_data([run])
+
+    assert data.tool_eval is not None
+    assert data.tool_eval.reviewer == "prism-ml/Ternary-Bonsai-2-27B-gguf:PQ2_0"
+    assert paired_wordings(data.tool_eval, [scope_label(data.tool_eval)])[0].startswith(
+        "+ reviewer Ternary-Bonsai-2-27B-gguf"
+    )
+    for layout in ("portrait", "landscape"):
+        assert "+ reviewer" in render_card_svg(data, layout=layout)
+
+
+def test_a_solo_run_card_names_no_reviewer() -> None:
+    data = build_card_data([_tool_eval_run()])
+
+    assert data.tool_eval is not None
+    assert data.tool_eval.reviewer is None
+
+
+def test_a_reviewed_subset_card_with_throughput_names_the_pair() -> None:
+    from tool_eval_bench.storage.reports.card import render_card_svg
+
+    run = _tool_eval_run()
+    run["config"]["reviewer"] = {"model": "prism-ml/Ternary-Bonsai-2-27B-gguf:PQ2_0"}
+
+    data = build_card_data([run, _perf_run()])
+
+    assert data.tool_eval is not None
+    for layout in ("portrait", "landscape"):
+        assert "+ reviewer" in render_card_svg(data, layout=layout)

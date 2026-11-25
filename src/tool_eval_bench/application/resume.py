@@ -10,16 +10,18 @@ and refuses whatever that config cannot reproduce.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from tool_eval_bench.adapters.wire_format import resolve_wire_format
+from tool_eval_bench.application.reviewer import resolve_reviewer, reviewer_config
 from tool_eval_bench.application.run_config import (
     RunSettings,
     build_run_config,
     resume_mismatches,
 )
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
+from tool_eval_bench.domain.review import ReviewerSettings
 from tool_eval_bench.domain.scenarios import ScenarioDefinition, ScenarioStatus
 
 #: Failure kinds that say nothing about the model, so their scenarios rerun.
@@ -95,6 +97,9 @@ class StoredResumePlan:
     reusable: list[dict[str, Any]]
     #: Scenarios still to execute.
     remaining: list[ScenarioDefinition]
+    #: The reviewer of a paired run, rebuilt from its stored block; None for a
+    #: solo run. It carries no key: the caller adds the one it was given.
+    reviewer: ReviewerSettings | None = None
 
 
 def _config_float(config: dict[str, Any], key: str, default: float) -> float:
@@ -126,6 +131,7 @@ def plan_stored_resume(
     *,
     base_url: str,
     wire_format: str | None = None,
+    reviewer_base_url: str | None = None,
 ) -> StoredResumePlan:
     """Plan a resume from the stored config, rejecting anything it cannot reproduce.
 
@@ -136,6 +142,11 @@ def plan_stored_resume(
     need CLI-only inputs (context-pressure filler, a decision judge, scenario
     variants, held-out packs) never appear in the rebuilt config, so a run that
     used them is reported as a mismatch rather than resumed without them.
+
+    A reviewer is rebuilt from its stored block. The block keeps only a
+    redacted origin, so ``reviewer_base_url`` supplies the reviewer's endpoint
+    (None: the benchmarked server), and the stored ``endpoint_id`` proves it is
+    the same one.
 
     Raises :class:`ResumeRejected` with a message naming what differs.
     """
@@ -195,6 +206,26 @@ def plan_stored_resume(
         decision_judge=None,
         wire_format=resolved_format,
     )
+    reviewer = _stored_reviewer(config.get("reviewer"), reviewer_base_url)
+    if reviewer is not None:
+        try:
+            stored_block = reviewer_config(
+                resolve_reviewer(
+                    reviewer,
+                    base_url=base_url,
+                    api_key=None,
+                    wire_format=resolved_format,
+                    extra_headers=None,
+                    session_header=None,
+                    temperature=settings.temperature,
+                    timeout_seconds=settings.timeout_seconds,
+                    seed=settings.seed,
+                    extra_params=settings.extra_params,
+                )
+            )
+        except ValueError as exc:
+            raise ResumeRejected(f"The stored reviewer cannot be rebuilt: {exc}") from exc
+        settings = replace(settings, reviewer=stored_block)
     current = build_run_config(settings, scenarios=scenarios, metadata={}, scenario_packs=None)
     mismatches = resume_mismatches(config, current, base_url=base_url, wire_format=resolved_format)
     if mismatches:
@@ -212,5 +243,31 @@ def plan_stored_resume(
     done = {result["scenario_id"] for result in reusable}
     remaining = [scenario for scenario in scenarios if scenario.id not in done]
     return StoredResumePlan(
-        settings=settings, scenarios=scenarios, reusable=reusable, remaining=remaining
+        settings=settings,
+        scenarios=scenarios,
+        reusable=reusable,
+        remaining=remaining,
+        reviewer=reviewer,
+    )
+
+
+def _stored_reviewer(block: Any, base_url: str | None) -> ReviewerSettings | None:
+    """The reviewer a stored ``reviewer`` block describes, at ``base_url``."""
+    if not isinstance(block, dict):
+        return None
+    model = block.get("model")
+    if not isinstance(model, str) or not model:
+        raise ResumeRejected("The stored reviewer has no model.")
+    extra = block.get("extra_params")
+    return ReviewerSettings(
+        model=model,
+        base_url=base_url,
+        wire_format=block.get("wire_format"),
+        temperature=block.get("temperature"),
+        timeout_seconds=block.get("timeout_seconds"),
+        seed=block.get("seed"),
+        extra_params=dict(extra) if isinstance(extra, dict) else {},
+        scope=str(block.get("scope") or "turns"),
+        max_rounds=rounds if isinstance(rounds := block.get("max_rounds"), int) else 1,
+        system_prompt=block.get("system_prompt"),
     )

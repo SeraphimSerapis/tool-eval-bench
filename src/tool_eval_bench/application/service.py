@@ -7,7 +7,7 @@ scenario benchmark system.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from functools import partial
@@ -17,6 +17,7 @@ import httpx
 
 from tool_eval_bench.adapters.factory import build_adapter, build_decision_adapter
 from tool_eval_bench.adapters.openai_compat import RateLimitObserver
+from tool_eval_bench.adapters.wire_format import resolve_wire_format
 from tool_eval_bench.application.decision_audit import (
     DecisionJudgeSet,
     audit_metadata,
@@ -28,6 +29,14 @@ from tool_eval_bench.application.decision_audit import (
     with_selected_checks,
 )
 from tool_eval_bench.application.finalization import finalize_completed_run
+from tool_eval_bench.application.reviewer import (
+    benchmark_credentials,
+    check_reviewer,
+    mask_credentials_in_adapter_logs,
+    reject_held_out,
+    resolve_reviewer,
+    reviewer_config,
+)
 from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.domain.adapters import BackendAdapter
 from tool_eval_bench.domain.engines import ACCEPTED_BACKEND_LABELS, BACKEND_LABELS
@@ -38,6 +47,7 @@ from tool_eval_bench.domain.models import (
     ChatMessage,
     RunContext,
 )
+from tool_eval_bench.domain.review import ReviewerSettings
 from tool_eval_bench.domain.scenarios import (
     OnScenarioAudit,
     OnScenarioResult,
@@ -51,6 +61,7 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 from tool_eval_bench.runner.orchestrator import run_all_scenarios, score_results
 from tool_eval_bench.runner.perf_presets import failed_cell_count
+from tool_eval_bench.runner.review import TurnReviewer
 from tool_eval_bench.runner.throughput import ThroughputSample
 from tool_eval_bench.storage.db import (
     RunRepository,
@@ -197,6 +208,7 @@ class BenchmarkService:
         perf_passes: list[dict[str, Any]] | None = None,
         perf_incomplete: bool = False,
         probe_engine: bool = True,
+        reviewer: ReviewerSettings | None = None,
     ) -> dict[str, Any]:
         """Run the tool-call benchmark against a model and persist results.
 
@@ -214,8 +226,27 @@ class BenchmarkService:
         an unfinished pass is recorded under ``scores["throughput"]``.
         ``probe_engine=False`` skips the required-tool diagnostic probe and
         the legacy engine metadata probe when no run context was supplied.
+        ``reviewer`` pairs the model with a second model that reviews each turn
+        in its scope before the harness acts on it; unset fields inherit from
+        this run (see :class:`~tool_eval_bench.domain.review.ReviewerSettings`).
         """
         validate_run_parameters(max_turns=max_turns, error_rate=error_rate, alpha=alpha)
+        resolved_reviewer = (
+            resolve_reviewer(
+                reviewer,
+                base_url=base_url,
+                api_key=api_key,
+                wire_format=wire_format,
+                extra_headers=extra_headers,
+                session_header=session_header,
+                temperature=temperature,
+                timeout_seconds=timeout_seconds,
+                seed=seed,
+                extra_params=extra_params,
+            )
+            if reviewer is not None
+            else None
+        )
         stored_perf_preset = perf_preset if throughput_samples else None
         stored_perf_passes = perf_passes if throughput_samples else None
         judge_config = decision_judge_config(
@@ -290,6 +321,11 @@ class BenchmarkService:
         # second interruption would overwrite its scenario identity and make a
         # later resume appear incompatible.
         config_scenarios = resume_scenarios or resolved
+        if resolved_reviewer is not None:
+            reject_held_out([*config_scenarios, *resolved])
+        stored_reviewer = (
+            reviewer_config(resolved_reviewer) if resolved_reviewer is not None else None
+        )
         if judge_config is not None:
             judge_config = with_selected_checks(judge_config, config_scenarios)
         # Captured once: the resume path below rebuilds the config against a
@@ -312,6 +348,7 @@ class BenchmarkService:
             system_prompt=system_prompt,
             decision_judge=judge_config,
             wire_format=wire_format,
+            reviewer=stored_reviewer,
         )
         run_config = build_run_config(
             settings,
@@ -325,9 +362,48 @@ class BenchmarkService:
         # Build run ID (reuse original for resumed runs)
         run_id = resume_run_id or build_run_id(run_config)
 
+        turn_reviewer: TurnReviewer | None = None
+        unmask_logs: Callable[[], None] = _nothing
+        # A resume whose scenarios all finished only merges stored results:
+        # no request reaches the reviewer, so it need not be reachable.
+        if resolved_reviewer is not None and resolved:
+            # Checked before the run row exists, so a misconfigured reviewer
+            # leaves nothing behind to resume.
+            unmask_logs = mask_credentials_in_adapter_logs(
+                resolved_reviewer, api_key=api_key, headers=extra_headers
+            )
+            reviewer_adapter = build_adapter(
+                resolved_reviewer.base_url or base_url,
+                wire_format=resolved_reviewer.wire_format,
+                default_headers=resolved_reviewer.extra_headers,
+                session_header=resolved_reviewer.session_header,
+            )
+            turn_reviewer = TurnReviewer(
+                reviewer_adapter,
+                resolved_reviewer,
+                benchmark_wire_format=resolve_wire_format(wire_format, base_url),
+                benchmark_secrets=benchmark_credentials(
+                    base_url, api_key=api_key, headers=extra_headers
+                ),
+            )
+            try:
+                await check_reviewer(turn_reviewer)
+            except BaseException:
+                await _close_quietly(reviewer_adapter, "reviewer")
+                unmask_logs()
+                await _close_quietly(adapter, "inference adapter")
+                raise
+
         # Claim the run row up front and checkpoint each finished scenario, so an
         # interrupted long run can be resumed instead of thrown away.
-        self._claim_run(run_id, model, run_config, metadata)
+        try:
+            self._claim_run(run_id, model, run_config, metadata)
+        except BaseException:
+            if turn_reviewer is not None:
+                await _close_quietly(turn_reviewer.adapter, "reviewer")
+            unmask_logs()
+            await _close_quietly(adapter, "inference adapter")
+            raise
         checkpointing_result_cb = self._checkpointing_callback(run_id, on_scenario_result)
 
         evaluated_hook: dict[str, Any] = {}
@@ -342,6 +418,8 @@ class BenchmarkService:
             evaluated_hook["on_scenario_evaluated"] = capture_audit
         if on_scenario_turn is not None:
             evaluated_hook["on_scenario_turn"] = on_scenario_turn
+        if turn_reviewer is not None:
+            evaluated_hook["reviewer"] = turn_reviewer
 
         # Run all scenarios (close adapter connection pool when done)
         try:
@@ -382,11 +460,15 @@ class BenchmarkService:
                     status.retries,
                     status.total_wait_seconds,
                 )
-            if hasattr(adapter, "aclose"):
+            # Nested, so a cancellation during one close still runs the rest.
+            try:
+                await _close_quietly(adapter, "inference adapter")
+            finally:
                 try:
-                    await adapter.aclose()
-                except Exception as exc:  # noqa: BLE001 - cleanup cannot fail or mask a run
-                    logger.warning("Could not close inference adapter: %s", type(exc).__name__)
+                    if turn_reviewer is not None:
+                        await _close_quietly(turn_reviewer.adapter, "reviewer")
+                finally:
+                    unmask_logs()
 
         # Merge prior results for resumed runs
         if resume_prior_results:
@@ -538,6 +620,10 @@ class BenchmarkService:
             reporter = self.reporter
             scenario_metadata = scenario_report_metadata(report_scenarios)
 
+            reviewer_kwargs: dict[str, Any] = (
+                {"reviewer": stored_reviewer} if stored_reviewer is not None else {}
+            )
+
             def write_scenario_report() -> Any:
                 return reporter.write_scenario_report(
                     run_id,
@@ -548,6 +634,7 @@ class BenchmarkService:
                     run_context=run_context,
                     scenario_metadata=scenario_metadata,
                     scenario_packs=scenario_packs,
+                    **reviewer_kwargs,
                 )
 
             report_writer = write_scenario_report
@@ -637,6 +724,20 @@ class BenchmarkService:
                 await inner(scenario, result, index, total)
 
         return on_result
+
+
+def _nothing() -> None:
+    """The undo of a step that did nothing."""
+
+
+async def _close_quietly(adapter: BackendAdapter, what: str) -> None:
+    """Close an adapter's connection pool; a failure to close never fails a run."""
+    if not hasattr(adapter, "aclose"):
+        return
+    try:
+        await adapter.aclose()
+    except Exception as exc:  # noqa: BLE001 - cleanup cannot fail or mask a run
+        logger.warning("Could not close %s: %s", what, type(exc).__name__)
 
 
 async def _collect_metadata_safe(

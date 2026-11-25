@@ -21,6 +21,7 @@ from tool_eval_bench.compare_reports._common import (
     dname,
     esc,
     pct_cls,
+    reviewer_suffix,
     sign,
     turn_time_display,
 )
@@ -33,6 +34,10 @@ def parse_md(fp: str) -> dict:
     d: dict = {}
 
     d["model_name"] = _r(r"^# Tool-Call Benchmark — (.+)$", txt, fl=re.M) or "Unknown"
+    # A paired run's header names its reviewer; the score belongs to the pair.
+    # Read from the header only, so a trace can never pose as the line.
+    header = txt.split("\n## ", 1)[0]
+    d["reviewer"] = _r(r"^- \*\*Reviewer\*\*:\s*`(.+?)`", header, fl=re.M)
     d["run_id"] = _r(r"\*\*Run ID\*\*:\s*`(.+?)`", txt)
     d["date"] = _r(r"\*\*Date\*\*:\s*`(.+?)`", txt)
     d["date_short"] = d["date"][:10] if d["date"] else ""
@@ -229,6 +234,8 @@ def generate_html(da: dict, db: dict, out: str) -> None:
     w, r = (da, db) if da["final_score"] >= db["final_score"] else (db, da)
     wl_raw, wd = short_label(w["model_name"], w["model_api"])
     rl_raw, rd = short_label(r["model_name"], r["model_api"])
+    wl_raw += reviewer_suffix(w, short=True)
+    rl_raw += reviewer_suffix(r, short=True)
     wl = esc(wl_raw)
     rl = esc(rl_raw)
     wdn, rdn = dname(w), dname(r)
@@ -820,8 +827,8 @@ def main():
             sys.exit(1)
     da = parse_md(fa)
     db = parse_md(fb)
-    print(f"Model A: {da['model_name']}  (score: {da['final_score']})")
-    print(f"Model B: {db['model_name']}  (score: {db['final_score']})")
+    print(f"Model A: {da['model_name']}{reviewer_suffix(da)}  (score: {da['final_score']})")
+    print(f"Model B: {db['model_name']}{reviewer_suffix(db)}  (score: {db['final_score']})")
     generate_html(da, db, out)
 
 

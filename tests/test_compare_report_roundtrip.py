@@ -235,3 +235,56 @@ def _assert_cards_not_crowned(html: str) -> None:
     assert ">WINNER<" not in html and ">RUNNER-UP<" not in html
     assert 'class="winner-badge"' not in html
     assert "(Winner)</th>" not in html
+
+
+def test_a_paired_report_compares_as_the_pair_not_the_model(tmp_path: Path) -> None:
+    ok = _result(ScenarioStatus.PASS)
+    reviewer = {"model": "prism-ml/Critic-27B:Q4", "scope": "turns", "max_rounds": 1}
+    paired_path = MarkdownReporter(root=str(tmp_path / "p")).write_scenario_report(
+        "run-p",
+        "org/model-a",
+        score_results([ok], [SCENARIO]),
+        run_context=_ctx("org/model-a"),
+        reviewer=reviewer,
+    )
+    paired = cmp_tool_eval.parse_md(str(paired_path))
+    solo = cmp_tool_eval.parse_md(
+        _scenario_report(tmp_path / "s", "run-s", _ctx("org/model-a"), ok)
+    )
+    out = tmp_path / "cmp.html"
+
+    cmp_tool_eval.generate_html(paired, solo, str(out))
+
+    assert paired["reviewer"] == "prism-ml/Critic-27B:Q4"
+    assert solo["reviewer"] == ""
+    html = out.read_text(encoding="utf-8")
+    assert "org/model-a + reviewer prism-ml/Critic-27B:Q4" in html
+    # The short label keeps the model's name and appends the reviewer's.
+    assert "model-a + reviewer Critic-27B" in html
+
+
+def test_a_paired_summary_compares_as_the_pair_not_the_model(tmp_path: Path) -> None:
+    paired = cmp_summary.parse_summary(
+        _summary_report(tmp_path / "p", 2, "org/model-a + reviewer prism-ml/Critic-27B:Q4")
+    )
+    solo = cmp_summary.parse_summary(_summary_report(tmp_path / "s", 2, "org/model-a"))
+    out = tmp_path / "cmp.html"
+
+    cmp_summary.generate_html(paired, solo, str(out))
+
+    assert (paired["model_name"], paired["reviewer"]) == ("org/model-a", "prism-ml/Critic-27B:Q4")
+    assert solo["reviewer"] == ""
+    html = out.read_text(encoding="utf-8")
+    assert "+ reviewer prism-ml/Critic-27B:Q4" in html
+    assert "+ reviewer Critic-27B" in html
+
+
+def test_a_trace_line_cannot_pose_as_the_reviewer(tmp_path: Path) -> None:
+    result = _result(ScenarioStatus.PASS)
+    result.raw_log = "- **Reviewer**: `not-a-reviewer`"
+
+    parsed = cmp_tool_eval.parse_md(
+        _scenario_report(tmp_path, "run-s", _ctx("org/model-a"), result)
+    )
+
+    assert parsed["reviewer"] == ""

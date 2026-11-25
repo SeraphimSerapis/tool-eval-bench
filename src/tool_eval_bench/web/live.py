@@ -59,6 +59,8 @@ class LiveRunSession:
     status: str = "running"
     held_out: frozenset[str] = field(default_factory=frozenset)
     index_offset: int = 0
+    #: The reviewer a paired run is scored with, or None for a solo run.
+    reviewer_model: str | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
     subscribers: set[asyncio.Queue[dict[str, Any]]] = field(default_factory=set)
     task: asyncio.Task[Any] | None = None
@@ -140,6 +142,7 @@ class LiveRunHub:
         total: int,
         held_out: frozenset[str] = frozenset(),
         preserved: list[dict[str, Any]] | None = None,
+        reviewer_model: str | None = None,
     ) -> LiveRunSession:
         """Start a session; ``preserved`` holds sanitized results a resume keeps.
 
@@ -154,6 +157,7 @@ class LiveRunHub:
             total=total,
             held_out=held_out,
             index_offset=len(preserved_list),
+            reviewer_model=reviewer_model,
         )
         # Re-registering (a resume) moves the run to the newest position.
         self._sessions.pop(run_id, None)
@@ -164,6 +168,7 @@ class LiveRunHub:
                 "event": "run_started",
                 "run_id": run_id,
                 "model": model,
+                "reviewer_model": reviewer_model,
                 "backend": backend,
                 "total": total,
                 "status": "running",
@@ -402,6 +407,11 @@ async def _tail_stored_run(
                     "event": "run_started",
                     "run_id": run_id,
                     "model": run.get("model") or config.get("model", "unknown"),
+                    "reviewer_model": (
+                        config["reviewer"].get("model")
+                        if isinstance(config.get("reviewer"), dict)
+                        else None
+                    ),
                     "backend": config.get("backend", "unknown"),
                     "total": total,
                     "status": status,

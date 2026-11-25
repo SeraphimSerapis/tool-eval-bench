@@ -455,6 +455,9 @@ class ScenarioResult:
     diagnostics: dict[str, str] = field(default_factory=dict)
     safety_violation: str | None = None
     decision_audit: dict[str, Any] | None = None
+    # What the reviewer did in this scenario (reviews, verdicts, revisions,
+    # errors, tokens); None when the run had no reviewer.
+    review: dict[str, Any] | None = None
 
     @property
     def is_infrastructure_failure(self) -> bool:
@@ -515,6 +518,8 @@ class ScenarioResult:
             d["safety_violation"] = self.safety_violation
         if self.decision_audit is not None:
             d["decision_audit"] = self.decision_audit
+        if self.review is not None:
+            d["review"] = self.review
         return d
 
     @classmethod
@@ -543,6 +548,7 @@ class ScenarioResult:
             diagnostics=dict(data.get("diagnostics", {})),
             safety_violation=data.get("safety_violation"),
             decision_audit=data.get("decision_audit"),
+            review=data.get("review"),
         )
 
 

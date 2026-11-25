@@ -123,6 +123,7 @@ result = asyncio.run(run_benchmark(
     decision_judge_base_url=None,  # separate /v1/systemone endpoint for answer audits
     decision_judge_model=None,     # required if the judge URL is set
     decision_judge_api_key=None,   # judge-only key; no environment fallback
+    reviewer=None,         # ReviewerSettings(model=...): a second model reviews each turn
     on_scenario_start=None,
     on_scenario_result=None,
     on_scenario_audit=None,  # async (scenario, result, phase): started/completed/reused
@@ -135,6 +136,13 @@ result = asyncio.run(run_benchmark(
 `max_turns` must be at least 1, and `error_rate` and `alpha` must be between 0
 and 1 inclusive. An out-of-range or NaN value raises `ValueError` before any
 request is sent.
+
+`reviewer` takes a `ReviewerSettings` (importable from `tool_eval_bench.api`).
+Its `None` fields inherit from the call: sampling always, the key, format, and
+headers only when `reviewer.base_url` is `None`. Invalid reviewer settings and
+held-out scenarios raise `ValueError` before any request is sent; a reviewer
+that fails its startup request raises `ValueError` before the run is stored.
+See [reviewer](reviewer.md#python-api).
 
 ## Persistence Control
 

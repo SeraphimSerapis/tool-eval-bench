@@ -22,6 +22,7 @@ from tool_eval_bench.storage.reports.card._data import (
     has_long_context,
     is_subset,
     needs_caution,
+    paired_wordings,
     rating_parts,
     scope_label,
     score_details,
@@ -704,7 +705,8 @@ def score_block(box: Box, te: ToolEvalSummary) -> str:
     out.append(runs_text(x - size * 0.04, base, score_runs(size)))
     details: list[str]
     if is_subset(te):
-        out.append(warn_pill(x, base + 13, scope_label(te), max_width=room)[0])
+        pill = paired_wordings(te, [scope_label(te)])[0]
+        out.append(warn_pill(x, base + 13, pill, max_width=room)[0])
         parts = [] if ring else [f"{te.passed} of {te.total} passed"]
         if te.trials > 1:
             parts.append(f"mean of {te.trials} trials")

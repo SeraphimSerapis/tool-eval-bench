@@ -1572,9 +1572,12 @@ class TestPressureSweepIntegration:
 
     @patch("tool_eval_bench.cli.pressure.resolve_scenarios")
     @patch("tool_eval_bench.cli.pressure.asyncio")
-    def test_sweep_runs_all_levels(self, mock_asyncio, mock_resolve) -> None:
+    def test_sweep_runs_all_levels(self, mock_asyncio, mock_resolve, tmp_path, monkeypatch) -> None:
         """Sweep should call run_all_scenarios for each pressure level."""
         import io
+
+        # The sweep persists its summary to ./data and ./runs.
+        monkeypatch.chdir(tmp_path)
 
         from rich.console import Console
 
@@ -1622,9 +1625,14 @@ class TestPressureSweepIntegration:
         self,
         mock_asyncio,
         mock_resolve,
+        tmp_path,
+        monkeypatch,
     ) -> None:
         """Sweep should stop after 2 consecutive all-fail levels."""
         import io
+
+        # The sweep persists its summary to ./data and ./runs.
+        monkeypatch.chdir(tmp_path)
 
         from rich.console import Console
 

@@ -102,6 +102,7 @@ class MarkdownReporter:
         run_context: RunContext | None = None,
         scenario_metadata: Mapping[str, ScenarioReportMetadata] | None = None,
         scenario_packs: list[dict[str, Any]] | None = None,
+        reviewer: Mapping[str, Any] | None = None,
     ) -> Path:
         """Write the Markdown report for a scenario-based benchmark run."""
         return write_scenario_report(
@@ -114,6 +115,7 @@ class MarkdownReporter:
             run_context=run_context,
             scenario_metadata=scenario_metadata,
             scenario_packs=scenario_packs,
+            reviewer=reviewer,
         )
 
     def write_throughput_report(

@@ -9,6 +9,19 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit, urlunsplit
 
+# Key fragments that mark a credential. "token" alone is not one of them:
+# max_tokens, fill_tokens, and token_efficiency are benchmark settings, so only
+# an exact "token" or a "*_token" suffix (hf_token, access_token) counts.
+_SENSITIVE_SUBSTRINGS = ("api_key", "apikey", "secret", "password", "authorization", "credential")
+
+
+def is_sensitive_key(key: str) -> bool:
+    """Whether a config, metadata, or request key names a credential."""
+    lowered = key.lower()
+    if lowered == "token" or lowered.endswith("_token"):
+        return True
+    return any(part in lowered for part in _SENSITIVE_SUBSTRINGS)
+
 
 def redact_url(url: str) -> str:
     """Mask the authority and remove query credentials from a persisted URL.

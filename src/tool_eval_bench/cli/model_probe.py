@@ -72,8 +72,12 @@ def _detect_model(
     wire_format: str = "openai",
     headers: Mapping[str, str] | None = None,
     multiple_models_hint: str | None = None,
+    show_body: bool = True,
 ) -> tuple[str, str]:
     """Query /v1/models and auto-select or let the user pick.
+
+    ``show_body=False`` leaves the response body out of an invalid-response
+    error, for an endpoint whose replies should not be echoed (the reviewer).
 
     Returns (api_id, display_name).
       - api_id:       what to send in API requests (e.g. "gemma4")
@@ -167,10 +171,10 @@ def _detect_model(
     if problem is not None:
         status_code = resp.status_code
         content_type = resp.headers.get("Content-Type", "unknown")
-        body_snippet = resp.text[:200]
+        body_snippet = repr(resp.text[:200]) if show_body else "(withheld)"
         err_msg = (
             f"Server returned {problem} from /v1/models (HTTP {status_code}, "
-            f"Content-Type: {content_type}). Body snippet: {body_snippet!r}"
+            f"Content-Type: {content_type}). Body snippet: {body_snippet}"
         )
         if headless:
             _headless_error(INVALID_RESPONSE, err_msg, exit_code=2)

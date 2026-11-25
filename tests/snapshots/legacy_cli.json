@@ -149,6 +149,235 @@
   },
   {
     "choices": null,
+    "default": false,
+    "dest": "reviewer",
+    "flags": [
+      "--reviewer"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_base_url",
+    "flags": [
+      "--reviewer-base-url"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_model",
+    "flags": [
+      "--reviewer-model"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_api_key",
+    "flags": [
+      "--reviewer-api-key"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_provider",
+    "flags": [
+      "--reviewer-provider"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": [
+      "auto",
+      "openai",
+      "gemini",
+      "anthropic"
+    ],
+    "default": null,
+    "dest": "reviewer_format",
+    "flags": [
+      "--reviewer-format"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_header",
+    "flags": [
+      "--reviewer-header"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_session_header",
+    "flags": [
+      "--reviewer-session-header"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": [
+      "turns",
+      "tools",
+      "final"
+    ],
+    "default": null,
+    "dest": "reviewer_scope",
+    "flags": [
+      "--reviewer-scope"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_max_rounds",
+    "flags": [
+      "--reviewer-max-rounds"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_temperature",
+    "flags": [
+      "--reviewer-temperature"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_top_p",
+    "flags": [
+      "--reviewer-top-p"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_top_k",
+    "flags": [
+      "--reviewer-top-k"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_min_p",
+    "flags": [
+      "--reviewer-min-p"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_repeat_penalty",
+    "flags": [
+      "--reviewer-repeat-penalty"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_think",
+    "flags": [
+      "--reviewer-no-think"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_think",
+    "flags": [
+      "--reviewer-think"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_seed",
+    "flags": [
+      "--reviewer-seed"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_timeout",
+    "flags": [
+      "--reviewer-timeout"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_backend_kwargs",
+    "flags": [
+      "--reviewer-backend-kwargs"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_system_prompt",
+    "flags": [
+      "--reviewer-system-prompt"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
+    "default": null,
+    "dest": "reviewer_system_prompt_file",
+    "flags": [
+      "--reviewer-system-prompt-file"
+    ],
+    "nargs": null,
+    "required": false
+  },
+  {
+    "choices": null,
     "default": 0.0,
     "dest": "temperature",
     "flags": [

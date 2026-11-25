@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import shlex
 import sys
+from collections.abc import Mapping
+from typing import Any
 
 from rich.console import Console
 from rich.markup import escape
@@ -124,6 +126,15 @@ def _extract_context_panel(run: dict) -> list[str]:
     return lines
 
 
+def _paired_model_label(run: Mapping[str, Any], model: str) -> str:
+    """``model``, or ``model + reviewer X`` when a reviewer took part in the run."""
+    config = run.get("config")
+    reviewer = config.get("reviewer") if isinstance(config, Mapping) else None
+    if isinstance(reviewer, Mapping) and reviewer.get("model"):
+        return f"{model} + reviewer {reviewer['model']}"
+    return model
+
+
 def print_history(console: Console) -> None:
     """List recent benchmark runs from SQLite."""
     from rich.table import Table
@@ -172,7 +183,7 @@ def print_history(console: Console) -> None:
         table.add_row(
             f"[dim]{escape(str(run['run_id']))}[/]",
             f"[dim]{escape(str(session_id)[:8])}[/]" if session_id else "[dim]—[/]",
-            escape(str(run.get("model", "?"))),
+            escape(_paired_model_label(run, str(run.get("model", "?")))),
             f"[bold]{escape(str(score))}[/]",
             rating,
             f"[dim]{context}[/]" if context else "[dim]—[/]",
@@ -373,8 +384,8 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
             )
         )
 
-    model_a = run_a.get("config", {}).get("model", "?")
-    model_b = run_b.get("config", {}).get("model", "?")
+    model_a = _paired_model_label(run_a, str(run_a.get("config", {}).get("model", "?")))
+    model_b = _paired_model_label(run_b, str(run_b.get("config", {}).get("model", "?")))
 
     # Header with run context (issue #6)
     ctx_lines_a = _extract_context_panel(run_a)

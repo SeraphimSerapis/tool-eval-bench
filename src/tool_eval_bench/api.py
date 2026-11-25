@@ -31,10 +31,16 @@ from typing import Any
 from tool_eval_bench import __version__
 from tool_eval_bench.adapters.wire_format import resolve_wire_format
 from tool_eval_bench.application.decision_audit import DecisionJudgeSet, decision_judge_config
+from tool_eval_bench.application.reviewer import (
+    reject_conversation_override,
+    reject_held_out,
+    validate_reviewer,
+)
 from tool_eval_bench.application.run_context import build_run_context, detect_backend
 from tool_eval_bench.application.service import BenchmarkService, validate_run_parameters
 from tool_eval_bench.domain.engines import ACCEPTED_BACKEND_LABELS, BACKEND_LABELS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
+from tool_eval_bench.domain.review import ReviewerSettings  # noqa: F401 — public re-export
 from tool_eval_bench.domain.scenarios import (
     OnScenarioAudit,
     OnScenarioResult,
@@ -112,6 +118,8 @@ def _validate_api_inputs(
     decision_judge_model: str | None,
     decision_judge_api_key: str | None,
     resolved: list[ScenarioDefinition],
+    reviewer: ReviewerSettings | None = None,
+    extra_params: dict[str, Any] | None = None,
 ) -> None:
     """Validate public API arguments before sending any probe or model requests."""
     if not isinstance(model, str) or not model.strip():
@@ -168,6 +176,11 @@ def _validate_api_inputs(
         decision_judge,
     )
 
+    if reviewer is not None:
+        validate_reviewer(reviewer)
+        reject_held_out(resolved)
+        reject_conversation_override(extra_params)
+
     if not resolved:
         raise ValueError("No scenarios to run")
     if locale is not None or variant_seed is not None:
@@ -210,6 +223,7 @@ async def run_benchmark(
     decision_judge_api_key: str | None = None,
     on_scenario_audit: OnScenarioAudit | None = None,
     probe_engine: bool = True,
+    reviewer: ReviewerSettings | None = None,
 ) -> dict[str, Any]:
     """Run tool-eval-bench programmatically and return structured results.
 
@@ -282,6 +296,13 @@ async def run_benchmark(
             ``metadata``. *False* skips detection requests and the diagnostic
             required-tool probe, like the CLI's ``--no-probe-engine``. Selected
             scenarios still run regardless of probe results.
+        reviewer: Pairs the model with a second model that reviews each turn
+            in its scope before the harness acts on it; the benchmarked model
+            revises a turn the reviewer rejects. Unset fields of
+            :class:`ReviewerSettings` inherit from this call: sampling always,
+            the key, format, and headers only when ``reviewer.base_url`` is
+            *None*. The reviewer is part of the comparison fingerprint, and
+            held-out scenarios are refused.
 
     Returns:
         A versioned JSON-serializable dict containing ``run_id``, ``config``,
@@ -323,6 +344,8 @@ async def run_benchmark(
         decision_judge_model=decision_judge_model,
         decision_judge_api_key=decision_judge_api_key,
         resolved=resolved,
+        reviewer=reviewer,
+        extra_params=extra_params,
     )
 
     backend = await detect_backend(
@@ -387,6 +410,7 @@ async def run_benchmark(
             decision_judge_api_key=decision_judge_api_key,
             on_scenario_audit=on_scenario_audit,
             decision_judge=decision_judge,
+            reviewer=reviewer,
         )
 
     return format_result(run_data)

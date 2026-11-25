@@ -200,6 +200,15 @@ def _build_side_kwargs(
     model = str(model_raw).strip() if model_raw is not None else ""
     if not model:
         raise ValueError(f"Stored run '{run_id}' has no model name in its config")
+    reviewer = cfg.get("reviewer")
+    if reviewer:
+        # Retesting without the reviewer would compare the model alone with a
+        # paired result and report the difference as if it were the pair's.
+        name = reviewer.get("model", "?") if isinstance(reviewer, Mapping) else "?"
+        raise ValueError(
+            f"Stored run '{run_id}' was reviewed by {name}; --retest-diffs cannot "
+            "reproduce a reviewer and would retest the model alone"
+        )
 
     backend = str(backend_override or cfg.get("backend") or "unknown").lower()
     if backend not in ACCEPTED_BACKEND_LABELS:

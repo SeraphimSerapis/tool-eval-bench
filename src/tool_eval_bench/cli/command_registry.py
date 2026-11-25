@@ -48,6 +48,30 @@ RUN_CONTROL = (
     "system_prompt_file",
 )
 DECISION_JUDGE = ("decision_judge", "decision_judge_base_url", "decision_judge_model")
+# Kept in step with cli.reviewer.REVIEWER_DESTS (tests/test_reviewer_cli.py).
+REVIEWER = (
+    "reviewer",
+    "reviewer_base_url",
+    "reviewer_model",
+    "reviewer_api_key",
+    "reviewer_provider",
+    "reviewer_format",
+    "reviewer_header",
+    "reviewer_session_header",
+    "reviewer_scope",
+    "reviewer_max_rounds",
+    "reviewer_temperature",
+    "reviewer_top_p",
+    "reviewer_top_k",
+    "reviewer_min_p",
+    "reviewer_repeat_penalty",
+    "reviewer_think",
+    "reviewer_seed",
+    "reviewer_timeout",
+    "reviewer_backend_kwargs",
+    "reviewer_system_prompt",
+    "reviewer_system_prompt_file",
+)
 # Only scored tool-call runs produce safety warnings, so plugin help omits it.
 SAFETY_GATE = ("fail_on_safety",)
 SCENARIOS = (
@@ -174,6 +198,7 @@ COMMAND_SPECS = (
         + OUTPUT
         + PRESSURE
         + DECISION_JUDGE
+        + REVIEWER
         + SAFETY_GATE
         + ("dry_run", "resume", "diff", "scenarios_from_diff", "weight_by_difficulty"),
     ),
@@ -276,6 +301,7 @@ COMMAND_SPECS = (
         + RUN_CONTROL
         + OUTPUT
         + DECISION_JUDGE
+        + REVIEWER
         + SAFETY_GATE,
         legacy_flags=("resume",),
     ),

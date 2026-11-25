@@ -381,6 +381,7 @@ FULL_RUN_KWARGS: dict[str, Any] = {
     "perf_passes": None,
     "perf_incomplete": False,
     "probe_engine": True,
+    "reviewer": None,
 }
 
 LIVE_CALLBACKS = {
@@ -515,6 +516,7 @@ DEFAULT_RUN_KWARGS: dict[str, Any] = {
     "perf_passes": None,
     "perf_incomplete": False,
     "probe_engine": True,
+    "reviewer": None,
 }
 
 
@@ -712,6 +714,144 @@ def test_decision_judge_model_is_detected_from_the_judge(cli: Cli, headless: boo
     (run,) = cli.run_kwargs
     assert run["decision_judge_model"] == "clef-flash"
     assert run["decision_judge"] == "all"
+
+
+def test_reviewer_model_is_detected_without_the_main_key(cli: Cli) -> None:
+    cli.record("tool_eval_bench.cli.model_probe", "_detect_model", ("critic", "critic"))
+
+    outcome = cli.run(
+        *CONNECTION,
+        "--api-key",
+        "main-key",
+        "--scenarios",
+        "TC-01",
+        "--temperature",
+        "0.6",
+        "--top-p",
+        "0.9",
+        "--reviewer-base-url",
+        "http://critic.test:8001",
+        "--reviewer-temperature",
+        "0.1",
+        "--no-live",
+    )
+
+    assert outcome.code == 0
+    (call,) = cli.calls("_detect_model")
+    # Another server: neither the main key nor the benchmark headers travel there.
+    assert call["args"] == ("http://critic.test:8001", None, "<console>")
+    assert call["headers"] is None
+    assert "--reviewer-model" in call["multiple_models_hint"]
+    # A reviewer's /v1/models body is never echoed.
+    assert call["show_body"] is False
+    (run,) = cli.run_kwargs
+    reviewer = run["reviewer"]
+    assert (reviewer.model, reviewer.base_url, reviewer.api_key) == (
+        "critic",
+        "http://critic.test:8001",
+        None,
+    )
+    assert reviewer.temperature == 0.1
+    assert reviewer.extra_params == {"top_p": 0.9}
+    assert "Reviewer: critic" in outcome.flat_out
+
+
+def test_same_server_reviewer_discovery_authenticates_like_its_requests(cli: Cli) -> None:
+    cli.record("tool_eval_bench.cli.model_probe", "_detect_model", ("critic", "critic"))
+
+    outcome = cli.run(
+        *CONNECTION,
+        "--api-key",
+        "main-key",
+        "--header",
+        "X-Team=bench",
+        "--session-header",
+        "X-Session-Id",
+        "--scenarios",
+        "TC-01",
+        # Same scheme, host, and port as BASE_URL: the main connection is shared.
+        "--reviewer-base-url",
+        "http://gpu.test:8000",
+        "--no-live",
+    )
+
+    assert outcome.code == 0
+    (call,) = [c for c in cli.leaves["_detect_model"] if c["args"][0] == "http://gpu.test:8000"]
+    assert call["args"][1] == "main-key"
+    assert call["headers"]["X-Team"] == "bench"
+    assert call["headers"]["X-Session-Id"]
+    (run,) = cli.run_kwargs
+    assert run["reviewer"].session_header == "X-Session-Id"
+
+
+def test_a_reviewer_on_the_same_server_shares_its_connection(cli: Cli) -> None:
+    detected = cli.record("tool_eval_bench.cli.model_probe", "_detect_model")
+
+    outcome = cli.run(
+        *CONNECTION,
+        "--api-key",
+        "main-key",
+        "--header",
+        "X-Team=bench",
+        "--scenarios",
+        "TC-01",
+        "--reviewer-model",
+        "critic",
+        "--json",
+    )
+
+    assert outcome.code == 0
+    assert detected == []
+    (run,) = cli.run_kwargs
+    reviewer = run["reviewer"]
+    assert reviewer.base_url is None
+    assert reviewer.api_key == "main-key"
+    assert reviewer.extra_headers == {"X-Team": "bench"}
+
+
+def test_the_reviewer_is_shown_by_its_origin_only(cli: Cli) -> None:
+    outcome = cli.run(
+        *CONNECTION,
+        "--scenarios",
+        "TC-01",
+        "--reviewer-base-url",
+        "https://critic.test/t/SECRET-PATH",
+        "--reviewer-model",
+        "critic",
+        "--no-live",
+    )
+
+    assert outcome.code == 0
+    assert "SECRET-PATH" not in outcome.out + outcome.err
+    assert "Reviewer: critic @ https://***" in outcome.flat_out
+
+
+def test_reviewer_env_alone_does_not_enable_a_reviewer(cli: Cli) -> None:
+    cli.monkeypatch.setenv("TOOL_EVAL_REVIEWER_BASE_URL", "http://critic.test")
+    cli.monkeypatch.setenv("TOOL_EVAL_REVIEWER_MODEL", "critic")
+
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--no-live")
+
+    assert outcome.code == 0
+    (run,) = cli.run_kwargs
+    assert run["reviewer"] is None
+
+
+def test_the_reviewer_flag_enables_the_env_reviewer(cli: Cli) -> None:
+    cli.monkeypatch.setenv("TOOL_EVAL_REVIEWER_BASE_URL", "http://critic.test")
+    cli.monkeypatch.setenv("TOOL_EVAL_REVIEWER_MODEL", "critic")
+    cli.monkeypatch.setenv("TOOL_EVAL_REVIEWER_API_KEY", "critic-key")
+
+    outcome = cli.run(*CONNECTION, "--scenarios", "TC-01", "--reviewer", "--no-live")
+
+    assert outcome.code == 0
+    (run,) = cli.run_kwargs
+    reviewer = run["reviewer"]
+    assert (reviewer.model, reviewer.base_url, reviewer.api_key) == (
+        "critic",
+        "http://critic.test",
+        "critic-key",
+    )
 
 
 def test_decision_judge_url_is_checked_before_detection(cli: Cli) -> None:
@@ -1732,6 +1872,44 @@ def test_no_server_exits_two(cli: Cli, mode_flags: list[str], stream: str, messa
             "Decision judge audits require a run or resume of tool-call scenarios",
             id="judge-without-scenarios",
         ),
+        pytest.param(
+            [*CONNECTION, "--perf-only", "--reviewer-model", "critic"],
+            "A reviewer requires a run or resume of tool-call scenarios",
+            id="reviewer-without-scenarios",
+        ),
+        pytest.param(
+            ["--history", "--reviewer-model", "critic"],
+            "A reviewer requires a run or resume of tool-call scenarios",
+            id="reviewer-with-history",
+        ),
+        pytest.param(
+            [*CONNECTION, "--probe", "--reviewer-model", "critic"],
+            "A reviewer requires a run or resume of tool-call scenarios",
+            id="reviewer-with-probe",
+        ),
+        pytest.param(
+            [*CONNECTION, "--scenario-pack", "/tmp", "--reviewer-model", "critic"],
+            "A reviewer cannot be combined with --scenario-pack",
+            id="reviewer-with-held-out-pack",
+        ),
+        pytest.param(
+            [*CONNECTION, "--scenarios", "TC-01", "--reviewer-scope", "tools"],
+            "A reviewer needs --reviewer-model",
+            id="reviewer-without-model-or-url",
+        ),
+        pytest.param(
+            [
+                *CONNECTION,
+                "--scenarios",
+                "TC-01",
+                "--backend-kwargs",
+                '{"messages": []}',
+                "--reviewer-model",
+                "critic",
+            ],
+            "replaces the conversation",
+            id="reviewer-with-a-conversation-override",
+        ),
     ],
 )
 def test_invalid_selection_is_a_usage_error(cli: Cli, argv: list[str], message: str) -> None:
@@ -1785,3 +1963,30 @@ def test_combined_plugins_still_run_when_safety_gate_exits_two(cli: Cli) -> None
 
     assert outcome.code == 2
     assert order == ["scenarios", "plugins"]
+
+
+def test_reviewer_discovery_with_its_own_key_drops_the_run_authorization(cli: Cli) -> None:
+    cli.record("tool_eval_bench.cli.model_probe", "_detect_model", ("critic", "critic"))
+
+    outcome = cli.run(
+        *CONNECTION,
+        "--api-key",
+        "main-key",
+        "--header",
+        "Authorization=Bearer main-key",
+        "--header",
+        "X-Team=bench",
+        "--scenarios",
+        "TC-01",
+        "--reviewer-base-url",
+        "http://gpu.test:8000",
+        "--reviewer-api-key",
+        "critic-key",
+        "--no-live",
+    )
+
+    assert outcome.code == 0
+    (call,) = [c for c in cli.leaves["_detect_model"] if c["args"][0] == "http://gpu.test:8000"]
+    assert call["args"][1] == "critic-key"
+    assert "Authorization" not in (call["headers"] or {})
+    assert (call["headers"] or {}).get("X-Team") == "bench"

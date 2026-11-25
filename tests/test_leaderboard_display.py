@@ -12,6 +12,7 @@ import json
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
+import pytest
 from rich.console import Console
 
 from tool_eval_bench.application.leaderboard import (
@@ -824,3 +825,32 @@ class TestLeaderboardLongModelNames:
             assert "Qwen/Qwen3.6-35B" in output
             assert "huggingface" not in output
             assert "snapshots" not in output
+
+
+@pytest.mark.parametrize("fmt", ["csv", "json"])
+def test_exports_carry_the_reviewer_of_a_paired_run(fmt: str) -> None:
+    import csv
+    import json as _json
+    import sys
+
+    from tool_eval_bench.cli.leaderboard import export_runs
+
+    paired = _make_run(model="small")
+    paired["config"]["reviewer"] = {"model": "critic"}
+    with patch("tool_eval_bench.storage.db.RunRepository") as MockRepo:
+        repo = MagicMock()
+        repo.list.return_value = [paired, _make_run(model="solo")]
+        MockRepo.return_value = repo
+        old_stdout, sys.stdout = sys.stdout, io.StringIO()
+        try:
+            export_runs(MagicMock(), fmt=fmt)
+            output = sys.stdout.getvalue()
+        finally:
+            sys.stdout = old_stdout
+
+    if fmt == "csv":
+        rows = {row["model"]: row["reviewer_model"] for row in csv.DictReader(io.StringIO(output))}
+    else:
+        rows = {entry["model"]: entry["reviewer_model"] for entry in _json.loads(output)}
+    assert rows["small"] == "critic"
+    assert rows["solo"] in ("", None)

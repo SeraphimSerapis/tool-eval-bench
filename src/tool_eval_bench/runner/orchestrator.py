@@ -66,6 +66,15 @@ from tool_eval_bench.domain.wire_hygiene import (
     detect_unparsed_tool_call,
     format_tool_parser_advice,
 )
+from tool_eval_bench.runner.review import (
+    ReviewStats,
+    TurnReviewer,
+    finish_reason_label,
+    revision_request,
+    storable_text,
+    storable_value,
+    token_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +163,8 @@ def _scenario_seed_offset(scenario_id: str) -> int:
 def _parses_as_json(text: str) -> bool:
     try:
         json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
+        # RecursionError: deeply nested input exhausts the decoder's stack.
         return False
     return True
 
@@ -417,6 +427,173 @@ async def _notify_turn(
         )
 
 
+def _review_payload(stats: ReviewStats | None) -> dict[str, Any] | None:
+    return stats.to_dict() if stats is not None else None
+
+
+async def _review_turn(
+    reviewer: TurnReviewer,
+    draft: ChatCompletionResult,
+    *,
+    messages: list[ChatMessage],
+    tools: list[dict[str, Any]] | None,
+    revise: Callable[[ChatMessage], Awaitable[ChatCompletionResult]],
+    stats: ReviewStats,
+    trace_lines: list[str],
+    turn: int,
+    omitted_after_system: int,
+    conversation_id: str,
+    tool_choice: str | dict[str, Any] | None = None,
+    detect_unparsed: bool = True,
+) -> tuple[ChatCompletionResult, list[ChatCompletionResult]]:
+    """Review ``draft`` and let the benchmarked model revise it on feedback.
+
+    Returns the turn to act on and every revision the model produced, used or
+    not, so the caller can count their tokens. A reviewer error, a revision
+    request the endpoint rejects, or a revision with nothing to act on leaves
+    the current draft in place: review must never turn a working turn into a
+    failed one. Replaced drafts appear only in the trace, never in
+    ``messages`` or the scenario state.
+    """
+    revisions: list[ChatCompletionResult] = []
+    for round_no in range(1, reviewer.max_rounds + 1):
+        if not reviewer.applies(
+            has_tool_calls=bool(draft.tool_calls), has_answer=_is_visible_answer(draft.content)
+        ):
+            break
+        verdict = await reviewer.review(
+            messages=messages,
+            tools=tools,
+            draft=draft,
+            omitted_after_system=omitted_after_system,
+            conversation_id=conversation_id,
+            tool_choice=tool_choice,
+        )
+        stats.record(verdict)
+        tag = f"{turn}.{round_no}"
+        trace_lines.append(f"review_{tag}={verdict.trace_text()}")
+        if verdict.verdict != "revise":
+            break
+        try:
+            revised = await revise(revision_request(draft, verdict.feedback))
+        except Exception as exc:  # noqa: BLE001 - keep the draft, as for a reviewer error
+            stats.revision_errors += 1
+            # The type only: exception text can quote a server's reply.
+            trace_lines.append(f"revision_error_{tag}={type(exc).__name__}; kept the draft")
+            break
+        if revised.malformed or revised.transport_error_status is not None:
+            stats.revision_errors += 1
+            reason = (
+                "malformed response"
+                if revised.malformed
+                else f"HTTP {revised.transport_error_status}"
+            )
+            trace_lines.append(f"revision_error_{tag}={reason}; kept the draft")
+            break
+        revisions.append(revised)
+        # The revision becomes model output in the trace and the report, both
+        # written as UTF-8; a lone surrogate from a JSON escape would break them.
+        revised = _storable_revision(revised)
+        try:
+            # A revision is judged by the same markup rule as the turn path,
+            # which follows the scenario's choice, not a wire override.
+            detect = tools if detect_unparsed else None
+            unusable = _unusable_revision(revised, detect)
+        except Exception as exc:  # noqa: BLE001 - a revision we cannot inspect is not used
+            unusable = f"revision could not be inspected ({type(exc).__name__})"
+        if unusable is not None:
+            stats.revision_errors += 1
+            trace_lines.append(f"revision_error_{tag}={unusable}; kept the draft")
+            break
+        trace_lines.append(f"rejected_draft_{tag}={draft.content or '[tool_calls_only]'}")
+        for call in draft.tool_calls:
+            trace_lines.append(f"rejected_tool_call_{tag}={call.name} {call.arguments_str}")
+        stats.revised += 1
+        draft = revised
+    return draft, revisions
+
+
+def _wire_tool_choice(
+    extra: dict[str, Any], choice: str | dict[str, Any], wire_format: str = "openai"
+) -> str | dict[str, Any]:
+    """The tool choice a request carries once ``--backend-kwargs`` overrides apply.
+
+    Each adapter honours a different override: the OpenAI one sends
+    ``tool_choice`` from the extra params over its own, the Gemini one sends
+    ``toolConfig``, and the Messages API adapter drops both. A malformed
+    override leaves the scenario's own choice in place.
+    """
+    if wire_format == "openai":
+        overridden = extra.get("tool_choice")
+        if isinstance(overridden, str | dict):
+            return overridden
+    elif wire_format == "gemini":
+        native = extra.get("toolConfig")
+        config = native.get("functionCallingConfig") if isinstance(native, dict) else None
+        mode = config.get("mode") if isinstance(config, dict) else None
+        if isinstance(mode, str):
+            return {"NONE": "none", "ANY": "required", "AUTO": "auto"}.get(mode.upper(), choice)
+    return choice
+
+
+def _storable_revision(result: ChatCompletionResult) -> ChatCompletionResult:
+    """``result`` with every text field UTF-8 can encode.
+
+    Content, reasoning, and tool calls all reach the trace, tool arguments are
+    measured as UTF-8, and IDs and provider metadata are replayed in the next
+    request; an unencodable character in any of them would fail a scenario
+    whose draft worked.
+    """
+    return replace(
+        result,
+        content=storable_text(result.content or ""),
+        reasoning=storable_text(result.reasoning) if result.reasoning is not None else None,
+        message_extra_content=storable_value(result.message_extra_content),
+        tool_calls=[
+            replace(
+                call,
+                id=storable_text(str(call.id)) if call.id is not None else call.id,
+                name=storable_text(call.name),
+                arguments_str=storable_text(call.arguments_str),
+                extra_content=storable_value(call.extra_content),
+            )
+            for call in result.tool_calls
+        ],
+    )
+
+
+def _is_cut_off_tool_call(result: ChatCompletionResult) -> bool:
+    """Whether ``result`` stopped at ``max_tokens`` mid-way through tool arguments."""
+    return result.finish_reason == "length" and any(
+        not _parses_as_json(call.arguments_str) for call in result.tool_calls
+    )
+
+
+def _unusable_revision(
+    result: ChatCompletionResult, tools: list[dict[str, Any]] | None
+) -> str | None:
+    """Why a revision gives the harness nothing to act on, or None when it does.
+
+    A revision that stops at the token ceiling with no answer, cuts off its
+    tool arguments mid-generation, or emits tool-call markup the server did
+    not parse would turn a draft that worked into a turn the harness tags as
+    truncated, empty, or unparsed. Those failures say nothing about the draft,
+    so the draft stays.
+    """
+    if result.tool_calls:
+        if _is_cut_off_tool_call(result):
+            return "revision cut off its tool-call arguments at the token ceiling"
+        return None
+    if tools and detect_unparsed_tool_call(result.content, tools) is not None:
+        return "revision emitted tool-call markup the server did not parse"
+    if _is_visible_answer(result.content):
+        return None
+    return (
+        "revision had no answer and no tool call "
+        f"(finish_reason={finish_reason_label(result.finish_reason)})"
+    )
+
+
 async def run_scenario(
     adapter: BackendAdapter,
     *,
@@ -436,9 +613,20 @@ async def run_scenario(
     system_prompt: str | None = None,
     on_scenario_evaluated: OnScenarioEvaluated | None = None,
     on_scenario_turn: OnScenarioTurn | None = None,
+    reviewer: TurnReviewer | None = None,
 ) -> ScenarioResult:
-    """Run a single scenario through the multi-turn orchestration loop."""
+    """Run a single scenario through the multi-turn orchestration loop.
+
+    With a ``reviewer``, every turn in its scope is reviewed before the
+    harness acts on it, and the benchmarked model revises a rejected turn.
+    """
+    if reviewer is not None and scenario.held_out:
+        raise ValueError(f"A reviewer must not receive held-out scenario {scenario.id}")
     t0 = time.perf_counter()
+    review_stats = ReviewStats() if reviewer is not None else None
+    # The reviewer is a conversation of its own, apart from the model's.
+    review_conversation_id = uuid.uuid4().hex
+    pressure_message_count = len(context_pressure_messages or [])
     # One scenario is one conversation: every turn carries the same id so a
     # gateway that routes or caches per conversation sees it as one.
     conversation_id = uuid.uuid4().hex
@@ -664,6 +852,7 @@ async def run_scenario(
                     failure_kind=(
                         FailureKind.SERVER_ERROR if is_infrastructure else FailureKind.MODEL_CRASH
                     ),
+                    review=_review_payload(review_stats),
                 )
 
             # Capture TTFT from the first streamed turn
@@ -675,6 +864,68 @@ async def run_scenario(
                 total_prompt_tokens += result.prompt_tokens
             if result.completion_tokens is not None:
                 total_completion_tokens += result.completion_tokens
+
+            # The first draft's: a revision's TTFT is a second request's.
+            turn_ttft_ms = result.ttft_ms
+            if (
+                reviewer is not None
+                and review_stats is not None
+                and not _is_cut_off_tool_call(result)
+            ):
+                turn_response_format = response_format
+                turn_tool_choice = active_tool_choice
+
+                async def revise(
+                    request: ChatMessage,
+                    *,
+                    _format: dict[str, Any] | None = turn_response_format,
+                    _tool_choice: str | dict[str, Any] = turn_tool_choice,
+                    _stream: bool = use_stream,
+                ) -> ChatCompletionResult:
+                    # The same request as the draft, plus the review. The
+                    # history itself never keeps the review message.
+                    return await adapter.chat_completion(
+                        model=model,
+                        messages=[*messages, request],
+                        tools=scenario_tools or None,
+                        tool_choice=_tool_choice if scenario_tools else None,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        timeout_seconds=timeout_seconds,
+                        api_key=api_key,
+                        base_url=base_url,
+                        extra_params=extra,
+                        stream=_stream,
+                        response_format=_format,
+                        conversation_id=conversation_id,
+                    )
+
+                result, revisions = await _review_turn(
+                    reviewer,
+                    result,
+                    messages=messages,
+                    tools=scenario_tools or None,
+                    revise=revise,
+                    stats=review_stats,
+                    trace_lines=trace_lines,
+                    turn=turn,
+                    omitted_after_system=pressure_message_count,
+                    conversation_id=review_conversation_id,
+                    # The choice the wire carries: --backend-kwargs can override it.
+                    tool_choice=_wire_tool_choice(
+                        extra, turn_tool_choice, reviewer.benchmark_wire_format
+                    )
+                    if scenario_tools
+                    else None,
+                    detect_unparsed=turn_tool_choice != "none",
+                )
+                for revision in revisions:
+                    total_prompt_tokens += token_count(revision.prompt_tokens)
+                    total_completion_tokens += token_count(revision.completion_tokens)
+                # A reviewed turn takes as long as the pair needs: draft,
+                # reviews, and revisions.
+                turn_ms = (time.perf_counter() - turn_start) * 1000
+                turn_latencies[-1] = turn_ms
 
             if result.tool_calls:
                 result = replace(
@@ -749,9 +1000,7 @@ async def run_scenario(
                             "turn": turn,
                             "max_turns": max_turns,
                             "latency_ms": round(turn_ms, 1),
-                            "ttft_ms": round(result.ttft_ms, 1)
-                            if result.ttft_ms is not None
-                            else None,
+                            "ttft_ms": round(turn_ttft_ms, 1) if turn_ttft_ms is not None else None,
                             "content": "" if scenario.held_out else (result.content or ""),
                             "tool_calls": [],
                             "tool_results": [],
@@ -874,7 +1123,7 @@ async def run_scenario(
                         "turn": turn,
                         "max_turns": max_turns,
                         "latency_ms": round(turn_ms, 1),
-                        "ttft_ms": round(result.ttft_ms, 1) if result.ttft_ms is not None else None,
+                        "ttft_ms": round(turn_ttft_ms, 1) if turn_ttft_ms is not None else None,
                         "content": "" if scenario.held_out else (result.content or ""),
                         "tool_calls": (
                             []
@@ -927,6 +1176,7 @@ async def run_scenario(
             parallel_tool_turns=parallel_tool_turns,
             state_checkpoints=state_checkpoints,
             failure_kind=_classify_runtime_error(exc),
+            review=_review_payload(review_stats),
         )
 
     # Ensure we have a final answer
@@ -1040,6 +1290,7 @@ async def run_scenario(
             parallel_tool_turns=parallel_tool_turns,
             state_checkpoints=state_checkpoints,
             failure_kind=FailureKind.EVALUATOR_ERROR,
+            review=_review_payload(review_stats),
         )
 
     # Build diagnostic summary of what tools were actually called
@@ -1093,6 +1344,7 @@ async def run_scenario(
         # A turn-budget run-out is a distinct failure reason, not an evaluator
         # verdict: the model never reached a final answer / exhausted follow-ups.
         turn_budget_exceeded=budget_exhausted,
+        review=_review_payload(review_stats),
     )
     if on_scenario_evaluated is not None:
         await on_scenario_evaluated(scenario, state, scenario_result)
@@ -1495,6 +1747,7 @@ async def run_all_scenarios(
     on_scenario_evaluated: OnScenarioEvaluated | None = None,
     on_scenario_turn: OnScenarioTurn | None = None,
     probe_engine: bool = True,
+    reviewer: TurnReviewer | None = None,
 ) -> ModelScoreSummary:
     """Run every scenario and produce an aggregate score summary.
 
@@ -1502,9 +1755,16 @@ async def run_all_scenarios(
         concurrency: max parallel scenario runs. 1 = sequential (default).
         system_prompt: replaces the built-in system prompt for every scenario.
         probe_engine: whether to run the diagnostic required-tool probe.
+        reviewer: reviews each turn in its scope before the harness acts on it.
     """
     target_scenarios = scenarios
     total = len(target_scenarios)
+    if reviewer is not None:
+        held_out = [s.id for s in target_scenarios if s.held_out]
+        if held_out:
+            raise ValueError(
+                "A reviewer must not receive held-out scenarios: " + ", ".join(held_out)
+            )
 
     # The probe describes its own request, not whether a scenario can run.
     forced_tool_choice = [s for s in target_scenarios if s.tool_choice_override == "required"]
@@ -1554,6 +1814,8 @@ async def run_all_scenarios(
         turn_kwargs: dict[str, Any] = (
             {"on_scenario_turn": on_scenario_turn} if on_scenario_turn is not None else {}
         )
+        if reviewer is not None:
+            turn_kwargs["reviewer"] = reviewer
         results: list[ScenarioResult] = []
         for idx, scenario in enumerate(target_scenarios):
             if on_scenario_start:
@@ -1612,6 +1874,8 @@ async def run_all_scenarios(
     parallel_turn_kwargs: dict[str, Any] = (
         {"on_scenario_turn": on_scenario_turn} if on_scenario_turn is not None else {}
     )
+    if reviewer is not None:
+        parallel_turn_kwargs["reviewer"] = reviewer
 
     async def _run_one(idx: int, scenario: ScenarioDefinition) -> None:
         nonlocal progress_counter

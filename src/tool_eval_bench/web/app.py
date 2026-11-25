@@ -114,6 +114,7 @@ def _format_export_payload(rows: list[dict[str, Any]], fmt: str) -> tuple[str, s
                 "num_runs": row["num_runs"],
                 "cohort_label": row["cohort_label"],
                 "cohort_fingerprint": row["cohort_fingerprint"],
+                "reviewer_model": row.get("reviewer_model"),
                 "categories": {cat: row["cat_scores"].get(cat) for cat in cat_order},
             }
             for opt_key in (
@@ -162,6 +163,7 @@ def _format_export_payload(rows: list[dict[str, Any]], fmt: str) -> tuple[str, s
         "server_model_root",
         "cohort",
         "cohort_fingerprint",
+        "reviewer_model",
         *(f"cat_{cat}" for cat in cat_order),
     ]
     buf = io.StringIO()
@@ -193,6 +195,7 @@ def _format_export_payload(rows: list[dict[str, Any]], fmt: str) -> tuple[str, s
             "server_model_root": row.get("server_model_root") or "",
             "cohort": row["cohort_label"],
             "cohort_fingerprint": row["cohort_fingerprint"],
+            "reviewer_model": row.get("reviewer_model") or "",
         }
         for cat in cat_order:
             csv_row[f"cat_{cat}"] = row["cat_scores"].get(cat, "")
@@ -559,6 +562,7 @@ def build_starlette_app(
             api_key=str(payload.get("api_key") or "") or None,
             wire_format=str(payload.get("wire_format") or "auto"),
             redact=redact_url,
+            reviewer=payload.get("purpose") == "reviewer",
         )
         return JSONResponse(result)
 

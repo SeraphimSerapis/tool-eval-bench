@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from tool_eval_bench.domain.models import RunContext
 from tool_eval_bench.domain.scenarios import (
@@ -18,6 +18,7 @@ from tool_eval_bench.domain.scenarios import (
     FailureKind,
     ModelScoreSummary,
     ScenarioReportMetadata,
+    ScenarioResult,
     ScenarioStatus,
 )
 from tool_eval_bench.domain.wire_hygiene import (
@@ -55,6 +56,68 @@ def _audit_outcome(audit: Mapping[str, Any]) -> str:
     return "unavailable"
 
 
+_REVIEW_COUNTERS = (
+    "reviews",
+    "approved",
+    "revise_requested",
+    "revised",
+    "reviewer_errors",
+    "revision_errors",
+)
+
+
+def _render_reviewer_section(
+    reviewer: Mapping[str, Any], results: Sequence[ScenarioResult]
+) -> list[str]:
+    """The reviewer settings, run totals, and one row per reviewed scenario."""
+    totals = dict.fromkeys(_REVIEW_COUNTERS, 0)
+    tokens = 0
+    latency_ms = 0.0
+    for result in results:
+        review = result.review or {}
+        for key in _REVIEW_COUNTERS:
+            totals[key] += int(review.get(key) or 0)
+        tokens += int(review.get("prompt_tokens") or 0) + int(review.get("completion_tokens") or 0)
+        latency_ms += float(review.get("latency_ms") or 0.0)
+    md = [
+        "",
+        "## Reviewer",
+        "",
+        "A second model reviewed each turn in scope before the harness acted on it. "
+        "The benchmarked model revised a rejected turn; drafts a revision replaced "
+        "appear in the traces as `rejected_draft_*` and never ran. A reviewer error "
+        "let the turn run unreviewed, and a revision the harness could not use "
+        "(`revision_error_*`) let the current draft run.",
+        "",
+        f"- **Model**: `{_markdown_table_cell(str(reviewer.get('model', '?')))}` at "
+        f"`{_markdown_table_cell(str(reviewer.get('base_url', '?')))}`",
+        f"- **Scope**: {reviewer.get('scope', '?')}; up to {reviewer.get('max_rounds', '?')} "
+        "review(s) per turn",
+        f"- **Sampling**: temperature {reviewer.get('temperature', '?')}, "
+        f"seed {reviewer.get('seed')}, extra params "
+        f"`{_markdown_table_cell(json.dumps(reviewer.get('extra_params') or {}, sort_keys=True))}`",
+        f"- **Prompt**: {'custom' if reviewer.get('system_prompt') else 'built-in'}",
+        f"- **Totals**: {totals['reviews']} reviews, {totals['approved']} approved, "
+        f"{totals['revise_requested']} revisions requested, {totals['revised']} revised, "
+        f"{totals['reviewer_errors']} reviewer errors, {totals['revision_errors']} "
+        f"failed revisions; {tokens:,} reviewer tokens, {latency_ms / 1000:.1f}s reviewing",
+        "",
+        "| Scenario | Status | Reviews | Approved | Revise requested | Revised | Errors |",
+        "|---|---|---:|---:|---:|---:|---:|",
+    ]
+    for result in results:
+        stats = result.review
+        if not stats:
+            continue
+        errors = int(stats.get("reviewer_errors") or 0) + int(stats.get("revision_errors") or 0)
+        md.append(
+            f"| {_markdown_table_cell(result.scenario_id)} | {result.status.value} | "
+            f"{stats.get('reviews', 0)} | {stats.get('approved', 0)} | "
+            f"{stats.get('revise_requested', 0)} | {stats.get('revised', 0)} | {errors} |"
+        )
+    return md
+
+
 def write_scenario_report(
     root: Path,
     run_id: str,
@@ -66,8 +129,12 @@ def write_scenario_report(
     run_context: RunContext | None = None,
     scenario_metadata: Mapping[str, ScenarioReportMetadata] | None = None,
     scenario_packs: list[dict[str, Any]] | None = None,
+    reviewer: Mapping[str, Any] | None = None,
 ) -> Path:
     """Write a Markdown report for a scenario-based benchmark run.
+
+    ``reviewer`` is the stored reviewer block of a paired run; the report then
+    names the reviewer in its header and summarizes what review did.
 
     Scenarios marked held-out in ``scenario_metadata`` have their titles,
     summaries, and traces withheld: the report is the artifact people
@@ -111,6 +178,13 @@ def write_scenario_report(
         f"- **Total Points**: {summary.total_points} / {summary.max_points}",
         f"- **Rating**: {summary.rating}",
     ]
+    if reviewer:
+        md.append(
+            f"- **Reviewer**: `{_markdown_table_cell(str(reviewer.get('model', '?')))}` "
+            f"(scope {reviewer.get('scope', '?')}, up to {reviewer.get('max_rounds', '?')} "
+            f"review(s) per turn, temperature {reviewer.get('temperature', '?')}); "
+            "the score belongs to the pair, not to the model alone"
+        )
     if summary.weighted_score is not None:
         md.append(
             f"- **Weighted Score**: **{summary.weighted_score}** / 100 _(difficulty-weighted)_"
@@ -441,6 +515,9 @@ def write_scenario_report(
                 md.extend([f"Semantic disagreement with the deterministic {label}.", ""])
             md.extend(_trace_block(json.dumps(audit, ensure_ascii=False, indent=2)))
             md.append("")
+
+    if reviewer:
+        md.extend(_render_reviewer_section(reviewer, summary.scenario_results))
 
     # Trace section
     md.extend(["", "## Traces", ""])

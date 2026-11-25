@@ -166,9 +166,9 @@ def test_pre_rename_decision_flags_are_rejected(
     assert error in capsys.readouterr().err
 
 
-def test_schema_v11_describes_every_command() -> None:
+def test_schema_v12_describes_every_command() -> None:
     schema = get_schema()
-    assert schema["schema_version"] == "11"
+    assert schema["schema_version"] == "12"
     assert schema["commands"] is COMMANDS_SCHEMA
     assert set(COMMANDS_SCHEMA) == KNOWN_COMMANDS
 

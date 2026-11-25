@@ -97,6 +97,7 @@ external dependencies.
 | `spec_decode.py` | Per-position acceptance arithmetic shared by the spec runner and its report renderer |
 | `engines.py` | One `EngineProfile` per inference engine: backend labels, display names, metrics namespaces and identity precedence, declared identity names, spec-counter rules, and whether the recorded context window is per-request. Probing mechanics stay in `utils/metadata.py` |
 | `plugin.py` | `BenchmarkPlugin` ABC + `BenchmarkResult` dataclass for pluggable benchmarks |
+| `review.py` | `ReviewerSettings`, the review scopes, and `review_applies`: which turns a reviewer checks and which fields inherit from the run |
 | `tools.py` | Universal tool definitions (12 tools), system prompt |
 | `tools_large.py` | Extended 52-tool definitions for Category L |
 | `errors.py` | Structured error code constants |
@@ -174,7 +175,8 @@ difference is what makes Python the right language for an evaluator.
 
 | Module | Purpose |
 |---|---|
-| `orchestrator.py` | Multi-turn tool-call loop, with a default of 8 turns and per-scenario overrides |
+| `orchestrator.py` | Multi-turn tool-call loop, with a default of 8 turns and per-scenario overrides. With a reviewer, `_review_turn` reviews each turn in scope before tools run and lets the model revise a rejected turn |
+| `review.py` | `TurnReviewer`: the reviewer prompt, the transcript it reads (without context-pressure filler), verdict parsing, the revision request, and per-scenario `ReviewStats`. Review errors never fail a scenario |
 | `service.py` | Compatibility re-export of the application-owned `BenchmarkService` |
 | `throughput.py` | Built-in streaming pp/tg measurement |
 | `spec_detection.py` | Spec-decode detection, Prometheus counters, and metric scraping; no dependency on benchmark runners |
@@ -229,6 +231,7 @@ Shared infrastructure:
 | `mode_runs.py` | `finalize_mode_run`, the one finalization path for context-pressure sweeps, spec-bench, throughput-only runs, and plugins. Each mode passes a `ModeRun` (what is stored) and a `ModeReport` (what is rendered); this module fingerprints the config, builds the run ID and metadata, writes the report, then persists |
 | `run_config.py` | `RunSettings` and `RUN_CONFIG_FIELDS`, the one declaration of every persisted config key. Each row says whether the key is written, fingerprinted, compared on `--resume`, and kept in the leaderboard's cross-model cohort. The builder, the resume check, and the cohort exclusions all derive from it. A new run setting needs a row, and `tests/test_run_config_schema.py` fails until it has one |
 | `run_context.py` | Backend detection (`identify_backend`) and `RunContext` collection, shared by the CLI and the Python API |
+| `reviewer.py` | Reviewer validation, inheritance from the run (`resolve_reviewer`), the stored `reviewer` config block with its fingerprint view and resume check, the held-out refusal, and the startup request that `check_reviewer` sends |
 | `run_queries.py` | Read queries against stored runs, each owning the repository's lifetime |
 | `run_summary.py` | What the web UI shows for each run type: `headline` picks the figure a run list shows in place of a score, `detail` lays a run's measurements out as stats and a table, and `session_entry` summarizes a run for the same-session panel. Throughput, needle, and accuracy figures come from the card's readers in `card_data.py` |
 | `run_deletion.py` | `delete_runs` removes runs in one transaction, then their Markdown reports, removing only a path shaped like a report the writers produce. `find_runs` selects runs by status, date, and model for the `delete` command |
@@ -252,6 +255,7 @@ Shared infrastructure:
 | `legacy_parser.py` | Permanent flat-flag parser used by legacy invocations and translated subcommands |
 | `dispatch.py` | Runtime command routing: `main()` resolves the endpoint and target, then hands off to one function per mode (probe, spec-live, decision-live, throughput, spec-bench, pressure sweep, plugins, scored run) |
 | `scored_run.py` | `ScoredRun`, the one place that turns the flags into `run_benchmark` kwargs (for the live, plain, and `--json` runners) and the `RunSettings` the resume check compares |
+| `reviewer.py` | The `--reviewer*` flags: activation, environment and provider lookup, validation, and inheritance of sampling and same-server credentials into `ReviewerSettings` |
 | `compare_report.py` | HTML comparison command for Markdown reports |
 | `local_commands.py` | Dry-run and local command rendering |
 | `delete.py` | The `delete` command: selects runs by id or filter through `application.run_deletion`, lists them, confirms, and deletes |
@@ -335,6 +339,7 @@ CLI
        │    │    ├─ build messages: system + context + user + [pressure filler]
        │    │    ├─ loop (up to configured max_turns, with scenario overrides):
        │    │    │    ├─ adapter.chat_completion(messages, tools)
+       │    │    │    ├─ [reviewer] review the turn; on feedback the model revises it
        │    │    │    ├─ if tool_calls: execute via scenario.handle_tool_call()
        │    │    │    ├─ noise.enrich_payload(result)
        │    │    │    └─ append tool results to messages

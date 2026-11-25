@@ -595,6 +595,7 @@ def _trial_summary(run: Mapping[str, Any]) -> ToolEvalSummary:
         excluded=len([item for item in scores.get("excluded_scenarios") or [] if item]),
         hardmode_only=suite.hardmode_only,
         scenario_pack=suite.pack,
+        reviewer=_reviewer_model(run),
     )
 
 
@@ -646,6 +647,14 @@ def _largest_remainder(means: Sequence[float], total: int) -> list[int]:
     for index in order[: max(total - sum(counts), 0)]:
         counts[index] += 1
     return counts
+
+
+def _reviewer_model(run: Mapping[str, Any]) -> str | None:
+    """The reviewer model a tool-call run was paired with, or None for a solo run."""
+    reviewer = _config(run).get("reviewer")
+    if isinstance(reviewer, Mapping) and isinstance(reviewer.get("model"), str):
+        return str(reviewer["model"])
+    return None
 
 
 def _tool_eval_summary(trials: Sequence[Mapping[str, Any]]) -> ToolEvalSummary:
@@ -701,6 +710,7 @@ def _tool_eval_summary(trials: Sequence[Mapping[str, Any]]) -> ToolEvalSummary:
         excluded=round(mean(lambda summary: summary.excluded)),
         hardmode_only=newest.hardmode_only,
         scenario_pack=newest.scenario_pack,
+        reviewer=newest.reviewer,
     )
 
 

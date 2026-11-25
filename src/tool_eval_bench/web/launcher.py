@@ -16,6 +16,14 @@ import httpx
 
 from tool_eval_bench.adapters.wire_format import resolve_wire_format
 from tool_eval_bench.application.resume import plan_stored_resume
+from tool_eval_bench.application.reviewer import (
+    mask_credentials_in_adapter_logs,
+    reject_held_out,
+    resolve_reviewer,
+    reviewer_config,
+    reviewer_origin,
+    validate_reviewer,
+)
 from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.application.run_context import build_run_context, identify_backend
 from tool_eval_bench.application.run_queries import get_run, resume_state
@@ -30,6 +38,11 @@ from tool_eval_bench.domain.models import (
     RUN_STATUS_RUNNING,
 )
 from tool_eval_bench.domain.redaction import redact_url, redact_urls
+from tool_eval_bench.domain.review import (
+    DEFAULT_REVIEW_MAX_ROUNDS,
+    DEFAULT_REVIEW_SCOPE,
+    ReviewerSettings,
+)
 from tool_eval_bench.domain.scenarios import (
     CATEGORY_LABELS,
     Category,
@@ -41,10 +54,16 @@ from tool_eval_bench.evals.scenarios import (
     HARDMODE_SCENARIOS,
     SCENARIOS,
 )
+from tool_eval_bench.runner.review import (
+    credential_values,
+    path_credential_values,
+    scrub,
+    url_credential_values,
+)
 from tool_eval_bench.schema import ARGS_SCHEMA, get_schema
 from tool_eval_bench.utils.ids import build_run_id
 from tool_eval_bench.utils.system_prompt import normalize_system_prompt
-from tool_eval_bench.utils.urls import root_endpoint_url, validate_http_url
+from tool_eval_bench.utils.urls import is_same_origin, root_endpoint_url, validate_http_url
 from tool_eval_bench.web.live import LiveRunHub, LiveRunSession
 from tool_eval_bench.web.sanitize import sanitize_result, stored_held_out_ids
 
@@ -182,6 +201,59 @@ def _api_key(payload: Mapping[str, Any]) -> str | None:
     return _optional_text(payload, "api_key") or os.getenv("TOOL_EVAL_API_KEY") or None
 
 
+#: The reviewer fields a launch request may carry.
+_REVIEWER_FIELDS = frozenset(
+    {
+        "reviewer_base_url",
+        "reviewer_model",
+        "reviewer_api_key",
+        "reviewer_scope",
+        "reviewer_max_rounds",
+        "reviewer_temperature",
+    }
+)
+
+
+def _reviewer_from_payload(
+    payload: Mapping[str, Any], *, base_url: str, api_key: str | None
+) -> ReviewerSettings | None:
+    """The reviewer a launch request asks for, or None for a solo run.
+
+    ``reviewer_model`` enables it; ``reviewer_base_url`` defaults to the
+    benchmarked server. The run's key travels only to the same origin; a
+    reviewer elsewhere authenticates with ``reviewer_api_key`` alone.
+    """
+    given = {str(key) for key, value in payload.items() if str(key).startswith("reviewer")}
+    unknown = sorted(given - _REVIEWER_FIELDS)
+    if unknown:
+        raise ValueError(f"Unknown reviewer field(s): {', '.join(unknown)}")
+    model = _optional_text(payload, "reviewer_model")
+    url = _optional_text(payload, "reviewer_base_url")
+    if model is None:
+        if any(payload.get(key) not in (None, "") for key in given):
+            raise ValueError("reviewer_model is required to run with a reviewer")
+        return None
+    if url is not None:
+        validate_http_url(url, what="reviewer_base_url")
+    own_key = _optional_text(payload, "reviewer_api_key")
+    shared = url is None or is_same_origin(url, base_url)
+    raw_temperature = payload.get("reviewer_temperature")
+    settings = ReviewerSettings(
+        model=model,
+        base_url=url,
+        api_key=own_key or (api_key if shared else None),
+        scope=_optional_text(payload, "reviewer_scope") or DEFAULT_REVIEW_SCOPE,
+        max_rounds=_integer(payload, "reviewer_max_rounds", DEFAULT_REVIEW_MAX_ROUNDS, minimum=1),
+        temperature=(
+            None
+            if raw_temperature in (None, "")
+            else _number(payload, "reviewer_temperature", 0.0, minimum=0.0)
+        ),
+    )
+    validate_reviewer(settings)
+    return settings
+
+
 async def _fetch_models_json(
     resolved_url: str,
     models_endpoint: str,
@@ -204,11 +276,67 @@ async def probe_endpoint_models(
     api_key: str | None = None,
     wire_format: str = "auto",
     redact: bool = False,
+    reviewer: bool = False,
+) -> dict[str, Any]:
+    """Probe an endpoint for its models; ``reviewer`` probes a reviewer endpoint.
+
+    A reviewer probe needs an explicit URL, never sends ``TOOL_EVAL_API_KEY``,
+    masks the URL's and key's credentials in HTTPX and adapter logs while it
+    runs, and answers with the redacted origin and a scrubbed error only.
+    """
+    if not reviewer:
+        return await _probe_endpoint_models(
+            base_url=base_url, api_key=api_key, wire_format=wire_format, redact=redact
+        )
+    url = (base_url or "").strip()
+    if not url:
+        return {"reachable": False, "error": "Enter the reviewer's Base URL.", "models": []}
+    try:
+        validate_http_url(url, what="reviewer base_url")
+    except ValueError:
+        return {
+            "reachable": False,
+            "error": "The reviewer Base URL is not a valid http(s) URL.",
+            "models": [],
+        }
+    undo = mask_credentials_in_adapter_logs(
+        ReviewerSettings(model="(probe)", base_url=url, api_key=api_key),
+        api_key=None,
+        headers=None,
+    )
+    try:
+        result = await _probe_endpoint_models(
+            base_url=url, api_key=api_key, wire_format=wire_format, redact=True, reviewer=True
+        )
+    finally:
+        undo()
+    secrets = [
+        *credential_values(api_key, None),
+        *url_credential_values(url),
+        *path_credential_values(url),
+    ]
+    result["base_url"] = reviewer_origin(url)
+    result.pop("resolved_base_url", None)
+    if isinstance(result.get("error"), str):
+        result["error"] = scrub(result["error"], sorted(set(secrets), key=len, reverse=True))
+    return result
+
+
+async def _probe_endpoint_models(
+    *,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    wire_format: str = "auto",
+    redact: bool = False,
+    reviewer: bool = False,
 ) -> dict[str, Any]:
     """Discover a local server or probe an explicit base_url for available models.
 
     With ``redact`` set the response never echoes the endpoint unmasked, so the
     browser cannot fill in a discovered URL; the user types it instead.
+    ``reviewer`` probes a reviewer endpoint: it needs an explicit URL, and
+    ``TOOL_EVAL_API_KEY``, which belongs to the benchmarked server, is never
+    sent to it.
     """
     resolved_url = (base_url or "").strip()
     if not resolved_url:
@@ -226,7 +354,7 @@ async def probe_endpoint_models(
             resolved_url = discovered[0]
 
     shown_url = redact_url(resolved_url) if redact else resolved_url
-    effective_key = api_key or os.getenv("TOOL_EVAL_API_KEY") or None
+    effective_key = api_key or (None if reviewer else os.getenv("TOOL_EVAL_API_KEY")) or None
     try:
         validate_http_url(resolved_url, what="base_url")
         resolved_format = resolve_wire_format(wire_format, resolved_url)
@@ -382,6 +510,7 @@ async def launch_web_run(
     api_key = _api_key(payload)
     wire_format_raw = str(payload.get("wire_format") or "auto").strip().lower()
     wire_format = resolve_wire_format(wire_format_raw, base_url)
+    reviewer = _reviewer_from_payload(payload, base_url=base_url, api_key=api_key)
 
     backend_raw = str(payload.get("backend") or "unknown").strip().lower()
     if backend_raw not in ACCEPTED_BACKEND_LABELS:
@@ -410,6 +539,24 @@ async def launch_web_run(
 
     validate_run_parameters(max_turns=max_turns, error_rate=error_rate, alpha=alpha)
     scenarios, scenario_packs, held_out = _resolve_launcher_scenarios(payload)
+    stored_reviewer = None
+    if reviewer is not None:
+        # Before the run is registered: a refused reviewer leaves nothing behind.
+        reject_held_out(scenarios)
+        stored_reviewer = reviewer_config(
+            resolve_reviewer(
+                reviewer,
+                base_url=base_url,
+                api_key=api_key,
+                wire_format=wire_format,
+                extra_headers=None,
+                session_header=None,
+                temperature=temperature,
+                timeout_seconds=timeout_seconds,
+                seed=seed,
+                extra_params=None,
+            )
+        )
 
     detection = await identify_backend(
         backend_raw if backend_raw and backend_raw != "unknown" else None,
@@ -459,6 +606,7 @@ async def launch_web_run(
         system_prompt=system_prompt,
         decision_judge=None,
         wire_format=wire_format,
+        reviewer=stored_reviewer,
     )
     run_config = build_run_config(
         settings,
@@ -476,12 +624,14 @@ async def launch_web_run(
         backend=backend,
         total=len(scenarios),
         held_out=held_out,
+        reviewer_model=reviewer.model if reviewer is not None else None,
     )
     _start_task(
         hub,
         session,
         output_dir,
         {
+            "reviewer": reviewer,
             "model": model,
             "backend": backend,
             "base_url": base_url,
@@ -506,6 +656,7 @@ async def launch_web_run(
         "run_id": run_id,
         "status": "running",
         "model": model,
+        "reviewer_model": reviewer.model if reviewer is not None else None,
         "backend": backend,
         "total_scenarios": len(scenarios),
     }
@@ -605,9 +756,25 @@ async def _resume_claimed_run(
         )
     validate_http_url(base_url, what="base_url")
     wire_format = _optional_text(payload, "wire_format") or "auto"
-    plan = plan_stored_resume(prev_run, checkpoints, base_url=base_url, wire_format=wire_format)
+    reviewer_url = _optional_text(payload, "reviewer_base_url")
+    if reviewer_url is not None:
+        validate_http_url(reviewer_url, what="reviewer_base_url")
+    plan = plan_stored_resume(
+        prev_run,
+        checkpoints,
+        base_url=base_url,
+        wire_format=wire_format,
+        reviewer_base_url=reviewer_url,
+    )
     settings = plan.settings
     api_key = _api_key(payload)
+    reviewer = plan.reviewer
+    if reviewer is not None:
+        # The stored block holds no key: the reviewer's own, else the run's on
+        # the same origin only.
+        shared = reviewer_url is None or is_same_origin(reviewer_url, base_url)
+        own_key = _optional_text(payload, "reviewer_api_key")
+        reviewer = replace(reviewer, api_key=own_key or (api_key if shared else None))
     held_out = stored_held_out_ids(prev_run)
     prev_meta = prev_run.get("metadata")
     prev_cfg = prev_run.get("config")
@@ -650,6 +817,7 @@ async def _resume_claimed_run(
         total=len(plan.scenarios),
         held_out=held_out,
         preserved=[sanitize_result(result, held_out) for result in plan.reusable],
+        reviewer_model=reviewer.model if reviewer is not None else None,
     )
     _start_task(
         hub,
@@ -677,12 +845,14 @@ async def _resume_claimed_run(
             "resume_scenarios": plan.scenarios,
             "wire_format": settings.wire_format,
             "system_prompt": settings.system_prompt,
+            "reviewer": reviewer,
         },
     )
     return {
         "run_id": run_id,
         "status": "running",
         "model": settings.model,
+        "reviewer_model": reviewer.model if reviewer is not None else None,
         "backend": settings.backend,
         "preserved_scenarios": len(plan.reusable),
         "remaining_scenarios": len(plan.remaining),
