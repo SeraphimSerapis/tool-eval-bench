@@ -166,7 +166,7 @@ class TestTC18:
                 {
                     "name": "translate_text",
                     "arguments": {
-                        "text": "x",
+                        "text": "The meeting has been moved to 3 PM.",
                         "source_language": "English",
                         "target_language": "German",
                     },

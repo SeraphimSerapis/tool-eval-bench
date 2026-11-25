@@ -35,17 +35,24 @@ def _tc10_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc10_eval(state: ScenarioState) -> ScenarioEvaluation:
-    answer = _strip_markdown_emphasis(state.final_answer).strip()
+    answer = re.sub(r"`([^`\n]+)`", r"\1", _strip_markdown_emphasis(state.final_answer)).strip()
     contextual = bool(
-        re.search(r"\b(?:world\s+war|wwii|ww2|war|ended|surrender|year)\b", answer, re.I)
+        re.search(
+            r"\b(?:world\s+war|wwii|ww2|ww\s*2|war|ended|end\s+of|concluded|finished|"
+            r"surrender\w*|year|september|august)\b",
+            answer,
+            re.I,
+        )
     )
     # A terse reply whose whole content is the year: "1945", "1945.",
-    # "It was 1945.", "In 1945." An exact-string match on the bare year
-    # rejected the ordinary sentence forms of the same reply, while a plain
-    # length cap would accept "I have 1945 unread messages."
+    # "It was 1945.", "It was in 1945.", "That was 1945.", "In 1945.",
+    # "1945 (September 2)." An exact-string match on the bare year rejected
+    # ordinary sentence forms of the same reply, while a plain length cap
+    # would accept "I have 1945 unread messages."
     terse_year = bool(
         re.fullmatch(
-            r"(?:it\s+was\s+|in\s+|the\s+year\s+(?:was\s+)?|answer:\s*)?1945\s*[.!]?",
+            r"(?:(?:it|that)\s+was\s+(?:in\s+)?|in\s+|the\s+year\s+(?:was\s+)?|answer:\s*)?"
+            r"1945(?:\s*\([^)\n]{1,30}\))?\s*[.!]?",
             answer,
             re.IGNORECASE,
         )

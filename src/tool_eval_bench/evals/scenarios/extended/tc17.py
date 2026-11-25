@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -74,6 +75,57 @@ def _tc17_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+_TC17_WINTER_OFFSETS = frozenset(
+    {
+        "cet",
+        "mez",
+        "utc+1",
+        "utc+01",
+        "utc+01:00",
+        "gmt+1",
+        "gmt+01",
+        "gmt+01:00",
+        "+1",
+        "+01",
+        "+01:00",
+        "+0100",
+    }
+)
+_TC17_SUMMER_OFFSETS = frozenset(
+    {
+        "cest",
+        "mesz",
+        "utc+2",
+        "utc+02",
+        "utc+02:00",
+        "gmt+2",
+        "gmt+02",
+        "gmt+02:00",
+        "+2",
+        "+02",
+        "+02:00",
+        "+0200",
+    }
+)
+_TC17_BERLIN_ANNOTATED = re.compile(r"^europe/berlin\s*\(([^)]+)\)$")
+
+
+def _tc17_timezone_matches(tz_val: str, expected_date: str) -> bool:
+    """Match Europe/Berlin or a season-accurate offset/alias for ``expected_date``."""
+    base = _utc_offset_aliases(expected_date, "Europe/Berlin")
+    accepted: set[str] = set(base)
+    if "cet" in base:
+        accepted |= _TC17_WINTER_OFFSETS
+    if "cest" in base:
+        accepted |= _TC17_SUMMER_OFFSETS
+    if tz_val == "europe/berlin" or tz_val in accepted:
+        return True
+    annotated = _TC17_BERLIN_ANNOTATED.fullmatch(tz_val)
+    if annotated is not None:
+        return _normalize(annotated.group(1)) in accepted
+    return False
+
+
 def _tc17_event_result_is_created(payload: Any) -> bool:
     return _status_is_success(payload, statuses={"accepted", "created", "ok", "success"})
 
@@ -102,13 +154,11 @@ def _tc17_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Which offset spelling is correct depends on whether the target date falls
     # inside EU summer time, so derive the accepted aliases from the date rather
     # than assuming the March default.
-    correct_tz = tz_val == "europe/berlin" or tz_val in _utc_offset_aliases(
-        expected_date, "Europe/Berlin"
-    )
+    correct_tz = _tc17_timezone_matches(tz_val, expected_date)
     correct_date = _date_matches(date_val, expected_date)
     has_title = any(
         _positive_argument_contains(title_val, title)
-        for title in ("standup", "stand-up", "meeting", "besprechung")
+        for title in ("standup", "stand-up", "stand up", "meeting", "besprechung")
     )
 
     if correct_time and correct_tz and correct_date and has_title:
@@ -154,7 +204,8 @@ SCENARIO = ScenarioDefinition(
 )
 
 DISPLAY = ScenarioDisplayDetail(
-    "Pass if it creates the event at 14:00 with timezone Europe/Berlin "
+    "Pass if it creates the event at 14:00 with timezone Europe/Berlin (or matching offset) "
     "for the Tuesday after the reference date.",
-    "Fail if it uses UTC or gets the date wrong.",
+    "Partial if it defaults to UTC, uses a wrong timezone, or misses the title or date; "
+    "fail if it skips creating the event or gets multiple core fields wrong.",
 )

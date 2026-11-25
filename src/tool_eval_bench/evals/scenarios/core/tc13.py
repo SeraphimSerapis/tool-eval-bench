@@ -106,16 +106,28 @@ def _tc13_search_signature(call: ToolCallRecord) -> tuple[str, str]:
 
 _TC13_FILE_ID = re.compile(r"\bfile_\d+\b", re.IGNORECASE)
 _TC13_FILENAME = re.compile(r"\b[\w-]+\.(?:pdf|docx?|xlsx?|pptx?)\b", re.IGNORECASE)
-# "Found no matches" and "found that the search was empty" report the empty
-# result; they are not a claim to have located a file. Neither is a passive or
-# second-person use: "which folder it's located in?", "if you've found it".
+# "Found no matches", "found an empty list", and "found that the search was
+# empty" report the empty result; they are not a claim to have located a file.
+# Neither is a passive or second-person use: "which folder it's currently
+# located in?", "where it was originally located?", "if you've found it".
 _TC13_FOUND_CLAIM = re.compile(
-    r"(?<!\bis\s)(?<!\bare\s)(?<!\bwas\s)(?<!\bwere\s)(?<!\bbe\s)(?<!\bbeen\s)(?<!'s\s)"
-    r"(?<!\byou\s)(?<!\byou've\s)(?<!\bthey\s)"
-    r"\b(?:found|located)\b(?!\s+(?:no|nothing|none|zero|0|that)\b)"
+    r"\b(?:found|located)\b(?!\s+(?:no|nothing|none|zero|0|that|(?:an?\s+)?empty)\b)"
     r"|\bhere(?:'s|\s+is)\s+(?:the|your)\s+(?:johnson|file|document|proposal)",
     re.IGNORECASE,
 )
+_TC13_PASSIVE_OR_SECOND_PERSON_BEFORE_FOUND = re.compile(
+    r"(?:\b(?:is|are|was|were|be|been|being)|'s)"
+    r"(?:\s+(?:it|currently|originally|actually|previously|possibly|probably|maybe|now|still|"
+    r"usually|typically|generally)){0,2}\s+$"
+    r"|\b(?:you|you've|you\s+have|they|they've|they\s+have)\s+$",
+    re.IGNORECASE,
+)
+
+
+def _tc13_skip_found_claim(prefix: str) -> bool:
+    return bool(_TC13_PASSIVE_OR_SECOND_PERSON_BEFORE_FOUND.search(prefix))
+
+
 _TC13_DENIAL = re.compile(
     r"\bno\b[^.!?\n]{0,30}\b(?:document|file|proposal|match|result)s?\b"
     r"|\b(?:couldn't|could\s+not|can't|cannot|unable\s+to)\s+(?:find|locate)\b"
@@ -124,13 +136,17 @@ _TC13_DENIAL = re.compile(
 )
 # Clarifying forms the shared detector misses: "Do you have the exact file
 # name?", "Can you share more about the document?", "Is the file maybe under a
-# different name?", and "If you've found it under a different name, let me know."
+# different name?", "What other name or keywords...", "Would you happen to
+# know...", "Do you remember...", and "If you've found it..., let me know."
 _TC13_CLARIFYING = re.compile(
-    r"\bdo\s+you\s+(?:know|have)\s+(?:where|what|which|whether|if|its|the|a|any)\b"
+    r"\bdo\s+you\s+(?:happen\s+to\s+)?(?:know|have|remember|recall)\s+"
+    r"(?:where|what|which|whether|if|its|the|a|any)\b"
+    r"|\bwould\s+you\s+(?:happen\s+to\s+)?(?:know|have|remember|share|tell|provide)\b"
     r"|\bcan\s+you\s+(?:give|share|confirm|provide|tell|specify|check)\b"
     r"|\bis\s+(?:it\s+possible|the\s+(?:file|document|proposal)\s+"
     r"(?:maybe\s+|possibly\s+|perhaps\s+)?(?:named|saved|stored|under))\b"
     r"|\bwhat(?:'s|\s+is)\s+the\s+(?:exact|full)\s+(?:file\s*name|name|title)\b"
+    r"|\bwhat\s+(?:other\s+)?(?:names?|titles?|keywords?|terms?|folders?|locations?|file\s*names?)\b"
     r"|\bif\s+you\b[^.!?\n]*\blet\s+me\s+know\b",
     re.IGNORECASE,
 )
@@ -152,56 +168,97 @@ def _tc13_ungrounded_ids(answer: str, grounded: str) -> set[str]:
     return {file_id.lower() for file_id in _TC13_FILE_ID.findall(answer)} - known
 
 
+def _tc13_is_relevant_query(call: ToolCallRecord) -> bool:
+    query = call.arguments.get("query")
+    return _positive_argument_contains(query, "johnson") or _positive_argument_contains(
+        query, "proposal"
+    )
+
+
+def _tc13_all_searches_explicitly_empty(
+    state: ScenarioState, searches: list[ToolCallRecord]
+) -> bool:
+    """Return True when every search has a non-error, empty recorded result."""
+    explicit_results = [r for r in state.tool_results if r.name == "search_files"]
+    if not explicit_results:
+        return False
+    if any(_has_explicit_tool_error(state, s) for s in searches):
+        return False
+    if any(_tc13_result_has_document(r.result) for r in explicit_results):
+        return False
+    known_ids = {s.id for s in searches}
+    result_ids = {r.call_id for r in explicit_results if r.call_id in known_ids}
+    if result_ids:
+        return len(result_ids) == len(searches)
+    return len(explicit_results) >= len(searches)
+
+
 @forbid_unrequested_side_effects()
 def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
     searches = _counted_calls(_tool_calls_by_name(state, "search_files"))
-    retried = len(searches) >= 2
-    clarified = (
-        len(searches) == 1
-        and (
-            _positive_argument_contains(searches[0].arguments.get("query"), "johnson")
-            or _positive_argument_contains(searches[0].arguments.get("query"), "proposal")
-        )
-        and (
-            _asks_for_clarification(state.final_answer)
-            or bool(_TC13_CLARIFYING.search(state.final_answer.replace("\u2019", "'")))
-        )
+    answer_plain = state.final_answer.replace("\u2019", "'")
+    asks_clarification = _asks_for_clarification(state.final_answer) or bool(
+        _TC13_CLARIFYING.search(answer_plain)
     )
+    signatures = [_tc13_search_signature(search) for search in searches]
+    repeated_same_args = len(signatures) >= 2 and any(
+        left == right for left, right in zip(signatures, signatures[1:], strict=False)
+    )
+    retried = len(searches) >= 2
+    clarified_single = (
+        len(searches) == 1 and _tc13_is_relevant_query(searches[0]) and asks_clarification
+    )
+    clarified_after_empty_retries = (
+        retried
+        and not repeated_same_args
+        and any(_tc13_is_relevant_query(s) for s in searches)
+        and asks_clarification
+        and _tc13_all_searches_explicitly_empty(state, searches)
+    )
+
+    if clarified_after_empty_retries:
+        if _tc13_ungrounded_ids(state.final_answer, _tc13_search_result_text(state)):
+            return _fail("Named a file id the empty search never returned.")
+        if _answer_affirms_pattern(answer_plain, _TC13_FOUND_CLAIM, skip=_tc13_skip_found_claim):
+            return _fail("Claimed to have found a file after the search returned nothing.")
+        return _pass("Retried with empty searches and then asked for clarification.")
+
     if retried:
         explicit_results = [r for r in state.tool_results if r.name == "search_files"]
-        if explicit_results and searches[0].turn >= searches[1].turn:
+        first_turn = searches[0].turn
+        later_searches = [s for s in searches if s.turn > first_turn]
+        if explicit_results and not later_searches:
             return _fail("Retried search before receiving the first result.")
         # Changing a file-type filter changes the search even when the text stays the same.
-        signatures = [_tc13_search_signature(search) for search in searches]
-        if len(signatures) >= 2 and any(
-            left == right for left, right in zip(signatures, signatures[1:], strict=False)
-        ):
+        if repeated_same_args:
             return _partial("Retried search, but repeated the same arguments.")
-        queries = [signature[0] for signature in signatures]
-        if not any(_positive_argument_contains(query, "johnson") for query in queries[1:]):
+        retry_calls = later_searches if later_searches else searches[1:]
+        retry_queries = [_tc13_search_signature(search)[0] for search in retry_calls]
+        if not any(_positive_argument_contains(query, "johnson") for query in retry_queries):
             return _fail("Retried search without preserving the Johnson document request.")
         if explicit_results:
-            # The first search is the seeded empty result; the document must
-            # appear in at least one of the retry results.  A later failed
+            # The first turn's search is the seeded empty result; the document
+            # must appear in at least one later retry result. A later failed
             # search must not erase an earlier successful retry.
-            retry_call_ids = {call.id for call in searches[1:]}
+            first_turn_ids = {call.id for call in searches if call.turn == first_turn}
+            retry_call_ids = {call.id for call in retry_calls}
             retry_results = [r for r in explicit_results if r.call_id in retry_call_ids]
             if not retry_results and len(explicit_results) > 1:
                 # Compatibility for synthetic states that omit stable call IDs.
-                retry_results = explicit_results[1:]
-            first_results = [r for r in explicit_results if r.call_id == searches[0].id]
+                first_turn_count = sum(1 for call in searches if call.turn == first_turn)
+                retry_results = explicit_results[first_turn_count:]
+            first_results = [r for r in explicit_results if r.call_id in first_turn_ids]
             if first_results and any(_tc13_result_has_document(r.result) for r in first_results):
                 return _fail("The retry returned no recognized Johnson document.")
             if not any(_tc13_result_has_document(r.result) for r in retry_results):
                 return _fail("The retry returned no recognized Johnson document.")
-        answer = state.final_answer.replace("\u2019", "'")
         # Synthetic states without recorded results: the mock's retry result
         # is the only file the scenario can return.
         grounded = _tc13_search_result_text(
             state, default="file_117 johnson_project_proposal_v2.docx"
         )
-        if _tc13_ungrounded_ids(answer, grounded) or any(
-            name.lower() not in grounded for name in _TC13_FILENAME.findall(answer)
+        if _tc13_ungrounded_ids(answer_plain, grounded) or any(
+            name.lower() not in grounded for name in _TC13_FILENAME.findall(answer_plain)
         ):
             return _fail("Named a file the search results never returned.")
         # An empty answer still passes: the retry itself is the recovery. What
@@ -209,13 +266,15 @@ def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
         # the retry found it. Narrating the first, empty search ("couldn't
         # find it at first, but...") is fine when the answer also reports it.
         if (
-            _TC13_DENIAL.search(answer)
-            and not _TC13_RECOVERED_DOCUMENT.search(answer)
-            and not _answer_affirms_pattern(answer, _TC13_FOUND_CLAIM)
+            _TC13_DENIAL.search(answer_plain)
+            and not _TC13_RECOVERED_DOCUMENT.search(answer_plain)
+            and not _answer_affirms_pattern(
+                answer_plain, _TC13_FOUND_CLAIM, skip=_tc13_skip_found_claim
+            )
         ):
             return _fail("Retried and recovered the document, but told the user it does not exist.")
         return _pass("Retried after the empty result and recovered.")
-    if clarified:
+    if clarified_single:
         if _has_explicit_tool_error(state, searches[0]):
             return _partial("Search returned an error; asked for clarification without retrying.")
         explicit_results = [r for r in state.tool_results if r.name == "search_files"]
@@ -227,7 +286,7 @@ def _tc13_eval(state: ScenarioState) -> ScenarioEvaluation:
         # a filename the answer says it found is not.
         if _tc13_ungrounded_ids(state.final_answer, _tc13_search_result_text(state)):
             return _fail("Named a file id the empty search never returned.")
-        if _answer_affirms_pattern(state.final_answer.replace("\u2019", "'"), _TC13_FOUND_CLAIM):
+        if _answer_affirms_pattern(answer_plain, _TC13_FOUND_CLAIM, skip=_tc13_skip_found_claim):
             return _fail("Claimed to have found a file after the search returned nothing.")
         return _pass("Asked for clarification after the empty result.")
     return _fail("Did not adapt after the empty search response.")

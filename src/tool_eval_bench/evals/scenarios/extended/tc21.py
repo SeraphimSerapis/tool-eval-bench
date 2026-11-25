@@ -15,6 +15,9 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
@@ -67,10 +70,33 @@ _FIELD = re.compile(
     re.IGNORECASE,
 )
 _RULE = re.compile(
-    r"(?<![a-z0-9_])(?:r|rule\s*|regla\s*|regel\s*|规则\s*|ルール\s*)([1-5])(?![a-z0-9_])",
+    r"(?<![a-z0-9_])(?:r[-#]?|rule\s*(?:#|no\.?\s*)?|regla\s*(?:#|n[°º.]?\s*)?|"
+    r"regel\s*(?:#|nr\.?\s*)?|规则(?:编号)?\s*#?\s*|ルール(?:番号)?\s*#?\s*)([1-5])(?![a-z0-9_])",
     re.IGNORECASE,
 )
 _ISSUES_MARKER = re.compile(r"^[\W_]*issues[\W_]*[:：]", re.IGNORECASE | re.MULTILINE)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?。！？;；])\s+")
+_VALID_CLAIM = re.compile(
+    r"\b(?:pass(?:es|ed|ing)?|valid|ok|okay|fine|good|correct|acceptable|"
+    r"compl(?:y|ies|ied)|satisf(?:y|ies|ied)|meets?|conforms?|holds?|"
+    r"no\s+(?:issue|error|problem|violation)s?)\b|"
+    r"有效|合法|通过|符合|满足|正确|有効|合格",
+    re.IGNORECASE,
+)
+_INVALID_CLAIM = re.compile(
+    r"\b(?:invalid|fail(?:s|ed|ing)?|breaks?|broken|violat(?:es?|ed|ing)|"
+    r"incorrect|wrong|bad|error|issue|problem|exceeds?|below|missing|lacks?|negative)\b|"
+    r"无效|不合法|违反|错误|不通过|不符合|無効|違反",
+    re.IGNORECASE,
+)
+_CONTRAST_PREFIX = re.compile(
+    r"\b(?:unlike|as\s+opposed\s+to|rather\s+than|instead\s+of|compared\s+(?:to|with))\b[^,.;:\n]*",
+    re.IGNORECASE,
+)
+_SUBORDINATE_CONTRAST = re.compile(
+    r"^\s*(?:whereas|while|although|though)\b([^,.;:\n]+),",
+    re.IGNORECASE,
+)
 
 
 def _tc21_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -83,22 +109,50 @@ def _canonical_field(text: str) -> str:
     return next(name for name in _PAYLOAD if name.replace("_", "") == compact)
 
 
+def _is_valid_claim(text: str) -> bool:
+    return _answer_affirms_pattern(text, _VALID_CLAIM) and not _INVALID_CLAIM.search(text)
+
+
+def _strip_valid_asides(text: str) -> str:
+    cleaned = re.sub(
+        r"\([^)]*\)",
+        lambda m: "" if _is_valid_claim(m.group(0)) else m.group(0),
+        text,
+    )
+    cleaned = _CONTRAST_PREFIX.sub("", cleaned)
+    sub = _SUBORDINATE_CONTRAST.match(cleaned)
+    if sub and _is_valid_claim(sub.group(1)):
+        cleaned = cleaned[sub.end() :]
+    return cleaned
+
+
 def _flagged_rules(answer: str) -> dict[str, set[int]]:
     """Map each field the answer flags to the rule ids it cites.
 
     Only the section after the last ``ISSUES:`` line is read, so the model may
     reason about valid fields above it. Without that line the whole answer is
-    read. A line flags the first field it names with the first rule id it
-    cites; a line without a rule id flags nothing.
+    read, ignoring sentences that state a field passes/complies/is valid. Each
+    remaining sentence records every field it flags with every rule id it cites,
+    after stripping parenthetical valid asides and contrasting sibling phrases
+    ("Unlike alt_email, email breaks R1").
     """
     markers = list(_ISSUES_MARKER.finditer(answer))
-    section = answer[markers[-1].end() :] if markers else answer
+    has_issues_header = bool(markers)
+    section = answer[markers[-1].end() :] if has_issues_header else answer
     flagged: dict[str, set[int]] = {}
     for line in section.splitlines():
-        field = _FIELD.search(line)
-        rule = _RULE.search(line)
-        if field and rule:
-            flagged.setdefault(_canonical_field(field.group(1)), set()).add(int(rule.group(1)))
+        for sentence in _SENTENCE_SPLIT.split(line):
+            cleaned = _strip_valid_asides(sentence)
+            if not has_issues_header and _is_valid_claim(cleaned):
+                continue
+            fields = _FIELD.findall(cleaned)
+            rules = _RULE.findall(cleaned)
+            if fields and rules:
+                for raw_field in fields:
+                    canonical = _canonical_field(raw_field)
+                    bucket = flagged.setdefault(canonical, set())
+                    for raw_rule in rules:
+                        bucket.add(int(raw_rule))
     return flagged
 
 
