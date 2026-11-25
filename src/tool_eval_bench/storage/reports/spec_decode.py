@@ -322,6 +322,18 @@ def spec_decode_report(
         md.append("")
 
     # Interpretation guide
+    steps_legend = (
+        "- **Steps/s**: Target-model verification passes per second. Without speculation "
+        "each pass yields one token, and a verification pass costs at least a plain decode "
+        "pass, so this is a lower bound on the no-spec decode rate and Eff t/s ÷ Steps/s "
+        "(≈ τ) is a ceiling on the speedup. `--baseline-tgs` gives the measured figure."
+    )
+    if any(getattr(s, "steps_cover_first_token", False) for s in spec_samples):
+        steps_legend += (
+            " A row whose step count also covers work before the first token, as Splash's "
+            "cycles do, shows no Steps/s: those steps fall outside the measured interval, "
+            "so the rate would be neither a bound nor a ceiling."
+        )
     md.extend(
         [
             "## Interpretation Guide",
@@ -343,10 +355,7 @@ def spec_decode_report(
             "Window utilization is (τ − 1) ÷ Window, the share of drafted positions accepted.",
             "- **Draft t/s**: Rate at which draft tokens are generated, regardless of acceptance. "
             "Compare with Eff t/s to see draft overhead.",
-            "- **Steps/s**: Target-model verification passes per second. Without speculation "
-            "each pass yields one token, and a verification pass costs at least a plain decode "
-            "pass, so this is a lower bound on the no-spec decode rate and Eff t/s ÷ Steps/s "
-            "(≈ τ) is a ceiling on the speedup. `--baseline-tgs` gives the measured figure.",
+            steps_legend,
             "- **Speedup**: Effective t/s ÷ baseline t/s. Values > 1.0x indicate spec decode "
             "is providing a benefit.",
             "",
