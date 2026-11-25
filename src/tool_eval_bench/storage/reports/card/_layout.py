@@ -9,6 +9,7 @@ the flag to run, so a sparse session is not mostly placeholders.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -454,6 +455,17 @@ def _tool_hero(data: CardData) -> Hero:
     te = data.tool_eval
     if te is None:
         return Hero("TOOL CALLING", TOOL, flags=("drop --perf-only",))
+    if not math.isfinite(te.score):
+        return Hero(
+            "TOOL CALLING",
+            TOOL,
+            "—",
+            "",
+            sub=(te.rating or "Withheld",),
+            sub_color=WARN,
+            sub2=tuple(score_details(te)),
+            sub2_color=WARN if needs_caution(te) else MUTED,
+        )
     score = fmt.score(te.score)
     if is_subset(te):
         # A rating earned on a few scenarios is not a rating of the model: no stars.

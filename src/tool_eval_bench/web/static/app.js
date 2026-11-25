@@ -553,7 +553,12 @@
       isToolEval(run)
         ? ring(score, {
             label: score === null || score === undefined ? null : Math.round(score),
-            title: score === null || score === undefined ? `No score, ${run.status}` : `Score ${score} of 100`,
+            title:
+              score === null || score === undefined
+                ? run.rating === "Withheld"
+                  ? "Score withheld (no gradable scenarios)"
+                  : `No score, ${run.status}`
+                : `Score ${score} of 100`,
           })
         : metric(run.headline),
       h(
@@ -876,6 +881,7 @@
     if (!entries || !entries.length) return null;
     const figure = (entry) => {
       if (entry.final_score !== null && entry.final_score !== undefined) return `Score ${Math.round(entry.final_score)}`;
+      if (isToolEval(entry) && entry.rating === "Withheld") return "Score withheld";
       if (hasFigure(entry.headline)) return `${entry.headline.label} ${fmtFigure(entry.headline.value, entry.headline.unit)}`;
       return "Nothing measured";
     };
@@ -1001,7 +1007,16 @@
       "div",
       { class: "card hero" },
       toolEval
-        ? ring(run.final_score, { cls: "ring-lg", animate: opts.animate, sub: run.final_score !== null && run.final_score !== undefined ? "of 100" : null })
+        ? ring(run.final_score, {
+            cls: "ring-lg",
+            animate: opts.animate,
+            sub:
+              run.final_score !== null && run.final_score !== undefined
+                ? "of 100"
+                : run.rating === "Withheld"
+                  ? "withheld"
+                  : null,
+          })
         : metric(run.headline, { cls: "metric-lg", withLabel: true }),
       h(
         "div",
@@ -1051,6 +1066,15 @@
       stat("Deployability", run.deployability ?? "—", { icon: "zap", small: run.deployability !== null && run.deployability !== undefined ? "/ 100" : null }),
       stat("Responsiveness", run.responsiveness ?? "—", { icon: "clock", small: run.responsiveness !== null && run.responsiveness !== undefined ? "/ 100" : null }),
       scores.total_tokens ? stat("Tokens", fmtTokens(scores.total_tokens), { icon: "message" }) : null,
+      scores.degenerate_loop_scenarios > 0
+        ? stat("Degenerate loops", scores.degenerate_loop_scenarios, { cls: "stat-fail", icon: "alert" })
+        : null,
+      scores.answer_in_thinking_turns > 0
+        ? stat("Answer in thinking", scores.answer_in_thinking_turns, {
+            icon: "message",
+            small: scores.answer_in_thinking_turns === 1 ? "turn" : "turns",
+          })
+        : null,
       warnings.length ? stat("Safety warnings", warnings.length, { cls: "stat-fail", icon: "shield" }) : null
     );
 
@@ -1196,7 +1220,9 @@
       h(
         "td",
         {},
-        h("div", { class: `score-cell ${tierFor(row.final_score)}` }, h("span", { text: row.final_score }), bar(row.final_score, tierFor(row.final_score))),
+        row.final_score !== null && row.final_score !== undefined
+          ? h("div", { class: `score-cell ${tierFor(row.final_score)}` }, h("span", { text: row.final_score }), bar(row.final_score, tierFor(row.final_score)))
+          : h("div", { class: "score-cell" }, h("span", { class: "muted", text: "Withheld" })),
         row.rating ? h("div", { class: "rating", text: row.rating }) : null
       ),
       h(
@@ -1387,7 +1413,7 @@
       { id, class: "select", value: selectedId, onchange: (ev) => onPick(ev.target.value) },
       toolRuns.map((r) => {
         const { name } = splitModel(r.model);
-        const score = r.final_score ?? "—";
+        const score = r.final_score ?? (r.rating === "Withheld" ? "Withheld" : "—");
         const pair = r.reviewer_model ? ` + reviewer ${r.reviewer_model}` : "";
         return h("option", { value: r.run_id, text: `${name}${pair} · ${score} · ${relTime(r.created_at)} · ${r.run_id.slice(0, 15)}` });
       })
@@ -1398,7 +1424,12 @@
     return h(
       "div",
       { class: "card vs-card" },
-      ring(run?.final_score),
+      ring(run?.final_score, {
+        sub:
+          run && (run.final_score === null || run.final_score === undefined) && run.rating === "Withheld"
+            ? "withheld"
+            : null,
+      }),
       h(
         "div",
         { class: "hero-title" },
@@ -1586,11 +1617,13 @@
           : mc.significant
             ? ["pass", "check", `Significant: ${mc.direction === "B" ? "candidate B" : "baseline A"} is better`, `p = ${mc.p_value} · χ² = ${mc.chi2} · ${mc.discordant_pairs} discordant pairs (A only ${mc.a_only_pass}, B only ${mc.b_only_pass})`]
             : ["plain", "minus", "Not significant", `p = ${mc.p_value} · χ² = ${mc.chi2} · ${mc.discordant_pairs} discordant pairs (A only ${mc.a_only_pass}, B only ${mc.b_only_pass})`];
+      const scoreLabel = (val, runObj) =>
+        val !== null && val !== undefined ? String(val) : runObj?.rating === "Withheld" ? "Withheld" : "—";
       body.push(
         h(
           "div",
           { class: "stats" },
-          stat("Score A → B", `${s.score_a ?? "?"} → ${s.score_b ?? "?"}`, {
+          stat("Score A → B", `${scoreLabel(s.score_a, cmp.run_a)} → ${scoreLabel(s.score_b, cmp.run_b)}`, {
             extra: scoreDelta === null || scoreDelta === undefined ? null : h("div", { class: scoreDelta >= 0 ? "delta-pos" : "delta-neg", text: `${scoreDelta >= 0 ? "+" : ""}${scoreDelta} points of score` }),
           }),
           stat("Points", `${s.total_points_a} → ${s.total_points_b}`, { small: `(${s.total_delta >= 0 ? "+" : ""}${s.total_delta})` }),

@@ -53,6 +53,8 @@ def _score_bg(pct: float) -> str:
 
 def _rating_short(rating: str) -> str:
     """Shorten a rating string for compact display."""
+    if "Withheld" in rating:
+        return "[yellow]—[/]"
     if "Excellent" in rating:
         return "[bold green]★★★★★[/]"
     if "Good" in rating:
@@ -194,8 +196,8 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
             model_name += f" + reviewer {shorten_model_name(row['reviewer_model'])}"
 
         # Score with color
-        score = row["final_score"]
-        score_str = f"[{_score_color(score)}]{score}[/]"
+        score = row.get("final_score")
+        score_str = "[yellow]—[/]" if score is None else f"[{_score_color(score)}]{score}[/]"
 
         # Rating stars
         rating_str = _rating_short(row["rating"])
@@ -322,7 +324,7 @@ def export_runs(
                 "model": row["model"],
                 "run_id": row["run_id"],
                 "date": row["date"],
-                "final_score": row["final_score"],
+                "final_score": row.get("final_score"),
                 "rating": row["rating"],
                 "total_points": row["total_points"],
                 "max_points": row["max_points"],
@@ -410,7 +412,7 @@ def export_runs(
                 "model": row["model"],
                 "run_id": row["run_id"],
                 "date": row["date"],
-                "final_score": row["final_score"],
+                "final_score": "" if row.get("final_score") is None else row["final_score"],
                 "rating": row["rating"],
                 "total_points": row["total_points"],
                 "max_points": row["max_points"],

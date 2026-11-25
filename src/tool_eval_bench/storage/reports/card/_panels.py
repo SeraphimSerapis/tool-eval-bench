@@ -685,13 +685,16 @@ def score_block(box: Box, te: ToolEvalSummary) -> str:
         text(x, label_y, "TOOL CALLING SCORE", size=13, fill=TEXT_2, weight=600, tracking=1.4)
     )
     area_top, area_bottom = label_y + 16, box.bottom - PAD
-    score = fmt.score(te.score)
+    has_score = math.isfinite(te.score)
+    score = fmt.score(te.score) if has_score else "—"
     details_h, bar_gap, bar_h = 58.0, 32.0, 36.0
     size = max(
         48.0, min(132.0, (area_bottom - area_top - details_h - bar_gap - bar_h) / 0.73 * 0.9)
     )
 
     def score_runs(size: float) -> list[Run]:
+        if not has_score:
+            return [Run(score, size, MUTED, "display", 700)]
         return [
             Run(score, size, TEXT, "display", 700, tracking=-2),
             Run("/100", round(size * 0.28), TOOL, "sans", 600, gap=6),
@@ -704,7 +707,11 @@ def score_block(box: Box, te: ToolEvalSummary) -> str:
     base = area_top + max((area_bottom - area_top - group_h) / 2, 0) + cap
     out.append(runs_text(x - size * 0.04, base, score_runs(size)))
     details: list[str]
-    if is_subset(te):
+    if not has_score:
+        out.append(warn_pill(x, base + 13, te.rating or "Withheld", max_width=room)[0])
+        details = score_details(te, passed=not ring)
+        color = WARN if needs_caution(te) else MUTED
+    elif is_subset(te):
         pill = paired_wordings(te, [scope_label(te)])[0]
         out.append(warn_pill(x, base + 13, pill, max_width=room)[0])
         parts = [] if ring else [f"{te.passed} of {te.total} passed"]

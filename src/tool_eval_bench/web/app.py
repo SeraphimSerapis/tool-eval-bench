@@ -101,7 +101,7 @@ def _format_export_payload(rows: list[dict[str, Any]], fmt: str) -> tuple[str, s
                 "model": row["model"],
                 "run_id": row["run_id"],
                 "date": row["date"],
-                "final_score": row["final_score"],
+                "final_score": row.get("final_score"),
                 "rating": row["rating"],
                 "total_points": row["total_points"],
                 "max_points": row["max_points"],
@@ -175,7 +175,7 @@ def _format_export_payload(rows: list[dict[str, Any]], fmt: str) -> tuple[str, s
             "model": row["model"],
             "run_id": row["run_id"],
             "date": row["date"],
-            "final_score": row["final_score"],
+            "final_score": "" if row.get("final_score") is None else row["final_score"],
             "rating": row["rating"],
             "total_points": row["total_points"],
             "max_points": row["max_points"],
@@ -306,7 +306,10 @@ def _build_comparison_payload(raw_a: Mapping[str, Any], raw_b: Mapping[str, Any]
     score_b = run_b.get("final_score")
     score_delta = (
         score_b - score_a
-        if isinstance(score_a, (int, float)) and isinstance(score_b, (int, float))
+        if isinstance(score_a, (int, float))
+        and not isinstance(score_a, bool)
+        and isinstance(score_b, (int, float))
+        and not isinstance(score_b, bool)
         else None
     )
     mcnemar = compute_mcnemar_stats(map_a, map_b, all_ids)

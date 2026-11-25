@@ -121,18 +121,20 @@ def write_summary_report(
     )
 
     scores = [s.final_score for s in summaries]
-    points = [s.total_points for s in summaries]
     ratings = [s.rating for s in summaries]
-    max_points = summaries[0].max_points if summaries else 0
 
-    md.append(
-        "| **Final Score** | "
-        + " | ".join(str(s) for s in scores)
-        + f" | **{agg.get('final_score_mean', 0.0):.1f} ± {agg.get('final_score_stddev', 0.0):.1f}** |"
+    score_cells = ["Withheld" if s is None else str(s) for s in scores]
+    mean_score = agg.get("final_score_mean")
+    std_score = agg.get("final_score_stddev")
+    mean_cell = (
+        "**Withheld**"
+        if mean_score is None
+        else f"**{mean_score:.1f} ± {(0.0 if std_score is None else std_score):.1f}**"
     )
+    md.append("| **Final Score** | " + " | ".join(score_cells) + f" | {mean_cell} |")
     md.append(
         "| **Total Points** | "
-        + " | ".join(f"{p}/{max_points}" for p in points)
+        + " | ".join(f"{s.total_points}/{s.max_points}" for s in summaries)
         + f" | **{agg.get('total_points_mean', 0.0):.1f} ± {agg.get('total_points_stddev', 0.0):.1f}** |"
     )
     # Ratings do not average; name the shared one or say they differ.
@@ -148,7 +150,8 @@ def write_summary_report(
     pass_at = agg.get("pass_at_k", 0)
     pass_hat = agg.get("pass_hat_k", 0)
     gap = agg.get("reliability_gap", 0)
-    ci_lo, ci_hi = agg.get("final_score_ci95", (0, 0))
+    ci = agg.get("final_score_ci95")
+    ci_text = "—" if ci is None else f"[{ci[0]:.1f}, {ci[1]:.1f}]"
 
     md.extend(
         [
@@ -159,7 +162,7 @@ def write_summary_report(
             f"| **Pass@{n}** (capability ceiling) | {pass_at:.1f}% |",
             f"| **Pass^{n}** (reliability floor) | {pass_hat:.1f}% |",
             f"| **Reliability Gap** | {gap:.1f}pp |",
-            f"| **95% CI** | [{ci_lo:.1f}, {ci_hi:.1f}] |",
+            f"| **95% CI** | {ci_text} |",
             "",
         ]
     )
@@ -329,13 +332,18 @@ def write_summary_report(
     # ── Deployability (from first summary with data) ──
     deploy_summary = next((s for s in summaries if s.deployability is not None), None)
     if deploy_summary:
+        quality_text = (
+            "Withheld"
+            if deploy_summary.final_score is None
+            else f"{deploy_summary.final_score} / 100"
+        )
         md.extend(
             [
                 "## Deployability",
                 "",
                 "| Metric | Value |",
                 "|---|---|",
-                f"| Quality | {deploy_summary.final_score} / 100 |",
+                f"| Quality | {quality_text} |",
                 f"| Responsiveness | {deploy_summary.responsiveness} / 100 |",
                 f"| Deployability | **{deploy_summary.deployability}** / 100 (α={deploy_summary.alpha}) |",
                 f"| Median Turn | {(deploy_summary.median_turn_ms or 0) / 1000:.1f}s |",

@@ -160,9 +160,26 @@ def aggregate_trials(summaries: list) -> dict:
     if count <= 1:
         return {}
 
-    final_scores = [summary.final_score for summary in summaries]
+    final_scores = [summary.final_score for summary in summaries if summary.final_score is not None]
+    withheld_trials = count - len(final_scores)
     total_points = [summary.total_points for summary in summaries]
-    ci_low, ci_high = bootstrap_ci([float(score) for score in final_scores])
+    if len(final_scores) >= 2:
+        score_floats = [float(score) for score in final_scores]
+        final_score_mean: float | None = round(mean(final_scores), 1)
+        final_score_stddev: float | None = round(stdev(final_scores), 1)
+        final_score_median: float | None = round(median(score_floats), 1)
+        final_score_ci95: tuple[float, float] | None = bootstrap_ci(score_floats)
+    elif len(final_scores) == 1:
+        sole = round(float(final_scores[0]), 1)
+        final_score_mean = sole
+        final_score_stddev = 0.0
+        final_score_median = sole
+        final_score_ci95 = (sole, sole)
+    else:
+        final_score_mean = None
+        final_score_stddev = None
+        final_score_median = None
+        final_score_ci95 = None
 
     points_by_scenario: dict[str, list[int]] = {}
     for summary in summaries:
@@ -209,12 +226,12 @@ def aggregate_trials(summaries: list) -> dict:
     total_scenarios = len(scenario_stats)
     pass_at_k = round(100 * pass_at_k_count / total_scenarios, 1) if total_scenarios else 0.0
     pass_hat_k = round(100 * pass_hat_k_count / total_scenarios, 1) if total_scenarios else 0.0
-    return {
+    agg: dict[str, Any] = {
         "trials": count,
-        "final_score_mean": round(mean(final_scores), 1),
-        "final_score_stddev": round(stdev(final_scores), 1),
-        "final_score_median": round(median([float(score) for score in final_scores]), 1),
-        "final_score_ci95": (ci_low, ci_high),
+        "final_score_mean": final_score_mean,
+        "final_score_stddev": final_score_stddev,
+        "final_score_median": final_score_median,
+        "final_score_ci95": final_score_ci95,
         "total_points_mean": round(mean(total_points), 1),
         "total_points_stddev": round(stdev(total_points), 1),
         "pass_at_k": pass_at_k,
@@ -223,3 +240,6 @@ def aggregate_trials(summaries: list) -> dict:
         "per_scenario": scenario_stats,
         "per_category": category_stats,
     }
+    if withheld_trials > 0:
+        agg["withheld_trials"] = withheld_trials
+    return agg

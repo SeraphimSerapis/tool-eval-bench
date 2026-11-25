@@ -87,7 +87,8 @@ class TestInfrastructureExclusion:
         )
         assert summary.excluded_scenarios == ["S1"]
         assert summary.max_points == 0
-        assert summary.final_score == 0
+        assert summary.final_score is None
+        assert summary.rating == "Withheld"
 
     @pytest.mark.parametrize(
         "kind",

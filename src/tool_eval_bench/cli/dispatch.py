@@ -2538,14 +2538,32 @@ def _print_trials_summary(console: Console, agg: dict) -> None:
     n = agg["trials"]
     score_mean = agg["final_score_mean"]
     score_std = agg["final_score_stddev"]
-    ci_lo, ci_hi = agg["final_score_ci95"]
+    ci = agg["final_score_ci95"]
     median = agg["final_score_median"]
+
+    if score_mean is None:
+        score_line = "  [bold]Score:[/]   [yellow]Withheld[/] [dim](no gradable scenarios)[/]\n"
+        median_line = "  [bold]Median:[/]  —\n"
+        ci_line = "  [bold]95% CI:[/]  —\n"
+    else:
+        std_val = 0.0 if score_std is None else score_std
+        score_line = f"  [bold]Score:[/]   {score_mean:.1f} ± {std_val:.1f} / 100\n"
+        median_line = (
+            f"  [bold]Median:[/]  {median:.1f}\n"
+            if median is not None
+            else "  [bold]Median:[/]  —\n"
+        )
+        ci_line = (
+            f"  [bold]95% CI:[/]  [{ci[0]:.1f}, {ci[1]:.1f}]\n"
+            if ci is not None
+            else "  [bold]95% CI:[/]  —\n"
+        )
 
     content = (
         f"  [bold]Trials:[/]  {n}\n"
-        f"  [bold]Score:[/]   {score_mean:.1f} ± {score_std:.1f} / 100\n"
-        f"  [bold]Median:[/]  {median:.1f}\n"
-        f"  [bold]95% CI:[/]  [{ci_lo:.1f}, {ci_hi:.1f}]\n"
+        f"{score_line}"
+        f"{median_line}"
+        f"{ci_line}"
         f"  [bold]Points:[/]  {agg['total_points_mean']:.1f} ± {agg['total_points_stddev']:.1f}\n"
     )
 
@@ -2716,7 +2734,10 @@ def _run_with_live_display(
                 trial_summary = _score_stored_trial(trial_result, args, scenarios)
                 if trial_summary is not None:
                     all_summaries.append(trial_summary)
-                    console.print(f"[bold]{trial_summary.final_score}[/]/100")
+                    if trial_summary.final_score is None:
+                        console.print("[bold yellow]Withheld[/]")
+                    else:
+                        console.print(f"[bold]{trial_summary.final_score}[/]/100")
 
             agg = _aggregate_trials(all_summaries)
             _print_trials_summary(console, agg)
@@ -2925,9 +2946,9 @@ def _run_plain(
 
     elapsed = time.time() - started
     scores = all_results_dicts[-1].get("scores", {})
-    console.print(
-        f"\n[bold]Score: {scores.get('final_score', 0)} / 100  — {scores.get('rating', '')}[/]"
-    )
+    final_score = scores.get("final_score")
+    score_display = "Withheld" if final_score is None else f"{final_score} / 100"
+    console.print(f"\n[bold]Score: {score_display}  — {scores.get('rating', '')}[/]")
     if scores.get("weighted_score") is not None:
         console.print(
             f"[bold]Weighted Score: {scores['weighted_score']} / 100[/]  [dim](difficulty-weighted)[/]"
