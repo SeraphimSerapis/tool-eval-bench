@@ -314,7 +314,6 @@ _CLAUSE_BOUNDARY = re.compile(
     r"(?<=\bno)\.(?!\s*\d|\w)|"
     r"\b(?:but|however|instead|and|or|while|whereas|though|although|yet|"
     r"sondern|aber|und|oder|pero|sino)\b|"
-    r"(?<=\s)(?:y|e|o|u)(?=\s)|"
     r"而是|但是|但|不过|且|并且"
 )
 _NEGATION = re.compile(r"\b(?:not|cannot|never|no|neither|nor|without)\b|n't\b")

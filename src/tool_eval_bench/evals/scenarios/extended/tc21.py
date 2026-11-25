@@ -143,16 +143,35 @@ def _flagged_rules(answer: str) -> dict[str, set[int]]:
     for line in section.splitlines():
         for sentence in _SENTENCE_SPLIT.split(line):
             cleaned = _strip_valid_asides(sentence)
-            if not has_issues_header and _is_valid_claim(cleaned):
+            if _is_valid_claim(cleaned):
                 continue
             fields = _FIELD.findall(cleaned)
             rules = _RULE.findall(cleaned)
-            if fields and rules:
-                for raw_field in fields:
-                    canonical = _canonical_field(raw_field)
-                    bucket = flagged.setdefault(canonical, set())
-                    for raw_rule in rules:
-                        bucket.add(int(raw_rule))
+            if not (fields and rules):
+                continue
+            if len(fields) > 1 and len(rules) > 1:
+                parts = [
+                    part
+                    for part in re.split(r"\s*(?:,\s*(?:and\s+)?|\band\b)\s*", cleaned)
+                    if part.strip()
+                ]
+                paired = [
+                    (_FIELD.findall(part), _RULE.findall(part))
+                    for part in parts
+                    if not _is_valid_claim(part)
+                ]
+                if len(paired) > 1 and all(pf and pr for pf, pr in paired):
+                    for part_fields, part_rules in paired:
+                        for raw_field in part_fields:
+                            bucket = flagged.setdefault(_canonical_field(raw_field), set())
+                            for raw_rule in part_rules:
+                                bucket.add(int(raw_rule))
+                    continue
+            for raw_field in fields:
+                canonical = _canonical_field(raw_field)
+                bucket = flagged.setdefault(canonical, set())
+                for raw_rule in rules:
+                    bucket.add(int(raw_rule))
     return flagged
 
 

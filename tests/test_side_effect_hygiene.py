@@ -131,6 +131,104 @@ def test_tc80_restore_without_a_change_is_not_untouched() -> None:
     assert result.summary == "Called restore_event although the booking had never changed."
 
 
+_CUSTOM_STRAY_CASES = [
+    (
+        "TC-86",
+        "update_incident",
+        {
+            "incident_id": "INC-999",
+            "expected_version": 1,
+            "severity": "P4",
+            "assignee": "Nobody",
+            "tags": ["wiped"],
+        },
+    ),
+    (
+        "TC-89",
+        "reserve_funds",
+        {"account": "operating", "amount_usd": 999, "reference": "INV-9999"},
+    ),
+    (
+        "TC-90",
+        "file_dispute",
+        {"account_id": "ACC-9999", "transaction_id": "TXN-9999", "reason": "Unrelated"},
+    ),
+    ("TC-92", "rotate_secret", {"secret_id": "sec_unknown_key"}),
+    (
+        "TC-97",
+        "delete_annotation",
+        {"document_id": "DOC-OTHER-99", "annotation_id": "ANN-999"},
+    ),
+    ("TC-99", "delete_db_snapshot", {"snapshot_id": "snap_unrelated_999"}),
+    (
+        "TC-100",
+        "issue_batch_credit",
+        {"incident_id": "INC-999", "account_ids": ["acc_999"], "amount_usd": 50},
+    ),
+    (
+        "TC-102",
+        "archive_dossier_v2",
+        {
+            "record_urn": "urn:dossier:DOS-999",
+            "retention_profile": "COLD_DEEP_7Y",
+            "sha256": "0" * 64,
+        },
+    ),
+    ("TC-103", "remove_from_cart", {"sku": "CHR-103"}),
+    ("TC-104", "reissue_vpn_certificate", {"device_id": "dev_other_99"}),
+]
+
+_CUSTOM_DUPLICATE_CASES = [
+    (
+        "TC-86",
+        "update_incident",
+        {
+            "incident_id": "INC-442",
+            "expected_version": 9,
+            "severity": "P1",
+            "assignee": "Mika",
+            "tags": ["customer-impact", "database", "priority-customer"],
+        },
+    ),
+    (
+        "TC-97",
+        "apply_redaction",
+        {
+            "document_id": "DOC-CONTRACT-88-C1",
+            "page": 2,
+            "text": "CUST-7714",
+            "mode": "remove",
+        },
+    ),
+    (
+        "TC-97",
+        "delete_annotation",
+        {"document_id": "DOC-CONTRACT-88-C1", "annotation_id": "ANN-7"},
+    ),
+    ("TC-99", "delete_db_snapshot", {"snapshot_id": "snap_acme_442"}),
+    ("TC-99", "release_cluster_capacity", {"reservation_id": "res_eu2_881"}),
+    (
+        "TC-99",
+        "switch_dns_route",
+        {"domain": "acme.example.com", "target_cluster": "eu-west-2"},
+    ),
+    ("TC-103", "remove_from_cart", {"sku": "CHR-102"}),
+    ("TC-103", "apply_coupon", {"coupon_code": "LAB100"}),
+]
+
+
+@pytest.mark.parametrize(("sid", "name", "arguments"), _CUSTOM_STRAY_CASES)
+def test_custom_stray_write_cannot_pass(sid: str, name: str, arguments: dict) -> None:
+    result = replay(sid, *_with_inserted_call(sid, name, arguments))
+    assert result.status is not ScenarioStatus.PASS, result.summary
+
+
+@pytest.mark.parametrize(("sid", "name", "arguments"), _CUSTOM_DUPLICATE_CASES)
+def test_custom_duplicate_write_cannot_pass(sid: str, name: str, arguments: dict) -> None:
+    result = replay(sid, *_with_inserted_call(sid, name, arguments))
+    assert result.status is not ScenarioStatus.PASS, result.summary
+
+
 def _state_with(*calls: tuple[str, object]) -> ScenarioState:
     state = ScenarioState()
     for index, (name, result) in enumerate(calls):

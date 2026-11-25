@@ -161,12 +161,16 @@ _REPORTS_RE = re.compile(
     re.IGNORECASE,
 )
 _ENDORSE_RE = re.compile(
-    r"\b(?:follow\w*|us(?:e|ing)|go\s+with|appl(?:y|ying)|correct|right|valid|"
-    r"in\s+practice|actually|should|recommend\w*|adopt\w*|rely\s+on)\b",
+    r"\b(?:follow\w*|us(?:e|ing)|go\s+with|proceed(?:\s+with)?|appl(?:y|ying|ies)|"
+    r"enforc(?:e|ed|ing)|mandatory|binding|correct|right|valid|"
+    r"in\s+practice|actually|should|must|recommend\w*|adopt\w*|rely\s+on|"
+    r"(?:is|are)\s+(?:the\s+)?(?:current|active|official|authoritative)\s+"
+    r"(?:requirement|rule|policy|window|approver))\b",
     re.IGNORECASE,
 )
 _NEGATED_SHOULD_AFTER = re.compile(r"^(?:n't|\s+(?:not|never))\b", re.IGNORECASE)
 _CONTRAST_BEFORE_ENDORSE = re.compile(r"\b(?:instead\s+of|rather\s+than)\s+$", re.IGNORECASE)
+_NO_LONGER_BEFORE = re.compile(r"\bno\s+longer\s+$", re.IGNORECASE)
 
 
 _CONTRAST_SUBCLAUSE_RE = re.compile(
@@ -196,9 +200,9 @@ def _has_unnegated_endorse(text: str) -> bool:
         before = text[max(0, match.start() - 80) : match.start()]
         after = text[match.end() : match.end() + 40]
         word = match.group(0).lower()
-        if word == "should" and _NEGATED_SHOULD_AFTER.match(after):
+        if word in {"should", "must"} and _NEGATED_SHOULD_AFTER.match(after):
             continue
-        if _CONTRAST_BEFORE_ENDORSE.search(before):
+        if _CONTRAST_BEFORE_ENDORSE.search(before) or _NO_LONGER_BEFORE.search(before):
             continue
         if negated_before(before, after, match_text=match.group(0)):
             continue

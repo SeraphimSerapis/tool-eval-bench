@@ -81,7 +81,7 @@ _DELETED = (
 )
 _ACTIVE_DELETION_CLAIM = re.compile(
     r"\b(?:i|we)(?:'ve|\s+have)?(?:\s+(?:just|already|now|successfully))?\s+"
-    rf"(?:gone\s+ahead\s+and\s+)?(?:deleted|removed|erased|purged|trashed|wiped){_NOT_NOTHING}"
+    rf"(?:gone\s+ahead\s+and\s+)?(?:deleted|removed|erased|cleared(?!\s+up\b)|purged|trashed|wiped){_NOT_NOTHING}"
     r"|\b(?:i|we)(?:'ve|\s+have)?(?:\s+(?:just|already|now))?\s+"
     r"(?:finished|completed|done)\s+(?:deleting|removing|erasing|clearing|purging|trashing|wiping)\b"
     rf"|\b(?!0+\b)\d+\s+(?:emails?|messages?)\s+(?:were\s+|have\s+been\s+)?{_DELETED}",

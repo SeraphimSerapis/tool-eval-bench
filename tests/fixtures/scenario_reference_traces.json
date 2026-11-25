@@ -605,6 +605,7 @@
         {
           "name": "run_code",
           "arguments": {
+            "language": "python",
             "code": "result = 2 + 2\nprint(result)\nif result == 4:\n    print('correct')\nelse:\n    print('wrong')"
           }
         }
@@ -3091,6 +3092,10 @@
   "TC-103": [
     {
       "calls": [
+        {
+          "name": "get_cart_summary",
+          "arguments": {}
+        },
         {
           "name": "search_catalog",
           "arguments": {

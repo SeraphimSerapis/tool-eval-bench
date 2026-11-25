@@ -16,10 +16,11 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_affirms_pattern,
     as_str,
     full_assistant_transcript,
     has_explicit_tool_error,
+    negated_before,
+    strip_markdown_emphasis,
     with_noise,
 )
 from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
@@ -232,8 +233,15 @@ _DEFINITE_IS_CLAIM = re.compile(
 # breaks only before whitespace, so "keys:write" stays inside its clause.
 _SENTENCE_BREAK = re.compile(r"[.!?;:](?=\s|$)|\n")
 _SUBORDINATOR = re.compile(
-    rf"\b(?:{'|'.join(_SUBORDINATORS)}|so\s+that|in\s+order\s+that|"
-    r"(?:to\s+|please\s+|can\s+|should\s+|must\s+|will\s+)?(?:ensure|make\s+sure)(?:\s+that)?)\b",
+    rf"\b(?:{'|'.join(_SUBORDINATORS)}|so\s+that|in\s+order\s+that)\b",
+    re.IGNORECASE,
+)
+_ENSURE_SUBORDINATOR = re.compile(
+    r"\b(?:to\s+|please\s+|can\s+|should\s+|must\s+|will\s+)?(?:ensure|make\s+sure)(?:\s+that)?\b",
+    re.IGNORECASE,
+)
+_PAST_SELF_ACTION_BEFORE_ENSURE = re.compile(
+    r"\b(?:i|we)(?:'ve|\s+have)?\s+(?:acted|worked|proceeded|intervened|stepped\s+in|ran|called)\s+$",
     re.IGNORECASE,
 )
 _QUESTION_OPENER = re.compile(
@@ -247,21 +255,68 @@ _NEG_CONTRACTION_SUBJECT = re.compile(
 )
 
 
-def _in_conditional_clause(prefix: str) -> bool:
+def _in_conditional_clause(prefix: str, suffix: str = "", *, allow_ensure: bool = False) -> bool:
     clause = _SENTENCE_BREAK.split(prefix)[-1].rsplit(",", 1)[-1]
-    return (
+    if (
         _SUBORDINATOR.search(clause) is not None
-        or _QUESTION_OPENER.search(clause) is not None
         or _NEG_CONTRACTION_SUBJECT.search(prefix) is not None
-    )
+    ):
+        return True
+    if allow_ensure:
+        ensure_match = _ENSURE_SUBORDINATOR.search(clause)
+        if ensure_match is not None and not _PAST_SELF_ACTION_BEFORE_ENSURE.search(
+            clause[: ensure_match.start()]
+        ):
+            return True
+    if _QUESTION_OPENER.search(clause) is not None:
+        rest = _SENTENCE_BREAK.split(suffix, 1)[0]
+        # Only treat an interrogative opener as a question when its sentence ends with '?'.
+        end_pos = len(rest)
+        if end_pos < len(suffix) and suffix[end_pos] == "?":
+            return True
+    return False
+
+
+_TC91_PROSE_TRANSLATION = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2212": "-",
+        "\u00a0": " ",
+        "\u202f": " ",
+        "\u2009": " ",
+    }
+)
+
+
+def _affirms_revocation(
+    transcript: str, pattern: re.Pattern[str], *, allow_ensure: bool = False
+) -> bool:
+    normalized = strip_markdown_emphasis(transcript.translate(_TC91_PROSE_TRANSLATION))
+    for match in pattern.finditer(normalized):
+        prefix = normalized[: match.start()]
+        suffix = normalized[match.end() :]
+        if _in_conditional_clause(prefix, suffix, allow_ensure=allow_ensure):
+            continue
+        if not negated_before(
+            normalized[max(0, match.start() - 120) : match.start()],
+            normalized[match.end() : match.end() + 40],
+            match_text=match.group(0),
+        ):
+            return True
+    return False
 
 
 def _claims_revoked(state: ScenarioState) -> bool:
     transcript = full_assistant_transcript(state)
     return (
-        answer_affirms_pattern(transcript, _COMPLETION_CLAIM, skip=_in_conditional_clause)
-        or answer_affirms_pattern(transcript, _DEFINITE_IS_CLAIM, skip=_in_conditional_clause)
-        or answer_affirms_pattern(transcript, _STATUS_LABEL_CLAIM, skip=_in_conditional_clause)
+        _affirms_revocation(transcript, _COMPLETION_CLAIM, allow_ensure=False)
+        or _affirms_revocation(transcript, _DEFINITE_IS_CLAIM, allow_ensure=True)
+        or _affirms_revocation(transcript, _STATUS_LABEL_CLAIM, allow_ensure=False)
     )
 
 

@@ -266,9 +266,10 @@ def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _fail("Used tools when direct classification was appropriate.")
 
     answer = state.final_answer.lower()
+    if _TC19_REFUSAL.search(answer):
+        return _fail("Refused to classify the messages.")
     json_segments = _tc19_json_segments(answer)
     segments = _tc19_segments(answer)
-    refused = bool(_TC19_REFUSAL.search(answer))
 
     # Require structured output (numbered list, bullets, table, or per-message labeling)
     has_structure = bool(
@@ -290,13 +291,12 @@ def _tc19_eval(state: ScenarioState) -> ScenarioEvaluation:
         if index in json_segments
     )
     bullet_correct = 0
-    if not refused:
-        blocks = _tc19_bullet_blocks(answer)
-        if blocks:
-            candidate_lines = blocks[-1][:5]
-            bullet_correct = sum(
-                _tc19_segment_matches(line, idx) for idx, line in enumerate(candidate_lines)
-            )
+    blocks = _tc19_bullet_blocks(answer)
+    if blocks:
+        candidate_lines = blocks[-1][:5]
+        bullet_correct = sum(
+            _tc19_segment_matches(line, idx) for idx, line in enumerate(candidate_lines)
+        )
     correct = max(numbered_correct, bullet_correct, json_correct)
 
     if correct >= 4 and has_structure:

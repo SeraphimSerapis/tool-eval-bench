@@ -190,6 +190,11 @@ _DETERMINER_NEGATORS: dict[str, re.Pattern[str]] = {
     "de": re.compile(r"\bkein(?:e|en|em|er|es)?\b", re.IGNORECASE),
     "es": re.compile(r"\b(?:ningun[oa]?s?|ningún)\b", re.IGNORECASE),
 }
+# Spanish single-letter conjunctions ("y", "e", "o", "u") are normalized only
+# under locale="es" so English algebraic variables ("y = 42", "Neither x nor y
+# is 42") never split negation clauses globally.
+_SPANISH_AND = re.compile(r"(?<=\s)[ye](?=\s)", re.IGNORECASE)
+_SPANISH_OR = re.compile(r"(?<=\s)[ou](?=\s)", re.IGNORECASE)
 _COMMA_DECIMAL_LOCALES = frozenset({"de", "es"})
 # Scenarios whose prose answers state a sub-thousand decimal constant rather
 # than a thousands-grouped integer, so bare single-group X.YYY such as 3.142
@@ -270,6 +275,9 @@ def normalize_answer(text: str, locale: str, *, strip_single_dot_group: bool = T
     determiner = _DETERMINER_NEGATORS.get(locale)
     if determiner is not None:
         text = determiner.sub(" no ", text)
+    if locale == "es":
+        text = _SPANISH_AND.sub("and", text)
+        text = _SPANISH_OR.sub("or", text)
     for index, block in enumerate(preserved):
         text = text.replace(f"\x00JSON_FENCE_{index}\x00", block)
     return text

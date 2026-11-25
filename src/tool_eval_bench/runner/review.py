@@ -52,7 +52,7 @@ or
 _APPROVE_WORDS = frozenset({"approve", "approved", "accept", "accepted", "ok", "pass"})
 _REVISE_WORDS = frozenset({"revise", "revision", "reject", "rejected", "needs_revision"})
 _KEYWORD_RE = re.compile(
-    r"^\W*(approve|approved|revise|reject|rejected)\b(?:\s*[:.\-\n]\s*|\s*$)",
+    r"^\W*(approve|approved|revise|reject|rejected)\b[*_`]*?(?:\s*[:.!\-\n]\s*|\s*$)",
     re.I,
 )
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
