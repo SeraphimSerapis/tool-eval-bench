@@ -99,17 +99,22 @@ def _tc05_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Models emit stringified integers often enough that an identity check on
     # this one field contradicted every other field's tolerant matcher.
     has_duration = _numeric_value(event.arguments.get("duration_minutes")) == 30
-    has_attendees = any(_attendee_matches(a, "alex") for a in attendees) and any(
-        _attendee_matches(a, "jamie") for a in attendees
+    has_attendees = (
+        any(_attendee_matches(a, "alex") for a in attendees)
+        and any(_attendee_matches(a, "jamie") for a in attendees)
+        and all(_attendee_matches(a, "alex") or _attendee_matches(a, "jamie") for a in attendees)
     )
     # "next Monday" is relative to the run's reference date, not a fixed day.
     expected_date = _next_weekday_after_reference(state, "monday")
     # Use flexible date matching — accept any ISO 8601 date representation
     correct_date = _date_matches(event.arguments.get("date"), expected_date)
-    correct_time = _time_matches(event.arguments.get("time"), "09:30")
-    has_title = _positive_argument_contains(
-        event.arguments.get("title"), "standup"
-    ) or _positive_argument_contains(event.arguments.get("title"), "stand-up")
+    correct_time = _time_matches(event.arguments.get("time"), "09:30") or _time_matches(
+        event.arguments.get("time"), "9:30"
+    )
+    has_title = any(
+        _positive_argument_contains(event.arguments.get("title"), variant)
+        for variant in ("standup", "stand-up", "stand up")
+    )
     if correct_date and correct_time and has_duration and has_attendees and has_title:
         if len(event_calls) > 1:
             return _partial("Created the requested event but issued duplicate calendar mutations.")

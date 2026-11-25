@@ -55,27 +55,60 @@ from tool_eval_bench.evals.scenarios.core._shared import (
 )
 
 _TC01_CELSIUS_MENTION_RE = re.compile(
-    r"(?<![A-Za-z0-9])-?\d+(?:\.\d+)?\s*(?:°\s*c\b|°(?!\s*f\b)|degrees?\b|\bcelsius\b)",
+    r"(?<![A-Za-z0-9])-?\d+(?:\.\d+)?\s*"
+    r"(?:°\s*c\b|℃|°(?!\s*f\b)|degrees?(?!\s*(?:f\b|fahrenheit\b))\b|\bcelsius\b)",
+    re.IGNORECASE,
+)
+_TC01_FAHRENHEIT_MENTION_RE = re.compile(
+    r"(?<![A-Za-z0-9])-?\d+(?:\.\d+)?\s*"
+    r"(?:°\s*f\b|℉|degrees?\s*(?:f\b|fahrenheit\b)|\bfahrenheit\b)",
     re.IGNORECASE,
 )
 
 
-def _tc01_weather_result_is_berlin(payload: Any) -> bool:
+def _tc01_normalized_units(call: ToolCallRecord) -> str | None:
+    """Return 'celsius', 'fahrenheit', or None when units is outside the enum."""
+    if "units" not in call.arguments:
+        return "celsius"
+    raw = call.arguments["units"]
+    if not isinstance(raw, str):
+        return None
+    normalized = _normalize(raw)
+    if normalized in ("celsius", "fahrenheit"):
+        return normalized
+    return None
+
+
+def _tc01_weather_result_is_berlin(payload: Any, expected_units: str = "celsius") -> bool:
     if not isinstance(payload, dict) or "error" in payload:
         return False
     if "location" in payload and not _positive_argument_contains(payload.get("location"), "berlin"):
         return False
-    if "units" in payload and _normalize(_as_str(payload.get("units"))) != "celsius":
+    if "units" in payload and _normalize(_as_str(payload.get("units"))) != expected_units:
         return False
-    return _numeric_value(payload.get("temperature")) == 8 or _answer_affirms_text(
-        _as_str(payload.get("condition")), "overcast"
+    temp = _numeric_value(payload.get("temperature"))
+    temp_ok = (
+        temp is not None and abs(temp - 46.4) < 0.5 if expected_units == "fahrenheit" else temp == 8
     )
+    return temp_ok or _answer_affirms_text(_as_str(payload.get("condition")), "overcast")
 
 
 def _tc01_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
-        if "units" in call.arguments and call.arguments["units"] not in ("celsius", "fahrenheit"):
+        units = _tc01_normalized_units(call)
+        if units is None:
             return _noise({"error": "units must be celsius or fahrenheit"}, call.name)
+        if units == "fahrenheit":
+            return _noise(
+                {
+                    "location": "Berlin",
+                    "temperature": 46.4,
+                    "units": "fahrenheit",
+                    "condition": "Overcast",
+                    "humidity": 72,
+                },
+                "get_weather",
+            )
         return _noise(
             {
                 "location": "Berlin",
@@ -94,13 +127,6 @@ def _tc01_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 
 def _tc01_eval(state: ScenarioState) -> ScenarioEvaluation:
-    if any(
-        c.name == "get_weather"
-        and "units" in c.arguments
-        and c.arguments["units"] not in ("celsius", "fahrenheit")
-        for c in state.tool_calls
-    ):
-        return _fail("The weather call violated the units enum.")
     used_weather = _has_tool_call(
         state,
         "get_weather",
@@ -120,37 +146,49 @@ def _tc01_eval(state: ScenarioState) -> ScenarioEvaluation:
         for c in state.tool_calls
     )
     if only_berlin_weather:
-        # A retry after an error (including one injected by --error-rate) is
-        # recovery, so the last call is the one graded. Repeating the call
-        # after a usable result is redundant, which is weaker than a clean
-        # route but not a routing failure.
+        # A retry after an error (including one injected by --error-rate or a
+        # rejected units value) is recovery, so the last call is graded.
+        # Repeating the call after a usable result is redundant.
         if not _only_error_retries_before_last(state, state.tool_calls):
             return _partial(
                 "Called get_weather for Berlin again after a usable result; "
                 "the duplicate call was redundant."
             )
         weather_call = state.tool_calls[-1]
-        if not _result_matches_if_present(state, weather_call, _tc01_weather_result_is_berlin):
+        requested_units = _tc01_normalized_units(weather_call)
+        if requested_units is None:
+            return _fail("The weather call violated the units enum.")
+        if not _result_matches_if_present(
+            state,
+            weather_call,
+            lambda payload: _tc01_weather_result_is_berlin(payload, requested_units),
+        ):
             return _fail(
                 "get_weather did not return usable Berlin weather data; the answer cannot "
                 "fabricate weather data."
             )
-        # Verify the model surfaced actual weather data (temp 8 or condition),
-        # without stating an inaccurate Celsius temperature alongside the condition.
-        has_temp = _answer_affirms_rounded_value(state.final_answer, "8")
+        # Verify the model surfaced actual weather data (temp 8°C / 46.4°F or
+        # condition), without stating an inaccurate Celsius or Fahrenheit value.
+        normalized_answer = _normalize(state.final_answer)
+        has_c_temp = _answer_affirms_rounded_value(state.final_answer, "8")
+        has_f_temp = _answer_affirms_rounded_value(state.final_answer, "46.4")
         has_condition = _answer_affirms_text(state.final_answer, "overcast")
-        wrong_temp = not has_temp and bool(
-            _TC01_CELSIUS_MENTION_RE.search(_normalize(state.final_answer))
+        wrong_c_temp = not has_c_temp and bool(_TC01_CELSIUS_MENTION_RE.search(normalized_answer))
+        wrong_f_temp = not has_f_temp and bool(
+            _TC01_FAHRENHEIT_MENTION_RE.search(normalized_answer)
         )
-        if wrong_temp:
+        if wrong_c_temp or wrong_f_temp:
             return _partial(
                 "Called get_weather correctly but reported an inaccurate Berlin temperature."
             )
+        has_temp = has_f_temp if requested_units == "fahrenheit" else (has_c_temp or has_f_temp)
         if has_temp or has_condition:
             return _pass("Used get_weather with Berlin only.")
         return _partial(
             "Called get_weather correctly but did not surface the weather data in the answer.",
         )
+    if any(c.name == "get_weather" and _tc01_normalized_units(c) is None for c in state.tool_calls):
+        return _fail("The weather call violated the units enum.")
     if not used_weather and used_web and _is_only_tool(state, "web_search"):
         return _partial("Answered functionally via web_search, but missed the specialist tool.")
     return _fail("Did not cleanly route the request to get_weather.")

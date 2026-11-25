@@ -57,7 +57,7 @@ def _error(name, message="service unavailable", status=500):
                 results=[_error("get_stock_price")],
                 answer="AAPL is $187.",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-03",
@@ -187,7 +187,7 @@ def _error(name, message="service unavailable", status=500):
                 results=[_error("get_stock_price")],
                 answer="The stock price service was unavailable. I will use web search instead. AAPL is $187.",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-15",

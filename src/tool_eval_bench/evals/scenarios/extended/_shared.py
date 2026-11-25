@@ -105,14 +105,22 @@ _GERMAN_MARKERS = re.compile(
 _ENGLISH_SOURCE_DESIGNATORS = frozenset({"english", "en", "en-us", "en-gb", "en-ca", "en-au"})
 
 
+_THOUSANDS_COMMA = re.compile(r"(?<=\d),(?=\d{3}(?:,\d{3})*(?!\d))")
 _STATED_NUMBER = re.compile(r"(?<![\d.])(?:([-\u2212])[$€£¥]?)?(\d+)(?:\.(\d+))?(?!\d|\.\d)")
+_SCALE_SUFFIX_AFTER = re.compile(
+    r"\s*(?:[kmb]\b|mm\b|mil\b|thousand\b|million\b|billion\b)", re.IGNORECASE
+)
 
 
-def _answer_affirms_exact_value(answer: str, value: str) -> bool:
+def _answer_affirms_exact_value(
+    answer: str, value: str, *, exclude_scale_suffix: bool = False
+) -> bool:
     """Whether ``answer`` asserts ``value`` with exact numeric equality."""
-    collapsed = re.sub(r"(?<=\d),(?=\d)", "", answer)
+    collapsed = _THOUSANDS_COMMA.sub("", answer)
     expected = Decimal(value)
     for match in _STATED_NUMBER.finditer(collapsed):
+        if exclude_scale_suffix and _SCALE_SUFFIX_AFTER.match(collapsed[match.end() :]):
+            continue
         sign = "-" if match.group(1) else ""
         fractional = f".{match.group(3)}" if match.group(3) is not None else ""
         stated = Decimal(f"{sign}{match.group(2)}{fractional}")
