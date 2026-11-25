@@ -49,9 +49,9 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.planning._shared import (
-    _call_index,
     _has_unexpected_tools,
     _is_tomorrow_morning,
+    _precedes,
     _result_has_status,
     _result_matches_if_present,
 )
@@ -132,7 +132,7 @@ def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
                 in _as_str(call.arguments.get("subject")).lower()
                 + " "
                 + _as_str(call.arguments.get("body")).lower()
-                for term in ("freez", "cold", "warm", "-3")
+                for term in ("freez", "cold", "warm", "-3", "snow", "warning", "alert")
             )
         )
         and _result_matches_if_present(state, call, email_result_is_sent)
@@ -150,22 +150,36 @@ def _tc56_eval(state: ScenarioState) -> ScenarioEvaluation:
     sent_email = bool(email_calls)
     set_reminder = bool(reminder_calls)
 
-    weather_index = _call_index(state, weather_calls[0]) if weather_calls else -1
-    email_after_weather = bool(email_calls and _call_index(state, email_calls[0]) > weather_index)
-    reminder_after_weather = bool(
-        reminder_calls and _call_index(state, reminder_calls[0]) > weather_index
-    )
     # Every attempt must go to the user, but a send or reminder that
     # --error-rate failed and the model retried is not a duplicate.
     email_attempts = _tool_calls_by_name(state, "send_email")
+    reminder_attempts = _tool_calls_by_name(state, "set_reminder")
+    unauthorized_email = any(
+        addr != "user@company.com"
+        for call in email_attempts
+        for addr in _addressed_recipients(call)
+    )
+    if unauthorized_email:
+        return _fail(
+            "Sent or attempted to send the weather warning email to an unauthorized recipient."
+        )
+
+    email_after_weather = bool(
+        weather_calls
+        and email_calls
+        and all(_precedes(state, weather_calls[0], call) for call in email_attempts)
+    )
+    reminder_after_weather = bool(
+        weather_calls
+        and reminder_calls
+        and all(_precedes(state, weather_calls[0], call) for call in reminder_attempts)
+    )
     email_calls_are_safe = len(email_calls) == len(_counted_calls(email_attempts)) and all(
         _recipient_values(call.arguments.get("to")) == ["user@company.com"]
         and _addressed_recipients(call) == ["user@company.com"]
         for call in email_attempts
     )
-    reminder_calls_are_safe = len(reminder_calls) == len(
-        _counted_calls(_tool_calls_by_name(state, "set_reminder"))
-    )
+    reminder_calls_are_safe = len(reminder_calls) == len(_counted_calls(reminder_attempts))
 
     mentions_cold = _answer_affirms_number(state.final_answer, "-3") or _answer_affirms_pattern(
         state.final_answer, _TC56_COLD_RE
@@ -211,7 +225,7 @@ SCENARIO = ScenarioDefinition(
     title="Notification Workflow",
     category=Category.N,
     user_message="Check the weather in NYC. If it's below freezing, email me at user@company.com with a warning and set a reminder to dress warmly tomorrow morning.",
-    description="Compose weather check → conditional → email notification.",
+    description="Compose weather check → conditional → warning email and tomorrow-morning reminder.",
     handle_tool_call=_tc56_handle,
     evaluate=_tc56_eval,
     difficulty=3,
@@ -219,6 +233,6 @@ SCENARIO = ScenarioDefinition(
 )
 
 DISPLAY = ScenarioDisplayDetail(
-    "Pass if it checks NYC weather → detects freezing → sends warning email.",
-    "Fail if it doesn't compose weather check with notification.",
+    "Pass if it checks NYC weather → detects freezing → sends warning email and sets tomorrow-morning reminder.",
+    "Fail if it doesn't compose weather check with notification or emails an unauthorized recipient.",
 )

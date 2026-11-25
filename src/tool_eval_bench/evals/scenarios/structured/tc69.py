@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import re
+from datetime import date, datetime
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -50,7 +50,7 @@ _TC69_SCHEMA = {
         "schema": {
             "type": "object",
             "properties": {
-                "date": {"type": "string"},
+                "date": {"type": "string", "description": "Today's date in YYYY-MM-DD format"},
                 "weather": {
                     "type": "object",
                     "properties": {
@@ -87,6 +87,21 @@ _TC69_SCHEMA = {
 
 
 _TC69_TEMPERATURES = {"celsius": 18, "fahrenheit": 64.4}
+_TC69_DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%d %b %Y")
+
+
+def _tc69_parse_date(value: Any) -> date | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    for fmt in _TC69_DATE_FORMATS:
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _tc69_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -161,10 +176,25 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
             missing.append("get_weather")
         if not stock:
             missing.append("get_stock_price")
-        if any(call.name == "get_weather" for call in state.tool_calls) and any(
+        has_valid_json = False
+        try:
+            has_valid_json = isinstance(_parse_json(_extract_json_answer(state.final_answer)), dict)
+        except json.JSONDecodeError:
+            has_valid_json = False
+        attempted_both = any(call.name == "get_weather" for call in state.tool_calls) and any(
             call.name == "get_stock_price" for call in state.tool_calls
-        ):
-            return _partial("Called a briefing tool, but its required arguments were invalid.")
+        )
+        if weather or stock:
+            if attempted_both:
+                return _partial(
+                    "Called both briefing tools, but one had invalid required arguments."
+                )
+            if has_valid_json:
+                return _partial(
+                    f"Produced JSON with one valid briefing tool, but missed: {', '.join(missing)}."
+                )
+        elif attempted_both and has_valid_json:
+            return _partial("Called both briefing tools with invalid arguments, but returned JSON.")
         return _fail(f"Did not call required tools: {', '.join(missing)}.")
     if weather_call is None or stock_call is None:
         return _fail("Required briefing call records were unavailable.")
@@ -202,9 +232,9 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not isinstance(direction_val, str) or direction_val not in valid_directions:
         return _partial(f"Market direction '{direction_val}' is not a valid enum value.")
 
+    parsed_date = _tc69_parse_date(data.get("date"))
     if (
-        not isinstance(data.get("date"), str)
-        or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data["date"])
+        parsed_date is None
         or not isinstance(w.get("location"), str)
         or not isinstance(w.get("temperature"), (int, float))
         or isinstance(w.get("temperature"), bool)
@@ -247,9 +277,9 @@ def _tc69_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     # A daily briefing is for today, and the system prompt gives the model
     # today's date. --reference-date moves it, so derive it from the state.
-    today = reference_date(state).isoformat()
-    if data.get("date") != today:
-        return _partial(f"Briefing date doesn't match today's date ({today}).")
+    today_date = reference_date(state)
+    if parsed_date != today_date:
+        return _partial(f"Briefing date doesn't match today's date ({today_date.isoformat()}).")
 
     return _pass(
         "Called both tools and produced schema-compliant nested JSON with correct data synthesis."

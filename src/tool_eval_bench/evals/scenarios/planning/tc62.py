@@ -44,7 +44,7 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.planning._shared import (
-    _call_index,
+    _precedes,
     _result_has_status,
     _result_matches_if_present,
 )
@@ -125,16 +125,23 @@ _TC62_SENTENCE_BREAK = re.compile(r"\.(?=\s|\Z)|[!?\n;]+")
 _TC62_NEGATION = re.compile(r"\b(?:not|never|no|without)\b|n't\b")
 _TC62_QUOTED_TEXT = re.compile(r'"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’')
 _TC62_STRAIGHT_SINGLE_QUOTED_TEXT = re.compile(r"(?<!\w)'[^'\n]*'(?!\w)")
-# ponytail: only clear Acme headings with an immediate revenue bullet; add other
-# layouts when a trace establishes unambiguous attribution, not by joining lines.
+# Clear Acme headings with a revenue bullet, allowing up to three non-revenue
+# bullets (e.g. "- Growth: 12%") before "- Revenue: $3.8M". Intervening plain
+# lines or bullets naming another company break heading attribution.
 _TC62_HEADING_REVENUE = re.compile(
     r"^[ \t]*(?:#{1,6}[ \t]+)?(?:\*\*|__)?acme(?:[ \t]+corp(?:oration)?\.?)?"
     r"(?:[ \t]+(?:q[1-4]|20\d{2}|performance|revenue|results))*"
-    r":?(?:\*\*|__)?[ \t]*:?[ \t]*\n(?:[ \t]*\n)*"
-    r"[ \t]*(?:[-*+]|\d+[.)])[ \t]+revenue[ \t]*:[ \t]*"
+    r":?(?:\*\*|__)?[ \t]*:?[ \t]*\n"
+    r"(?:[ \t]*\n|(?:[ \t]*(?:[-*+]|\d+[.)])[ \t]+"
+    r"(?!.*(?:\brevenue\b|\bcontoso\b|\bour\b))[^\n]+\n)){0,3}"
+    r"[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?:q[1-4][ \t]+)?revenue[ \t]*:[ \t]*"
     r"(?P<amount>\$?[ \t]*(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)"
     r"(?:[ \t]*(?:million|m))?)[ \t]*\.?[ \t]*(?=\n|\Z)",
     re.IGNORECASE | re.MULTILINE,
+)
+_TC62_ACME_MENTION = re.compile(r"\bacme\b")
+_TC62_AMOUNT_FOR_ACME = re.compile(
+    r"^\s*(?:for|at|from)\s+(?:(?:our\s+|the\s+)?competitor\s+)?acme\b"
 )
 _TC62_TABLE_SEP_CELL = re.compile(r"^:?-{2,}:?$")
 _TC62_ACME_CELL = re.compile(
@@ -219,12 +226,13 @@ def _tc62_is_monetary_candidate(sentence: str, match: re.Match[str]) -> bool:
 def _tc62_asserts_competitor_amount(body: str) -> bool:
     """True only when the email asserts Acme's amount as exactly $3,800,000.
 
-    A clear Acme heading followed immediately by a revenue bullet is normalized
-    to an inline claim. Otherwise the claim is evaluated sentence-locally: the
-    first monetary figure after "Acme" in the same sentence is the claimed amount.
-    A figure that belongs to a different company (it precedes the Acme mention,
-    or another number follows Acme), a negation between Acme and the figure,
-    and quoted claims are all rejected.
+    A clear Acme heading followed by a revenue bullet (with optional non-revenue
+    bullets like Growth in between) is normalized to an inline claim. Otherwise
+    each sentence is evaluated locally: every "Acme" mention checks its first
+    following monetary figure (so an earlier "$350,000" gap does not hide a
+    later "Acme's $3.8M" claim), and "$3.8M for/at/from Acme" is also credited
+    when unnegated. Figures belonging to another company, negated claims, and
+    quoted claims are rejected.
     """
     text = _TC62_ACME_SUFFIX_PERIOD.sub(r"\1", body)
     text = _TC62_QUOTED_TEXT.sub("", text.lower())
@@ -233,15 +241,27 @@ def _tc62_asserts_competitor_amount(body: str) -> bool:
     text = _TC62_HEADING_REVENUE.sub(r"acme revenue: \g<amount>", text)
     text = _tc62_normalize_pipe_tables(text)
     for sentence in _TC62_SENTENCE_BREAK.split(text):
-        acme = sentence.find("acme")
-        if acme < 0:
+        acme_mentions = list(_TC62_ACME_MENTION.finditer(sentence))
+        if not acme_mentions:
             continue
-        for match in _TC62_AMOUNT_TOKEN.finditer(sentence, acme + len("acme")):
+        for acme_match in acme_mentions:
+            for match in _TC62_AMOUNT_TOKEN.finditer(sentence, acme_match.end()):
+                if not _tc62_is_monetary_candidate(sentence, match):
+                    continue
+                if _TC62_NEGATION.search(sentence[acme_match.end() : match.start()]):
+                    break
+                if _tc62_amount_value(match) == _TC62_COMPETITOR_AMOUNT:
+                    return True
+                break
+        for match in _TC62_AMOUNT_TOKEN.finditer(sentence):
             if not _tc62_is_monetary_candidate(sentence, match):
                 continue
-            if _TC62_NEGATION.search(sentence[acme + len("acme") : match.start()]):
-                break
-            return _tc62_amount_value(match) == _TC62_COMPETITOR_AMOUNT
+            if _tc62_amount_value(match) != _TC62_COMPETITOR_AMOUNT:
+                continue
+            if not _TC62_AMOUNT_FOR_ACME.match(sentence[match.end() :]):
+                continue
+            if not _negated_before(sentence[max(0, match.start() - 80) : match.start()]):
+                return True
     return False
 
 
@@ -332,6 +352,17 @@ def _tc62_claims_q4_improvement(body: str) -> bool:
     return False
 
 
+# A fronted adverbial phrase ("In Q4, we expect...", "Looking ahead to Q4, we...",
+# "For Q4, we are optimistic...") places a comma right after Q4 without starting a
+# contrasting clause.
+_TC62_FRONTED_Q4_PRE = re.compile(
+    r"\b(?:in|for|into|heading\s+into|going\s+into|looking\s+(?:ahead\s+)?to|entering|as\s+for)\s+$"
+)
+_TC62_FRONTED_Q4_AFTER = re.compile(
+    r"^,\s+(?:we|i(?!\.e\b)|our(?!\s+(?:rivals?|competitors?)\b))\b"
+)
+
+
 def _tc62_q4_improvement_tails(sentence: str) -> Iterator[str]:
     """The text after each Q4 improvement claim this ;-clause makes as ours."""
     sentence = _TC62_NO_DOUBT.sub("certainly", sentence)
@@ -343,14 +374,25 @@ def _tc62_q4_improvement_tails(sentence: str) -> Iterator[str]:
             if end - start > _TC62_Q4_CLAIM_WINDOW:
                 continue
             span = sentence[start:end]
-            if _TC62_NEGATION.search(span) or _TC62_CLAUSE_BREAK.search(span):
+            fronted_q4_comma = (
+                quarter.start() < upward.start()
+                and bool(_TC62_FRONTED_Q4_PRE.search(sentence[: quarter.start()]))
+                and bool(_TC62_FRONTED_Q4_AFTER.match(sentence[quarter.end() : upward.start()]))
+            )
+            break_check_span = sentence[quarter.end() + 1 : end] if fronted_q4_comma else span
+            if _TC62_NEGATION.search(span) or _TC62_CLAUSE_BREAK.search(break_check_span):
                 continue
             prefix = sentence[max(0, start - 120) : start]
             if _negated_before(prefix) or _TC62_HEDGE.search(prefix + span):
                 continue
             if attributed:
-                clause_start = max(
-                    (b.end() for b in _TC62_CLAUSE_BREAK.finditer(sentence, 0, start)), default=0
+                clause_start = (
+                    quarter.end() + 1
+                    if fronted_q4_comma
+                    else max(
+                        (b.end() for b in _TC62_CLAUSE_BREAK.finditer(sentence, 0, start)),
+                        default=0,
+                    )
                 )
                 clause_end = next(
                     (b.start() for b in _TC62_CLAUSE_BREAK.finditer(sentence, end)), len(sentence)
@@ -428,7 +470,7 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
         corrected_search_calls
         and corrected_file_calls
         and all(
-            _call_index(state, corrected_search_calls[0]) < _call_index(state, call)
+            _precedes(state, corrected_search_calls[0], call)
             for call in _tool_calls_by_name(state, "read_file")
             if call in corrected_file_calls or (call.injected and _names_corrected_file(call))
         )
@@ -500,15 +542,15 @@ def _tc62_eval(state: ScenarioState) -> ScenarioEvaluation:
     email_after_revision = not phase_data_present or bool(
         email_calls and email_calls[-1].user_phase is not None and email_calls[-1].user_phase >= 4
     )
-    research_indices = [
-        *[_call_index(state, call) for call in corrected_file_calls],
-        *[_call_index(state, call) for call in searched_acme_calls],
-        *[_call_index(state, call) for call in cfo_contact_calls],
+    research_calls = [
+        *corrected_file_calls,
+        *searched_acme_calls,
+        *cfo_contact_calls,
     ]
     email_after_research = bool(
         email_calls
-        and research_indices
-        and max(research_indices) < _call_index(state, email_calls[-1])
+        and research_calls
+        and all(_precedes(state, producer, email_calls[-1]) for producer in research_calls)
     )
     # A send that --error-rate failed and the model retried is not a second
     # email, but its recipient still has to be the CFO.
@@ -570,10 +612,11 @@ SCENARIO = ScenarioDefinition(
     follow_up_messages=_TC62_FOLLOW_UPS,
     # The attainable reference path contains dependent search/read rounds,
     # a competitor lookup, a draft turn, contact resolution, delivery, and
-    # a final response. The default eight turns cannot reach authorization.
-    max_turns_override=14,
+    # a final response, leaving comfortable headroom above the 12-turn reference.
+    max_turns_override=16,
     difficulty=4,
     dependencies=(
+        ("search_files", "read_file"),
         ("read_file", "send_email"),
         ("web_search", "send_email"),
         ("get_contacts", "send_email"),

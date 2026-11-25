@@ -57,6 +57,7 @@ from tool_eval_bench.evals.scenarios.planning._shared import (
 )
 
 _TC51_ENGINEERING = frozenset({"alice@company.com", "bob@company.com", "carol@company.com"})
+_TC51_ALLOWED_EVENT_ATTENDEES = _TC51_ENGINEERING | {"user@company.com"}
 
 
 def _tc51_contacts_result_is_engineering(payload: Any) -> bool:
@@ -163,14 +164,22 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
     def _event_attendees(call: ToolCallRecord) -> list[str]:
         return _recipient_values(_as_str_list(call.arguments.get("attendees")))
 
+    def _event_attendees_are_valid(call: ToolCallRecord) -> bool:
+        attendees = _event_attendees(call)
+        if not attendees:
+            return True
+        return (
+            len(attendees) == len(set(attendees))
+            and set(attendees) <= _TC51_ALLOWED_EVENT_ATTENDEES
+        )
+
     valid_events = [
         c
         for c in event_calls
         if _includes_text(c.arguments.get("title"), "lunch")
         and _tc51_date_is_friday(state, c.arguments.get("date"))
         and _tc51_time_is_present(state, c.arguments.get("time"))
-        and len(_event_attendees(c)) == len(_TC51_ENGINEERING)
-        and set(_event_attendees(c)) == _TC51_ENGINEERING
+        and _event_attendees_are_valid(c)
         and _result_matches_if_present(state, c, _tc51_event_result_is_created)
     ]
     valid_event = valid_events[0] if len(valid_events) == 1 else None
@@ -210,9 +219,12 @@ def _tc51_eval(state: ScenarioState) -> ScenarioEvaluation:
             break
         notified |= recipients
     # A calendar event that carries every engineer as an attendee is itself the
-    # notification: the invite goes out with the event. A separate email to the
-    # same people is the other accepted path, not a requirement on top.
-    invited_by_event = valid_event is not None
+    # notification: the invite goes out with the event. Omitting optional
+    # attendees on the event is still a valid event as long as a valid post-event
+    # email notifies all three engineers.
+    invited_by_event = bool(
+        valid_event is not None and _TC51_ENGINEERING <= set(_event_attendees(valid_event))
+    )
     notification_complete = invited_by_event or (
         notifications_valid and notified == _TC51_ENGINEERING
     )

@@ -38,8 +38,8 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.planning._shared import (
-    _call_index,
     _has_unexpected_tools,
+    _precedes,
     _result_matches_if_present,
 )
 
@@ -60,7 +60,7 @@ def _tc54_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
                 {"results": [{"snippet": "Current exchange rate: 1 USD = 149.50 JPY."}]},
                 "web_search",
             )
-        if "exchange" in query or "currency" in query or "yen" in query:
+        if "exchange" in query or "currency" in query or "yen" in query or "jpy" in query:
             return _noise(
                 {"results": [{"snippet": "USD/JPY exchange rate: 149.50. Japanese Yen."}]},
                 "web_search",
@@ -165,8 +165,8 @@ def _tc54_eval(state: ScenarioState) -> ScenarioEvaluation:
         and exchange_calls
         and calculator_calls
         and all(
-            max(_call_index(state, stock_calls[0]), _call_index(state, exchange_calls[0]))
-            < _call_index(state, attempt)
+            _precedes(state, stock_calls[0], attempt)
+            and _precedes(state, exchange_calls[0], attempt)
             for attempt in calc_attempts
         )
     )

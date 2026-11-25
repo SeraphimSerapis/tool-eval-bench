@@ -57,6 +57,7 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.scenarios.planning._shared import (
     _UNRELATED_UNIVERSAL_MUTATIONS,
+    _precedes,
     _result_has_status,
     _result_matches_if_present,
 )
@@ -100,8 +101,23 @@ _TC53_TOOLS = [
 
 def _tc53_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "search_events":
-        query = _as_str(call.arguments.get("query")).lower()
-        found = any(term in query for term in ("outdoor", "meeting", "sync", "team"))
+        query = _as_str(call.arguments.get("query")).strip().lower()
+        found = query in ("", "all", "*", "events", "calendar") or any(
+            term in query
+            for term in (
+                "outdoor",
+                "meeting",
+                "sync",
+                "team",
+                "weekend",
+                "saturday",
+                "2026-03-21",
+                "regent",
+                "park",
+                "march 21",
+                "mar 21",
+            )
+        )
         summary = {k: _TC53_EVENT[k] for k in ("event_id", "title", "date", "time")}
         return _noise({"results": [summary] if found else []}, call.name)
     if call.name == "get_event":
@@ -257,7 +273,7 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
         _next_weekday_after_reference(state, "sunday"),
     }
     valid_events = all(
-        any(weather.turn <= event.turn for weather in weather_calls)
+        any(_precedes(state, weather, event) for weather in weather_calls)
         and any(date_matches(event.arguments.get("date"), day) for day in weekend_dates)
         and any(
             term in _as_str(event.arguments.get("title")).lower()
@@ -267,6 +283,19 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
     ) and all(
         _result_matches_if_present(state, event, event_result_is_created)
         for event in counted_events
+    )
+    notifications_explain_relocation = bool(notifications) and all(
+        _answer_affirms_pattern(
+            f"{_as_str(notification.arguments.get('subject'))} "
+            f"{_as_str(notification.arguments.get('body'))}",
+            _TC53_OFFICE_RE,
+        )
+        or _answer_affirms_pattern(
+            f"{_as_str(notification.arguments.get('subject'))} "
+            f"{_as_str(notification.arguments.get('body'))}",
+            _TC53_RAIN_RE,
+        )
+        for notification in notifications
     )
     if event_calls and not valid_events:
         return _fail("Created an unrelated or premature calendar event.")
@@ -285,6 +314,7 @@ def _tc53_eval(state: ScenarioState) -> ScenarioEvaluation:
         and mentions_rain
         and mentions_office
         and safe_notifications
+        and notifications_explain_relocation
     ):
         return _pass("Checked weather → detected rain → moved to office → notified attendees.")
     if checked_weather and (event_calls or notifications) and mentions_rain:
@@ -306,7 +336,10 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc53_eval,
     tools_override=_TC53_TOOLS,
     difficulty=4,
-    dependencies=(("get_weather", "send_email"),),
+    dependencies=(
+        ("get_weather", "create_calendar_event"),
+        ("get_weather", "send_email"),
+    ),
 )
 
 DISPLAY = ScenarioDisplayDetail(

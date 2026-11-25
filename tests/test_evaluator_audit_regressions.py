@@ -554,7 +554,7 @@ def _error(name, message="service unavailable", status=500):
                 ],
                 answer="NYC is below freezing; warning sent.",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-57",
