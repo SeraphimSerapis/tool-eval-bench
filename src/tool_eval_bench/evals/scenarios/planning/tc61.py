@@ -54,6 +54,10 @@ from tool_eval_bench.evals.scenarios.planning._shared import (
 _JOB_ID = "job_tc61_9f3a"
 
 
+def _is_str_literal(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
 def _operation(call: ToolCallRecord) -> tuple[str, dict[str, Any], list[Any]] | None:
     """Recognize the documented mock API without executing submitted code."""
     try:
@@ -71,10 +75,17 @@ def _operation(call: ToolCallRecord) -> tuple[str, dict[str, Any], list[Any]] | 
                 and isinstance(output.value, ast.Call)
                 and isinstance(output.value.func, ast.Name)
                 and output.value.func.id == "print"
-                and len(output.value.args) == 1
                 and not output.value.keywords
-                and isinstance(output.value.args[0], ast.Name)
-                and output.value.args[0].id == statement.targets[0].id
+            ):
+                return None
+            target_id = statement.targets[0].id
+            var_args = [
+                arg
+                for arg in output.value.args
+                if isinstance(arg, ast.Name) and arg.id == target_id
+            ]
+            if len(var_args) != 1 or not all(
+                arg is var_args[0] or _is_str_literal(arg) for arg in output.value.args
             ):
                 return None
         if not isinstance(statement, (ast.Expr, ast.Assign)):
@@ -84,10 +95,13 @@ def _operation(call: ToolCallRecord) -> tuple[str, dict[str, Any], list[Any]] | 
             isinstance(expression, ast.Call)
             and isinstance(expression.func, ast.Name)
             and expression.func.id == "print"
-            and len(expression.args) == 1
             and not expression.keywords
         ):
-            expression = expression.args[0]
+            call_args = [arg for arg in expression.args if isinstance(arg, ast.Call)]
+            if len(call_args) == 1 and all(
+                arg is call_args[0] or _is_str_literal(arg) for arg in expression.args
+            ):
+                expression = call_args[0]
         if not isinstance(expression, ast.Call) or not isinstance(expression.func, ast.Name):
             return None
         if any(keyword.arg is None for keyword in expression.keywords):
@@ -159,10 +173,25 @@ def _tc61_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     )
 
 
-# The word or number right before "anomal...", as in "3 anomalies", "three
-# anomalies", "thirty-three anomalies" or "no anomalies".
-_TC61_ANOMALY_COUNT = re.compile(r"(?<![\w.-])(\d+|[a-z]+(?:-[a-z]+)?)\s+anomal")
-_TC61_FAILED_RE = re.compile(r"\bfailed\b", re.IGNORECASE)
+# The word or number right before "anomaly"/"anomalies", as in "3 anomalies",
+# "three anomalies", "thirty-three anomalies" or "no anomalies".
+_TC61_ANOMALY_COUNT = re.compile(r"(?<![\w.-])(\d+|[a-z]+(?:-[a-z]+)?)\s+(anomal(?:y|ies))\b")
+# Singular "anomaly" used as a noun adjunct ("no anomaly details") or rate
+# ("one anomaly per 5,140 records") does not state the total anomaly count.
+_TC61_ANOMALY_ADJUNCT_AFTER = re.compile(
+    r"^\s+(?:details?|breakdown|info(?:rmation)?|descriptions?|list|ids?|data|"
+    r"records?|types?|categories|report|summary|causes?|reasons?|context|metadata)\b"
+)
+_TC61_ANOMALY_RATE_AFTER = re.compile(r"^\s+(?:per|every|for\s+every|in\s+every|out\s+of)\b")
+_TC61_FAILED_RE = re.compile(
+    r"\b(?:fail(?:ed|ure|ing)?|error(?:ed)?|"
+    r"unable\s+to\s+(?:read|complete|produce|process|run|finish)|"
+    r"could\s+not\s+(?:read|complete|produce|process|run|finish)|"
+    r"couldn't\s+(?:read|complete|produce|process|run|finish)|"
+    r"did\s+not\s+(?:succeed|complete)|didn't\s+(?:succeed|complete)|"
+    r"unsuccessful|aborted)\b",
+    re.IGNORECASE,
+)
 _TC61_NUMBER_WORDS = {
     "no": 0,
     "zero": 0,
@@ -207,6 +236,19 @@ def _tc61_count_value(token: str) -> int | None:
     return sum(_TC61_NUMBER_WORDS[part] for part in parts)
 
 
+def _tc61_anomaly_count_matches(answer: str) -> list[re.Match[str]]:
+    """Return anomaly-count matches, ignoring noun adjuncts and rate ratios."""
+    matches: list[re.Match[str]] = []
+    for match in _TC61_ANOMALY_COUNT.finditer(answer):
+        after = answer[match.end() :]
+        if _TC61_ANOMALY_RATE_AFTER.match(after):
+            continue
+        if match.group(2) == "anomaly" and _TC61_ANOMALY_ADJUNCT_AFTER.match(after):
+            continue
+        matches.append(match)
+    return matches
+
+
 @forbid_unrequested_side_effects({"run_code": None})
 def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'Run this data analysis script and give me the results:
@@ -222,7 +264,7 @@ def _tc61_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Either the record count or the anomaly count reports the result, but a
     # wrong anomaly count anywhere in the answer ("13 anomalies") is not the
     # result, even beside the right record count.
-    anomaly_matches = list(_TC61_ANOMALY_COUNT.finditer(answer))
+    anomaly_matches = _tc61_anomaly_count_matches(answer)
     anomaly_counts = [_tc61_count_value(match.group(1)) for match in anomaly_matches]
     affirmed_three = any(
         _tc61_count_value(match.group(1)) == 3
@@ -336,10 +378,21 @@ def _tc61_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
                 and r.result.get("status") == "failed"
                 for r in state.tool_results
             )
+            answer_lower = _strip_markdown_emphasis(state.final_answer).lower()
+            fabricated_anomalies = any(
+                (count := _tc61_count_value(match.group(1))) is not None
+                and count > 0
+                and not _negated_before(
+                    answer_lower[max(0, match.start() - 120) : match.start()],
+                    answer_lower[match.end() : match.end() + 40],
+                )
+                for match in _tc61_anomaly_count_matches(answer_lower)
+            )
             if (
                 failed
                 and _answer_affirms_pattern(state.final_answer, _TC61_FAILED_RE)
                 and not any(n in state.final_answer for n in ("15420", "15,420"))
+                and not fabricated_anomalies
             ):
                 return _pass("Stopped polling and reported the terminal analysis failure.")
         return _fail("Did not stop and report the terminal analysis failure faithfully.")

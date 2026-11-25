@@ -350,7 +350,7 @@ class TestTC56NotificationWorkflow:
         result = self.sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
 
-    def test_partial_email_to_invented_recipient(self) -> None:
+    def test_fail_email_to_invented_recipient(self) -> None:
         state = _make_state(
             tool_calls=[
                 {"name": "get_weather", "arguments": {"location": "NYC"}},
@@ -369,7 +369,7 @@ class TestTC56NotificationWorkflow:
             ],
             final_answer="NYC is below freezing.",
         )
-        assert self.sc.evaluate(state).status == ScenarioStatus.PARTIAL
+        assert self.sc.evaluate(state).status == ScenarioStatus.FAIL
 
     def test_fail_no_weather(self) -> None:
         state = _make_state(final_answer="I'll set up the alert.")
@@ -2026,7 +2026,14 @@ class TestTC56EdgeCases:
         state = _make_state(
             tool_calls=[
                 {"name": "get_weather", "arguments": {"location": "NYC"}},
-                {"name": "send_email", "arguments": {"to": "me@co.com"}},
+                {
+                    "name": "send_email",
+                    "arguments": {
+                        "to": "user@company.com",
+                        "subject": "Freezing warning",
+                        "body": "NYC is below freezing.",
+                    },
+                },
             ],
             final_answer="I checked the weather and sent you an email.",
         )
