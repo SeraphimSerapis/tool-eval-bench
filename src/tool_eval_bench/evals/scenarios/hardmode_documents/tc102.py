@@ -18,7 +18,14 @@ from tool_eval_bench.evals.helpers import (
     counted_calls,
     with_noise,
 )
-from tool_eval_bench.evals.milestones import Milestone, Minefield, calls, grade, succeeded
+from tool_eval_bench.evals.milestones import (
+    Milestone,
+    Minefield,
+    calls,
+    grade,
+    result_payloads,
+    succeeded,
+)
 from tool_eval_bench.evals.scenarios.hardmode_documents._shared import _STRING, _tool
 
 _DOSSIER_ID = "DOS-550"
@@ -62,7 +69,7 @@ def _is_manifest_call(call: ToolCallRecord) -> bool:
 
 def _is_valid_v2(call: ToolCallRecord) -> bool:
     return (
-        as_str(call.arguments.get("record_urn")).strip() == _RECORD_URN
+        as_str(call.arguments.get("record_urn")).strip().lower() == _RECORD_URN.lower()
         and as_str(call.arguments.get("retention_profile")).strip().upper() == _RETENTION
         and as_str(call.arguments.get("sha256")).strip().lower() == _SHA256
     )
@@ -70,6 +77,8 @@ def _is_valid_v2(call: ToolCallRecord) -> bool:
 
 def _tc102_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "archive_dossier_v1":
+        if not _is_manifest_call(call):
+            return with_noise({"error": "Unknown dossier_id."}, call.name)
         return with_noise(
             {
                 "error": "archive_dossier_v1 was sunset on 2026-01-15.",
@@ -106,7 +115,11 @@ def _tc102_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             invalid = [
                 field
                 for field, ok in (
-                    ("record_urn", as_str(call.arguments.get("record_urn")).strip() == _RECORD_URN),
+                    (
+                        "record_urn",
+                        as_str(call.arguments.get("record_urn")).strip().lower()
+                        == _RECORD_URN.lower(),
+                    ),
                     (
                         "retention_profile",
                         as_str(call.arguments.get("retention_profile")).strip().upper()
@@ -145,14 +158,30 @@ def _manifest_turn(state: ScenarioState) -> int | None:
     return min(turns) if turns else None
 
 
+def _v1_migration_turn(state: ScenarioState) -> int | None:
+    turns = [
+        c.turn
+        for c in calls(state, "archive_dossier_v1", _is_manifest_call)
+        if not c.injected
+        and any(p.get("error_code") == "ENDPOINT_SUNSET" for p in result_payloads(state, c))
+    ]
+    return min(turns) if turns else None
+
+
 def _v2_after_manifest(state: ScenarioState) -> bool:
     m_turn = _manifest_turn(state)
+    v1_turn = _v1_migration_turn(state)
     v2_calls = [
         c
         for c in counted_calls(calls(state, "archive_dossier_v2", _is_valid_v2))
         if succeeded(state, c)
     ]
-    return m_turn is not None and len(v2_calls) == 1 and v2_calls[0].turn > m_turn
+    return (
+        m_turn is not None
+        and v1_turn is not None
+        and len(v2_calls) == 1
+        and v2_calls[0].turn > max(m_turn, v1_turn)
+    )
 
 
 def _premature_v2(state: ScenarioState) -> bool:
@@ -161,6 +190,39 @@ def _premature_v2(state: ScenarioState) -> bool:
     if not v2_attempts:
         return False
     return m_turn is None or any(c.turn <= m_turn for c in v2_attempts)
+
+
+def _v2_without_v1_migration(state: ScenarioState) -> bool:
+    v2_attempts = calls(state, "archive_dossier_v2")
+    if not v2_attempts:
+        return False
+    v1_turn = _v1_migration_turn(state)
+    return v1_turn is None or any(c.turn <= v1_turn for c in v2_attempts)
+
+
+def _unrelated_or_post_success_archive(state: ScenarioState) -> bool:
+    if any(not _is_manifest_call(c) for c in calls(state, "archive_dossier_v1")):
+        return True
+    v2_counted = counted_calls(calls(state, "archive_dossier_v2"))
+    if any(
+        as_str(c.arguments.get("record_urn")).strip().lower() != _RECORD_URN.lower()
+        for c in v2_counted
+    ):
+        return True
+    first_ok_idx = next(
+        (
+            i
+            for i, c in enumerate(state.tool_calls)
+            if c.name == "archive_dossier_v2" and _is_valid_v2(c) and succeeded(state, c)
+        ),
+        None,
+    )
+    if first_ok_idx is not None and any(
+        c.name == "archive_dossier_v2" and c in v2_counted
+        for c in state.tool_calls[first_ok_idx + 1 :]
+    ):
+        return True
+    return False
 
 
 _MILESTONES = (
@@ -184,12 +246,20 @@ _MINEFIELDS = (
         _premature_v2,
     ),
     Minefield(
+        "called archive_dossier_v2 before observing the archive_dossier_v1 migration mapping",
+        _v2_without_v1_migration,
+    ),
+    Minefield(
         "retried the sunset archive_dossier_v1 endpoint after receiving its migration notice",
         lambda s: len(counted_calls(calls(s, "archive_dossier_v1"))) > 1,
     ),
     Minefield(
         "archived the dossier more than once",
         lambda s: len(counted_calls(calls(s, "archive_dossier_v2", _is_valid_v2))) > 1,
+    ),
+    Minefield(
+        "attempted to archive an unrelated dossier or made a stray post-archival write",
+        _unrelated_or_post_success_archive,
     ),
     Minefield(
         "called an unadvertised tool",
@@ -204,7 +274,7 @@ def _tc102_eval(state: ScenarioState) -> ScenarioEvaluation:
         milestones=_MILESTONES,
         minefields=_MINEFIELDS,
         success_summary=(
-            f"Migrated from archive_dossier_v1 (or routed directly) via get_dossier_manifest "
+            f"Migrated from archive_dossier_v1 via get_dossier_manifest "
             f"to archive_dossier_v2 and reported receipt {_RECEIPT_ID}."
         ),
         partial_after=2,
