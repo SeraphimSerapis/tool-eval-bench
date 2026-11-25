@@ -130,7 +130,7 @@ def _tc71_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not valid_contacts:
         if any("jordan" in normalize(as_str(c.arguments.get("query"))) for c in contact_calls):
             return _fail("Did not obtain usable Jordan contact results.")
-        return _partial("Looked up the wrong person instead of Jordan.")
+        return _fail("Looked up the wrong person instead of Jordan.")
 
     # Best outcome: looked up contacts, found ambiguity, asked for clarification
     # WITHOUT sending any email (sending = guessing, even if also asking)

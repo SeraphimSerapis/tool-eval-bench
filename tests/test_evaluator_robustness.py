@@ -157,8 +157,9 @@ class TestAnswerContainsNumber:
         ("answer", "value"),
         [
             ("London is 12°C.", "12"),
-            ("MSFT is trading at $412.78.", "412"),
-            ("The total is $7,450.40.", "7450"),
+            ("MSFT is trading at $412.78.", "412.78"),
+            ("The total is $7,450.40.", "7450.40"),
+            ("The total is $7,450.00.", "7450"),
             ("Processed 15,420 records.", "15,420"),
             ("The ratio is 4.2%.", "4.2"),
         ],

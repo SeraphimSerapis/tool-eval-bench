@@ -24,6 +24,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
+    negated_before as _negated_before,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
@@ -120,13 +123,11 @@ _TC63_PRICE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?")
 _TC63_CLOCK = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\b|\b(\d{1,2}):(\d{2})\b")
 
 
-_TC63_NEGATED_BUDGET = re.compile(r"(?:\b(?:not|never|no)\b|n't\b)(?:\W+\w+){0,4}\W*$")
-_TC63_NEGATED_PHRASE = re.compile(r"(?:\b(?:not|never|no|without)\b|n't\b)(?:\W+\w+){0,3}\W*$")
-_TC63_NEGATED_LATE = re.compile(r"(?:\b(?:not|never|no|without)\b|n't\b)(?:\W+\w+){0,4}\W*$")
-
-
-def _tc63_prefix(answer: str, index: int) -> str:
-    return answer[max(0, index - 32) : index].lower().replace("\u2019", "'")
+def _tc63_is_negated(answer: str, start: int, end: int) -> bool:
+    return _negated_before(
+        answer[max(0, start - 120) : start],
+        answer[end : end + 40],
+    )
 
 
 def _tc63_within_budget(answer: str) -> bool:
@@ -149,11 +150,12 @@ def _tc63_within_budget(answer: str) -> bool:
         # Unicode decimal digit, so stripping ASCII "0" would leave `٠٠٠…٢٥` unguarded;
         # `float()` accepts every one of them and has no length ceiling. A long NON-zero
         # run cannot reach here at all -- it is `inf`, which the ceiling rejects first.
-        if price > _TC63_BUDGET_CEILING or not _answer_affirms_number(
-            answer, str(int(float(digits)))
-        ):
+        if price > _TC63_BUDGET_CEILING:
             continue
-        if _TC63_NEGATED_BUDGET.search(_tc63_prefix(answer, match.start())):
+        lookup = f"{int(float(digits))}.{cents}" if cents is not None else str(int(float(digits)))
+        if not _answer_affirms_number(answer, lookup):
+            continue
+        if _tc63_is_negated(answer, match.start(), match.end()):
             continue
         return True
     return False
@@ -162,7 +164,7 @@ def _tc63_within_budget(answer: str) -> bool:
 def _tc63_affirms_phrase(answer: str, phrase: str) -> bool:
     pattern = re.compile(rf"\b{re.escape(phrase)}\b", re.IGNORECASE)
     for match in pattern.finditer(answer):
-        if not _TC63_NEGATED_PHRASE.search(_tc63_prefix(answer, match.start())):
+        if not _tc63_is_negated(answer, match.start(), match.end()):
             return True
     return False
 
@@ -176,11 +178,11 @@ def _tc63_open_late(answer: str) -> bool:
     10pm.
     """
     for cutoff in _TC63_PAST_CUTOFF.finditer(answer):
-        if not _TC63_NEGATED_LATE.search(_tc63_prefix(answer, cutoff.start())):
+        if not _tc63_is_negated(answer, cutoff.start(), cutoff.end()):
             return True
     for match in _TC63_CLOCK.finditer(answer):
         hour12, minute12, meridiem, hour24, minute24 = match.groups()
-        if _TC63_NEGATED_LATE.search(_tc63_prefix(answer, match.start())):
+        if _tc63_is_negated(answer, match.start(), match.end()):
             continue
         if meridiem:
             hour, minute = int(hour12) % 12 + (12 if meridiem == "p" else 0), int(minute12 or 0)
@@ -199,12 +201,60 @@ _TC63_COMPETITORS = ("luigi", "sushi palace", "burger joint")
 # in the sentence does not count: "Luigi's over Trattoria Bella" and
 # "Trattoria Bella is fine, but Luigi's is better" both recommend Luigi's.
 _TC63_REJECTED_BEFORE = re.compile(
-    r"\b(?:instead\s+of|rather\s+than|over|unlike|except|not|avoid|skip|than|besides)"
-    r"\s+(?:\w+\s+){0,2}$"
+    r"\b(?:instead\s+of|rather\s+than|over|unlike|except(?:\s+for)?|not|avoid|skip|than|"
+    r"besides|rul(?:e[ds]?|ing)\s+out|eliminat(?:e[ds]?|ing)|exclud(?:e[ds]?|ing)|"
+    r"reject(?:ed|ing)?|drop(?:ped|ping)?|disqualif(?:y|ied|ying))"
+    r"\s+(?:\w+\s+){0,3}$"
 )
 _TC63_REJECTED_AFTER = re.compile(
-    r"^[^.!?;,]{0,40}?(?:\bclos\w*|n't\b|\bnot\b|\bnever\b|\b9\s*(?:pm|p\.m\.)|\b21:00\b)"
+    r"^(?:'s)?(?:\s*\([^)\n]{0,60}\))?[^.!?;,]{0,70}?"
+    r"(?:\bclos(?:e[ds]?|ing)\b|n't\b|\bnot\b|\bnever\b"
+    r"|\b9(?::00)?\s*(?:pm|p\.m\.)|\b21:00\b"
+    r"|\bexceed(?:s|ed|ing)?\b|\bover\s+(?:your\s+|the\s+)?budget\b|\btoo\s+expensive\b"
+    r"|\bruled\s+out\b|\beliminated\b|\bexcluded\b|\bdisqualified\b|\brejected\b"
+    r"|\bfails?\b|\bmisses?\b|\bdoesn't\s+meet\b|\bdoes\s+not\s+meet\b)"
 )
+_TC63_RECOMMEND_PROPER = re.compile(
+    r"\b(?:recommend|suggest|try|visit|go\s+to|choose|pick|head\s+to|check\s+out)\s+"
+    r"(?:dining\s+at\s+|eating\s+at\s+)?"
+    r"(?P<name>[A-Z][a-z']+(?:\s+[A-Z][a-z']+){0,3})\b"
+)
+_TC63_VENUE_PROPER = re.compile(
+    r"\b(?P<name>(?:Osteria|Ristorante|Pizzeria|Trattoria|Bistro|Cafe|Caf[eé]|"
+    r"Taverna|Enoteca|Cucina|Da|La|Il)\s+[A-Z][a-z']+(?:\s+[A-Z][a-z']+)?)\b"
+)
+_TC63_NON_RESTAURANT_PROPER = frozenset(
+    {
+        "italian",
+        "chicago",
+        "downtown",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "tonight",
+        "dinner",
+        "loop",
+    }
+)
+
+
+def _tc63_names_fabricated_restaurant(raw_answer: str) -> bool:
+    """Return True when an answer lacking Trattoria Bella names an invented restaurant."""
+    for pattern in (_TC63_RECOMMEND_PROPER, _TC63_VENUE_PROPER):
+        for match in pattern.finditer(raw_answer):
+            name = match.group("name").strip().lower()
+            if name in _TC63_NON_RESTAURANT_PROPER:
+                continue
+            if "trattoria" in name or "bella" in name:
+                continue
+            if any(comp in name for comp in _TC63_COMPETITORS):
+                continue
+            return True
+    return False
 
 
 def _tc63_recommended_competitor(answer: str) -> str | None:
@@ -230,14 +280,14 @@ def _tc63_eval(state: ScenarioState) -> ScenarioEvaluation:
     """
     answer = state.final_answer.lower()
 
+    def _result_grounds_trattoria(payload: Any) -> bool:
+        text = str(payload).lower()
+        return "trattoria" in text and "downtown" in text and "11pm" in text
+
     searched_calls = [
         call
         for call in _tool_calls_by_name(state, "web_search")
-        if _result_matches_if_present(
-            state,
-            call,
-            lambda payload: "trattoria" in str(payload).lower() or "luigi" in str(payload).lower(),
-        )
+        if _result_matches_if_present(state, call, _result_grounds_trattoria)
     ]
     searched = bool(searched_calls)
     has_italian = any(
@@ -271,6 +321,10 @@ def _tc63_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _partial("Found a matching restaurant but also called an unrelated tool.")
         return _pass("Maintained all accumulated constraints → recommended Trattoria Bella.")
     if constraints_met == 4 and searched:
+        if _tc63_names_fabricated_restaurant(state.final_answer):
+            return _partial(
+                "Recommended an ungrounded restaurant name not present in the search results."
+            )
         if _has_unexpected_tools(state, {"web_search"}):
             return _partial("Found a matching restaurant but also called an unrelated tool.")
         return _pass("Final recommendation satisfies all 4 accumulated constraints.")

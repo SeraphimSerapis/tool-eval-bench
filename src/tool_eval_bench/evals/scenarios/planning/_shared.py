@@ -85,6 +85,28 @@ def _call_index(state: ScenarioState, target: ToolCallRecord) -> int:
     return next(index for index, call in enumerate(state.tool_calls) if call is target)
 
 
+def _precedes(
+    state: ScenarioState,
+    producer: ToolCallRecord,
+    consumer: ToolCallRecord,
+) -> bool:
+    """Return whether ``producer`` finished in an earlier turn than ``consumer``.
+
+    Runtime traces (``trace_policy == "complete"``) carry authoritative turn
+    numbers, so same-turn batching is rejected (``producer.turn < consumer.turn``).
+    Legacy synthetic unit tests often omit ``turn`` (defaulting every call to
+    turn 1), so fall back to list position only on non-complete traces where no
+    call specifies ``turn > 1``.
+    """
+    if state.meta.get("trace_policy") == "complete":
+        return producer.turn < consumer.turn
+    if producer.turn != consumer.turn:
+        return producer.turn < consumer.turn
+    if any(call.turn > 1 for call in state.tool_calls):
+        return False
+    return _call_index(state, producer) < _call_index(state, consumer)
+
+
 _UNRELATED_UNIVERSAL_MUTATIONS = frozenset({"set_reminder", "run_code"})
 
 

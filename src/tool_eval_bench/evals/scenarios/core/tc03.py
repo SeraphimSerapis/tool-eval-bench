@@ -70,20 +70,24 @@ def _tc03_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 def _tc03_time_3pm(value: str) -> bool:
     """True if ``value`` spells the requested 3 PM in a common way.
 
-    Accepts 12-hour spellings (3pm, 3 PM, 3:00 PM, 3 p.m.) as well as
+    Accepts 12-hour spellings (3pm, 3 PM, 3:00 PM, 03:00 PM, 3 p.m.) as well as
     24-hour equivalents (15:00, 1500).  Other minutes such as 3:30 PM are
     intentionally not accepted because they are a different time.
     """
     text = value.lower()
     return bool(
-        re.search(r"\b15:00\b|\b1500\b", text) or re.search(r"\b3(?::?00)?\s*p\.?m\.?\b", text)
+        re.search(r"\b15:00\b|\b1500\b", text) or re.search(r"\b0?3(?::?00)?\s*p\.?m\.?\b", text)
     )
 
 
 # A message that has already been negated is not a notification of the change.
 _TC03_UNCHANGED = re.compile(
     r"\b(?:not|never|no|isn't|is\s+not|hasn't|has\s+not|wasn't|was\s+not)\s+"
-    r"(?:been\s+)?(?:moved|rescheduled|changed|shifted|pushed)\b|\bnot\s+at\s+3",
+    r"(?:been\s+)?(?:moved|rescheduled|changed|shifted|pushed)\b"
+    r"|\bnot\s+(?:at\s+)?0?3(?::?00)?(?:\s*p\.?m\.?)?\b"
+    r"|\bno\s+longer\s+(?:at\s+)?0?3(?::?00)?(?:\s*p\.?m\.?)?\b"
+    r"|\b(?:not|no\s+longer)\s+at\s+15:00\b"
+    r"|(?<!\bnot\s)(?<!\bnever\s)(?<!\bisn't\s)(?<!\bwasn't\s)\bcancell?ed\b",
     re.IGNORECASE,
 )
 
@@ -95,22 +99,29 @@ _TC03_SUBJECT_MATTER = re.compile(
     re.IGNORECASE,
 )
 
-# A sentence that names some other detail as unchanged ("The room has not
-# changed") is not denying the move. Only an explicitly named other subject
-# lifts the denial; "It has not moved" has no such subject and still counts.
+# A clause that names some other detail as unchanged ("The room has not
+# changed", "The date has not changed") is not denying the move. Only an
+# explicitly named other subject lifts the denial; "It has not moved" has no
+# such subject and still counts.
 _TC03_OTHER_SUBJECT = re.compile(
-    r"\b(?:room|location|venue|agenda|link|dial-in|zoom|everything\s+else|nothing\s+else)\b",
+    r"\b(?:room|location|venue|agenda|link|dial-in|zoom|date|day|"
+    r"attendees?|participants?|invitees?|host|organizer|topic|title|duration|length|"
+    r"everything\s+else|nothing\s+else)\b",
     re.IGNORECASE,
 )
 _TC03_MEETING_OR_TIME = re.compile(r"\bmeetings?\b|\btime\b", re.IGNORECASE)
+_TC03_CLAUSE_SPLIT = re.compile(
+    r"(?<=[.!?;])\s+|\n|,?\s*\b(?:but|though|although|however|while|whereas)\b\s*",
+    re.IGNORECASE,
+)
 
 
 def _tc03_denies_the_move(body: str) -> bool:
-    """Return whether a sentence of ``body`` says the meeting did not move."""
+    """Return whether a clause of ``body`` says the meeting did not move."""
     plain = _strip_markdown_emphasis(body)
-    for sentence in re.split(r"(?<=[.!?;])\s+|\n", plain):
-        normalized = _normalize(sentence)
-        if not _TC03_UNCHANGED.search(normalized):
+    for clause in _TC03_CLAUSE_SPLIT.split(plain):
+        normalized = _normalize(clause)
+        if not normalized or not _TC03_UNCHANGED.search(normalized):
             continue
         about_other_subject = bool(_TC03_OTHER_SUBJECT.search(normalized))
         about_meeting = bool(_TC03_MEETING_OR_TIME.search(normalized)) or _tc03_time_3pm(normalized)

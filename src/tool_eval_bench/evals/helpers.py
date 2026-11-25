@@ -171,8 +171,12 @@ def strip_markdown_emphasis(value: str) -> str:
     return value
 
 
+_ISO_OFFSET = r"(?:[Zz]|[+-](?:[01]\d|2[0-3]):?[0-5]\d)"
+_ISO_TIME_TAIL = rf"(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:{_ISO_OFFSET})?"
+
+
 def datetime_matches(value: Any, date: str, time: str) -> bool:
-    """Flexible ISO 8601 datetime match that accepts any timezone representation.
+    """Flexible ISO 8601 datetime match that accepts any valid timezone representation.
 
     Matches strings like:
      - "2026-03-21T08:00:00"          (naive)
@@ -183,36 +187,43 @@ def datetime_matches(value: Any, date: str, time: str) -> bool:
 
     The ``date`` and ``time`` arguments are the expected local date and time
     components (e.g. date="2026-03-21", time="08:00").  Only the date and
-    hour:minute portion of ``value`` is compared — timezone offset and seconds
-    are ignored so that timezone-aware models are not penalised.
+    hour:minute portion of ``value`` is compared — valid seconds and timezone
+    offsets are accepted so that timezone-aware models are not penalised,
+    while malformed suffixes (invalid seconds, out-of-range offsets, trailing
+    garbage) are rejected.
     """
     s = as_str(value).strip()
-    # Normalise separator: allow space or T
-    s = s.replace(" ", "T")
-    # Strip trailing timezone info and seconds: keep YYYY-MM-DDTHH:MM
-    m = re.match(r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})", s)
+    m = re.fullmatch(
+        rf"(\d{{4}}-\d{{2}}-\d{{2}})[Tt ](\d{{2}}:\d{{2}})"
+        rf"(?::[0-5]\d(?:\.\d+)?)?(?:{_ISO_OFFSET})?",
+        s,
+    )
     if not m:
         return False
     return m.group(1) == date and m.group(2) == time[:5]
 
 
 def date_matches(value: Any, date: str) -> bool:
-    """Check that a value starts with the given ISO date (YYYY-MM-DD)."""
+    """Check that a value names the given ISO date (YYYY-MM-DD), optionally with a valid time."""
+    if not date:
+        return False
     s = as_str(value).strip()
-    return s.startswith(date)
+    return bool(re.fullmatch(rf"{re.escape(date)}(?:[Tt ]{_ISO_TIME_TAIL})?", s))
 
 
 def time_matches(value: Any, expected: str) -> bool:
     """Return whether a ``time`` argument names ``expected`` as ``HH:MM``.
 
-    Accepts an optional seconds field and an explicit UTC offset, because
+    Accepts an optional valid seconds field and an explicit UTC offset, because
     "14:00", "14:00:00" and "14:00+01:00" all schedule the same moment. Two
     scenarios creating the same event through the same tool disagreed on this,
     and the stricter one reported the seconds suffix as a timezone error.
     """
+    if not expected:
+        return False
     return bool(
         re.fullmatch(
-            rf"{re.escape(expected)}(?::\d{{2}})?(?:Z|[+-]\d{{2}}:\d{{2}})?",
+            rf"{re.escape(expected)}(?::[0-5]\d(?:\.\d+)?)?(?:{_ISO_OFFSET})?",
             as_str(value).strip(),
         )
     )
@@ -260,11 +271,36 @@ def positive_argument_contains(value: Any, expected: str) -> bool:
     )
 
 
+_THOUSANDS_COMMA = re.compile(r"(?<=\d),(?=\d{3}(?:,\d{3})*(?!\d))")
+# Attached unary minus before a non-negative number or its currency prefix
+# ("-56", "-$56", "$-4,200,000"), preserving spaced dashes ("Berlin - 8°C")
+# and hyphenated numeric ranges ("10-20").
+_ATTACHED_MINUS = re.compile(r"(?<!\d)-(?:[$€£¥])?$")
+
+
+def _collapse_thousands(text: str) -> str:
+    """Remove only valid 3-digit thousands grouping commas."""
+    return _THOUSANDS_COMMA.sub("", text)
+
+
+def _compile_number_pattern(value: str) -> tuple[re.Pattern[str], bool]:
+    raw = _collapse_thousands(value.translate(_HYPHEN_AND_SPACE_TRANSLATION)).strip().lower()
+    needle = re.escape(raw)
+    tail = r"0*(?!\.\d|\d)" if "." in raw else r"(?:\.0+(?!\d))?(?!\.\d|\d)"
+    return re.compile(rf"(?<![\d.]){needle}{tail}", re.IGNORECASE), not raw.startswith("-")
+
+
 def answer_contains_number(answer: str, value: str) -> bool:
-    """Check if a number (ignoring commas) appears as a standalone numeric span."""
-    collapsed = answer.translate(_HYPHEN_AND_SPACE_TRANSLATION).replace(",", "").lower()
-    needle = re.escape(value.translate(_HYPHEN_AND_SPACE_TRANSLATION).replace(",", "").lower())
-    return bool(re.search(rf"(?<![\d.]){needle}(?!\d)", collapsed))
+    """Check if a number (ignoring thousands commas) appears as a standalone numeric span."""
+    if not value.strip():
+        return False
+    collapsed = _collapse_thousands(answer.translate(_HYPHEN_AND_SPACE_TRANSLATION))
+    pattern, reject_unary_minus = _compile_number_pattern(value)
+    for match in pattern.finditer(collapsed):
+        if reject_unary_minus and _ATTACHED_MINUS.search(collapsed[: match.start()]):
+            continue
+        return True
+    return False
 
 
 # A negation only reaches the value it actually governs.  Ordinary answers
@@ -273,8 +309,12 @@ def answer_contains_number(answer: str, value: str) -> bool:
 # the few words immediately before the value.  A wider window rejects correct
 # answers, which is exactly as damaging as accepting negated ones.
 _CLAUSE_BOUNDARY = re.compile(
-    r"[.!?;:,()\[\]\n–—，。！？；：、（）【】「」『』]|\s-\s|"
-    r"\b(?:but|however|instead|and|or|while|whereas|though|although|yet|sondern|aber|pero|sino)\b"
+    r"[!?;:,()\[\]\n–—，。！？；：、（）【】「」『』]|\s-\s|"
+    r"(?<!\b(?:dr|mr|ms|st|vs))(?<!\b(?:mrs|etc|e\.g|i\.e|a\.m|p\.m))(?<!\bno)\.(?!\w)|"
+    r"(?<=\bno)\.(?!\s*\d|\w)|"
+    r"\b(?:but|however|instead|and|or|while|whereas|though|although|yet|"
+    r"sondern|aber|und|oder|pero|sino)\b|"
+    r"而是|但是|但|不过|且|并且"
 )
 _NEGATION = re.compile(r"\b(?:not|cannot|never|no|neither|nor|without)\b|n't\b")
 # Function words carry no distance ("could not find a price of 187" is still a
@@ -283,20 +323,26 @@ _NEGATION_STOPWORDS = frozenset(
     "a an the of any some that this it its is are was were be been to in at on for".split()
 )
 _NEGATION_WINDOW_WORDS = 4
-# "not", "never" and "n't" negate the verb, so they carry across the rest of the
-# predicate: "could not find a price of 187" denies the 187.  The rest are
-# determiners and prepositions, which reach only their own complement.  "There
-# are no conflicts at 3pm" denies conflicts, not 3pm, and "without rounding it
-# is 440.33 F" denies rounding, not the conversion.
-_CONSTITUENT_NEGATION = frozenset({"no", "neither", "nor", "without"})
+# "not", "never", "nor" and "n't" negate the clause/verb, so they carry across
+# the rest of the predicate: "could not find a price of 187" denies the 187,
+# and "nor was the payment paid" denies "paid".  The rest are determiners and
+# prepositions, which reach only their own complement.  "There are no conflicts
+# at 3pm" denies conflicts, not 3pm, and "without rounding it is 440.33 F"
+# denies rounding, not the conversion.
+_CONSTITUENT_NEGATION = frozenset({"no", "neither", "without"})
 # A constituent negation stops at the first word that opens a new phrase: any
 # preposition other than "of", which stays inside the noun phrase ("no price of
 # 187"), or a verb, which starts a new predicate.
 _SCOPE_BREAKERS = frozenset(
     "at in on for to from by with near around before after until past over under into onto than as "
+    "bei mit en con "
     "is are was were be been being am has have had will would shall should can could may might must "
     "do does did ist sind war waren es son fue fueron".split()
 )
+# Spanish preposition "a" breaks constituent scope ("ningún problema a 30"),
+# but English indefinite article "a" directly after a constituent negator or
+# "of" stays inside the negated noun phrase ("without a payment").
+_ARTICLE_A_PREDECESSORS = _CONSTITUENT_NEGATION | frozenset({"of", "nor", "even", "just", "only"})
 
 
 _PROSE_APOSTROPHES = str.maketrans(
@@ -322,13 +368,16 @@ def _is_negated(prefix: str) -> bool:
     """
     cleaned = strip_markdown_emphasis(prefix.translate(_PROSE_TRANSLATION))
     clause = _CLAUSE_BOUNDARY.split(cleaned.lower())[-1]
+    tokens = [token.strip("'\"").strip("*_") for token in clause.split()]
     content_words = 0
     phrase_opened = False
-    for token in reversed(clause.split()):
-        bare = token.strip("'\"").strip("*_")
+    for idx in range(len(tokens) - 1, -1, -1):
+        bare = tokens[idx]
         if _NEGATION.search(bare) and not (bare in _CONSTITUENT_NEGATION and phrase_opened):
             return True
-        if bare in _SCOPE_BREAKERS:
+        if bare in _SCOPE_BREAKERS or (
+            bare == "a" and idx > 0 and tokens[idx - 1] not in _ARTICLE_A_PREDECESSORS
+        ):
             phrase_opened = True
         if bare not in _NEGATION_STOPWORDS:
             content_words += 1
@@ -345,14 +394,15 @@ def answer_affirms_number(answer: str, value: str) -> bool:
     check opt-in so existing partial-credit paths that only need numeric
     mention semantics remain unchanged.
     """
-    # Only strip digit grouping commas — sentence commas are clause boundaries.
+    if not value.strip():
+        return False
+    # Only strip valid 3-digit grouping commas — sentence commas are clause boundaries.
     plain = strip_markdown_emphasis(answer.translate(_PROSE_TRANSLATION))
-    collapsed = re.sub(r"(?<=\d),(?=\d)", "", plain)
-    needle = re.escape(
-        re.sub(r"(?<=\d),(?=\d)", "", value.translate(_HYPHEN_AND_SPACE_TRANSLATION))
-    )
-    pattern = re.compile(rf"(?<![\d.]){needle}(?!\d)", re.IGNORECASE)
+    collapsed = _collapse_thousands(plain)
+    pattern, reject_unary_minus = _compile_number_pattern(value)
     for match in pattern.finditer(collapsed):
+        if reject_unary_minus and _ATTACHED_MINUS.search(collapsed[: match.start()]):
+            continue
         if not negated_before(
             collapsed[max(0, match.start() - 120) : match.start()],
             collapsed[match.end() : match.end() + 40],
@@ -369,14 +419,20 @@ def answer_affirms_number(answer: str, value: str) -> bool:
 # revoked" still reads as a claim.
 _AUXILIARY = r"(?:was|were|is|are|has|have|had|got|been|being|ever|yet|actually)\b"
 _AUX_SEQUENCE = rf"(?:'s\b|\s+{_AUXILIARY})"
+_NEG_NOUN_TOKEN = (
+    r"(?!(?:it|i|we|you|he|she|they|this|that|everything|everyone|all|both|each)\b)\w+"
+)
+_NEG_NOUN = rf"(?:{_NEG_NOUN_TOKEN}\s+)?{_NEG_NOUN_TOKEN}"
 _NEGATIVE_HEAD = (
     r"(?:\b(?:nothing|none|nobody|no\s+one|neither(?:\s+(?!of\b)\w+)?)(?:\s+else)?"
     r"(?:\s+of(?:\s+\w+){0,2})?"
-    r"|\bno\s+(?:\w+\s+)?"
-    r"(?!(?:it|i|we|you|he|she|they|this|that|everything|everyone|all|both|each)\b)\w+"
+    rf"|\bno\s+{_NEG_NOUN}"
+    rf"(?:(?:,\s*{_NEG_NOUN}){{0,2}},?\s+(?:or|nor)\s+{_NEG_NOUN})?"
     r"(?=\s+(?:was|were|is|are|has|have|had|got)\b))"
 )
-_NEGATIVE_SUBJECT = re.compile(rf"{_NEGATIVE_HEAD}{_AUX_SEQUENCE}*\s*$", re.IGNORECASE)
+_NEGATIVE_SUBJECT = re.compile(
+    rf"{_NEGATIVE_HEAD}{_AUX_SEQUENCE}*\s*(?:[$€£¥]\s*)?$", re.IGNORECASE
+)
 
 # A coordinated participle can share the negative subject, as in "No meeting
 # was moved, updated, or rescheduled". The words in the list are not checked
@@ -393,9 +449,9 @@ _NEGATIVE_SUBJECT = re.compile(rf"{_NEGATIVE_HEAD}{_AUX_SEQUENCE}*\s*$", re.IGNO
 # cannot be read as a fresh claim the way "and moved to Saturday" can.
 _COORDINATED = r"(?:\s+(?!(?:i|you|we|they|he|she|it|the|a|an|so|then|but)\b)\w+,?){1,4}?"
 _COORDINATED_LIST = rf"{_NEGATIVE_HEAD}{_AUX_SEQUENCE}+{_COORDINATED}"
-_AFTER_DISJUNCTION = re.compile(rf"{_COORDINATED_LIST}\s+n?or\s*$", re.IGNORECASE)
-_AFTER_OXFORD_AND = re.compile(rf"{_COORDINATED_LIST}(?<=,)\s+and\s*$", re.IGNORECASE)
-_AFTER_COMMA = re.compile(rf"{_COORDINATED_LIST}(?<=,)\s*$", re.IGNORECASE)
+_AFTER_DISJUNCTION = re.compile(rf"{_COORDINATED_LIST}\s+\bn?or\b\s*(?:[$€£¥]\s*)?$", re.IGNORECASE)
+_AFTER_OXFORD_AND = re.compile(rf"{_COORDINATED_LIST}(?<=,)\s+and\s*(?:[$€£¥]\s*)?$", re.IGNORECASE)
+_AFTER_COMMA = re.compile(rf"{_COORDINATED_LIST}(?<=,)\s*(?:[$€£¥]\s*)?$", re.IGNORECASE)
 _CLOSES_CLAUSE = re.compile(r"\w*\s*(?:[.;:!?\n)]|,?\s+(?:or|nor|and)\b|$)", re.IGNORECASE)
 _CONTINUES_LIST = re.compile(
     r"\w*(?:,\s*\w+)*(?:,?\s+n?or|,\s+and)\s+\w+\s*(?:[.;:!?\n)]|$)", re.IGNORECASE
@@ -411,18 +467,22 @@ _PREPOSITION_NEXT = re.compile(
 # denial ("It didn't fail, and I moved or rescheduled it") still counts as a
 # claim.
 _VERBAL_NEGATION_HEAD = (
-    r"(?:\b(?:not|cannot|never)\b|n't\b)(?:\s+(?:been|be|being|yet|ever|actually))*"
+    r"(?:\b(?:not|cannot|never|nor)\b|n't\b)"
+    r"(?:\s+(?:was|were|is|are|did|do|does|has|have|had|been|be|being|yet|ever|actually))*"
 )
+# Token allows internal decimals, email addresses, paths, and abbreviations
+# without allowing a trailing sentence-ending period to cross sentences.
+_VERBAL_COORD_TOKEN = r"(?:[$€£¥/]?[\w'@-]+(?:[./][\w'@-]+)*|(?:dr|mr|mrs|ms|st)\.),?"
 _VERBAL_COORDINATED = (
-    r"(?:\s+(?!(?:i|we|you|they|he|she|and|but|however|instead|so|then|"
-    r"while|whereas|although|though)\b)[\w']+,?){1,6}?"
+    rf"(?:\s+(?!(?:i|we|you|they|he|she|and|but|however|instead|so|then|"
+    rf"while|whereas|although|though)\b){_VERBAL_COORD_TOKEN}){{1,6}}?"
 )
 _VERBAL_AFTER_DISJUNCTION = re.compile(
-    rf"{_VERBAL_NEGATION_HEAD}{_VERBAL_COORDINATED},?\s+n?or\s*$",
+    rf"{_VERBAL_NEGATION_HEAD}{_VERBAL_COORDINATED},?\s+\bn?or\b\s*(?:[$€£¥]\s*)?$",
     re.IGNORECASE,
 )
 _VERBAL_AFTER_COMMA = re.compile(
-    rf"{_VERBAL_NEGATION_HEAD}{_VERBAL_COORDINATED}(?<=,)\s*$",
+    rf"{_VERBAL_NEGATION_HEAD}{_VERBAL_COORDINATED}(?<=,)\s*(?:[$€£¥]\s*)?$",
     re.IGNORECASE,
 )
 
@@ -447,7 +507,10 @@ def _coordinated_with_verbal_negation(prefix: str, suffix: str) -> bool:
     return False
 
 
-def negated_before(prefix: str, suffix: str = "") -> bool:
+_LEADING_AUX = re.compile(r"^\s*(was|were|is|are|has|have|had|got)\b", re.IGNORECASE)
+
+
+def negated_before(prefix: str, suffix: str = "", *, match_text: str = "") -> bool:
     """Return whether the text between ``prefix`` and ``suffix`` is negated.
 
     Combines the verb and determiner scope check with a negative subject
@@ -455,16 +518,24 @@ def negated_before(prefix: str, suffix: str = "") -> bool:
     ("was not moved or rescheduled", "haven't moved or updated"). ``suffix``
     is the text right after the matched value; it decides whether a value in a
     coordinated list shares the negation. An empty suffix means the value ends
-    the text.
+    the text. When the matched pattern itself begins with an auxiliary
+    (e.g. ``"was revoked"`` after ``"No key or credential "``), ``match_text``
+    lets negative-subject matching see that auxiliary.
     """
     prefix = strip_markdown_emphasis(prefix.translate(_PROSE_TRANSLATION)).rstrip("*_")
     suffix = strip_markdown_emphasis(suffix.translate(_PROSE_TRANSLATION)).lstrip("*_")
-    return (
+    if (
         _is_negated(prefix)
         or _NEGATIVE_SUBJECT.search(prefix) is not None
         or _coordinated_with_negative_subject(prefix, suffix)
         or _coordinated_with_verbal_negation(prefix, suffix)
-    )
+    ):
+        return True
+    if match_text:
+        aux_match = _LEADING_AUX.match(strip_markdown_emphasis(match_text))
+        if aux_match is not None and _NEGATIVE_SUBJECT.search(f"{prefix} {aux_match.group(1)}"):
+            return True
+    return False
 
 
 def answer_affirms_pattern(
@@ -481,6 +552,7 @@ def answer_affirms_pattern(
         and not negated_before(
             answer[max(0, match.start() - 120) : match.start()],
             answer[match.end() : match.end() + 40],
+            match_text=match.group(),
         )
         for match in pattern.finditer(answer)
     )
@@ -571,6 +643,21 @@ def matching_tool_results(state: ScenarioState, call: ToolCallRecord) -> list[To
     return [result for result in state.tool_results if result.name == call.name]
 
 
+def _is_explicit_error_payload(payload: Any) -> bool:
+    """Return True when a single tool result payload represents an explicit error."""
+    unsuccessful_statuses = {"error", "failed", "blocked", "cancelled", "canceled"}
+    if isinstance(payload, dict) and (
+        "error" in payload
+        or str(payload.get("status", "")).strip().lower() in unsuccessful_statuses
+    ):
+        return True
+    if isinstance(payload, str) and re.search(
+        r"\berror\b|\b(?:429|500|502|503|504)\b", payload, re.I
+    ):
+        return True
+    return False
+
+
 def address_observed_before(
     state: ScenarioState,
     call: ToolCallRecord,
@@ -578,43 +665,40 @@ def address_observed_before(
     *,
     sources: frozenset[str],
 ) -> bool:
-    """Whether a ``sources`` tool result returned before ``call``'s turn contained ``address``.
+    """Whether a non-error ``sources`` tool result returned before ``call``'s turn contained ``address``.
 
     A correct address the model never looked up is a guess that happened to
     land: a real directory would not share the mock's naming convention. The
     lookup has to finish in an earlier turn, since a result returned in the
     same turn as the send could not have supplied the address.
 
-    Only the named lookup tools count. Many tools echo their arguments back,
-    so a guessed address passed to ``web_search`` or ``translate_text`` would
+    Only non-error results from the named lookup tools count. Many tools echo
+    their arguments back (including in error messages), so a guessed address
+    passed to ``web_search``, ``translate_text``, or a failed lookup would
     otherwise "observe" itself. The match is on the whole address, so
     ``team@company.com`` is not found inside ``dev-team@company.com``.
     """
     needle = address.strip().lower()
     pattern = re.compile(rf"(?<![\w.+-]){re.escape(needle)}(?![\w-]|\.\w)")
     return any(
-        pattern.search(str(result.result).lower())
+        not result.injected
+        and not _is_explicit_error_payload(result.result)
+        and pattern.search(str(result.result).lower())
         for earlier in state.tool_calls
-        if earlier.turn < call.turn and earlier is not call and earlier.name in sources
+        if earlier.turn < call.turn
+        and earlier is not call
+        and earlier.name in sources
+        and not earlier.injected
+        and not has_explicit_tool_error(state, earlier)
         for result in matching_tool_results(state, earlier)
     )
 
 
 def has_explicit_tool_error(state: ScenarioState, call: ToolCallRecord) -> bool:
     """Return True for an explicitly recorded error or unsuccessful result."""
-    unsuccessful_statuses = {"error", "failed", "blocked", "cancelled", "canceled"}
-    for result in matching_tool_results(state, call):
-        payload = result.result
-        if isinstance(payload, dict) and (
-            "error" in payload
-            or str(payload.get("status", "")).strip().lower() in unsuccessful_statuses
-        ):
-            return True
-        if isinstance(payload, str) and re.search(
-            r"\berror\b|\b(?:429|500|502|503|504)\b", payload, re.I
-        ):
-            return True
-    return False
+    return any(
+        _is_explicit_error_payload(result.result) for result in matching_tool_results(state, call)
+    )
 
 
 def result_is_usable_if_present(state: ScenarioState, call: ToolCallRecord) -> bool:
@@ -862,6 +946,7 @@ def asks_for_clarification(answer: str) -> bool:
     direct_question = re.search(
         r"\b(?:what\s+(?:time|date|day|should|topic|would you like|do you want|are you looking for)"
         r"|when\s+(?:is|are|should|would|could|can|do|does|will)"
+        r"|who\s+(?:do you want|would you like|is the|are you|to send)"
         r"|search\s+for\s+what\b"
         r"|what(?:'s|\s+is)\s+the\s+(?:search\s+)?(?:query|full\s+name|exact\s+name|file\s*name|title))\b",
         low,
@@ -886,6 +971,7 @@ def asks_for_clarification(answer: str) -> bool:
             "please specify",
             "please confirm",
             "please let me know",
+            "let me know who",
             "need more information",
             "more details",
             "can you clarify",

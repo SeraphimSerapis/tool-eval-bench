@@ -213,7 +213,7 @@ def test_tc62_has_attainable_budget_and_explicit_send_authorization() -> None:
     scenario = _scenario("TC-62")
 
     assert len(scenario.follow_up_messages) == 4
-    assert scenario.max_turns_override == 14
+    assert scenario.max_turns_override == 16
     assert "send it" in scenario.follow_up_messages[-1].lower()
 
 

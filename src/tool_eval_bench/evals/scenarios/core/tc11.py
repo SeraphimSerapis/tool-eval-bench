@@ -24,6 +24,9 @@ from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
 )
 from tool_eval_bench.evals.helpers import (
+    is_only_tool as _is_only_tool,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
@@ -40,11 +43,12 @@ def _tc11_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
 
 @forbid_unrequested_side_effects()
 def _tc11_eval(state: ScenarioState) -> ScenarioEvaluation:
-    correct = _answer_affirms_exact_value(state.final_answer, "30")
+    correct = _answer_affirms_exact_value(state.final_answer, "30", exclude_percent=True)
     contextual = bool(
         re.search(
-            r"15\s*%|(?<!\d)200(?!\d)|percent|prozent|por\s+ciento|porcentaje|百分之|パーセント"
-            r"|dollars?|answer|antwort|respuesta|答案|答え|result|ergebnis|resultado|结果|結果",
+            r"15\s*%|(?<!\d)200(?!\d)|0\.15|15/100|percent|prozent|por\s+ciento|porcentaje|百分之|パーセント"
+            r"|dollars?|answer|antwort|respuesta|答案|答え|result|ergebnis|resultado|结果|結果"
+            r"|\b(?:tenth|half|adding|add|plus|sum|equals?|gives|multiply|multiplied|times|product|total)\b",
             state.final_answer,
             re.I,
         )
@@ -54,7 +58,7 @@ def _tc11_eval(state: ScenarioState) -> ScenarioEvaluation:
     terse_answer = len(re.sub(r"[*_`]", "", state.final_answer).strip()) <= 40
     if len(state.tool_calls) == 0 and correct and (contextual or terse_answer):
         return _pass("Did the math directly — good restraint.")
-    if _has_tool_call(state, "calculator") and correct and not _has_tool_call(state, "web_search"):
+    if _has_tool_call(state, "calculator") and _is_only_tool(state, "calculator") and correct:
         return _partial(
             "Reached for calculator on 15%×200 — correct answer but mental math was sufficient."
         )
@@ -75,6 +79,6 @@ SCENARIO = ScenarioDefinition(
 )
 
 DISPLAY = ScenarioDisplayDetail(
-    "Pass if it answers 30 directly with no calculator — testing arithmetic restraint.",
-    "Fail if it reaches for calculator or web_search when mental math is sufficient.",
+    "Pass if it answers 30 directly with no tools — testing arithmetic restraint.",
+    "Partial if it reaches for calculator alone; fail if it uses other tools or gets the math wrong.",
 )

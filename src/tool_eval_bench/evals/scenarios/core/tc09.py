@@ -39,6 +39,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    result_is_usable_if_present as _result_is_usable_if_present,
+)
+from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
@@ -51,8 +54,20 @@ from tool_eval_bench.evals.scenarios.core._shared import (
 
 def _tc09_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
+        units = _normalize(_as_str(call.arguments.get("units"))) or "celsius"
+        if units == "fahrenheit":
+            return _noise(
+                {
+                    "location": "London",
+                    "temperature": 53.6,
+                    "units": "fahrenheit",
+                    "condition": "Cloudy",
+                },
+                "get_weather",
+            )
         return _noise(
-            {"location": "London", "temperature": 12, "condition": "Cloudy"}, "get_weather"
+            {"location": "London", "temperature": 12, "units": "celsius", "condition": "Cloudy"},
+            "get_weather",
         )
     if call.name == "get_stock_price":
         return _noise({"ticker": "MSFT", "price": 412.78, "currency": "USD"}, "get_stock_price")
@@ -64,13 +79,17 @@ def _tc09_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
-def _tc09_weather_result_is_london(payload: Any) -> bool:
+def _tc09_weather_result_is_london(payload: Any, expected_units: str = "celsius") -> bool:
     if not isinstance(payload, dict) or "error" in payload:
         return False
-    return (
-        _positive_argument_contains(payload.get("location"), "london")
-        and _numeric_value(payload.get("temperature")) == 12
-    )
+    if not _positive_argument_contains(payload.get("location"), "london"):
+        return False
+    if "units" in payload and _normalize(_as_str(payload.get("units"))) != expected_units:
+        return False
+    temp = _numeric_value(payload.get("temperature"))
+    if expected_units == "fahrenheit":
+        return temp is not None and abs(temp - 53.6) < 0.5
+    return temp == 12
 
 
 def _tc09_stock_result_is_msft(payload: Any) -> bool:
@@ -103,8 +122,16 @@ def _tc09_eval(state: ScenarioState) -> ScenarioEvaluation:
     if weather and stock:
         weather_call = _first_call(state, "get_weather")
         stock_call = _first_call(state, "get_stock_price")
+        requested_units = (
+            "fahrenheit"
+            if weather_call
+            and _normalize(_as_str(weather_call.arguments.get("units"))) == "fahrenheit"
+            else "celsius"
+        )
         if weather_call and not _result_matches_if_present(
-            state, weather_call, _tc09_weather_result_is_london
+            state,
+            weather_call,
+            lambda payload: _tc09_weather_result_is_london(payload, requested_units),
         ):
             return _partial("The weather result was unusable, so its value cannot be confirmed.")
         if stock_call and not _result_matches_if_present(
@@ -114,9 +141,16 @@ def _tc09_eval(state: ScenarioState) -> ScenarioEvaluation:
         # Verify the model actually surfaced the tool result values. Each
         # stated number must be the tool value at the precision the answer
         # chose: "412", "412.8" and "412.78" report the price, "412.99" does
-        # not. Digit boundaries keep the "12" inside "412.78" from counting
-        # as the temperature.
-        has_temp = _answer_affirms_rounded_value(state.final_answer, "12")
+        # not. Digit boundaries keep the "12" inside "412.78" and clock times
+        # like "12:00" from counting as the temperature.
+        has_temp = (
+            _answer_affirms_rounded_value(state.final_answer, "53.6")
+            if requested_units == "fahrenheit"
+            else (
+                _answer_affirms_rounded_value(state.final_answer, "12")
+                or _answer_affirms_rounded_value(state.final_answer, "53.6")
+            )
+        )
         has_price = _answer_affirms_rounded_value(state.final_answer, "412.78")
         if has_temp and has_price:
             if len(_counted_calls(state.tool_calls)) != 2:
@@ -125,9 +159,21 @@ def _tc09_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _pass("Handled both independent tasks.", note)
         return _partial(
             "Called the right tools but did not surface the actual results in the answer.",
-            "Answer should include the temperature (12) and stock price (412.78).",
+            "Answer should include the temperature (12°C / 53.6°F) and stock price (412.78).",
         )
-    if _has_tool_call(state, "web_search"):
+    relevant_web = _has_tool_call(
+        state,
+        "web_search",
+        lambda c: (
+            (
+                _positive_argument_contains(c.arguments.get("query"), "london")
+                or _positive_argument_contains(c.arguments.get("query"), "msft")
+                or _positive_argument_contains(c.arguments.get("query"), "microsoft")
+            )
+            and _result_is_usable_if_present(state, c)
+        ),
+    )
+    if relevant_web:
         return _partial("Covered the request, but fell back to web_search.")
     return _fail("Missed one side of the two-part request.")
 

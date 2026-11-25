@@ -38,8 +38,8 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.planning._shared import (
-    _call_index,
     _has_unexpected_tools,
+    _precedes,
     _result_matches_if_present,
 )
 
@@ -60,7 +60,7 @@ def _tc54_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
                 {"results": [{"snippet": "Current exchange rate: 1 USD = 149.50 JPY."}]},
                 "web_search",
             )
-        if "exchange" in query or "currency" in query or "yen" in query:
+        if "exchange" in query or "currency" in query or "yen" in query or "jpy" in query:
             return _noise(
                 {"results": [{"snippet": "USD/JPY exchange rate: 149.50. Japanese Yen."}]},
                 "web_search",
@@ -142,7 +142,7 @@ def _tc54_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer
     # Expected: 425.80 * 149.50 ≈ 63,657 JPY. Accept nearby rounded values
     # without allowing any arbitrary "63" substring to count as the result.
-    has_reasonable = any(
+    has_reasonable = _answer_affirms_number(answer, "63657.1") or any(
         _answer_affirms_number(answer, str(value)) for value in range(63600, 63700)
     )
 
@@ -165,8 +165,8 @@ def _tc54_eval(state: ScenarioState) -> ScenarioEvaluation:
         and exchange_calls
         and calculator_calls
         and all(
-            max(_call_index(state, stock_calls[0]), _call_index(state, exchange_calls[0]))
-            < _call_index(state, attempt)
+            _precedes(state, stock_calls[0], attempt)
+            and _precedes(state, exchange_calls[0], attempt)
             for attempt in calc_attempts
         )
     )

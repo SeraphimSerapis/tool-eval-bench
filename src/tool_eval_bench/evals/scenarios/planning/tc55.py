@@ -38,8 +38,8 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.planning._shared import (
-    _call_index,
     _has_unexpected_tools,
+    _precedes,
     _result_matches_if_present,
 )
 
@@ -174,11 +174,11 @@ def _tc55_eval(state: ScenarioState) -> ScenarioEvaluation:
         and read_na_calls
         and read_emea_calls
         and calculator_calls
-        and _call_index(state, search_calls[0])
-        < min(_call_index(state, read_na_calls[0]), _call_index(state, read_emea_calls[0]))
+        and _precedes(state, search_calls[0], read_na_calls[0])
+        and _precedes(state, search_calls[0], read_emea_calls[0])
         and all(
-            max(_call_index(state, read_na_calls[0]), _call_index(state, read_emea_calls[0]))
-            < _call_index(state, attempt)
+            _precedes(state, read_na_calls[0], attempt)
+            and _precedes(state, read_emea_calls[0], attempt)
             for attempt in sum_attempts
         )
     )

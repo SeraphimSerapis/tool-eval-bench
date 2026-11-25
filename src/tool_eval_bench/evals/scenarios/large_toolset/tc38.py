@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -18,6 +19,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     addressed_recipients as _addressed_recipients,
+)
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
 )
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
@@ -52,7 +56,6 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.scenarios.large_toolset._shared import (
     LARGE_SIDE_EFFECT_TOOLS,
-    _answer_affirms_exact_value,
     _is_engineering_department,
     _result_matches_if_present,
     _status_is_success,
@@ -60,6 +63,25 @@ from tool_eval_bench.evals.scenarios.large_toolset._shared import (
 
 # Either directory can supply the manager address.
 _TC38_LOOKUPS = frozenset({"get_contacts", "get_org_chart"})
+_TC38_TOTAL_MILLIONS = re.compile(
+    r"(?<![\d.$])(?:\$\s*)?4\.40*\s*(?:m\b|million\b|mio\.?|millones\b)",
+    re.IGNORECASE,
+)
+_TC38_TOTAL_EXACT = re.compile(
+    r"(?<![\d.$])(?:\$\s*)?4,?400,?000(?:\.00?)?"
+    r"(?!\d|\.\d|\s*(?:k\b|m\b|b\b|bn\b|thousand\b|million\b|billion\b))",
+    re.IGNORECASE,
+)
+_TC38_ATTACHED_MINUS = re.compile(r"(?<!\d)[-\u2212](?:[$€£¥])?$")
+
+
+def _tc38_has_attached_minus(prefix: str) -> bool:
+    return _TC38_ATTACHED_MINUS.search(prefix) is not None
+
+
+def _tc38_query_contains(value: Any, expected: str) -> bool:
+    """Match entity terms even when separated by underscores (e.g. Q3_Budget_Report)."""
+    return _positive_argument_contains(_as_str(value).replace("_", " "), expected)
 
 
 def _tc38_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -175,7 +197,7 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     """
 
     def _is_valid_search(call: ToolCallRecord) -> bool:
-        return call.name == "search_files" and _positive_argument_contains(
+        return call.name == "search_files" and _tc38_query_contains(
             call.arguments.get("query"), "budget"
         )
 
@@ -192,8 +214,7 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
 
     def _is_valid_manager(c: ToolCallRecord) -> bool:
         return (
-            c.name == "get_contacts"
-            and _positive_argument_contains(c.arguments.get("query"), "manager")
+            c.name == "get_contacts" and _tc38_query_contains(c.arguments.get("query"), "manager")
         ) or _is_manager_verification(c)
 
     def _is_valid_email(c: ToolCallRecord) -> bool:
@@ -203,12 +224,11 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
             and _recipient_values(c.arguments.get("to")) == ["jordan.park@company.com"]
             and _addressed_recipients(c) == ["jordan.park@company.com"]
             # TC-38 is TC-07 with 52 tools, so a score difference between them
-            # has to mean the toolset size mattered. Spelling the unit out
-            # ("$4.4 million", "$4.40M", "$4,400,000") or sending the address as
-            # a one-element array is not a toolset effect, so use TC-07's checks.
+            # has to mean the toolset size mattered. Require million/M scale on
+            # 4.4 so "$4.4 billion" or "$4.4K" cannot pass as "$4.4M".
             and (
-                _answer_affirms_exact_value(body, "4.4")
-                or _answer_affirms_exact_value(body, "4400000")
+                _answer_affirms_pattern(body, _TC38_TOTAL_MILLIONS, skip=_tc38_has_attached_minus)
+                or _answer_affirms_pattern(body, _TC38_TOTAL_EXACT, skip=_tc38_has_attached_minus)
             )
         )
 
@@ -230,7 +250,7 @@ def _tc38_eval(state: ScenarioState) -> ScenarioEvaluation:
     domain_calls = [
         c.name
         for c in state.tool_calls
-        if c.name not in ("search_files", "read_file", "get_contacts", "send_email", "web_search")
+        if c.name not in ("search_files", "read_file", "get_contacts", "send_email")
         and not _is_manager_verification(c)
     ]
 
@@ -304,11 +324,11 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc38_eval,
     tools_override=LARGE_TOOLSET,
     difficulty=4,
+    # Manager lookup can come from either get_contacts OR get_org_chart;
+    # _tc38_eval enforces that OR-dependency and turn ordering directly.
     dependencies=(
         ("search_files", "read_file"),
         ("read_file", "send_email"),
-        ("get_contacts", "send_email"),
-        ("get_org_chart", "send_email"),
     ),
     variant_literals=("file_091",),
     control_scenario_id="TC-07",

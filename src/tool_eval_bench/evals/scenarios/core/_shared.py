@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -195,7 +195,14 @@ def _only_error_retries_before_last(state: ScenarioState, calls: list[ToolCallRe
     return all(_has_explicit_tool_error(state, call) for call in calls[:-1])
 
 
+_THOUSANDS_COMMA = re.compile(r"(?<=\d),(?=\d{3}(?:,\d{3})*(?!\d))")
 _STATED_NUMBER = re.compile(r"(?<![\d.])(?:([-\u2212])[$€£¥]?)?(\d+)(?:\.(\d+))?(?!\d|\.\d)")
+_CLOCK_BEFORE = re.compile(r"\d:$")
+_CLOCK_AFTER = re.compile(r":\d{2}\b")
+_PERCENT_AFTER = re.compile(r"\s*(?:%|(?:percent|prozent|por\s+ciento)\b)", re.IGNORECASE)
+_SCALE_SUFFIX_AFTER = re.compile(
+    r"\s*(?:[kmb]\b|mm\b|mil\b|thousand\b|million\b|billion\b)", re.IGNORECASE
+)
 
 
 def _parsed_stated_number(match: re.Match[str]) -> Decimal:
@@ -204,7 +211,33 @@ def _parsed_stated_number(match: re.Match[str]) -> Decimal:
     return Decimal(f"{sign}{match.group(2)}{fractional}")
 
 
-def _answer_affirms_rounded_value(answer: str, value: str) -> bool:
+def _excluded_stated_match(
+    collapsed: str,
+    match: re.Match[str],
+    *,
+    exclude_clock_times: bool,
+    exclude_percent: bool,
+    exclude_scale_suffix: bool,
+) -> bool:
+    before = collapsed[: match.start()]
+    after = collapsed[match.end() :]
+    if exclude_clock_times and (_CLOCK_AFTER.match(after) or _CLOCK_BEFORE.search(before)):
+        return True
+    if exclude_percent and _PERCENT_AFTER.match(after):
+        return True
+    if exclude_scale_suffix and _SCALE_SUFFIX_AFTER.match(after):
+        return True
+    return False
+
+
+def _answer_affirms_rounded_value(
+    answer: str,
+    value: str,
+    *,
+    exclude_clock_times: bool = True,
+    exclude_percent: bool = True,
+    exclude_scale_suffix: bool = False,
+) -> bool:
     """Whether ``answer`` asserts ``value`` at the precision it chose.
 
     A stated number passes when it equals ``value`` rounded or truncated to
@@ -212,32 +245,65 @@ def _answer_affirms_rounded_value(answer: str, value: str) -> bool:
     report a price of 187.42 while 187.99 and -187.42 do not. Negated
     mentions ("not 187.42") are rejected.
     """
-    collapsed = re.sub(r"(?<=\d),(?=\d)", "", answer)
+    collapsed = _THOUSANDS_COMMA.sub("", answer)
     expected = Decimal(value)
+    exp = expected.as_tuple().exponent
+    expected_decimals = max(0, -exp) if isinstance(exp, int) else 0
     for match in _STATED_NUMBER.finditer(collapsed):
+        if _excluded_stated_match(
+            collapsed,
+            match,
+            exclude_clock_times=exclude_clock_times,
+            exclude_percent=exclude_percent,
+            exclude_scale_suffix=exclude_scale_suffix,
+        ):
+            continue
         stated = _parsed_stated_number(match)
-        quantum = Decimal(1).scaleb(-len(match.group(3) or ""))
-        accepted = {
-            expected.quantize(quantum, rounding=ROUND_HALF_UP),
-            expected.quantize(quantum, rounding=ROUND_DOWN),
-        }
-        if stated in accepted and not _is_negated(
+        frac = match.group(3) or ""
+        if len(frac) > expected_decimals:
+            matches_expected = stated == expected
+        else:
+            quantum = Decimal(1).scaleb(-len(frac))
+            try:
+                accepted = {
+                    expected.quantize(quantum, rounding=ROUND_HALF_UP),
+                    expected.quantize(quantum, rounding=ROUND_DOWN),
+                }
+                matches_expected = stated in accepted
+            except InvalidOperation:
+                matches_expected = stated == expected
+        if matches_expected and not _is_negated(
             collapsed[max(0, match.start() - 120) : match.start()]
         ):
             return True
     return False
 
 
-def _answer_affirms_exact_value(answer: str, value: str) -> bool:
+def _answer_affirms_exact_value(
+    answer: str,
+    value: str,
+    *,
+    exclude_clock_times: bool = False,
+    exclude_percent: bool = False,
+    exclude_scale_suffix: bool = False,
+) -> bool:
     """Whether ``answer`` asserts ``value`` with exact numeric equality.
 
     Accepts equivalent trailing zeros such as ``4.40`` for ``4.4`` or
     ``4,400,000.00`` for ``4400000``, while rejecting rounded-away digits
     (``4``), wrong decimals (``4.45``), wrong signs (``-4.4``), and negations.
     """
-    collapsed = re.sub(r"(?<=\d),(?=\d)", "", answer)
+    collapsed = _THOUSANDS_COMMA.sub("", answer)
     expected = Decimal(value)
     for match in _STATED_NUMBER.finditer(collapsed):
+        if _excluded_stated_match(
+            collapsed,
+            match,
+            exclude_clock_times=exclude_clock_times,
+            exclude_percent=exclude_percent,
+            exclude_scale_suffix=exclude_scale_suffix,
+        ):
+            continue
         if _parsed_stated_number(match) == expected and not _is_negated(
             collapsed[max(0, match.start() - 120) : match.start()]
         ):

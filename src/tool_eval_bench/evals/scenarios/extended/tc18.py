@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -82,15 +83,23 @@ def _tc18_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "send_email":
         return _noise({"status": "sent", "message_id": "msg_1822"}, "send_email")
     if call.name == "get_contacts":
-        return _noise(
-            {
-                "results": [
-                    {"name": "Hans Müller", "email": "hans.mueller@firma.de"},
-                    {"name": "Sarah Chen", "email": "sarah.chen@company.com"},
-                ]
-            },
-            "get_contacts",
-        )
+        contacts = [
+            {"name": "Hans Müller", "email": "hans.mueller@firma.de"},
+            {"name": "Sarah Chen", "email": "sarah.chen@company.com"},
+        ]
+        query = _normalize(_as_str(call.arguments.get("query")))
+        if not query or query in {"all", "contacts", "directory", "team"}:
+            return _noise({"results": contacts}, "get_contacts")
+        tokens = [token for token in re.findall(r"[^\W_]+", query) if len(token) >= 2]
+        matched = [
+            contact
+            for contact in contacts
+            if any(
+                token in _normalize(contact["name"]) or token in _normalize(contact["email"])
+                for token in tokens
+            )
+        ]
+        return _noise({"results": matched}, "get_contacts")
     return _generic_tool_fallback(call)
 
 
@@ -162,13 +171,26 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
         def went_through(calls: list[ToolCallRecord]) -> list[ToolCallRecord]:
             return [call for call in calls if not _has_explicit_tool_error(state, call)]
 
-        if (
-            len(went_through(translations)) != 1
-            or len(went_through(emails)) != 1
-            or len(went_through(email_calls)) != 1
+        successful_translations = went_through(translations)
+        translated_texts = [
+            _normalize(_as_str(call.arguments.get("text"))) for call in successful_translations
+        ]
+        if len(translated_texts) != len(set(translated_texts)):
+            return _partial(
+                "Translated and emailed the message, but issued duplicate translation calls."
+            )
+        if not all(
+            _normalize(_as_str(call.arguments.get("source_language")))
+            in _ENGLISH_SOURCE_DESIGNATORS
+            for call in successful_translations
         ):
             return _partial(
-                "Translated and emailed the message but issued duplicate or incorrect email mutations."
+                "Translated and emailed the message, but also issued a translation call "
+                "with a non-English source language."
+            )
+        if len(went_through(emails)) != 1 or len(went_through(email_calls)) != 1:
+            return _partial(
+                "Translated and emailed the message, but issued duplicate or incorrect email mutations."
             )
         if not _address_observed_before(
             state, went_through(emails)[0], "hans.mueller@firma.de", sources=_TC18_LOOKUPS
@@ -192,7 +214,7 @@ def _tc18_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial(
             "Translated correctly but emailed the English version instead of the German one."
         )
-    if translated_to_german and not sent_email:
+    if usable_translations and not sent_email:
         return _partial("Translated to German but didn't complete the email step.")
     return _fail("Did not translate and email correctly.")
 

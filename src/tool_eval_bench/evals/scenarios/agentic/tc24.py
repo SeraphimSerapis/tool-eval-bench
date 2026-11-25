@@ -26,13 +26,18 @@ from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
-from tool_eval_bench.evals.helpers import first_counted as _first_counted
+from tool_eval_bench.evals.helpers import (
+    first_call_without_error as _first_call_without_error,
+)
 from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
     matching_tool_results as _matching_tool_results,
+)
+from tool_eval_bench.evals.helpers import (
+    normalize as _normalize,
 )
 from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
@@ -50,10 +55,13 @@ from tool_eval_bench.evals.helpers import (
 
 def _tc24_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "search_files":
-        return _noise(
-            {"results": [{"file_id": "file_q3_report", "name": "Q3_Report_2025.pdf"}]},
-            "search_files",
-        )
+        query = _normalize(_as_str(call.arguments.get("query")))
+        if "q3" in query or "report" in query:
+            return _noise(
+                {"results": [{"file_id": "file_q3_report", "name": "Q3_Report_2025.pdf"}]},
+                "search_files",
+            )
+        return _noise({"results": []}, "search_files")
     if call.name == "read_file":
         if _as_str(call.arguments.get("file_id")).strip() != "file_q3_report":
             return _noise({"error": "File not found."}, "read_file")
@@ -78,9 +86,10 @@ _TC24_SCALED_REVENUE = re.compile(r"(?<![\d.])\$?4\.25\s*(?:m\b|million\b)", re.
 @forbid_unrequested_side_effects()
 def _tc24_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User said: 'Search for the Q3 report, read it, and respond with ONLY the total revenue number — nothing else.'"""
-    search_call = _first_counted(state.tool_calls, lambda c: c.name == "search_files")
-    read_call = _first_counted(state.tool_calls, lambda c: c.name == "read_file")
-    searched = bool(search_call and "q3" in _as_str(search_call.arguments.get("query")).lower())
+    search_call = _first_call_without_error(state, "search_files")
+    read_call = _first_call_without_error(state, "read_file")
+    search_query = _normalize(_as_str(search_call.arguments.get("query"))) if search_call else ""
+    searched = bool(search_call and ("q3" in search_query or "report" in search_query))
     read = bool(read_call and _as_str(read_call.arguments.get("file_id")) == "file_q3_report")
     answer = state.final_answer.strip()
 
@@ -98,7 +107,7 @@ def _tc24_eval(state: ScenarioState) -> ScenarioEvaluation:
         or not read
         or search_call.turn >= read_call.turn
     ):
-        if mentions_revenue:
+        if state.tool_calls and mentions_revenue:
             return _partial("Got the right number but didn't use search→read chain.")
         return _fail("Did not complete the search→read chain.")
 
@@ -135,7 +144,23 @@ def _tc24_eval(state: ScenarioState) -> ScenarioEvaluation:
             f"Got: {answer[:80]}",
         )
 
-    if len(_counted_calls(state.tool_calls)) != 2:
+    counted = _counted_calls(state.tool_calls)
+    effective_calls = [
+        call
+        for call in counted
+        if not (
+            not call.injected
+            and call.name in {"search_files", "read_file"}
+            and not _result_is_usable_if_present(state, call)
+            and any(
+                later.name == call.name
+                and later.turn > call.turn
+                and _result_is_usable_if_present(state, later)
+                for later in counted
+            )
+        )
+    ]
+    if len(effective_calls) != 2:
         return _partial("Completed the chain but made unnecessary additional tool calls.")
 
     return _pass("Correct chain, correct value, terse response.")

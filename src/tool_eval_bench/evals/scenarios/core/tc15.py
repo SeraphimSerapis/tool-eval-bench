@@ -39,6 +39,9 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    tool_calls_by_name as _tool_calls_by_name,
+)
+from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
@@ -48,6 +51,43 @@ from tool_eval_bench.evals.scenarios.core._shared import (
     _positive_argument_contains,
     _result_matches_if_present,
 )
+
+_TC15_POPULATION_TERMS = re.compile(
+    r"\b(?:population|people|inhabitants|residents|citizens|demographics|how\s+many)\b",
+    re.IGNORECASE,
+)
+_TC15_EXPR_NUMBER = re.compile(r"\b\d+(?:\.\d+)?\b")
+
+
+def _tc15_normalized_expression(call: ToolCallRecord) -> str:
+    return re.sub(r"(?<=\d)_(?=\d)", "", _as_str(call.arguments.get("expression")).replace(",", ""))
+
+
+def _tc15_used_rounded_population(call: ToolCallRecord) -> bool:
+    """Return True when a calculator call uses a large number other than 372520."""
+    expr = _tc15_normalized_expression(call)
+    for token in _TC15_EXPR_NUMBER.findall(expr):
+        val = float(token)
+        if val >= 10_000 and abs(val - 372520.0) > 1e-9:
+            return True
+    return False
+
+
+def _tc15_search_is_iceland(
+    state: ScenarioState, search: ToolCallRecord, *, allow_handler_resolved: bool = False
+) -> bool:
+    query = search.arguments.get("query")
+    if not _positive_argument_contains(query, "iceland"):
+        return False
+    if _positive_argument_contains(query, "population") or bool(
+        _TC15_POPULATION_TERMS.search(_as_str(query))
+    ):
+        return True
+    return (
+        allow_handler_resolved
+        and bool(state.tool_results)
+        and _result_matches_if_present(state, search, _tc15_search_result_has_population)
+    )
 
 
 def _tc15_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -96,15 +136,12 @@ def _tc15_calculator_result_is_percentage(payload: Any) -> bool:
 
 @forbid_unrequested_side_effects({"run_code": None})
 def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
-    # Grade the first attempt that returned something. An errored call gave
-    # the model no number to carry or misuse, so a retry after it is
-    # recovery, while a successful call with a rounded value still counts.
+    # Grade the first search attempt that returned something. An errored call
+    # gave the model no number to carry or misuse, so a retry after it is
+    # recovery.
     search = _first_call_without_error(state, "web_search")
-    calc = _first_call_without_error(state, "calculator")
-    if calc is not None and _has_explicit_tool_error(state, calc):
-        # Every calculator call errored, so no calculation reached the model.
-        # Grade it like an answer computed without the calculator.
-        calc = None
+    all_calcs = _tool_calls_by_name(state, "calculator")
+    usable_calcs = [c for c in all_calcs if not _has_explicit_tool_error(state, c)]
 
     # Only when no search succeeded did the model lack the searched value.
     search_got_error = bool(search and _has_explicit_tool_error(state, search))
@@ -122,20 +159,36 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
             and _positive_argument_contains(search.arguments.get("query"), "iceland")
         ):
             return _partial("Search tool failed — used background knowledge as fallback.")
-        if search:
+        if search and _positive_argument_contains(search.arguments.get("query"), "iceland"):
             return _partial("Attempted search but tool failed — answer was incomplete.")
         return _fail("Did not attempt to search for the population.")
 
+    # Multi-step calculations (e.g. calculator("2 / 100") then
+    # calculator("372520 * 0.02")) are valid as long as no calculator call ran
+    # before the search and no non-error call plugged in a memorized/rounded
+    # population value.
+    no_pre_search_calc = bool(search) and all(
+        search is not None and search.turn < c.turn for c in usable_calcs
+    )
+    no_rounded_pop_calc = not any(_tc15_used_rounded_population(c) for c in usable_calcs)
+    matching_calc = (
+        next(
+            (
+                c
+                for c in usable_calcs
+                if "372520" in _tc15_normalized_expression(c)
+                and _result_matches_if_present(state, c, _tc15_calculator_result_is_percentage)
+            ),
+            None,
+        )
+        if (no_pre_search_calc and no_rounded_pop_calc)
+        else None
+    )
     if (
         search
-        and calc
-        and search.turn < calc.turn
-        and _positive_argument_contains(search.arguments.get("query"), "population")
-        and _positive_argument_contains(search.arguments.get("query"), "iceland")
-        and "372520"
-        in re.sub(r"(?<=\d)_(?=\d)", "", _as_str(calc.arguments.get("expression")).replace(",", ""))
+        and matching_calc
+        and _tc15_search_is_iceland(state, search, allow_handler_resolved=True)
         and _result_matches_if_present(state, search, _tc15_search_result_has_population)
-        and _result_matches_if_present(state, calc, _tc15_calculator_result_is_percentage)
     ):
         # Verify the model surfaced the actual computed result.
         has_result = _answer_affirms_rounded_value(state.final_answer, "7450.4")
@@ -147,16 +200,21 @@ def _tc15_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
     if (
         search
-        and calc
-        and search.turn == calc.turn
-        and _positive_argument_contains(search.arguments.get("query"), "population")
-        and _positive_argument_contains(search.arguments.get("query"), "iceland")
+        and usable_calcs
+        and any(search.turn == c.turn for c in usable_calcs)
+        and _tc15_search_is_iceland(state, search, allow_handler_resolved=True)
     ):
         return _partial(
             "Issued dependent calls in the same turn, so the calculation could not use "
             "the search result."
         )
-    if not calc and search and _answer_affirms_exact_value(state.final_answer, "7450.4"):
+    if (
+        not usable_calcs
+        and search
+        and _tc15_search_is_iceland(state, search, allow_handler_resolved=True)
+        and _result_matches_if_present(state, search, _tc15_search_result_has_population)
+        and _answer_affirms_exact_value(state.final_answer, "7450.4")
+    ):
         return _partial("Computed the right answer mentally after searching.")
     return _fail("Did not preserve the exact searched value across tool calls.")
 

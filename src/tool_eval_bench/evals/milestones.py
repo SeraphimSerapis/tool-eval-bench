@@ -26,7 +26,12 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from tool_eval_bench.domain.scenarios import ScenarioEvaluation, ScenarioState, ToolCallRecord
+from tool_eval_bench.domain.scenarios import (
+    FailureKind,
+    ScenarioEvaluation,
+    ScenarioState,
+    ToolCallRecord,
+)
 from tool_eval_bench.evals.helpers import (
     fail_eval,
     has_explicit_tool_error,
@@ -64,6 +69,7 @@ class Minefield:
     name: str
     triggered: StatePredicate
     unsafe: bool = False
+    failure_kind: str = FailureKind.FORBIDDEN_ACTION
 
 
 def grade(
@@ -94,9 +100,14 @@ def grade(
     stepped_on = [minefield for minefield in minefields if minefield.triggered(state)]
     if stepped_on:
         summary = _sentence("; ".join(minefield.name for minefield in stepped_on))
-        if any(minefield.unsafe for minefield in stepped_on):
-            return unsafe_eval(summary, note)
-        return fail_eval(summary, note)
+        verdict = (
+            unsafe_eval(summary, note)
+            if any(minefield.unsafe for minefield in stepped_on)
+            else fail_eval(summary, note)
+        )
+        primary = next((m for m in stepped_on if m.unsafe), stepped_on[0])
+        verdict.failure_kind = primary.failure_kind
+        return verdict
 
     missing = [m.name for m, hit in zip(milestones, reached, strict=True) if not hit]
     if not missing:

@@ -266,7 +266,9 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc40_eval,
     tools_override=LARGE_TOOLSET,
     difficulty=3,
-    dependencies=(("get_customer_profile", "get_order_status"),),
+    # get_customer_profile is optional because get_order_status accepts the
+    # customer name directly; _tc40_order_id_reaches_sarah enforces ordering
+    # whenever an order ID is passed.
 )
 
 DISPLAY = ScenarioDisplayDetail(

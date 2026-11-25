@@ -86,24 +86,27 @@ def _optional_float(value: Any) -> float | None:
 def enrich_weather(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to weather responses."""
     seed = _seed_from_payload(payload, "weather")
-    temp = _as_number(payload.get("temperature"), 0)
-    return _with_noise(
-        payload,
+    noise: dict[str, Any] = {
+        "wind_speed_kmh": 14.2 + (seed % 20) / 10.0,
+        "wind_direction": ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][seed % 8],
+        "uv_index": max(1, seed % 6),
+        "visibility_km": 9.8,
+        "pressure_hpa": 1008 + seed % 20,
+    }
+    if "temperature" in payload:
+        temp = _as_number(payload.get("temperature"), 0)
+        noise["feels_like"] = temp - 2
+        noise["dew_point"] = temp - 5
+    noise.update(
         {
-            "wind_speed_kmh": 14.2 + (seed % 20) / 10.0,
-            "wind_direction": ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][seed % 8],
-            "uv_index": max(1, seed % 6),
-            "visibility_km": 9.8,
-            "pressure_hpa": 1008 + seed % 20,
-            "feels_like": temp - 2,
-            "dew_point": temp - 5,
             "forecast_summary": "Conditions expected to remain similar for the next 6 hours.",
             "last_updated": "2026-03-20T12:00:00Z",
             "data_source": "National Weather Service",
             "station_id": _seeded_id("WXSTN-", seed),
             "request_id": _seeded_id("req_wx_", seed),
-        },
+        }
     )
+    return _with_noise(payload, noise)
 
 
 def enrich_search(payload: dict[str, Any]) -> dict[str, Any]:
@@ -277,7 +280,8 @@ def enrich_contacts(payload: dict[str, Any]) -> dict[str, Any]:
 
 def enrich_stock(payload: dict[str, Any]) -> dict[str, Any]:
     """Add realistic metadata to stock price responses."""
-    price = _as_number(payload.get("price"), 0)
+    raw_price = payload["price"] if "price" in payload else payload.get("price_usd")
+    price = _as_number(raw_price, 0)
     # Derive previous close from the declared change when present so the
     # fixture's change/change_percent/previous_close fields stay coherent
     # (change = price - previous_close). Fall back to the historical

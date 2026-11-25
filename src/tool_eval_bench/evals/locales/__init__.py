@@ -163,8 +163,8 @@ _DECIMAL_COMMA = re.compile(r"(?<![\d.,])(\d+),(\d{1,2}|\d{4,})(?!\d|[.,]\d)")
 _TRAILING_DOLLAR = re.compile(r"(\d(?:[\d.,]*\d)?)\s?(?:\$|US-?\$|USD|美元|美金|ドル)(?![A-Za-z])")
 
 _NEGATORS: dict[str, re.Pattern[str]] = {
-    "de": re.compile(r"\b(?:nicht|kein(?:e|en|em|er|es)?|nie(?:mals)?|weder)\b", re.IGNORECASE),
-    "es": re.compile(r"\b(?:no|nunca|jamás|ningun[oa]?|ningún|ni|tampoco)\b", re.IGNORECASE),
+    "de": re.compile(r"\b(?:nicht|nie(?:mals)?|weder)\b", re.IGNORECASE),
+    "es": re.compile(r"\b(?:no|nunca|jamás|ni|tampoco)\b", re.IGNORECASE),
     # Chinese negation precedes what it negates, as English does. Guard against
     # compound words ("无理数", "无限不循环", "不需要", "非幂等", "不再", "不超过", "非常").
     "zh": re.compile(
@@ -182,6 +182,19 @@ _CONSTITUENT_NEGATORS: dict[str, re.Pattern[str]] = {
     "de": re.compile(r"\bohne\b", re.IGNORECASE),
     "es": re.compile(r"\bsin\b(?!\s+(?:duda|embargo)\b)", re.IGNORECASE),
 }
+# Determiner negators ("kein*", "ningun*"/"ningún") scope over their own noun
+# phrase rather than the entire clause ("Kein Regen in Tokyo bei 64 °F"), so
+# rewrite them to constituent "no" after verbal negators have run (otherwise
+# Spanish _NEGATORS's \bno\b would turn " no " right back into " not ").
+_DETERMINER_NEGATORS: dict[str, re.Pattern[str]] = {
+    "de": re.compile(r"\bkein(?:e|en|em|er|es)?\b", re.IGNORECASE),
+    "es": re.compile(r"\b(?:ningun[oa]?s?|ningún)\b", re.IGNORECASE),
+}
+# Spanish single-letter conjunctions ("y", "e", "o", "u") are normalized only
+# under locale="es" so English algebraic variables ("y = 42", "Neither x nor y
+# is 42") never split negation clauses globally.
+_SPANISH_AND = re.compile(r"(?<=\s)[ye](?=\s)", re.IGNORECASE)
+_SPANISH_OR = re.compile(r"(?<=\s)[ou](?=\s)", re.IGNORECASE)
 _COMMA_DECIMAL_LOCALES = frozenset({"de", "es"})
 # Scenarios whose prose answers state a sub-thousand decimal constant rather
 # than a thousands-grouped integer, so bare single-group X.YYY such as 3.142
@@ -259,6 +272,12 @@ def normalize_answer(text: str, locale: str, *, strip_single_dot_group: bool = T
     negator = _NEGATORS.get(locale)
     if negator is not None:
         text = negator.sub(" not ", text)
+    determiner = _DETERMINER_NEGATORS.get(locale)
+    if determiner is not None:
+        text = determiner.sub(" no ", text)
+    if locale == "es":
+        text = _SPANISH_AND.sub("and", text)
+        text = _SPANISH_OR.sub("or", text)
     for index, block in enumerate(preserved):
         text = text.replace(f"\x00JSON_FENCE_{index}\x00", block)
     return text

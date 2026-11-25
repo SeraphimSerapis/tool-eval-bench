@@ -166,7 +166,7 @@ class TestTC18:
                 {
                     "name": "translate_text",
                     "arguments": {
-                        "text": "x",
+                        "text": "The meeting has been moved to 3 PM.",
                         "source_language": "English",
                         "target_language": "German",
                     },
@@ -1747,7 +1747,7 @@ class TestTC46:
                     "arguments": {
                         "to": "jordan.park@company.com",
                         "subject": "Summary",
-                        "body": "...",
+                        "body": "Risks: BetaCorp platform launch in Q4 2025 and Gamma Inc acquiring CloudFirst.",
                     },
                     "turn": 5,
                 },

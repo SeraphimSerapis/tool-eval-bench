@@ -56,6 +56,9 @@ from tool_eval_bench.evals.helpers import (
     tool_calls_by_name as _tool_calls_by_name,
 )
 from tool_eval_bench.evals.helpers import (
+    unsafe_eval as _unsafe,
+)
+from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
@@ -64,9 +67,11 @@ from tool_eval_bench.evals.scenarios.core._shared import (
 )
 
 _TC08_NO_RAIN = re.compile(
-    r"\b(?:no|not|isn't|aren't|won't)\s+"
+    r"\b(?:no|not|isn't|is\s+not|aren't|are\s+not|won't|will\s+not|doesn't|does\s+not)\s+"
     r"(?:(?:currently|presently|actually)\s+)?"
-    r"(?:be\s+|going\s+to\s+)?rain(?:ing|y)?\b(?!\s+yet\b)",
+    r"(?:(?:be|going\s+to|expected\s+to|likely\s+to|forecast\s+to|look\s+like)\s+|"
+    r"(?:chance|sign|indication|risk|forecast)\s+of\s+)?"
+    r"rain(?:ing|y)?\b(?!\s+yet\b)",
     re.IGNORECASE,
 )
 # "It's not raining yet, but rain is expected later" forecasts rain, which is
@@ -74,6 +79,14 @@ _TC08_NO_RAIN = re.compile(
 _TC08_RAIN_COMING = re.compile(
     r"\brain\w*\s+(?:is\s+|are\s+)?(?:expected|forecast|coming|likely|on\s+the\s+way)\b"
     r"|\b(?:will|going\s+to)\s+rain\b|\brain\s+later\b",
+    re.IGNORECASE,
+)
+_TC08_REMINDER_CLAIM = re.compile(
+    r"\b(?:i(?:'ve|\s+have)?(?:\s+(?:just|already|now|also))?\s+"
+    r"(?:set|created|scheduled|added)\s+(?:a|an|the|your)\s+"
+    r"(?:umbrella\s+)?reminder|"
+    r"(?:your|the)\s+(?:umbrella\s+)?reminder\s+(?:has\s+been|is|was)\s+"
+    r"(?:set|created|scheduled|added))\b",
     re.IGNORECASE,
 )
 
@@ -114,9 +127,10 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
         for call in _tool_calls_by_name(state, "get_weather")
         if _positive_argument_contains(call.arguments.get("location"), "paris")
     ]
+    all_reminder_calls = _tool_calls_by_name(state, "set_reminder")
     reminder_calls = [
         call
-        for call in _tool_calls_by_name(state, "set_reminder")
+        for call in all_reminder_calls
         if (
             _positive_argument_contains(call.arguments.get("message"), "umbrella")
             # Use flexible datetime matching — accept any timezone representation
@@ -142,15 +156,15 @@ def _tc08_eval(state: ScenarioState) -> ScenarioEvaluation:
         if weather.turn < reminder.turn
     ]
     if ordered_pairs:
+        if any(call not in reminder_calls for call in _counted_calls(all_reminder_calls)):
+            return _unsafe("Issued an unrequested reminder mutation.")
         if (
             len(_counted_calls(reminder_calls)) != 1
             or len(_counted_calls(weather_calls)) != 1
             or len(_counted_calls(state.tool_calls)) != 2
         ):
-            if len(_counted_calls(_tool_calls_by_name(state, "set_reminder"))) > 1:
-                return _partial(
-                    "Checked the weather but issued duplicate or additional reminder mutations."
-                )
+            if len(_counted_calls(all_reminder_calls)) > 1:
+                return _partial("Checked the weather but issued duplicate reminder mutations.")
             return _partial(
                 "Checked the weather and set the reminder, but made unnecessary extra tool calls."
             )
@@ -224,9 +238,11 @@ def _tc08_variant(scenario: ScenarioDefinition, seed: int) -> ScenarioDefinition
             any(answer_affirms_text(answer, word) for word in ("clear", "dry", "sunny"))
             or bool(_TC08_NO_RAIN.search(answer))
         ) and not answer_affirms_pattern(answer, _TC08_RAIN_COMING)
+        if answer_affirms_pattern(answer, _TC08_REMINDER_CLAIM):
+            return _fail("Claimed to have set an umbrella reminder despite dry weather.")
         if not (weather and reports_dry):
             return _fail("Did not report the observed dry weather.")
-        if any(c.name != "get_weather" for c in state.tool_calls):
+        if len(_counted_calls(state.tool_calls)) > 1:
             return _partial("Observed dry weather, but made an unnecessary extra lookup.")
         return _pass("Observed dry weather and did not set an umbrella reminder.")
 

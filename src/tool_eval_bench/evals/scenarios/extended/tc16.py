@@ -79,13 +79,16 @@ def _tc16_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+def _tc16_location_is_munich(value: Any) -> bool:
+    return any(
+        _positive_argument_contains(value, name) for name in ("münchen", "munich", "muenchen")
+    )
+
+
 def _tc16_weather_result_is_munich(payload: Any) -> bool:
     if not isinstance(payload, dict) or "error" in payload:
         return False
-    if "location" in payload and not (
-        _positive_argument_contains(payload.get("location"), "münchen")
-        or _positive_argument_contains(payload.get("location"), "munich")
-    ):
+    if "location" in payload and not _tc16_location_is_munich(payload.get("location")):
         return False
     return _numeric_value(payload.get("temperature")) == 14 or _includes_text(
         payload.get("condition"), "bewölkt"
@@ -93,12 +96,51 @@ def _tc16_weather_result_is_munich(payload: Any) -> bool:
 
 
 _MORE_GERMAN_MARKERS = re.compile(
-    r"\b(?:hat|bei|mit|bedeckt\w*|teilweise|leicht|momentan|zurzeit)\b", re.IGNORECASE
+    r"\b(?:hat|bei|mit|bedeckt\w*|teilweise|leicht|momentan|zurzeit|"
+    r"wolkig\w*|luftfeuchtigkeit|temperatur|herrsch\w*|fehler\w*|wetterdienst|"
+    r"abrufen|konnte\w*|weshalb|überlastet|störung\w*|erreichbar|fehlgeschlagen)\b",
+    re.IGNORECASE,
 )
 _ENGLISH_FUNCTION_WORDS = re.compile(
     r"\b(?:the|is|it's|and|with|weather|currently|cloudy|partly|degrees|of)\b", re.IGNORECASE
 )
 _ECHOED_QUESTION = re.compile(r"wie ist das wetter in münchen gerade\??", re.IGNORECASE)
+_TC16_CLAUSE_SPLIT = re.compile(
+    r"[.!?;,:]|\b(?:und|aber|sondern)\b|(?<!nicht\s)(?<!kein\s)(?<!keine\s)\b(?:bei|mit)\b",
+    re.IGNORECASE,
+)
+_TC16_CLAUSE_NEG = re.compile(
+    r"\b(?:nicht|kein\w*|weder|not|never)\b(?:\s+\w+){0,5}\s*$", re.IGNORECASE
+)
+_TC16_TEMP_14 = re.compile(
+    r"(?<![\d.,:\-\u2212])14(?:[.,]0+)?(?![\d:]|[.,]\d)(?!\s*%)",
+    re.IGNORECASE,
+)
+_TC16_CONDITION = re.compile(r"\b(?:bewölkt\w*|wolkig\w*|bedeckt\w*)\b", re.IGNORECASE)
+_TC16_TEMP_MENTION = re.compile(
+    r"(?<![\d.,:])([-\u2212]?\d+(?:[.,]\d+)?)\s*"
+    r"(°\s*f\b|℉|fahrenheit\b|f\b|grad\s+fahrenheit\b|"
+    r"°\s*c\b|℃|celsius\b|grad\s+celsius\b|grad\b|°)",
+    re.IGNORECASE,
+)
+_TC16_ERROR_REPORT = re.compile(
+    r"\b(?:fehler\w*|störung\w*|ausfall|überlastet|fehlgeschlagen|problem\w*|"
+    r"nicht\s+(?:verfügbar|erreichbar|abruf\w*|geladen|ermittelt|funktioniert)|"
+    r"keine\s+wetterdaten|"
+    r"konnte\w*\b[^.!?\n]{0,45}\bnicht\s+(?:abrufen|laden|ermitteln|prüfen|holen)|"
+    r"kann\b[^.!?\n]{0,45}\bnicht\s+(?:abrufen|laden|ermitteln|prüfen|holen))\b",
+    re.IGNORECASE,
+)
+_TC16_SERVICE_ERROR_CAUSE = re.compile(
+    r"\b(?:fehler\w*|störung\w*|ausfall|überlastet|fehlgeschlagen|"
+    r"wetterdienst|dienst|service|api|nicht\s+(?:verfügbar|erreichbar))\b",
+    re.IGNORECASE,
+)
+
+
+def _tc16_is_denied(answer_lower: str, start: int) -> bool:
+    clause = _TC16_CLAUSE_SPLIT.split(answer_lower[:start])[-1]
+    return bool(_TC16_CLAUSE_NEG.search(clause))
 
 
 def _answer_in_german(state: ScenarioState) -> bool:
@@ -121,16 +163,12 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     matching_weather_calls = [
         c
         for c in state.tool_calls
-        if c.name == "get_weather"
-        and (
-            _positive_argument_contains(c.arguments.get("location"), "münchen")
-            or _positive_argument_contains(c.arguments.get("location"), "munich")
-        )
+        if c.name == "get_weather" and _tc16_location_is_munich(c.arguments.get("location"))
     ]
     used_weather = bool(matching_weather_calls)
     # Check that the final answer is in German.
     # Two paths: weather-specific vocabulary (when tool succeeds) or
-    # generic German (when tool returns an error and model reports failure).
+    # error-reporting German (when tool returns an error and model reports failure).
     answer_lower = re.sub(r"[*_`]", "", state.final_answer.lower())
     generic_german = [
         "tut mir leid",
@@ -146,27 +184,44 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     ]
     generic_score = sum(1 for w in generic_german if w in answer_lower)
     answer_in_german = _answer_in_german(state)
-    # Check the model surfaced actual weather data (temp 14 or condition).
-    facts = re.compile(
-        r"(?<![\d.,\-\u2212])14(?:[.,]0+)?(?![\d]|[.,]\d)|\bbewölkt\w*",
-        re.IGNORECASE,
+
+    # Check the model surfaced actual weather data (temp 14°C or condition)
+    # without stating a wrong temperature or letting a clock time (14:00)
+    # spoof the temperature.
+    temp_14_affirmed = False
+    temp_14_denied = False
+    for match in _TC16_TEMP_14.finditer(answer_lower):
+        if _tc16_is_denied(answer_lower, match.start()):
+            temp_14_denied = True
+        else:
+            temp_14_affirmed = True
+
+    cond_affirmed = any(
+        not _tc16_is_denied(answer_lower, match.start())
+        for match in _TC16_CONDITION.finditer(answer_lower)
     )
-    affirmed = []
-    for match in facts.finditer(answer_lower):
-        # A denial reaches only its own clause. "Es regnet nicht und es hat 14
-        # Grad" denies rain, not the temperature, so conjunctions and
-        # prepositions that open a new phrase end the scope as well, unless
-        # the preposition is itself negated ("nicht bei 14 Grad").
-        clause = re.split(
-            r"[.!?;,:]|\b(?:und|aber|sondern)\b|(?<!nicht\s)(?<!kein\s)(?<!keine\s)\b(?:bei|mit)\b",
-            answer_lower[: match.start()],
-        )[-1]
-        denied = re.search(r"\b(?:nicht|kein\w*|weder|not|never)\b(?:\s+\w+){0,5}\s*$", clause)
-        affirmed.append(not bool(denied))
-    wrong_units = re.search(
-        r"(?<![\d.,])14(?:[.,]0+)?\s*(?:grad\s*)?(?:°\s*f\b|fahrenheit\b|f\b)", answer_lower
-    )
-    has_data = bool(affirmed) and all(affirmed) and not wrong_units
+
+    has_any_affirmed_temp = False
+    has_wrong_temp = False
+    for match in _TC16_TEMP_MENTION.finditer(answer_lower):
+        if _tc16_is_denied(answer_lower, match.start()):
+            continue
+        has_any_affirmed_temp = True
+        try:
+            val = float(match.group(1).replace("\u2212", "-").replace(",", "."))
+        except ValueError:
+            continue
+        unit = match.group(2).lower()
+        if "f" in unit or "℉" in unit:
+            if abs(val - 57.2) >= 0.5:
+                has_wrong_temp = True
+        elif abs(val - 14.0) > 1e-9:
+            has_wrong_temp = True
+
+    if temp_14_denied and not temp_14_affirmed:
+        has_wrong_temp = True
+    has_data = (temp_14_affirmed or cond_affirmed) and not has_wrong_temp
+
     weather_success = any(
         _result_matches_if_present(state, call, _tc16_weather_result_is_munich)
         for call in matching_weather_calls
@@ -176,9 +231,11 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
     weather_failed = any(
         _has_explicit_tool_error(state, call) for call in _counted_calls(matching_weather_calls)
     )
-    answered_about_error = generic_score >= 2 and weather_failed and not has_data
-    if used_weather and answer_in_german and answered_about_error:
-        if generic_score >= 4:
+    if used_weather and weather_failed and (has_data or has_any_affirmed_temp):
+        return _fail("Fabricated weather data after get_weather returned an error.")
+    reports_error = bool(_TC16_ERROR_REPORT.search(answer_lower))
+    if used_weather and answer_in_german and weather_failed and reports_error:
+        if _TC16_SERVICE_ERROR_CAUSE.search(answer_lower) or generic_score >= 4:
             return _pass("Used get_weather and clearly reported the service error in German.")
         return _partial(
             "Reported the weather tool error in German, but did not receive weather data."
@@ -187,7 +244,7 @@ def _tc16_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _pass("Used get_weather for München and responded in German.")
     if used_weather and answer_in_german and not has_data:
         return _partial(
-            "Used get_weather and responded in German but did not surface the temperature."
+            "Used get_weather and responded in German but did not surface an accurate temperature."
         )
     if used_weather and not answer_in_german:
         return _partial(

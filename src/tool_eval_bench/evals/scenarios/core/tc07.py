@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -13,6 +14,10 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    _is_negated,
+    forbid_unrequested_side_effects,
+)
+from tool_eval_bench.evals.helpers import (
     addressed_recipients as _addressed_recipients,
 )
 from tool_eval_bench.evals.helpers import (
@@ -22,7 +27,6 @@ from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
-from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback as _generic_tool_fallback,
 )
@@ -48,10 +52,35 @@ from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.core._shared import (
+    _THOUSANDS_COMMA,
     _answer_affirms_exact_value,
     _positive_argument_contains,
     _result_matches_if_present,
     _tc03_email_result_is_sent,
+)
+
+_TC07_MILLIONS = re.compile(
+    r"(?<![\d.])(?:([-\u2212])[$€£¥]?|[$€£¥]([-\u2212]))?4\.40*(?!\d|\.\d)"
+    r"\s*(?:m\b|mm\b|mil\b|million\b)",
+    re.IGNORECASE,
+)
+_TC07_THOUSANDS = re.compile(
+    r"(?<![\d.])(?:([-\u2212])[$€£¥]?|[$€£¥]([-\u2212]))?4400(?:\.0+)?(?!\d|\.\d)"
+    r"\s*(?:k\b|thousand\b)",
+    re.IGNORECASE,
+)
+_TC07_MANAGER_QUERIES = (
+    "manager",
+    "managers",
+    "boss",
+    "supervisor",
+    "lead",
+    "director",
+    "management",
+)
+_TC07_NEGATED_MANAGER = re.compile(
+    r"\b(?:not|no|without|except|exclude|excluding)\s+(?:the\s+)?managers?\b",
+    re.IGNORECASE,
 )
 
 
@@ -62,6 +91,17 @@ def _tc07_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             "search_files",
         )
     if call.name == "read_file":
+        file_id = _normalize(_as_str(call.arguments.get("file_id")))
+        if file_id != "file_091":
+            return _noise(
+                {
+                    "error": (
+                        f"File not found: {call.arguments.get('file_id')!r}. "
+                        "Use a file_id returned by search_files."
+                    )
+                },
+                "read_file",
+            )
         return _noise(
             {
                 "content": "Department budgets: Engineering $2.1M, Marketing $800K, Sales $1.5M. Total: $4.4M"
@@ -115,14 +155,29 @@ def _tc07_contact_result_has_manager(payload: Any) -> bool:
     )
 
 
+def _tc07_affirms_scaled(body: str, pattern: re.Pattern[str]) -> bool:
+    collapsed = _THOUSANDS_COMMA.sub("", body)
+    for match in pattern.finditer(collapsed):
+        if match.group(1) or match.group(2):
+            continue
+        if not _is_negated(collapsed[max(0, match.start() - 120) : match.start()]):
+            return True
+    return False
+
+
 def _tc07_body_states_total(body: str) -> bool:
     """Return whether an email body reports the $4.4M total.
 
-    Equivalent decimal and full-dollar spellings ("$4.4M", "$4.40M",
-    "$4,400,000", "$4,400,000.00") report the same value; wrong signs or
-    rounded-away digits ("-$4.4M", "$4M") do not.
+    Equivalent scaled and full-dollar spellings ("$4.4M", "$4.40M",
+    "$4.4 million", "$4,400K", "$4,400,000", "$4,400,000.00") report the same
+    value; wrong magnitudes ("$4.4K", "$4.40"), wrong signs ("-$4.4M"), or
+    rounded-away digits ("$4M") do not.
     """
-    return _answer_affirms_exact_value(body, "4.4") or _answer_affirms_exact_value(body, "4400000")
+    return (
+        _tc07_affirms_scaled(body, _TC07_MILLIONS)
+        or _tc07_affirms_scaled(body, _TC07_THOUSANDS)
+        or _answer_affirms_exact_value(body, "4400000", exclude_scale_suffix=True)
+    )
 
 
 @forbid_unrequested_side_effects({"send_email": 1})
@@ -133,20 +188,37 @@ def _tc07_eval(state: ScenarioState) -> ScenarioEvaluation:
         for c in _tool_calls_by_name(state, "read_file")
         if _normalize(_as_str(c.arguments.get("file_id"))) == "file_091"
     ]
-    contact_calls = [
-        c
-        for c in _tool_calls_by_name(state, "get_contacts")
-        if _positive_argument_contains(c.arguments.get("query"), "manager")
-    ]
+    all_contact_calls = _tool_calls_by_name(state, "get_contacts")
+    all_email_calls = _tool_calls_by_name(state, "send_email")
     email_calls = [
         c
-        for c in _tool_calls_by_name(state, "send_email")
+        for c in all_email_calls
         if (
             _recipient_values(c.arguments.get("to")) == ["jordan.park@company.com"]
             and _addressed_recipients(c) == ["jordan.park@company.com"]
             and _tc07_body_states_total(_as_str(c.arguments.get("body")))
         )
     ]
+    contact_calls = [
+        c
+        for c in all_contact_calls
+        if not _TC07_NEGATED_MANAGER.search(_normalize(_as_str(c.arguments.get("query"))))
+        and (
+            any(
+                _positive_argument_contains(c.arguments.get("query"), term)
+                for term in _TC07_MANAGER_QUERIES
+            )
+            or (
+                bool(email_calls)
+                and bool(state.tool_results)
+                and _result_matches_if_present(state, c, _tc07_contact_result_has_manager)
+            )
+        )
+    ]
+    if all_email_calls and (not read_calls or not contact_calls):
+        return _fail(
+            "Sent the email without both reading the budget report and looking up the manager."
+        )
 
     semantic_search_calls = [
         c

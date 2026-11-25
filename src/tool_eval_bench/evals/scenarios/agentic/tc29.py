@@ -26,6 +26,9 @@ from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
+    negated_before as _negated_before,
+)
+from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
@@ -41,7 +44,8 @@ from tool_eval_bench.evals.helpers import (
 # The output as a whole sequence: "[0, 1, 4, 9, 16, 25]" contains the expected
 # digits as a substring, and used to pass.
 _TC29_OUTPUT = re.compile(
-    r"(?<![\d.])(?<!\d,)(?<!\d,\s)0,\s*1,\s*4,\s*9,\s*16(?!\s*,\s*-?\d)(?!\d)"
+    r"(?<![\d.])(?<!\d,)(?<!\d,\s)0,\s*1,\s*4,\s*9(?:,\s*|\s*,?\s+and\s+)16"
+    r"(?!\s*(?:,\s*-?\d|,?\s+and\s+-?\d))(?!\d)"
 )
 _TC29_SQUARING = re.compile(
     r"\bsquar\w*|\bpower\s+of\s+(?:2|two)\b|\bsecond\s+power\b|\btimes\s+itself\b"
@@ -364,6 +368,18 @@ def _tc29_example_spans(answer: str) -> list[tuple[int, int]]:
     return spans
 
 
+_TC29_NEGATED_LIST_PREFIX = re.compile(
+    r"\b(?:instead\s+of|rather\s+than|as\s+opposed\s+to|unlike)\s*$", re.IGNORECASE
+)
+_TC29_INTERVAL_PREFIX = re.compile(
+    r"\b(?:in|on|over|interval|range|from|between|within)\s*$", re.IGNORECASE
+)
+_TC29_INDEX_PREFIX = re.compile(
+    r"\b(?:element|index|item|position|entry|slot|step|at)\s*$", re.IGNORECASE
+)
+_TC29_INDEX_SUFFIX = re.compile(r"^\s*(?:is|=|:|->|\u2192)")
+
+
 def _tc29_states_wrong_list(answer: str, *, allow_examples: bool) -> bool:
     """Whether the answer writes out a list other than the result or the range.
 
@@ -372,11 +388,27 @@ def _tc29_states_wrong_list(answer: str, *, allow_examples: bool) -> bool:
     on other input is the model's misreading of range(5).
     """
     examples = _tc29_example_spans(answer) if allow_examples else []
-    return any(
-        _tc29_ints(match.group(1)) not in _TC29_ALLOWED_LISTS
-        and not any(start <= match.start() and match.end() <= end for start, end in examples)
-        for match in _TC29_INT_LIST.finditer(answer)
-    )
+    for match in _TC29_INT_LIST.finditer(answer):
+        parsed = _tc29_ints(match.group(1))
+        if parsed in _TC29_ALLOWED_LISTS:
+            continue
+        if any(start <= match.start() and match.end() <= end for start, end in examples):
+            continue
+        prefix = answer[max(0, match.start() - 120) : match.start()]
+        suffix = answer[match.end() : match.end() + 40]
+        if _negated_before(prefix, suffix) or _TC29_NEGATED_LIST_PREFIX.search(prefix):
+            continue
+        if parsed == (0, 4) and _TC29_INTERVAL_PREFIX.search(prefix):
+            continue
+        if (
+            parsed is not None
+            and len(parsed) == 1
+            and not re.search(r"(?:->|=>|\u2192)\s*`?$", prefix)
+            and (_TC29_INDEX_PREFIX.search(prefix) or _TC29_INDEX_SUFFIX.search(suffix))
+        ):
+            continue
+        return True
+    return False
 
 
 def _tc29_handle(state: ScenarioState, call: ToolCallRecord) -> Any:

@@ -160,9 +160,11 @@ def test_tc72_email_before_reading_backup_fails_instead_of_partial() -> None:
     )
     assert email_first.status is ScenarioStatus.FAIL
 
-    # Reading the backup first and then emailing still scores PARTIAL when skipping file_404.
+    # Reading the backup first (after discovering files) and then emailing still scores PARTIAL
+    # when skipping file_404.
     backup_first = replay(
         "TC-72",
+        turn(("search_files", {"query": "Project Alpha"})),
         turn(("get_contacts", {"query": "Dana"}), ("read_file", {"file_id": "file_405"})),
         turn(
             (

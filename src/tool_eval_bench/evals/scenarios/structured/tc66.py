@@ -93,6 +93,15 @@ def _tc66_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return generic_tool_fallback(call)
 
 
+_TC66_BROAD_QUERIES = frozenset({"", "all", "*", "contacts"})
+
+
+def _tc66_query_names_engineering(value: Any) -> bool:
+    return any(
+        positive_argument_contains(value, term) for term in ("engineering", "engineer", "engineers")
+    )
+
+
 @forbid_unrequested_side_effects()
 def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     def contacts_result_is_engineering(payload: Any) -> bool:
@@ -128,8 +137,9 @@ def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     # empty/broad query is fine — the contact data itself is verified below.
     # Only a query aimed at a different group is wrong.
     contacts_query = normalize(as_str(contacts_call.arguments.get("query")))
-    if contacts_query not in ("", "all", "*", "contacts") and not positive_argument_contains(
-        contacts_call.arguments.get("query"), "engineering"
+    used_broad_lookup = contacts_query in _TC66_BROAD_QUERIES
+    if not used_broad_lookup and not _tc66_query_names_engineering(
+        contacts_call.arguments.get("query")
     ):
         return _partial("Called get_contacts, but looked up the wrong contact group.")
     if not result_is_usable_if_present(state, contacts_call):
@@ -180,14 +190,15 @@ def _tc66_eval(state: ScenarioState) -> ScenarioEvaluation:
     if actual_contacts != expected_contacts:
         return _partial("Contacts don't match tool result data.")
     # The schema types `query` as a bare string with no description, and the
-    # prompt says "all engineering contacts". "Engineering" is also the exact
-    # spelling of the department field the model is echoing, so any string
-    # naming engineering answers the schema.
+    # prompt says "all engineering contacts". Accept any string naming
+    # engineering/engineer(s), or echoing the accepted broad lookup query when
+    # the model listed all contacts and filtered client-side.
     query_field = data.get("query")
-    query_names_engineering = isinstance(query_field, str) and positive_argument_contains(
-        query_field, "engineering"
+    query_matches = isinstance(query_field, str) and (
+        _tc66_query_names_engineering(query_field)
+        or (used_broad_lookup and normalize(query_field) == contacts_query)
     )
-    if not query_names_engineering or set(data) != {"query", "total", "contacts"}:
+    if not query_matches or set(data) != {"query", "total", "contacts"}:
         return _partial("Top-level contact fields do not match the requested schema and query.")
 
     return _pass("Produced schema-compliant nested JSON with correct contact data from tool.")

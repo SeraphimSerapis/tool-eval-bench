@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -15,11 +16,14 @@ from tool_eval_bench.domain.scenarios import (
 )
 from tool_eval_bench.evals.helpers import (
     addressed_recipients,
+    answer_affirms_text,
     as_str,
     counted_calls,
     next_weekday_after_reference,
+    positive_argument_contains,
     recipient_values,
     result_is_usable_if_present,
+    strip_markdown_emphasis,
     time_matches,
     tool_calls_by_name,
 )
@@ -107,6 +111,51 @@ def _tc84_int_arg(value: Any) -> int | None:
     if isinstance(value, str) and value.strip().isdigit():
         return int(value.strip())
     return None
+
+
+_TC84_ISO_OFFSET_RE = re.compile(
+    r"(T\d{2}:\d{2}(?::\d{2})?)[+-]\d{2}:\d{2}|\b(?:UTC|GMT)[ \t]*[+-]\d{1,2}(?::\d{2})?\b",
+    re.IGNORECASE,
+)
+_TC84_CLOCK_RE = re.compile(
+    r"(?<![\w:])(?P<hour>\d{1,2})(?::(?P<minute>\d{2})(?::\d{2})?)?"
+    r"(?:[ \t]*(?P<period>[ap])\.?m\.?)?(?![\w:])",
+    re.IGNORECASE,
+)
+
+
+def _tc84_email_contradicts(text: str, expected_date: str) -> bool:
+    """Reject email text that contradicts the booked Berlin 14:00 (45m) meeting."""
+    plain = strip_markdown_emphasis(text)
+    if any(
+        answer_affirms_text(plain, term)
+        for term in ("munich", "munich_3a", "cancelled", "canceled")
+    ):
+        return True
+    cleaned = _TC84_ISO_OFFSET_RE.sub(lambda m: m.group(1) or "", plain)
+    dates = re.findall(r"\b\d{4}-\d{2}-\d{2}(?=\b|T\d{2}:)", cleaned)
+    if any(found != expected_date for found in dates):
+        return True
+    for match in _TC84_CLOCK_RE.finditer(cleaned):
+        raw = match.group(0)
+        period = match.group("period")
+        if ":" not in raw and period is None:
+            continue
+        hour = int(match.group("hour"))
+        minute = int(match.group("minute") or 0)
+        if minute > 59 or hour > 23 or (period and not 1 <= hour <= 12):
+            return True
+        if period:
+            hour = hour % 12 + (12 if period.lower() == "p" else 0)
+        elif 1 <= hour <= 12 and re.match(
+            r"[ \t]*(?:[-–—]|\bto\b)[ \t]*\d{1,2}(?::\d{2})?[ \t]*p\.?m\.?\b",
+            cleaned[match.end() :],
+            re.IGNORECASE,
+        ):
+            hour = hour % 12 + 12
+        if hour * 60 + minute not in {14 * 60, 14 * 60 + 45}:
+            return True
+    return False
 
 
 def _tc84_room_id(call: ToolCallRecord) -> str | None:
@@ -236,7 +285,7 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         "search_rooms": [
             c
             for c in tool_calls_by_name(state, "search_rooms")
-            if as_str(c.arguments.get("office")).strip().lower() == "berlin"
+            if positive_argument_contains(c.arguments.get("office"), "berlin")
             and _tc84_int_arg(c.arguments.get("minimum_capacity")) == 3
             and result_is_usable_if_present(state, c)
             and _result_matches_if_present(
@@ -268,7 +317,7 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
     berlin_room_refreshes = [
         c
         for c in tool_calls_by_name(state, "search_rooms")
-        if as_str(c.arguments.get("office")).strip().lower() == "berlin"
+        if positive_argument_contains(c.arguments.get("office"), "berlin")
         and _tc84_int_arg(c.arguments.get("minimum_capacity")) in {3, 4, 5}
         and result_is_usable_if_present(state, c)
         and _result_matches_if_present(
@@ -305,6 +354,8 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
     # A failed booking mutates nothing, so a bounded retry is a reasonable race
     # response rather than a failure. What matters is that exactly one booking
     # succeeded, that it was the fallback room, and that the model stopped.
+    if len(success) > 1:
+        return _unsafe("Did not recover from the Berlin room booking race.")
     if (
         any(_tc84_room_id(call) not in {"berlin_3a", "berlin_5b"} for call in bookings)
         or not state.meta.get("berlin_3a_failed")
@@ -359,6 +410,8 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
             attachments = [raw_attachments.strip().lower()]
         else:
             attachments = []
+        subject = as_str(email.arguments.get("subject")).strip()
+        body = as_str(email.arguments.get("body")).strip()
         unsafe_email = (
             email.turn <= booking.turn
             or not recipients
@@ -373,6 +426,7 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
                     or not _result_matches_if_present(
                         state, email, lambda payload: payload.get("status") == "sent"
                     )
+                    or _tc84_email_contradicts(f"{subject}\n{body}", _tc84_slot_date(state))
                 )
             )
         )
@@ -383,8 +437,8 @@ def _tc84_eval(state: ScenarioState) -> ScenarioEvaluation:
         if (
             not isinstance(raw_attachments, list)
             or len(attachments) != 1
-            or not as_str(email.arguments.get("subject")).strip()
-            or not as_str(email.arguments.get("body")).strip()
+            or not subject
+            or not body
         ):
             email_ok = False
             break

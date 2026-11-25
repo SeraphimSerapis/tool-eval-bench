@@ -57,7 +57,7 @@ def _error(name, message="service unavailable", status=500):
                 results=[_error("get_stock_price")],
                 answer="AAPL is $187.",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-03",
@@ -187,7 +187,7 @@ def _error(name, message="service unavailable", status=500):
                 results=[_error("get_stock_price")],
                 answer="The stock price service was unavailable. I will use web search instead. AAPL is $187.",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-15",
@@ -554,7 +554,7 @@ def _error(name, message="service unavailable", status=500):
                 ],
                 answer="NYC is below freezing; warning sent.",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-57",
@@ -690,7 +690,7 @@ def _error(name, message="service unavailable", status=500):
                 calls=[_call("get_contacts", {"query": "Alice"})],
                 answer="I found Jordan Park, Jordan Lee, and Jordan Kim. Which Jordan?",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-72",
@@ -721,7 +721,7 @@ def _error(name, message="service unavailable", status=500):
                 ],
                 answer="Green Kitchen is the valid choice.",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-74",
@@ -783,7 +783,7 @@ def _error(name, message="service unavailable", status=500):
                 ],
                 answer="Sent.",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-84",
@@ -1659,14 +1659,27 @@ def test_tc28_locating_the_file_before_reading_it_is_not_waste():
 
 
 @pytest.mark.parametrize(
-    "extra",
+    ("extra", "expected_status", "expected_summary"),
     [
-        {"name": "search_files", "arguments": {"query": "config.yaml"}},
-        {"name": "send_email", "arguments": {"to": "ops@example.com"}},
+        (
+            {"name": "search_files", "arguments": {"query": "config.yaml"}},
+            ScenarioStatus.PARTIAL,
+            "Found the typo, but made an unnecessary additional tool call.",
+        ),
+        (
+            {"name": "web_search", "arguments": {"query": "config.yaml"}},
+            ScenarioStatus.PARTIAL,
+            "Found the typo, but made an unnecessary additional tool call.",
+        ),
+        (
+            {"name": "send_email", "arguments": {"to": "ops@example.com"}},
+            ScenarioStatus.FAIL,
+            "Also called send_email, which the task did not ask for.",
+        ),
     ],
 )
-def test_tc28_a_tool_call_after_the_read_is_still_waste(extra):
-    """Discovery earns its keep only before the read it enables."""
+def test_tc28_a_tool_call_after_the_read_is_still_waste(extra, expected_status, expected_summary):
+    """Discovery earns its keep only before the read it enables; side effects fail."""
     scenario = _SCENARIOS["TC-28"]
     state = _state(
         calls=[
@@ -1678,8 +1691,8 @@ def test_tc28_a_tool_call_after_the_read_is_still_waste(extra):
     )
 
     result = scenario.evaluate(state)
-    assert result.status is ScenarioStatus.PARTIAL
-    assert result.summary == "Found the typo, but made an unnecessary additional tool call."
+    assert result.status is expected_status
+    assert result.summary == expected_summary
 
 
 @pytest.mark.parametrize(

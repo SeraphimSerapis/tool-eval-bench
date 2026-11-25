@@ -53,7 +53,13 @@ from tool_eval_bench.evals.scenarios.large_toolset._shared import (
 )
 
 _TC37_CELSIUS_MENTION_RE = re.compile(
-    r"(?<![A-Za-z0-9])-?\d+(?:\.\d+)?\s*(?:°\s*c\b|°(?!\s*f\b)|degrees?\b|\bcelsius\b)",
+    r"(?<![A-Za-z0-9])-?\d+(?:\.\d+)?\s*"
+    r"(?:°\s*c\b|°(?!\s*f(?:ahrenheit)?\b)|"
+    r"degrees?(?!\s*(?:f\b|fahrenheit\b|k\b|kelvin\b))\b|\bcelsius\b)",
+    re.IGNORECASE,
+)
+_TC37_FAHRENHEIT_MENTION_RE = re.compile(
+    r"(?<![A-Za-z0-9])-?\d+(?:\.\d+)?\s*(?:°\s*f\b|(?:degrees?\s+)?fahrenheit\b)",
     re.IGNORECASE,
 )
 
@@ -63,7 +69,13 @@ def _tc37_weather_result_is_berlin(payload: Any) -> bool:
         return False
     if "location" in payload and not _positive_argument_contains(payload.get("location"), "berlin"):
         return False
-    if "units" in payload and _normalize(_as_str(payload.get("units"))) != "celsius":
+    units = _normalize(_as_str(payload.get("units")))
+    if units == "fahrenheit":
+        temp = _numeric_value(payload.get("temperature"))
+        return (temp is not None and abs(temp - 46.4) < 0.5) or _answer_affirms_text(
+            _as_str(payload.get("condition")), "overcast"
+        )
+    if "units" in payload and units != "celsius":
         return False
     return _numeric_value(payload.get("temperature")) == 8 or _answer_affirms_text(
         _as_str(payload.get("condition")), "overcast"
@@ -74,6 +86,17 @@ def _tc37_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
         if "units" in call.arguments and call.arguments["units"] not in ("celsius", "fahrenheit"):
             return _noise({"error": "units must be celsius or fahrenheit"}, call.name)
+        if call.arguments.get("units") == "fahrenheit":
+            return _noise(
+                {
+                    "location": "Berlin",
+                    "temperature": 46.4,
+                    "units": "fahrenheit",
+                    "condition": "Overcast",
+                    "humidity": 72,
+                },
+                "get_weather",
+            )
         return _noise(
             {
                 "location": "Berlin",
@@ -133,12 +156,21 @@ def _tc37_eval(state: ScenarioState) -> ScenarioEvaluation:
                 "get_weather did not return usable Berlin weather data, "
                 "so Berlin weather cannot be confirmed."
             )
-        # Verify the model surfaced actual weather data (temp 8 or condition),
-        # matching TC-01, without stating an inaccurate Celsius temperature.
-        has_temp = _answer_affirms_rounded_value(state.final_answer, "8")
+        # Verify the model surfaced actual weather data (temp or condition),
+        # matching TC-01, without stating an inaccurate temperature in the
+        # returned scale.
+        is_fahrenheit = weather_call.arguments.get("units") == "fahrenheit"
+        has_temp = (
+            _answer_affirms_rounded_value(state.final_answer, "46.4")
+            or _answer_affirms_rounded_value(state.final_answer, "8")
+            if is_fahrenheit
+            else _answer_affirms_rounded_value(state.final_answer, "8")
+        )
         has_condition = _answer_affirms_text(state.final_answer, "overcast")
         wrong_temp = not has_temp and bool(
-            _TC37_CELSIUS_MENTION_RE.search(_normalize(state.final_answer))
+            (_TC37_FAHRENHEIT_MENTION_RE if is_fahrenheit else _TC37_CELSIUS_MENTION_RE).search(
+                _normalize(state.final_answer)
+            )
         )
         if wrong_temp:
             return _partial(

@@ -86,6 +86,42 @@ def _tc30_prints_text(statements: list[ast.stmt], expected: str) -> bool:
     return _tc30_is_text_literal(_tc30_print_argument(statements[0]), expected)
 
 
+def _tc30_prints_calc_and_text(
+    statements: list[ast.stmt], calculated_names: set[str], expected: str
+) -> bool:
+    if len(statements) != 2:
+        return False
+    first_arg = _tc30_print_argument(statements[0])
+    return (
+        first_arg is not None
+        and _tc30_is_calculation(first_arg, calculated_names)
+        and _tc30_is_text_literal(_tc30_print_argument(statements[1]), expected)
+    )
+
+
+def _tc30_orelse_matches(
+    orelse: list[ast.stmt],
+    calculated_names: set[str],
+    expected: str,
+    *,
+    expect_eq: bool,
+    allow_leading_calc_print: bool = False,
+) -> bool:
+    if _tc30_prints_text(orelse, expected):
+        return True
+    if allow_leading_calc_print and _tc30_prints_calc_and_text(orelse, calculated_names, expected):
+        return True
+    if len(orelse) == 1 and isinstance(orelse[0], ast.If) and not orelse[0].orelse:
+        elif_stmt = orelse[0]
+        compares, is_eq = _tc30_compares_result_to_four(elif_stmt.test, calculated_names)
+        if compares and is_eq == expect_eq:
+            return _tc30_prints_text(elif_stmt.body, expected) or (
+                allow_leading_calc_print
+                and _tc30_prints_calc_and_text(elif_stmt.body, calculated_names, expected)
+            )
+    return False
+
+
 def _tc30_compares_result_to_four(
     comparison: ast.expr, calculated_names: set[str]
 ) -> tuple[bool, bool]:
@@ -155,7 +191,7 @@ def _tc30_is_expected_workflow(code: str) -> bool:
         if consumed:
             continue
 
-        if not printed_calculation or index != len(module.body) - 1:
+        if index != len(module.body) - 1:
             return False
 
         if isinstance(statement, ast.If):
@@ -165,9 +201,48 @@ def _tc30_is_expected_workflow(code: str) -> bool:
             if not compares_result_to_four:
                 return False
             body_expected, else_expected = ("correct", "wrong") if is_eq else ("wrong", "correct")
-            return _tc30_prints_text(statement.body, body_expected) and _tc30_prints_text(
-                statement.orelse, else_expected
+            if printed_calculation:
+                return _tc30_prints_text(statement.body, body_expected) and _tc30_orelse_matches(
+                    statement.orelse,
+                    calculated_names,
+                    else_expected,
+                    expect_eq=not is_eq,
+                )
+            # Also accept printing the calculation inside the branch itself
+            # (e.g. `x = 2 + 2; if x == 4: print(x); print("correct") ...`).
+            if not calculated_names:
+                return False
+            body_ok = (
+                _tc30_prints_calc_and_text(statement.body, calculated_names, body_expected)
+                if is_eq
+                else _tc30_prints_text(statement.body, body_expected)
+                or _tc30_prints_calc_and_text(statement.body, calculated_names, body_expected)
             )
+            if not body_ok:
+                return False
+            if is_eq:
+                return _tc30_orelse_matches(
+                    statement.orelse,
+                    calculated_names,
+                    else_expected,
+                    expect_eq=False,
+                    allow_leading_calc_print=True,
+                )
+            return _tc30_prints_calc_and_text(
+                statement.orelse, calculated_names, else_expected
+            ) or (
+                len(statement.orelse) == 1
+                and isinstance(statement.orelse[0], ast.If)
+                and not statement.orelse[0].orelse
+                and _tc30_compares_result_to_four(statement.orelse[0].test, calculated_names)
+                == (True, True)
+                and _tc30_prints_calc_and_text(
+                    statement.orelse[0].body, calculated_names, else_expected
+                )
+            )
+
+        if not printed_calculation:
+            return False
 
         argument = _tc30_print_argument(statement)
         if isinstance(argument, ast.IfExp):
@@ -207,13 +282,59 @@ def _tc30_is_print_calculation(code: str) -> bool:
     return printed
 
 
+def _tc30_is_four_assignment(statement: ast.stmt, four_names: set[str]) -> bool:
+    if (
+        isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and (
+            _tc30_is_integer(statement.value, 4)
+            or (isinstance(statement.value, ast.Name) and statement.value.id in four_names)
+        )
+    ):
+        four_names.add(statement.targets[0].id)
+        return True
+    return False
+
+
 def _tc30_is_print_text(code: str, expected: str) -> bool:
-    """Recognize exactly one print of the expected branch text."""
+    """Recognize printing the expected branch text, directly or by branching on literal 4."""
     try:
         module = ast.parse(code, mode="exec")
     except (SyntaxError, ValueError, TypeError):
         return False
-    return _tc30_prints_text(module.body, expected)
+    if _tc30_prints_text(module.body, expected):
+        return True
+    four_names: set[str] = set()
+    for index, statement in enumerate(module.body):
+        if _tc30_is_four_assignment(statement, four_names):
+            continue
+        if index != len(module.body) - 1 or not four_names:
+            return False
+        if isinstance(statement, ast.If):
+            compares, is_eq = _tc30_compares_result_to_four(statement.test, four_names)
+            if not compares:
+                return False
+            taken_body = statement.body if is_eq else statement.orelse
+            other_body = statement.orelse if is_eq else statement.body
+            other_expected = "wrong" if expected == "correct" else "correct"
+            return _tc30_prints_text(taken_body, expected) and (
+                not other_body
+                or _tc30_orelse_matches(other_body, four_names, other_expected, expect_eq=not is_eq)
+            )
+        argument = _tc30_print_argument(statement)
+        if isinstance(argument, ast.IfExp):
+            compares, is_eq = _tc30_compares_result_to_four(argument.test, four_names)
+            if not compares:
+                return False
+            taken_expr = argument.body if is_eq else argument.orelse
+            other_expr = argument.orelse if is_eq else argument.body
+            other_expected = "wrong" if expected == "correct" else "correct"
+            return _tc30_is_text_literal(taken_expr, expected) and _tc30_is_text_literal(
+                other_expr, other_expected
+            )
+        return False
+    return False
 
 
 def _tc30_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -248,6 +369,14 @@ def _tc30_code_result_has_stdout(
         and _as_str(result.result.get("stdout")).strip() == expected_stdout
         for result in results
     )
+
+
+def _tc30_is_valid_python_syntax(code: str) -> bool:
+    try:
+        ast.parse(code, mode="exec")
+    except (SyntaxError, ValueError, TypeError):
+        return False
+    return True
 
 
 def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
@@ -314,14 +443,27 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
             _tc30_is_print_text(_as_str(call.arguments.get("code")), "wrong") for call in code_calls
         ):
             return _fail("Ran the 'wrong' branch despite the result being 4.")
-        if not any(
-            _tc30_is_print_calculation(_as_str(call.arguments.get("code")))
-            or _tc30_is_expected_workflow(_as_str(call.arguments.get("code")))
+        calc_turns = [
+            call.turn
             for call in code_calls
-        ):
+            if _tc30_is_print_calculation(_as_str(call.arguments.get("code")))
+        ]
+        workflow_calls = [
+            call
+            for call in code_calls
+            if _tc30_is_expected_workflow(_as_str(call.arguments.get("code")))
+        ]
+        correct_turns = [
+            call.turn
+            for call in code_calls
+            if _tc30_is_print_text(_as_str(call.arguments.get("code")), "correct")
+        ]
+        if not workflow_calls and not calc_turns:
             return _fail(
                 "Made multiple run_code calls without executing the requested 2+2 calculation."
             )
+        if not workflow_calls and correct_turns and min(correct_turns) <= min(calc_turns):
+            return _fail("Ran the conditional branch before receiving the calculation result.")
         return _partial(
             f"Made {len(code_calls)} run_code calls instead of one complete call or two dependent calls."
         )
@@ -341,6 +483,8 @@ def _tc30_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial("Ran the correct branch but skipped the requested calculation.")
     if _tc30_is_print_calculation(raw_first_code):
         return _partial("Ran the calculation but didn't follow up with the conditional.")
+    if not _tc30_is_valid_python_syntax(raw_first_code):
+        return _fail("The run_code call failed with invalid Python syntax.")
     return _partial("Made 1 run_code call — conditional logic unclear.")
 
 

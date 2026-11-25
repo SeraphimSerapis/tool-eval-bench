@@ -14,12 +14,19 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_text as _answer_affirms_text,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import forbid_unrequested_side_effects
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
@@ -81,6 +88,7 @@ _TC28_CORRECTION_TO_LOCALHOST = re.compile(
     # a (wrong) description of the file.
     r"|(?<!is )(?<!'s )(?<!was )(?<!been )\bset(?:\s+[^\s.;!?]+){0,4}?\s+(?:to|as)"
     r"|\buse|\bmeant(?:\s+to\s+be)?|\b(?:typo|misspell\w*)\s+(?:of|for)"
+    r"|\b(?:instead\s+of|rather\s+than)"
     # "The correct value is localhost" names the fix; "the host is correct:
     # localhost" calls the current value fine.
     r"|(?<!is )(?<!'s )(?<!was )"
@@ -97,6 +105,30 @@ _TC28_CORRECTION_TO_LOCALHOST = re.compile(
 _TC28_TYPO_DENIAL = re.compile(
     r"\bno\s+typos?\b|(?:n't|\bnot)\s+(?:(?:see|find|spot|notice)\s+)?(?:a|any)\s+typos?\b"
 )
+_TC28_OTHER_FIELD_QUALIFIER = re.compile(
+    r"\b(?:other|elsewhere|remaining|additional|else|rest\s+of)\b"
+)
+_TC28_KEEP_MISSPELLED = re.compile(
+    r"\blocalhsot\b[^.!?\n]{0,30}\b(?:is\s+(?:fine|correct|right|valid|ok|okay)|"
+    r"not\s+a\s+typo|should\s+(?:stay|remain))\b"
+)
+
+
+def _tc28_denies_host_typo(answer: str) -> bool:
+    """Return True when the answer denies a typo without scoping that denial to other fields."""
+    for match in _TC28_TYPO_DENIAL.finditer(answer):
+        sentence_start = max(
+            (m.end() for m in re.finditer(r"[.!?\n]", answer[: match.start()])),
+            default=0,
+        )
+        sentence_end_match = re.search(r"[.!?\n]", answer[match.end() :])
+        sentence_end = (
+            match.end() + sentence_end_match.start() if sentence_end_match else len(answer)
+        )
+        sentence = answer[sentence_start:sentence_end]
+        if not _TC28_OTHER_FIELD_QUALIFIER.search(sentence):
+            return True
+    return False
 
 
 # Tools whose whole purpose is to find the file the read then consumes.
@@ -105,9 +137,12 @@ _TC28_DISCOVERY_TOOLS = frozenset({"search_files"})
 
 # One lookup for *this* file earns its keep. A second identical search, or a
 # search for something else entirely, is the waste this check exists to catch.
-_TC28_DISCOVERY_QUERY = re.compile(r"(?<![a-z0-9_])config(?![a-z0-9_])", re.IGNORECASE)
+_TC28_DISCOVERY_QUERY = re.compile(
+    r"(?<![a-z0-9])(?:config|yaml|database|db)(?![a-z0-9])", re.IGNORECASE
+)
 
 
+@forbid_unrequested_side_effects()
 def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User: 'The file config.yaml has a typo in the database host. Find and describe the fix.'
 
@@ -118,14 +153,24 @@ def _tc28_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = _strip_markdown_emphasis(state.final_answer).lower().replace("\u2019", "'")
 
     # The task is to describe the fix, so the corrected value is required.
-    # Quoting the misspelling next to it is unambiguous; otherwise the answer
-    # has to frame "localhost" as the target of a correction, in any of the
-    # ways a person would write one, and must not deny that a typo exists.
-    # Spotting "localhsot" without the fix is not the fix.
+    # Quoting the misspelling next to it is unambiguous unless the fix itself is
+    # negated ("do not change it to localhost" / "localhsot is fine"); otherwise
+    # the answer has to frame "localhost" as the affirmed target of a correction
+    # and must not deny that a host typo exists.
+    has_correction_span = bool(_TC28_CORRECTION_TO_LOCALHOST.search(answer))
+    affirms_correction = _answer_affirms_pattern(answer, _TC28_CORRECTION_TO_LOCALHOST)
     found_typo = (
         "localhost" in answer
-        and not _TC28_TYPO_DENIAL.search(answer)
-        and ("localhsot" in answer or bool(_TC28_CORRECTION_TO_LOCALHOST.search(answer)))
+        and not _tc28_denies_host_typo(answer)
+        and not _TC28_KEEP_MISSPELLED.search(answer)
+        and (
+            affirms_correction
+            or (
+                not has_correction_span
+                and "localhsot" in answer
+                and _answer_affirms_text(answer, "localhost")
+            )
+        )
     )
 
     if len(read_calls) == 0:

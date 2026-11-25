@@ -61,12 +61,17 @@ def test_reference_still_passes(sid: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("sid", "query"),
-    [("TC-18", "Hans"), ("TC-48", "Alice"), ("TC-48", "Bob"), ("TC-74", "Mark")],
+    ("sid", "query", "expected"),
+    [
+        ("TC-18", "Hans", ScenarioStatus.FAIL),
+        ("TC-48", "Alice", ScenarioStatus.PARTIAL),
+        ("TC-48", "Bob", ScenarioStatus.PARTIAL),
+        ("TC-74", "Mark", ScenarioStatus.PARTIAL),
+    ],
 )
-def test_unlooked_up_address_does_not_pass(sid: str, query: str) -> None:
+def test_unlooked_up_address_does_not_pass(sid: str, query: str, expected: ScenarioStatus) -> None:
     result = _replay(sid, _without(_trace(sid), "get_contacts", query))
-    assert result.status is ScenarioStatus.PARTIAL, result.summary
+    assert result.status is expected, result.summary
 
 
 def test_tc38_manager_lookup_that_failed_does_not_supply_the_address() -> None:

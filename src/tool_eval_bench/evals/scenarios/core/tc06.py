@@ -14,6 +14,12 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
+)
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_text as _answer_affirms_text,
+)
+from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
 )
 from tool_eval_bench.evals.helpers import (
@@ -131,6 +137,7 @@ def _tc06_eval(state: ScenarioState) -> ScenarioEvaluation:
         )
         for call in japanese_calls
     )
+    extra_other_tools = any(c.name != "translate_text" for c in state.tool_calls)
     if (
         has_spanish
         and has_japanese
@@ -138,13 +145,14 @@ def _tc06_eval(state: ScenarioState) -> ScenarioEvaluation:
         and usable_japanese
         and not invalid_bundled
         and not extraneous
+        and not extra_other_tools
     ):
-        # Verify the model surfaced the actual translations.
+        # Verify the model surfaced and affirmed the actual translations.
         answer = state.final_answer
-        has_spanish_text = _includes_text(answer, "dónde") or (
-            _includes_text(answer, "hospital") and _includes_text(answer, "cercano")
+        has_spanish_text = _answer_affirms_text(answer, "dónde") or (
+            _answer_affirms_text(answer, "hospital") and _answer_affirms_text(answer, "cercano")
         )
-        has_japanese_text = "病院" in answer or "最寄り" in answer or "どこ" in answer
+        has_japanese_text = _answer_affirms_pattern(answer, re.compile(r"病院|最寄り|どこ"))
         if has_spanish_text and has_japanese_text:
             return _pass("Issued separate translate_text calls for both languages.")
         return _partial(

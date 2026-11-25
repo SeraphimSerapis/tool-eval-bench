@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -53,6 +54,17 @@ from tool_eval_bench.evals.scenarios.extended._shared import (
 
 def _tc20_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "read_file":
+        file_id = _normalize(_as_str(call.arguments.get("file_id")))
+        if file_id != "file_q3_sales":
+            return _noise(
+                {
+                    "error": (
+                        f"File not found: {call.arguments.get('file_id')!r}. "
+                        "Use a file_id returned by search_files."
+                    )
+                },
+                "read_file",
+            )
         return _noise(
             {
                 "content": (
@@ -106,11 +118,21 @@ def _tc20_read_result_has_sales_report(payload: Any) -> bool:
     return _includes_text(content, "707,200") or _includes_text(content, "707200")
 
 
-def _tc20_calculator_result_is_average(payload: Any) -> bool:
+def _tc20_query_is_q3_sales(value: Any) -> bool:
+    spaced = re.sub(r"[_/\\-]+", " ", _as_str(value))
+    has_q3 = any(
+        _positive_argument_contains(spaced, term)
+        for term in ("q3", "quarter 3", "third quarter", "3rd quarter")
+    )
+    return has_q3 and _positive_argument_contains(spaced, "sales")
+
+
+def _tc20_calculator_result_is_valid(payload: Any) -> bool:
+    """Accept either the final average (141440) or valid regional sum (707200)."""
     if not isinstance(payload, dict) or "error" in payload:
         return False
     value = _numeric_value(payload.get("result"))
-    return value is not None and abs(value - 141440) < 1e-9
+    return value is not None and (abs(value - 141440) < 1e-9 or abs(value - 707200) < 1e-9)
 
 
 @forbid_unrequested_side_effects({"run_code": None})
@@ -123,12 +145,10 @@ def _tc20_eval(state: ScenarioState) -> ScenarioEvaluation:
     # search and read that returned something.
     search = _first_call_without_error(state, "search_files")
     read = _first_call_without_error(state, "read_file")
-    searched = bool(
-        search
-        and _positive_argument_contains(search.arguments.get("query"), "q3")
-        and _positive_argument_contains(search.arguments.get("query"), "sales")
+    searched = bool(search and _tc20_query_is_q3_sales(search.arguments.get("query")))
+    read_correct = bool(
+        read and _normalize(_as_str(read.arguments.get("file_id"))) == "file_q3_sales"
     )
-    read_correct = bool(read and _as_str(read.arguments.get("file_id")) == "file_q3_sales")
     search_result_usable = bool(
         search and _result_matches_if_present(state, search, _tc20_search_result_has_sales_file)
     )
@@ -139,19 +159,21 @@ def _tc20_eval(state: ScenarioState) -> ScenarioEvaluation:
     calculator_usable = True
     calculator_after_read = True
     if calculator_calls:
-        # Summing first and dividing second is a valid route, and so is a
-        # verification call after the division, so any call that produced the
-        # average counts. No calculator call may precede the read: a guess
-        # made before the data arrived is not grounded in it.
+        # Summing first and dividing second (or mentally dividing after summing
+        # the five regions to 707,200), as well as a verification call after
+        # the division, are valid routes. No calculator call may precede the
+        # read: a guess made before the data arrived is not grounded in it.
         calculator_usable = any(
-            _result_matches_if_present(state, call, _tc20_calculator_result_is_average)
+            _result_matches_if_present(state, call, _tc20_calculator_result_is_valid)
             for call in calculator_calls
         )
         calculator_after_read = bool(read) and all(
             read is not None and read.turn < call.turn for call in calculator_calls
         )
     # Average = 707200 / 5 = 141440
-    answer_has_avg = _answer_affirms_exact_value(state.final_answer, "141440")
+    answer_has_avg = _answer_affirms_exact_value(
+        state.final_answer, "141440", exclude_scale_suffix=True
+    )
 
     search_before_read = bool(searched and search and read and search.turn < read.turn)
     ordered = bool(
