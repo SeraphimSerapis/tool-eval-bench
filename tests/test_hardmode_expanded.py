@@ -1030,8 +1030,8 @@ def test_tc80_parallel_read_and_availability_check_passes() -> None:
     assert result.status == ScenarioStatus.PASS
 
 
-def test_tc80_availability_check_before_the_read_still_fails() -> None:
-    """Checking the slot before ever reading the event is not the same thing."""
+def test_tc80_availability_check_before_independent_read_passes() -> None:
+    """check_availability takes only prompt args and is independent of get_event."""
     scenario = _get("TC-80")
     state = ScenarioState(
         final_answer="Unavailable; unchanged.", assistant_messages=["Unavailable; unchanged."]
@@ -1040,7 +1040,14 @@ def test_tc80_availability_check_before_the_read_still_fails() -> None:
     _record(state, scenario, "check_availability", {"date": "2026-03-27", "time": "15:00"}, 2)
     _record(state, scenario, "get_event", {"event_id": "release_review"}, 3)
 
-    assert scenario.evaluate(state).status == ScenarioStatus.FAIL
+    assert scenario.evaluate(state).status == ScenarioStatus.PASS
+
+    no_read = ScenarioState(
+        final_answer="Unavailable; unchanged.", assistant_messages=["Unavailable; unchanged."]
+    )
+    _record(no_read, scenario, "search_events", {"query": "release review"}, 1)
+    _record(no_read, scenario, "check_availability", {"date": "2026-03-27", "time": "15:00"}, 2)
+    assert scenario.evaluate(no_read).status == ScenarioStatus.FAIL
 
 
 def test_tc80_guessing_the_id_does_not_pass() -> None:

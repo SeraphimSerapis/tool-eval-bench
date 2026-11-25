@@ -149,6 +149,7 @@ class TestTC70AdversarialTools:
         # Then: correct tool
         c2 = _make_call("get_weather_global", {"location": "Tokyo"}, turn=2)
         _record(state, sc, c2)
+        state.final_answer = "Tokyo is currently 22°C and Sunny."
         result = sc.evaluate(state)
         assert result.status == ScenarioStatus.PARTIAL
 

@@ -690,7 +690,7 @@ def _error(name, message="service unavailable", status=500):
                 calls=[_call("get_contacts", {"query": "Alice"})],
                 answer="I found Jordan Park, Jordan Lee, and Jordan Kim. Which Jordan?",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-72",
@@ -721,7 +721,7 @@ def _error(name, message="service unavailable", status=500):
                 ],
                 answer="Green Kitchen is the valid choice.",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-74",
@@ -783,7 +783,7 @@ def _error(name, message="service unavailable", status=500):
                 ],
                 answer="Sent.",
             ),
-            ScenarioStatus.PARTIAL,
+            ScenarioStatus.FAIL,
         ),
         (
             "TC-84",

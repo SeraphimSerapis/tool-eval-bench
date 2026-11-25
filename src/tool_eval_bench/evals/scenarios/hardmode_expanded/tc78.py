@@ -144,6 +144,10 @@ def _tc78_eval(state: ScenarioState) -> ScenarioEvaluation:
     wrong_lookup = any(ticker not in _PRICES for ticker in tickers)
     if complete and total_ok and not wrong_lookup:
         return _pass("Fetched all three independent prices and reported the $935 portfolio value.")
+    if complete and total_ok and wrong_lookup:
+        return _partial(
+            "Fetched all required prices and reported $935, but also made an invalid ticker lookup."
+        )
     if complete:
         return _partial("Fetched all required prices but did not report the clean correct total.")
     return _fail("Omitted a required ticker or invented the portfolio value.")

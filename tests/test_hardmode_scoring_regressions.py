@@ -124,7 +124,7 @@ def test_tc73_email_recommending_mitte_brasserie_fails_the_email_step() -> None:
         "Mitte Brasserie is my pick; Green Kitchen Berlin is a backup.",
         "I recommended Green Kitchen Berlin. Mitte Brasserie is closed on Sundays.",
     )
-    assert result.status is ScenarioStatus.PARTIAL
+    assert result.status is ScenarioStatus.FAIL
     assert result.summary.endswith("Missing: confirmation email.")
 
 
