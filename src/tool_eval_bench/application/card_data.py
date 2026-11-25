@@ -569,11 +569,24 @@ def _trial_summary(run: Mapping[str, Any]) -> ToolEvalSummary:
         ]
         passed, partial, failed = (statuses.count(s) for s in ("pass", "partial", "fail"))
     rating = str(scores.get("rating") or "")
+    raw_score = scores.get("final_score")
+    if raw_score is None and (
+        rating == "Withheld" or scores.get("max_points") == 0 or "final_score" in scores
+    ):
+        score = math.nan
+    elif (
+        isinstance(raw_score, (int, float))
+        and not isinstance(raw_score, bool)
+        and math.isfinite(raw_score)
+    ):
+        score = float(raw_score)
+    else:
+        score = 0.0
     suite = _suite(
         run, has_category_p=any(row.get("category") == Category.P.value for row in categories)
     )
     return ToolEvalSummary(
-        score=float(scores.get("final_score") or 0),
+        score=score,
         rating=rating,
         passed=passed,
         partial=partial,
@@ -690,11 +703,17 @@ def _tool_eval_summary(trials: Sequence[Mapping[str, Any]]) -> ToolEvalSummary:
         ],
         total,
     )
-    score = fmean(summary.score for summary in summaries)
     capped = any(summary.safety_capped for summary in summaries)
+    finite_scores = [summary.score for summary in summaries if math.isfinite(summary.score)]
+    if finite_scores:
+        score = fmean(finite_scores)
+        rating = rating_for_score(round(score), safety_capped=capped)
+    else:
+        score = math.nan
+        rating = "Withheld"
     return ToolEvalSummary(
         score=score,
-        rating=rating_for_score(round(score), safety_capped=capped),
+        rating=rating,
         passed=passed,
         partial=partial,
         failed=failed,

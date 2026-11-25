@@ -15,8 +15,76 @@ import random
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from tool_eval_bench.application.leaderboard import compute_mcnemar_stats
+from tool_eval_bench.application.leaderboard import comparability_warnings, compute_mcnemar_stats
 from tool_eval_bench.domain.scenarios import INFRASTRUCTURE_FAILURE_KINDS
+
+_RUBRIC_VERSION_FIELDS: tuple[tuple[str, str], ...] = (
+    ("eval_rubric_version", "Eval rubric version"),
+    ("locale_version", "Locale version"),
+    ("noise_version", "Noise version"),
+)
+
+
+def _nonempty_str(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def compare_comparability_warnings(
+    run_a: Mapping[str, Any],
+    run_b: Mapping[str, Any],
+) -> list[str]:
+    """Return deterministic comparability warnings for a pair of runs.
+
+    Surfaces per-run warnings for Run A and Run B plus cross-run rubric or
+    version mismatches when the two runs were graded under different rules.
+    """
+    warnings: list[str] = []
+    for warning in comparability_warnings(run_a):
+        warnings.append(f"Run A: {warning}")
+    for warning in comparability_warnings(run_b):
+        warnings.append(f"Run B: {warning}")
+
+    raw_meta_a = run_a.get("metadata")
+    raw_meta_b = run_b.get("metadata")
+    meta_a: Mapping[str, Any] = raw_meta_a if isinstance(raw_meta_a, Mapping) else {}
+    meta_b: Mapping[str, Any] = raw_meta_b if isinstance(raw_meta_b, Mapping) else {}
+
+    has_rubric_a = _nonempty_str(meta_a.get("eval_rubric_version")) is not None
+    has_rubric_b = _nonempty_str(meta_b.get("eval_rubric_version")) is not None
+
+    if has_rubric_a or has_rubric_b:
+        for field, label in _RUBRIC_VERSION_FIELDS:
+            va = _nonempty_str(meta_a.get(field))
+            vb = _nonempty_str(meta_b.get(field))
+            if va != vb:
+                warnings.append(
+                    f"{label} mismatch ({va or 'unversioned'} vs {vb or 'unversioned'})"
+                )
+    else:
+        for field, label in (("tool_version", "Tool version"), ("git_sha", "Git SHA")):
+            va = _nonempty_str(meta_a.get(field))
+            vb = _nonempty_str(meta_b.get(field))
+            if va != vb and (va is not None or vb is not None):
+                warnings.append(f"{label} mismatch ({va or 'unknown'} vs {vb or 'unknown'})")
+
+    return list(dict.fromkeys(warnings))
+
+
+def _effective_run_for_warnings(
+    run: Mapping[str, Any] | None,
+    result_map: Mapping[str, Mapping[str, Any]],
+) -> Mapping[str, Any]:
+    """Attach scenario results from *result_map* when *run* does not carry them."""
+    if run is None:
+        return {"scores": {"scenario_results": list(result_map.values())}}
+    raw_scores = run.get("scores")
+    scores = dict(raw_scores) if isinstance(raw_scores, Mapping) else {}
+    if "scenario_results" not in scores and result_map:
+        scores["scenario_results"] = list(result_map.values())
+        return {**run, "scores": scores}
+    return run
 
 
 def is_infrastructure_failure_dict(result: Mapping[str, Any]) -> bool:
@@ -72,6 +140,8 @@ def compute_paired_comparison(
     *,
     bootstrap_samples: int = 2000,
     seed: int = 0,
+    run_a: Mapping[str, Any] | None = None,
+    run_b: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compute paired 3-tier quality deltas, 95% CI, sign test, and McNemar stats.
 
@@ -138,6 +208,16 @@ def compute_paired_comparison(
     else:
         verdict = "inconclusive_noise"
 
+    eff_a = _effective_run_for_warnings(run_a, map_a)
+    eff_b = _effective_run_for_warnings(run_b, map_b)
+    if run_a is not None and run_b is not None:
+        warnings = compare_comparability_warnings(eff_a, eff_b)
+    else:
+        warnings = [
+            *(f"Run A: {w}" for w in comparability_warnings(eff_a)),
+            *(f"Run B: {w}" for w in comparability_warnings(eff_b)),
+        ]
+
     return {
         "shared_count": shared_count,
         "infra_excluded_ids": infra_excluded_ids,
@@ -150,4 +230,5 @@ def compute_paired_comparison(
         "sign_p_value": sign_p_value,
         "mcnemar": mcnemar,
         "verdict": verdict,
+        "comparability_warnings": warnings,
     }

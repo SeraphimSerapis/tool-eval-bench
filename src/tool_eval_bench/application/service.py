@@ -524,11 +524,11 @@ class BenchmarkService:
                     perf_passes=stored_perf_passes,
                 )
                 logger.info(
-                    "Resume merge: %d prior + %d new = %d total scenarios (score: %d)",
+                    "Resume merge: %d prior + %d new = %d total scenarios (score: %s)",
                     len(merged_results) - len(existing_ids),
                     len(existing_ids),
                     len(merged_results),
-                    summary.final_score,
+                    "Withheld" if summary.final_score is None else summary.final_score,
                 )
             except BaseException:
                 self._mark_interrupted(run_id)

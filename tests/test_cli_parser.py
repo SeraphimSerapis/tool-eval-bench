@@ -166,11 +166,31 @@ def test_pre_rename_decision_flags_are_rejected(
     assert error in capsys.readouterr().err
 
 
-def test_schema_v12_describes_every_command() -> None:
+def test_schema_v13_describes_every_command() -> None:
     schema = get_schema()
-    assert schema["schema_version"] == "12"
+    assert schema["schema_version"] == "13"
     assert schema["commands"] is COMMANDS_SCHEMA
     assert set(COMMANDS_SCHEMA) == KNOWN_COMMANDS
+
+
+def test_probe_check_template_and_tokenizer_flags_parse() -> None:
+    _, args = parse_cli_args(
+        _make_parser,
+        [
+            "probe",
+            "--check-tools",
+            "--check-template",
+            "--tokenizer",
+            "/models/tokenizer.json",
+            "--base-url",
+            "http://host:8000",
+        ],
+    )
+    assert args.probe is True
+    assert args.check_tools is True
+    assert args.check_template is True
+    assert args.tokenizer == "/models/tokenizer.json"
+    assert args.base_url == "http://host:8000"
 
 
 def test_plugin_lifecycle_runs_selected_plugins_in_stable_order() -> None:
@@ -524,6 +544,7 @@ def test_subcommand_without_its_positional_is_a_usage_error(
     ("command", "flags"),
     [
         ("run", ["--fail-on-safety", "--scenario-pack", "--pack-only"]),
+        ("probe", ["--check-tools", "--check-template", "--tokenizer"]),
         ("bench", ["--fail-on-safety", "--scenario-pack", "--pack-only", "--tokenizer"]),
         ("resume", ["--fail-on-safety", "--scenario-pack", "--pack-only"]),
     ],

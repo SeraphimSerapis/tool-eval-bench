@@ -19,11 +19,16 @@ from tool_eval_bench.domain.errors import CONNECTION_FAILED, INVALID_RESPONSE, M
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.domain.wire_hygiene import format_tool_parser_advice
 from tool_eval_bench.runner.orchestrator import ToolCallWireProbe, probe_tool_call_parsing
+from tool_eval_bench.runner.template_probe import (
+    ChatTemplateProbe,
+    probe_chat_template_fidelity,
+)
 from tool_eval_bench.utils.openai_compat import (
     max_tokens_retry_payload,
     output_token_limit_reached,
     sampling_retry_payload,
 )
+from tool_eval_bench.utils.tokenizers import extract_special_tokens, resolve_tokenizer
 from tool_eval_bench.utils.urls import redact_urls
 
 
@@ -314,5 +319,159 @@ def check_tool_call_wire_parsing(
             console.print(f"  [yellow]  {escape(advice)}[/]")
 
     if exit_on_failure and not ok:
+        sys.exit(1)
+    return probe
+
+
+def _template_probe_advice(
+    probe: ChatTemplateProbe,
+    *,
+    backend: str | None = None,
+    engine_name: str | None = None,
+) -> str | None:
+    """Return concrete remediation advice for a failed chat-template probe."""
+    if probe.passed:
+        return None
+    if probe.parser_family is not None:
+        return format_tool_parser_advice(
+            backend=backend,
+            engine_name=engine_name,
+            parser_family=probe.parser_family,
+        )
+    if probe.diagnosis == "tool_replay_template_error":
+        return (
+            "Inspect the server chat template (--chat-template on vLLM/SGLang or "
+            "--jinja on llama.cpp); tool-response messages were not preserved."
+        )
+    if probe.diagnosis == "multi_turn_template_error":
+        return (
+            "Inspect the server chat template; multi-turn user/assistant history was "
+            "dropped or mangled."
+        )
+    if probe.diagnosis == "template_token_leak":
+        return (
+            "Check stop tokens and chat-template or reasoning-parser settings on the "
+            "serving stack; special control tokens leaked into visible output."
+        )
+    return None
+
+
+def check_chat_template_fidelity(
+    console: Console,
+    base_url: str,
+    model: str,
+    api_key: str | None,
+    *,
+    backend: str | None = None,
+    engine_name: str | None = None,
+    headless: bool = False,
+    timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    extra_params: dict[str, Any] | None = None,
+    wire_format: str = "openai",
+    headers: Mapping[str, str] | None = None,
+    display_url: str | None = None,
+    tokenizer: str | None = None,
+    adapter: BackendAdapter | None = None,
+    exit_on_failure: bool = False,
+) -> ChatTemplateProbe:
+    """Verify chat-template replay fidelity and absence of leaked special tokens."""
+    show_url = display_url or base_url
+    resolution = resolve_tokenizer(model, explicit=tokenizer)
+    special_tokens = (
+        extract_special_tokens(resolution.path) if resolution.path is not None else frozenset()
+    )
+
+    async def _check() -> ChatTemplateProbe:
+        owned = adapter is None
+        active_adapter = (
+            adapter
+            if adapter is not None
+            else build_adapter(
+                base_url,
+                wire_format=wire_format,
+                default_headers=headers,
+            )
+        )
+        try:
+            return await probe_chat_template_fidelity(
+                active_adapter,
+                model=model,
+                base_url=base_url,
+                api_key=api_key,
+                timeout_seconds=timeout_seconds,
+                extra_params=extra_params,
+                special_tokens=special_tokens,
+            )
+        finally:
+            if owned:
+                aclose = getattr(active_adapter, "aclose", None)
+                if aclose is not None:
+                    await aclose()
+
+    probe = asyncio.run(_check())
+    advice = _template_probe_advice(probe, backend=backend, engine_name=engine_name)
+    redact = show_url != base_url
+
+    if headless:
+        event: dict[str, Any] = {
+            "event": "template_probe",
+            "status": "ok" if probe.passed else "failed",
+            "passed": probe.passed,
+            "diagnosis": probe.diagnosis,
+            "detail": redact_urls(probe.detail),
+            "tokenizer_source": resolution.source,
+            "tokenizer_tokens_checked": probe.tokenizer_tokens_checked,
+            "checks": [
+                {
+                    **check.to_dict(),
+                    "detail": redact_urls(check.detail),
+                    **({"error": redact_urls(check.error)} if check.error is not None else {}),
+                }
+                for check in probe.checks
+            ],
+        }
+        if probe.diagnoses:
+            event["diagnoses"] = list(probe.diagnoses)
+        if probe.leaked_tokens:
+            event["leaked_tokens"] = list(probe.leaked_tokens)
+        if probe.unparsed_marker is not None:
+            event["unparsed_marker"] = probe.unparsed_marker
+        if probe.parser_family is not None:
+            event["parser_family"] = probe.parser_family
+        if advice is not None:
+            event["advice"] = advice
+        sys.stderr.write(json.dumps(event) + "\n")
+        sys.stderr.flush()
+    elif probe.passed:
+        console.print(
+            "  [bold green]✓[/] Chat-template fidelity verified: "
+            "tool replay, multi-turn history, and token hygiene passed"
+        )
+        if probe.tokenizer_tokens_checked > 0:
+            console.print(
+                f"  [dim]  Checked {probe.tokenizer_tokens_checked} tokenizer control "
+                f"token(s) ({escape(resolution.source)})[/]"
+            )
+        for check in probe.checks:
+            console.print(f"    [green]✓[/] {escape(check.name)}: [dim]{escape(check.detail)}[/]")
+    else:
+        shown_detail = redact_urls(probe.detail) if redact else probe.detail
+        console.print(
+            f"  [bold yellow]⚠[/] [yellow]Chat-template fidelity check failed "
+            f"({escape(probe.diagnosis)}): {escape(shown_detail)}[/]"
+        )
+        if probe.tokenizer_tokens_checked > 0:
+            console.print(
+                f"  [dim]  Checked {probe.tokenizer_tokens_checked} tokenizer control "
+                f"token(s) ({escape(resolution.source)})[/]"
+            )
+        for check in probe.checks:
+            mark = "[green]✓[/]" if check.passed else "[red]✗[/]"
+            check_detail = redact_urls(check.detail) if redact else check.detail
+            console.print(f"    {mark} {escape(check.name)}: [dim]{escape(check_detail)}[/]")
+        if advice is not None:
+            console.print(f"  [yellow]  {escape(advice)}[/]")
+
+    if exit_on_failure and not probe.passed:
         sys.exit(1)
     return probe

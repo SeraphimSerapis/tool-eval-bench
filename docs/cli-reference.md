@@ -121,13 +121,32 @@ arguments:
 tool-eval-bench probe --check-tools --base-url http://localhost:8000
 ```
 
-Without `--check-tools`, `probe` queries only the model listing and makes zero
-chat-completion requests. With `--check-tools`, it resolves `--model` or the
-first model ID returned by `/v1/models`, sends one tool-call probe, prints
-server parser flag advice when raw tool markup such as `<tool_call>` or
-`[TOOL_CALLS]` leaks into `content`, and exits 1 unless both reachability and
-structured tool-call parsing succeed. Under `--json`, stderr receives a
-`tool_call_probe` event after `probe_result`.
+Without `--check-tools` or `--check-template`, `probe` queries only the model
+listing and makes zero chat-completion requests. With `--check-tools`, it
+resolves `--model` or the first model ID returned by `/v1/models`, sends one
+tool-call probe, prints server parser flag advice when raw tool markup such as
+`<tool_call>`, `<|tool_call>`, or `[TOOL_CALLS]` leaks into `content`, and exits
+1 unless both reachability and structured tool-call parsing succeed. Under
+`--json`, stderr receives a `tool_call_probe` event after `probe_result`.
+
+Add `--check-template` to run four paired chat-template fidelity and
+special-token leak checks (`tool_replay` / `tool_replay_twin` and `multi_turn` /
+`multi_turn_twin`):
+
+```bash
+tool-eval-bench probe --check-template --base-url http://localhost:8000
+tool-eval-bench probe --check-tools --check-template --tokenizer /path/to/tokenizer.json --base-url http://localhost:8000
+```
+
+Each replay check is paired with a single-turn twin so `probe` can isolate
+server-side Jinja template failures (`tool_replay_template_error` when tool
+responses are dropped, `multi_turn_template_error` when history is mangled) from
+model or endpoint errors (`model_or_endpoint_failure`). Every reply is scanned
+against built-in control markers and any special tokens extracted from a local
+HuggingFace `tokenizer.json` (auto-resolved from the local cache or supplied via
+`--tokenizer`), flagging leaks under `template_token_leak`. Under `--json`,
+stderr receives a `template_probe` event after `probe_result`, and `probe` exits
+1 when any requested check fails.
 
 During a scored `run`, turns that emit raw tool markup or JSON call objects in
 `content` while `tool_calls` stays empty record
@@ -197,6 +216,7 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--short` | Run core 15 scenarios (~2 min) instead of full 69 |
 | `--probe` | Check server readiness and exit |
 | `--check-tools` | With `probe` or `--probe`, send one tool-call request and exit 1 unless structured `tool_calls` parse cleanly |
+| `--check-template` | With `probe` or `--probe`, run paired chat-template replay checks (`tool_replay`, `multi_turn`, plus single-turn twins) and special-token leak detection (uses `--tokenizer` or auto-resolved HF cache when available) |
 | `--dry-run` | List scenarios that would run (no server needed). Reports 0 when the invocation runs no tool-call scenarios, such as `--perf-only` |
 | `--base-url URL` | Server endpoint |
 | `--redact-url` | Mask the server URL in console output, including `--probe`, pre-flight errors, the auto-discovered localhost URL, and the `spec-live` metrics endpoint, for screenshots and recordings. Reports, stored runs, and `--json` error output are always redacted |
@@ -668,6 +688,7 @@ Each line on stderr is a JSON object:
 {"event": "model_auto_selected", "model": "Qwen/Qwen3-8B", ...}
 {"event": "probe_result", ...}                      // --probe only
 {"event": "tool_call_probe", "status": "ok", ...}   // --probe --check-tools only
+{"event": "template_probe", "status": "ok", ...}    // --probe --check-template only
 {"event": "scenario_start", "scenario_id": "TC-01", "index": 0, "total": 15}
 {"event": "scenario_result", "scenario_id": "TC-01", "status": "pass", "points": 2, ...}
 {"event": "decision_audit_start", ...}              // with a decision judge

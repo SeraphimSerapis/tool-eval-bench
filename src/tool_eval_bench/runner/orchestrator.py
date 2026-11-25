@@ -29,6 +29,10 @@ from tool_eval_bench.domain.adapters import (
     ChatCompletionResult,
     ProviderToolCall,
 )
+from tool_eval_bench.domain.loop_detection import (
+    LoopDetectionResult,
+    detect_degenerate_loop,
+)
 from tool_eval_bench.domain.models import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
     ChatMessage,
@@ -263,6 +267,24 @@ def _is_visible_answer(content: str | None) -> bool:
     if not content or not content.strip():
         return False
     return not content.startswith("[no content:")
+
+
+def _detect_turn_degenerate_loop(
+    result: ChatCompletionResult,
+    *,
+    extra_texts: Sequence[tuple[str, str]] = (),
+) -> tuple[str, LoopDetectionResult] | None:
+    """Inspect reasoning, content, and any extra text for a degenerate repetition loop."""
+    candidates: list[tuple[str, str | None]] = [
+        ("reasoning", result.reasoning),
+        ("content", result.content),
+        *extra_texts,
+    ]
+    for channel, text in candidates:
+        detected = detect_degenerate_loop(text)
+        if detected.detected:
+            return channel, detected
+    return None
 
 
 def _scenario_seed_offset(scenario_id: str) -> int:
@@ -825,10 +847,17 @@ async def run_scenario(
     # Set when a turn ends on finish_reason=length with nothing to grade: the
     # model spent the whole ceiling thinking and never reached an answer.
     truncated_stop: str | None = None
+    # Set when a turn stalls in a degenerate text or reasoning repetition loop.
+    # Distinct from REASONING_TRUNCATED so operators are not told to raise
+    # max_tokens when the model is repeating itself.
+    degenerate_loop_stop: str | None = None
     # Set when a turn ends normally (not on length) with neither visible text
     # nor a tool call, typically a reasoning-only reply. The phase closes on
     # nothing; tagging it keeps it apart from a wrong answer or wrong call.
     empty_stop: str | None = None
+    # Count of cleanly finished no-tool turns that emitted reasoning with empty
+    # visible content (excluding degenerate repetition loops).
+    answer_in_thinking_turns = 0
     # Set when a turn with tools available returns raw tool-call markup or a
     # JSON call envelope in content while tool_calls is empty.
     unparsed_stop: str | None = None
@@ -983,6 +1012,7 @@ async def run_scenario(
                         FailureKind.SERVER_ERROR if is_infrastructure else FailureKind.MODEL_CRASH
                     ),
                     review=_review_payload(review_stats),
+                    answer_in_thinking_turns=answer_in_thinking_turns,
                 )
 
             # Capture TTFT from the first streamed turn
@@ -1082,21 +1112,33 @@ async def run_scenario(
                 trace_lines.append(f"assistant_reasoning_{turn}={result.reasoning}")
 
             # The ceiling ate the turn: nothing visible came back and the
-            # provider says it stopped for length. Grading the empty string
-            # would blame the model's judgement for a harness setting, so
-            # stop here and tag the run instead.
+            # provider says it stopped for length. Check for a degenerate
+            # repetition loop first so operators are not misdirected to raise
+            # max_tokens; otherwise tag as reasoning truncation.
             # _is_visible_answer also treats the Gemini "[no content: ...]"
             # placeholder and whitespace-only text as no answer.
             visible_answer = _is_visible_answer(result.content)
-            if not result.tool_calls and not visible_answer and result.finish_reason == "length":
-                reasoning_chars = len(result.reasoning or "")
-                truncated_stop = (
-                    f"Turn {turn} hit the max_tokens ceiling ({max_tokens}) with "
-                    f"{reasoning_chars} characters of reasoning and no answer or tool call."
-                )
-                trace_lines.append(f"truncated={truncated_stop}")
-                budget_exhausted = False
-                break
+            if not result.tool_calls and result.finish_reason == "length":
+                loop_hit = _detect_turn_degenerate_loop(result)
+                if loop_hit is not None:
+                    channel, loop_info = loop_hit
+                    degenerate_loop_stop = (
+                        f"Turn {turn} entered a degenerate repetition loop in {channel} "
+                        f"({loop_info.kind}: {loop_info.detail}) before hitting "
+                        f"max_tokens ({max_tokens})."
+                    )
+                    trace_lines.append(f"degenerate_loop={degenerate_loop_stop}")
+                    budget_exhausted = False
+                    break
+                if not visible_answer:
+                    reasoning_chars = len(result.reasoning or "")
+                    truncated_stop = (
+                        f"Turn {turn} hit the max_tokens ceiling ({max_tokens}) with "
+                        f"{reasoning_chars} characters of reasoning and no answer or tool call."
+                    )
+                    trace_lines.append(f"truncated={truncated_stop}")
+                    budget_exhausted = False
+                    break
 
             # No tool calls → model finished this conversational phase
             if not result.tool_calls:
@@ -1117,13 +1159,36 @@ async def run_scenario(
                                 "in content instead of structured tool_calls."
                             )
                         trace_lines.append(f"unparsed_tool_call={unparsed_stop}")
-                if not visible_answer and empty_stop is None:
-                    empty_stop = (
-                        f"Turn {turn} ended with no visible answer and no tool call "
-                        f"(finish_reason={result.finish_reason or 'unknown'}, "
-                        f"{len(result.reasoning or '')} characters of reasoning)."
-                    )
-                    trace_lines.append(f"empty_turn={empty_stop}")
+                if not visible_answer:
+                    loop_hit = _detect_turn_degenerate_loop(result)
+                    if loop_hit is not None:
+                        if degenerate_loop_stop is None:
+                            channel, loop_info = loop_hit
+                            degenerate_loop_stop = (
+                                f"Turn {turn} entered a degenerate repetition loop in {channel} "
+                                f"({loop_info.kind}: {loop_info.detail}) with no visible answer."
+                            )
+                            trace_lines.append(f"degenerate_loop={degenerate_loop_stop}")
+                    else:
+                        has_reasoning = bool((result.reasoning or "").strip())
+                        if has_reasoning:
+                            answer_in_thinking_turns += 1
+                            trace_lines.append(
+                                f"answer_in_thinking=Turn {turn} emitted "
+                                f"{len(result.reasoning or '')} characters of reasoning "
+                                "with empty visible content."
+                            )
+                        if empty_stop is None:
+                            empty_stop = (
+                                f"Turn {turn} ended with no visible answer and no tool call "
+                                f"(finish_reason={result.finish_reason or 'unknown'}, "
+                                f"{len(result.reasoning or '')} characters of reasoning)."
+                            )
+                            if has_reasoning:
+                                empty_stop += (
+                                    " Answer emitted in reasoning block with empty visible content."
+                                )
+                            trace_lines.append(f"empty_turn={empty_stop}")
                 if on_scenario_turn is not None:
                     await _notify_turn(
                         on_scenario_turn,
@@ -1183,13 +1248,30 @@ async def run_scenario(
                     )
                     total_arg_bytes += len(tc.arguments_str.encode("utf-8"))
                     trace_lines.append(f"tool_call={tc.name} {tc.arguments_str}")
-                reasoning_chars = len(result.reasoning or "")
-                truncated_stop = (
-                    f"Turn {turn} hit the max_tokens ceiling ({max_tokens}) with "
-                    f"{reasoning_chars} characters of reasoning and cut off the arguments "
-                    f"of {', '.join(cut_off)}."
+                loop_hit = _detect_turn_degenerate_loop(
+                    result,
+                    extra_texts=[
+                        ("tool_arguments", tc.arguments_str)
+                        for tc in result.tool_calls
+                        if not _parses_as_json(tc.arguments_str)
+                    ],
                 )
-                trace_lines.append(f"truncated={truncated_stop}")
+                if loop_hit is not None:
+                    channel, loop_info = loop_hit
+                    degenerate_loop_stop = (
+                        f"Turn {turn} entered a degenerate repetition loop in {channel} "
+                        f"({loop_info.kind}: {loop_info.detail}) before hitting "
+                        f"max_tokens ({max_tokens}) and cutting off {', '.join(cut_off)}."
+                    )
+                    trace_lines.append(f"degenerate_loop={degenerate_loop_stop}")
+                else:
+                    reasoning_chars = len(result.reasoning or "")
+                    truncated_stop = (
+                        f"Turn {turn} hit the max_tokens ceiling ({max_tokens}) with "
+                        f"{reasoning_chars} characters of reasoning and cut off the arguments "
+                        f"of {', '.join(cut_off)}."
+                    )
+                    trace_lines.append(f"truncated={truncated_stop}")
                 budget_exhausted = False
                 break
 
@@ -1357,6 +1439,7 @@ async def run_scenario(
             state_checkpoints=state_checkpoints,
             failure_kind=FailureKind.EVALUATOR_ERROR,
             review=_review_payload(review_stats),
+            answer_in_thinking_turns=answer_in_thinking_turns,
         )
 
     except Exception as exc:
@@ -1384,6 +1467,7 @@ async def run_scenario(
             state_checkpoints=state_checkpoints,
             failure_kind=_classify_runtime_error(exc),
             review=_review_payload(review_stats),
+            answer_in_thinking_turns=answer_in_thinking_turns,
         )
 
     # Ensure we have a final answer
@@ -1452,9 +1536,22 @@ async def run_scenario(
             if budget_exhausted
             else None
         )
-        harness_stop = truncated_stop or loop_stop or unparsed_stop or empty_stop or budget_stop
+        harness_stop = (
+            degenerate_loop_stop
+            or truncated_stop
+            or loop_stop
+            or unparsed_stop
+            or empty_stop
+            or budget_stop
+        )
         if harness_stop is not None and evaluation.status != ScenarioStatus.PASS:
             evaluation.note = f"{harness_stop} {evaluation.note or ''}".strip()
+        if answer_in_thinking_turns > 0:
+            turn_word = "turn" if answer_in_thinking_turns == 1 else "turns"
+            evaluation.diagnostics["answer_in_thinking"] = (
+                "Answer emitted in reasoning block with empty visible content "
+                f"({answer_in_thinking_turns} {turn_word})"
+            )
         if response_format_fallback is not None:
             evaluation.diagnostics["response_format"] = (
                 f"endpoint rejected it; fell back {response_format_fallback}, "
@@ -1493,6 +1590,7 @@ async def run_scenario(
             state_checkpoints=state_checkpoints,
             failure_kind=FailureKind.EVALUATOR_ERROR,
             review=_review_payload(review_stats),
+            answer_in_thinking_turns=answer_in_thinking_turns,
         )
 
     # Build diagnostic summary of what tools were actually called
@@ -1531,7 +1629,9 @@ async def run_scenario(
         parallel_tool_turns=parallel_tool_turns,
         state_checkpoints=state_checkpoints,
         failure_kind=(
-            FailureKind.REASONING_TRUNCATED
+            FailureKind.DEGENERATE_LOOP
+            if degenerate_loop_stop is not None and evaluation.status != ScenarioStatus.PASS
+            else FailureKind.REASONING_TRUNCATED
             if truncated_stop is not None and evaluation.status != ScenarioStatus.PASS
             else FailureKind.REPEATED_CALL_LOOP
             if loop_stop is not None and evaluation.status != ScenarioStatus.PASS
@@ -1547,6 +1647,7 @@ async def run_scenario(
         # verdict: the model never reached a final answer / exhausted follow-ups.
         turn_budget_exceeded=budget_exhausted,
         review=_review_payload(review_stats),
+        answer_in_thinking_turns=answer_in_thinking_turns,
     )
     if on_scenario_evaluated is not None:
         await on_scenario_evaluated(scenario, state, scenario_result)
@@ -2249,7 +2350,7 @@ def score_results(
     gradable_scenarios = [s for s in all_scenarios if s.id not in excluded_ids]
     max_points = len(gradable_scenarios) * 2
 
-    final_score = round((total_points / max_points) * 100) if max_points > 0 else 0
+    final_score: int | None = round((total_points / max_points) * 100) if max_points > 0 else None
 
     completion_rate = (
         round((len(gradable_scenarios) / len(all_scenarios)) * 100, 1) if all_scenarios else 100.0
@@ -2314,7 +2415,7 @@ def score_results(
 
     # Difficulty-weighted scoring
     weighted: int | None = None
-    if weight_by_difficulty:
+    if weight_by_difficulty and max_points > 0:
         w_earned = 0
         w_max = 0
         for r in scored_results:
@@ -2322,7 +2423,7 @@ def score_results(
             diff = sc.difficulty if sc and sc.difficulty else 1
             w_earned += r.points * diff
             w_max += 2 * diff  # max 2 points per scenario × weight
-        weighted = round((w_earned / w_max) * 100) if w_max > 0 else 0
+        weighted = round((w_earned / w_max) * 100) if w_max > 0 else None
 
     by_id = {result.scenario_id: result for result in scored_results}
     toolset_deltas = {}
@@ -2339,6 +2440,12 @@ def score_results(
             toolset_deltas[f"{scenario.id} vs {control}"] = (
                 by_id[scenario.id].points - by_id[control].points
             )
+
+    answer_in_thinking_turns = sum(r.answer_in_thinking_turns for r in results)
+    answer_in_thinking_scenarios = sum(1 for r in results if r.answer_in_thinking_turns > 0)
+    degenerate_loop_scenarios = sum(
+        1 for r in results if r.failure_kind == FailureKind.DEGENERATE_LOOP
+    )
 
     return ModelScoreSummary(
         # Every result is retained for reporting/traces, including excluded ones.
@@ -2362,4 +2469,7 @@ def score_results(
         token_efficiency=token_eff,
         weighted_score=weighted,
         toolset_deltas=toolset_deltas,
+        answer_in_thinking_turns=answer_in_thinking_turns,
+        answer_in_thinking_scenarios=answer_in_thinking_scenarios,
+        degenerate_loop_scenarios=degenerate_loop_scenarios,
     )

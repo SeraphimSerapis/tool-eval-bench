@@ -91,6 +91,12 @@
       "type": "bool"
     },
     {
+      "default": false,
+      "description": "With probe, run chat-template replay pairs and special-token leak checks",
+      "name": "check_template",
+      "type": "bool"
+    },
+    {
       "choices": [
         "recommended",
         "all"
@@ -1170,5 +1176,5 @@
       ]
     }
   },
-  "schema_version": "12"
+  "schema_version": "13"
 }

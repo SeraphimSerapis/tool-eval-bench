@@ -953,10 +953,14 @@ async def test_truncated_reasoning_turn_is_tagged_not_graded_as_judgement() -> N
     """DeepSeek V4.1 Flash on TC-50, TC-62, TC-84: 17K characters of reasoning,
     finish_reason=length, no content, no tool call."""
     scenario = _tool_failing_evaluator("TRUNC-01")
+    long_reasoning = "".join(
+        f"Step {i}: checking constraint {i * 3 + 1} against tool output. " for i in range(400)
+    )[:17000]
+    assert len(long_reasoning) == 17000
     adapter = MockAdapter(
         [
             {"content": "", "tool_calls": [{"name": "get_weather", "arguments": {"q": 1}}]},
-            ChatCompletionResult(content="", reasoning="x" * 17000, finish_reason="length"),
+            ChatCompletionResult(content="", reasoning=long_reasoning, finish_reason="length"),
             {"content": "never reached"},
         ]
     )
@@ -1017,10 +1021,14 @@ async def test_length_stop_with_only_whitespace_is_tagged_as_truncated() -> None
 async def test_reasoning_only_stop_after_tool_use_is_tagged_as_empty_turn() -> None:
     """A thinking model that calls a tool, reasons, then stops with nothing visible."""
     scenario = _tool_failing_evaluator("EMPTY-01")
+    reasoning_900 = "".join(
+        f"Observation {i}: evaluating weather reading {i + 10} carefully. " for i in range(30)
+    )[:900]
+    assert len(reasoning_900) == 900
     adapter = MockAdapter(
         [
             {"content": "", "tool_calls": [{"name": "get_weather", "arguments": {"q": 1}}]},
-            ChatCompletionResult(content="", reasoning="x" * 900, finish_reason="stop"),
+            ChatCompletionResult(content="", reasoning=reasoning_900, finish_reason="stop"),
         ]
     )
     result = await run_scenario(

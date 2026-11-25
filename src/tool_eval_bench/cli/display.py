@@ -95,6 +95,7 @@ RATING_COLORS = {
     "★★★ Adequate (safety-capped)": "bold red",
     "★★ Weak": "bold red",
     "★ Poor": "bold red",
+    "Withheld": "bold yellow",
 }
 
 
@@ -616,10 +617,11 @@ def _print_final_panel(
 
     # A paired score belongs to the model and its reviewer together.
     reviewer_line = f"  [bold]Reviewer:[/] {escape(reviewer_model)}\n" if reviewer_model else ""
+    score_display = "Withheld" if score is None else f"{score} / 100"
     content = (
         f"  [bold]Model:[/]  {escape(model)}\n"
         f"{reviewer_line}"
-        f"  [bold]Score:[/]  [{rating_color}]{score} / 100[/]\n"
+        f"  [bold]Score:[/]  [{rating_color}]{score_display}[/]\n"
         f"  [bold]Rating:[/] [{rating_color}]{escape(rating)}[/]"
         f"{benchmark_line}"
         f"{model_info_lines}\n"
@@ -657,6 +659,31 @@ def _print_final_panel(
             f"\n  [yellow]   {escape(parser_advice)}[/]"
         )
 
+    degenerate_loop_count = summary.degenerate_loop_scenarios or sum(
+        1 for r in summary.scenario_results if r.failure_kind == FailureKind.DEGENERATE_LOOP
+    )
+    if degenerate_loop_count > 0:
+        scenario_word = "scenario" if degenerate_loop_count == 1 else "scenarios"
+        content += (
+            f"\n  [bold yellow]⚠  {degenerate_loop_count} {scenario_word} failed with "
+            "degenerate_loop: model entered a repetitive output loop "
+            "(raising max_tokens will not help).[/]"
+        )
+
+    ait_turns = summary.answer_in_thinking_turns or sum(
+        r.answer_in_thinking_turns for r in summary.scenario_results
+    )
+    ait_scenarios = summary.answer_in_thinking_scenarios or sum(
+        1 for r in summary.scenario_results if r.answer_in_thinking_turns > 0
+    )
+    if ait_turns > 0:
+        turn_word = "turn" if ait_turns == 1 else "turns"
+        scenario_word = "scenario" if ait_scenarios == 1 else "scenarios"
+        content += (
+            f"\n  [bold yellow]⚠  Answer in thinking: {ait_turns} {turn_word} across "
+            f"{ait_scenarios} {scenario_word} emitted reasoning with empty visible content.[/]"
+        )
+
     # Deployability composite (only when latency data is present)
     if summary.deployability is not None and summary.responsiveness is not None:
         med_s = (summary.median_turn_ms or 0) / 1000
@@ -670,8 +697,9 @@ def _print_final_panel(
             if summary.deployability >= 75
             else ("yellow" if summary.deployability >= 40 else "red")
         )
+        quality_text = "Withheld" if score is None else f"{score}/100"
         content += (
-            f"\n\n  [bold]Quality:[/]        {score}/100"
+            f"\n\n  [bold]Quality:[/]        {quality_text}"
             f"\n  [bold]Responsiveness:[/] [{resp_color}]{summary.responsiveness}/100[/]"
             f"  [dim](median turn: {med_s:.1f}s)[/]"
             f"\n  [bold]Deployability:[/]  [{deploy_color}]{summary.deployability}/100[/]"
@@ -753,7 +781,10 @@ def _print_final_panel(
             f"\n  [dim]• Responsiveness: logistic curve (100 at <1s, ~50 at 3s, 0 at >10s)[/]"
         )
 
-    border = "green" if score >= 75 else ("yellow" if score >= 40 else "red")
+    if score is None:
+        border = "yellow"
+    else:
+        border = "green" if score >= 75 else ("yellow" if score >= 40 else "red")
     if summary.safety_warnings:
         border = "red"  # always red border when safety issues exist
     console.print(

@@ -47,6 +47,11 @@ from tool_eval_bench.domain.models import (
     RunContext,
     default_max_tokens,
 )
+from tool_eval_bench.domain.rubric import (
+    EVAL_RUBRIC_VERSION,
+    LOCALE_VERSION,
+    NOISE_VERSION,
+)
 from tool_eval_bench.utils.urls import metrics_request_target
 from tool_eval_bench.utils.urls import models_url as _models_url
 from tool_eval_bench.utils.urls import root_endpoint_url as _root_endpoint_url
@@ -1072,6 +1077,10 @@ async def collect_run_context(
         gpu_count=engine_info.get("gpu_count"),
         slot_count=engine_info.get("slot_count"),
         spec_decoding=engine_info.get("spec_decoding"),
+        # Rubric provenance versions
+        eval_rubric_version=EVAL_RUBRIC_VERSION,
+        locale_version=LOCALE_VERSION,
+        noise_version=NOISE_VERSION,
     )
 
 

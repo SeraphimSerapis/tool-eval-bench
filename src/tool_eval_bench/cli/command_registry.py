@@ -206,7 +206,8 @@ COMMAND_SPECS = (
         "probe",
         "Check whether an inference server is reachable",
         legacy_prefix=("--probe",),
-        help_dests=CONNECTION + ("check_tools", "json", "redact_url"),
+        help_dests=CONNECTION
+        + ("check_tools", "check_template", "tokenizer", "json", "redact_url"),
         legacy_flags=("probe",),
     ),
     CommandSpec(

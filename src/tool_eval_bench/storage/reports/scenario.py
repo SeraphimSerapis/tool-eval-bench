@@ -168,13 +168,18 @@ def write_scenario_report(
 
         version_str = f" (v{__version__})"
 
+    final_score_line = (
+        "- **Final Score**: **Withheld** _(no gradable scenarios)_"
+        if summary.final_score is None
+        else f"- **Final Score**: **{summary.final_score}** / 100"
+    )
     md = [
         f"# Tool-Call Benchmark — {model}",
         "",
         f"- **Run ID**: `{run_id}`",
         f"- **Date**: `{now.isoformat()}`",
         f"- **tool-eval-bench**: `{version_str.strip(' ()')}`" if version_str else "",
-        f"- **Final Score**: **{summary.final_score}** / 100",
+        final_score_line,
         f"- **Total Points**: {summary.total_points} / {summary.max_points}",
         f"- **Rating**: {summary.rating}",
     ]
@@ -195,6 +200,28 @@ def write_scenario_report(
             f"- **Completion Rate**: {summary.completion_rate}% — "
             f"{len(summary.excluded_scenarios)} scenario(s) excluded from scoring "
             f"due to infrastructure failures (timeout / connection / 5xx): {excluded}"
+        )
+    degenerate_loop_count = summary.degenerate_loop_scenarios or sum(
+        1 for r in summary.scenario_results if r.failure_kind == FailureKind.DEGENERATE_LOOP
+    )
+    if degenerate_loop_count > 0:
+        scenario_word = "scenario" if degenerate_loop_count == 1 else "scenarios"
+        md.append(
+            f"- **Degenerate Loops**: {degenerate_loop_count} {scenario_word} stopped in a "
+            "repetitive output loop (`degenerate_loop`; raising `max_tokens` will not resolve this)"
+        )
+    ait_turns = summary.answer_in_thinking_turns or sum(
+        r.answer_in_thinking_turns for r in summary.scenario_results
+    )
+    ait_scenarios = summary.answer_in_thinking_scenarios or sum(
+        1 for r in summary.scenario_results if r.answer_in_thinking_turns > 0
+    )
+    if ait_turns > 0:
+        turn_word = "turn" if ait_turns == 1 else "turns"
+        scenario_word = "scenario" if ait_scenarios == 1 else "scenarios"
+        md.append(
+            f"- **Answer in Thinking**: {ait_turns} {turn_word} across {ait_scenarios} "
+            f"{scenario_word} emitted reasoning with empty visible content"
         )
     held_out = held_out_ids(scenario_metadata)
     diagnostics = [
@@ -267,10 +294,11 @@ def write_scenario_report(
     # Deployability composite (only when latency data is present)
     if summary.deployability is not None:
         med_s = (summary.median_turn_ms or 0) / 1000
+        quality_text = "Withheld" if summary.final_score is None else f"{summary.final_score} / 100"
         md.extend(
             [
                 f"- **Deployability**: **{summary.deployability}** / 100 (α={summary.alpha})",
-                f"- **Quality**: {summary.final_score} / 100",
+                f"- **Quality**: {quality_text}",
                 f"- **Responsiveness**: {summary.responsiveness} / 100 (median turn: {med_s:.1f}s)",
             ]
         )

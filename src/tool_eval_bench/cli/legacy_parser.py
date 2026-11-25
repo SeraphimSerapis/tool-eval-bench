@@ -156,6 +156,12 @@ def _make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="With --probe, send one tool-call request to verify structured tool_calls parsing",
     )
+    conn.add_argument(
+        "--check-template",
+        dest="check_template",
+        action="store_true",
+        help="With --probe, run chat-template replay pairs and special-token leak checks",
+    )
 
     judge = parser.add_argument_group("decision judge audit")
     judge.add_argument(

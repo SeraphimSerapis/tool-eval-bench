@@ -119,6 +119,13 @@ class RunContext:
     # never rendered in shareable reports. Last for the same positional
     # construction reason as ``system_prompt``.
     session_id: str | None = None
+    # Explicit rubric, locale, and noise versions recorded on new runs so
+    # leaderboard cohorts stay stable across unrelated commits while splitting
+    # whenever scoring semantics change. Kept last to preserve positional
+    # RunContext construction.
+    eval_rubric_version: str | None = None
+    locale_version: str | None = None
+    noise_version: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-safe dict for metadata_json storage."""

@@ -135,6 +135,22 @@ def _paired_model_label(run: Mapping[str, Any], model: str) -> str:
     return model
 
 
+def _format_stored_score(scores: Mapping[str, Any], *, compact: bool = False) -> str:
+    """Format a stored ``scores["final_score"]`` value without printing ``None``.
+
+    ``compact=True`` renders ``—`` for a withheld score in narrow table columns
+    where the adjacent Rating column already shows ``Withheld``.
+    """
+    if "final_score" not in scores:
+        return "?"
+    value = scores["final_score"]
+    if value is None:
+        if not compact and scores.get("rating") == "Withheld":
+            return "Withheld"
+        return "—"
+    return str(value)
+
+
 def print_history(console: Console) -> None:
     """List recent benchmark runs from SQLite."""
     from rich.table import Table
@@ -166,7 +182,7 @@ def print_history(console: Console) -> None:
 
     for run in runs:
         scores = run.get("scores") or {}
-        score = scores.get("final_score", "?")
+        score = _format_stored_score(scores, compact=True)
         rating = escape(str(scores.get("rating", "")))
         if run.get("status") != RUN_STATUS_COMPLETED:
             # Interrupted and still-running rows have no final score; surface the
@@ -513,8 +529,8 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
     delta_color = "green" if total_delta > 0 else ("red" if total_delta < 0 else "dim")
     delta_sign = "+" if total_delta > 0 else ""
 
-    score_a = run_a.get("scores", {}).get("final_score", "?")
-    score_b = run_b.get("scores", {}).get("final_score", "?")
+    score_a = _format_stored_score(run_a.get("scores") or {})
+    score_b = _format_stored_score(run_b.get("scores") or {})
 
     summary = (
         f"  [green]↑ {improved} improved[/]  "

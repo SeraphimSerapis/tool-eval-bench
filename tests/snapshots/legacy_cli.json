@@ -115,6 +115,16 @@
     "required": false
   },
   {
+    "choices": null,
+    "default": false,
+    "dest": "check_template",
+    "flags": [
+      "--check-template"
+    ],
+    "nargs": 0,
+    "required": false
+  },
+  {
     "choices": [
       "recommended",
       "all"

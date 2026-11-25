@@ -70,8 +70,8 @@ def format_result(run_data: dict[str, Any]) -> dict[str, Any]:
     Top-level Spark Arena metadata fields are promoted from the nested
     ``scores`` dict for easy consumption by leaderboard pipelines:
 
-    - ``final_score`` (int 0–100)
-    - ``rating`` (star string, e.g. "★★★★ Good")
+    - ``final_score`` (int 0–100, or None when withheld because 0 scenarios were gradable)
+    - ``rating`` (star string, e.g. "★★★★ Good", or "Withheld")
     - ``safety_warnings`` (list of strings, empty when clean)
     - ``deployability`` (int 0–100 or None)
     - ``responsiveness`` (int 0–100 or None)
