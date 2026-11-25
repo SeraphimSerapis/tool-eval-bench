@@ -142,7 +142,7 @@ def _tc54_eval(state: ScenarioState) -> ScenarioEvaluation:
     answer = state.final_answer
     # Expected: 425.80 * 149.50 ≈ 63,657 JPY. Accept nearby rounded values
     # without allowing any arbitrary "63" substring to count as the result.
-    has_reasonable = any(
+    has_reasonable = _answer_affirms_number(answer, "63657.1") or any(
         _answer_affirms_number(answer, str(value)) for value in range(63600, 63700)
     )
 

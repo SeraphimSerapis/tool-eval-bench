@@ -579,21 +579,21 @@ class TestYamlLoaderStrictnessAndRetries:
 id: YAML-STRICT-01
 title: Strict JSON Types
 category: A
-user_message: Send a reminder.
+user_message: Schedule a calendar ping.
 held_out: true
 tool_responses:
-  set_reminder:
+  create_calendar_event:
     - match:
-        message: "Ping"
-        datetime: null
+        title: "Ping"
+        date: null
       response:
         matched: "explicit_null"
 expected_tool_calls:
-  - tool: set_reminder
+  - tool: create_calendar_event
     arguments:
-      message: "Ping"
-      datetime: null
-      urgent: true
+      title: "Ping"
+      date: null
+      duration_minutes: true
 answer_contains:
   - "done"
 """.lstrip(),
@@ -602,15 +602,17 @@ answer_contains:
         [scenario] = load_yaml_scenarios(tmp_path)
         assert scenario.held_out is True
 
-        # Missing 'datetime' key must NOT match explicit `datetime: null`.
-        missing_key_call = make_tool_call("set_reminder", {"message": "Ping", "urgent": True})
+        # Missing 'date' key must NOT match explicit `date: null`.
+        missing_key_call = make_tool_call(
+            "create_calendar_event", {"title": "Ping", "duration_minutes": True}
+        )
         assert scenario.handle_tool_call(make_state(), missing_key_call) == {"result": "ok"}
         missing_state = make_state(tool_calls=[missing_key_call], final_answer="done")
         assert scenario.evaluate(missing_state).status == ScenarioStatus.FAIL
 
-        # `urgent: 1` (int) must NOT match `urgent: true` (bool).
+        # `duration_minutes: 1` (int) must NOT match `duration_minutes: true` (bool).
         int_for_bool_call = make_tool_call(
-            "set_reminder", {"message": "Ping", "datetime": None, "urgent": 1}
+            "create_calendar_event", {"title": "Ping", "date": None, "duration_minutes": 1}
         )
         int_state = make_state(tool_calls=[int_for_bool_call], final_answer="done")
         assert scenario.evaluate(int_state).status == ScenarioStatus.FAIL
@@ -618,17 +620,17 @@ answer_contains:
         # Injected transient error attempt followed by exact match passes.
         injected_call = ToolCallRecord(
             id="inj_1",
-            name="set_reminder",
-            raw_arguments='{"message": "Ping", "datetime": null, "urgent": true}',
-            arguments={"message": "Ping", "datetime": None, "urgent": True},
+            name="create_calendar_event",
+            raw_arguments='{"title": "Ping", "date": null, "duration_minutes": true}',
+            arguments={"title": "Ping", "date": None, "duration_minutes": True},
             turn=1,
             injected=True,
         )
         valid_call = ToolCallRecord(
             id="ok_2",
-            name="set_reminder",
-            raw_arguments='{"message": "Ping", "datetime": null, "urgent": true}',
-            arguments={"message": "Ping", "datetime": None, "urgent": True},
+            name="create_calendar_event",
+            raw_arguments='{"title": "Ping", "date": null, "duration_minutes": true}',
+            arguments={"title": "Ping", "date": None, "duration_minutes": True},
             turn=2,
             injected=False,
         )

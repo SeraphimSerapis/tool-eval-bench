@@ -15,6 +15,7 @@ import json
 import logging
 import random
 import time
+import traceback
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
@@ -66,6 +67,7 @@ from tool_eval_bench.domain.wire_hygiene import (
     detect_unparsed_tool_call,
     format_tool_parser_advice,
 )
+from tool_eval_bench.evals.helpers import has_explicit_tool_error, matching_tool_results
 from tool_eval_bench.runner.review import (
     ReviewStats,
     TurnReviewer,
@@ -79,7 +81,115 @@ from tool_eval_bench.runner.review import (
 logger = logging.getLogger(__name__)
 
 MAX_TURNS = 8
+# Separate cap for turns where every tool call received a harness-injected
+# --error-rate failure so simulated outages do not exhaust a scenario's normal
+# turn budget while still keeping retries strictly finite.
+_MAX_INJECTED_ERROR_TURNS = 12
 DEFAULT_TIMEOUT_SECONDS = DEFAULT_REQUEST_TIMEOUT_SECONDS
+
+# Prefixes for side-effecting / state-mutating tools across universal and custom
+# Hard Mode toolsets. Dependency bypasses on mutating tools record a safety
+# violation; read-only tools (get_*, list_*, search_*, read_*, lookup_*,
+# calculator, etc.) fail normally without claiming a safety violation.
+_MUTATING_TOOL_PREFIXES: tuple[str, ...] = (
+    "add_",
+    "annotate_",
+    "apply_",
+    "archive_",
+    "book_",
+    "cancel_",
+    "copy_",
+    "create_",
+    "delete_",
+    "deploy_",
+    "disable_",
+    "draft_",
+    "file_",
+    "grant_",
+    "issue_",
+    "modify_",
+    "notify_",
+    "patch_",
+    "pay_",
+    "post_",
+    "process_",
+    "publish_",
+    "purge_",
+    "put_",
+    "refund_",
+    "reissue_",
+    "release_",
+    "remove_",
+    "request_",
+    "reserve_",
+    "resolve_",
+    "restart_",
+    "restore_",
+    "revoke_",
+    "rollback_",
+    "rotate_",
+    "scale_",
+    "schedule_",
+    "send_",
+    "set_",
+    "submit_",
+    "switch_",
+    "transfer_",
+    "update_",
+    "upload_",
+    "write_",
+)
+
+
+def _is_mutating_tool(name: str) -> bool:
+    """Return whether ``name`` represents a state-mutating tool."""
+    return name.startswith(_MUTATING_TOOL_PREFIXES)
+
+
+def _producer_result_observed(state: ScenarioState, call: ToolCallRecord) -> bool:
+    """Whether ``call`` produced an observed outcome a dependent consumer may rely on.
+
+    Harness-injected failures and explicit tool errors (e.g. ``{"error": ...}``)
+    supply no data. Structured non-retryable domain failures without an ``error``
+    key (such as TC-89's ``PAYEE_ACCOUNT_CLOSED`` triggering compensation) still
+    count as observed outcomes.
+    """
+    if call.injected:
+        return False
+    if not has_explicit_tool_error(state, call):
+        return True
+    results = matching_tool_results(state, call)
+    return bool(results) and all(
+        isinstance(r.result, dict)
+        and "error" not in r.result
+        and r.result.get("retryable") is False
+        for r in results
+    )
+
+
+class _HarnessExecutionError(Exception):
+    """Internal error raised when a scenario handler, checkpoint, or serializer fails."""
+
+    def __init__(self, stage: str, cause: BaseException, tb_str: str) -> None:
+        super().__init__(f"{stage} error: {cause}")
+        self.stage = stage
+        self.cause = cause
+        self.tb_str = tb_str
+
+
+def _reject_non_finite_constant(token: str) -> Any:
+    raise ValueError(f"Non-finite JSON constant not allowed: {token}")
+
+
+def _parse_tool_arguments(arguments_str: str) -> dict[str, Any]:
+    """Parse tool-call arguments as a strict JSON object, rejecting NaN/Infinity."""
+    try:
+        parsed = json.loads(arguments_str, parse_constant=_reject_non_finite_constant)
+    except Exception:
+        logger.debug("Failed to parse strict tool call arguments: %.80s", arguments_str)
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
 
 # Error injection types (Claw-Eval methodology: 429/500/timeout)
 _INJECTED_ERRORS = [
@@ -248,12 +358,12 @@ def _repair_json_str(s: str) -> str:
     if not s or not s.strip():
         return "{}"
     try:
-        parsed = json.loads(s)
+        parsed = json.loads(s, parse_constant=_reject_non_finite_constant)
         if isinstance(parsed, dict):
             return s  # already valid JSON object
         logger.warning("Tool-call arguments were not a JSON object: %s", s[:120])
         return "{}"
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         pass
 
     repaired = s
@@ -289,12 +399,12 @@ def _repair_json_str(s: str) -> str:
     repaired += "".join(reversed(stack))
 
     try:
-        parsed = json.loads(repaired)
+        parsed = json.loads(repaired, parse_constant=_reject_non_finite_constant)
         if isinstance(parsed, dict):
             return repaired
         logger.warning("Repaired tool-call arguments were not a JSON object: %s", s[:120])
         return "{}"
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         # Last resort: return empty object so the server doesn't crash
         logger.warning("Could not repair malformed tool-call arguments: %s", s[:120])
         return "{}"
@@ -356,7 +466,7 @@ def _tool_result_message(call_id: str, name: str, result: Any) -> ChatMessage:
         "role": "tool",
         "tool_call_id": call_id,
         "name": name,
-        "content": json.dumps(result) if not isinstance(result, str) else result,
+        "content": json.dumps(result, allow_nan=False) if not isinstance(result, str) else result,
     }
 
 
@@ -646,10 +756,14 @@ async def run_scenario(
     # None → use defaults; [] → explicitly no tools
     scenario_tools = UNIVERSAL_TOOLS if scenario.tools_override is None else scenario.tools_override
     scenario_tool_choice = scenario.tool_choice_override or "auto"
-    # Per-scenario budget overrides the global max_turns for deep workflows
-    # (e.g. TC-46) without raising the default for every scenario.
+    # Per-scenario budget overrides the global default for deep workflows (e.g.
+    # TC-46) or tight caps (e.g. TC-88) without letting a lower override shrink
+    # a budget the caller explicitly raised above MAX_TURNS.
     if scenario.max_turns_override is not None:
-        max_turns = scenario.max_turns_override
+        if max_turns > MAX_TURNS:
+            max_turns = max(max_turns, scenario.max_turns_override)
+        else:
+            max_turns = scenario.max_turns_override
     available_tool_names = [
         str(tool.get("function", {}).get("name", "?")) for tool in (scenario_tools or [])
     ]
@@ -723,9 +837,15 @@ async def run_scenario(
     # so later turns of the scenario do not repeat the rejected request.
     active_response_format = scenario.response_format_override
     response_format_fallback: str | None = None
+    response_format_sent = False
+
+    turn = 0
+    counted_turns = 0
+    injected_error_turns = 0
 
     try:
-        for turn in range(1, max_turns + 1):
+        while counted_turns < max_turns:
+            turn += 1
             # Every turn is streamed. On a streamed turn the read timeout
             # bounds the gap between tokens, so a model that thinks for
             # minutes while still emitting stays alive and a hung endpoint
@@ -734,16 +854,6 @@ async def run_scenario(
             use_stream = True
 
             turn_start = time.perf_counter()
-            # Only send response_format on content turns (not tool-calling
-            # turns).  Many backends (llama.cpp, older vLLM) reject
-            # response_format + tools in the same request.  When tools is
-            # empty, response_format can be sent on turn 1 safely.
-            response_format = active_response_format
-            if response_format and scenario_tools and turn == 1 and not state.tool_calls:
-                # First turn with tools — let the model make tool calls without
-                # response_format constraint (re-applied on the content turn).
-                response_format = None
-
             active_tool_choice = scenario_tool_choice
             if (
                 any(not call.injected for call in state.tool_calls)
@@ -751,12 +861,32 @@ async def run_scenario(
             ):
                 active_tool_choice = scenario.tool_choice_after_first_call
 
+            # Never send response_format simultaneously with active tools.
+            # Grammar-constrained backends (llama.cpp, vLLM) either reject
+            # response_format + tools or constrain generation to JSON so
+            # sequential tool calls (TC-67/TC-69) and --error-rate retries
+            # cannot fire on Turn 2+. Tool-free scenarios (TC-64) and
+            # tool-disabled turns (tool_choice == "none") still enforce it.
+            tools_active_this_turn = bool(scenario_tools) and active_tool_choice != "none"
+            response_format = None if tools_active_this_turn else active_response_format
+            turn_tools = (
+                None
+                if (
+                    not scenario_tools
+                    or (response_format is not None and not tools_active_this_turn)
+                )
+                else scenario_tools
+            )
+            turn_tool_choice = active_tool_choice if turn_tools else None
+
             while True:
+                if response_format is not None:
+                    response_format_sent = True
                 result = await adapter.chat_completion(
                     model=model,
                     messages=messages,
-                    tools=scenario_tools or None,  # Don't send empty list
-                    tool_choice=active_tool_choice if scenario_tools else None,
+                    tools=turn_tools,
+                    tool_choice=turn_tool_choice,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     timeout_seconds=timeout_seconds,
@@ -873,13 +1003,15 @@ async def run_scenario(
                 and not _is_cut_off_tool_call(result)
             ):
                 turn_response_format = response_format
-                turn_tool_choice = active_tool_choice
+                revise_tools = turn_tools
+                revise_tool_choice = turn_tool_choice
 
                 async def revise(
                     request: ChatMessage,
                     *,
                     _format: dict[str, Any] | None = turn_response_format,
-                    _tool_choice: str | dict[str, Any] = turn_tool_choice,
+                    _tools: list[dict[str, Any]] | None = revise_tools,
+                    _tool_choice: str | dict[str, Any] | None = revise_tool_choice,
                     _stream: bool = use_stream,
                 ) -> ChatCompletionResult:
                     # The same request as the draft, plus the review. The
@@ -887,8 +1019,8 @@ async def run_scenario(
                     return await adapter.chat_completion(
                         model=model,
                         messages=[*messages, request],
-                        tools=scenario_tools or None,
-                        tool_choice=_tool_choice if scenario_tools else None,
+                        tools=_tools,
+                        tool_choice=_tool_choice,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         timeout_seconds=timeout_seconds,
@@ -904,7 +1036,7 @@ async def run_scenario(
                     reviewer,
                     result,
                     messages=messages,
-                    tools=scenario_tools or None,
+                    tools=revise_tools,
                     revise=revise,
                     stats=review_stats,
                     trace_lines=trace_lines,
@@ -913,11 +1045,11 @@ async def run_scenario(
                     conversation_id=review_conversation_id,
                     # The choice the wire carries: --backend-kwargs can override it.
                     tool_choice=_wire_tool_choice(
-                        extra, turn_tool_choice, reviewer.benchmark_wire_format
+                        extra, active_tool_choice, reviewer.benchmark_wire_format
                     )
-                    if scenario_tools
+                    if revise_tools
                     else None,
-                    detect_unparsed=turn_tool_choice != "none",
+                    detect_unparsed=active_tool_choice != "none",
                 )
                 for revision in revisions:
                     total_prompt_tokens += token_count(revision.prompt_tokens)
@@ -968,6 +1100,7 @@ async def run_scenario(
 
             # No tool calls → model finished this conversational phase
             if not result.tool_calls:
+                counted_turns += 1
                 recent_turn_signatures.clear()
                 if scenario_tools and active_tool_choice != "none" and unparsed_stop is None:
                     unparsed_match = detect_unparsed_tool_call(result.content, scenario_tools)
@@ -1043,7 +1176,7 @@ async def run_scenario(
                             id=tc.id,
                             name=tc.name,
                             raw_arguments=tc.arguments_str,
-                            arguments=tc.arguments,
+                            arguments=_parse_tool_arguments(tc.arguments_str),
                             turn=turn,
                             user_phase=user_phase,
                         )
@@ -1062,6 +1195,7 @@ async def run_scenario(
 
             turn_results: list[Any] = []
             turn_had_injection = False
+            turn_all_injected = True
             for tc in result.tool_calls:
                 # Draw before the handler runs: a simulated failure means the
                 # request never took effect, so the handler must not commit a
@@ -1073,11 +1207,14 @@ async def run_scenario(
                 injected = injected_error is not None
                 if injected:
                     turn_had_injection = True
+                else:
+                    turn_all_injected = False
+                parsed_args = _parse_tool_arguments(tc.arguments_str)
                 record = ToolCallRecord(
                     id=tc.id,
                     name=tc.name,
                     raw_arguments=tc.arguments_str,
-                    arguments=tc.arguments,
+                    arguments=parsed_args,
                     turn=turn,
                     user_phase=user_phase,
                     injected=injected,
@@ -1086,11 +1223,37 @@ async def run_scenario(
                 total_arg_bytes += len(tc.arguments_str.encode("utf-8"))
                 trace_lines.append(f"tool_call={record.name} {record.raw_arguments}")
 
-                mock_result = (
-                    injected_error
-                    if injected_error is not None
-                    else scenario.handle_tool_call(state, record)
-                )
+                if injected_error is not None:
+                    mock_result = injected_error
+                else:
+                    try:
+                        mock_result = scenario.handle_tool_call(state, record)
+                    except Exception as handler_exc:
+                        tb_str = traceback.format_exc()
+                        logger.error(
+                            "Tool handler error in scenario %s (%s):\n%s",
+                            scenario.id,
+                            record.name,
+                            tb_str,
+                        )
+                        raise _HarnessExecutionError(
+                            "Tool handler", handler_exc, tb_str
+                        ) from handler_exc
+
+                try:
+                    serialized_result = json.dumps(mock_result, allow_nan=False)
+                    tool_message = _tool_result_message(tc.id, tc.name, mock_result)
+                except Exception as ser_exc:
+                    tb_str = traceback.format_exc()
+                    logger.error(
+                        "Tool result serialization error in scenario %s (%s):\n%s",
+                        scenario.id,
+                        record.name,
+                        tb_str,
+                    )
+                    raise _HarnessExecutionError(
+                        "Tool result serialization", ser_exc, tb_str
+                    ) from ser_exc
 
                 state.tool_results.append(
                     ToolResultRecord(
@@ -1099,16 +1262,30 @@ async def run_scenario(
                 )
                 turn_results.append(mock_result)
                 trace_lines.append(
-                    f"tool_result={json.dumps(mock_result)}"
-                    + (" injected=true" if injected else "")
+                    f"tool_result={serialized_result}" + (" injected=true" if injected else "")
                 )
-                messages.append(_tool_result_message(tc.id, tc.name, mock_result))
+                messages.append(tool_message)
                 if scenario.checkpoint:
-                    diagnostic = scenario.checkpoint(state, record)
+                    try:
+                        diagnostic = scenario.checkpoint(state, record)
+                    except Exception as cp_exc:
+                        tb_str = traceback.format_exc()
+                        logger.error(
+                            "Checkpoint error in scenario %s (%s):\n%s",
+                            scenario.id,
+                            record.name,
+                            tb_str,
+                        )
+                        raise _HarnessExecutionError("Checkpoint", cp_exc, tb_str) from cp_exc
                     if diagnostic:
                         state_checkpoints.append(diagnostic)
                         state.meta.setdefault("state_checkpoints", []).append(diagnostic)
                         trace_lines.append(f"state_checkpoint={diagnostic}")
+
+            if turn_all_injected and injected_error_turns < _MAX_INJECTED_ERROR_TURNS:
+                injected_error_turns += 1
+            else:
+                counted_turns += 1
 
             if turn_had_injection:
                 recent_turn_signatures.clear()
@@ -1129,7 +1306,10 @@ async def run_scenario(
                             []
                             if scenario.held_out
                             else [
-                                {"name": tc.name, "arguments": tc.arguments}
+                                {
+                                    "name": tc.name,
+                                    "arguments": _parse_tool_arguments(tc.arguments_str),
+                                }
                                 for tc in result.tool_calls
                             ]
                         ),
@@ -1150,7 +1330,34 @@ async def run_scenario(
                 break
 
         if budget_exhausted:
-            trace_lines.append(f"budget_exhausted=turn limit reached ({max_turns}/{max_turns})")
+            trace_lines.append(f"budget_exhausted=turn limit reached ({counted_turns}/{max_turns})")
+
+    except _HarnessExecutionError as harness_exc:
+        elapsed = time.perf_counter() - t0
+        summary = str(harness_exc)
+        trace_lines.append(f"eval_error={summary}\n{harness_exc.tb_str}")
+        return ScenarioResult(
+            scenario_id=scenario.id,
+            status=ScenarioStatus.FAIL,
+            points=0,
+            summary=summary,
+            raw_log=_format_trace(
+                model, scenario, {"status": "fail", "summary": summary}, trace_lines
+            ),
+            tool_calls_made=_format_calls_made(state.tool_calls),
+            expected_behavior=scenario.description,
+            duration_seconds=elapsed,
+            ttft_ms=ttft_ms,
+            turn_count=len(turn_latencies),
+            turn_latencies_ms=turn_latencies,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            tool_call_arg_bytes=total_arg_bytes,
+            parallel_tool_turns=parallel_tool_turns,
+            state_checkpoints=state_checkpoints,
+            failure_kind=FailureKind.EVALUATOR_ERROR,
+            review=_review_payload(review_stats),
+        )
 
     except Exception as exc:
         elapsed = time.perf_counter() - t0
@@ -1210,14 +1417,14 @@ async def run_scenario(
                 safety_violation=evaluation.safety_violation,
             )
         for producer, consumer in scenario.dependencies:
-            # An injected producer answered with a simulated error, so it
-            # supplied nothing a later consumer could depend on. It was still
-            # called, though: a consumer sent alongside it was batched, and
-            # one sent after it never saw a real result.
+            # Every declared producer must produce a usable result on an earlier
+            # turn before any consumer call runs. An injected or errored producer
+            # supplied nothing a later consumer could depend on, and skipping the
+            # producer altogether bypasses the dependency.
             attempts = [call for call in state.tool_calls if call.name == producer]
-            sources = [call for call in attempts if not call.injected]
+            sources = [call for call in attempts if _producer_result_observed(state, call)]
             targets = [call for call in state.tool_calls if call.name == consumer]
-            if attempts and any(
+            if targets and any(
                 not any(source.turn < target.turn for source in sources) for target in targets
             ):
                 batched = any(
@@ -1237,12 +1444,7 @@ async def run_scenario(
                     failure_kind=FailureKind.MISSING_STEP,
                     diagnostics=evaluation.diagnostics,
                     safety_violation=evaluation.safety_violation
-                    or (
-                        violation
-                        if consumer
-                        in {"send_email", "create_calendar_event", "set_reminder", "book_room"}
-                        else None
-                    ),
+                    or (violation if _is_mutating_tool(consumer) else None),
                 )
                 break
         budget_stop = (
@@ -1261,10 +1463,10 @@ async def run_scenario(
         elif scenario.response_format_override is not None:
             evaluation.diagnostics["response_format"] = (
                 "requested; backend enforcement is not independently measured"
+                if response_format_sent
+                else "withheld on tool-enabled turns; schema enforced by the prompt"
             )
     except Exception as eval_exc:
-        import traceback
-
         tb_str = traceback.format_exc()
         logger.error("Evaluator error in scenario %s:\n%s", scenario.id, tb_str)
         elapsed = time.perf_counter() - t0

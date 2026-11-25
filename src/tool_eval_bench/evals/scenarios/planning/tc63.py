@@ -149,9 +149,10 @@ def _tc63_within_budget(answer: str) -> bool:
         # Unicode decimal digit, so stripping ASCII "0" would leave `٠٠٠…٢٥` unguarded;
         # `float()` accepts every one of them and has no length ceiling. A long NON-zero
         # run cannot reach here at all -- it is `inf`, which the ceiling rejects first.
-        if price > _TC63_BUDGET_CEILING or not _answer_affirms_number(
-            answer, str(int(float(digits)))
-        ):
+        if price > _TC63_BUDGET_CEILING:
+            continue
+        lookup = f"{int(float(digits))}.{cents}" if cents is not None else str(int(float(digits)))
+        if not _answer_affirms_number(answer, lookup):
             continue
         if _TC63_NEGATED_BUDGET.search(_tc63_prefix(answer, match.start())):
             continue

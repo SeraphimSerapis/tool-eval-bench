@@ -68,7 +68,12 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
-from tool_eval_bench.evals.helpers import counted_calls
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_number,
+    answer_affirms_text,
+    counted_calls,
+    has_explicit_tool_error,
+)
 
 # YAML scenarios cannot declare tools; the orchestrator offers these to every one.
 _OFFERED_TOOLS = frozenset(tool["function"]["name"] for tool in UNIVERSAL_TOOLS)
@@ -112,17 +117,30 @@ def _make_handler(
     return handle_tool_call
 
 
+_NUMERIC_SNIPPET = re.compile(r"^-?\d+(?:,\d{3})*(?:\.\d+)?$|^-?\d+(?:\.\d+)?$")
+
+
 def _missing_from_answer(answer: str, required: list[str]) -> list[str]:
-    """Return the required snippets absent from *answer*, case-insensitively."""
-    haystack = (answer or "").lower()
-    return [snippet for snippet in required if snippet.lower() not in haystack]
+    """Return the required snippets not affirmed in *answer* (boundary- and negation-aware)."""
+    text = answer or ""
+    missing: list[str] = []
+    for snippet in required:
+        stripped = snippet.strip()
+        if _NUMERIC_SNIPPET.fullmatch(stripped):
+            matched = answer_affirms_number(text, stripped)
+        else:
+            matched = answer_affirms_text(text, snippet)
+        if not matched:
+            missing.append(snippet)
+    return missing
 
 
 def _make_evaluator(
     expected_tool_calls: list[dict[str, Any]],
     answer_contains: list[str],
+    dependencies: tuple[tuple[str, str], ...] = (),
 ) -> Any:
-    """Build an evaluator that checks tool calls, then the answer's content."""
+    """Build an evaluator that checks tool calls, dependencies, then the answer's content."""
 
     def _verdict(state: ScenarioState, summary: str) -> ScenarioEvaluation:
         """Score tool discipline that already passed against the answer text."""
@@ -188,6 +206,24 @@ def _make_evaluator(
                 points=0,
                 summary="Extra tool calls made.",
             )
+
+        for producer, consumer in dependencies:
+            sources = [
+                call
+                for call in state.tool_calls
+                if call.name == producer
+                and not call.injected
+                and not has_explicit_tool_error(state, call)
+            ]
+            targets = [call for call in state.tool_calls if call.name == consumer]
+            if targets and any(
+                not any(source.turn < target.turn for source in sources) for target in targets
+            ):
+                return ScenarioEvaluation(
+                    status=ScenarioStatus.FAIL,
+                    points=0,
+                    summary=f"Called {consumer} before observing a {producer} result.",
+                )
 
         return _verdict(state, "All expected tool calls matched.")
 
@@ -344,6 +380,7 @@ _SCENARIO_KEYS = frozenset(
         "tool_responses",
         "answer_contains",
         "capabilities",
+        "dependencies",
         "held_out",
     }
 )
@@ -398,8 +435,45 @@ def _expected_tool_calls(data: dict[str, Any], path: Path) -> list[dict[str, Any
                 f"in {path}; choose from {', '.join(sorted(_OFFERED_TOOLS))}"
             )
         if "arguments" in entry:
-            _mapping_field(entry["arguments"], f"{where}.arguments", path)
+            arguments = _mapping_field(entry["arguments"], f"{where}.arguments", path)
+            parameters = _TOOL_PARAMETERS[tool]
+            unknown = [key for key in arguments if key not in parameters]
+            if unknown:
+                raise ValueError(
+                    f"Field {where + '.arguments'!r} names {', '.join(map(repr, unknown))}, "
+                    f"which {tool} does not take, in {path}; "
+                    f"its parameters: {', '.join(sorted(parameters))}"
+                )
     return value
+
+
+def _dependencies(data: dict[str, Any], path: Path) -> tuple[tuple[str, str], ...]:
+    """Validate optional ``dependencies`` as ``[[producer, consumer], ...]`` offered-tool edges."""
+    value = data.get("dependencies")
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError(
+            f"Field 'dependencies' must be a list of [producer, consumer] pairs in {path}"
+        )
+    edges: list[tuple[str, str]] = []
+    for index, edge in enumerate(value):
+        where = f"dependencies[{index}]"
+        if (
+            not isinstance(edge, list)
+            or len(edge) != 2
+            or not all(isinstance(name, str) and name.strip() for name in edge)
+        ):
+            raise ValueError(f"Field {where!r} must be a 2-element list of tool names in {path}")
+        producer, consumer = edge[0], edge[1]
+        for role, name in (("producer", producer), ("consumer", consumer)):
+            if name not in _OFFERED_TOOLS:
+                raise ValueError(
+                    f"Field {where!r} {role} names {name!r}, which YAML scenarios never offer, "
+                    f"in {path}; choose from {', '.join(sorted(_OFFERED_TOOLS))}"
+                )
+        edges.append((producer, consumer))
+    return tuple(edges)
 
 
 def _tool_responses(data: dict[str, Any], path: Path) -> dict[str, list[dict[str, Any]]]:
@@ -483,6 +557,7 @@ def _load_yaml_file(path: Path, raw_bytes: bytes | None = None) -> ScenarioDefin
     difficulty = _difficulty(data, path)
     tool_responses = _tool_responses(data, path)
     expected_tool_calls = _expected_tool_calls(data, path)
+    dependencies = _dependencies(data, path)
     answer_contains = _string_list(data, "answer_contains", path)
     capabilities = _string_list(data, "capabilities", path)
     unknown = [tag for tag in capabilities if tag not in CAPABILITY_LABELS]
@@ -498,9 +573,10 @@ def _load_yaml_file(path: Path, raw_bytes: bytes | None = None) -> ScenarioDefin
         user_message=user_message,
         description=description or "",
         handle_tool_call=_make_handler(tool_responses),
-        evaluate=_make_evaluator(expected_tool_calls, answer_contains),
+        evaluate=_make_evaluator(expected_tool_calls, answer_contains, dependencies),
         difficulty=difficulty,
         held_out=held_out,
+        dependencies=dependencies,
         capabilities=tuple(capabilities),
     )
 

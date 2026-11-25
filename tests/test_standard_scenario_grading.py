@@ -1014,7 +1014,9 @@ def test_tc18_address_echoed_by_translate_text_error_is_partial() -> None:
         },
     )
     result = replay("TC-18", *turns)
-    assert result.status is PARTIAL, result.summary
+    # Skipping get_contacts altogether before send_email now fails TC-18's
+    # declared ("get_contacts", "send_email") dependency in the orchestrator.
+    assert result.status is FAIL, result.summary
 
 
 # --- Third review round -----------------------------------------------------

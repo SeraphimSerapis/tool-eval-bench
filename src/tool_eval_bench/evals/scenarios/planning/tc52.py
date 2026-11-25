@@ -180,9 +180,10 @@ def _tc52_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Require actual AAPL price plus benchmark data (either index level or
     # percentage change paired with a benchmark name), and a valid comparison
     # that does not invert direction or punt.
-    has_price = _answer_affirms_number(answer_raw, "178")
+    has_price = any(_answer_affirms_number(answer_raw, value) for value in ("178.5", "178"))
     has_benchmark_level = any(
-        _answer_affirms_number(answer_raw, value) for value in ("5412", "5,412", "17234", "17,234")
+        _answer_affirms_number(answer_raw, value)
+        for value in ("5412.5", "5412", "17234.12", "17234")
     )
     has_benchmark_pct = bool(_TC52_BENCHMARK_NAME.search(answer)) and any(
         _answer_affirms_number(answer_raw, value) for value in ("0.8", "1.2")

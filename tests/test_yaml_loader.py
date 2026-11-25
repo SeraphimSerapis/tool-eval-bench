@@ -462,15 +462,15 @@ class TestAmbiguousScalars:
         path = _pack_file(
             tmp_path,
             "expected_tool_calls:\n  - tool: create_calendar_event\n    arguments:\n"
-            '      date: "2026-03-21"\n      time: "14:30"\n      country: "NO"\n'
-            "      zip: '01234'\n",
+            '      date: "2026-03-21"\n      time: "14:30"\n      title: "NO"\n'
+            "      timezone: '01234'\n",
         )
         sc = _load_yaml_file(path)
         state = ScenarioState()
         state.tool_calls.append(
             _record(
                 "create_calendar_event",
-                {"date": "2026-03-21", "time": "14:30", "country": "NO", "zip": "01234"},
+                {"date": "2026-03-21", "time": "14:30", "title": "NO", "timezone": "01234"},
             )
         )
 

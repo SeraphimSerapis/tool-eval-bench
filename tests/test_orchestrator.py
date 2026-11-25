@@ -1674,6 +1674,7 @@ async def test_rejected_json_schema_falls_back_to_json_object() -> None:
     scenario = ScenarioDefinition(
         **{
             **MOCK_SCENARIO.__dict__,
+            "tool_choice_after_first_call": "none",
             "response_format_override": {"type": "json_schema", "json_schema": {"schema": {}}},
         }
     )

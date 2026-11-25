@@ -566,6 +566,9 @@ def build_pressure_messages(
     return messages
 
 
+_MIN_FILLER_USER_CHARS = 100
+
+
 async def calibrate_pressure_messages(
     messages: list[ChatMessage],
     target_tokens: int,
@@ -580,8 +583,9 @@ async def calibrate_pressure_messages(
     """Calibrate filler messages to hit the exact token target.
 
     Uses the server's ``/tokenize`` endpoint to measure actual token
-    counts, then trims or extends the last user message content to
-    match the target.  Returns ``(calibrated_messages, actual_tokens)``.
+    counts, then trims proportionally across user filler chunks or extends
+    the last user message content to match the target. Returns
+    ``(calibrated_messages, actual_tokens)``.
 
     If tokenization is unavailable, returns the messages unchanged with
     the char-based estimate and calls *on_estimated*, so a caller that
@@ -616,26 +620,42 @@ async def calibrate_pressure_messages(
         return messages, actual
 
     if delta > 0:
-        # Over target — trim characters from the last user message
-        # Find the last user message
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i]["role"] == "user":
-                content = messages[i].get("content") or ""
-                # Estimate chars to remove: delta tokens × chars_per_token
-                # Use measured ratio from this run for better accuracy
-                total_chars = sum(len(m.get("content") or "") for m in messages)
-                measured_cpt = total_chars / actual if actual > 0 else CHARS_PER_TOKEN_ESTIMATE
-                chars_to_remove = int(delta * measured_cpt * 1.05)  # slight over-trim
-                if chars_to_remove < len(content) - 100:
-                    # Trim the content but keep the message — never remove
-                    # an entire message pair, as that changes the prompt
-                    # structure and can re-introduce alternating pass/fail.
-                    messages[i]["content"] = content[:-chars_to_remove]
-                else:
-                    # Need to remove nearly all content — trim to minimum
-                    # viable length rather than removing the pair.
-                    messages[i]["content"] = content[:100]
-                break
+        # Over target — distribute trimming proportionally across all user
+        # filler chunks while keeping every message pair intact (never removing
+        # a pair, which changes prompt structure and can re-introduce
+        # alternating pass/fail) and preserving a minimum viable length per chunk.
+        user_indices = [i for i, m in enumerate(messages) if m["role"] == "user"]
+        total_chars = sum(len(m.get("content") or "") for m in messages)
+        measured_cpt = total_chars / actual if actual > 0 else CHARS_PER_TOKEN_ESTIMATE
+        chars_to_remove = int(delta * measured_cpt * 1.05)  # slight over-trim
+        trimmable = [
+            max(0, len(messages[i].get("content") or "") - _MIN_FILLER_USER_CHARS)
+            for i in user_indices
+        ]
+        total_trimmable = sum(trimmable)
+        if total_trimmable > 0 and chars_to_remove > 0:
+            if chars_to_remove >= total_trimmable:
+                for i, avail in zip(user_indices, trimmable, strict=True):
+                    if avail > 0:
+                        content = messages[i].get("content") or ""
+                        messages[i]["content"] = content[: len(content) - avail]
+            else:
+                cuts = [
+                    min(avail, int(chars_to_remove * avail / total_trimmable))
+                    for avail in trimmable
+                ]
+                remainder = chars_to_remove - sum(cuts)
+                for idx in range(len(cuts) - 1, -1, -1):
+                    if remainder <= 0:
+                        break
+                    spare = trimmable[idx] - cuts[idx]
+                    extra_cut = min(spare, remainder)
+                    cuts[idx] += extra_cut
+                    remainder -= extra_cut
+                for i, cut in zip(user_indices, cuts, strict=True):
+                    if cut > 0:
+                        content = messages[i].get("content") or ""
+                        messages[i]["content"] = content[:-cut]
 
         # Re-measure after trim
         recounted = await count_messages_tokens(

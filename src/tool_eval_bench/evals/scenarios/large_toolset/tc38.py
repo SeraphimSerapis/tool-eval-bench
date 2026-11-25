@@ -304,11 +304,11 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc38_eval,
     tools_override=LARGE_TOOLSET,
     difficulty=4,
+    # Manager lookup can come from either get_contacts OR get_org_chart;
+    # _tc38_eval enforces that OR-dependency and turn ordering directly.
     dependencies=(
         ("search_files", "read_file"),
         ("read_file", "send_email"),
-        ("get_contacts", "send_email"),
-        ("get_org_chart", "send_email"),
     ),
     variant_literals=("file_091",),
     control_scenario_id="TC-07",

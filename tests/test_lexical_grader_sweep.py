@@ -252,6 +252,8 @@ def test_tc63_reads_the_whole_amount_not_its_first_digits(price):
         "$28.50,11pm",
         "$25.50,2 blocks away",
         "$22.50, 4.5 stars",
+        "$25,4.5 stars",
+        "$28,11pm",
     ],
 )
 def test_tc63_still_accepts_an_amount_at_or_under_the_ceiling(price):
@@ -259,10 +261,9 @@ def test_tc63_still_accepts_an_amount_at_or_under_the_ceiling(price):
 
     `US$25` works today, and a lookbehind rejecting a preceding word character
     would silently break it along with `CA$` and `AU$`. `$30.00` is the ceiling
-    exactly. The last four are the cases that killed two earlier drafts: reading
-    the amount is not enough if what gets LOOKED UP in the answer changes with
-    it, because `answer_affirms_number` strips digit-grouping commas from the
-    answer and can pull a following digit against a wider needle.
+    exactly. Comma-delimited non-thousands fields like `$25,4.5 stars` and
+    `$28,11pm` are also read cleanly now that `answer_affirms_number` only
+    strips valid 3-digit grouping commas.
     """
     from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_within_budget
 
@@ -270,19 +271,13 @@ def test_tc63_still_accepts_an_amount_at_or_under_the_ceiling(price):
     assert _tc63_within_budget(answer.lower()) is True, price
 
 
-@pytest.mark.parametrize("price", ["$25,4.5 stars", "$28,11pm", "$007", "$٢٥"])
+@pytest.mark.parametrize("price", ["$007", "$٢٥"])
 def test_tc63_still_does_not_read_these_and_this_change_does_not_either(price):
     """Known limitations, genuinely unchanged — recorded, not fixed.
 
-    `answer_affirms_number` collapses digit-grouping commas across the whole
-    answer, so in `$25,4.5` the amount is not affirmed by that occurrence, and
-    unless the answer names it again elsewhere the price is not read at all.
     `$007` is looked up as `7`, which the lookbehind refuses inside `007`
     itself. `$٢٥` is looked up as ASCII `25`, a string that does not occur in
-    the answer at all. For all four the value looked up is byte-identical
-    before and after, because the old three-digit cap did not change any of
-    these amounts. Named so the guard above is not read as covering a class it
-    only half covers.
+    the answer at all.
     """
     from tool_eval_bench.evals.scenarios.planning.tc63 import _tc63_within_budget
 
