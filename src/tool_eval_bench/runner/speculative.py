@@ -21,6 +21,9 @@ Data sources:
 - Strata:   ``timings.draft_n`` / ``draft_n_accepted`` in the response;
             otherwise Prometheus counter deltas at /metrics
 - TensorFold: request-local counts in the response; otherwise Prometheus
+- Splash:   ``metrics.speculation`` in the response (draft counts and cycles),
+            or ``timings.draft_n`` when it is absent; otherwise Prometheus
+            counter deltas at /metrics, which carry no step count
 - SGLang:   live gauges are available to spec-live, but are not request-local here
 - Fallback: wall-clock effective t/s only (always available)
 """
@@ -32,6 +35,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
+from tool_eval_bench.domain.engines import LLAMACPP, engine_profile_by_declared_name
 from tool_eval_bench.domain.measurement import MeasurementClient, MeasurementClientFactory
 from tool_eval_bench.domain.spec_decode import per_position_acceptance
 from tool_eval_bench.runner.spec_detection import (
@@ -82,6 +86,9 @@ class PerRequestSpecMetrics:
     num_spec_tokens: int | None = None
     per_step_accepted: list[int] | None = None
     per_step_drafted: list[int] | None = None
+    # The step count also covers work before the first streamed token, so it
+    # does not fit the after-first-token interval Steps/s divides it by.
+    steps_cover_first_token: bool = False
 
 
 def _int_list(value: object) -> list[int] | None:
@@ -141,6 +148,39 @@ def parse_tensorfold_spec_metrics(raw: object) -> PerRequestSpecMetrics | None:
     return PerRequestSpecMetrics(drafted, accepted, num_spec_steps=None)
 
 
+def _server_omits_zero_draft_n(server_header: str | None) -> bool:
+    """Whether a response's ``Server`` header names an engine whose timings
+    omit ``draft_n`` for a request that drafted nothing."""
+    profile = engine_profile_by_declared_name("server", server_header)
+    return profile is not None and profile.absent_draft_n_is_zero
+
+
+def parse_splash_spec_metrics(raw: object) -> PerRequestSpecMetrics | None:
+    """Read Splash's ``metrics.speculation``: request-local counts and cycles.
+
+    server/metrics.py metrics_dict() writes the object only when the request
+    drafted. A cycle verifies one draft and yields the tokens it accepted plus
+    one (server/diagnostics.py), so cycles are speculative steps.
+    server/protocol.py rejects accepted or cycles above drafted, and drafted
+    tokens without a cycle. Counts that break those rules are not trusted; a
+    cycle count alone that breaks them is dropped.
+    """
+    if not isinstance(raw, dict):
+        return None
+    drafted = _non_negative_int(raw.get("drafted_tokens"))
+    accepted = _non_negative_int(raw.get("accepted_draft_tokens"))
+    if drafted is None or accepted is None or accepted > drafted:
+        return None
+    cycles = _non_negative_int(raw.get("cycles"))
+    if cycles is not None and (cycles > drafted or (drafted > 0 and cycles == 0)):
+        cycles = None
+    # server/metrics.py: "The first native emission can contain a whole
+    # speculative block", so the cycles include work before the first token.
+    return PerRequestSpecMetrics(
+        drafted, accepted, num_spec_steps=cycles, steps_cover_first_token=True
+    )
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -180,6 +220,9 @@ class SpecDecodeSample:
     # Per-step arrays from vLLM ``detailed`` mode; None in ``summary`` mode.
     per_step_accepted: list[int] | None = None
     per_step_drafted: list[int] | None = None
+    # The step count includes steps before the first token (Splash), so
+    # Steps/s, which divides by the time after it, is not reported.
+    steps_cover_first_token: bool = False
 
     # Derived metrics
     spec_method: str = "unknown"  # mtp / draft_model / ngram / eagle
@@ -275,7 +318,13 @@ class SpecDecodeSample:
         decode rate. Effective t/s divided by it is therefore a ceiling on the
         real speedup, and it equals τ. ``--baseline-tgs`` measures the real
         thing.
+
+        None when the step count also covers steps before the first token
+        (``steps_cover_first_token``): those steps fall outside the interval,
+        so the rate would be neither a bound nor a ceiling.
         """
+        if self.steps_cover_first_token:
+            return None
         if self.num_drafts_delta is not None and self.num_drafts_delta > 0 and self.total_ms > 0:
             gen_ms = self.total_ms - self.ttft_ms if self.ttft_ms > 0 else self.total_ms
             if gen_ms > 0:
@@ -363,6 +412,7 @@ class SpecDecodeSample:
         self.num_spec_tokens = metrics.num_spec_tokens
         self.per_step_accepted = metrics.per_step_accepted
         self.per_step_drafted = metrics.per_step_drafted
+        self.steps_cover_first_token = metrics.steps_cover_first_token
         self.acceptance_source = "response"
         if metrics.num_draft_tokens > 0:
             self.acceptance_rate = metrics.num_accepted_draft_tokens / metrics.num_draft_tokens
@@ -446,6 +496,7 @@ def pool_spec_samples(samples: list[SpecDecodeSample]) -> SpecDecodeSample:
         prompt_type=first.prompt_type,
         runs=n,
         failed_runs=failed,
+        steps_cover_first_token=any(s.steps_cover_first_token for s in ok),
     )
     # Rates from the pooled counters, not the mean of per-run rates, so a
     # short run does not weigh as much as a long one.
@@ -609,14 +660,16 @@ async def measure_spec_single(
     )
     spec_sample.baseline_tg_tps = baseline_tg_tps
 
-    # vLLM --per-request-spec-decode-metrics and TensorFold's counts: exact
-    # and request-scoped, so they win over the server-wide counter delta
+    # vLLM --per-request-spec-decode-metrics, TensorFold's and Splash's counts:
+    # exact and request-scoped, so they win over the server-wide counter delta
     # whenever they are present.
     if sample.error:
         return spec_sample
     per_request = parse_per_request_spec_metrics(sample.spec_decode_metrics)
     if per_request is None:
         per_request = parse_tensorfold_spec_metrics(sample.tensorfold_spec_metrics)
+    if per_request is None:
+        per_request = parse_splash_spec_metrics(sample.splash_spec_metrics)
     if per_request is not None:
         spec_sample.apply_per_request_metrics(per_request)
         return spec_sample
@@ -655,8 +708,14 @@ async def measure_spec_single(
     # writes draft_n only when n_draft_tokens > 0, so on llama.cpp a timings
     # object without it is an exact zero. Strata and unknown servers can omit
     # the field for "not reported", so they keep the delta fallback. Detection
-    # sets has_per_request_timings from EngineProfile.absent_draft_n_is_zero.
-    if draft_n is None and sample.timings_present and spec_info.has_per_request_timings:
+    # sets has_per_request_timings from EngineProfile.absent_draft_n_is_zero;
+    # when /metrics is hidden, the response's own Server header can name such
+    # an engine (Splash sends "Splash" on every response).
+    if (
+        draft_n is None
+        and sample.timings_present
+        and (spec_info.has_per_request_timings or _server_omits_zero_draft_n(sample.server_header))
+    ):
         draft_n = 0
     if draft_n is not None:
         accepted = sample.draft_n_accepted or 0
@@ -763,9 +822,10 @@ async def run_spec_bench(
 
         if spec_info.has_per_request_timings:
             logger.info(
-                "llama.cpp backend detected — spec decode metrics will be "
-                "extracted from per-request timings (draft_n/draft_n_accepted). "
+                "%s backend detected — spec decode metrics will be extracted from "
+                "the per-request draft counts in each response. "
                 "Per-request stats are exact for each measurement.",
+                spec_info.engine_name or LLAMACPP.display_name,
             )
 
         # Build sweep: depth × prompt_type

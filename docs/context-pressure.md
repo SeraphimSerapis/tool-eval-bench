@@ -119,11 +119,11 @@ level's filler, so sweeps that differ in either are not grouped together.
 The context window size is auto-detected. `--context-size` wins when given.
 Otherwise the first of these that answers is used:
 
-1. `/v1/models`: `max_model_len` (vLLM, Flare), `context_window`, or `max_tokens`.
+1. `/v1/models`: `max_model_len` (vLLM, Flare, Splash), `context_window`, or `max_tokens`.
 2. TensorFold's `/health` `context_length`.
 3. llama.cpp's or Strata's `/props` `default_generation_settings.n_ctx`, Strata's
-   `/health` `max_context`, or Flare's `/v1/models` `max_model_len`, as recorded by
-   the engine probe in the run metadata. `--no-probe-engine` skips the probe, and
+   `/health` `max_context`, or Flare's or Splash's `/v1/models` `max_model_len`, as
+   recorded by the engine probe in the run metadata. `--no-probe-engine` skips the probe, and
    with it this source.
 
 That llama.cpp `n_ctx` is the per-request limit. Without `--kv-unified` it is
@@ -142,6 +142,12 @@ Flare reports `max_model_len` on `/v1/models` as its effective single-request
 prompt plus output limit, so context pressure, the pressure sweep, and the needle
 benchmark pick it up directly from model-listing discovery (and also keep it
 available via the engine-probe fallback).
+
+Splash reports its `max_context` as `max_model_len` on `/v1/models`. Its frontend
+refuses a prompt that reaches that limit and caps the prompt plus the output at
+it, so it is a single-request limit too. Splash can still end a long request early
+with a length finish when its SSD cache quota or memory stops the request's lane
+from growing.
 
 vLLM's KV cache capacity on `/metrics` then caps the result, except for hybrid
 attention models. If auto-detection fails, use `--context-size` to specify it

@@ -19,12 +19,11 @@ import tomllib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 
 import httpx
 
 from tool_eval_bench.domain.engines import (
-    ENGINE_PROFILES,
     FLARE,
     HALOGEN,
     LITELLM,
@@ -32,6 +31,7 @@ from tool_eval_bench.domain.engines import (
     METRICS_IDENTITY_ORDER,
     NINFER,
     SGLANG,
+    SPLASH,
     STRATA,
     TABBYAPI,
     TANDEMLLM,
@@ -39,6 +39,7 @@ from tool_eval_bench.domain.engines import (
     VLLM,
     IdentitySource,
     engine_profile,
+    engine_profile_by_declared_name,
 )
 from tool_eval_bench.domain.models import (
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
@@ -465,21 +466,6 @@ def detect_backend_from_metrics(text: str) -> tuple[str, str] | None:
     return None
 
 
-# Names servers give themselves, keyed by where they give them, from each
-# profile's declared_names. A lookup is an exact, case-insensitive match on the
-# value's leading name token, so "Strata 0.1.40" names Strata and "tabby" names
-# nothing. Declared identity is checked before llama.cpp's /props shape, which
-# Strata and TabbyAPI imitate.
-_DECLARED_IDENTITIES: dict[IdentitySource, dict[str, tuple[str, str]]] = {
-    source: {
-        token: profile.identity
-        for profile in ENGINE_PROFILES
-        for declared_source, token in profile.declared_names
-        if declared_source == source
-    }
-    for source in get_args(IdentitySource)
-}
-
 # Endpoint-specific identity fields, as a key path into the JSON body. Every
 # probed response is also checked for model ownership and its Server header.
 _DECLARED_FIELDS: dict[str, tuple[IdentitySource, tuple[str, ...]]] = {
@@ -490,11 +476,13 @@ _DECLARED_FIELDS: dict[str, tuple[IdentitySource, tuple[str, ...]]] = {
 
 
 def _declared(source: IdentitySource, value: Any) -> tuple[str, str] | None:
-    """Look up the server *value* names; anything but a non-empty string names none."""
-    if not isinstance(value, str):
-        return None
-    token = re.split(r"[\s/]", value.strip(), maxsplit=1)[0].lower()
-    return _DECLARED_IDENTITIES[source].get(token) if token else None
+    """Look up the server *value* names; see ``engine_profile_by_declared_name``.
+
+    Declared identity is checked before llama.cpp's /props shape, which Strata
+    and TabbyAPI imitate.
+    """
+    profile = engine_profile_by_declared_name(source, value)
+    return profile.identity if profile is not None else None
 
 
 def backend_from_models(body: Any) -> tuple[str, str] | None:
@@ -875,6 +863,33 @@ async def _probe_flare(
     return result
 
 
+async def _probe_splash(
+    base_url: str, api_key: str | None, *, session: _ProbeSession
+) -> dict[str, Any]:
+    """Read Splash's concurrent-request limit from ``/status``.
+
+    ``frontend.preparation_capacity`` is the engine's
+    ``--max-concurrent-requests`` (server/frontend.py). ``max_model_len``
+    already comes from ``/v1/models``. Splash serves no version over HTTP; its
+    Server header is the bare token ``Splash``, so ``engine_version`` stays
+    unset. ``/status`` needs the API key when the server has one.
+    """
+    result: dict[str, Any] = {"engine_name": SPLASH.display_name}
+    status = await _probe_json(
+        session,
+        _root_endpoint_url(base_url, "/status"),
+        headers=_auth_headers(api_key),
+        what="Splash /status",
+    )
+    frontend = status.get("frontend") if status else None
+    slots = (
+        _positive_int(frontend.get("preparation_capacity")) if isinstance(frontend, dict) else None
+    )
+    if slots:
+        result["slot_count"] = slots
+    return result
+
+
 async def _identify_unlabelled(
     base_url: str, api_key: str | None, *, session: _ProbeSession
 ) -> tuple[str, str | None]:
@@ -940,6 +955,8 @@ async def _probe_engine(
             result.update(await _probe_tandemllm(base_url, api_key, session=active))
         elif key == FLARE.key:
             result.update(await _probe_flare(base_url, api_key, model=model, session=active))
+        elif key == SPLASH.key:
+            result.update(await _probe_splash(base_url, api_key, session=active))
         elif key == LLAMACPP.key:
             props = await _probe_props(base_url, api_key, session=active)
             # A GGUF file type cannot tell UD-Q4_K_XL or Q4_K_L from Q4_K_M, so

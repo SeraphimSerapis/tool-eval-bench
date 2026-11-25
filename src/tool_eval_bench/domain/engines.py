@@ -48,7 +48,7 @@ class EngineProfile:
     """Lower-case names the server gives itself, keyed by where it gives them.
     Matched exactly against the value's leading name token."""
     spec_counters_always_rendered: bool = False
-    """The ``spec_decode`` counters appear on every scrape, drafting or not, so
+    """The speculative counters appear whether or not the engine drafts, so
     speculation is active only once drafted tokens are above zero."""
     absent_draft_n_is_zero: bool = False
     """A response ``timings`` object without ``draft_n`` means this request
@@ -177,6 +177,28 @@ FLARE = EngineProfile(
     # max_model_len, the effective prompt+output limit for one request.
     reports_request_context_window=True,
 )
+SPLASH = EngineProfile(
+    key="splash",
+    display_name="Splash",
+    metrics_prefixes=("splash_",),
+    # server/server.py lists every model with owned_by "splash", and its
+    # version_string() makes the Server header the bare token "Splash".
+    declared_names=(("owned_by", "splash"), ("server", "splash")),
+    # runtime/engine/Status.cpp writeMetrics() writes drafted_tokens and
+    # accepted_draft_tokens unconditionally, and server/metrics.py renders
+    # them as splash_*_total, so only drafted tokens prove speculation.
+    spec_counters_always_rendered=True,
+    # server/metrics.py timings_dict() adds draft_n and draft_n_accepted only
+    # when the request drafted a token.
+    absent_draft_n_is_zero=True,
+    spec_counter_detail=(
+        "Splash draft counters available; per-request counts and draft cycles "
+        "come from the response (metrics.speculation)"
+    ),
+    # server/frontend.py _output_budget() caps one request's prompt plus
+    # output at the max_context that /v1/models reports as max_model_len.
+    reports_request_context_window=True,
+)
 
 # Public label order, as the argument schema lists it.
 ENGINE_PROFILES: tuple[EngineProfile, ...] = (
@@ -194,6 +216,7 @@ ENGINE_PROFILES: tuple[EngineProfile, ...] = (
     TABBYAPI,
     TANDEMLLM,
     FLARE,
+    SPLASH,
 )
 
 # Which engine a /metrics scrape belongs to when several namespaces appear.
@@ -205,6 +228,7 @@ METRICS_IDENTITY_ORDER: tuple[EngineProfile, ...] = (
     TENSORFOLD,
     STRATA,
     FLARE,
+    SPLASH,
     VLLM,
     SGLANG,
     LLAMACPP,
@@ -215,7 +239,7 @@ METRICS_IDENTITY_ORDER: tuple[EngineProfile, ...] = (
 # checked before Strata here, so a scrape carrying both namespaces is
 # identified as Strata but read with llama.cpp's counter rules, and Halogen's
 # exported llama.cpp counters are read as llama.cpp's.
-SPEC_COUNTER_ORDER: tuple[EngineProfile, ...] = (TENSORFOLD, LLAMACPP, STRATA, FLARE)
+SPEC_COUNTER_ORDER: tuple[EngineProfile, ...] = (TENSORFOLD, LLAMACPP, STRATA, FLARE, SPLASH)
 
 # The backend labels the argument schema offers, in order.
 BACKEND_LABELS: tuple[str, ...] = (*(p.key for p in ENGINE_PROFILES), UNKNOWN_BACKEND)
@@ -227,6 +251,9 @@ ACCEPTED_BACKEND_LABELS: frozenset[str] = frozenset(
 
 _BY_LABEL = {label: p for p in ENGINE_PROFILES for label in p.labels}
 _BY_DISPLAY_NAME = {p.display_name: p for p in ENGINE_PROFILES}
+_BY_DECLARED_NAME = {
+    (source, token): p for p in ENGINE_PROFILES for source, token in p.declared_names
+}
 
 
 def engine_profile(label: str | None) -> EngineProfile | None:
@@ -237,6 +264,19 @@ def engine_profile(label: str | None) -> EngineProfile | None:
 def engine_profile_by_name(display_name: str | None) -> EngineProfile | None:
     """Return the profile whose ``display_name`` is exactly *display_name*."""
     return _BY_DISPLAY_NAME.get(display_name) if display_name else None
+
+
+def engine_profile_by_declared_name(source: IdentitySource, value: object) -> EngineProfile | None:
+    """Return the profile that *value*, found at *source*, names.
+
+    The match is exact and case-insensitive on the value's leading name token,
+    so "Strata 0.1.40" names Strata and "tabby" names nothing. Anything but a
+    non-empty string names none.
+    """
+    if not isinstance(value, str):
+        return None
+    token = re.split(r"[\s/]", value.strip(), maxsplit=1)[0].lower()
+    return _BY_DECLARED_NAME.get((source, token)) if token else None
 
 
 def metrics_namespace_present(text: str, profile: EngineProfile) -> bool:

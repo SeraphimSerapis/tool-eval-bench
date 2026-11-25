@@ -12,6 +12,7 @@ from tool_eval_bench.domain.engines import (
     FLARE,
     LLAMACPP,
     SPEC_COUNTER_ORDER,
+    SPLASH,
     EngineProfile,
     metrics_namespace_present,
 )
@@ -91,10 +92,39 @@ _FLARE_PROM_PATTERNS = {
 }
 
 
-def _has_flare_spec_counters(text: str) -> bool:
-    """Whether *text* contains at least one Flare speculative counter sample."""
-    return metrics_namespace_present(text, FLARE) and any(
-        pattern.search(text) is not None for pattern in _FLARE_PROM_PATTERNS.values()
+# Splash renders its lifetime decode-batch draft counters under ``splash_``
+# (server/metrics.py PROMETHEUS_SERIES). It exports no draft-cycle counter, so
+# a Splash scrape never carries ``num_drafts``.
+_SPLASH_PROM_PATTERNS = {
+    "accepted_tokens": re.compile(
+        rf"^splash_accepted_draft_tokens_total(?:\{{[^}}]*\}})?\s+{_NUM}",
+        re.MULTILINE,
+    ),
+    "draft_tokens": re.compile(
+        rf"^splash_drafted_tokens_total(?:\{{[^}}]*\}})?\s+{_NUM}",
+        re.MULTILINE,
+    ),
+}
+
+# Engines whose speculative counters carry their own names instead of the
+# ``spec_decode_`` family, in the order a mixed scrape is read.
+_NAMESPACED_SPEC_PATTERNS: tuple[tuple[EngineProfile, dict[str, re.Pattern[str]]], ...] = (
+    (FLARE, _FLARE_PROM_PATTERNS),
+    (SPLASH, _SPLASH_PROM_PATTERNS),
+)
+
+
+def _has_namespaced_spec_counters(text: str, profile: EngineProfile | None = None) -> bool:
+    """Whether *text* holds a finite counter sample of an engine-named family.
+
+    *profile* restricts the check to that engine's family; ``None`` checks all.
+    Finite, as ``parse_prometheus_spec_metrics`` reads them, so detection never
+    names a family whose only samples the parser discards.
+    """
+    return any(
+        metrics_namespace_present(text, owner) and _parse_counter_family(text, patterns)[1]
+        for owner, patterns in _NAMESPACED_SPEC_PATTERNS
+        if profile is None or owner is profile
     )
 
 
@@ -119,16 +149,18 @@ def parse_prometheus_spec_metrics(text: str) -> SpecDecodeCounters:
     """Parse speculative decoding counters from Prometheus text format.
 
     Works with vLLM, llama.cpp, TensorFold, Strata (``spec_decode_``
-    counters) and Flare (``flare_*`` draft counters). Only one counter
-    family is summed so a mixed scrape never double-counts.
+    counters), Flare (``flare_*`` draft counters) and Splash (``splash_*``
+    draft counters, without a step count). Only one counter family is summed
+    so a mixed scrape never double-counts.
     """
     counters, matched = _parse_counter_family(text, _PROM_PATTERNS)
     if matched:
         return counters
-    if metrics_namespace_present(text, FLARE):
-        flare_counters, flare_matched = _parse_counter_family(text, _FLARE_PROM_PATTERNS)
-        if flare_matched:
-            return flare_counters
+    for owner, patterns in _NAMESPACED_SPEC_PATTERNS:
+        if metrics_namespace_present(text, owner):
+            owned, owned_matched = _parse_counter_family(text, patterns)
+            if owned_matched:
+                return owned
     return counters
 
 
@@ -293,7 +325,7 @@ async def scrape_spec_metrics(
             return counters
         # Also return if counters are all zero but the metric names are present
         # (server has spec decode but hasn't processed any requests yet)
-        if "spec_decode" in resp.text or _has_flare_spec_counters(resp.text):
+        if "spec_decode" in resp.text or _has_namespaced_spec_counters(resp.text):
             return counters
         return None
     except Exception as exc:
@@ -319,6 +351,9 @@ class SpecDecodeInfo:
     # skipped because the response body is exact and request-scoped.
     has_per_request_metrics: bool = False
     detail: str = ""
+    # Display name of the engine whose counter rules detection applied, or
+    # None when no engine-specific rule matched. Log hints name it.
+    engine_name: str | None = None
 
 
 async def detect_spec_decoding(
@@ -344,8 +379,8 @@ async def detect_spec_decoding(
         if resp.status_code == 200:
             text = resp.text
 
-            # vLLM, Flare, and compatible exporters: look for spec counters.
-            if "spec_decode" in text or _has_flare_spec_counters(text):
+            # vLLM, Flare, Splash, and compatible exporters: look for spec counters.
+            if "spec_decode" in text or _has_namespaced_spec_counters(text):
                 info.active = True
                 info.has_prometheus = True
                 info.detail = "Detected via Prometheus /metrics (spec_decode counters present)"
@@ -354,19 +389,27 @@ async def detect_spec_decoding(
                 # activity, but do not identify the configured proposer.
                 # Namespaces are matched at line start so a label value such
                 # as model_name="acme/strata:7b" does not name the engine.
-                # Every engine in SPEC_COUNTER_ORDER renders its counters on
-                # every scrape, so only drafted tokens prove activity.
+                # Every engine in SPEC_COUNTER_ORDER renders its counters
+                # whether or not it drafts, so only drafted tokens prove activity.
                 _, has_standard_counters = _parse_counter_family(text, _PROM_PATTERNS)
+                namespaced = {owner for owner, _ in _NAMESPACED_SPEC_PATTERNS}
+                # parse_prometheus_spec_metrics reads an engine-named family only
+                # when no spec_decode_ family is present. The rules applied here
+                # must belong to the family it reads, so a load-only namespace
+                # (llamacpp:, strata:) never claims another engine's counters.
+                reads_namespaced = not has_standard_counters and _has_namespaced_spec_counters(text)
                 for profile in SPEC_COUNTER_ORDER:
-                    if profile is FLARE and (
-                        has_standard_counters or not _has_flare_spec_counters(text)
-                    ):
+                    if profile in namespaced:
+                        if not reads_namespaced or not _has_namespaced_spec_counters(text, profile):
+                            continue
+                    elif reads_namespaced:
                         continue
                     if metrics_namespace_present(text, profile):
                         info.active = parse_prometheus_spec_metrics(text).draft_tokens > 0
                         info.has_per_request_timings = profile.absent_draft_n_is_zero
                         info.method = _detect_spec_method(text, profile)
                         info.detail = profile.spec_counter_detail or info.detail
+                        info.engine_name = profile.display_name
                         break
                 else:
                     info.method = _detect_spec_method(text)
@@ -377,6 +420,7 @@ async def detect_spec_decoding(
             # value or HELP text does not make another server llama.cpp.
             elif metrics_namespace_present(text, LLAMACPP):
                 info.has_per_request_timings = True
+                info.engine_name = LLAMACPP.display_name
                 info.detail = (
                     "llama.cpp detected — spec decode metrics available "
                     "via per-request timings (draft_n/draft_n_accepted)"

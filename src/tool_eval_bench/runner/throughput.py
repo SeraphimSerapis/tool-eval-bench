@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from tool_eval_bench.domain.engines import LLAMACPP
 from tool_eval_bench.domain.measurement import MeasurementClient, MeasurementClientFactory
 from tool_eval_bench.runner.spec_detection import detect_spec_decoding
 from tool_eval_bench.utils.openai_compat import (
@@ -292,6 +293,12 @@ class ThroughputSample:
     # Kept raw here; ``runner.speculative`` owns the typed parse.
     spec_decode_metrics: dict[str, Any] | None = None
     tensorfold_spec_metrics: dict[str, Any] | None = None
+    # Splash's raw ``metrics.speculation`` object: request-local draft counts
+    # and draft cycles, present only when the request drafted.
+    splash_spec_metrics: dict[str, Any] | None = None
+    # The streamed response's own ``Server`` header, the engine's name for
+    # itself on this very response.
+    server_header: str | None = None
     # True when single-stream prefill was estimated from e2e_ttft because
     # llama-benchy counted a pre-content stream chunk as its first response.
     # Reports mark such rows with an asterisk.
@@ -691,6 +698,7 @@ async def _stream_one(
                 # the body text.
                 await response.aread()
             response.raise_for_status()
+            sample.server_header = response.headers.get("server")
 
             pending_data: list[str] = []
             async for raw_line in _completion_lines(response):
@@ -749,6 +757,11 @@ async def _stream_one(
                     spec_metrics = metrics.get("speculative_decoding")
                     if isinstance(spec_metrics, dict):
                         sample.spec_decode_metrics = spec_metrics
+                    # Splash puts its request-local counts in the same
+                    # metrics object, under its own key.
+                    splash_metrics = metrics.get("speculation")
+                    if isinstance(splash_metrics, dict):
+                        sample.splash_spec_metrics = splash_metrics
 
                 # MLX carries speculative counters separately; CUDA puts
                 # engine stats in tensorfold. Neither exposes spec-step counts.
@@ -1143,6 +1156,18 @@ async def run_throughput_matrix(
                     "Standard tg t/s under-reports real throughput for spec-decode models. "
                     "Run with --spec-bench to measure acceptance rate and effective t/s.",
                     spec_method_name or "auto",
+                )
+            elif spec_info.has_per_request_timings and spec_info.engine_name not in (
+                None,
+                LLAMACPP.display_name,
+            ):
+                # Another engine with per-request draft counts (Splash) whose
+                # always-rendered draft counters are still zero.
+                logger.info(
+                    "%s backend detected; its draft counters are zero. If speculative "
+                    "decoding is enabled, run with --spec-bench to measure acceptance "
+                    "rate and effective t/s from per-request draft counts.",
+                    spec_info.engine_name,
                 )
             elif spec_info.has_per_request_timings:
                 # llama.cpp detected — spec decode may be active but we can't
