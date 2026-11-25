@@ -28,7 +28,7 @@ NOISE_VERSION: str = "1"
 # Pinned 16-hex SHA-256 digest of normalized ASTs across ``evals/**/*.py`` and
 # ``runner/orchestrator.py``. Verified in CI by
 # ``tests/test_rubric_cohorts.py::test_rubric_ast_fingerprint_matches_source``.
-RUBRIC_AST_FINGERPRINT: str = "e17954df6945eaa7"
+RUBRIC_AST_FINGERPRINT: str = "e611bd4823bf43a5"
 
 _DOCSTRING_OWNERS = (
     ast.Module,

@@ -85,9 +85,10 @@ tool-eval-bench run --short --base-url http://localhost:8000
 
 Drop `--base-url` and it scans the common localhost ports used by vLLM,
 llama.cpp, TensorFold, SGLang, LiteLLM, Ollama, and TGI. `tool-eval-bench probe` checks an
-endpoint is reachable before you commit to a full run, and `tool-eval-bench probe --check-tools`
-also verifies that a test tool call arrives as structured `tool_calls` rather than raw markup in
-`content`.
+endpoint is reachable before you commit to a full run, `tool-eval-bench probe --check-tools`
+verifies that a test tool call arrives as structured `tool_calls` rather than raw markup in
+`content`, and `tool-eval-bench probe --check-template` runs paired replay and multi-turn checks
+plus tokenizer-derived special-token leak checks to isolate chat-template bugs from model quality.
 
 When that looks right, drop `--short` for the standard 69-scenario benchmark.
 Pass `--seed` so the run is reproducible, and add `--hardmode` for all 104:
@@ -356,7 +357,7 @@ design, and per-scenario acceptance notes: [docs/methodology.md](https://github.
 | Command | Purpose |
 |---|---|
 | `run` | Run tool-call scenarios |
-| `probe` | Check inference-server reachability, or add `--check-tools` to verify structured tool-call parsing |
+| `probe` | Check inference-server reachability, `--check-tools` for structured tool-call parsing, or `--check-template` for chat-template replay and token-leak checks |
 | `bench` | Throughput, speculative-decoding, or context-pressure benchmarks |
 | `plugin` | Run GSM8K, MMLU, IFEval, needle-in-a-haystack, toolscale, or decision models |
 | `spec-live` | Monitor speculative-decoding metrics |
