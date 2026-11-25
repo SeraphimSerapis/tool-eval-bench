@@ -17,6 +17,8 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_number,
     answer_affirms_text,
     as_str,
+    counted_calls,
+    has_explicit_tool_error,
     with_noise,
 )
 from tool_eval_bench.evals.milestones import (
@@ -231,7 +233,9 @@ def _tc103_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "remove_from_cart":
         sku = as_str(call.arguments.get("sku")).strip().upper()
         cart = _cart(state)
-        cart.pop(sku, None)
+        if sku not in cart:
+            return with_noise({"error": f"SKU {sku} is not in the cart."}, call.name)
+        cart.pop(sku)
         return with_noise(_summary(state), call.name)
     if call.name == "apply_coupon":
         code = as_str(call.arguments.get("coupon_code")).strip().upper()
@@ -276,15 +280,95 @@ def _applied_lab100(state: ScenarioState) -> bool:
 
 
 def _catalog_observed_required_skus(state: ScenarioState) -> bool:
-    seen_skus = {
-        item.get("sku")
-        for c in calls(state, "search_catalog")
-        if succeeded(state, c)
-        for payload in result_payloads(state, c)
-        for item in payload.get("items", [])
-        if isinstance(item, dict)
-    }
-    return {"CHR-101", "DSK-201"}.issubset(seen_skus)
+    seen_turn: dict[str, int] = {}
+    for c in calls(state, "search_catalog"):
+        if not succeeded(state, c):
+            continue
+        for payload in result_payloads(state, c):
+            for item in payload.get("items", []):
+                if isinstance(item, dict) and isinstance(item.get("sku"), str):
+                    sku = item["sku"]
+                    if sku not in seen_turn or c.turn < seen_turn[sku]:
+                        seen_turn[sku] = c.turn
+    if not {"CHR-101", "DSK-201"}.issubset(seen_turn):
+        return False
+    return all(
+        (sku := as_str(c.arguments.get("sku")).strip().upper()) in seen_turn
+        and c.turn > seen_turn[sku]
+        for c in calls(state, "add_to_cart")
+        if as_str(c.arguments.get("sku")).strip().upper() in _CATALOG
+    )
+
+
+def _stray_or_duplicate_removal(state: ScenarioState) -> bool:
+    removals = calls(state, "remove_from_cart")
+    if any(not c.injected and has_explicit_tool_error(state, c) for c in removals):
+        return True
+    chr102_removals = [
+        c
+        for c in counted_calls(removals)
+        if as_str(c.arguments.get("sku")).strip().upper() == "CHR-102"
+    ]
+    return len(chr102_removals) > 1
+
+
+def _stray_or_duplicate_coupon(state: ScenarioState) -> bool:
+    coupons = calls(state, "apply_coupon")
+    if any(
+        as_str(c.arguments.get("coupon_code")).strip().upper() not in _COUPON_BY_CODE
+        for c in coupons
+    ):
+        return True
+    counted = counted_calls(coupons)
+    lab100_calls = [
+        c
+        for c in counted
+        if as_str(c.arguments.get("coupon_code")).strip().upper() == "LAB100"
+        and (c.injected or succeeded(state, c))
+    ]
+    if len(lab100_calls) > 1:
+        return True
+    first_lab100_idx = next(
+        (
+            i
+            for i, c in enumerate(state.tool_calls)
+            if c.name == "apply_coupon"
+            and as_str(c.arguments.get("coupon_code")).strip().upper() == "LAB100"
+            and succeeded(state, c)
+        ),
+        None,
+    )
+    if first_lab100_idx is not None and any(
+        c.name == "apply_coupon" and c in counted for c in state.tool_calls[first_lab100_idx + 1 :]
+    ):
+        return True
+    return False
+
+
+def _stray_cart_add(state: ScenarioState) -> bool:
+    adds = calls(state, "add_to_cart")
+    if any(
+        as_str(c.arguments.get("sku")).strip().upper() not in _CATALOG
+        or _tc103_qty(c.arguments.get("quantity")) <= 0
+        for c in adds
+    ):
+        return True
+    first_lab100_idx = next(
+        (
+            i
+            for i, c in enumerate(state.tool_calls)
+            if c.name == "apply_coupon"
+            and as_str(c.arguments.get("coupon_code")).strip().upper() == "LAB100"
+            and succeeded(state, c)
+        ),
+        None,
+    )
+    if first_lab100_idx is not None and any(
+        c.name == "add_to_cart" and not c.injected and has_explicit_tool_error(state, c)
+        for c in state.tool_calls[first_lab100_idx + 1 :]
+    ):
+        return True
+    return False
 
 
 _MILESTONES = (
@@ -325,6 +409,18 @@ _MINEFIELDS = (
     Minefield(
         "left the final cart total above the $1,050 budget",
         _over_budget,
+    ),
+    Minefield(
+        "attempted a stray or duplicate cart removal",
+        _stray_or_duplicate_removal,
+    ),
+    Minefield(
+        "applied an unknown or duplicate coupon",
+        _stray_or_duplicate_coupon,
+    ),
+    Minefield(
+        "attempted to add an unknown or invalid item to the cart",
+        _stray_cart_add,
     ),
 )
 

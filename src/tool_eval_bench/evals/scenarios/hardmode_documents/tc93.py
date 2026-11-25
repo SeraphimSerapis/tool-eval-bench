@@ -17,6 +17,7 @@ from tool_eval_bench.evals.helpers import (
     answer_affirms_number,
     as_str,
     counted_calls,
+    negated_before,
     strip_markdown_emphasis,
     with_noise,
 )
@@ -140,9 +141,31 @@ def _reported(state: ScenarioState) -> bool:
     return bool(_target_extractions(state)) and answer_affirms_number(state.final_answer, "24")
 
 
+_OTHER_PAGE_CONTEXT = re.compile(
+    r"\b(?:bracket|panel|gasket|re-?torque|inspection|"
+    r"index\s+(?:11|12|15|17)|page\s+(?:7|8|11|13)|"
+    r"(?:wrong|different|other)\s+page|sheet\s+12|"
+    r"physical\s+(?:page|index)\s+(?:11|12|15|17)|twelfth\s+sheet)\b",
+    re.IGNORECASE,
+)
+_HEDGE_LINK = re.compile(r"(?:\b(?:or|either)\b|/)\s*(?:\(\s*)?$", re.IGNORECASE)
+_CLAUSE_SPLIT = re.compile(r"[.!?\n;]+")
+
+
 def _wrong_value(state: ScenarioState) -> bool:
     plain = strip_markdown_emphasis(state.final_answer)
-    return not _reported(state) and _WRONG_TORQUE.search(plain) is not None
+    if not _reported(state):
+        return _WRONG_TORQUE.search(plain) is not None
+    for clause in _CLAUSE_SPLIT.split(plain):
+        for match in _WRONG_TORQUE.finditer(clause):
+            before = clause[: match.start()]
+            after = clause[match.end() :]
+            if negated_before(before[-120:], after[:40]):
+                continue
+            if _OTHER_PAGE_CONTEXT.search(clause) and not _HEDGE_LINK.search(before):
+                continue
+            return True
+    return False
 
 
 _MILESTONES = (

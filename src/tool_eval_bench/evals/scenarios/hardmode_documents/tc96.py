@@ -15,6 +15,7 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern,
     as_str,
     negated_before,
     strip_markdown_emphasis,
@@ -107,9 +108,16 @@ def _tc96_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return with_noise({"error": f"Unsupported tool {call.name}."}, call.name)
 
 
+def _list_turn(state: ScenarioState) -> int | None:
+    turns = [c.turn for c in calls(state, "list_collection") if succeeded(state, c)]
+    return min(turns) if turns else None
+
+
 def _ocred_match(state: ScenarioState) -> bool:
-    return any(
-        succeeded(state, c) for c in calls(state, "ocr_document", lambda c: _document(c) == _MATCH)
+    listed = _list_turn(state)
+    return listed is not None and any(
+        c.turn > listed and succeeded(state, c)
+        for c in calls(state, "ocr_document", lambda c: _document(c) == _MATCH)
     )
 
 
@@ -119,6 +127,23 @@ _DENIES_MATCH_AFTER = re.compile(
     r"^(?:(?!\b(?:scan_\d+|while|whereas|but|however)\b)[^.!?;,\n]){0,40}"
     r"\b(?:(?:does|did)(?:n't| not)\s+(?:contain|mention|include|have|match)|"
     r"has\s+no\s+(?:match|mention)|contains?\s+no)\b",
+    re.IGNORECASE,
+)
+_INDEX_OMISSION_BEFORE = re.compile(
+    r"\b(?:search\s+)?index\s+(?:did(?:n't|\s+not)|does(?:n't|\s+not)|has(?:n't|\s+not))\s+"
+    r"(?:cover|include|index|contain|search)\s+$",
+    re.IGNORECASE,
+)
+_MATCH_AFFIRM_AFTER = re.compile(
+    r"\b(?:900\s*K|contains?|revealed|found|matches?|appears?|page\s*2)\b",
+    re.IGNORECASE,
+)
+_CO_CITES_0412_MATCH = re.compile(
+    r"\b(?:both\s+(?:scan_)?041[29](?:\.pdf)?\s+and\s+(?:scan_)?041[29](?:\.pdf)?"
+    r"|(?:scan_)?041[29](?:\.pdf)?\s+and\s+(?:scan_)?041[29](?:\.pdf)?\s+(?:both\s+)?"
+    r"(?:contain\w*|have|include\w*|match\w*|mention\w*|record\w*|show\w*))\b"
+    r"|\b(?:scan_)?0412(?:\.pdf)?\s+(?:also\s+)?(?:contains?|includes?|matches?|has)\s+"
+    r"(?:the\s+)?(?:exact\s+)?(?:phrase|match|900\s*K|[\"']reactor\s+reached\s+900\s*K[\"'])\b",
     re.IGNORECASE,
 )
 _EMPTY_COLLECTION_CLAIM = re.compile(
@@ -135,30 +160,45 @@ def _normalize_prose(answer: str) -> str:
     return strip_markdown_emphasis(answer).replace("\u2019", "'").replace("\u2018", "'")
 
 
-def _affirms_scan(answer: str, pattern: re.Pattern[str]) -> bool:
+def _affirms_scan(
+    answer: str, pattern: re.Pattern[str], *, allow_index_omission: bool = False
+) -> bool:
     plain = _normalize_prose(answer)
-    return any(
-        not negated_before(
-            plain[max(0, m.start() - 120) : m.start()],
-            plain[m.end() : m.end() + 40],
-        )
-        and not _DENIES_MATCH_AFTER.search(plain[m.end() :])
-        for m in pattern.finditer(plain)
-    )
+    for m in pattern.finditer(plain):
+        before = plain[max(0, m.start() - 120) : m.start()]
+        after = plain[m.end() :]
+        if _DENIES_MATCH_AFTER.search(after):
+            continue
+        if not negated_before(before, after[:40]):
+            return True
+        if allow_index_omission and _INDEX_OMISSION_BEFORE.search(before):
+            sentence_tail = re.split(r"[.!?\n]", after, maxsplit=1)[0]
+            if answer_affirms_pattern(sentence_tail, _MATCH_AFFIRM_AFTER):
+                return True
+    return False
 
 
 def _affirms_0419(answer: str) -> bool:
-    return _affirms_scan(answer, _SCAN_0419)
+    return _affirms_scan(answer, _SCAN_0419, allow_index_omission=True)
+
+
+def _co_cites_0412_as_match(answer: str) -> bool:
+    return answer_affirms_pattern(_normalize_prose(answer), _CO_CITES_0412_MATCH)
 
 
 def _reported(state: ScenarioState) -> bool:
-    return _ocred_match(state) and _affirms_0419(state.final_answer)
+    plain = _normalize_prose(state.final_answer)
+    return (
+        _ocred_match(state)
+        and _affirms_0419(state.final_answer)
+        and not _EMPTY_COLLECTION_CLAIM.search(plain)
+    )
 
 
 _MILESTONES = (
     Milestone(
         "listed the collection and found the unindexed scans",
-        lambda s: any(succeeded(s, c) for c in calls(s, "list_collection")),
+        lambda s: _list_turn(s) is not None,
     ),
     Milestone(f"OCRed {_MATCH}", _ocred_match),
     Milestone(f"reported the phrase in {_MATCH}", _reported),
@@ -177,8 +217,18 @@ _MINEFIELDS = (
         ),
     ),
     Minefield(
+        "answered that no document contains the phrase despite OCRing scan_0419.pdf",
+        lambda s: (
+            _ocred_match(s)
+            and bool(_EMPTY_COLLECTION_CLAIM.search(_normalize_prose(s.final_answer)))
+        ),
+    ),
+    Minefield(
         "cited the 890 K near miss in scan_0412.pdf as the match",
-        lambda s: _affirms_scan(s.final_answer, _SCAN_0412) and not _affirms_0419(s.final_answer),
+        lambda s: (
+            (_affirms_scan(s.final_answer, _SCAN_0412) and not _affirms_0419(s.final_answer))
+            or _co_cites_0412_as_match(s.final_answer)
+        ),
     ),
     Minefield(
         "called an unadvertised tool",
@@ -210,6 +260,7 @@ SCENARIO = ScenarioDefinition(
     evaluate=_tc96_eval,
     tools_override=_TC96_TOOLS,
     difficulty=4,
+    dependencies=(("list_collection", "ocr_document"),),
     capabilities=("completeness",),
 )
 

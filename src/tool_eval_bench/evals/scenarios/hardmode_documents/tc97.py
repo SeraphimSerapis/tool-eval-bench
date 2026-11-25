@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -13,7 +14,14 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
-from tool_eval_bench.evals.helpers import answer_affirms_text, as_str, counted_calls, with_noise
+from tool_eval_bench.evals.helpers import (
+    _PROSE_TRANSLATION,
+    answer_affirms_text,
+    as_str,
+    counted_calls,
+    strip_markdown_emphasis,
+    with_noise,
+)
 from tool_eval_bench.evals.milestones import (
     Milestone,
     Minefield,
@@ -144,8 +152,9 @@ def _tc97_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
             call.arguments.get("text")
         ):
             return with_noise({"redactions_applied": 0}, call.name)
-        if doc["text"] != "removed":
-            doc["text"] = "removed" if mode == "remove" else "overlay"
+        if doc["text"] == "removed":
+            return with_noise({"redactions_applied": 0, "mode": mode}, call.name)
+        doc["text"] = "removed" if mode == "remove" else "overlay"
         return with_noise({"redactions_applied": 1, "mode": mode}, call.name)
     if call.name == "delete_annotation":
         annotation = as_str(call.arguments.get("annotation_id")).strip().upper()
@@ -224,6 +233,83 @@ def _deleted_unrelated(state: ScenarioState) -> bool:
     )
 
 
+_COPY_ID_RE = re.compile(rf"(?<![a-z0-9_]){re.escape(_COPY)}(?![a-z0-9_])", re.IGNORECASE)
+_PRESENCE_NEGATION_BEFORE_COPY = re.compile(
+    r"\b(?:(?:does|do|did)(?:n't|\s+not)|no\s+longer|never|is(?:n't|\s+not)|are(?:n't|\s+not))\s+"
+    r"(?:appear\w*|remain\w*|exist\w*|present|found|show(?:n|ing)?|occur\w*|left)\s+"
+    r"(?:anywhere\s+)?(?:in|on|within)\s+(?:the\s+(?:redacted\s+)?(?:copy\s+|document\s+)?)?$"
+    r"|\bno\s+(?:occurrences?|matches?|traces?|instances?|mentions?)(?:\s+of\s+[\w-]+)?\s+"
+    r"(?:(?:remain\w*|appear\w*|exist\w*|found|left)\s+)?"
+    r"(?:in|on|within)\s+(?:the\s+(?:redacted\s+)?(?:copy\s+|document\s+)?)?$",
+    re.IGNORECASE,
+)
+
+
+def _reported_copy_id(state: ScenarioState) -> bool:
+    if _copy(state) is None:
+        return False
+    if answer_affirms_text(state.final_answer, _COPY):
+        return True
+    plain = strip_markdown_emphasis(state.final_answer.translate(_PROSE_TRANSLATION)).replace(
+        "`", ""
+    )
+    return any(
+        _PRESENCE_NEGATION_BEFORE_COPY.search(plain[max(0, m.start() - 120) : m.start()])
+        for m in _COPY_ID_RE.finditer(plain)
+    )
+
+
+def _redundant_or_stray_redaction(state: ScenarioState) -> bool:
+    copy_redactions = [
+        c for c in counted_calls(calls(state, "apply_redaction")) if _doc_id(c) == _COPY
+    ]
+    remove_redactions = [
+        c
+        for c in copy_redactions
+        if as_str(c.arguments.get("mode")).strip().lower() == "remove"
+        and _page(c.arguments.get("page")) == _PAGE
+        and _names_number(c.arguments.get("text"))
+    ]
+    if len(remove_redactions) > 1:
+        return True
+    first_remove_idx = next(
+        (
+            i
+            for i, c in enumerate(state.tool_calls)
+            if c in remove_redactions and succeeded(state, c)
+        ),
+        None,
+    )
+    if first_remove_idx is not None and any(
+        c.name == "apply_redaction" and _doc_id(c) == _COPY and c in copy_redactions
+        for c in state.tool_calls[first_remove_idx + 1 :]
+    ):
+        return True
+    return False
+
+
+def _duplicate_annotation_delete(state: ScenarioState) -> bool:
+    ann7_deletes = [
+        c
+        for c in counted_calls(calls(state, "delete_annotation"))
+        if _doc_id(c) == _COPY
+        and as_str(c.arguments.get("annotation_id")).strip().upper() == _LEAKING_ANNOTATION
+    ]
+    return len(ann7_deletes) > 1
+
+
+def _unrelated_write_target(state: ScenarioState) -> bool:
+    if any(_doc_id(c) != _ORIGINAL for c in calls(state, "copy_document")):
+        return True
+    if any(_doc_id(c) not in {_ORIGINAL, _COPY} for name in _MUTATIONS for c in calls(state, name)):
+        return True
+    return any(
+        as_str(c.arguments.get("annotation_id")).strip().upper()
+        not in {_LEAKING_ANNOTATION, "ANN-8"}
+        for c in calls(state, "delete_annotation")
+    )
+
+
 _MILESTONES = (
     Milestone(
         f"copied {_ORIGINAL}",
@@ -236,7 +322,7 @@ _MILESTONES = (
     Milestone("re-checked the copy's text and annotations after the last edit", _verified),
     Milestone(
         f"gave the user the copy's id, {_COPY}",
-        lambda s: _copy(s) is not None and answer_affirms_text(s.final_answer, _COPY),
+        _reported_copy_id,
     ),
 )
 
@@ -247,6 +333,15 @@ _MINEFIELDS = (
     ),
     Minefield("deleted the unrelated annotation ANN-8", _deleted_unrelated),
     Minefield("made more than one copy", _copied_twice),
+    Minefield("applied a redundant or stray redaction", _redundant_or_stray_redaction),
+    Minefield(
+        f"attempted to delete annotation {_LEAKING_ANNOTATION} more than once",
+        _duplicate_annotation_delete,
+    ),
+    Minefield(
+        "attempted a write on an unknown or unrelated document or annotation",
+        _unrelated_write_target,
+    ),
     Minefield(
         "called an unadvertised tool",
         lambda s: any(c.name not in _TC97_ADVERTISED for c in s.tool_calls),

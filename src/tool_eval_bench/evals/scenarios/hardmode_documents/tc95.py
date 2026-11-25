@@ -68,6 +68,21 @@ _TC95_TOOLS = [
 _TC95_ADVERTISED = frozenset(tool["function"]["name"] for tool in _TC95_TOOLS)
 
 
+def _parsed_pages(call: ToolCallRecord) -> set[int]:
+    """Parse every integer-like page number from ``pages``, including out-of-range values."""
+    value = call.arguments.get("pages")
+    items = value if isinstance(value, list) else [value]
+    pages: set[int] = set()
+    for item in items:
+        if isinstance(item, int) and not isinstance(item, bool):
+            pages.add(item)
+        elif isinstance(item, float) and item.is_integer():
+            pages.add(int(item))
+        elif as_str(item).strip().isdigit():
+            pages.add(int(as_str(item).strip()))
+    return pages
+
+
 def _pages(call: ToolCallRecord) -> set[int] | None:
     value = call.arguments.get("pages")
     items = value if isinstance(value, list) else [value]
@@ -121,8 +136,9 @@ def _covered(state: ScenarioState, name: str) -> set[int]:
 
 
 def _ocr_on_native(state: ScenarioState) -> bool:
-    # Every attempt counts, injected or not: the model chose to pay for it.
-    return any((_pages(c) or set()) & _NATIVE for c in calls(state, "ocr_pages"))
+    # Every attempt counts, injected or not, including calls that also included
+    # out-of-range page numbers alongside native pages.
+    return any(_parsed_pages(c) & _NATIVE for c in calls(state, "ocr_pages"))
 
 
 def _ocr_twice(state: ScenarioState) -> bool:
@@ -137,23 +153,25 @@ def _ocr_twice(state: ScenarioState) -> bool:
     return any(count > 1 for count in billed.values())
 
 
-def _scan_status_turn(state: ScenarioState) -> int | None:
-    """The first turn whose result showed which pages lack a text layer."""
+def _page_scan_observed_turn(state: ScenarioState, page: int) -> int | None:
+    """The first turn whose result showed ``page`` lacks a text layer."""
     turns = [c.turn for c in calls(state, "get_document_info") if succeeded(state, c)] + [
         c.turn
         for c in calls(state, "extract_text")
-        if succeeded(state, c) and (_pages(c) or set()) & _SCANNED
+        if succeeded(state, c) and page in (_pages(c) or set())
     ]
     return min(turns) if turns else None
 
 
 def _ocr_scanned(state: ScenarioState) -> bool:
-    observed = _scan_status_turn(state)
-    return (
-        observed is not None
-        and _SCANNED <= _covered(state, "ocr_pages")
-        and all(c.turn > observed for c in calls(state, "ocr_pages"))
-    )
+    if not (_SCANNED <= _covered(state, "ocr_pages")):
+        return False
+    for c in calls(state, "ocr_pages"):
+        for page in _parsed_pages(c) & _SCANNED:
+            observed = _page_scan_observed_turn(state, page)
+            if observed is None or c.turn <= observed:
+                return False
+    return True
 
 
 def _reported(state: ScenarioState) -> bool:

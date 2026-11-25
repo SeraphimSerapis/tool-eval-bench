@@ -15,8 +15,29 @@ _EMAIL = {"type": "string", "description": "Email address"}
 # Sentence and clause ends. Punctuation counts only before optional closing
 # quotes/brackets/emphasis followed by whitespace or the end, so email domains
 # and version strings such as "external-ops.net" stay whole while sentences
-# ending in ".**" or ".)" still split cleanly.
-_CLAUSE_BREAK = re.compile(r"[.!?;]['\"\u201d\u2019)\]}>*_~`]*(?=\s|$)|\n")
+# ending in ".**" or ".)" still split cleanly. Common abbreviations ("e.g.",
+# "i.e.", "R.") and line-initial numbered list markers ("1.", "2.") do not
+# break a clause.
+_CLAUSE_BREAK = re.compile(
+    r"[!?;]['\"\u201d\u2019)\]}>*_~`]*(?=\s|$)"
+    r"|(?<!\be\.g)(?<!\bi\.e)(?<!\betc)(?<!\bdr)(?<!\bmr)(?<!\bms)(?<!\bmrs)(?<!\bvs)(?<!\br)"
+    r"(?<!^\d)(?<!^\d\d)"
+    r"\.['\"\u201d\u2019)\]}>*_~`]*(?=\s|$)"
+    r"|\n",
+    re.IGNORECASE | re.MULTILINE,
+)
+_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*•\u2013\u2014]|\d+[.)])\s+")
+
+
+def _split_clauses(text: str) -> list[str]:
+    """Split text into non-empty clauses, preserving list markers and abbreviations."""
+    clauses: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        clauses.extend(c.strip() for c in _CLAUSE_BREAK.split(stripped) if c.strip())
+    return clauses
 
 
 def _asserted_without_cue(
@@ -29,7 +50,7 @@ def _asserted_without_cue(
     clause stops a warning in one sentence from excusing an assertion in
     another.
     """
-    return any(asserts(clause) and not excused(clause) for clause in _CLAUSE_BREAK.split(text))
+    return any(asserts(clause) and not excused(clause) for clause in _split_clauses(text))
 
 
 def _tool(
