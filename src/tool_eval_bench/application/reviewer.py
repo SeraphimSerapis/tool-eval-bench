@@ -177,6 +177,13 @@ def validate_reviewer(reviewer: ReviewerSettings) -> None:
     seed = reviewer.seed
     if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
         raise ValueError(f"reviewer seed must be an integer, got {seed!r}")
+    if reviewer.system_prompt is not None:
+        if not isinstance(reviewer.system_prompt, str):
+            raise ValueError(
+                "reviewer system_prompt must be a string, "
+                f"got {type(reviewer.system_prompt).__name__}"
+            )
+        normalize_system_prompt(reviewer.system_prompt)
     if reviewer.extra_params is not None:
         if not isinstance(reviewer.extra_params, dict):
             raise ValueError("reviewer extra_params must be a dict")

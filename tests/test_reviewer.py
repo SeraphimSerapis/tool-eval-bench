@@ -203,6 +203,21 @@ def _capturing_adapter(adapter_cls: Any, sent: list[dict[str, Any]], status: int
         ('Here is my verdict: {"verdict": "approved"} done.', ("approve", "")),
         ('{"verdict": "reject", "feedback": "wrong city"}', ("revise", "wrong city")),
         ("REVISE: ask for the city first", ("revise", "ask for the city first")),
+        ('REVISE: {"city": "Tokyo"}', ("revise", '{"city": "Tokyo"}')),
+        (
+            'REVISE: call get_weather with {"city": "Tokyo"} instead of Paris',
+            ("revise", 'call get_weather with {"city": "Tokyo"} instead of Paris'),
+        ),
+        (
+            'The call `delete_user({"id": 1})` is unsafe.\n\n'
+            '```json\n{"verdict": "revise", "feedback": "ask first"}\n```',
+            ("revise", "ask first"),
+        ),
+        (
+            'The assistant called get_weather({"city": "Paris"}). '
+            '{"verdict": "revise", "feedback": "use Tokyo"}',
+            ("revise", "use Tokyo"),
+        ),
         ("Approve.", ("approve", "")),
     ],
 )
@@ -216,11 +231,24 @@ def test_parse_verdict_reads_json_and_keywords(text: str, expected: tuple[str, s
         "",
         "   ",
         "Looks fine to me",
+        "Approve? No, revise this.",
         '{"feedback": "no verdict"}',
         '{"verdict": "maybe"}',
+        'APPROVE {"verdict": "maybe"}',
         "[" * 100_000 + "]" * 100_000,  # exhausts the JSON decoder's stack
+        "{" * 100_000 + "}" * 100_000,
     ],
-    ids=["empty", "blank", "prose", "no-verdict-key", "unknown-verdict", "deeply-nested"],
+    ids=[
+        "empty",
+        "blank",
+        "prose",
+        "question-prose",
+        "no-verdict-key",
+        "unknown-verdict",
+        "keyword-with-unknown-json-verdict",
+        "deeply-nested-brackets",
+        "deeply-nested-braces",
+    ],
 )
 def test_parse_verdict_returns_none_without_a_verdict(text: str) -> None:
     assert parse_verdict(text) is None
@@ -873,6 +901,9 @@ def test_the_stored_block_holds_the_origin_and_format_but_no_secret() -> None:
             ({"extra_params": {key: "x"}}, key)
             for key in ("model", "messages", "system", "contents", "systemInstruction")
         ),
+        ({"system_prompt": "   "}, "must not be empty"),
+        ({"system_prompt": "x" * 40_000}, "exceeds"),
+        ({"system_prompt": 123}, "system_prompt must be a string"),
         *(
             ({"extra_params": value}, "must not carry credentials")
             for value in (
@@ -1546,6 +1577,42 @@ async def test_the_live_turn_payload_reports_the_drafts_ttft() -> None:
 
     assert result.ttft_ms == 11.0
     assert payloads[0]["ttft_ms"] == 11.0
+
+
+@pytest.mark.asyncio
+async def test_the_api_refuses_invalid_reviewer_system_prompt_before_any_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tool_eval_bench import api
+
+    async def no_requests(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("a request was sent")
+
+    monkeypatch.setattr(api, "detect_backend", no_requests)
+    monkeypatch.setattr(api, "build_run_context", no_requests)
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        await api.run_benchmark(
+            model="m",
+            base_url="http://bench.test",
+            scenarios=[SCENARIO],
+            reviewer=ReviewerSettings(model="critic", system_prompt="   "),
+            persist=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_cut_off_tool_call_draft_is_not_reviewed_and_stays_truncated() -> None:
+    cut_off_call = ProviderToolCall(id="c1", name="get_weather", arguments_str='{"location": "Ber')
+    main = ScriptedAdapter([_result(calls=[cut_off_call], finish_reason="length")])
+    reviewer = ScriptedAdapter([_verdict("revise", "complete the JSON")])
+
+    result = await _run(main, reviewer)
+
+    assert reviewer.requests == []
+    assert result.review is not None
+    assert result.review["reviews"] == 0
+    assert "truncated=" in result.raw_log
 
 
 def test_a_reviewer_wire_format_typo_is_rejected_before_any_request() -> None:

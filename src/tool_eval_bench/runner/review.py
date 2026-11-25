@@ -51,8 +51,9 @@ or
 
 _APPROVE_WORDS = frozenset({"approve", "approved", "accept", "accepted", "ok", "pass"})
 _REVISE_WORDS = frozenset({"revise", "revision", "reject", "rejected", "needs_revision"})
-_KEYWORD_RE = re.compile(r"^\W*(approve|approved|revise|reject|rejected)\b[\s:.\-]*", re.I)
+_KEYWORD_RE = re.compile(r"^\W*(approve|approved|revise|reject|rejected)\b(?!\s*\?)[\s:.\-]*", re.I)
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
+_MAX_JSON_CANDIDATES = 64
 _TRACE_EXCERPT = 300
 
 
@@ -138,25 +139,31 @@ def parse_verdict(text: str) -> tuple[str, str] | None:
     stripped = _FENCE_RE.sub("", (text or "").strip()).strip()
     if not stripped:
         return None
-    candidates = [stripped]
-    start, end = stripped.find("{"), stripped.rfind("}")
-    if 0 <= start < end:
-        candidates.append(stripped[start : end + 1])
-    for candidate in candidates:
+    decoder = json.JSONDecoder()
+    saw_verdict_key = False
+    pos = stripped.find("{")
+    attempts = 0
+    while pos != -1 and attempts < _MAX_JSON_CANDIDATES:
+        attempts += 1
         try:
-            data = json.loads(candidate)
-        except (ValueError, RecursionError):
-            # RecursionError: deeply nested JSON exhausts the decoder's stack.
+            data, end = decoder.raw_decode(stripped, pos)
+        except RecursionError:
+            # Deeply nested JSON exhausts the decoder's stack; do not retry at every brace.
+            return None
+        except ValueError:
+            pos = stripped.find("{", pos + 1)
             continue
-        if not isinstance(data, dict):
-            continue
-        word = str(data.get("verdict", "")).strip().lower().replace(" ", "_")
-        feedback = data.get("feedback")
-        feedback_text = feedback.strip() if isinstance(feedback, str) else ""
-        if word in _APPROVE_WORDS:
-            return "approve", feedback_text
-        if word in _REVISE_WORDS:
-            return "revise", feedback_text
+        if isinstance(data, dict) and "verdict" in data:
+            saw_verdict_key = True
+            word = str(data.get("verdict", "")).strip().lower().replace(" ", "_")
+            feedback = data.get("feedback")
+            feedback_text = feedback.strip() if isinstance(feedback, str) else ""
+            if word in _APPROVE_WORDS:
+                return "approve", feedback_text
+            if word in _REVISE_WORDS:
+                return "revise", feedback_text
+        pos = stripped.find("{", end)
+    if saw_verdict_key:
         return None
     match = _KEYWORD_RE.match(stripped)
     if match is None:

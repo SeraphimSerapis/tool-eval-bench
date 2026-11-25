@@ -562,6 +562,13 @@ def _storable_revision(result: ChatCompletionResult) -> ChatCompletionResult:
     )
 
 
+def _is_cut_off_tool_call(result: ChatCompletionResult) -> bool:
+    """Whether ``result`` stopped at ``max_tokens`` mid-way through tool arguments."""
+    return result.finish_reason == "length" and any(
+        not _parses_as_json(call.arguments_str) for call in result.tool_calls
+    )
+
+
 def _unusable_revision(
     result: ChatCompletionResult, tools: list[dict[str, Any]] | None
 ) -> str | None:
@@ -574,9 +581,7 @@ def _unusable_revision(
     so the draft stays.
     """
     if result.tool_calls:
-        if result.finish_reason == "length" and any(
-            not _parses_as_json(call.arguments_str) for call in result.tool_calls
-        ):
+        if _is_cut_off_tool_call(result):
             return "revision cut off its tool-call arguments at the token ceiling"
         return None
     if tools and detect_unparsed_tool_call(result.content, tools) is not None:
@@ -862,7 +867,11 @@ async def run_scenario(
 
             # The first draft's: a revision's TTFT is a second request's.
             turn_ttft_ms = result.ttft_ms
-            if reviewer is not None and review_stats is not None:
+            if (
+                reviewer is not None
+                and review_stats is not None
+                and not _is_cut_off_tool_call(result)
+            ):
                 turn_response_format = response_format
                 turn_tool_choice = active_tool_choice
 
