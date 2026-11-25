@@ -149,6 +149,7 @@
     liveRunId: null,
     liveRunStatus: null,
     liveModel: null,
+    liveReviewer: null,
     liveTotal: 0,
     liveActiveScenario: null,
     liveTurns: [],
@@ -548,6 +549,7 @@
       },
       state.selecting ? h("span", { class: "run-check", "aria-hidden": "true" }, picked ? icon("check") : null) : null,
       modelBlock(run.model, "run-model"),
+      run.reviewer_model ? h("span", { class: "run-meta muted", text: `+ reviewer ${run.reviewer_model}` }) : null,
       isToolEval(run)
         ? ring(score, {
             label: score === null || score === undefined ? null : Math.round(score),
@@ -1012,6 +1014,9 @@
           chip(run.status),
           toolEval ? null : typeChip(run),
           run.rating ? h("span", { class: "meta-item", text: run.rating }) : null,
+          run.reviewer_model
+            ? h("span", { class: "meta-item", title: "The score belongs to the model and its reviewer together", text: `+ reviewer ${run.reviewer_model}` })
+            : null,
           h("span", { class: "meta-item mono", title: "Run ID", text: run.run_id }),
           toolEval || (run.backend && run.backend !== "unknown")
             ? h("span", { class: "meta-item" }, icon("server"), run.backend || "unknown")
@@ -1181,7 +1186,13 @@
         },
       },
       h("td", { class: "sticky-col sticky-rank" }, h("span", { class: `rank ${row.cohort_rank <= 3 ? `rank-${row.cohort_rank}` : ""}`, text: row.cohort_rank })),
-      h("td", { class: "sticky-col sticky-model" }, modelBlock(row.model, "model-cell")),
+      h(
+        "td",
+        { class: "sticky-col sticky-model" },
+        modelBlock(row.model, "model-cell"),
+        // A paired score belongs to the model and its reviewer together.
+        row.reviewer_model ? h("div", { class: "run-meta muted", text: `+ reviewer ${row.reviewer_model}` }) : null
+      ),
       h(
         "td",
         {},
@@ -1377,7 +1388,8 @@
       toolRuns.map((r) => {
         const { name } = splitModel(r.model);
         const score = r.final_score ?? "—";
-        return h("option", { value: r.run_id, text: `${name} · ${score} · ${relTime(r.created_at)} · ${r.run_id.slice(0, 15)}` });
+        const pair = r.reviewer_model ? ` + reviewer ${r.reviewer_model}` : "";
+        return h("option", { value: r.run_id, text: `${name}${pair} · ${score} · ${relTime(r.created_at)} · ${r.run_id.slice(0, 15)}` });
       })
     );
   }
@@ -1393,6 +1405,9 @@
         h("span", { class: "eyebrow", text: side }),
         h("label", { class: "visually-hidden", for: selectId, text: side }),
         run ? h("strong", { text: splitModel(run.model).name, title: run.model }) : null,
+        run && run.reviewer_model
+          ? h("span", { class: "eyebrow", text: `+ reviewer ${run.reviewer_model}` })
+          : null,
         runPicker(selectId, selectedId, toolRuns, onPick)
       )
     );
@@ -1789,6 +1804,141 @@
     }
   }
 
+  function urlOrigin(url) {
+    const trimmed = (url || "").trim();
+    if (!trimmed) return "";
+    try {
+      return new URL(trimmed).origin;
+    } catch {
+      return trimmed;
+    }
+  }
+
+  // The server a reviewer request goes to: its own URL, or the benchmarked one
+  // when the reviewer URL is blank.
+  function effectiveReviewerOrigin() {
+    const own = byId("launch-reviewer-base-url")?.value.trim() || "";
+    return urlOrigin(own || byId("launch-base-url")?.value || "");
+  }
+
+  // A reviewer key belongs to the server it was typed for. When the effective
+  // reviewer origin changes, the key is cleared, so it never travels there.
+  function bindReviewerKeyToOrigin() {
+    const key = byId("launch-reviewer-api-key");
+    if (!key) return;
+    key.dataset.origin = effectiveReviewerOrigin();
+    delete key.dataset.cleared;
+  }
+
+  // Returns whether it cleared the key.
+  function forgetReviewerKeyOnNewOrigin() {
+    const key = byId("launch-reviewer-api-key");
+    if (!key || !key.value) return false;
+    const now = effectiveReviewerOrigin();
+    const bound = key.dataset.origin;
+    if (bound === undefined || bound === "") {
+      // Typed before either URL was known: it belongs to the first one entered.
+      key.dataset.origin = now;
+      return false;
+    }
+    if (bound !== now) {
+      key.value = "";
+      delete key.dataset.origin;
+      // Remembered until the next probe reports it: the URL field's change
+      // event usually clears the key before the probe button's click runs.
+      key.dataset.cleared = "1";
+      const feedback = byId("reviewer-probe-feedback");
+      if (feedback) {
+        feedback.className = "probe-status is-error";
+        feedback.textContent = "The reviewer API key was cleared: it was entered for another server.";
+      }
+      return true;
+    }
+    return false;
+  }
+
+  async function probeReviewer() {
+    const keyInput = byId("launch-reviewer-api-key");
+    const cleared = forgetReviewerKeyOnNewOrigin() || keyInput?.dataset.cleared === "1";
+    if (keyInput) delete keyInput.dataset.cleared;
+    const feedback = byId("reviewer-probe-feedback");
+    const setStatus = (kind, text) => {
+      if (!feedback) return;
+      feedback.className = `probe-status ${kind ? `is-${kind}` : ""}`;
+      feedback.textContent = text;
+    };
+    // A blank reviewer URL means the benchmarked server, as for a launch, and
+    // then the benchmark's wire format applies too.
+    const ownUrl = byId("launch-reviewer-base-url")?.value.trim() || "";
+    const url = ownUrl || byId("launch-base-url")?.value.trim() || "";
+    if (!url) {
+      setStatus("error", "Enter the reviewer's Base URL, or the benchmark Base URL to review on that server.");
+      return;
+    }
+    setStatus("busy", "Probing reviewer…");
+    try {
+      // The same rule as a launch: without a key of its own, a reviewer on the
+      // benchmarked server's origin uses the run's key; elsewhere it gets none.
+      const ownKey = byId("launch-reviewer-api-key")?.value.trim() || "";
+      const mainUrl = byId("launch-base-url")?.value || "";
+      const sameOrigin = urlOrigin(mainUrl) !== "" && urlOrigin(url) === urlOrigin(mainUrl);
+      const runKey = byId("launch-api-key")?.value.trim() || "";
+      const sentKey = ownKey || (sameOrigin ? runKey : "");
+      const res = await postJson("/api/probe", {
+        purpose: "reviewer",
+        base_url: url,
+        api_key: sentKey || undefined,
+        wire_format: ownUrl ? undefined : byId("launch-wire-format")?.value || "auto",
+      });
+      if (!res.reachable) {
+        // The probe never falls back to TOOL_EVAL_API_KEY, which belongs to
+        // the benchmarked server; a launch on that server does use it.
+        // On the benchmark's origin the run's key field would be used; elsewhere
+        // only the Reviewer API key field is.
+        const hint = sentKey
+          ? ""
+          : sameOrigin
+            ? " · if the server takes its key from TOOL_EVAL_API_KEY, enter it in the API key field to probe"
+            : " · if the reviewer needs a key, enter it in the Reviewer API key field";
+        setStatus("error", `${res.error || "Unreachable"}${hint}`);
+        return;
+      }
+      const models = (res.models || []).filter((m) => m && m.id);
+      setChildren(byId("launch-reviewer-models"), ...models.map((m) => h("option", { value: m.id, text: m.display_name || m.id })));
+      const modelInput = byId("launch-reviewer-model");
+      if (modelInput && !modelInput.value.trim() && models.length === 1) modelInput.value = models[0].id;
+      const note = cleared ? " · the API key entered for another server was cleared" : "";
+      setStatus("ok", `Reviewer reachable · ${models.length} model${models.length === 1 ? "" : "s"}${note}`);
+    } catch (err) {
+      setStatus("error", err.message);
+    }
+  }
+
+  // Reviewer fields go out only with a reviewer model: a blank model is a solo run.
+  function readReviewerFields() {
+    forgetReviewerKeyOnNewOrigin();
+    const model = byId("launch-reviewer-model")?.value.trim() || "";
+    if (!model) return { ok: true, fields: {} };
+    const rounds = readNumericField("launch-reviewer-max-rounds", 1, "Reviews per turn");
+    if (!rounds.ok) return rounds;
+    if (!Number.isInteger(rounds.value) || rounds.value < 1) return { ok: false, error: "Reviews per turn must be a whole number of at least 1." };
+    const tempEl = byId("launch-reviewer-temperature");
+    const tempRaw = tempEl?.value.trim() || "";
+    const temperature = tempRaw === "" ? { ok: true, value: undefined } : readNumericField("launch-reviewer-temperature", undefined, "Reviewer temperature");
+    if (!temperature.ok) return temperature;
+    return {
+      ok: true,
+      fields: {
+        reviewer_model: model,
+        reviewer_base_url: byId("launch-reviewer-base-url")?.value.trim() || undefined,
+        reviewer_api_key: byId("launch-reviewer-api-key")?.value.trim() || undefined,
+        reviewer_scope: byId("launch-reviewer-scope")?.value || "turns",
+        reviewer_max_rounds: rounds.value,
+        reviewer_temperature: temperature.value,
+      },
+    };
+  }
+
   function renderLiveWorkspace() {
     const workspace = byId("live-workspace");
     const schema = state.launcherSchema;
@@ -1890,10 +2040,47 @@
       h("div", { class: "section-spacer" }, field("Run label", input("launch-label", { placeholder: "e.g. vllm-0.11-fp8-baseline" })))
     );
 
+    const reviewerSection = h(
+      "details",
+      { class: "card launcher-section advanced", id: "launch-reviewer-section" },
+      h("summary", {}, icon("chevron"), icon("eye"), "Reviewer (optional)"),
+      h("span", {
+        class: "field-hint",
+        text: "A second model reviews each turn before it runs, and the benchmarked model revises a rejected turn. The score belongs to the pair. Leave the model empty for a solo run.",
+      }),
+      h(
+        "div",
+        { class: "field" },
+        h("label", { class: "field-label", for: "launch-reviewer-base-url", text: "Reviewer base URL" }),
+        h(
+          "div",
+          { class: "input-row" },
+          input("launch-reviewer-base-url", { class: "input mono", placeholder: "Blank: the benchmarked server", autocomplete: "off", onchange: forgetReviewerKeyOnNewOrigin }),
+          h("button", { type: "button", id: "probe-reviewer-btn", class: "btn", onclick: probeReviewer }, icon("radio"), "Probe")
+        ),
+        h("div", { id: "reviewer-probe-feedback", class: "probe-status", role: "status" })
+      ),
+      field("Reviewer model", input("launch-reviewer-model", { class: "input mono", placeholder: "Probe to list models, or type an ID", autocomplete: "off", list: "launch-reviewer-models" })),
+      h("datalist", { id: "launch-reviewer-models" }),
+      field(
+        "Reviewer API key",
+        input("launch-reviewer-api-key", { type: "password", class: "input mono", placeholder: "Blank: the run's key, on the same server only", autocomplete: "off", oninput: bindReviewerKeyToOrigin }),
+        "Sent to the reviewer only; never stored."
+      ),
+      h(
+        "div",
+        { class: "grid-2" },
+        field("Scope", select("launch-reviewer-scope", [["turns", "Every turn"], ["tools", "Tool-call turns"], ["final", "Final replies"]], "turns")),
+        field("Reviews per turn", input("launch-reviewer-max-rounds", { type: "number", class: "input mono", step: "1", min: "1", max: "5", value: 1 })),
+        field("Reviewer temperature", input("launch-reviewer-temperature", { type: "number", class: "input mono", step: "0.05", min: "0", max: "2", placeholder: "Same as the run" }))
+      )
+    );
+
     const form = h(
       "form",
       { id: "launch-run-form", onsubmit: submitLaunch, novalidate: true },
       endpoint,
+      reviewerSection,
       suite,
       advanced,
       h("div", { id: "launch-error-msg", class: "banner banner-danger", role: "alert", hidden: true }),
@@ -1951,7 +2138,8 @@
     const maxTurns = readNumericField("launch-max-turns", 8, "Max turns");
     const timeoutSeconds = readNumericField("launch-timeout", 120, "Timeout (s)");
     const seed = readSeedField();
-    for (const parsed of [temperature, concurrency, maxTurns, timeoutSeconds, seed]) {
+    const reviewer = readReviewerFields();
+    for (const parsed of [temperature, concurrency, maxTurns, timeoutSeconds, seed, reviewer]) {
       if (!parsed.ok) {
         showLaunchError(parsed.error);
         return;
@@ -1976,6 +2164,7 @@
       max_turns: maxTurns.value,
       timeout_seconds: timeoutSeconds.value,
       label: byId("launch-label")?.value || undefined,
+      ...reviewer.fields,
     };
     if (!payload.model) {
       showLaunchError("Pick a probed model or enter a custom model ID.");
@@ -1985,7 +2174,7 @@
     if (button) button.disabled = true;
     try {
       const started = await postJson("/api/runs", payload);
-      connectLiveStream(started.run_id, { model: started.model, total: started.total_scenarios });
+      connectLiveStream(started.run_id, { model: started.model, reviewer: started.reviewer_model, total: started.total_scenarios });
       loadRunsList();
     } catch (err) {
       showLaunchError(err.message);
@@ -2081,6 +2270,10 @@
           { class: "hero-meta" },
           running ? h("span", { class: "live-dot", "aria-hidden": "true" }) : null,
           chip(state.liveRunStatus),
+          // The score belongs to the pair; the heading stays the benchmarked model.
+          state.liveReviewer
+            ? h("span", { class: "meta-item", title: "Reviewed by a second model", text: `+ reviewer ${state.liveReviewer}` })
+            : null,
           h("span", { class: "meta-item mono", text: state.liveRunId }),
           h("span", { class: "meta-item progress-text", dataset: { progress: "" }, text: `${done}/${total} (${pct}%)` }),
           state.liveManaged ? null : h("span", { class: "chip chip-plain", text: "started by another process" })
@@ -2201,6 +2394,7 @@
     state.liveRunId = runId;
     state.liveRunStatus = "running";
     state.liveModel = initialMeta?.model || runId;
+    state.liveReviewer = initialMeta?.reviewer || null;
     state.liveTotal = initialMeta?.total || 0;
     state.liveActiveScenario = null;
     state.liveTurns = [];
@@ -2227,6 +2421,7 @@
     es.addEventListener("run_started", (ev) => {
       const data = JSON.parse(ev.data);
       state.liveModel = data.model || state.liveModel;
+      state.liveReviewer = data.reviewer_model || state.liveReviewer;
       state.liveTotal = data.total || state.liveTotal;
       state.liveRunStatus = data.status || "running";
       state.liveManaged = data.managed !== false;
@@ -2304,13 +2499,17 @@
     const baseUrl = byId("launch-base-url")?.value.trim() || "";
     const apiKey = byId("launch-api-key")?.value.trim() || "";
     const wireFormat = byId("launch-wire-format")?.value || "auto";
+    forgetReviewerKeyOnNewOrigin();
     try {
       const res = await postJson(`/api/runs/${encodeURIComponent(runId)}/resume`, {
         base_url: baseUrl || undefined,
         api_key: apiKey || undefined,
         wire_format: wireFormat,
+        // Used only when the run was reviewed: the stored reviewer URL is redacted.
+        reviewer_base_url: byId("launch-reviewer-base-url")?.value.trim() || undefined,
+        reviewer_api_key: byId("launch-reviewer-api-key")?.value.trim() || undefined,
       });
-      connectLiveStream(res.run_id, { model: res.model, total: res.total_scenarios });
+      connectLiveStream(res.run_id, { model: res.model, reviewer: res.reviewer_model, total: res.total_scenarios });
     } catch (err) {
       showLaunchError(err.message);
       if (state.liveRunId === runId) {

@@ -246,6 +246,26 @@ def scope_label(te: ToolEvalSummary, *, tag: bool = True) -> str:
     return f"{label}{MID}{name}" if name else label
 
 
+def _short_model(model: str) -> str:
+    """The model name without its owner prefix and quantization tag."""
+    return model.rsplit("/", 1)[-1].split(":", 1)[0] or model
+
+
+def paired_wordings(te: ToolEvalSummary, wordings: list[str]) -> list[str]:
+    """``wordings`` led by the reviewer marker when the score belongs to a pair.
+
+    The marker goes first in every wording, with the reviewer's name and then
+    without it, so neither a shorter fallback nor the end-truncation of the
+    last one can drop it.
+    """
+    if not te.reviewer:
+        return wordings
+    name = _short_model(te.reviewer)
+    marked = [f"+ reviewer {name}{MID}{w}" for w in wordings]
+    marked += [f"+ reviewer{MID}{w}" for w in wordings]
+    return list(dict.fromkeys(marked))
+
+
 def score_details(te: ToolEvalSummary, *, passed: bool = False) -> list[str]:
     """Wordings for the line under a tool score, longest first.
 
@@ -266,7 +286,7 @@ def score_details(te: ToolEvalSummary, *, passed: bool = False) -> list[str]:
             options.append(MID.join([scope, passed_text, *trials[:1]]))
         options.extend(MID.join([scope, t]) for t in trials)
         options.append(scope)
-    return list(dict.fromkeys(options))
+    return paired_wordings(te, list(dict.fromkeys(options)))
 
 
 # --------------------------------------------------------------------------- accuracy

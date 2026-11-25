@@ -50,6 +50,7 @@ from tool_eval_bench.application.resume import prior_results_for_resume
 from tool_eval_bench.application.resume import (
     result_requires_rerun as _resume_result_requires_rerun,
 )
+from tool_eval_bench.application.reviewer import mask_credentials_in_adapter_logs, reviewer_origin
 from tool_eval_bench.application.run_config import (
     RunSettings,  # noqa: F401  (cli.bench name)
     build_run_config,
@@ -85,6 +86,7 @@ from tool_eval_bench.cli.helpers import (
 from tool_eval_bench.cli.helpers import (
     persist_plugin_run as _persist_plugin_run,  # noqa: F401  (cli.bench name)
 )
+from tool_eval_bench.cli.helpers import read_prompt_option
 from tool_eval_bench.cli.helpers import (
     safety_gate_failed as _safety_gate_failed,  # noqa: F401  (cli.bench name)
 )
@@ -147,6 +149,13 @@ from tool_eval_bench.cli.resolve import (
 from tool_eval_bench.cli.resolve import (
     with_config_fingerprint as _with_config_fingerprint,  # noqa: F401  (cli.bench name)
 )
+from tool_eval_bench.cli.reviewer import (
+    build_reviewer_settings,
+    connection_api_key,
+    prepare_reviewer_args,
+    reviewer_requested,
+    same_server,
+)
 from tool_eval_bench.cli.run_io import aggregate_trials as _aggregate_trials
 from tool_eval_bench.cli.run_io import bootstrap_ci as _bootstrap_ci  # noqa: F401
 from tool_eval_bench.cli.run_io import emit_json_output as _emit_json_output
@@ -180,6 +189,7 @@ from tool_eval_bench.domain.errors import (
     NO_SERVER,
 )
 from tool_eval_bench.domain.models import ChatMessage, RunContext
+from tool_eval_bench.domain.review import CONVERSATION_KEYS, ReviewerSettings, without_auth_headers
 from tool_eval_bench.domain.scenarios import (
     AuditPhase,
     Category,
@@ -205,7 +215,6 @@ from tool_eval_bench.utils.headers import attach_session_id as _attach_session_i
 from tool_eval_bench.utils.headers import merge_headers as _merge_headers
 from tool_eval_bench.utils.headers import parse_header_env as _parse_header_env
 from tool_eval_bench.utils.headers import parse_header_pairs as _parse_header_pairs
-from tool_eval_bench.utils.system_prompt import MAX_SYSTEM_PROMPT_BYTES, normalize_system_prompt
 from tool_eval_bench.utils.urls import redact_urls as _redact_urls
 
 if TYPE_CHECKING:
@@ -378,6 +387,7 @@ def _detect_model(
     wire_format: str = "openai",
     headers: Mapping[str, str] | None = None,
     multiple_models_hint: str | None = None,
+    show_body: bool = True,
 ) -> tuple[str, str]:
     """Compatibility wrapper preserving the historical asyncio patch seam."""
     prior_asyncio = _model_probe.asyncio
@@ -392,6 +402,7 @@ def _detect_model(
             wire_format=wire_format,
             headers=headers,
             multiple_models_hint=multiple_models_hint,
+            show_body=show_body,
         )
     finally:
         _model_probe.asyncio = prior_asyncio
@@ -1094,33 +1105,13 @@ def _resolve_system_prompt(args: argparse.Namespace, parser: argparse.ArgumentPa
     argument parsing, and both variants leave here in the canonical form that is
     persisted and sent (see ``normalize_system_prompt``).
     """
-    file_prompt = getattr(args, "system_prompt_file", None)
-    inline_prompt = getattr(args, "system_prompt", None)
-    if file_prompt is not None and inline_prompt is not None:
-        parser.error("--system-prompt and --system-prompt-file are mutually exclusive")
-    if file_prompt is not None:
-        source = f"--system-prompt-file '{file_prompt}'"
-        try:
-            with open(file_prompt, "rb") as handle:
-                raw = handle.read(MAX_SYSTEM_PROMPT_BYTES + 1)
-        except OSError as exc:
-            parser.error(f"Cannot read {source}: {exc}")
-        # Judged on the file, not the stripped text: a bounded read must never
-        # silently drop the tail of a larger file.
-        if len(raw) > MAX_SYSTEM_PROMPT_BYTES:
-            parser.error(f"{source} is larger than {MAX_SYSTEM_PROMPT_BYTES} bytes")
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            parser.error(f"{source} is not valid UTF-8")
-    elif inline_prompt is not None:
-        source, text = "--system-prompt", inline_prompt
-    else:
-        return
-    try:
-        args.system_prompt = normalize_system_prompt(text)
-    except ValueError as exc:
-        parser.error(f"{source}: {exc}")
+    args.system_prompt = read_prompt_option(
+        getattr(args, "system_prompt", None),
+        getattr(args, "system_prompt_file", None),
+        inline_flag="--system-prompt",
+        file_flag="--system-prompt-file",
+        parser=parser,
+    )
 
 
 def _drop_unused_system_prompt(args: argparse.Namespace, console: Console) -> None:
@@ -1478,6 +1469,28 @@ def _prepare_args(
         or args.context_pressure_sweep is not None
     ):
         parser.error("Decision judge audits require a run or resume of tool-call scenarios")
+    prepare_reviewer_args(args, parser)
+    if reviewer_requested(args):
+        if (
+            getattr(args, "command", None) not in {None, "run", "resume"}
+            or not _sends_system_prompt(args)
+            or args.context_pressure_sweep is not None
+            or getattr(args, "probe", False)
+            or _runs_a_storage_command(args)
+        ):
+            parser.error("A reviewer requires a run or resume of tool-call scenarios")
+        if getattr(args, "scenario_pack", None):
+            parser.error(
+                "A reviewer cannot be combined with --scenario-pack: it would receive "
+                "the held-out scenarios"
+            )
+        # Checked here, before any request: the flags alone decide it.
+        replaced = sorted(CONVERSATION_KEYS & _build_extra_params(args, parser).keys())
+        if replaced:
+            parser.error(
+                f"--backend-kwargs {', '.join(replaced)} replaces the conversation, which "
+                "would drop the reviewer's revision requests"
+            )
     if args.resume and (not _sends_system_prompt(args) or args.context_pressure_sweep is not None):
         parser.error("--resume requires a run of tool-call scenarios")
     if getattr(args, "check_tools", False) and not args.probe:
@@ -1829,6 +1842,7 @@ def _resolve_target(
     display_name = display_name or model
 
     extra_params = _build_extra_params(args, parser)
+    _resolve_reviewer(args, console, endpoint, extra_params)
 
     _validate_scenario_selection(args, parser, console)
 
@@ -1846,6 +1860,116 @@ def _resolve_target(
         extra_params=extra_params,
         run_context=None,
     )
+
+
+def _runs_a_storage_command(args: argparse.Namespace) -> bool:
+    """Whether the invocation only reads or manages stored runs (history, export, ...).
+
+    Those commands run no scenario, so a reviewer flag there would be ignored
+    without a word; ``handle_local_command`` routes the same flags.
+    """
+    return bool(
+        args.history
+        or args.leaderboard
+        or args.export
+        or args.compare
+        or getattr(args, "serve", False)
+        or getattr(args, "card", None) is not None
+        or getattr(args, "card_run", None)
+        or getattr(args, "delete", None) is not None
+    )
+
+
+def _resolve_reviewer(
+    args: argparse.Namespace,
+    console: Console,
+    endpoint: _Endpoint,
+    extra_params: dict[str, Any],
+) -> None:
+    """Leave the reviewer on ``args._reviewer``, asking its server for the model if needed.
+
+    A single served model is taken. Several open the interactive picker, and
+    stop a ``--json`` run rather than guess, since the reviewer is recorded.
+    """
+    args._reviewer = None
+    if not reviewer_requested(args):
+        return
+    connection: dict[str, Any] = args._reviewer_connection
+    reviewer_url: str | None = connection["base_url"]
+    model: str | None = connection["model"]
+    # The origin only: some gateways authenticate by a path segment.
+    display_url = reviewer_origin(reviewer_url) if reviewer_url else "(benchmarked server)"
+    if model is None and reviewer_url is not None:
+        # Discovery authenticates exactly as the reviewer's requests will.
+        shared = same_server(reviewer_url, endpoint.base_url)
+        discovery_key = connection_api_key(connection, endpoint.base_url, endpoint.api_key)
+        headers = connection["headers"]
+        if headers is None and shared:
+            inherited = getattr(args, "_request_headers", None)
+            # Discovery authenticates as the chat requests will: a reviewer
+            # with its own key drops the run's Authorization header.
+            headers = (
+                inherited if discovery_key == endpoint.api_key else without_auth_headers(inherited)
+            )
+        session_header = connection["session_header"] or (
+            getattr(args, "_session_header", None) if shared else None
+        )
+        if session_header:
+            headers = _attach_session_id(headers or {}, session_header)
+        # HTTPX logs the discovery URL, query string included: mask what the
+        # reviewer's URL, key, and headers carry while it runs.
+        unmask = mask_credentials_in_adapter_logs(
+            ReviewerSettings(
+                model="(discovery)",
+                base_url=reviewer_url,
+                api_key=discovery_key,
+                extra_headers=headers,
+            ),
+            api_key=endpoint.api_key,
+            headers=getattr(args, "_request_headers", None),
+        )
+        try:
+            model, _ = _detect_model(
+                reviewer_url,
+                discovery_key,
+                console,
+                display_url=display_url,
+                headless=args.json,
+                wire_format=_resolve_wire_format(
+                    getattr(args, "reviewer_format", None), reviewer_url
+                ),
+                headers=headers,
+                multiple_models_hint=(
+                    "pass --reviewer-model or set TOOL_EVAL_REVIEWER_MODEL to choose one"
+                ),
+                show_body=False,
+            )
+        finally:
+            unmask()
+    if model is None:  # prepare_reviewer_args rejects a reviewer with neither.
+        return
+    args._reviewer = build_reviewer_settings(
+        args,
+        model=model,
+        main_base_url=endpoint.base_url,
+        main_api_key=endpoint.api_key,
+        main_headers=getattr(args, "_request_headers", None),
+        main_session_header=getattr(args, "_session_header", None),
+        main_extra_params=extra_params,
+    )
+    if not args.json:
+        console.print(f"[dim]  Reviewer: {escape(model)} @ {escape(display_url)}[/]")
+        if _any_plugin_selected(args):
+            console.print(
+                "[dim]  The reviewer applies to the tool-call scenarios; plugin "
+                "benchmarks run without it.[/]"
+            )
+
+
+def _report_model_label(display_name: str, args: argparse.Namespace) -> str:
+    """The model a cross-trial summary names: the pair when a reviewer took part."""
+    reviewer = getattr(args, "_reviewer", None)
+    return f"{display_name} + reviewer {reviewer.model}" if reviewer is not None else display_name
 
 
 def _build_extra_params(
@@ -2498,8 +2622,14 @@ def _run_with_live_display(
     all_summaries = []
 
     # --- Trial 1: with live display ---
+    reviewer = getattr(args, "_reviewer", None)
     display = BenchmarkDisplay(
-        display_name, backend, display_url or base_url, scenarios, run_context=run_context
+        display_name,
+        backend,
+        display_url or base_url,
+        scenarios,
+        run_context=run_context,
+        reviewer_model=reviewer.model if reviewer is not None else None,
     )
     display.start()
 
@@ -2598,7 +2728,7 @@ def _run_with_live_display(
                 protocol_scenarios = getattr(args, "_resume_scenarios", None) or scenarios
                 summary_path = reporter.write_summary_report(
                     run_id=run_id_base,
-                    model=display_name,
+                    model=_report_model_label(display_name, args),
                     summaries=all_summaries,
                     agg=agg,
                     throughput_samples=throughput_samples,
@@ -2836,7 +2966,7 @@ def _run_plain(
             protocol_scenarios = getattr(args, "_resume_scenarios", None) or resolved
             summary_path = reporter.write_summary_report(
                 run_id=run_id_base,
-                model=display_name,
+                model=_report_model_label(display_name, args),
                 summaries=summaries,
                 agg=agg,
                 throughput_samples=throughput_samples,

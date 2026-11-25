@@ -228,6 +228,10 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--decision-judge-base-url URL` | Independent `/v1/systemone` endpoint for answer auditing; official scores stay unchanged (env: `TOOL_EVAL_DECISION_JUDGE_BASE_URL`) |
 | `--decision-judge-model NAME` | Judge model, auto-detected from the judge's `/v1/models` when omitted (env: `TOOL_EVAL_DECISION_JUDGE_MODEL`); authentication uses `TOOL_EVAL_DECISION_JUDGE_API_KEY`, never the benchmark's key |
 | `--alpha F` | Quality weight in the deployability composite, 0 to 1 (default: 0.7; speed gets 1 − alpha) |
+| `--reviewer-base-url URL` | Pair the model with a reviewer on this server (env: `TOOL_EVAL_REVIEWER_BASE_URL`). See [reviewing turns](#reviewing-turns) |
+| `--reviewer-model NAME` | Reviewer model; without a reviewer URL (flag, provider, or `TOOL_EVAL_REVIEWER_BASE_URL`) it reviews on the benchmarked server (env: `TOOL_EVAL_REVIEWER_MODEL`) |
+| `--reviewer-scope SCOPE` | `turns` (default), `tools`, or `final` |
+| `--reviewer-max-rounds N` | Reviews per turn; each rejection triggers one revision (default: 1) |
 
 ## Benchmark modes
 
@@ -298,6 +302,36 @@ Results include a separate `decision_audit`; no audit changes points, safety
 warnings, or the run's comparison fingerprint.
 See [answer audits](decision-models.md#answer-audits) for input limits, abstention,
 credential isolation, and persisted evidence.
+
+### Reviewing turns
+
+Any `--reviewer*` flag pairs the benchmarked model with a reviewer that checks
+each turn before the harness acts on it; the benchmarked model revises a turn
+the reviewer rejects. `--reviewer` alone enables the reviewer configured by
+`TOOL_EVAL_REVIEWER_BASE_URL`, `_MODEL`, and `_API_KEY`, which never enable one by
+themselves. The flags apply to `run`, `resume`, and flat scenario invocations,
+and cannot be combined with `--scenario-pack`.
+
+| Flag | Purpose |
+|------|---------|
+| `--reviewer` | Enable the reviewer from the environment |
+| `--reviewer-base-url URL` | Reviewer server (default: the benchmarked server) |
+| `--reviewer-model NAME` | Reviewer model; with a reviewer URL it is discovered from that server's model list (several listed: a picker, or a `--json` error), without one it is required |
+| `--reviewer-api-key KEY` | Reviewer key (env: `TOOL_EVAL_REVIEWER_API_KEY`) |
+| `--reviewer-provider NAME` | Reviewer URL, key, model, and headers from `TOOL_EVAL_<NAME>_*` |
+| `--reviewer-format FORMAT` | Reviewer wire format (default: detected from its URL; without a reviewer URL, the benchmark's `--format`) |
+| `--reviewer-header NAME=VALUE`, `--reviewer-session-header NAME` | Reviewer request headers |
+| `--reviewer-scope SCOPE` | `turns` (every turn), `tools` (tool-call turns), or `final` (replies without a tool call) |
+| `--reviewer-max-rounds N` | Reviews per turn (default: 1) |
+| `--reviewer-temperature`, `--reviewer-top-p`, `--reviewer-top-k`, `--reviewer-min-p`, `--reviewer-repeat-penalty`, `--reviewer-seed`, `--reviewer-timeout` | Reviewer sampling; each defaults to the main flag |
+| `--reviewer-no-think`, `--reviewer-think` | Reviewer thinking off or on (default: follows `--no-think`) |
+| `--reviewer-backend-kwargs JSON` | Merged over the inherited `--backend-kwargs`; `null` removes a key |
+| `--reviewer-system-prompt TEXT`, `--reviewer-system-prompt-file PATH` | Replace the built-in reviewer prompt |
+
+The reviewer uses the main API key and headers only on the same server (same
+scheme, host, and port). Keep the same reviewer flags when resuming a reviewed
+run. See [reviewer](reviewer.md) for the review loop, failure handling, and what
+the run stores.
 
 ### Overriding the system prompt
 

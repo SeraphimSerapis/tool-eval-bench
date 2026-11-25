@@ -25,6 +25,7 @@ from enum import Enum
 from typing import Any
 
 from tool_eval_bench.adapters.wire_format import detect_wire_format, resolve_wire_format
+from tool_eval_bench.application.reviewer import reviewer_fingerprint_view, reviewer_mismatch
 from tool_eval_bench.domain.scenarios import ScenarioDefinition
 from tool_eval_bench.utils.fingerprint import comparison_fingerprint
 from tool_eval_bench.utils.urls import (
@@ -66,6 +67,9 @@ class RunSettings:
     #: The ``--format`` choice; None or ``auto`` detects it from ``base_url``.
     #: Not stored itself; it decides how ``endpoint_id`` canonicalises the URL.
     wire_format: str | None = None
+    #: The resolved reviewer block from ``application.reviewer.reviewer_config``,
+    #: or None for a solo run.
+    reviewer: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -431,6 +435,20 @@ RUN_CONFIG_FIELDS: tuple[ConfigField, ...] = (
         Fingerprint.EXCLUDE,
         identifies_model=False,
         resume=ResumeCheck(Absent.UNSET, describe=_judge_mismatch),
+    ),
+    # A reviewer changes what the model answers, so the pair is the system
+    # under test: a reviewed run gets its own fingerprint and cohort, apart from
+    # a solo run of the same model. The cohort keeps the reviewer's model,
+    # endpoint, and settings, so different models ranked together share one
+    # reviewer. Only the redacted URL and the timeout stay out of both.
+    ConfigField(
+        "reviewer",
+        lambda i: i.settings.reviewer,
+        Presence.WHEN_NOT_NONE,
+        Fingerprint.INCLUDE,
+        identifies_model=False,
+        resume=ResumeCheck(Absent.UNSET, describe=reviewer_mismatch),
+        fingerprint_view=reviewer_fingerprint_view,
     ),
     ConfigField(
         "scenario_variants",

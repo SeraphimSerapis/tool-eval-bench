@@ -186,6 +186,7 @@ class BenchmarkDisplay:
         base_url: str,
         scenarios: list[ScenarioDefinition] | None = None,
         run_context: Any | None = None,
+        reviewer_model: str | None = None,
     ) -> None:
         from tool_eval_bench.evals.scenarios import SCENARIOS
 
@@ -194,6 +195,7 @@ class BenchmarkDisplay:
         self.base_url = base_url
         self.scenarios = scenarios or SCENARIOS
         self.run_context = run_context
+        self.reviewer_model = reviewer_model
         self.console = Console()
 
         # State
@@ -332,6 +334,7 @@ class BenchmarkDisplay:
             time.time() - self.started_at,
             throughput_samples=throughput_samples,
             run_context=self.run_context,
+            reviewer_model=self.reviewer_model,
         )
 
     # -- Formatting helpers --
@@ -495,8 +498,9 @@ def _print_final_panel(
     *,
     throughput_samples: list | None = None,
     run_context: Any | None = None,
+    reviewer_model: str | None = None,
 ) -> None:
-    """Print the final score panel."""
+    """Print the final score panel; ``reviewer_model`` names a paired run's reviewer."""
     score = summary.final_score
     rating = summary.rating
     rating_color = RATING_COLORS.get(rating, "bold white")
@@ -528,8 +532,11 @@ def _print_final_panel(
     except ImportError:
         benchmark_line = ""
 
+    # A paired score belongs to the model and its reviewer together.
+    reviewer_line = f"  [bold]Reviewer:[/] {escape(reviewer_model)}\n" if reviewer_model else ""
     content = (
         f"  [bold]Model:[/]  {escape(model)}\n"
+        f"{reviewer_line}"
         f"  [bold]Score:[/]  [{rating_color}]{score} / 100[/]\n"
         f"  [bold]Rating:[/] [{rating_color}]{escape(rating)}[/]"
         f"{benchmark_line}"
@@ -690,6 +697,7 @@ def print_final_report(
     *,
     throughput_samples: list | None = None,
     run_context: Any | None = None,
+    reviewer_model: str | None = None,
 ) -> None:
     """Print a detailed static report with per-scenario diagnostics."""
     _print_category_scores(console, summary)
@@ -751,4 +759,5 @@ def print_final_report(
         elapsed,
         throughput_samples=throughput_samples,
         run_context=run_context,
+        reviewer_model=reviewer_model,
     )

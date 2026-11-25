@@ -7,6 +7,7 @@ the large ``main()`` dispatch or scenario execution code.
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import sys
@@ -19,8 +20,47 @@ from dotenv import find_dotenv, load_dotenv
 from tool_eval_bench.utils.fingerprint import (
     with_config_fingerprint as with_config_fingerprint,
 )
+from tool_eval_bench.utils.system_prompt import MAX_SYSTEM_PROMPT_BYTES, normalize_system_prompt
 from tool_eval_bench.utils.urls import redact_url as _redact_url
 from tool_eval_bench.utils.urls import redact_urls as _redact_urls
+
+
+def read_prompt_option(
+    inline: str | None,
+    path: str | None,
+    *,
+    inline_flag: str,
+    file_flag: str,
+    parser: argparse.ArgumentParser,
+) -> str | None:
+    """Return a prompt given inline or as a file, in canonical form, or None.
+
+    The two flags are mutually exclusive. A file is read with a bounded read and
+    judged on its size, so the tail of a larger file is never dropped silently.
+    """
+    if path is not None and inline is not None:
+        parser.error(f"{inline_flag} and {file_flag} are mutually exclusive")
+    if path is not None:
+        source = f"{file_flag} '{path}'"
+        try:
+            with open(path, "rb") as handle:
+                raw = handle.read(MAX_SYSTEM_PROMPT_BYTES + 1)
+        except OSError as exc:
+            parser.error(f"Cannot read {source}: {exc}")
+        if len(raw) > MAX_SYSTEM_PROMPT_BYTES:
+            parser.error(f"{source} is larger than {MAX_SYSTEM_PROMPT_BYTES} bytes")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            parser.error(f"{source} is not valid UTF-8")
+    elif inline is not None:
+        source, text = inline_flag, inline
+    else:
+        return None
+    try:
+        return normalize_system_prompt(text)
+    except ValueError as exc:
+        parser.error(f"{source}: {exc}")
 
 
 def load_dotenv_file() -> None:

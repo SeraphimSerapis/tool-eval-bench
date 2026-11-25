@@ -18,8 +18,10 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from tool_eval_bench.application.decision_audit import decision_judge_config, with_selected_checks
+from tool_eval_bench.application.reviewer import resolve_reviewer, reviewer_config
 from tool_eval_bench.application.run_config import RunSettings
 from tool_eval_bench.domain.models import ChatMessage, RunContext
+from tool_eval_bench.domain.review import ReviewerSettings
 from tool_eval_bench.domain.scenarios import ScenarioDefinition
 
 DECISION_JUDGE_API_KEY_ENV = "TOOL_EVAL_DECISION_JUDGE_API_KEY"
@@ -101,6 +103,8 @@ class ScoredRun:
     #: Whether a planned throughput pass was interrupted, failed, or skipped.
     perf_incomplete: bool = False
     probe_engine: bool = True
+    #: The reviewer ``dispatch`` left on ``args._reviewer``, or None for a solo run.
+    reviewer: ReviewerSettings | None = None
 
     @classmethod
     def from_args(
@@ -162,6 +166,7 @@ class ScoredRun:
             ),
             judge=JudgeConnection.from_args(args),
             probe_engine=not getattr(args, "no_probe_engine", False),
+            reviewer=getattr(args, "_reviewer", None),
             **_perf_fields(args),
         )
 
@@ -225,6 +230,7 @@ class ScoredRun:
             "perf_passes": self.perf_passes,
             "perf_incomplete": self.perf_incomplete,
             "probe_engine": self.probe_engine,
+            "reviewer": self.reviewer,
             **(self.judge.service_kwargs() if self.judge is not None else {}),
         }
 
@@ -272,6 +278,26 @@ class ScoredRun:
                 else None
             ),
             wire_format=self.wire_format,
+            reviewer=self._stored_reviewer(),
+        )
+
+    def _stored_reviewer(self) -> dict[str, Any] | None:
+        """The reviewer block the service will store, resolved the way it resolves it."""
+        if self.reviewer is None:
+            return None
+        return reviewer_config(
+            resolve_reviewer(
+                self.reviewer,
+                base_url=self.base_url,
+                api_key=self.api_key,
+                wire_format=self.wire_format,
+                extra_headers=self.extra_headers,
+                session_header=self.session_header,
+                temperature=self.temperature,
+                timeout_seconds=self.timeout_seconds,
+                seed=self.seed,
+                extra_params=self.extra_params,
+            )
         )
 
 

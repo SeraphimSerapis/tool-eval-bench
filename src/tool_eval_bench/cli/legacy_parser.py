@@ -14,6 +14,11 @@ from tool_eval_bench.application.decision_audit import (
 )
 from tool_eval_bench.cli.command_registry import COMMAND_SPECS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
+from tool_eval_bench.domain.review import (
+    DEFAULT_REVIEW_MAX_ROUNDS,
+    DEFAULT_REVIEW_SCOPE,
+    REVIEW_SCOPES,
+)
 from tool_eval_bench.runner.perf_presets import DEFAULT_PERF_PRESET, PERF_PRESETS
 
 
@@ -174,6 +179,148 @@ def _make_parser() -> argparse.ArgumentParser:
         help="Judge model (default: auto-detected from the judge's /v1/models). "
         "Env: TOOL_EVAL_DECISION_JUDGE_MODEL. "
         "Judge-only key: TOOL_EVAL_DECISION_JUDGE_API_KEY",
+    )
+
+    # -- Reviewer ----------------------------------------------------------
+    review = parser.add_argument_group(
+        "reviewer",
+        "A second model reviews each turn before it runs; the benchmarked model revises "
+        "a rejected turn. Any --reviewer* flag enables it. Sampling flags not given here "
+        "inherit from the main ones; the key and headers only when the reviewer uses the "
+        "same server.",
+    )
+    review.add_argument(
+        "--reviewer",
+        action="store_true",
+        help="Enable the reviewer configured by TOOL_EVAL_REVIEWER_BASE_URL/_MODEL/_API_KEY",
+    )
+    review.add_argument(
+        "--reviewer-base-url",
+        default=None,
+        metavar="URL",
+        help="Reviewer server (default: the benchmarked server). Env: TOOL_EVAL_REVIEWER_BASE_URL",
+    )
+    review.add_argument(
+        "--reviewer-model",
+        default=None,
+        metavar="NAME",
+        help="Reviewer model. With a reviewer URL it is discovered from that server's model "
+        "list (a picker opens, or --json stops, when several are listed); without one it "
+        "is required. Env: TOOL_EVAL_REVIEWER_MODEL",
+    )
+    review.add_argument(
+        "--reviewer-api-key",
+        default=None,
+        metavar="KEY",
+        help="Reviewer API key. Env: TOOL_EVAL_REVIEWER_API_KEY",
+    )
+    review.add_argument(
+        "--reviewer-provider",
+        default=None,
+        metavar="NAME",
+        help="Read the reviewer's URL, key, model, and headers from TOOL_EVAL_<NAME>_*",
+    )
+    review.add_argument(
+        "--reviewer-format",
+        choices=list(WIRE_FORMATS),
+        default=None,
+        help="Reviewer wire format (default: detected from the reviewer URL; without a "
+        "reviewer URL, the benchmark's --format)",
+    )
+    review.add_argument(
+        "--reviewer-header",
+        action="append",
+        default=None,
+        metavar="NAME=VALUE",
+        help="Extra reviewer request header, repeatable",
+    )
+    review.add_argument(
+        "--reviewer-session-header",
+        default=None,
+        metavar="NAME",
+        help="Header carrying the reviewer's per-conversation id",
+    )
+    review.add_argument(
+        "--reviewer-scope",
+        choices=list(REVIEW_SCOPES),
+        default=None,
+        help="Turns to review: turns (all), tools (tool-call turns), final (replies "
+        f"without a tool call). Default: {DEFAULT_REVIEW_SCOPE}",
+    )
+    review.add_argument(
+        "--reviewer-max-rounds",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Reviews per turn; each rejection triggers one revision. "
+        f"Default: {DEFAULT_REVIEW_MAX_ROUNDS}",
+    )
+    review.add_argument(
+        "--reviewer-temperature",
+        type=float,
+        default=None,
+        metavar="T",
+        help="Reviewer temperature (default: --temperature)",
+    )
+    review.add_argument(
+        "--reviewer-top-p", type=float, default=None, metavar="P", help="Default: --top-p"
+    )
+    review.add_argument(
+        "--reviewer-top-k", type=int, default=None, metavar="K", help="Default: --top-k"
+    )
+    review.add_argument(
+        "--reviewer-min-p", type=float, default=None, metavar="P", help="Default: --min-p"
+    )
+    review.add_argument(
+        "--reviewer-repeat-penalty",
+        type=float,
+        default=None,
+        metavar="V",
+        help="Default: --repeat-penalty",
+    )
+    review.add_argument(
+        "--reviewer-no-think",
+        dest="reviewer_think",
+        action="store_const",
+        const=False,
+        default=None,
+        help="Disable reviewer thinking (default: follows --no-think)",
+    )
+    review.add_argument(
+        "--reviewer-think",
+        dest="reviewer_think",
+        action="store_const",
+        const=True,
+        help="Leave reviewer thinking on even with --no-think",
+    )
+    review.add_argument(
+        "--reviewer-seed", type=int, default=None, metavar="N", help="Default: --seed"
+    )
+    review.add_argument(
+        "--reviewer-timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Reviewer request timeout (default: --timeout)",
+    )
+    review.add_argument(
+        "--reviewer-backend-kwargs",
+        default=None,
+        metavar="JSON",
+        help="JSON dict merged over the inherited --backend-kwargs for the reviewer; "
+        "a null value removes an inherited key",
+    )
+    review.add_argument(
+        "--reviewer-system-prompt",
+        default=None,
+        metavar="TEXT",
+        help="Replace the built-in reviewer prompt (it must still ask for a JSON verdict)",
+    )
+    review.add_argument(
+        "--reviewer-system-prompt-file",
+        default=None,
+        metavar="PATH",
+        help="Read the reviewer prompt from a file",
     )
 
     # -- Sampling ----------------------------------------------------------

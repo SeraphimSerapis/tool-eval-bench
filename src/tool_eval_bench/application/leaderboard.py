@@ -92,6 +92,9 @@ def cohort_label(config: dict[str, Any], cohort_fingerprint: str) -> str:
         label.append("context-pressure")
     if config.get("scenario_packs"):
         label.append("scenario-pack")
+    reviewer = config.get("reviewer")
+    if isinstance(reviewer, dict):
+        label.append(f"reviewer={shorten_model_name(str(reviewer.get('model', '?')))}")
 
     # Keep a short stable identifier so two cohorts with the same readable
     # settings remain visibly distinct when another comparison field differs.
@@ -213,9 +216,12 @@ def extract_leaderboard_rows(
         row_cohort = cohort_fingerprint(config, metadata)
         final_score = _finite_number(scores.get("final_score", 0), 0)
 
+        reviewer = config.get("reviewer")
         rows.append(
             {
                 "model": model,
+                # A paired run scores the model together with its reviewer.
+                "reviewer_model": reviewer.get("model") if isinstance(reviewer, dict) else None,
                 "run_id": best.get("run_id", "?"),
                 "date": str(best.get("created_at") or "?")[:19],
                 "final_score": final_score,

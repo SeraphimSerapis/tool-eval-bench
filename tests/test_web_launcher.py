@@ -521,3 +521,304 @@ async def test_launch_rejects_non_string_optional_text_fields(
         resp = await client.post("/api/runs", json={**_LAUNCH, field: 123})
     assert resp.status_code == 400
     assert f"{field} must be a string" in resp.json()["error"]
+
+
+# ---------------------------------------------------------------------------
+# Reviewer
+# ---------------------------------------------------------------------------
+
+
+class _ApprovingReviewer:
+    """A reviewer endpoint that approves everything and records its requests."""
+
+    def __init__(self) -> None:
+        self.requests: list[dict[str, Any]] = []
+
+    async def chat_completion(self, **kwargs: Any) -> ChatCompletionResult:
+        self.requests.append(kwargs)
+        return ChatCompletionResult(content='{"verdict": "approve", "feedback": ""}')
+
+    async def aclose(self) -> None:
+        pass
+
+
+def _use_reviewer(monkeypatch: pytest.MonkeyPatch) -> _ApprovingReviewer:
+    reviewer = _ApprovingReviewer()
+    monkeypatch.setattr(
+        "tool_eval_bench.application.service.build_adapter", lambda *a, **k: reviewer
+    )
+    return reviewer
+
+
+_PAIRED = {
+    **_LAUNCH,
+    "api_key": "main-key",
+    "reviewer_base_url": "http://critic.test:8001",
+    "reviewer_model": "critic",
+    "reviewer_scope": "final",
+    "reviewer_max_rounds": 2,
+    "reviewer_temperature": 0.1,
+}
+
+
+@pytest.mark.asyncio
+async def test_launch_with_a_reviewer_runs_and_stores_the_pair(
+    launcher_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_adapter(monkeypatch, _FakeAdapter())
+    reviewer = _use_reviewer(monkeypatch)
+    app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
+    async with web_client(app) as client:
+        resp = await client.post("/api/runs", json={**_PAIRED, "reviewer_api_key": "critic-key"})
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        session = app.state.live_hub.get(body["run_id"])
+        assert session is not None and session.task is not None
+        assert session.reviewer_model == "critic"
+        await session.task
+    assert body["reviewer_model"] == "critic"
+    stored = await asyncio.to_thread(get_run, body["run_id"], include_traces=False)
+    assert stored is not None and stored["status"] == "completed"
+    block = stored["config"]["reviewer"]
+    assert (block["model"], block["scope"], block["max_rounds"], block["temperature"]) == (
+        "critic",
+        "final",
+        2,
+        0.1,
+    )
+    # The startup review, then one review per final reply.
+    assert len(reviewer.requests) >= 2
+    assert {request["api_key"] for request in reviewer.requests} == {"critic-key"}
+    assert stored["scores"]["scenario_results"][0]["review"]["reviews"] >= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reviewer_url", "expected_key"),
+    [("http://critic.test:8001", None), (f"{_BASE_URL}/v1", "main-key"), (None, "main-key")],
+    ids=["other-origin", "same-origin", "same-server"],
+)
+async def test_the_run_key_reaches_a_web_reviewer_on_the_same_server_only(
+    launcher_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    reviewer_url: str | None,
+    expected_key: str | None,
+) -> None:
+    _use_adapter(monkeypatch, _FakeAdapter())
+    reviewer = _use_reviewer(monkeypatch)
+    payload = {**_PAIRED, "reviewer_base_url": reviewer_url}
+    app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
+    async with web_client(app) as client:
+        resp = await client.post("/api/runs", json=payload)
+        assert resp.status_code == 202, resp.text
+        session = app.state.live_hub.get(resp.json()["run_id"])
+        assert session is not None and session.task is not None
+        await session.task
+    assert {request["api_key"] for request in reviewer.requests} == {expected_key}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"reviewer_modle": "critic"}, "Unknown reviewer field"),
+        ({"reviewer_model": None, "reviewer_scope": "tools"}, "reviewer_model is required"),
+        ({"reviewer_max_rounds": 0}, "reviewer_max_rounds"),
+        ({"reviewer_scope": "everything"}, "scope"),
+        ({"reviewer_base_url": "ftp://critic"}, "reviewer_base_url"),
+    ],
+)
+async def test_launch_rejects_bad_reviewer_fields_with_400(
+    launcher_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    extra: dict[str, Any],
+    message: str,
+) -> None:
+    _use_adapter(monkeypatch, _FakeAdapter())
+    app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
+    payload = {key: value for key, value in {**_PAIRED, **extra}.items() if value is not None}
+    async with web_client(app) as client:
+        resp = await client.post("/api/runs", json=payload)
+    assert resp.status_code == 400
+    assert message in resp.text
+    assert not app.state.live_hub._sessions  # nothing was registered
+
+
+@pytest.mark.asyncio
+async def test_a_reviewer_probe_never_sends_the_run_key(
+    launcher_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tool_eval_bench.web.launcher import probe_endpoint_models
+
+    monkeypatch.setenv("TOOL_EVAL_API_KEY", "main-env-key")
+    seen: list[dict[str, str]] = []
+
+    async def fake_fetch(url: str, endpoint: str, headers: dict[str, str], fmt: str) -> Any:
+        seen.append(dict(headers))
+        return {"data": [{"id": "critic"}]}
+
+    monkeypatch.setattr("tool_eval_bench.web.launcher._fetch_models_json", fake_fetch)
+
+    found = await probe_endpoint_models(base_url="http://critic.test:8001", reviewer=True)
+    missing = await probe_endpoint_models(base_url=None, reviewer=True)
+
+    assert [m["id"] for m in found["models"]] == ["critic"]
+    assert "main-env-key" not in str(seen)
+    assert missing["reachable"] is False and "reviewer" in missing["error"]
+
+
+@pytest.mark.asyncio
+async def test_resume_a_reviewed_run_from_the_web(
+    launcher_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tool_eval_bench.application.reviewer import resolve_reviewer, reviewer_config
+    from tool_eval_bench.domain.review import ReviewerSettings
+
+    block = reviewer_config(
+        resolve_reviewer(
+            ReviewerSettings(model="critic", base_url="http://critic.test:8001"),
+            base_url=_BASE_URL,
+            api_key=None,
+            wire_format=None,
+            extra_headers=None,
+            session_header=None,
+            temperature=0.0,
+            timeout_seconds=120.0,
+            seed=None,
+            extra_params=None,
+        )
+    )
+    _store_run(launcher_env["db_path"], "run-paired", status="interrupted", reviewer=block)
+    _use_adapter(monkeypatch, _FakeAdapter())
+    reviewer = _use_reviewer(monkeypatch)
+    app = create_app(output_dir=launcher_env["output_dir"], token=TEST_TOKEN)
+    async with web_client(app) as client:
+        refused = await client.post("/api/runs/run-paired/resume", json={"base_url": _BASE_URL})
+        resumed = await client.post(
+            "/api/runs/run-paired/resume",
+            json={
+                "base_url": _BASE_URL,
+                "reviewer_base_url": "http://critic.test:8001",
+                "reviewer_api_key": "critic-key",
+            },
+        )
+        assert resumed.status_code == 202, resumed.text
+        session = app.state.live_hub.get("run-paired")
+        assert session is not None and session.task is not None
+        await session.task
+    assert refused.status_code == 400 and "reviewer" in refused.text
+    assert resumed.json()["reviewer_model"] == "critic"
+    assert {request["api_key"] for request in reviewer.requests} == {"critic-key"}
+    stored = await asyncio.to_thread(get_run, "run-paired", include_traces=False)
+    assert stored is not None and stored["status"] == "completed"
+    assert stored["config"]["reviewer"]["model"] == "critic"
+
+
+@pytest.mark.asyncio
+async def test_the_stored_run_stream_names_the_reviewer(
+    launcher_env: dict[str, str],
+) -> None:
+    from tool_eval_bench.web.live import _tail_stored_run
+
+    _store_run(
+        launcher_env["db_path"],
+        "run-stream",
+        status="completed",
+        reviewer={"model": "critic", "endpoint_id": "e", "scope": "turns"},
+    )
+    first = None
+    async for frame in _tail_stored_run(
+        "run-stream", poll_interval=0.01, heartbeat_seconds=10.0, idle_timeout=1.0, max_polls=1
+    ):
+        first = frame
+        break
+    assert first is not None and '"reviewer_model": "critic"' in first
+
+
+def test_the_launcher_page_never_carries_a_reviewer_key_to_another_server() -> None:
+    """Static guard: the key is cleared when the reviewer URL changes origin.
+
+    The browser behaviour was checked live; this pins the wiring so a refactor
+    cannot drop the check from probe, launch, or resume.
+    """
+    from pathlib import Path
+
+    app_js = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "tool_eval_bench"
+        / "web"
+        / "static"
+        / "app.js"
+    ).read_text(encoding="utf-8")
+
+    assert "onchange: forgetReviewerKeyOnNewOrigin" in app_js
+    assert "oninput: bindReviewerKeyToOrigin" in app_js
+    # A blank reviewer URL means the benchmarked server, so the binding uses
+    # the effective URL, falling back to the benchmark Base URL.
+    effective = app_js.split("function effectiveReviewerOrigin(", maxsplit=1)[1].split(
+        "\n  }\n", maxsplit=1
+    )[0]
+    assert 'byId("launch-base-url")' in effective
+    # The reviewer probe sends the run's key only to the run's own origin.
+    probe = app_js.split("async function probeReviewer(", maxsplit=1)[1].split(
+        "\n  }\n", maxsplit=1
+    )[0]
+    assert "ownKey || (sameOrigin ? runKey" in probe
+    # A blank reviewer URL probes the benchmark server with its wire format.
+    assert 'wire_format: ownUrl ? undefined : byId("launch-wire-format")' in probe
+    # Leaderboard rows name the reviewer of a paired score.
+    assert "row.reviewer_model ? h(" in app_js
+    for function in ("function bindReviewerKeyToOrigin(", "function forgetReviewerKeyOnNewOrigin("):
+        body = app_js.split(function, maxsplit=1)[1].split("\n  }\n", maxsplit=1)[0]
+        assert "effectiveReviewerOrigin()" in body, function
+    for function in (
+        "async function probeReviewer(",
+        "function readReviewerFields(",
+        "async function resumeInterruptedRun(",
+    ):
+        body = app_js.split(function, maxsplit=1)[1].split("\n  }\n", maxsplit=1)[0]
+        assert "forgetReviewerKeyOnNewOrigin()" in body, function
+
+
+@pytest.mark.asyncio
+async def test_a_reviewer_probe_keeps_url_credentials_out_of_logs_and_answers(
+    launcher_env: dict[str, str], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from tool_eval_bench.web.launcher import probe_endpoint_models
+
+    url = "https://critic.example/route/PATHTOKEN88/v1?key=QUERYTOKEN88"
+
+    async def failing_fetch(base: str, endpoint: str, headers: dict[str, str], fmt: str) -> Any:
+        logging.getLogger("httpx").info("HTTP Request: GET %s", endpoint)
+        raise httpx.ConnectError(f"cannot reach {endpoint}")
+
+    monkeypatch.setattr("tool_eval_bench.web.launcher._fetch_models_json", failing_fetch)
+
+    with caplog.at_level("INFO"):
+        result = await probe_endpoint_models(base_url=url, reviewer=True)
+
+    for token in ("PATHTOKEN88", "QUERYTOKEN88"):
+        assert token not in caplog.text
+        assert token not in str(result)
+    assert result["reachable"] is False
+    assert result["base_url"] == "https://***"
+    # The filter is gone once the probe returns.
+    assert not any(logging.getLogger("httpx").filters)
+
+
+@pytest.mark.asyncio
+async def test_a_reviewer_probe_answers_a_malformed_url_without_raising(
+    launcher_env: dict[str, str],
+) -> None:
+    from tool_eval_bench.web.launcher import probe_endpoint_models
+
+    result = await probe_endpoint_models(base_url="http://[::1", reviewer=True)
+
+    assert result == {
+        "reachable": False,
+        "error": "The reviewer Base URL is not a valid http(s) URL.",
+        "models": [],
+    }

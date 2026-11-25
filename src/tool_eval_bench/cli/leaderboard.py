@@ -190,6 +190,8 @@ def print_leaderboard(console: Console, limit: int = 50) -> None:
 
         # Model name — shorten paths to owner/model for readability (#15)
         model_name = shorten_model_name(row["model"])
+        if row.get("reviewer_model"):
+            model_name += f" + reviewer {shorten_model_name(row['reviewer_model'])}"
 
         # Score with color
         score = row["final_score"]
@@ -333,6 +335,7 @@ def export_runs(
                 "num_runs": row["num_runs"],
                 "cohort_label": row["cohort_label"],
                 "cohort_fingerprint": row["cohort_fingerprint"],
+                "reviewer_model": row.get("reviewer_model"),
                 "categories": {cat: row["cat_scores"].get(cat) for cat in cat_order},
             }
             if row.get("token_efficiency") is not None:
@@ -391,6 +394,7 @@ def export_runs(
             "server_model_root",
             "cohort",
             "cohort_fingerprint",
+            "reviewer_model",
         ]
         headers.extend(f"cat_{cat}" for cat in cat_order)
 
@@ -428,6 +432,7 @@ def export_runs(
                 "server_model_root": row.get("server_model_root") or "",
                 "cohort": row["cohort_label"],
                 "cohort_fingerprint": row["cohort_fingerprint"],
+                "reviewer_model": row.get("reviewer_model") or "",
             }
             for cat in cat_order:
                 csv_row[f"cat_{cat}"] = row["cat_scores"].get(cat, "")

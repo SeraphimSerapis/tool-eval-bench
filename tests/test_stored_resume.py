@@ -11,7 +11,9 @@ from tool_eval_bench.application.resume import (
     plan_stored_resume,
     result_requires_rerun,
 )
+from tool_eval_bench.application.reviewer import resolve_reviewer, reviewer_config
 from tool_eval_bench.application.run_config import RunSettings, build_run_config
+from tool_eval_bench.domain.review import ReviewerSettings
 from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
 
 _URL = "http://localhost:8000"
@@ -85,6 +87,65 @@ def test_plan_rejects_held_out_pack_scenarios() -> None:
     run["config"]["scenario_ids"] = ["TC-01", "PACK-01"]
     with pytest.raises(ResumeRejected, match="--scenario-pack"):
         plan_stored_resume(run, [], base_url=_URL)
+
+
+def _reviewed(reviewer_url: str | None) -> dict[str, Any]:
+    """A stored run reviewed by ``critic`` at ``reviewer_url`` (None: the same server)."""
+    block = reviewer_config(
+        resolve_reviewer(
+            ReviewerSettings(model="critic", base_url=reviewer_url, scope="tools", max_rounds=2),
+            base_url=_URL,
+            api_key=None,
+            wire_format=None,
+            extra_headers=None,
+            session_header=None,
+            temperature=0.0,
+            timeout_seconds=120.0,
+            seed=7,
+            extra_params={"top_p": 0.9},
+        )
+    )
+    return _stored(reviewer=block)
+
+
+def test_plan_rebuilds_a_reviewer_on_the_benchmarked_server() -> None:
+    plan = plan_stored_resume(_reviewed(None), [], base_url=_URL)
+
+    assert plan.reviewer is not None
+    assert (plan.reviewer.model, plan.reviewer.scope, plan.reviewer.max_rounds) == (
+        "critic",
+        "tools",
+        2,
+    )
+    assert plan.reviewer.base_url is None and plan.reviewer.api_key is None
+    assert plan.settings.reviewer is not None
+
+
+def test_plan_rebuilds_a_reviewer_elsewhere_from_its_url() -> None:
+    plan = plan_stored_resume(
+        _reviewed("http://critic.test:8001"),
+        [],
+        base_url=_URL,
+        reviewer_base_url="http://critic.test:8001/v1",
+    )
+
+    assert plan.reviewer is not None
+    assert plan.reviewer.base_url == "http://critic.test:8001/v1"
+
+
+@pytest.mark.parametrize("reviewer_url", [None, "http://other.test:8001"])
+def test_plan_rejects_a_reviewer_at_another_endpoint(reviewer_url: str | None) -> None:
+    with pytest.raises(ResumeRejected, match="reviewer endpoint_id"):
+        plan_stored_resume(
+            _reviewed("http://critic.test:8001"),
+            [],
+            base_url=_URL,
+            reviewer_base_url=reviewer_url,
+        )
+
+
+def test_plan_keeps_a_solo_run_solo() -> None:
+    assert plan_stored_resume(_stored(), [], base_url=_URL).reviewer is None
 
 
 def test_result_requires_rerun_for_corrupt_checkpoints() -> None:

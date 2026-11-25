@@ -26,6 +26,7 @@ from tool_eval_bench.storage.reports.card._data import (
     has_long_context,
     is_subset,
     needs_caution,
+    paired_wordings,
     perf_warnings,
     plottable,
     pp_tg_label,
@@ -473,7 +474,7 @@ def _tool_hero(data: CardData) -> Hero:
             TOOL,
             score,
             "/100",
-            sub=tuple(dict.fromkeys(scopes)),
+            sub=tuple(paired_wordings(te, list(dict.fromkeys(scopes)))),
             sub_color=WARN,
             sub2=(MID.join(extra), extra[0]),
         )

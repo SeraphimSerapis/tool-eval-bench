@@ -453,6 +453,28 @@ unaudited runs share a comparison fingerprint, since an audit never changes a
 score. Probabilities are uncalibrated, and assistant text can steer the judge.
 See [answer audit limits and API configuration](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/decision-models.md#answer-audits).
 
+### Pair the model with a reviewer
+
+A second model can review each turn before the harness acts on it. The
+reviewer approves the turn or returns feedback, and the benchmarked model then
+revises the turn; the harness runs the revision instead of the rejected turn.
+
+```bash
+tool-eval-bench run --base-url http://localhost:8003 \
+  --reviewer-base-url http://localhost:8001 \
+  --reviewer-scope tools --reviewer-temperature 0
+```
+
+Any `--reviewer*` flag enables it. Sampling settings the reviewer flags leave
+unset (temperature, top-p/k, min-p, thinking, seed, timeout, and
+`--backend-kwargs`) inherit from the main ones. The API key and headers
+inherit only when the reviewer uses the benchmarked server. A reviewer that
+fails mid-run lets the turn run unreviewed and counts the error; a reviewer that
+fails its startup check stops the run. The pair is the system under test, so a
+reviewed run gets its own fingerprint and leaderboard cohort. Held-out packs are
+refused. The web UI's launcher has a Reviewer section (URL, model, key, scope,
+reviews per turn, temperature); the other reviewer settings are CLI and API only. Details: [docs/reviewer.md](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/reviewer.md).
+
 ### Browse results in a browser
 
 `tool-eval-bench serve` opens a local web UI over the same SQLite history:
@@ -549,6 +571,7 @@ remain supported.
 - **The benchmarks:** [methodology](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/methodology.md) ·
   [hard mode](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/hard-mode.md) · [needle](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/needle.md) ·
   [decision models](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/decision-models.md) ·
+  [reviewer](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/reviewer.md) ·
   [context pressure](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/context-pressure.md) ·
   [speculative decoding](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/speculative-decoding.md) ·
   [accuracy and throughput](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/benchmarks.md) ·

@@ -59,6 +59,17 @@ FULL = RunSettings(
     weight_by_difficulty=False,
     system_prompt="Be terse.",
     decision_judge={"set": "recommended", "checks": ["a"]},
+    reviewer={
+        "model": "critic",
+        "base_url": "http://localhost:8001",
+        "endpoint_id": "abc",
+        "scope": "turns",
+        "max_rounds": 1,
+        "temperature": 0.0,
+        "timeout_seconds": 120.0,
+        "seed": 1,
+        "extra_params": {"top_p": 0.9},
+    },
 )
 
 #: A different value for every RunSettings field.  Adding a field without a
@@ -83,6 +94,17 @@ PERTURBED: dict[str, Any] = {
     "decision_judge": {"set": "all", "checks": ["a"]},
     # Reaches the config through endpoint_id: a Gemini base keeps FULL's /v1.
     "wire_format": "gemini",
+    "reviewer": {
+        "model": "other-critic",
+        "base_url": "http://localhost:8001",
+        "endpoint_id": "abc",
+        "scope": "final",
+        "max_rounds": 2,
+        "temperature": 0.0,
+        "timeout_seconds": 120.0,
+        "seed": 1,
+        "extra_params": {"top_p": 0.9},
+    },
 }
 
 
@@ -129,7 +151,11 @@ def test_full_run_writes_every_schema_key_in_order() -> None:
 
 def test_default_run_writes_only_always_present_keys() -> None:
     plain = dataclasses.replace(
-        FULL, system_prompt=None, decision_judge=None, context_pressure_config=None
+        FULL,
+        system_prompt=None,
+        decision_judge=None,
+        context_pressure_config=None,
+        reviewer=None,
     )
     config = build_run_config(plain, scenarios=[_scenario("TC-01")], metadata={})
     expected = [f.key for f in RUN_CONFIG_FIELDS if f.presence is Presence.ALWAYS]
@@ -138,6 +164,33 @@ def test_default_run_writes_only_always_present_keys() -> None:
 
 def test_a_run_resumes_cleanly_against_itself() -> None:
     assert resume_mismatches(_build(FULL), _build(FULL)) == []
+
+
+def test_a_reviewed_run_is_its_own_fingerprint_and_cohort() -> None:
+    solo = _build(dataclasses.replace(FULL, reviewer=None))
+    paired = _build(FULL)
+
+    assert paired[CONFIG_FINGERPRINT_KEY] != solo[CONFIG_FINGERPRINT_KEY]
+    assert cohort_config(paired) != cohort_config(solo)
+    assert resume_mismatches(paired, solo) == ["reviewer (was critic, now off)"]
+
+
+def test_reviewer_url_spelling_and_timeout_do_not_move_the_fingerprint() -> None:
+    assert FULL.reviewer is not None
+    respelled = dataclasses.replace(
+        FULL,
+        reviewer={**FULL.reviewer, "base_url": "http://localhost:8001/v1/", "timeout_seconds": 9.0},
+    )
+
+    assert _build(respelled)[CONFIG_FINGERPRINT_KEY] == _build(FULL)[CONFIG_FINGERPRINT_KEY]
+    assert resume_mismatches(_build(respelled), _build(FULL)) == []
+
+
+def test_a_reviewer_change_names_the_changed_settings_on_resume() -> None:
+    assert FULL.reviewer is not None
+    changed = dataclasses.replace(FULL, reviewer={**FULL.reviewer, "scope": "tools"})
+
+    assert resume_mismatches(_build(changed), _build(FULL)) == ["reviewer scope"]
 
 
 def test_cohort_drops_model_identity_operational_and_unfingerprinted_keys() -> None:

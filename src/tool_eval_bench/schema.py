@@ -35,9 +35,14 @@ from tool_eval_bench.application.decision_audit import (
 from tool_eval_bench.cli.command_registry import commands_schema
 from tool_eval_bench.domain.engines import BACKEND_LABELS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
+from tool_eval_bench.domain.review import (
+    DEFAULT_REVIEW_MAX_ROUNDS,
+    DEFAULT_REVIEW_SCOPE,
+    REVIEW_SCOPES,
+)
 
 # Argument schema version — bump when adding/removing/renaming args.
-SCHEMA_VERSION = "11"
+SCHEMA_VERSION = "12"
 
 COMMANDS_SCHEMA: dict[str, dict[str, Any]] = commands_schema()
 
@@ -147,6 +152,159 @@ ARGS_SCHEMA: list[dict[str, Any]] = [
             "(also TOOL_EVAL_DECISION_JUDGE_MODEL); judge-only key via "
             "TOOL_EVAL_DECISION_JUDGE_API_KEY"
         ),
+    },
+    # -- Reviewer --
+    {
+        "name": "reviewer",
+        "type": "bool",
+        "default": False,
+        "description": (
+            "Enable the reviewer configured by TOOL_EVAL_REVIEWER_BASE_URL/_MODEL/_API_KEY; "
+            "any other reviewer_* argument enables it too"
+        ),
+    },
+    {
+        "name": "reviewer_base_url",
+        "type": "string",
+        "default": None,
+        "description": "Reviewer server (default: the benchmarked server)",
+    },
+    {
+        "name": "reviewer_model",
+        "type": "string",
+        "default": None,
+        "description": (
+            "Reviewer model; with a reviewer URL it is discovered from that server's model "
+            "list (several listed: a picker, or a --json error), without one it is required"
+        ),
+    },
+    {
+        "name": "reviewer_api_key",
+        "type": "string",
+        "default": None,
+        "description": (
+            "Reviewer API key (also TOOL_EVAL_REVIEWER_API_KEY); the main key is used "
+            "only when the reviewer shares the benchmarked server's origin"
+        ),
+    },
+    {
+        "name": "reviewer_provider",
+        "type": "string",
+        "default": None,
+        "description": "Read the reviewer's URL, key, model, and headers from TOOL_EVAL_<NAME>_*",
+    },
+    {
+        "name": "reviewer_format",
+        "type": "string",
+        "default": None,
+        "choices": ["auto", "openai", "gemini", "anthropic"],
+        "description": (
+            "Reviewer wire format (default: detected from the reviewer URL; without a "
+            "reviewer URL, the benchmark's format)"
+        ),
+    },
+    {
+        "name": "reviewer_header",
+        "type": "list[string]",
+        "default": None,
+        "description": "Extra reviewer request header as NAME=VALUE (repeatable)",
+    },
+    {
+        "name": "reviewer_session_header",
+        "type": "string",
+        "default": None,
+        "description": "Header that carries the reviewer's per-conversation id",
+    },
+    {
+        "name": "reviewer_scope",
+        "type": "string",
+        "default": None,
+        "choices": list(REVIEW_SCOPES),
+        "description": (
+            "Turns to review: turns (all), tools (tool-call turns), final (replies without "
+            f"a tool call); default {DEFAULT_REVIEW_SCOPE}"
+        ),
+    },
+    {
+        "name": "reviewer_max_rounds",
+        "type": "int",
+        "default": None,
+        "description": (
+            "Reviews per turn; each rejection triggers one revision "
+            f"(default {DEFAULT_REVIEW_MAX_ROUNDS})"
+        ),
+    },
+    {
+        "name": "reviewer_temperature",
+        "type": "float",
+        "default": None,
+        "description": "Reviewer temperature (default: temperature)",
+    },
+    {
+        "name": "reviewer_top_p",
+        "type": "float",
+        "default": None,
+        "description": "Reviewer top-p (default: top_p)",
+    },
+    {
+        "name": "reviewer_top_k",
+        "type": "int",
+        "default": None,
+        "description": "Reviewer top-k (default: top_k)",
+    },
+    {
+        "name": "reviewer_min_p",
+        "type": "float",
+        "default": None,
+        "description": "Reviewer min-p (default: min_p)",
+    },
+    {
+        "name": "reviewer_repeat_penalty",
+        "type": "float",
+        "default": None,
+        "description": "Reviewer repetition penalty (default: repeat_penalty)",
+    },
+    {
+        "name": "reviewer_think",
+        "type": "bool",
+        "default": None,
+        "description": (
+            "true (--reviewer-think) keeps reviewer thinking on, false (--reviewer-no-think) "
+            "turns it off; default follows no_think"
+        ),
+    },
+    {
+        "name": "reviewer_seed",
+        "type": "int",
+        "default": None,
+        "description": "Reviewer seed (default: seed)",
+    },
+    {
+        "name": "reviewer_timeout",
+        "type": "float",
+        "default": None,
+        "description": "Reviewer request timeout in seconds (default: timeout)",
+    },
+    {
+        "name": "reviewer_backend_kwargs",
+        "type": "string",
+        "default": None,
+        "description": (
+            "JSON dict merged over the inherited backend_kwargs; a null value removes "
+            "an inherited key"
+        ),
+    },
+    {
+        "name": "reviewer_system_prompt",
+        "type": "string",
+        "default": None,
+        "description": "Replace the built-in reviewer prompt (it must still ask for a JSON verdict)",
+    },
+    {
+        "name": "reviewer_system_prompt_file",
+        "type": "string",
+        "default": None,
+        "description": "Read the reviewer prompt from a file",
     },
     # -- Sampling --
     {

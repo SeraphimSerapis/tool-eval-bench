@@ -100,8 +100,21 @@ def card_labels(tie: bool) -> tuple[str, str]:
     return runner, winner
 
 
+def reviewer_suffix(d: dict, *, short: bool = False) -> str:
+    """`` + reviewer X`` for a paired run's report, empty for a solo one.
+
+    Kept apart from the model name: labels that split a name on ``/`` would
+    otherwise pick the reviewer's name as the model's.
+    """
+    reviewer = d.get("reviewer") or ""
+    if not reviewer:
+        return ""
+    name = reviewer.rsplit("/", 1)[-1].split(":", 1)[0] if short else reviewer
+    return f" + reviewer {name or reviewer}"
+
+
 def dname(d: dict) -> str:
-    return d["model_api"] or d["model_name"]
+    return f"{d['model_api'] or d['model_name']}{reviewer_suffix(d)}"
 
 
 def esc(s: str) -> str:

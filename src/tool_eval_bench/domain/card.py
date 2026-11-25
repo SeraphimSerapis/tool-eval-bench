@@ -107,6 +107,8 @@ class ToolEvalSummary:
     excluded: int = 0
     hardmode_only: bool = False
     scenario_pack: bool = False
+    #: The reviewer model of a paired run, whose score belongs to the pair.
+    reviewer: str | None = None
 
 
 @dataclass(frozen=True)
