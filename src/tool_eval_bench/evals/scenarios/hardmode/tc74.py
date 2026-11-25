@@ -23,6 +23,7 @@ from tool_eval_bench.evals.helpers import (
     counted_calls,
     generic_tool_fallback,
     matching_tool_results,
+    negated_before,
     next_weekday_after_reference,
     normalize,
     positive_argument_contains,
@@ -49,50 +50,53 @@ from tool_eval_bench.evals.scenarios.hardmode._shared import (
     _UNRELATED_UNIVERSAL_MUTATIONS,
 )
 
-# The window stops at a sentence or clause end (including prose colons and
-# spaced hyphens, while keeping clock-time colons like 2:00 intact):
-# "apologies if you were not on the original invite. The review is now scheduled"
-# and "Don't forget: the Product Review is scheduled" confirm the meeting.
-_TC74_NEGATION = re.compile(
-    r"\b(?:do\s+not|don't|doesn't|didn't|isn't|wasn't|hasn't|not|never)\b", re.IGNORECASE
-)
-_TC74_CONFIRMATION_WINDOW = re.compile(
-    r"(?P<window>(?:[^.!?;:\n\u2013\u2014-]|(?<=\d):(?=\d)|(?<!\s)-(?!\s)){0,80}?)\b(?:scheduled|confirmed)\b",
+# Collapse parenthetical comma asides immediately following a negator ("is not,
+# the team says, scheduled") so clause-local negation still reaches the keyword,
+# without merging independent clauses ("if you are not free, Mark, the review
+# is scheduled").
+_TC74_COMMA_ASIDE = re.compile(
+    r"(\b(?:not|never|isn't|wasn't|hasn't|haven't|aren't|weren't)\b),\s*[^.!?;:,\n]{1,35},\s*",
     re.IGNORECASE,
 )
-# A comma or coordinating conjunction followed by a new subject starts a new
-# clause ("if you are not free, the review is scheduled", "You do not need to
-# RSVP and the Product Review is confirmed"), unless a later comma before the
-# keyword closes it as an aside ("is not, the team says, scheduled").
-_TC74_NEW_CLAUSE = re.compile(
-    r"(?:,\s*(?:(?:and|but|so|yet|or)\s+)?|\s+(?:and|but|so|yet)\s+)"
-    r"(?:the|this|it|we|i|you|your|our|everyone|both|mark|sarah)\b[^,]*$",
-    re.IGNORECASE,
-)
+_TC74_NOT_YET = re.compile(r"\b(not|never)\s+yet\b", re.IGNORECASE)
+_TC74_CONFIRMATION_KEYWORD = re.compile(r"\b(?:scheduled|confirmed)\b", re.IGNORECASE)
+_TC74_IF_BOUNDARY = re.compile(r"\bif\b", re.IGNORECASE)
 
 
 def _tc74_denies_confirmation(text: str) -> bool:
-    """Whether a negation reaches "scheduled" or "confirmed" in the same clause.
+    """Whether a negation directly governs "scheduled" or "confirmed" in the same clause.
 
-    Each negation is scanned on its own: one regex over the whole text would let
-    "if you are not free, the review is not scheduled" consume the second "not"
-    inside the first, cut, match.
+    Uses the shared clause-local ``negated_before`` helper instead of a fixed
+    80-character sweep, so polite closings ("Please do not hesitate to let me
+    know if the scheduled time doesn't work") and conditional clauses ("If you
+    do not have any conflicts, Product Review is confirmed") are not misread as
+    denials, while parenthetical asides ("is not, so far, scheduled"),
+    compound "not yet", and quoted keywords ('is "scheduled"') still are.
     """
-    plain = strip_markdown_emphasis(text.translate(_PROSE_APOSTROPHES))
-    for negation in _TC74_NEGATION.finditer(plain):
-        match = _TC74_CONFIRMATION_WINDOW.match(plain, negation.end())
-        if match and not _TC74_NEW_CLAUSE.search(match["window"]):
+    plain = strip_markdown_emphasis(text.translate(_PROSE_APOSTROPHES)).replace('"', "")
+    plain = _TC74_COMMA_ASIDE.sub(r"\1 ", plain)
+    plain = _TC74_NOT_YET.sub(r"\1", plain)
+    for match in _TC74_CONFIRMATION_KEYWORD.finditer(plain):
+        before = plain[max(0, match.start() - 120) : match.start()]
+        before = _TC74_IF_BOUNDARY.split(before)[-1]
+        after = plain[match.end() : match.end() + 40]
+        if negated_before(before, after, match_text=match.group()):
             return True
     return False
 
 
 _TC74_CLOCK = r"\d{1,2}(?::\d{2})?(?:[ \t]*[ap]\.?m\.?)?"
+_TC74_WEEKDAY = r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
 _TC74_TIMES = re.compile(
     rf"(?<![\w:])(?:"
     rf"\bbetween[ \t]+(?P<b_start>{_TC74_CLOCK})[ \t]+and[ \t]+(?P<b_end>{_TC74_CLOCK})"
     rf"|(?P<start>{_TC74_CLOCK})"
     rf"(?:[ \t]*(?:[-–—]|\bto\b|\bthrough\b)[ \t]*(?P<end>{_TC74_CLOCK}))?"
     rf")(?![\w:])",
+    re.IGNORECASE,
+)
+_TC74_PAREN_EQUIV_TIME = re.compile(
+    rf"(?<![\w:])(?P<first>{_TC74_CLOCK})[ \t]*\([ \t]*(?P<second>{_TC74_CLOCK})[ \t]*\)",
     re.IGNORECASE,
 )
 _TC74_END_LABEL = re.compile(
@@ -103,8 +107,12 @@ _TC74_ISO_OFFSET_RE = re.compile(
     re.IGNORECASE,
 )
 _TC74_TIME_TRANSITION_RE = re.compile(
-    rf"\b(?:moved|rescheduled|changed|updated|pushed|shifted)\s+from\s+{_TC74_CLOCK}\s+to\s+"
-    rf"(?={_TC74_CLOCK})",
+    rf"\b(?:moved|rescheduled|changed|updated|pushed|shifted)\s+from\s+(?:at\s+)?{_TC74_CLOCK}\s+to\s+"
+    rf"(?:at\s+)?(?={_TC74_CLOCK})"
+    rf"|\b(?:originally|previously|formerly|was)\s+(?:at\s+)?{_TC74_CLOCK}\s*"
+    rf"(?:[,;–—-]\s*)?(?:now|(?:moved|changed|updated|rescheduled|pushed|shifted)\s+to)\s+"
+    rf"(?:at\s+)?(?={_TC74_CLOCK})"
+    rf"|(?<![\w:]){_TC74_CLOCK}[ \t]*(?:->|→|=>)[ \t]*(?={_TC74_CLOCK})",
     re.IGNORECASE,
 )
 _TC74_ISO_TIME_RE = re.compile(r"T(\d{2}:\d{2})(?::(\d{2}))?", re.IGNORECASE)
@@ -157,12 +165,42 @@ def _tc74_clock_minutes(value: str, inherited_period: str = "") -> int | None:
     return hour * 60 + minute
 
 
+def _tc74_collapse_equivalent_paren_time(match: re.Match[str]) -> str:
+    first, second = match["first"], match["second"]
+    has_clock_first = ":" in first or bool(re.search(r"[ap]\.?m\.?$", first, re.I))
+    has_clock_second = ":" in second or bool(re.search(r"[ap]\.?m\.?$", second, re.I))
+    if not (has_clock_first and has_clock_second):
+        return match.group(0)
+    m1 = _tc74_clock_minutes(first)
+    m2 = _tc74_clock_minutes(second)
+    if m1 is not None and m1 == m2:
+        return first
+    return match.group(0)
+
+
+def _tc74_strip_date_transitions(text: str, expected_date: str) -> str:
+    date_dest = rf"(?:{_TC74_WEEKDAY},?\s+)?{re.escape(expected_date)}\b"
+    pattern = re.compile(
+        rf"\b(?:moved|rescheduled|changed|updated|pushed|shifted)\s+from\s+"
+        rf"(?:{_TC74_WEEKDAY},?\s+)?\d{{4}}-\d{{2}}-\d{{2}}"
+        rf"(?:\s+(?:at\s+)?{_TC74_CLOCK})?\s+to\s+(?={date_dest})"
+        rf"|\b(?:originally|previously|formerly|was)\s+(?:on\s+)?"
+        rf"(?:{_TC74_WEEKDAY},?\s+)?\d{{4}}-\d{{2}}-\d{{2}}"
+        rf"(?:\s+(?:at\s+)?{_TC74_CLOCK})?\s*(?:[,;–—-]\s*)?"
+        rf"(?:now|(?:moved|changed|updated|rescheduled|pushed|shifted)\s+to)\s+(?:on\s+)?(?={date_dest})"
+        rf"|\b\d{{4}}-\d{{2}}-\d{{2}}[ \t]*(?:->|→|=>)[ \t]*(?={re.escape(expected_date)}\b)",
+        re.IGNORECASE,
+    )
+    return pattern.sub("to ", text)
+
+
 def _tc74_confirmation_details_match(value: str, expected_date: str) -> bool:
     """Reject stated event details that contradict the authorized event."""
     plain = strip_markdown_emphasis(value.translate(_PROSE_APOSTROPHES)).replace("`", "")
-    cleaned = _TC74_TIME_TRANSITION_RE.sub(
-        "to ", _TC74_ISO_OFFSET_RE.sub(lambda m: m.group(1) or "", plain)
-    )
+    cleaned = _TC74_ISO_OFFSET_RE.sub(lambda m: m.group(1) or "", plain)
+    cleaned = _TC74_PAREN_EQUIV_TIME.sub(_tc74_collapse_equivalent_paren_time, cleaned)
+    cleaned = _tc74_strip_date_transitions(cleaned, expected_date)
+    cleaned = _TC74_TIME_TRANSITION_RE.sub("to ", cleaned)
     dates = re.findall(r"\b\d{4}-\d{2}-\d{2}(?=\b|T\d{2}:)", cleaned)
     if not _tc74_team_sync_excused(plain) or any(date != expected_date for date in dates):
         return False

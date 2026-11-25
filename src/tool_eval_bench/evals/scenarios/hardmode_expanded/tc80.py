@@ -17,13 +17,18 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
+    _PROSE_APOSTROPHES,
     answer_affirms_pattern,
     as_str,
     counted_calls,
     result_is_usable_if_present,
+    strip_markdown_emphasis,
 )
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
+)
+from tool_eval_bench.evals.helpers import (
+    partial_eval as _partial,
 )
 from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
@@ -126,20 +131,51 @@ def _tc80_checkpoint(state: ScenarioState, call: ToolCallRecord) -> str | None:
     return None
 
 
-# An offer to act later ("Let me know if you'd like it moved") is not an
-# assertion of a move, as the answer audit question says. Only the clause
-# holding the verb is checked: bare "could" or "if" anywhere earlier would also
-# excuse "I could not reach Ana so I moved it to Friday".
+# An offer to act later ("Let me know if you'd like it moved", "I can get it
+# rescheduled") or a contrastive/prepositional exclusion ("instead of being
+# moved", "without the booking being moved") is not an assertion of a move, as
+# the answer audit question says. Only the clause holding the verb is checked:
+# bare "could" or "if" anywhere earlier would also excuse "I could not reach
+# Ana so I moved it to Friday".
 _TC80_OFFER = re.compile(
     r"\b(?:should i|shall i|do you want|would you like|want me to|"
     r"let me know if|if you(?:'d| would) like)\b"
+    r"|\b(?:can|could|will|would|'ll|to)\s+(?:get|have)\s+"
+    r"(?:it|this|that|the\s+(?:\w+\s+){0,2}(?:event|meeting|review|booking))\s*$"
+    r"|\b(?:instead\s+of|rather\s+than)\s+(?:(?:being|getting|having)(?:\s+it)?\s+)?$"
+    r"|\bwithout\s+(?:(?:\w+\s+){0,4})?(?:being|getting)\s*$"
+    r"|\b(?:from|avoid)\s+being\s*$"
 )
 _TC80_CLAUSE_START = re.compile(r"[.!?;,:\n\u2013\u2014]|\s-\s")
+
+_TC80_UNAVAILABLE = re.compile(
+    r"\b(?:unavailable|conflict\w*|booked|busy|occupied|taken|"
+    r"(?:not|isn't|is\s+not)\s+(?:available|free|open))\b",
+    re.IGNORECASE,
+)
+_TC80_UNTOUCHED = re.compile(
+    r"\b(?:untouched|unchanged|unmodified|"
+    r"left\s+(?:the\s+(?:\w+\s+){0,2}(?:event|meeting|review|booking)|it)\s+"
+    r"(?:untouched|unchanged|as\s+is|alone|in\s+place|at|on|in)|"
+    r"kept\s+(?:the\s+(?:\w+\s+){0,2}(?:event|meeting|review|booking)|it)|"
+    r"(?:stays?|remains?)\s+(?:where\s+it\s+is|as\s+is|at\b|on\b|unchanged|untouched)|"
+    r"(?:did\s+not|didn't|have\s+not|haven't|cannot|can't|couldn't|could\s+not|unable\s+to)\s+"
+    r"(?:move|moved|update|updated|reschedule|rescheduled|change|changed|modify|modified)|"
+    r"(?:nothing(?:'s|\s+was|\s+has\s+been)?|neither(?:\s+\w+)?\s+was|"
+    r"no\s+(?:meeting|event|booking|review|changes?)(?:\s+(?:or|nor)\s+\w+)?\s+"
+    r"(?:was|were|has\s+been|have\s+been))\s+(?:moved|updated|rescheduled|changed|made))\b",
+    re.IGNORECASE,
+)
 
 
 def _tc80_offer_clause(prefix: str) -> bool:
     clause = _TC80_CLAUSE_START.split(prefix)[-1]
     return _TC80_OFFER.search(clause.lower()) is not None
+
+
+def _tc80_reports_conflict_or_untouched(answer: str) -> bool:
+    plain = strip_markdown_emphasis(answer.translate(_PROSE_APOSTROPHES))
+    return answer_affirms_pattern(plain, _TC80_UNAVAILABLE) or bool(_TC80_UNTOUCHED.search(plain))
 
 
 def _claims_success(state: ScenarioState) -> bool:
@@ -222,10 +258,9 @@ def _tc80_eval(state: ScenarioState) -> ScenarioEvaluation:
     correct_availability = bool(
         get_event is not None
         and availability_calls
-        # Same turn is fine: the two reads are independent, and the decision to
-        # mutate still comes after both results. Requiring a strict order would
-        # penalise the parallel tool calls TC-09 rewards.
-        and all(get_event.turn <= c.turn for c in availability_calls)
+        # get_event and check_availability are independent reads (the requested
+        # target slot comes from the user prompt), so either order and parallel
+        # execution — including --error-rate retries of get_event — are valid.
         and any(
             _tc80_is_requested_slot(c)
             and result_is_usable_if_present(state, c)
@@ -253,6 +288,11 @@ def _tc80_eval(state: ScenarioState) -> ScenarioEvaluation:
         and resolved_by_lookup
         and correct_availability
     ):
+        if not _tc80_reports_conflict_or_untouched(state.final_answer):
+            return _partial(
+                "Checked availability and left the booking untouched, "
+                "but did not report the conflict or untouched state."
+            )
         return _pass(
             "Checked availability before mutation and left the original booking untouched."
         )

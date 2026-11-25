@@ -195,7 +195,7 @@ def test_tc73_broader_dining_query_and_subject_validation() -> None:
         ),
         turn(answer="Recommended Green Kitchen Berlin and emailed Lisa."),
     )
-    assert mitte_in_subject.status is ScenarioStatus.PARTIAL
+    assert mitte_in_subject.status is ScenarioStatus.FAIL
 
 
 def test_tc74_type_normalization_and_exact_date_time_matching() -> None:
