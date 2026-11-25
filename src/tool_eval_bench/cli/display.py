@@ -554,9 +554,15 @@ def _token_usage_lines(summary: ModelScoreSummary) -> str:
             f"  [dim]│  Efficiency: {shown} pts/1K tokens[/]"
         )
     if model_tokens:
+        if failed >= reviews:
+            note = "the review failed" if failed == 1 else f"all {failed} reviews failed"
+            return (
+                f"{header}[dim]Model:[/] {model_tokens:,} tokens"
+                f"  [dim]│  {note}; reviewer token usage unknown[/]"
+            )
         return (
             f"{header}[dim]Model:[/] {model_tokens:,} tokens"
-            "  [dim]│  the reviewer's server reported no token usage[/]"
+            f"  [dim]│  the reviewer's server reported no token usage{missing}[/]"
         )
     if reviewer_tokens:
         return (

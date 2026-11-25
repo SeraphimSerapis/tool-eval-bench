@@ -574,6 +574,38 @@ def test_the_final_panel_counts_the_reviewers_tokens() -> None:
     assert "Model: 2,000 tokens" in no_reviewer_usage
     assert "the reviewer's server reported no token usage" in no_reviewer_usage
     assert "Efficiency" not in no_reviewer_usage
+    all_failed, _ = panel(
+        result(
+            first,
+            {"reviews": 2, "reviewer_errors": 2, "prompt_tokens": 0, "completion_tokens": 0},
+        )
+    )
+    assert "Model: 2,000 tokens" in all_failed
+    assert "all 2 reviews failed; reviewer token usage unknown" in all_failed
+    assert "reported no token usage" not in all_failed
+    assert "Efficiency" not in all_failed
+    one_failed, _ = panel(
+        result(
+            first,
+            {"reviews": 1, "reviewer_errors": 1, "prompt_tokens": 0, "completion_tokens": 0},
+        )
+    )
+    assert "Model: 2,000 tokens" in one_failed
+    assert "the review failed; reviewer token usage unknown" in one_failed
+    assert "reported no token usage" not in one_failed
+    assert "Efficiency" not in one_failed
+    partial_failed, _ = panel(
+        result(
+            first,
+            {"reviews": 2, "reviewer_errors": 1, "prompt_tokens": 0, "completion_tokens": 0},
+        )
+    )
+    assert "Model: 2,000 tokens" in partial_failed
+    assert (
+        "the reviewer's server reported no token usage; usage of 1 failed review may be missing"
+        in partial_failed
+    )
+    assert "Efficiency" not in partial_failed
     no_model_usage, _ = panel(result(first, review, model_tokens=(0, 0)))
     assert "Reviewer: 2,000 tokens" in no_model_usage
     assert "the model's server reported no token usage" in no_model_usage

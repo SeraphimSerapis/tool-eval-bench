@@ -202,9 +202,11 @@ While a reviewer is configured, the harness masks known credential values as
   tokens, and Efficiency divides the points by both. Both sides skip the
   scenarios that infrastructure failures took out of scoring. When only one
   side's server reported usage, the panel names the side that reported none and
-  shows no Efficiency. A failed review may have used tokens it never reported,
-  so after one the panel marks the reviewer's count as possibly incomplete, and
-  Efficiency, when shown, as an upper bound. The stored `total_tokens`, which
+  shows no Efficiency; if every review failed and no reviewer tokens were
+  recorded, it reports the failed reviews and unknown reviewer usage instead. A
+  failed review may have used tokens it never reported, so after one the panel
+  marks the reviewer's count as possibly incomplete, and Efficiency, when
+  shown, as an upper bound. The stored `total_tokens`, which
   the leaderboard's token column and the web run view show, and
   `token_efficiency`, which JSON exports carry, count the benchmarked model's
   tokens only.
