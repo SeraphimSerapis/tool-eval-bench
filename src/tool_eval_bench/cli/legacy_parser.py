@@ -106,7 +106,8 @@ def _make_parser() -> argparse.ArgumentParser:
         "--backend",
         default=None,
         help="Backend label for reports: vllm, litellm, llamacpp, sglang, gemini, openai, "
-        "anthropic, ninfer, tensorfold, halogen, strata, tabbyapi, tandemllm, flare, unknown "
+        "anthropic, ninfer, tensorfold, halogen, strata, tabbyapi, tandemllm, flare, splash, "
+        "unknown "
         "(the request format follows the endpoint, not this label — see --format; "
         "default: auto-detected, otherwise unknown)",
     )

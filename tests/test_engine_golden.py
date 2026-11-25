@@ -58,6 +58,9 @@ FLARE_SPEC = (
     "flare_accepted_draft_tokens_total 5\n"
     "flare_draft_request_rounds_total 4\n"
 )
+SPLASH_LOAD = 'splash_info{runtime="native"} 1\nsplash_prefill_input_tokens_total 40\n'
+SPLASH_ZERO_SPEC = "splash_drafted_tokens_total 0\nsplash_accepted_draft_tokens_total 0\n"
+SPLASH_SPEC = "splash_drafted_tokens_total 10\nsplash_accepted_draft_tokens_total 5\n"
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +109,16 @@ FLARE_SPEC = (
             "vllm:num_requests_running 1\n" + FLARE_LOAD, ("flare", "Flare"), id="vllm+flare"
         ),
         pytest.param(LLAMACPP_LOAD + FLARE_LOAD, ("flare", "Flare"), id="llamacpp+flare"),
+        pytest.param(SPLASH_LOAD, ("splash", "Splash"), id="splash"),
+        pytest.param(
+            "vllm:num_requests_running 1\n" + SPLASH_LOAD, ("splash", "Splash"), id="vllm+splash"
+        ),
+        pytest.param(LLAMACPP_LOAD + SPLASH_LOAD, ("splash", "Splash"), id="llamacpp+splash"),
+        pytest.param(
+            'vllm:num_requests_running{model_name="acme/splash_7b"} 1\n',
+            ("vllm", "vLLM"),
+            id="splash-in-label",
+        ),
         pytest.param(STRATA_NS + HALOGEN_NS, ("halogen", "Halogen Flash"), id="strata+halogen"),
         # A namespace inside a label value names no engine.
         pytest.param(
@@ -141,6 +154,7 @@ def test_metrics_namespace_identity(text: str, expected: tuple[str, str] | None)
         ("owned_by", "tabbyapi", ("tabbyapi", "TabbyAPI")),
         ("owned_by", "tandemllm", ("tandemllm", "TandemLLM")),
         ("owned_by", "TensorFold 1.2", ("tensorfold", "TensorFold")),
+        ("owned_by", "splash", ("splash", "Splash")),
         ("owned_by", "vllm", None),
         ("owned_by", "strata", None),
         ("server", "llama.cpp", ("llamacpp", "llama.cpp")),
@@ -149,6 +163,8 @@ def test_metrics_namespace_identity(text: str, expected: tuple[str, str] | None)
         ("server", "LiteLLM", ("litellm", "LiteLLM")),
         ("server", "TandemLLM Python/3.11.16", ("tandemllm", "TandemLLM")),
         ("server", "tandem", None),
+        ("server", "Splash", ("splash", "Splash")),
+        ("server", "splashy", None),
         ("server", "uvicorn", None),
         ("server", "strata", None),
         ("service", "Strata 0.1.40", ("strata", "Strata")),
@@ -260,6 +276,8 @@ _ENGINE_CASES: list[tuple[str, dict[str, httpx.Response], str | None, list[str]]
     ("flare", {}, "Flare", ["/v1/models"]),
     ("hyperflare", {}, "Flare", ["/v1/models"]),
     ("HyperFlare", {}, "Flare", ["/v1/models"]),
+    ("splash", {}, "Splash", ["/v1/models", "/status"]),
+    ("SPLASH", {}, "Splash", ["/v1/models", "/status"]),
     ("halogen", {}, "Halogen Flash", ["/v1/models"]),
     ("sglang", {}, "SGLang", ["/v1/models"]),
     (
@@ -324,6 +342,23 @@ _ENGINE_CASES: list[tuple[str, dict[str, httpx.Response], str | None, list[str]]
         ["/v1/models", "/version", "/health"],
     ),
     (
+        "unknown",
+        {"/v1/models": httpx.Response(200, json={"data": [{"id": "m", "owned_by": "splash"}]})},
+        "Splash",
+        ["/v1/models", "/version", "/health", "/status"],
+    ),
+    (
+        # Splash's Server header names it even where owned_by would not.
+        "unknown",
+        {
+            "/v1/models": httpx.Response(
+                200, headers={"Server": "Splash"}, json={"data": [{"id": "m"}]}
+            )
+        },
+        "Splash",
+        ["/v1/models", "/version", "/health", "/status"],
+    ),
+    (
         "something-else",
         {"/props": httpx.Response(200, json=_LLAMA_PROPS)},
         "llama.cpp",
@@ -384,6 +419,10 @@ LC_NO_COUNTERS = (
 )
 STRATA_DETAIL = "Strata MTP draft counters available"
 FLARE_DETAIL = "Flare speculative draft counters available"
+SPLASH_DETAIL = (
+    "Splash draft counters available; per-request counts and draft cycles "
+    "come from the response (metrics.speculation)"
+)
 
 # (active, method, has_prometheus, has_per_request_timings, detail)
 _SPEC_CASES: list[tuple[str, str | None, str, tuple[bool, str, bool, bool, str]]] = [
@@ -469,6 +508,42 @@ _SPEC_CASES: list[tuple[str, str | None, str, tuple[bool, str, bool, bool, str]]
     (
         "flare-in-label",
         _counters("vllm:", 0, labels='model_name="acme/flare_7b"'),
+        "auto",
+        (True, "unknown", True, False, GENERIC),
+    ),
+    ("splash-zero", SPLASH_ZERO_SPEC, "auto", (False, "unknown", True, True, SPLASH_DETAIL)),
+    ("splash", SPLASH_SPEC, "auto", (True, "unknown", True, True, SPLASH_DETAIL)),
+    ("splash-load-only", SPLASH_LOAD, "auto", (False, "unknown", False, False, "")),
+    (
+        "splash-zero-hint",
+        SPLASH_ZERO_SPEC,
+        "dflash",
+        (True, "dflash", True, True, "Assumed active via --spec-method=dflash"),
+    ),
+    (
+        # The counters parsed are Splash's, so a load-only namespace of another
+        # engine does not lend them its rules.
+        "strata-ns+splash",
+        STRATA_NS + SPLASH_SPEC,
+        "auto",
+        (True, "unknown", True, True, SPLASH_DETAIL),
+    ),
+    (
+        "llamacpp-load+splash",
+        LLAMACPP_LOAD + SPLASH_SPEC,
+        "auto",
+        (True, "unknown", True, True, SPLASH_DETAIL),
+    ),
+    (
+        "llamacpp-load+flare",
+        LLAMACPP_LOAD + FLARE_SPEC,
+        "auto",
+        (True, "unknown", True, False, FLARE_DETAIL),
+    ),
+    (
+        # A spec_decode_ family wins over Splash's own, as in counter parsing.
+        "vllm+splash",
+        _counters("vllm:", 0) + SPLASH_SPEC,
         "auto",
         (True, "unknown", True, False, GENERIC),
     ),
@@ -611,6 +686,10 @@ _LIVE_CASES: list[tuple[str, str, tuple[str, bool, str]]] = [
     ("flare", FLARE_SPEC, ("flare", True, "unknown")),
     ("flare-zero", FLARE_ZERO_SPEC, ("flare", True, "unknown")),
     ("flare-load-only", FLARE_LOAD, ("flare", True, "unknown")),
+    ("splash", SPLASH_SPEC, ("splash", True, "unknown")),
+    ("splash-zero", SPLASH_ZERO_SPEC, ("splash", True, "unknown")),
+    ("splash-load-only", SPLASH_LOAD, ("splash", True, "unknown")),
+    ("vllm+splash", _counters("vllm:", 10, 5, 4) + SPLASH_SPEC, ("vllm", True, "unknown")),
 ]
 
 
@@ -680,6 +759,7 @@ def _run_context(engine_name: str | None, window: int | None = 81920) -> RunCont
         ("llama.cpp", 81920),
         ("Strata", 81920),
         ("Flare", 81920),
+        ("Splash", 81920),
         ("vLLM", None),
         ("SGLang", None),
         ("TensorFold", None),
@@ -694,6 +774,7 @@ def _run_context(engine_name: str | None, window: int | None = 81920) -> RunCont
         ("llamacpp", None),
         ("strata", None),
         ("flare", None),
+        ("splash", None),
         ("LLAMA.CPP", None),
         (None, None),
     ],
@@ -726,6 +807,7 @@ _BACKEND_CHOICES = [
     "tabbyapi",
     "tandemllm",
     "flare",
+    "splash",
     "unknown",
 ]
 
@@ -757,5 +839,5 @@ def test_unsupported_backend_message() -> None:
     assert str(excinfo.value) == (
         "Unsupported backend: Bogus. "
         "Supported: vllm, litellm, llamacpp, sglang, gemini, openai, anthropic, "
-        "ninfer, tensorfold, halogen, strata, tabbyapi, tandemllm, flare, unknown"
+        "ninfer, tensorfold, halogen, strata, tabbyapi, tandemllm, flare, splash, unknown"
     )

@@ -2,7 +2,8 @@
 
 A tool-calling quality benchmark for LLMs in agentic workflows, built for
 self-hosted serving stacks: **vLLM**, **SGLang**, **LiteLLM**, **llama.cpp**, **Strata**,
-**TabbyAPI**, **NInfer**, **TensorFold**, **TandemLLM**, **Flare**, and hosted **Gemini** and **Anthropic**.
+**TabbyAPI**, **NInfer**, **TensorFold**, **TandemLLM**, **Flare**, **Splash**, and hosted **Gemini** and
+**Anthropic**.
 
 Each scenario observes one assistant conversation with mock tools. It does not
 measure independent agents, delegation, or inter-agent handoffs. Localization
@@ -128,6 +129,19 @@ tool-eval-bench run --short --base-url http://127.0.0.1:8000/v1 --seed 42
 
 See [Flare](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/backends.md#flare) for
 probed metadata, sampling-range clamping, prefix caching, and speculative metrics.
+
+[Splash](https://github.com/incoai/splash) is detected from its `splash_` Prometheus namespace,
+`owned_by: "splash"` on `/v1/models`, or its `Server: Splash` header, and uses the existing
+OpenAI-compatible adapter. Its default port 8000 is already scanned; pass `--base-url` for an
+instance on a port outside the discovery list, and `--base-url` with `--api-key` for one that
+requires a key:
+
+```bash
+tool-eval-bench run --short --base-url http://127.0.0.1:8001 --seed 42
+```
+
+See [Splash](https://github.com/SeraphimSerapis/tool-eval-bench/blob/main/docs/backends.md#splash)
+for probed metadata, per-request speculative metrics with draft cycles, and thinking control.
 
 Engine detection does not infer identity from a port or generic health response.
 A server's declared identity wins over compatibility shapes: model owner, `Server`

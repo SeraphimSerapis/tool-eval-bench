@@ -39,7 +39,9 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > yields one token and costs at least as much as a verification pass, so
 > Steps/s is a lower bound on the no-spec decode rate and Eff t/s ÷ Steps/s
 > (≈ τ) is a ceiling on the real speedup. `--baseline-tgs` from a run without
-> speculation gives the measured figure.
+> speculation gives the measured figure. Splash rows show no Steps/s and no
+> ceiling: Splash's cycle count also covers its first emission, which comes
+> before the interval Steps/s divides by.
 
 > **Acceptance rate.** The primary metric is **effective t/s**, which always works: tokens after the first ÷ wall-clock time after the first token, the window a throughput baseline uses. Acceptance rate and draft statistics use different extraction methods depending on the backend:
 >
@@ -51,6 +53,7 @@ tool-eval-bench bench --perf --spec-bench --seed 42
 > | **SGLang** | No request-local counter contract | Effective t/s remains available; use `spec-live` for the server's current acceptance gauges |
 > | **Strata** | `timings.draft_n` / `draft_n_accepted` in each response; otherwise Prometheus `vllm:spec_decode_*` counter deltas | α % and waste ratio; no draft-step counter, so τ and draft window stay unknown |
 > | **Flare** | Prometheus `/metrics` (`flare_accepted_draft_tokens_total`, `flare_verification_draft_tokens_total`, `flare_draft_request_rounds_total` deltas) | α %, acceptance length (τ), draft window, waste ratio, and Steps/s; `spec-live` adds per-position acceptance from `flare_speculative_drafts_total` |
+> | **Splash** | `metrics.speculation` in each response (`drafted_tokens`, `accepted_draft_tokens`, `cycles`); then `timings.draft_n` / `draft_n_accepted`; a `timings` object without `draft_n` from a server identified as Splash (by `/metrics` or the response's `Server: Splash` header) drafted nothing; otherwise Prometheus `splash_drafted_tokens_total` and `splash_accepted_draft_tokens_total` deltas | α %, acceptance length (τ), draft window, and waste ratio from exact per-request counts. No Steps/s or speedup ceiling: Splash's first emission can already hold a verified draft, so its cycle count covers work before the interval Steps/s divides by. The Prometheus fallback and `spec-live` have no cycle counter, so τ and draft window stay unknown there |
 >
 > **vLLM per-request metrics** are optional but worth turning on. Prometheus
 > counters are server-wide, so any concurrent traffic lands in the delta
@@ -182,5 +185,15 @@ Press **Ctrl+R** to reset all session counters and history without restarting.  
 > reads Flare's token counters, KV page gauges (`flare_total_kv_pages`,
 > `flare_free_kv_pages`), prefix cache lookups/hits, and active/pending request
 > gauges.
+> Splash exports cumulative `splash_drafted_tokens_total` and
+> `splash_accepted_draft_tokens_total` counters on every scrape that carries its
+> engine's status, zeros included, so speculation counts as active only once
+> drafted tokens are above zero. It exports no cycle
+> counter, so the monitor shows α and token rates without τ or draft window. It
+> also reads Splash's prefill and decode token counters and the scheduler's
+> request counts by phase; it maps no KV or prefix cache gauge for Splash.
+> Point the monitor at one engine's `/metrics`. When one scrape mixes engine
+> namespaces and an engine's token counter disappears between polls, the
+> monitor can difference two engines' counters and report a false token rate.
 > Acceptance length follows each upstream contract and includes the verifier's
 > bonus token.

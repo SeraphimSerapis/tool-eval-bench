@@ -19,6 +19,9 @@ needs no chat endpoint; see [decision-models.md](decision-models.md).
 - **Flare** serves models via [Hyperflare](https://github.com/NVIDIA/hyperflare-inference) through
   the existing OpenAI adapter, and natively serves `/v1/messages` with `--format anthropic`;
   detected by the `flare_` metrics namespace or the `flare` metadata object on `/v1/models`
+- **Splash** serves GGUF models on Apple silicon ([incoai/splash](https://github.com/incoai/splash))
+  through the existing OpenAI adapter, and also serves `/v1/messages`; detected by the `splash_`
+  metrics namespace, `owned_by: "splash"` on `/v1/models`, or the `Server: Splash` header
 - **Gemini** — supported through its native API as well as its OpenAI-compatible
   endpoint; the native wire format is detected from the URL, and `--format` pins
   it manually
@@ -32,8 +35,8 @@ Detection runs in a fixed order and stops at the first answer. The engine facts
 it relies on, such as namespaces, their precedence and the names servers declare,
 live in one profile per engine in `src/tool_eval_bench/domain/engines.py`:
 
-1. A native Prometheus namespace on `/metrics` (`halogen:`, `tensorfold:`, `strata:`, `flare_`, `vllm:`,
-   `sglang:` or `sglang_`, then `llamacpp:`).
+1. A native Prometheus namespace on `/metrics` (`halogen:`, `tensorfold:`, `strata:`, `flare_`,
+   `splash_`, `vllm:`, `sglang:` or `sglang_`, then `llamacpp:`).
 2. vLLM's `/version`.
 3. The identity a server declares about itself: `owned_by` or a `flare` metadata object in `/v1/models`, an
    identifying `Server` header, `service` in `/health`, `software.name` in
@@ -357,6 +360,72 @@ Practical serving notes:
 - **Tools and reasoning.** Standard tool calling (`tools`, `tool_choice`,
   `parallel_tool_calls`) and reasoning (`reasoning_content`) are supported natively.
   Flare rejects `strict: true` in tool schemas with HTTP 400.
+
+## Splash
+
+```bash
+# OpenAI-compatible endpoint (default port 8000 is already scanned):
+tool-eval-bench run --short --base-url http://127.0.0.1:8000 --seed 42
+# The Messages API on the same server; --backend keeps the Splash label and probe:
+tool-eval-bench run --short --base-url http://127.0.0.1:8000 --backend splash --format anthropic --seed 42
+```
+
+[Splash](https://github.com/incoai/splash) listens on `http://127.0.0.1:8000` by
+default and runs through the existing OpenAI-compatible adapter. Instances on ports
+outside the discovery list need `--base-url`. So does an instance with an API key,
+together with `--api-key`: localhost discovery asks `/v1/models` without a key, and Splash refuses
+that request when it has one. The same server also serves `/v1/messages`. With
+`--format anthropic` and no `--backend`, a run is labelled `anthropic`, as for any
+Messages API endpoint, and skips the engine probe; pass `--backend splash` to keep
+the Splash label and metadata.
+
+Automatic detection finds the `splash_` Prometheus namespace on `/metrics`. When
+`/metrics` is hidden, `owned_by: "splash"` on `/v1/models` or the `Server: Splash`
+header identifies it. Splash requires its API key for `/metrics`, `/status`, and
+`/v1/models` when one is configured, so pass `--api-key` to such a server.
+
+The metadata probe reads `max_model_len` from `/v1/models`, which is the limit
+Splash enforces on one request's prompt plus output, and
+`frontend.preparation_capacity` from `/status`, which is the server's
+`--max-concurrent-requests` (recorded as `slot_count`). Splash does not report its
+version over HTTP (its `Server` header is the bare token `Splash`), so
+`engine_version` stays unknown. Quantization inferred from the model name remains
+a heuristic.
+
+For `--spec-bench`, each Splash response that drafted carries
+`metrics.speculation` (`drafted_tokens`, `accepted_draft_tokens`, and `cycles`),
+which gives an exact α, τ, and draft window per request. Spec-bench shows no Steps/s
+or speedup ceiling for Splash, because the cycles also cover Splash's first emission,
+which comes before the interval Steps/s divides by. A response that drafted
+nothing omits that object and `timings.draft_n`. Spec-bench records such a response
+as zero drafts when it carries a `timings` object and the server is identified as
+Splash, by `/metrics` or by the response's own `Server: Splash` header; a response
+without `timings` proves nothing. Splash's Prometheus counters
+(`splash_drafted_tokens_total`, `splash_accepted_draft_tokens_total`) appear on
+every scrape that carries the engine's status, zeros included, so speculative
+decoding counts as active only once drafted tokens are above zero. They carry no
+cycle count, so `spec-live` shows α, waste, accepted and drafted t/s, but no τ or
+draft window. `spec-live` also reads the prefill and decode token counters
+(`splash_prefill_input_tokens_total`, which leaves out prefix-cached prompt
+tokens, and `splash_decode_output_tokens_total`) and the scheduler's request
+counts by phase for running and waiting requests. It maps no KV cache or prefix
+cache gauge for Splash, so those two rows read 0%. Splash names no proposer, so
+the method stays `unknown` unless `--spec-method` is passed.
+
+Practical serving notes:
+
+- **Thinking.** `--no-think` sends `chat_template_kwargs.enable_thinking=false`.
+  `/status` reports as `reasoning_switch` whether a request can turn the served
+  model's reasoning on and off. Of the two instances this support was tested
+  against, a Ternary Bonsai 2 model reporting `true` stopped reasoning under
+  `--no-think`, and an Inkling 2 Mini model reporting `false` kept reasoning.
+- **Prefix caching.** Splash reuses cached prompt prefixes across requests; a
+  repeated request reports them in `usage.prompt_tokens_details.cached_tokens`. A
+  request shares cached prompts only with requests that send the same
+  `cache_salt`. Verify cold prefill in throughput sweeps through `cached_tokens`.
+- **Token calibration.** Splash's `/tokenize` reads llama.cpp's `content` field
+  and answers HTTP 400 to the `prompt` field the benchmark sends, so throughput
+  and spec-bench calibrate the characters-per-token ratio with probe requests.
 
 ## LiteLLM and other model routers
 

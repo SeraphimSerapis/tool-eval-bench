@@ -640,7 +640,7 @@ metrics, you can't tell whether your MTP configuration is actually helping.
 | **Acceptance length (τ)** | 1 + accepted draft tokens ÷ speculative steps for counter backends; direct gauge for SGLang | Prometheus `/metrics` |
 | **Draft window** | Drafted tokens ÷ speculative steps (configured draft size) | Prometheus `/metrics` |
 | **Draft t/s** | Drafted tokens ÷ wall-clock generation time | Prometheus `/metrics` + timing |
-| **Verify steps/s** | Speculative steps ÷ wall-clock generation time. A lower bound on the no-spec decode rate, so Effective t/s ÷ Steps/s (≈ τ) is a ceiling on the speedup | Counters + timing |
+| **Verify steps/s** | Speculative steps ÷ wall-clock generation time. A lower bound on the no-spec decode rate, so Effective t/s ÷ Steps/s (≈ τ) is a ceiling on the speedup. Not reported when the step count also covers steps before the first token, as Splash's does | Counters + timing |
 | **Speedup ratio** | Effective t/s ÷ baseline t/s | Requires `--baseline-tgs` |
 | **Goodput** | Only accepted (verified) draft tokens per second. Stored as `null` when the sample has no acceptance counters | Prometheus `/metrics` or response counts |
 

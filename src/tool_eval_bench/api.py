@@ -237,7 +237,7 @@ async def run_benchmark(
         backend: Backend label — ``vllm``, ``litellm``, ``llamacpp``, ``sglang``,
             ``gemini``, ``openai`` (the hosted OpenAI API), ``anthropic``,
             ``ninfer``, ``tensorfold``, ``halogen``, ``strata``, ``tabbyapi``,
-            ``tandemllm``, or ``flare``.
+            ``tandemllm``, ``flare``, or ``splash``.
             Any value other than ``unknown`` (the default, any case) or an empty
             string is kept as given. Otherwise a hosted Gemini or Anthropic
             endpoint is labelled by its wire format, and any other server is

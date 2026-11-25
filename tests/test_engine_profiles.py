@@ -22,6 +22,7 @@ from tool_eval_bench.domain.engines import (
     LLAMACPP,
     METRICS_IDENTITY_ORDER,
     SPEC_COUNTER_ORDER,
+    SPLASH,
     STRATA,
     TENSORFOLD,
     UNKNOWN_BACKEND,
@@ -65,7 +66,13 @@ def test_identity_order_ranks_every_namespaced_engine_once() -> None:
 def test_spec_counter_order_ranks_exactly_the_always_rendered_engines() -> None:
     always_rendered = {p.key for p in ENGINE_PROFILES if p.spec_counters_always_rendered}
 
-    assert [p.key for p in SPEC_COUNTER_ORDER] == ["tensorfold", "llamacpp", "strata", "flare"]
+    assert [p.key for p in SPEC_COUNTER_ORDER] == [
+        "tensorfold",
+        "llamacpp",
+        "strata",
+        "flare",
+        "splash",
+    ]
     assert {p.key for p in SPEC_COUNTER_ORDER} == always_rendered
     assert all(p.metrics_prefixes and p.spec_counter_detail for p in SPEC_COUNTER_ORDER)
 
@@ -95,6 +102,7 @@ _FACTS = {
     "tabbyapi": (False, False, None, False),
     "tandemllm": (False, False, None, False),
     "flare": (True, False, None, True),
+    "splash": (True, True, None, True),
 }
 
 
@@ -122,6 +130,8 @@ def test_backend_labels_list_every_engine_then_unknown() -> None:
         ("flare", FLARE),
         ("hyperflare", FLARE),
         ("HYPERFLARE", FLARE),
+        ("splash", SPLASH),
+        ("SPLASH", SPLASH),
         ("unknown", None),
         ("", None),
         (None, None),
@@ -140,6 +150,8 @@ def test_engine_profile_by_label(label: str | None, expected: EngineProfile | No
         ("strata", None),
         ("Flare", FLARE),
         ("flare", None),
+        ("Splash", SPLASH),
+        ("splash", None),
         ("", None),
         (None, None),
     ],
@@ -188,3 +200,5 @@ def test_declared_name_reads_the_named_source() -> None:
     assert TENSORFOLD.declared_name("owned_by") == "tensorfold"
     assert LLAMACPP.declared_name("server") == "llama.cpp"
     assert STRATA.declared_name("owned_by") is None
+    assert SPLASH.declared_name("owned_by") == "splash"
+    assert SPLASH.declared_name("server") == "splash"

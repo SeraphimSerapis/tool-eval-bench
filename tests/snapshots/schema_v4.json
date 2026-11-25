@@ -28,6 +28,7 @@
         "tabbyapi",
         "tandemllm",
         "flare",
+        "splash",
         "unknown"
       ],
       "default": "unknown",

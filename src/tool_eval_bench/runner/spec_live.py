@@ -35,6 +35,7 @@ import httpx
 
 from tool_eval_bench.domain.engines import (
     FLARE,
+    SPLASH,
     STRATA,
     TENSORFOLD,
     engine_profile,
@@ -333,6 +334,33 @@ _FLARE_ENGINE_GAUGE_METRICS = {
     "free_kv_pages": "flare_free_kv_pages",
 }
 _FLARE_PER_POSITION_METRIC_NAME = "flare_speculative_drafts_total"
+# Splash (incoai/splash) renders its native /status as ``splash_*`` series
+# (server/metrics.py). The draft counters are lifetime decode-batch sums. It
+# exports no draft-cycle counter, so acceptance length stays unknown here.
+_SPLASH_SPEC_METRICS = {
+    "accepted_tokens": "splash_accepted_draft_tokens_total",
+    "draft_tokens": "splash_drafted_tokens_total",
+}
+# The prefill counter leaves out prefix-cached prompt tokens; the decode
+# counter counts every completion token, the first one included.
+_SPLASH_ENGINE_SUM_METRICS = {
+    "prompt_tokens_total": "splash_prefill_input_tokens_total",
+    "generation_tokens_total": "splash_decode_output_tokens_total",
+}
+# Request counts per scheduler phase (runtime/engine/Scheduler.hpp Phase). A
+# lane that prefills, decodes, or waits for its next token's grammar mask is
+# running; a queued request, or one waiting for memory or for another
+# request's prefix, is waiting.
+_SPLASH_RUNNING_METRICS = (
+    "splash_scheduler_prefilling",
+    "splash_scheduler_decoding",
+    "splash_scheduler_waiting_mask",
+)
+_SPLASH_WAITING_METRICS = (
+    "splash_scheduler_queued",
+    "splash_scheduler_waiting_resources",
+    "splash_scheduler_waiting_prefix",
+)
 _SUM_COUNTER_KEYS = frozenset(
     {
         "accepted_tokens",
@@ -426,12 +454,14 @@ class MetricsSnapshot:
     llamacpp_metrics_present: bool = False
     flare_spec_metrics_present: bool = False
     flare_metrics_present: bool = False
+    splash_spec_metrics_present: bool = False
+    splash_metrics_present: bool = False
     # Strata exports vLLM's counter names; its own ``strata:`` namespace is
     # what tells the two apart.
     strata_metrics_present: bool = False
 
     # ``vllm`` / ``strata`` / ``sglang`` / ``llamacpp`` / ``tensorfold`` /
-    # ``flare``, or ``unknown``.
+    # ``flare`` / ``splash``, or ``unknown``.
     spec_backend: str = "unknown"
 
     @property
@@ -442,6 +472,7 @@ class MetricsSnapshot:
             or self.sglang_spec_metrics_present
             or self.llamacpp_spec_metrics_present
             or self.flare_spec_metrics_present
+            or self.splash_spec_metrics_present
             or self.draft_tokens > 0
             or self.accepted_tokens > 0
             or self.num_drafts > 0
@@ -455,6 +486,7 @@ class MetricsSnapshot:
             or self.tensorfold_spec_metrics_present
             or self.llamacpp_spec_metrics_present
             or self.flare_spec_metrics_present
+            or self.splash_spec_metrics_present
             or self.draft_tokens > 0
             or self.accepted_tokens > 0
             or self.num_drafts > 0
@@ -728,6 +760,40 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
             if total_pages is not None and free_pages is not None and total_pages > 0:
                 snap.kv_cache_usage = max(0.0, min(1.0, (total_pages - free_pages) / total_pages))
 
+    splash_spec_values: dict[str, float] = {}
+    splash_engine_values: dict[str, float] = {}
+    if metrics_namespace_present(text, SPLASH):
+        snap.splash_metrics_present = True
+        for field_name, metric_name in _SPLASH_SPEC_METRICS.items():
+            series = _metric_series(text, metric_name)
+            if series:
+                splash_spec_values[field_name] = sum(val for _, val in series)
+                snap.splash_spec_metrics_present = True
+        for field_name, metric_name in _SPLASH_ENGINE_SUM_METRICS.items():
+            series = _metric_series(text, metric_name)
+            if series:
+                splash_engine_values[field_name] = sum(val for _, val in series)
+        for field_name, metric_names in (
+            ("running_reqs", _SPLASH_RUNNING_METRICS),
+            ("waiting_reqs", _SPLASH_WAITING_METRICS),
+        ):
+            phases = [_select_gauge_series(_metric_series(text, name)) for name in metric_names]
+            counts = [count for count in phases if count is not None]
+            if counts:
+                splash_engine_values[field_name] = sum(counts)
+
+    # A Splash value fills a field only when no finite vLLM-family sample,
+    # Flare value or SGLang value does. Keyed on presence, not on a zero, so a
+    # vLLM counter that resets to 0 is never swapped for Splash's and
+    # differenced against it on the next poll.
+    for field_name, value in splash_engine_values.items():
+        if (
+            _sum_pattern_values(_COUNTER_PATTERNS[field_name], text)[0] is None
+            and field_name not in flare_engine_values
+            and field_name not in sglang_engine_values
+        ):
+            setattr(snap, field_name, value)
+
     # Use llama.cpp spec counters as the generic counter view when no vLLM
     # counter family is present.  This keeps existing dashboard consumers
     # backend-neutral while retaining explicit fields for mixed scrapes.
@@ -751,6 +817,11 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
             snap.per_position_drafted_counters = dict(flare_per_pos_drafted)
         if snap.spec_backend == "unknown":
             snap.spec_backend = FLARE.key
+    elif snap.splash_spec_metrics_present and not snap.tensorfold_spec_metrics_present:
+        snap.accepted_tokens = splash_spec_values.get("accepted_tokens", 0.0)
+        snap.draft_tokens = splash_spec_values.get("draft_tokens", 0.0)
+        if snap.spec_backend == "unknown":
+            snap.spec_backend = SPLASH.key
     if snap.tensorfold_spec_metrics_present and snap.spec_backend == "unknown":
         snap.spec_backend = "tensorfold"
 
@@ -758,6 +829,8 @@ def _parse_snapshot(text: str) -> MetricsSnapshot:
         snap.spec_backend = "llamacpp"
     if snap.flare_metrics_present and snap.spec_backend == "unknown":
         snap.spec_backend = FLARE.key
+    if snap.splash_metrics_present and snap.spec_backend == "unknown":
+        snap.spec_backend = SPLASH.key
 
     # If we have per-position counters but no rate gauges, compute rates
     # from counters.
