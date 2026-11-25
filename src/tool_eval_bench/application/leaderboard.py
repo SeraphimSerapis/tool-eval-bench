@@ -57,18 +57,44 @@ def shorten_model_name(name: str) -> str:
     return name
 
 
+_UNPROBED_ENGINE_BACKENDS: frozenset[str] = frozenset(
+    {
+        "vllm",
+        "sglang",
+        "llamacpp",
+        "llama.cpp",
+        "llama_cpp",
+        "litellm",
+        "openai",
+        "local",
+    }
+)
+
+
 def cohort_fingerprint(config: Mapping[str, Any], metadata: Mapping[str, Any]) -> str:
     """Fingerprint benchmark conditions shared across different models.
 
     The schema decides which config keys to drop, and ``cohort_config`` applies
     each field's ``fingerprint_view``.  It is an exclusion rather than an
     allow-list so a key that only an older version stored still splits
-    cohorts.  The per-model ``config_fingerprint`` is excluded because it folds
-    in the model, so the code identity it carries is added back from the run's
-    stored metadata: evaluators are code, and runs from different versions or
-    commits are not comparable.  Never use the running ``__version__`` here; it
-    would describe this process, not the run.
+    cohorts.  When the run recorded explicit rubric provenance
+    (``eval_rubric_version``), cohorts key on those rubric versions instead of
+    unrelated ``tool_version``/``git_sha`` commits.  Legacy runs that predate
+    rubric versioning keep the historical ``tool_version`` + ``git_sha``
+    payload so existing stored rows retain identical cohort hashes.  Never use
+    the running ``__version__`` here; it would describe this process, not the
+    run.
     """
+    eval_rubric_version = metadata.get("eval_rubric_version")
+    if isinstance(eval_rubric_version, str) and eval_rubric_version:
+        return build_config_fingerprint(
+            {
+                "config": cohort_config(dict(config)),
+                "eval_rubric_version": eval_rubric_version,
+                "locale_version": metadata.get("locale_version"),
+                "noise_version": metadata.get("noise_version"),
+            }
+        )
     return build_config_fingerprint(
         {
             "config": cohort_config(dict(config)),
@@ -76,6 +102,90 @@ def cohort_fingerprint(config: Mapping[str, Any], metadata: Mapping[str, Any]) -
             "git_sha": metadata.get("git_sha"),
         }
     )
+
+
+def _has_response_format_fallback(scenario_results: Any) -> bool:
+    """Return whether any stored scenario result recorded a response_format fallback."""
+    if not isinstance(scenario_results, Sequence) or isinstance(scenario_results, (str, bytes)):
+        return False
+    for result in scenario_results:
+        if not isinstance(result, Mapping):
+            continue
+        diagnostics = result.get("diagnostics")
+        if not isinstance(diagnostics, Mapping):
+            continue
+        if diagnostics.get("response_format_fallback"):
+            return True
+        rf_note = diagnostics.get("response_format")
+        if isinstance(rf_note, str):
+            lowered = rf_note.lower()
+            if "fell back" in lowered or "fallback" in lowered or "downgrad" in lowered:
+                return True
+    return False
+
+
+def comparability_warnings(
+    run: Mapping[str, Any],
+    config: Mapping[str, Any] | None = None,
+    scores: Mapping[str, Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Return deterministic comparability warnings for a single benchmark run."""
+    raw_cfg = run.get("config")
+    cfg: Mapping[str, Any] = (
+        config if config is not None else (raw_cfg if isinstance(raw_cfg, Mapping) else {})
+    )
+    raw_scores = run.get("scores")
+    sc: Mapping[str, Any] = (
+        scores if scores is not None else (raw_scores if isinstance(raw_scores, Mapping) else {})
+    )
+    raw_meta = run.get("metadata")
+    meta: Mapping[str, Any] = (
+        metadata if metadata is not None else (raw_meta if isinstance(raw_meta, Mapping) else {})
+    )
+
+    warnings: list[str] = []
+
+    score_withheld = (
+        ("final_score" in sc and sc["final_score"] is None)
+        or (scores is None and "final_score" in run and run["final_score"] is None)
+        or sc.get("rating") == "Withheld"
+    )
+    if score_withheld:
+        warnings.append("Score withheld (no gradable scenarios)")
+
+    completion_rate = sc.get("completion_rate")
+    if (
+        not isinstance(completion_rate, bool)
+        and isinstance(completion_rate, (int, float))
+        and math.isfinite(completion_rate)
+        and completion_rate < 100
+    ):
+        warnings.append(
+            f"Incomplete run ({completion_rate:.1f}% completion; infrastructure failures excluded)"
+        )
+
+    git_sha = meta.get("git_sha")
+    if isinstance(git_sha, str) and git_sha.endswith("-dirty"):
+        warnings.append(f"Run from dirty git working tree ({git_sha})")
+
+    limit = cfg.get("limit")
+    if not isinstance(limit, bool) and isinstance(limit, int) and limit > 0:
+        warnings.append(f"Evaluated subset only (limit={limit})")
+
+    raw_backend = cfg.get("backend") or meta.get("backend")
+    backend = raw_backend.strip().lower() if isinstance(raw_backend, str) else ""
+    engine_name = meta.get("engine_name")
+    has_engine_name = isinstance(engine_name, str) and bool(engine_name.strip())
+    if bool(cfg.get("no_probe_engine")) or (
+        not has_engine_name and backend in _UNPROBED_ENGINE_BACKENDS
+    ):
+        warnings.append("Serving engine was not probed")
+
+    if _has_response_format_fallback(sc.get("scenario_results")):
+        warnings.append("Structured output fell back from json_schema")
+
+    return warnings
 
 
 def cohort_label(config: dict[str, Any], cohort_fingerprint: str) -> str:
@@ -115,6 +225,8 @@ def is_rank_eligible(run: dict[str, Any], config: dict[str, Any], scores: dict[s
     if status is None:
         return True
     if status != "completed":
+        return False
+    if scores.get("final_score") is None:
         return False
     completion_rate = scores.get("completion_rate")
     if isinstance(completion_rate, (int, float)) and (
@@ -245,6 +357,7 @@ def extract_leaderboard_rows(
                 "median_turn_ms": scores.get("median_turn_ms"),
                 "deployability": scores.get("deployability"),
                 "safety_warnings": len(scores.get("safety_warnings", [])),
+                "comparability_warnings": comparability_warnings(best, config, scores, metadata),
                 "num_runs": len(group_runs),
                 # Issue #6 metadata fields
                 "tool_version": metadata.get("tool_version"),
