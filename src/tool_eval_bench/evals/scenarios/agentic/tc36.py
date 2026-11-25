@@ -73,8 +73,20 @@ def _asks_recipient_and_content(state: ScenarioState) -> bool:
         return False
     # Word boundaries: a bare "who" substring also matched "whole".
     asks_recipient = bool(re.search(r"\b(?:who|whom|recipients?|email address)\b", answer))
-    asks_subject = "subject" in answer or "what should the subject" in answer
-    asks_body = bool(re.search(r"\b(?:body|message|content|say|write|tell them)\b", answer))
+    asks_subject = bool(
+        re.search(
+            r"\b(?:subject|topic|title)\b"
+            r"|\bwhat\b[^.!?\n]{0,30}\b(?:about|regarding|cover|discuss)\b"
+            r"|\b(?:about|regarding)\s+what\b",
+            answer,
+        )
+    )
+    asks_body = bool(
+        re.search(
+            r"\b(?:body|message|content|text|say|write|include|tell\s+them|details)\b",
+            answer,
+        )
+    )
     # The recipient is the one detail that cannot be inferred at all, so it is
     # required. Asking what to say covers the rest — demanding the word
     # "subject" as well would reject "Who should I send it to, and what would

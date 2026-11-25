@@ -1747,7 +1747,7 @@ class TestTC46:
                     "arguments": {
                         "to": "jordan.park@company.com",
                         "subject": "Summary",
-                        "body": "...",
+                        "body": "Risks: BetaCorp platform launch in Q4 2025 and Gamma Inc acquiring CloudFirst.",
                     },
                     "turn": 5,
                 },

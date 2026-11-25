@@ -14,13 +14,13 @@ from tool_eval_bench.domain.scenarios import (
     ToolCallRecord,
 )
 from tool_eval_bench.evals.helpers import (
-    answer_affirms_pattern as _answer_affirms_pattern,
-)
-from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
+)
+from tool_eval_bench.evals.helpers import (
+    negated_before as _negated_before,
 )
 from tool_eval_bench.evals.helpers import (
     normalize as _normalize,
@@ -46,17 +46,40 @@ _TC23_VERB = (
     r"\b(?:retriev\w*|returns?|returning|fetch(?:es|ing)?|looks?\s*up|lookups?|"
     r"obtains?|obtaining|gets?\b|getting|provid\w*|gives?\b|giving|quer(?:y|ies|ying)|"
     r"reports?\b|pulls?\b|reads?\b|shows?\b|tells?\b|finds?\b|access(?:es|ing)?|"
+    r"checks?|checking|outputs?|outputting|requests?|requesting|"
     r"expos\w*|deliver\w*|surfac\w*|yields?\b)"
 )
 
 
-_TC23_ACTION = re.compile(rf"(?:{_TC23_VERB}).{{0,80}}(?:stock|price|ticker)")
+_TC23_ACTION = re.compile(
+    rf"(?:{_TC23_VERB})(?P<gap>.{{0,80}}?)(?P<noun>\b(?:stock|price|ticker)\w*)"
+)
+_TC23_NEGATED_GAP = re.compile(r"\b(?:nothing|none|no|not|never|except|excluding|without)\b|n't\b")
 _TC23_COORDINATED_NEGATION = re.compile(
     r"(?:does not|doesn't|not|never)\s+"
     r"(?:(?:a|an|the)\s+)?"
     r"(?:function\s+(?:that|which)\s+)?"
     r"(?:\w+\s+){0,4}?(?:or|nor)\s+$"
 )
+
+
+def _tc23_affirms_action(answer: str) -> bool:
+    for match in _TC23_ACTION.finditer(answer):
+        verb_prefix = answer[max(0, match.start() - 120) : match.start()]
+        verb_suffix = answer[match.end() : match.end() + 40]
+        if _TC23_COORDINATED_NEGATION.search(verb_prefix[-80:]):
+            continue
+        if _negated_before(verb_prefix, verb_suffix):
+            continue
+        if _TC23_NEGATED_GAP.search(match.group("gap")):
+            continue
+        noun_start = match.start("noun")
+        noun_prefix = answer[max(0, noun_start - 120) : noun_start]
+        noun_suffix = answer[match.end("noun") : match.end("noun") + 40]
+        if _negated_before(noun_prefix, noun_suffix):
+            continue
+        return True
+    return False
 
 
 def _tc23_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -76,11 +99,9 @@ def _tc23_eval(state: ScenarioState) -> ScenarioEvaluation:
     # Normalize apostrophe variants and Markdown emphasis before checking
     # whether the explanation asserts a stock-price lookup rather than negating it.
     answer = re.sub(r"\s+", " ", _normalize(_strip_markdown_emphasis(state.final_answer)))
-    explains = bool(re.search(r"get_stock_price|\bfunction\b", answer)) and _answer_affirms_pattern(
-        answer,
-        _TC23_ACTION,
-        skip=lambda prefix: _TC23_COORDINATED_NEGATION.search(prefix[-80:]) is not None,
-    )
+    explains = bool(
+        re.search(r"get_stock_price|\bfunction\b|\btool\b|\bit\b", answer)
+    ) and _tc23_affirms_action(answer)
     if explains:
         return _pass("Explained the function without calling any tools.")
     return _partial("Did not use tools (good) but explanation was unclear.")

@@ -64,9 +64,10 @@ _TC42_SCHEMA_REASON = re.compile(
     r"\b(?:schema|additionalproperties|additional propert\w+|"
     r"extra (?:field|paramet|propert)\w*|"
     r"only (?:accepts?|supports?|takes?|allows?)|"
-    r"not (?:a )?(?:supported|valid|accepted|allowed)|"
+    r"(?:not|aren't|isn't)\s+(?:a\s+)?(?:supported|valid|accepted|allowed|defined|recogni[sz]ed)|"
     r"no such (?:field|paramet|propert)\w*|"
-    r"does not (?:accept|support|allow)|doesn't (?:accept|support|allow))\b"
+    r"(?:does|do)\s+not\s+(?:accept|support|allow|have|define|take|include|recogni[sz]e)|"
+    r"(?:doesn't|don't)\s+(?:accept|support|allow|have|define|take|include|recogni[sz]e))\b"
 )
 
 
@@ -115,13 +116,12 @@ def _tc42_call_violation(call: ToolCallRecord) -> str | None:
         return "Called get_weather for a different location instead of Tokyo."
     if any(key not in {"location", "units"} for key in call.arguments):
         return "Injected extra parameters despite additionalProperties: false."
-    # Moving the user's value into an allowed key ("units": "high") is the
-    # same violation as adding the key it was asked for.
-    units = call.arguments.get("units")
-    if units is not None and not (
-        isinstance(units, str) and _normalize(units) in ("celsius", "fahrenheit")
-    ):
-        return f"Passed units={units!r}, which is not a valid enum value."
+    # Moving the user's value into an allowed key ("units": "high") or passing
+    # explicit null ("units": None) violates the string enum schema.
+    if "units" in call.arguments:
+        units = call.arguments["units"]
+        if not (isinstance(units, str) and _normalize(units) in ("celsius", "fahrenheit")):
+            return f"Passed units={units!r}, which is not a valid enum value."
     return None
 
 

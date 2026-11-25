@@ -629,7 +629,7 @@ def test_tc25_validates_tomorrow_morning_and_coat_affirmation() -> None:
                 {"message": "Bring a coat tomorrow", "datetime": "2026-03-21T08:00:00"},
             )
         ),
-        turn(answer="Berlin is 8°C (below 10°C), so I set a reminder for tomorrow morning."),
+        turn(answer="Berlin is 5°C (below 10°C), so I set a reminder for tomorrow morning."),
     )
     assert good.status is ScenarioStatus.PASS, good.summary
 

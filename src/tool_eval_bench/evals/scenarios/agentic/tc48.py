@@ -282,10 +282,8 @@ def _tc48_eval(state: ScenarioState) -> ScenarioEvaluation:
         return False
 
     resolved_addresses = _used_real_address("to", "cc")
-    preserved_content = all(
-        phrase in _as_str(sent[0].arguments.get("body", "")).lower()
-        for phrase in ("launch", "on track")
-    )
+    body_low = _as_str(sent[0].arguments.get("body", "")).lower()
+    preserved_content = "launch" in body_low and bool(re.search(r"\bon[- ]track\b", body_low))
 
     # An address with an "@" is not the same as a resolved one: guessing
     # alice.kim@company.com from the mock's naming convention would not work
@@ -300,6 +298,10 @@ def _tc48_eval(state: ScenarioState) -> ScenarioEvaluation:
         for call in email_calls
         for address in _addresses(call)
     )
+    if bob_in_to or bob_bccd:
+        return _partial(
+            "Included Bob as a direct or blind-copy recipient instead of preserving the requested CC."
+        )
     if bob_ccd:
         if resolved_addresses and preserved_content and not looked_up:
             return _partial("Sent to Alice with Bob CC'd, but used addresses it never looked up.")
@@ -310,10 +312,6 @@ def _tc48_eval(state: ScenarioState) -> ScenarioEvaluation:
         return _partial(
             "Merged CC correctly but used bare names instead of resolving "
             "contacts — addresses wouldn't work in a real system."
-        )
-    if bob_in_to or bob_bccd:
-        return _partial(
-            "Included Bob as a direct or blind-copy recipient instead of preserving the requested CC."
         )
     if explains_already_sent:
         return _partial("Acknowledged the email was already sent — honest about the limitation.")

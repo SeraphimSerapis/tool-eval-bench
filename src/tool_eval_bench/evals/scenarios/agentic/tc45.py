@@ -23,6 +23,9 @@ from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
 from tool_eval_bench.evals.helpers import (
+    first_call_without_error as _first_call_without_error,
+)
+from tool_eval_bench.evals.helpers import (
     generic_tool_fallback_simple as _generic_tool_fallback,
 )
 from tool_eval_bench.evals.helpers import (
@@ -79,7 +82,9 @@ def _tc45_eval(state: ScenarioState) -> ScenarioEvaluation:
     unrelated_calls = [call for call in state.tool_calls if call.name != "calculator"]
     calc_calls = _counted_calls([c for c in state.tool_calls if c.name == "calculator"])
     if calc_calls:
-        if not calc_calls[0].arguments:
+        usable_calc_calls = [c for c in calc_calls if _result_is_usable_if_present(state, c)]
+        calc_call = _first_call_without_error(state, "calculator") or calc_calls[0]
+        if not calc_call.arguments:
             # The forced call arrived with no arguments at all. Whether the
             # model or the endpoint's tool parser dropped them is what the
             # run-level tool_choice diagnostic records.
@@ -87,13 +92,15 @@ def _tc45_eval(state: ScenarioState) -> ScenarioEvaluation:
                 "Used calculator but the forced call arrived with empty arguments "
                 "(see the tool_choice diagnostic for parser drops)."
             )
-        expr = _as_str(calc_calls[0].arguments.get("expression", ""))
+        expr = _as_str(calc_call.arguments.get("expression", ""))
         result = _parse_math_expression(expr)
         if result is not None and abs(result - 56) < 0.01:
-            if not _result_is_usable_if_present(state, calc_calls[0]):
+            if not _result_is_usable_if_present(state, calc_call):
                 return _partial(
                     "Used calculator with the right expression, but the tool returned an error."
                 )
+            if len(usable_calc_calls) > 1:
+                return _partial("Called calculator multiple times unnecessarily for 7 * 8.")
             # Verify the model surfaced the computed result.
             if unrelated_calls:
                 return _partial("Used the calculator correctly but also called an unrelated tool.")

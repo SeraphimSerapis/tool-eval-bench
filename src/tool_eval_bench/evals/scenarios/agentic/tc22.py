@@ -14,6 +14,9 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioState,
     ToolCallRecord,
 )
+from tool_eval_bench.evals.helpers import (
+    as_str as _as_str,
+)
 from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
@@ -24,6 +27,9 @@ from tool_eval_bench.evals.helpers import (
 )
 from tool_eval_bench.evals.helpers import (
     matching_tool_results as _matching_tool_results,
+)
+from tool_eval_bench.evals.helpers import (
+    normalize as _normalize,
 )
 from tool_eval_bench.evals.helpers import (
     partial_eval as _partial,
@@ -44,6 +50,18 @@ from tool_eval_bench.evals.helpers import (
 
 def _tc22_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     if call.name == "get_weather":
+        units = _normalize(_as_str(call.arguments.get("units"))) or "celsius"
+        if units == "fahrenheit":
+            return _noise(
+                {
+                    "location": "Berlin",
+                    "temperature": 44.6,
+                    "units": "fahrenheit",
+                    "condition": "Overcast",
+                    "humidity": 82,
+                },
+                "get_weather",
+            )
         return _noise(
             {
                 "location": "Berlin",
@@ -57,18 +75,32 @@ def _tc22_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
-_TC22_TEMP_STR = re.compile(r"7(?:\.0+)?(?:\s*°?\s*c(?:elsius)?)?", re.IGNORECASE)
+_TC22_TEMP_STR = re.compile(
+    r"7(?:\.0+)?(?:\s*(?:degrees?(?:\s+celsius|\s*°?\s*c)?|°\s*c?|c(?:elsius)?))?",
+    re.IGNORECASE,
+)
+_TC22_TEMP_F_STR = re.compile(
+    r"44\.60*(?:\s*(?:degrees?(?:\s+fahrenheit|\s*°?\s*f)?|°\s*f?|f(?:ahrenheit)?))?",
+    re.IGNORECASE,
+)
 _TC22_HUMIDITY_STR = re.compile(r"82(?:\.0+)?(?:\s*%)?")
 
 
-def _tc22_values_match(parsed: dict[str, Any]) -> bool:
-    """Accept raw numbers or unit-qualified strings matching 7°C, Overcast, 82%."""
+def _tc22_values_match(parsed: dict[str, Any], *, fahrenheit: bool = False) -> bool:
+    """Accept raw numbers or unit-qualified strings matching 7°C (or 44.6°F), Overcast, 82%."""
     temp = parsed.get("temp")
     cond = parsed.get("condition")
     hum = parsed.get("humidity")
-    temp_ok = (type(temp) in (int, float) and temp == 7) or (
-        isinstance(temp, str) and bool(_TC22_TEMP_STR.fullmatch(temp.strip()))
-    )
+    if fahrenheit:
+        temp_ok = (
+            isinstance(temp, (int, float))
+            and not isinstance(temp, bool)
+            and abs(float(temp) - 44.6) < 0.05
+        ) or (isinstance(temp, str) and bool(_TC22_TEMP_F_STR.fullmatch(temp.strip())))
+    else:
+        temp_ok = (isinstance(temp, (int, float)) and not isinstance(temp, bool) and temp == 7) or (
+            isinstance(temp, str) and bool(_TC22_TEMP_STR.fullmatch(temp.strip()))
+        )
     cond_ok = isinstance(cond, str) and cond.strip().lower() == "overcast"
     hum_ok = (type(hum) in (int, float) and hum == 82) or (
         isinstance(hum, str) and bool(_TC22_HUMIDITY_STR.fullmatch(hum.strip()))
@@ -95,10 +127,14 @@ def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not _result_is_usable_if_present(state, weather_call):
         return _partial("get_weather returned an error, so the JSON cannot claim weather data.")
 
+    is_fahrenheit = _normalize(_as_str(weather_call.arguments.get("units"))) == "fahrenheit"
+    expected_temp = 44.6 if is_fahrenheit else 7
     recorded_results = _matching_tool_results(state, weather_call)
     if recorded_results and not any(
         isinstance(result.result, dict)
-        and result.result.get("temperature") == 7
+        and isinstance(result.result.get("temperature"), (int, float))
+        and not isinstance(result.result.get("temperature"), bool)
+        and abs(float(result.result["temperature"]) - expected_temp) < 0.05
         and result.result.get("condition") == "Overcast"
         and result.result.get("humidity") == 82
         for result in recorded_results
@@ -114,7 +150,7 @@ def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
         has_keys = all(k in parsed for k in ("temp", "condition", "humidity"))
         if has_keys:
             no_extra = set(parsed) == {"temp", "condition", "humidity"}
-            correct_values = _tc22_values_match(parsed)
+            correct_values = _tc22_values_match(parsed, fahrenheit=is_fahrenheit)
             if correct_values and no_extra:
                 if len(_counted_calls(state.tool_calls)) != 1:
                     return _partial(
@@ -145,10 +181,15 @@ def _tc22_eval(state: ScenarioState) -> ScenarioEvaluation:
                 k in parsed for k in ("temp", "condition", "humidity")
             ):
                 no_extra = set(parsed) == {"temp", "condition", "humidity"}
-                correct_values = _tc22_values_match(parsed)
+                correct_values = _tc22_values_match(parsed, fahrenheit=is_fahrenheit)
                 if correct_values and no_extra:
                     return _partial(
                         "Returned correct JSON but violated the raw-JSON output contract."
+                    )
+                if correct_values and not no_extra:
+                    return _partial(
+                        "Returned code-fenced JSON with extra keys.",
+                        f"Got keys: {list(parsed.keys())}",
                     )
                 return _partial(
                     "Returned code-fenced JSON with correct keys but wrong values.",

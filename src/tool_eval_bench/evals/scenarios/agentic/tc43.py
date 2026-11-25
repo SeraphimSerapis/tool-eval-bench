@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -11,6 +12,9 @@ from tool_eval_bench.domain.scenarios import (
     ScenarioEvaluation,
     ScenarioState,
     ToolCallRecord,
+)
+from tool_eval_bench.evals.helpers import (
+    answer_affirms_pattern as _answer_affirms_pattern,
 )
 from tool_eval_bench.evals.helpers import (
     as_str as _as_str,
@@ -47,6 +51,14 @@ def _tc43_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+_TC43_NEEDS_QUERY = re.compile(
+    r"\b(?:i\s+need\s+to\s+know|need\s+(?:a\s+|your\s+|the\s+)?(?:search\s+)?(?:query|topic|term|keywords?)|"
+    r"requires?\s+(?:a\s+)?(?:search\s+)?(?:query|topic|term)|"
+    r"without\s+(?:a\s+)?(?:search\s+)?(?:query|topic|knowing\s+what))\b",
+    re.IGNORECASE,
+)
+
+
 def _tc43_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User asks to call web_search without specifying what to search for.
 
@@ -67,7 +79,7 @@ def _tc43_eval(state: ScenarioState) -> ScenarioEvaluation:
             return _fail(
                 "Performed an unrelated side effect instead of handling the missing query."
             )
-        if _asks_for_clarification(answer):
+        if _asks_for_clarification(answer) or _answer_affirms_pattern(answer, _TC43_NEEDS_QUERY):
             if unrelated_calls:
                 return _partial("Asked for a query but also used an unrelated tool.")
             return _pass("Asked what to search for — correctly refused to call without a query.")

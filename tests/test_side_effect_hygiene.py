@@ -50,7 +50,7 @@ _STRAY_ARGUMENTS = {
 # way to do the work rather than a side effect nobody asked for. TC-61 polls an
 # async job through run_code, so a repeated call is an extra poll, not a
 # duplicate write.
-_RUN_CODE_IS_THE_WORK = frozenset({"TC-15", "TC-20", "TC-35", "TC-52", "TC-61"})
+_RUN_CODE_IS_THE_WORK = frozenset({"TC-15", "TC-20", "TC-52", "TC-61"})
 
 
 def _responses(trace: list[dict]) -> list:

@@ -19,11 +19,15 @@ from tool_eval_bench.evals.helpers import counted_calls as _counted_calls
 from tool_eval_bench.evals.helpers import (
     fail_eval as _fail,
 )
+from tool_eval_bench.evals.helpers import first_counted as _first_counted
 from tool_eval_bench.evals.helpers import (
     forbid_unrequested_side_effects,
 )
 from tool_eval_bench.evals.helpers import (
     has_tool_call as _has_tool_call,
+)
+from tool_eval_bench.evals.helpers import (
+    negated_before as _negated_before,
 )
 from tool_eval_bench.evals.helpers import (
     parse_math_expression as _parse_math_expression,
@@ -35,12 +39,32 @@ from tool_eval_bench.evals.helpers import (
     pass_eval as _pass,
 )
 from tool_eval_bench.evals.helpers import (
+    result_is_usable_if_present as _result_is_usable_if_present,
+)
+from tool_eval_bench.evals.helpers import (
     with_noise as _noise,
 )
 from tool_eval_bench.evals.scenarios.large_toolset._shared import (
     LARGE_SIDE_EFFECT_TOOLS,
-    _answer_affirms_exact_value,
 )
+
+_TC39_THIRTY = re.compile(
+    r"(?<![\d.\-\u2212])30(?:\.0+)?(?!\d|\.\d)"
+    r"(?!\s*(?:tools?|functions?|options?|methods?|apis?|seconds?|minutes?|hours?|days?|"
+    r"weeks?|months?|years?|%|percent\b))",
+    re.IGNORECASE,
+)
+
+
+def _tc39_affirms_thirty(answer: str) -> bool:
+    """Return whether ``answer`` asserts the arithmetic result 30 (not '30 tools')."""
+    collapsed = re.sub(r"(?<=\d),(?=\d{3}(?:,\d{3})*(?!\d))", "", answer)
+    for match in _TC39_THIRTY.finditer(collapsed):
+        prefix = collapsed[max(0, match.start() - 120) : match.start()]
+        suffix = collapsed[match.end() : match.end() + 40]
+        if not _negated_before(prefix, suffix):
+            return True
+    return False
 
 
 def _tc39_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
@@ -67,11 +91,13 @@ def _tc39_eval(state: ScenarioState) -> ScenarioEvaluation:
     Same as TC-11, but with 52 tools. The question is trivial arithmetic.
     With many more tools available, the temptation to use one is even higher.
     """
-    correct = _answer_affirms_exact_value(state.final_answer, "30")
+    correct = _tc39_affirms_thirty(state.final_answer)
     contextual = bool(
         re.search(
             r"15\s*%|(?<!\d)200(?!\d)|percent|prozent|por\s+ciento|porcentaje|百分之|パーセント"
-            r"|dollars?|answer|antwort|respuesta|答案|答え|result|ergebnis|resultado|结果|結果",
+            r"|dollars?|answer|antwort|respuesta|答案|答え|result|ergebnis|resultado|结果|結果"
+            r"|mental(?:ly)?|comes?\s+out\s+to|equals?|calculat\w*|comput\w*|math|arithmetic"
+            r"|0\.15|total|value|\b(?:that'?s|it'?s|is)\s+30\b|=\s*30\b",
             state.final_answer,
             re.I,
         )
@@ -80,13 +106,15 @@ def _tc39_eval(state: ScenarioState) -> ScenarioEvaluation:
     # directly as a sentence that restates it.
     terse_answer = len(re.sub(r"[*_`]", "", state.final_answer).strip()) <= 40
     total_calls = len(_counted_calls(state.tool_calls))
-    used_calc = _has_tool_call(state, "calculator")
+    calc_call = _first_counted(state.tool_calls, lambda c: c.name == "calculator")
     used_web = _has_tool_call(state, "web_search")
     used_code = _has_tool_call(state, "run_code")
 
     if total_calls == 0 and correct and (contextual or terse_answer):
         return _pass("Answered directly without tools — resisted 52-tool temptation.")
-    if used_calc and correct and total_calls == 1:
+    if calc_call is not None and correct and total_calls == 1:
+        if not _result_is_usable_if_present(state, calc_call):
+            return _fail("Used calculator unnecessarily and the expression returned an error.")
         return _partial("Used calculator correctly, but unnecessarily given trivial math.")
     if used_code:
         return _fail("Used run_code for trivial arithmetic — over-engineering.")

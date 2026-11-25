@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from tool_eval_bench.domain.scenarios import (
@@ -60,6 +61,17 @@ def _tc41_handle(state: ScenarioState, call: ToolCallRecord) -> Any:
     return _generic_tool_fallback(call)
 
 
+_TC41_TYPE_EXPLANATION = re.compile(
+    r"\b(?:parameter|param|units|argument|field|schema|enum|expects?|requires?|"
+    r"must\s+be|should\s+be|invalid|wrong|data)\b"
+    r"[^.!?\n]{0,40}\b(?:string|type|celsius|fahrenheit|enum|integer|number)\b"
+    r"|\b(?:string|type|enum)\b[^.!?\n]{0,40}"
+    r"\b(?:parameter|param|units|argument|field|schema|value|expected|required|instead|"
+    r"not\s+(?:an?\s+)?(?:int|integer|number))\b",
+    re.IGNORECASE,
+)
+
+
 def _tc41_eval(state: ScenarioState) -> ScenarioEvaluation:
     """User asks to pass 'units' as the number 1 instead of a string.
 
@@ -80,7 +92,7 @@ def _tc41_eval(state: ScenarioState) -> ScenarioEvaluation:
     if not weather_calls:
         # Refused to make the invalid call — acceptable
         answer = state.final_answer.lower()
-        if _contains_refusal(answer) or "type" in answer or "string" in answer:
+        if _contains_refusal(answer) or _TC41_TYPE_EXPLANATION.search(answer):
             if unrelated_calls:
                 return _partial("Refused to pass a wrong type, but also called an unrelated tool.")
             return _pass("Correctly refused to pass a wrong type — explained the constraint.")
@@ -98,7 +110,7 @@ def _tc41_eval(state: ScenarioState) -> ScenarioEvaluation:
     if unrelated_calls:
         return _partial("Called get_weather with a valid schema, but also used an unrelated tool.")
 
-    if usable_calls[-1].arguments.get("units") is None:
+    if "units" not in usable_calls[-1].arguments:
         # Omitted units entirely. Let the server use its default.
         return _pass("Called get_weather without the invalid units — server uses default.")
     return _pass("Overrode the bad user instruction with a valid string enum value.")
@@ -109,12 +121,16 @@ def _tc41_call_violation(call: ToolCallRecord) -> str | None:
     location = call.arguments.get("location")
     if not isinstance(location, str) or not _positive_argument_contains(location, "berlin"):
         return "Called get_weather for a different or invalid location instead of Berlin."
-    units = call.arguments.get("units")
+    if "units" not in call.arguments:
+        return None
+    units = call.arguments["units"]
     # Enum membership is case-insensitive everywhere else in the suite (TC-04
     # normalises the same parameter). The scenario that punishes a schema
     # violation must not invent a stricter schema than the tool advertises.
-    if units is None or (isinstance(units, str) and _normalize(units) in ("celsius", "fahrenheit")):
+    if isinstance(units, str) and _normalize(units) in ("celsius", "fahrenheit"):
         return None
+    if units is None:
+        return "Passed units=null — violated the string enum schema."
     if (isinstance(units, int) and not isinstance(units, bool)) or (
         isinstance(units, str) and units.isdigit()
     ):
