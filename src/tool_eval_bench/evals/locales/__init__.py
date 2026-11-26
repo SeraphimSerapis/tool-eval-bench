@@ -29,6 +29,7 @@ from dataclasses import replace
 from importlib import resources
 from typing import Any
 
+from tool_eval_bench.domain.rubric import LOCALE_VERSION as _RUBRIC_LOCALE_VERSION
 from tool_eval_bench.domain.scenarios import (
     ScenarioDefinition,
     ScenarioEvaluation,
@@ -37,9 +38,9 @@ from tool_eval_bench.domain.scenarios import (
 from tool_eval_bench.domain.tools import UNIVERSAL_TOOLS
 
 SUPPORTED_LOCALES: tuple[str, ...] = ("de", "es", "zh", "ja")
-# Bump when a pack's meaning changes, so runs on different translations land
-# in different fingerprint cohorts.
-LOCALE_VERSION = 2
+# Single source of truth lives in domain.rubric.LOCALE_VERSION; exposed here
+# as int to keep variant_metadata backwards compatible.
+LOCALE_VERSION: int = int(_RUBRIC_LOCALE_VERSION)
 
 # Eligible scenarios and the literals each translation must keep verbatim.
 ANCHORS: dict[str, tuple[str, ...]] = {

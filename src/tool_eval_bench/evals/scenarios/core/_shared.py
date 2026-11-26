@@ -197,7 +197,6 @@ def _only_error_retries_before_last(state: ScenarioState, calls: list[ToolCallRe
 
 _THOUSANDS_COMMA = re.compile(r"(?<=\d),(?=\d{3}(?:,\d{3})*(?!\d))")
 _STATED_NUMBER = re.compile(r"(?<![\d.])(?:([-\u2212])[$€£¥]?)?(\d+)(?:\.(\d+))?(?!\d|\.\d)")
-_CLOCK_BEFORE = re.compile(r"\d:$")
 _CLOCK_AFTER = re.compile(r":\d{2}\b")
 _PERCENT_AFTER = re.compile(r"\s*(?:%|(?:percent|prozent|por\s+ciento)\b)", re.IGNORECASE)
 _SCALE_SUFFIX_AFTER = re.compile(
@@ -219,13 +218,16 @@ def _excluded_stated_match(
     exclude_percent: bool,
     exclude_scale_suffix: bool,
 ) -> bool:
-    before = collapsed[: match.start()]
-    after = collapsed[match.end() :]
-    if exclude_clock_times and (_CLOCK_AFTER.match(after) or _CLOCK_BEFORE.search(before)):
+    start = match.start()
+    end = match.end()
+    if exclude_clock_times and (
+        _CLOCK_AFTER.match(collapsed, end)
+        or (start >= 2 and collapsed[start - 1] == ":" and collapsed[start - 2].isdigit())
+    ):
         return True
-    if exclude_percent and _PERCENT_AFTER.match(after):
+    if exclude_percent and _PERCENT_AFTER.match(collapsed, end):
         return True
-    if exclude_scale_suffix and _SCALE_SUFFIX_AFTER.match(after):
+    if exclude_scale_suffix and _SCALE_SUFFIX_AFTER.match(collapsed, end):
         return True
     return False
 

@@ -42,7 +42,7 @@ def test_rubric_ast_fingerprint_matches_source() -> None:
     assert actual == RUBRIC_AST_FINGERPRINT, (
         f"Rubric AST fingerprint changed: expected {RUBRIC_AST_FINGERPRINT!r}, got {actual!r}.\n"
         "A Python file under src/tool_eval_bench/evals/ or "
-        "src/tool_eval_bench/runner/orchestrator.py changed in a way that altered its AST.\n"
+        "src/tool_eval_bench/runner/orchestrator/ changed in a way that altered its AST.\n"
         "- If this change alters scoring verdicts, localized prompts, or noise injection, bump "
         "EVAL_RUBRIC_VERSION, LOCALE_VERSION, or NOISE_VERSION in "
         "src/tool_eval_bench/domain/rubric.py and set RUBRIC_AST_FINGERPRINT = "
@@ -50,6 +50,14 @@ def test_rubric_ast_fingerprint_matches_source() -> None:
         "- If this is a strictly verdict-preserving refactor, update RUBRIC_AST_FINGERPRINT = "
         f"{actual!r} only and explain why verdicts are unchanged in the PR description."
     )
+
+
+def test_locale_version_single_source_of_truth() -> None:
+    """evals.locales.LOCALE_VERSION derives from domain.rubric.LOCALE_VERSION as int."""
+    from tool_eval_bench.evals import locales
+
+    assert isinstance(locales.LOCALE_VERSION, int)
+    assert locales.LOCALE_VERSION == int(LOCALE_VERSION)
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +170,35 @@ class TestRubricAstFingerprint:
         (evals_only / "evals").mkdir(parents=True)
         with pytest.raises(FileNotFoundError, match="orchestrator"):
             compute_rubric_ast_fingerprint(evals_only)
+
+        empty_orch_pkg = tmp_path / "empty_orch_pkg"
+        (empty_orch_pkg / "evals").mkdir(parents=True)
+        (empty_orch_pkg / "runner" / "orchestrator").mkdir(parents=True)
+        with pytest.raises(FileNotFoundError, match="orchestrator"):
+            compute_rubric_ast_fingerprint(empty_orch_pkg)
+
+    def test_orchestrator_package_module_edits_change_fingerprint(self, tmp_path: Path) -> None:
+        def _write_pkg(root: Path, wire_src: str) -> Path:
+            eval_file = root / "evals" / "scenarios" / "sample.py"
+            eval_file.parent.mkdir(parents=True, exist_ok=True)
+            eval_file.write_text("def grade() -> int:\n    return 2\n", encoding="utf-8")
+
+            orch_dir = root / "runner" / "orchestrator"
+            orch_dir.mkdir(parents=True, exist_ok=True)
+            (orch_dir / "__init__.py").write_text("MAX_TURNS = 8\n", encoding="utf-8")
+            (orch_dir / "wire.py").write_text(wire_src, encoding="utf-8")
+            return root
+
+        base = _write_pkg(tmp_path / "pkg_base", "def classify() -> str:\n    return 'a'\n")
+        doc_only = _write_pkg(
+            tmp_path / "pkg_doc",
+            '"""Doc."""\n# comment\ndef classify() -> str:\n    return "a"\n',
+        )
+        edited = _write_pkg(tmp_path / "pkg_edited", "def classify() -> str:\n    return 'b'\n")
+
+        fp_base = compute_rubric_ast_fingerprint(base)
+        assert compute_rubric_ast_fingerprint(doc_only) == fp_base
+        assert compute_rubric_ast_fingerprint(edited) != fp_base
 
 
 # ---------------------------------------------------------------------------
