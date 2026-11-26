@@ -445,12 +445,15 @@ def _png_size(png: bytes) -> tuple[int, int]:
     return width, height
 
 
-@pytest.mark.parametrize("layout", LAYOUTS)
-def test_png_export_uses_scale(layout: CardLayout) -> None:
+@pytest.mark.parametrize(("scale", "expected"), [(1.0, (100, 50)), (2.0, (200, 100))])
+def test_png_export_uses_scale(scale: float, expected: tuple[int, int]) -> None:
     pytest.importorskip("resvg_py")
-    png = svg_to_png(render_card_svg(full_long(), layout=layout), scale=2.0)
-    width, height = SIZES[layout]
-    assert _png_size(png) == (width * 2, height * 2)
+    tiny_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50" viewBox="0 0 100 50">'
+        '<rect width="100" height="50" fill="#0B1020"/></svg>'
+    )
+    png = svg_to_png(tiny_svg, scale=scale)
+    assert _png_size(png) == expected
 
 
 def test_png_export_without_renderer_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:

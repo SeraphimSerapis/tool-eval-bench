@@ -6,6 +6,7 @@ scenario benchmark system.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -141,6 +142,7 @@ class BenchmarkService:
         *,
         extra_headers: Mapping[str, str] | None = None,
         session_header: str | None = None,
+        max_concurrency: int | None = None,
     ) -> BackendAdapter:
         """Return the adapter for a backend label and endpoint.
 
@@ -160,6 +162,7 @@ class BenchmarkService:
             wire_format=wire_format,
             default_headers=extra_headers,
             session_header=session_header,
+            max_concurrency=max_concurrency,
         )
 
     async def run_benchmark(
@@ -258,6 +261,7 @@ class BenchmarkService:
             wire_format,
             extra_headers=extra_headers,
             session_header=session_header,
+            max_concurrency=concurrency,
         )
         if rate_limit_observer is not None:
             setter = getattr(adapter, "set_rate_limit_observer", None)
@@ -377,6 +381,7 @@ class BenchmarkService:
                 wire_format=resolved_reviewer.wire_format,
                 default_headers=resolved_reviewer.extra_headers,
                 session_header=resolved_reviewer.session_header,
+                max_concurrency=concurrency,
             )
             turn_reviewer = TurnReviewer(
                 reviewer_adapter,
@@ -397,7 +402,7 @@ class BenchmarkService:
         # Claim the run row up front and checkpoint each finished scenario, so an
         # interrupted long run can be resumed instead of thrown away.
         try:
-            self._claim_run(run_id, model, run_config, metadata)
+            await asyncio.to_thread(self._claim_run, run_id, model, run_config, metadata)
         except BaseException:
             if turn_reviewer is not None:
                 await _close_quietly(turn_reviewer.adapter, "reviewer")
@@ -639,7 +644,12 @@ class BenchmarkService:
 
             report_writer = write_scenario_report
         try:
-            finalize_completed_run(
+            # RunRepository opens SQLite with check_same_thread=False and serialises
+            # access via its RLock; asyncio.to_thread also propagates contextvars
+            # (invocation_session) so report writing and SQLite persistence stay off
+            # the event loop without losing session identity.
+            await asyncio.to_thread(
+                finalize_completed_run,
                 run_data,
                 write_report=report_writer,
                 persist=self.repo.upsert_scenario_run if self.repo is not None else None,
@@ -652,7 +662,7 @@ class BenchmarkService:
         # Final scores now hold everything the checkpoints held.
         if self.repo is not None:
             try:
-                self.repo.clear_checkpoints(run_id)
+                await asyncio.to_thread(self.repo.clear_checkpoints, run_id)
             except Exception as exc:  # noqa: BLE001 — cleanup must not fail a good run
                 logger.warning("Failed to clear checkpoints for run %s: %s", run_id, exc)
 

@@ -7,7 +7,7 @@ a caller cannot leave a WAL connection behind by returning early.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -70,6 +70,21 @@ def get_run(run_id: str, *, include_traces: bool = True) -> dict[str, Any] | Non
     """Return one stored run, or ``None`` when the id is unknown."""
     with closing(_repository()) as repo:
         return repo.get(run_id, include_traces=include_traces)
+
+
+def get_runs(
+    run_ids: Sequence[str],
+    *,
+    output_dir: str | None = None,
+    include_traces: bool = False,
+) -> dict[str, dict[str, Any]]:
+    """Return stored runs matching *run_ids*, keyed by run ID, over one connection."""
+    _ = output_dir
+    unique_ids = list(dict.fromkeys(run_ids))
+    if not unique_ids:
+        return {}
+    with closing(_repository()) as repo:
+        return repo.get_many(unique_ids, include_traces=include_traces)
 
 
 def resolve_run(

@@ -519,7 +519,7 @@ class TestLoader:
 
         monkeypatch.setattr(card_data.run_queries, "database_exists", lambda: False)
         monkeypatch.setattr(card_data.run_queries, "latest_session_id", no_query)
-        monkeypatch.setattr(card_data.run_queries, "get_run", no_query)
+        monkeypatch.setattr(card_data.run_queries, "get_runs", no_query)
         with pytest.raises(CardDataUnavailable, match="No benchmark runs are stored here yet"):
             load_card_data()
         with pytest.raises(CardDataUnavailable, match="No benchmark runs are stored here yet"):
@@ -549,16 +549,16 @@ class TestLoader:
         assert asked == ["abcdef"]
 
     def test_repeated_run_ids_count_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[str] = []
+        calls: list[list[str]] = []
         trial = _trial(80, 1)
 
-        def get_run(run_id: str, **_: Any) -> dict:
-            calls.append(run_id)
-            return trial
+        def get_runs(run_ids: list[str], **_: Any) -> dict[str, dict]:
+            calls.append(list(run_ids))
+            return {rid: trial for rid in run_ids}
 
-        monkeypatch.setattr(card_data.run_queries, "get_run", get_run)
+        monkeypatch.setattr(card_data.run_queries, "get_runs", get_runs)
         summary = load_card_data(run_ids=["t1", "t1", "t1"]).tool_eval
-        assert calls == ["t1"]
+        assert calls == [["t1"]]
         assert summary is not None
         assert summary.trials == 1
 
@@ -566,7 +566,11 @@ class TestLoader:
         older = _plugin_run("gsm8k", 50.0, "2026-01-01")
         older["metadata"].update(tool_version="2.8.0", engine_version="0.10.0")
         stored = {"a": _needle_run(), "b": older}
-        monkeypatch.setattr(card_data.run_queries, "get_run", lambda rid, **_: stored[rid])
+        monkeypatch.setattr(
+            card_data.run_queries,
+            "get_runs",
+            lambda rids, **_: {rid: stored[rid] for rid in rids if rid in stored},
+        )
         notes: list[str] = []
         load_card_data(run_ids=["a", "b"], warn=notes.append)
         assert notes == [
@@ -664,25 +668,25 @@ class TestLoader:
 
     def test_run_ids_override_the_session(self, monkeypatch: pytest.MonkeyPatch) -> None:
         stored = {"r-needle": _needle_run(), "r-gsm": _plugin_run("gsm8k", 50.0, "2026-01-01")}
-        calls: list[tuple[str, bool]] = []
+        calls: list[tuple[list[str], bool]] = []
 
-        def get_run(run_id: str, *, include_traces: bool = True) -> dict | None:
-            calls.append((run_id, include_traces))
-            return stored.get(run_id)
+        def get_runs(run_ids: list[str], *, include_traces: bool = False) -> dict[str, dict]:
+            calls.append((list(run_ids), include_traces))
+            return {rid: stored[rid] for rid in run_ids if rid in stored}
 
         def no_session(*_: Any, **__: Any) -> Any:
             raise AssertionError("run ids must bypass the session lookup")
 
-        monkeypatch.setattr(card_data.run_queries, "get_run", get_run)
+        monkeypatch.setattr(card_data.run_queries, "get_runs", get_runs)
         monkeypatch.setattr(card_data.run_queries, "latest_session_id", no_session)
         monkeypatch.setattr(card_data.run_queries, "session_runs", no_session)
         card = load_card_data(session="ignored", run_ids=["r-needle", "r-gsm"])
         assert card.needle is not None
         assert [a.name for a in card.accuracy] == ["GSM8K"]
-        assert calls == [("r-needle", False), ("r-gsm", False)]
+        assert calls == [(["r-needle", "r-gsm"], False)]
 
     def test_unknown_run_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(card_data.run_queries, "get_run", lambda *_a, **_k: None)
+        monkeypatch.setattr(card_data.run_queries, "get_runs", lambda *_a, **_k: {})
         with pytest.raises(CardDataUnavailable, match="No stored run with id a, b"):
             load_card_data(run_ids=["a", "b"])
 
@@ -691,7 +695,11 @@ class TestLoader:
         first["metadata"]["server_model_root"] = "Qwen/Qwen3-32B-AWQ"
         second["metadata"]["server_model_root"] = "meta-llama/Llama-3-8B"
         stored = {"a": first, "b": second}
-        monkeypatch.setattr(card_data.run_queries, "get_run", lambda rid, **_: stored[rid])
+        monkeypatch.setattr(
+            card_data.run_queries,
+            "get_runs",
+            lambda rids, **_: {rid: stored[rid] for rid in rids if rid in stored},
+        )
         with pytest.raises(
             CardDataUnavailable, match=r"more than one model \(Llama-3-8B, Qwen3-32B-AWQ\)"
         ):
@@ -702,8 +710,55 @@ class TestLoader:
         first["metadata"]["server_model_root"] = "Qwen/Qwen3-32B-AWQ"
         second["metadata"]["server_model_root"] = "Qwen3-32B-AWQ"
         stored = {"a": first, "b": second}
-        monkeypatch.setattr(card_data.run_queries, "get_run", lambda rid, **_: stored[rid])
+        monkeypatch.setattr(
+            card_data.run_queries,
+            "get_runs",
+            lambda rids, **_: {rid: stored[rid] for rid in rids if rid in stored},
+        )
         assert load_card_data(run_ids=["a", "b"]).model == "Qwen3-32B-AWQ"
+
+
+def test_run_queries_get_runs_uses_one_connection(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tool_eval_bench.application import run_queries
+    from tool_eval_bench.storage import db
+
+    monkeypatch.chdir(tmp_path)
+    with db.RunRepository() as repo:
+        repo.upsert_scenario_run({**_needle_run(), "run_id": "r-a"})
+        repo.upsert_scenario_run(
+            {**_plugin_run("gsm8k", 80.0, "2026-10-10T12:15:00+00:00"), "run_id": "r-b"}
+        )
+
+    opens = 0
+    real_cls = db.RunRepository
+
+    def _counting_repo() -> db.RunRepository:
+        nonlocal opens
+        opens += 1
+        return real_cls()
+
+    monkeypatch.setattr(db, "RunRepository", _counting_repo)
+    fetched = run_queries.get_runs(["r-a", "r-b", "r-a"], include_traces=False)
+    assert opens == 1
+    assert set(fetched) == {"r-a", "r-b"}
+    assert run_queries.get_runs([]) == {}
+
+
+def test_session_entry_includes_rating_for_tool_eval_only() -> None:
+    from tool_eval_bench.application.run_summary import session_entry
+
+    withheld = _tool_eval_run(final_score=None, rating="Withheld")
+    entry = session_entry(withheld)
+    assert entry["final_score"] is None
+    assert entry["rating"] == "Withheld"
+
+    scored = _tool_eval_run(final_score=88, rating="★★★★ Good")
+    assert session_entry(scored)["rating"] == "★★★★ Good"
+
+    needle_entry = session_entry(_needle_run())
+    assert needle_entry["rating"] is None
 
 
 def _trial(

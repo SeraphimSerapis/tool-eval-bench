@@ -153,6 +153,7 @@ def session_entry(run: Mapping[str, Any]) -> dict[str, Any]:
         "status": run.get("status") or "completed",
         "created_at": run.get("created_at"),
         "final_score": scores.get("final_score") if kind == TOOL_EVAL else None,
+        "rating": scores.get("rating") if kind == TOOL_EVAL else None,
         "headline": headline(run),
     }
 

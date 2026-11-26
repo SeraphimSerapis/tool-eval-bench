@@ -22,9 +22,15 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, TypeGuard
+from typing import Any, Literal, TypeGuard
 
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
+
+#: A judge set names the highest tier it includes: ``all`` also runs every
+#: ``recommended`` audit.
+DecisionJudgeSet = Literal["recommended", "all"]
+DECISION_JUDGE_SETS: tuple[DecisionJudgeSet, ...] = ("recommended", "all")
+DEFAULT_DECISION_JUDGE_SET: DecisionJudgeSet = "recommended"
 
 
 class DecisionUnsupportedError(RuntimeError):

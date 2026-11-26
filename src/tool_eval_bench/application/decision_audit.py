@@ -8,14 +8,20 @@ import logging
 import math
 import time
 from collections.abc import Awaitable, Callable, Iterable
-from typing import Any, get_args
+from typing import Any
 from urllib.parse import urlsplit
 
-from tool_eval_bench.domain.decision import ChoiceAnswer, ChoiceQuestion, DecisionBackend
+from tool_eval_bench.domain.decision import (
+    DECISION_JUDGE_SETS,
+    DEFAULT_DECISION_JUDGE_SET,
+    ChoiceAnswer,
+    ChoiceQuestion,
+    DecisionBackend,
+    DecisionJudgeSet,
+)
 from tool_eval_bench.domain.scenarios import (
     AnswerAuditDefinition,
     AuditPhase,
-    AuditTier,
     ScenarioDefinition,
     ScenarioResult,
     ScenarioState,
@@ -28,12 +34,6 @@ AUDIT_TIMEOUT_SECONDS = 10.0
 # ponytail: conservative byte cap for an 8k context; use tokenizer-aware sizing
 # if longer inputs are needed. Server context rejections remain unavailable audits.
 MAX_AUDIT_REQUEST_BYTES = 6000
-
-#: A judge set names the highest tier it includes: ``all`` also runs every
-#: ``recommended`` audit.
-DecisionJudgeSet = AuditTier
-DECISION_JUDGE_SETS: tuple[DecisionJudgeSet, ...] = get_args(AuditTier)
-DEFAULT_DECISION_JUDGE_SET: DecisionJudgeSet = "recommended"
 
 
 def decision_judge_config(
