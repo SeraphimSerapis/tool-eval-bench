@@ -124,8 +124,9 @@ def _git_sha() -> str | None:
                 ["git", "-C", str(package_root), *args],
                 stderr=subprocess.DEVNULL,
                 env=_git_env_without_repository(),
+                timeout=5,
             )
-        except (OSError, subprocess.CalledProcessError):
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return None
         return out.decode().strip()
 
@@ -1042,10 +1043,12 @@ async def collect_run_context(
         except Exception as exc:
             logger.warning("Engine probe failed: %s", exc)
 
+    git_sha = await asyncio.to_thread(_git_sha)
+
     return RunContext(
         # Tier 1
         tool_version=_tool_version(),
-        git_sha=_git_sha(),
+        git_sha=git_sha,
         hostname=socket.gethostname(),
         platform_info=platform.platform(),
         python_version=platform.python_version(),
@@ -1095,7 +1098,7 @@ async def collect_run_metadata(config: BenchmarkConfig) -> dict[str, Any]:
     from tool_eval_bench.utils.urls import redact_url as _redact
 
     return {
-        "git_sha": _git_sha(),
+        "git_sha": await asyncio.to_thread(_git_sha),
         "host": socket.gethostname(),
         "platform": platform.platform(),
         "python_version": platform.python_version(),

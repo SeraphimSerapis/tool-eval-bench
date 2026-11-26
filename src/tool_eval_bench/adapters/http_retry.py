@@ -370,34 +370,41 @@ class RateLimitCoordinator:
                 reserved_next = start + self._min_interval
                 self._next_slot = reserved_next
                 generation = self._pressure_generation
+                delay = start - now
 
-            delay = start - time.monotonic()
-            if delay > 0:
-                try:
-                    await asyncio.sleep(delay)
-                except BaseException:
-                    if (
-                        not self._lock.locked()
-                        and self._pressure_generation == generation
-                        and self._next_slot == reserved_next
-                    ):
-                        self._next_slot = start
-                    raise
+            while True:
+                if delay > 0:
+                    try:
+                        await asyncio.sleep(delay)
+                    except BaseException:
+                        if (
+                            not self._lock.locked()
+                            and self._pressure_generation == generation
+                            and self._next_slot == reserved_next
+                        ):
+                            self._next_slot = start
+                        raise
 
-            async with self._lock:
-                now = time.monotonic()
-                if generation != self._pressure_generation:
-                    # A newer 429 changed the pause and pacing after this slot
-                    # was reserved. Re-enter the queue under the new settings.
-                    continue
-                if now < self._pause_until or now < start:
-                    continue
-                return
+                async with self._lock:
+                    now = time.monotonic()
+                    if generation != self._pressure_generation:
+                        # A newer 429 changed the pause and pacing after this slot
+                        # was reserved. Re-enter the queue under the new settings.
+                        break
+                    if now < self._pause_until:
+                        break
+                    if now < start:
+                        # Sleep woke slightly before our reserved slot; finish
+                        # waiting for the same slot rather than reserving another.
+                        delay = start - now
+                        continue
+                    return
 
     async def on_rate_limited(self, delay: float) -> None:
         """Record a 429: pause everyone and widen the spacing."""
         async with self._lock:
             self._pause_until = max(self._pause_until, time.monotonic() + delay)
+            self._next_slot = self._pause_until
             self._min_interval = min(max(self._min_interval * 2, self._step), self._max_interval)
             self._pressure_generation += 1
             self._successes = 0
@@ -443,6 +450,7 @@ class RetryingHTTPAdapter:
         rate_limit_observer: RateLimitObserver | None = None,
         default_headers: Mapping[str, str] | None = None,
         session_header: str | None = None,
+        max_concurrency: int | None = None,
     ) -> None:
         self._client: httpx.AsyncClient | None = None
         self._max_retries = max_retries
@@ -450,6 +458,7 @@ class RetryingHTTPAdapter:
         self._rate_limits = RateLimitCoordinator(observer=rate_limit_observer)
         self._default_headers: dict[str, str] = dict(default_headers or {})
         self._session_header = session_header or None
+        self._max_concurrency = max_concurrency
 
     def _request_headers(
         self, headers: Mapping[str, str], conversation_id: str | None
@@ -469,11 +478,12 @@ class RetryingHTTPAdapter:
         throughput (180s), and scenario requests.
         """
         if self._client is None or self._client.is_closed:
+            concurrency = self._max_concurrency or 0
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(120.0),  # generous default; overridden per-request
                 limits=httpx.Limits(
-                    max_connections=20,
-                    max_keepalive_connections=10,
+                    max_connections=max(20, concurrency + 4),
+                    max_keepalive_connections=max(10, concurrency),
                 ),
             )
         return self._client

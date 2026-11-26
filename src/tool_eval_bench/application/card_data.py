@@ -147,10 +147,12 @@ def load_card_data(
             "that holds the data folder"
         )
     if run_ids:
+        unique_ids = list(dict.fromkeys(run_ids))
+        fetched = run_queries.get_runs(unique_ids, include_traces=False)
         runs: list[dict[str, Any]] = []
         missing: list[str] = []
-        for run_id in dict.fromkeys(run_ids):
-            run = run_queries.get_run(run_id, include_traces=False)
+        for run_id in unique_ids:
+            run = fetched.get(run_id)
             if run is None:
                 missing.append(run_id)
             else:

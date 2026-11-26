@@ -9,7 +9,7 @@ import math
 import sqlite3
 import threading
 import time
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, NamedTuple
 
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 
 # Wait rather than fail when another process holds the write lock (concurrent
 # runs against different endpoints share one database file).
@@ -155,6 +155,30 @@ def _add_column(conn: sqlite3.Connection, ddl: str) -> None:
 #: Shortest session prefix ``resolve_session_prefix`` accepts.  Session ids are
 #: 32 hex characters, so six already leave 16 million possibilities.
 SESSION_PREFIX_MIN_LENGTH = 6
+
+# SQLite limits bound parameters per statement (999 on older builds).
+_SQLITE_IN_CHUNK_SIZE = 500
+
+
+def _prefix_upper_bound(prefix: str) -> str | None:
+    """Smallest UTF-8-encodable string strictly above every string with *prefix*.
+
+    Returns ``None`` when every character in *prefix* is the maximum Unicode
+    scalar value (``U+10FFFF``), in which case ``session_id >= prefix`` alone
+    is exact.
+    """
+    chars = list(prefix)
+    while chars:
+        code = ord(chars[-1])
+        if code < 0xD7FF or (0xE000 <= code < 0x10FFFF):
+            chars[-1] = chr(code + 1)
+            return "".join(chars)
+        if 0xD7FF <= code < 0xE000:
+            chars[-1] = chr(0xE000)
+            return "".join(chars)
+        chars.pop()
+    return None
+
 
 _SELECT_RUNS = (
     "SELECT run_id, created_at, status, model, config_json, "
@@ -331,6 +355,20 @@ class RunRepository:
                     "ON scenario_runs(session_id)"
                 )
                 version = 5
+            if version < 6:
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_scenario_runs_type_status_created "
+                    "ON scenario_runs(run_type, status, created_at DESC)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_scenario_runs_created_at "
+                    "ON scenario_runs(created_at DESC)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_scenario_runs_report_path "
+                    "ON scenario_runs(report_path) WHERE report_path IS NOT NULL"
+                )
+                version = 6
             if version != int(conn.execute("PRAGMA user_version").fetchone()[0]):
                 conn.execute(f"PRAGMA user_version = {version}")
 
@@ -546,6 +584,40 @@ class RunRepository:
                 run["scores"] = _merge_traces(run["scores"], self.get_traces(run_id))
             return run
 
+    def get_many(
+        self,
+        run_ids: Sequence[str],
+        *,
+        include_traces: bool = True,
+    ) -> dict[str, dict[str, Any]]:
+        """Retrieve multiple runs by ID on one connection, keyed by run ID."""
+        unique_ids = list(dict.fromkeys(run_ids))
+        if not unique_ids:
+            return {}
+        runs: dict[str, dict[str, Any]] = {}
+        with self._write_lock, self._conn as conn:
+            for offset in range(0, len(unique_ids), _SQLITE_IN_CHUNK_SIZE):
+                chunk = unique_ids[offset : offset + _SQLITE_IN_CHUNK_SIZE]
+                placeholders = ", ".join("?" * len(chunk))
+                query = f"{_SELECT_RUNS} WHERE run_id IN ({placeholders})"
+                rows = conn.execute(query, chunk).fetchall()
+                for row in rows:
+                    runs[str(row[0])] = _run_from_row(row)
+            if include_traces and runs:
+                found_ids = list(runs)
+                traces_by_run: dict[str, dict[str, str]] = {}
+                for offset in range(0, len(found_ids), _SQLITE_IN_CHUNK_SIZE):
+                    chunk = found_ids[offset : offset + _SQLITE_IN_CHUNK_SIZE]
+                    placeholders = ", ".join("?" * len(chunk))
+                    trace_query = "SELECT run_id, scenario_id, raw_log FROM scenario_traces"
+                    trace_query += f" WHERE run_id IN ({placeholders})"
+                    trace_rows = conn.execute(trace_query, chunk).fetchall()
+                    for rid, scenario_id, raw_log in trace_rows:
+                        traces_by_run.setdefault(str(rid), {})[str(scenario_id)] = str(raw_log)
+                for rid, traces in traces_by_run.items():
+                    runs[rid]["scores"] = _merge_traces(runs[rid]["scores"], traces)
+        return runs
+
     def list(
         self,
         limit: int = 20,
@@ -604,10 +676,21 @@ class RunRepository:
         status: str | None = None,
     ) -> dict | None:
         """Get the most recent run, optionally narrowed by model, run type, and status."""
-        runs = self.list(limit=1, model=model, run_type=run_type, status=status)
-        if not runs:
+        query = "SELECT run_id FROM scenario_runs"
+        conditions: list[str] = []
+        params: list[str] = []
+        for column, value in (("model", model), ("run_type", run_type), ("status", status)):
+            if value:
+                conditions.append(f"{column} = ?")
+                params.append(value)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY created_at DESC LIMIT 1"
+        with self._write_lock, self._conn as conn:
+            row = conn.execute(query, params).fetchone()
+        if not row:
             return None
-        return self.get(runs[0]["run_id"])
+        return self.get(str(row[0]))
 
     def list_summaries(
         self,
@@ -728,16 +811,24 @@ class RunRepository:
                 return prefix
             if len(prefix) < SESSION_PREFIX_MIN_LENGTH:
                 return None
-            # substr rather than LIKE, so "%" or "_" in the input stay literal.
-            matches = [
-                str(row[0])
-                for row in conn.execute(
+            # Bounded range seek on idx_scenario_runs_session_id avoids both
+            # LIKE wildcard escaping and full-index substr() scans.
+            upper = _prefix_upper_bound(prefix)
+            if upper is not None:
+                rows = conn.execute(
                     "SELECT DISTINCT session_id FROM scenario_runs "
-                    "WHERE session_id IS NOT NULL AND substr(session_id, 1, ?) = ? "
+                    "WHERE session_id >= ? AND session_id < ? "
                     "ORDER BY session_id LIMIT 3",
-                    (len(prefix), prefix),
+                    (prefix, upper),
                 ).fetchall()
-            ]
+            else:
+                rows = conn.execute(
+                    "SELECT DISTINCT session_id FROM scenario_runs "
+                    "WHERE session_id >= ? "
+                    "ORDER BY session_id LIMIT 3",
+                    (prefix,),
+                ).fetchall()
+            matches = [str(row[0]) for row in rows]
         if len(matches) > 1:
             shown = ", ".join(matches[:2]) + (", ..." if len(matches) > 2 else "")
             raise ValueError(

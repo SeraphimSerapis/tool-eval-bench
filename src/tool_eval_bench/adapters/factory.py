@@ -16,14 +16,18 @@ def build_adapter(
     base_url: str = "",
     *,
     wire_format: str | None = None,
+    max_concurrency: int | None = None,
     **kwargs: Any,
 ) -> BackendAdapter:
     """Return the adapter for ``base_url``, honoring an explicit format choice.
 
     ``wire_format`` accepts ``auto`` (or None) to detect from the URL, ``openai``,
-    ``gemini``, or ``anthropic``.  Extra keyword arguments are passed to the
+    ``gemini``, or ``anthropic``.  ``max_concurrency`` sizes the underlying HTTP
+    connection pool when given.  Extra keyword arguments are passed to the
     adapter.
     """
+    if max_concurrency is not None:
+        kwargs["max_concurrency"] = max_concurrency
     resolved: WireFormat = resolve_wire_format(wire_format, base_url)
     if resolved == "gemini":
         return GeminiAdapter(**kwargs)
