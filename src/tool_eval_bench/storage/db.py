@@ -170,11 +170,14 @@ def _prefix_upper_bound(prefix: str) -> str | None:
     chars = list(prefix)
     while chars:
         code = ord(chars[-1])
-        if code < 0xD7FF or (0xE000 <= code < 0x10FFFF):
+        if code < 0xD7FF:
             chars[-1] = chr(code + 1)
             return "".join(chars)
-        if 0xD7FF <= code < 0xE000:
+        if code < 0xE000:
             chars[-1] = chr(0xE000)
+            return "".join(chars)
+        if code < 0x10FFFF:
+            chars[-1] = chr(code + 1)
             return "".join(chars)
         chars.pop()
     return None

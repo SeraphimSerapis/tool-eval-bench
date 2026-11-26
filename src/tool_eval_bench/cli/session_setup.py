@@ -45,15 +45,35 @@ from tool_eval_bench.domain.errors import NO_SERVER
 from tool_eval_bench.domain.models import ChatMessage, RunContext
 from tool_eval_bench.domain.review import ReviewerSettings, without_auth_headers
 from tool_eval_bench.domain.scenarios import ScenarioDefinition
+from tool_eval_bench.runner.perf_presets import PerfPlan, failed_cell_count
 from tool_eval_bench.utils.headers import attach_session_id as _attach_session_id
 from tool_eval_bench.utils.headers import merge_headers as _merge_headers
 from tool_eval_bench.utils.headers import parse_header_env as _parse_header_env
 from tool_eval_bench.utils.headers import parse_header_pairs as _parse_header_pairs
 
 if TYPE_CHECKING:
-    from tool_eval_bench.cli.perf_mode import _PerfSweep
+    from tool_eval_bench.runner.throughput import ThroughputSample
 
 logger = logging.getLogger("tool_eval_bench.cli.dispatch")
+
+
+@dataclass(frozen=True)
+class _PerfSweep:
+    """What :func:`tool_eval_bench.cli.perf_mode._run_perf_plan` measured.
+
+    ``plan`` holds only the passes that ran, the one that failed included.
+    ``incomplete`` means a planned pass was skipped, failed, or interrupted;
+    ``interrupted`` means Ctrl+C stopped a later pass.
+    """
+
+    samples: list[ThroughputSample]
+    plan: PerfPlan
+    incomplete: bool = False
+    interrupted: bool = False
+
+    @property
+    def failed_cells(self) -> int:
+        return failed_cell_count(self.samples)
 
 
 @dataclass(frozen=True)

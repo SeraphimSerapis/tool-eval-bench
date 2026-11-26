@@ -7,7 +7,6 @@ import logging
 import os
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +21,7 @@ from tool_eval_bench.cli.perf import PerfPassFailed, _resolve_benchy_tokenizer
 from tool_eval_bench.cli.perf import run_llama_benchy as _run_llama_benchy
 from tool_eval_bench.cli.resolve import parse_int_list as _parse_int_list
 from tool_eval_bench.cli.resolve import redact_url as _redact_url
-from tool_eval_bench.cli.session_setup import _Target
+from tool_eval_bench.cli.session_setup import _PerfSweep, _Target
 from tool_eval_bench.runner.perf_presets import (
     DEFAULT_PERF_PRESET,
     PerfPass,
@@ -211,25 +210,6 @@ def _unfinished_pass_samples(plan: PerfPlan, perf_pass: PerfPass) -> list[Throug
         for depth in perf_pass.depths
         for level in perf_pass.concurrency
     ]
-
-
-@dataclass(frozen=True)
-class _PerfSweep:
-    """What :func:`_run_perf_plan` measured.
-
-    ``plan`` holds only the passes that ran, the one that failed included.
-    ``incomplete`` means a planned pass was skipped, failed, or interrupted;
-    ``interrupted`` means Ctrl+C stopped a later pass.
-    """
-
-    samples: list[ThroughputSample]
-    plan: PerfPlan
-    incomplete: bool = False
-    interrupted: bool = False
-
-    @property
-    def failed_cells(self) -> int:
-        return failed_cell_count(self.samples)
 
 
 def _perf_notice(console: Console, markup: str) -> None:
