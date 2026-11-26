@@ -81,7 +81,7 @@ def resolve_discordant_scenarios_for_diff(
         raise ValueError(f"Run '{id_b}' has no scenario results to compare")
 
     map_a, map_b, all_ids = extract_result_maps(results_a, results_b)
-    paired = compute_paired_comparison(map_a, map_b, all_ids)
+    paired = compute_paired_comparison(map_a, map_b, all_ids, run_a=run_a, run_b=run_b)
     return id_a, run_a, id_b, run_b, paired
 
 

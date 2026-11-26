@@ -612,9 +612,10 @@ def _make_parser() -> argparse.ArgumentParser:
         "--tokenizer",
         default=None,
         help="Path to a local tokenizer.json (or a directory containing it) used "
-        "for llama-benchy prompt construction. Usually unnecessary: the HuggingFace "
-        "cache is searched automatically for the served model. Use this to override "
-        "that, or on offline hosts where auto-detection finds nothing.",
+        "for llama-benchy prompt construction and probe --check-template special-token "
+        "leak checks. Usually unnecessary: the HuggingFace cache is searched "
+        "automatically for the served model. Use this to override that, or on "
+        "offline hosts where auto-detection finds nothing.",
     )
     perf_grp.add_argument(
         "--skip-coherence",

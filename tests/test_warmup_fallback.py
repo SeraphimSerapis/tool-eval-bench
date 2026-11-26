@@ -260,3 +260,206 @@ class TestWarmupRequestOverride:
 
     def test_nothing_to_strip_returns_none(self):
         assert throughput._without_optional_hints({"model": "m"}) is None
+
+
+class TestPreflightAndWarmupCliOutcomes:
+    """User-visible preflight and warmup outcomes in ``cli/probe.py``."""
+
+    def test_preflight_and_warmup_user_outcomes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import httpx
+        from rich.console import Console
+
+        from tests.coverage_helpers import async_return
+        from tool_eval_bench.cli import probe
+
+        class Client:
+            mode = "ok"
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, **kwargs):
+                if self.mode == "connect":
+                    raise httpx.ConnectError("down")
+                if self.mode == "error":
+                    raise RuntimeError("unexpected")
+                if self.mode == "blank_error":
+                    raise RuntimeError()
+                request = httpx.Request("POST", url)
+                if self.mode == "http":
+                    return httpx.Response(500, text="bad", request=request)
+                return httpx.Response(200, json={"choices": []}, request=request)
+
+        client = Client()
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        console = Console(record=True)
+        probe.preflight_model_check(console, "url", "m", "key")
+        for mode, code in (("http", 3), ("connect", 2), ("error", 3)):
+            client.mode = mode
+            with pytest.raises(SystemExit) as exc:
+                probe.preflight_model_check(console, "url", "m", None)
+            assert exc.value.code == code
+        client.mode = "blank_error"
+        with pytest.raises(SystemExit) as exc:
+            probe.preflight_model_check(console, "url", "m", None)
+        assert exc.value.code == 3
+        assert "RuntimeError" in console.export_text()
+
+        monkeypatch.setattr(throughput, "warmup", async_return(20_000))
+        probe.warmup_server(console, "url", "m", None)
+        monkeypatch.setattr(throughput, "warmup", async_return(10))
+        probe.warmup_server(console, "url", "m", None)
+
+        async def fail(*args, **kwargs):
+            raise RuntimeError()
+
+        monkeypatch.setattr(throughput, "warmup", fail)
+        probe.warmup_server(console, "url", "m", None)
+        assert "Warm-up failed" in console.export_text()
+
+        async def fail_with_response(*args, **kwargs):
+            request = httpx.Request("POST", "http://server/v1/chat/completions")
+            response = httpx.Response(400, text="provider detail", request=request)
+            raise httpx.HTTPStatusError("bad request", request=request, response=response)
+
+        monkeypatch.setattr(throughput, "warmup", fail_with_response)
+        probe.warmup_server(console, "url", "m", None)
+        assert "provider detail" in console.export_text()
+
+    def test_preflight_forwards_request_configuration(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import httpx
+        from rich.console import Console
+
+        from tool_eval_bench.cli import probe
+
+        observed: dict[str, object] = {}
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, **kwargs):
+                observed["url"] = url
+                observed["post"] = kwargs
+                return httpx.Response(
+                    200,
+                    json={"choices": [{}]},
+                    request=httpx.Request("POST", url),
+                )
+
+        def make_client(**kwargs):
+            observed["client_kwargs"] = kwargs
+            return Client()
+
+        monkeypatch.setattr(httpx, "AsyncClient", make_client)
+        probe.preflight_model_check(
+            Console(),
+            "http://server/v1",
+            "m",
+            None,
+            timeout_seconds=17.5,
+            temperature=0.4,
+            extra_params={"reasoning_effort": "low", "top_p": 0.9},
+        )
+
+        assert observed["client_kwargs"] == {"timeout": 17.5}
+        post = observed["post"]
+        assert isinstance(post, dict)
+        payload = post["json"]
+        assert isinstance(payload, dict)
+        assert payload["reasoning_effort"] == "low"
+        assert payload["top_p"] == 0.9
+        assert payload["temperature"] == 0.4
+        assert payload["model"] == "m"
+
+    def test_preflight_retries_with_max_completion_tokens(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import httpx
+        from rich.console import Console
+
+        from tool_eval_bench.cli import probe
+
+        bodies: list[dict] = []
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, *, json, headers):
+                bodies.append(json)
+                if "max_tokens" in json:
+                    return httpx.Response(
+                        400,
+                        json={
+                            "error": {
+                                "message": "Unsupported parameter: max_tokens. Use max_completion_tokens instead."
+                            }
+                        },
+                        request=httpx.Request("POST", url),
+                    )
+                return httpx.Response(200, json={"choices": [{}]})
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: Client())
+        probe.preflight_model_check(Console(), "http://server/v1", "m", None)
+
+        assert len(bodies) == 2
+        assert bodies[1]["max_completion_tokens"] == 1
+        assert "max_tokens" not in bodies[1]
+
+    def test_preflight_accepts_output_limit_as_model_availability(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import httpx
+        from rich.console import Console
+
+        from tool_eval_bench.cli import probe
+
+        bodies: list[dict] = []
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, *, json, headers):
+                bodies.append(json)
+                request = httpx.Request("POST", url)
+                if "max_tokens" in json:
+                    return httpx.Response(
+                        400,
+                        json={
+                            "error": {
+                                "message": "Unsupported parameter: max_tokens. Use max_completion_tokens instead."
+                            }
+                        },
+                        request=request,
+                    )
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "message": "Could not finish the message because max_tokens or model output limit was reached. Please try again with higher max_tokens."
+                        }
+                    },
+                    request=request,
+                )
+
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: Client())
+        probe.preflight_model_check(Console(), "http://server/v1", "reasoning-model", None)
+
+        assert len(bodies) == 2
+        assert bodies[1]["max_completion_tokens"] == 1

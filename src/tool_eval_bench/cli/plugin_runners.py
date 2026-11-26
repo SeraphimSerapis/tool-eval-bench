@@ -1,56 +1,82 @@
-"""Shared lifecycle dispatch for external benchmark plugins."""
+"""Shared lifecycle dispatch and compatibility facade for external benchmark plugins."""
 
 from __future__ import annotations
 
 import argparse
-import sys
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
 from tool_eval_bench.cli.command_registry import PLUGIN_FLAG_STEMS
-from tool_eval_bench.cli.headless import HeadlessConsole, report_run_failed
+from tool_eval_bench.cli.plugin_accuracy import (
+    dataset_identity as _dataset_identity,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_accuracy import (
+    print_truncated as _print_truncated,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_accuracy import (
+    run_gsm8k_benchmark as _run_gsm8k_impl,
+)
+from tool_eval_bench.cli.plugin_accuracy import (
+    run_ifeval_benchmark as _run_ifeval_impl,
+)
+from tool_eval_bench.cli.plugin_accuracy import (
+    run_mmlu_benchmark as _run_mmlu_impl,
+)
 from tool_eval_bench.cli.plugin_datasets import load_dataset_with_progress
-from tool_eval_bench.cli.plugin_lifecycle import (
-    execute_plugin as _execute_plugin_impl,
+from tool_eval_bench.cli.plugin_decision import (
+    print_decision_tables as _print_decision_tables,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_decision import (
+    run_decision_benchmark as _run_decision_benchmark,
 )
 from tool_eval_bench.cli.plugin_lifecycle import (
-    finalize_plugin_run as _finalize_plugin_run,
+    execute_plugin as _execute_plugin,  # noqa: F401
 )
-from tool_eval_bench.cli.plugin_progress import (
-    PluginProgressDisplay,
-    final_tally_line,
-    status_icon,
-    tally_line,
-    truncate,
+from tool_eval_bench.cli.plugin_lifecycle import (
+    finalize_plugin_run as _finalize_plugin_run,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_needle import (
+    _NEEDLE_MIN_TOKENS,  # noqa: F401
+    _NEEDLE_PROMPT_OVERHEAD,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_needle import (
+    needle_context_lengths as _needle_context_lengths,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_needle import (
+    needle_depths as _needle_depths,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_needle import (
+    print_needle_grid as _print_needle_grid,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_needle import (
+    resolve_needle_context_size as _resolve_needle_context_size,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_needle import (
+    run_needle_benchmark as _run_needle_benchmark,
+)
+from tool_eval_bench.cli.plugin_toolscale import (
+    _TOKENS_PER_TOOL_ESTIMATE,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_toolscale import (
+    OPENAI_TOOL_CAP as _OPENAI_TOOL_CAP,
+)
+from tool_eval_bench.cli.plugin_toolscale import (
+    print_toolscale_effects as _print_toolscale_effects,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_toolscale import (
+    print_toolscale_grid as _print_toolscale_grid,  # noqa: F401
+)
+from tool_eval_bench.cli.plugin_toolscale import (
+    run_toolscale_benchmark as _run_toolscale_impl,
+)
+from tool_eval_bench.cli.plugin_toolscale import (
+    toolscale_timeout as _toolscale_timeout,  # noqa: F401
 )
 from tool_eval_bench.domain.models import RunContext
 
-
-def _execute_plugin(
-    console: Console, benchmark_name: str, run: Callable[[], Any], result_holder: list[Any]
-) -> Any | None:
-    return _execute_plugin_impl(console, benchmark_name, run, result_holder)
-
-
-def _dataset_identity(details: Mapping[str, Any]) -> dict[str, Any]:
-    """Config keys that pin which dataset revision and items a run graded."""
-    return {
-        "dataset_revision": details.get("dataset_revision"),
-        "items_sha256": details.get("items_sha256"),
-    }
-
-
-def _print_truncated(console: Console, details: Mapping[str, Any]) -> None:
-    """Say how many answers the token budget cut off, when any were."""
-    truncated = details.get("truncated", 0)
-    if truncated:
-        console.print(
-            f"  [bold yellow]⚠ {truncated} truncated[/] (token budget ran out before an "
-            "answer; counted as wrong)"
-        )
+PluginRunner = Callable[..., None]
 
 
 def _run_gsm8k_benchmark(
@@ -65,171 +91,19 @@ def _run_gsm8k_benchmark(
     output_dir: str | None = None,
     run_context: RunContext | None = None,
 ) -> None:
-    """Run the GSM8K grade-school math benchmark and display results."""
-    from rich.panel import Panel
-
-    from tool_eval_bench.adapters.factory import build_adapter
-    from tool_eval_bench.cli.helpers import adapter_options
-    from tool_eval_bench.plugins.gsm8k.plugin import GSM8KPlugin
-
-    n_shots = args.gsm8k_shots
-    limit = args.gsm8k_limit
-    shuffle = args.gsm8k_shuffle
-    seed = getattr(args, "seed", None)
-    parallel = args.parallel
-    parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
-    limit_label = "all 1319" if limit == 0 else f"{limit}"
-
-    console.print()
-    console.print(
-        Panel(
-            f"[bold]{display_name}[/]\n"
-            f"[dim]{n_shots}-shot CoT · {limit_label} questions"
-            f"{' · shuffled' if shuffle else ''}{parallel_label}[/]",
-            title="[bold]📐 GSM8K — Grade School Math[/]",
-            border_style="bright_magenta",
-        )
-    )
-
-    plugin = GSM8KPlugin()
-    result_holder: list = []
-
-    # -- Phase 1: Load dataset (with visible progress) --
-    from tool_eval_bench.plugins.gsm8k.dataset import _find_cache_file, load_dataset
-
-    dataset_items = load_dataset_with_progress(
+    """Run GSM8K, forwarding module-level ``load_dataset_with_progress`` for test seams."""
+    _run_gsm8k_impl(
         console,
-        name="GSM8K",
-        noun="questions",
-        cache_path=_find_cache_file(),
-        load=load_dataset,
-        cache_note="data/gsm8k/test.jsonl",
-    )
-    if dataset_items is None:
-        sys.exit(1)
-
-    adapter = build_adapter(base_url, **adapter_options(args))
-
-    # -- Phase 2: Evaluate with model --
-    async def run() -> None:
-        eval_total = min(limit, len(dataset_items)) if limit > 0 else len(dataset_items)
-
-        with PluginProgressDisplay(console, total=eval_total) as display:
-
-            async def on_progress(current: int, total: int, item_info: dict) -> None:
-                display.tally.record(item_info)
-                got = item_info.get("extracted_answer", "?")
-                expected = item_info.get("ground_truth", "?")
-                display.advance(
-                    current,
-                    total,
-                    stats=tally_line(display.tally, rate=display.rate_per_minute(current)),
-                    detail=(
-                        f"  {status_icon(item_info)} [bold]{got}[/]/{expected} "
-                        f"[dim italic]{truncate(item_info.get('question'))}[/]"
-                    ),
-                )
-
-            try:
-                result = await plugin.run(
-                    adapter,
-                    model=model,
-                    base_url=base_url,
-                    api_key=api_key,
-                    temperature=args.temperature,
-                    timeout_seconds=args.timeout,
-                    seed=seed,
-                    extra_params=extra_params,
-                    on_progress=on_progress,
-                    n_shots=n_shots,
-                    limit=limit,
-                    shuffle=shuffle,
-                    concurrency=args.parallel,
-                    _preloaded_items=dataset_items,
-                )
-                result_holder.append(result)
-
-                # Final state
-                total_items = result.details["total"]
-                final_speed = (
-                    total_items / result.duration_seconds * 60 if result.duration_seconds > 0 else 0
-                )
-                errs = result.details.get("errors", 0)
-                display.finish(
-                    completed=total_items,
-                    stats=final_tally_line(
-                        correct=result.details["correct"],
-                        wrong=total_items - result.details["correct"] - errs,
-                        errors=errs,
-                        score=result.score,
-                        rate=final_speed,
-                    ),
-                )
-            finally:
-                if hasattr(adapter, "aclose"):
-                    await adapter.aclose()
-
-    result = _execute_plugin(console, "GSM8K", run, result_holder)
-    if result is None:
-        return
-    details = result.details
-
-    # Display summary
-    console.print()
-    errs = details.get("errors", 0)
-    total = details["total"]
-    answered = details.get("answered", total - errs)
-    console.print(
-        f"  [bold]GSM8K Accuracy:[/] [bold magenta]{result.score:.1f}%[/] "
-        f"({details['correct']}/{total})"
-    )
-    if errs > 0:
-        console.print(
-            f"  [bold yellow]⚠ {errs} errors[/] (counted in accuracy; {answered}/{total} answered)"
-        )
-    _print_truncated(console, details)
-    console.print(f"  [bold]Rating:[/] {result.rating}")
-    console.print(
-        f"  [dim]Duration: {result.duration_seconds:.1f}s · Tokens: {result.total_tokens:,}[/]"
-    )
-
-    report_lines = plugin.render_report_section(result)
-    _finalize_plugin_run(
-        console,
-        mode="gsm8k",
-        title="GSM8K",
-        display_name=display_name,
-        result=result,
-        config={
-            "model": model,
-            "base_url": base_url,
-            "mode": "gsm8k",
-            "n_shots": n_shots,
-            "limit": limit,
-            "temperature": args.temperature,
-            "seed": seed,
-            "shuffle": shuffle,
-            # An unseeded shuffle draws its own seed; recording it keeps two
-            # such runs from sharing a fingerprint and makes the sample
-            # reproducible.
-            "shuffle_seed": details.get("shuffle_seed"),
-            "extra_params": extra_params or None,
-            **_dataset_identity(details),
-        },
-        report_metrics=[
-            f"- **Accuracy**: **{result.score:.1f}%**",
-            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
-        ],
-        report_lines=report_lines,
+        model,
+        display_name,
+        base_url,
+        api_key,
+        args,
+        extra_params=extra_params,
         output_dir=output_dir,
-        label=getattr(args, "label", None),
         run_context=run_context,
+        load_dataset_fn=load_dataset_with_progress,
     )
-
-
-# ---------------------------------------------------------------------------
-# MMLU benchmark (--mmlu / --mmlu-only)
-# ---------------------------------------------------------------------------
 
 
 def _run_mmlu_benchmark(
@@ -244,214 +118,19 @@ def _run_mmlu_benchmark(
     output_dir: str | None = None,
     run_context: RunContext | None = None,
 ) -> None:
-    """Run the MMLU benchmark and display results."""
-    from rich.markup import escape
-    from rich.panel import Panel
-
-    from tool_eval_bench.adapters.factory import build_adapter
-    from tool_eval_bench.cli.helpers import adapter_options
-    from tool_eval_bench.plugins.mmlu.plugin import (
-        SAMPLING,
-        MMLUPlugin,
-        resolve_subjects,
-        select_items,
-    )
-
-    n_shots = args.mmlu_shots
-    limit = args.mmlu_limit
-    subjects_str = args.mmlu_subjects
-    seed = getattr(args, "seed", None)
-    limit_label = "all 14042" if limit == 0 else f"{limit} stratified"
-    subjects_list: list[str] | None = None
-    if subjects_str is not None:
-        # Normalised so "STEM" and "stem,STEM" store, and fingerprint, alike.
-        subjects_list = sorted({s.strip().lower() for s in subjects_str.split(",") if s.strip()})
-        subjects_str = ",".join(subjects_list)
-        # A typo or an empty list would otherwise download 14K questions first.
-        try:
-            if not subjects_list:
-                raise ValueError("--mmlu-subjects needs at least one subject or category")
-            resolve_subjects(subjects_list)
-        except ValueError as exc:
-            report_run_failed(console, f"\n[bold red]MMLU error:[/] {escape(str(exc))}")
-            sys.exit(1)
-    subjects_label = f" · subjects: {subjects_str}" if subjects_str else ""
-
-    parallel = args.parallel
-    parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
-
-    console.print()
-    console.print(
-        Panel(
-            f"[bold]{display_name}[/]\n"
-            f"[dim]{n_shots}-shot · {limit_label} questions{subjects_label}{parallel_label}[/]",
-            title="[bold]🧠 MMLU — Massive Multitask Language Understanding[/]",
-            border_style="bright_blue",
-        )
-    )
-
-    plugin = MMLUPlugin()
-    result_holder: list = []
-
-    # -- Phase 1: Load dataset (with visible progress) --
-    from tool_eval_bench.plugins.mmlu.dataset import _find_cache_file, load_dataset
-
-    test_items = load_dataset_with_progress(
+    """Run MMLU, forwarding module-level ``load_dataset_with_progress`` for test seams."""
+    _run_mmlu_impl(
         console,
-        name="MMLU",
-        noun="questions",
-        cache_path=_find_cache_file("test"),
-        load=lambda **kw: load_dataset("test", **kw),
-        cache_note="data/mmlu/test.jsonl",
-        partial_path=Path("data") / "mmlu" / "test.partial.jsonl",
-    )
-    if test_items is None:
-        sys.exit(1)
-
-    # Load dev split for few-shot.  Same loader as the test split, so a failed
-    # download is reported and resumable instead of escaping as a traceback.
-    dev_items: Any = []
-    if n_shots > 0:
-        dev_items = load_dataset_with_progress(
-            console,
-            name="MMLU dev split",
-            noun="few-shot examples",
-            cache_path=_find_cache_file("dev"),
-            load=lambda **kw: load_dataset("dev", **kw),
-            cache_note="data/mmlu/dev.jsonl",
-            partial_path=Path("data") / "mmlu" / "dev.partial.jsonl",
-        )
-        if dev_items is None:
-            sys.exit(1)
-
-    adapter = build_adapter(base_url, **adapter_options(args))
-    preloaded = {"test": test_items, "dev": dev_items}
-
-    # -- Phase 2: Evaluate with model --
-    async def run() -> None:
-        # The plugin makes the same selection; this only sizes the progress bar.
-        eval_total = len(select_items(test_items, subjects_list, limit))
-
-        with PluginProgressDisplay(console, total=eval_total) as display:
-
-            async def on_progress(current: int, total: int, item_info: dict) -> None:
-                display.tally.record(item_info)
-                got = item_info.get("extracted_answer", "?")
-                expected = item_info.get("ground_truth", "?")
-                subj = item_info.get("subject", "?")
-                display.advance(
-                    current,
-                    total,
-                    stats=tally_line(
-                        display.tally, rate=display.rate_per_minute(current), accent="blue"
-                    ),
-                    detail=(
-                        f"  {status_icon(item_info)} [bold]{got}[/]/{expected} "
-                        f"[dim]{subj}[/]  [dim italic]{truncate(item_info.get('question'))}[/]"
-                    ),
-                )
-
-            try:
-                result = await plugin.run(
-                    adapter,
-                    model=model,
-                    base_url=base_url,
-                    api_key=api_key,
-                    temperature=args.temperature,
-                    timeout_seconds=args.timeout,
-                    seed=seed,
-                    extra_params=extra_params,
-                    on_progress=on_progress,
-                    n_shots=n_shots,
-                    limit=limit,
-                    subjects=subjects_list,
-                    concurrency=args.parallel,
-                    _preloaded_items=preloaded,
-                )
-                result_holder.append(result)
-
-                total_items = result.details["total"]
-                final_speed = (
-                    total_items / result.duration_seconds * 60 if result.duration_seconds > 0 else 0
-                )
-                errs = result.details.get("errors", 0)
-                display.finish(
-                    completed=total_items,
-                    stats=final_tally_line(
-                        correct=result.details["correct"],
-                        wrong=total_items - result.details["correct"] - errs,
-                        errors=errs,
-                        score=result.score,
-                        rate=final_speed,
-                        accent="blue",
-                    ),
-                )
-            finally:
-                if hasattr(adapter, "aclose"):
-                    await adapter.aclose()
-
-    result = _execute_plugin(console, "MMLU", run, result_holder)
-    if result is None:
-        return
-    details = result.details
-
-    console.print()
-    errs = details.get("errors", 0)
-    total = details["total"]
-    answered = details.get("answered", total - errs)
-    console.print(
-        f"  [bold]MMLU Accuracy:[/] [bold blue]{result.score:.1f}%[/] "
-        f"({details['correct']}/{total})"
-    )
-    if errs > 0:
-        console.print(
-            f"  [bold yellow]⚠ {errs} errors[/] (counted in accuracy; {answered}/{total} answered)"
-        )
-    _print_truncated(console, details)
-    console.print(f"  [bold]Rating:[/] {result.rating}")
-    # Show category breakdown
-    cats = details.get("categories", {})
-    if cats:
-        parts = [f"{cat}: {c['accuracy']:.1f}%" for cat, c in sorted(cats.items())]
-        console.print(f"  [dim]{' · '.join(parts)}[/]")
-    console.print(
-        f"  [dim]Duration: {result.duration_seconds:.1f}s · Tokens: {result.total_tokens:,}[/]"
-    )
-
-    report_lines = plugin.render_report_section(result)
-    _finalize_plugin_run(
-        console,
-        mode="mmlu",
-        title="MMLU",
-        display_name=display_name,
-        result=result,
-        config={
-            "model": model,
-            "base_url": base_url,
-            "mode": "mmlu",
-            "n_shots": n_shots,
-            "limit": limit,
-            "sampling": SAMPLING,
-            "temperature": args.temperature,
-            "seed": seed,
-            "subjects": subjects_str,
-            "extra_params": extra_params or None,
-            **_dataset_identity(details),
-        },
-        report_metrics=[
-            f"- **Accuracy**: **{result.score:.1f}%**",
-            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
-        ],
-        report_lines=report_lines,
+        model,
+        display_name,
+        base_url,
+        api_key,
+        args,
+        extra_params=extra_params,
         output_dir=output_dir,
-        label=getattr(args, "label", None),
         run_context=run_context,
+        load_dataset_fn=load_dataset_with_progress,
     )
-
-
-# ---------------------------------------------------------------------------
-# IFEval benchmark (--ifeval / --ifeval-only)
-# ---------------------------------------------------------------------------
 
 
 def _run_ifeval_benchmark(
@@ -466,509 +145,19 @@ def _run_ifeval_benchmark(
     output_dir: str | None = None,
     run_context: RunContext | None = None,
 ) -> None:
-    """Run the IFEval instruction-following benchmark and display results."""
-    from rich.panel import Panel
-
-    from tool_eval_bench.adapters.factory import build_adapter
-    from tool_eval_bench.cli.helpers import adapter_options
-    from tool_eval_bench.plugins.ifeval.plugin import IFEvalPlugin
-
-    limit = args.ifeval_limit
-    seed = getattr(args, "seed", None)
-    limit_label = "all 541" if limit == 0 else f"{limit}"
-
-    parallel = args.parallel
-    parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
-
-    console.print()
-    console.print(
-        Panel(
-            f"[bold]{display_name}[/]\n[dim]{limit_label} prompts · 25 constraint types{parallel_label}[/]",
-            title="[bold]📋 IFEval — Instruction Following Evaluation[/]",
-            border_style="bright_green",
-        )
-    )
-
-    plugin = IFEvalPlugin()
-    result_holder: list = []
-
-    # -- Phase 1: Load dataset --
-    from tool_eval_bench.plugins.ifeval.dataset import _find_cache_file, load_dataset
-
-    dataset_items = load_dataset_with_progress(
+    """Run IFEval, forwarding module-level ``load_dataset_with_progress`` for test seams."""
+    _run_ifeval_impl(
         console,
-        name="IFEval",
-        noun="prompts",
-        cache_path=_find_cache_file(),
-        load=load_dataset,
-        cache_note="data/ifeval/prompts.jsonl",
-        partial_path=Path("data") / "ifeval" / "prompts.partial.jsonl",
-    )
-    if dataset_items is None:
-        sys.exit(1)
-
-    adapter = build_adapter(base_url, **adapter_options(args))
-
-    # -- Phase 2: Evaluate with model --
-    async def run() -> None:
-
-        eval_total = min(limit, len(dataset_items)) if limit > 0 else len(dataset_items)
-
-        instructions_passed = 0
-        instructions_total = 0
-
-        with PluginProgressDisplay(console, total=eval_total) as display:
-
-            async def on_progress(current: int, total: int, item_info: dict) -> None:
-                # IFEval scores whole prompts, and also reports how many
-                # individual constraints within each prompt were satisfied, so
-                # its tally carries two percentages rather than one accuracy.
-                nonlocal instructions_passed, instructions_total
-                display.tally.record({**item_info, "correct": item_info.get("prompt_pass")})
-                instructions_passed += item_info.get("instructions_passed", 0)
-                instructions_total += item_info.get("instructions_total", 0)
-
-                inst_pct = (
-                    (instructions_passed / instructions_total * 100)
-                    if instructions_total > 0
-                    else 0
-                )
-                status_parts = [
-                    f"  [bold green]✓ {display.tally.correct}[/]",
-                    f"[bold red]✗ {display.tally.wrong}[/]",
-                ]
-                if display.tally.errors > 0:
-                    status_parts.append(f"[bold yellow]⚠ {display.tally.errors}[/]")
-                status_parts += [
-                    "[dim]│[/]",
-                    f"[bold green]{display.tally.accuracy:.1f}%[/] prompt",
-                    f"[bold cyan]{inst_pct:.1f}%[/] instr",
-                    "[dim]│[/]",
-                    f"[dim]{display.rate_per_minute(current):.1f} p/min[/]",
-                ]
-                ip = item_info.get("instructions_passed", 0)
-                it = item_info.get("instructions_total", 0)
-                display.advance(
-                    current,
-                    total,
-                    stats="  ".join(status_parts),
-                    detail=(
-                        f"  {status_icon(item_info, key='prompt_pass')} [bold]{ip}[/]/{it} "
-                        f"constraints  [dim italic]{truncate(item_info.get('prompt'))}[/]"
-                    ),
-                )
-
-            try:
-                result = await plugin.run(
-                    adapter,
-                    model=model,
-                    base_url=base_url,
-                    api_key=api_key,
-                    temperature=args.temperature,
-                    timeout_seconds=args.timeout,
-                    seed=seed,
-                    extra_params=extra_params,
-                    on_progress=on_progress,
-                    limit=limit,
-                    concurrency=args.parallel,
-                    _preloaded_items=dataset_items,
-                )
-                result_holder.append(result)
-
-                d = result.details
-                final_speed = (
-                    d["total"] / result.duration_seconds * 60 if result.duration_seconds > 0 else 0
-                )
-                errs = d.get("errors", 0)
-                wrong = d["total"] - d["prompts_passed"] - errs
-                parts = f"  [bold green]✓ {d['prompts_passed']}[/]  [bold red]✗ {wrong}[/]  "
-                if errs > 0:
-                    parts += f"[bold yellow]⚠ {errs} errors[/]  "
-                parts += (
-                    f"[dim]│[/]  "
-                    f"[bold green]{d['prompt_accuracy']:.1f}%[/] prompt  "
-                    f"[bold cyan]{d.get('instruction_accuracy', 0):.1f}%[/] instr  "
-                    f"[dim]│[/]  "
-                    f"[dim]{final_speed:.1f} p/min[/]"
-                )
-                display.finish(completed=d["total"], stats=parts)
-            finally:
-                if hasattr(adapter, "aclose"):
-                    await adapter.aclose()
-
-    result = _execute_plugin(console, "IFEval", run, result_holder)
-    if result is None:
-        return
-    details = result.details
-
-    console.print()
-    errs = details.get("errors", 0)
-    total = details["total"]
-    answered = details.get("answered", total - errs)
-    console.print(
-        f"  [bold]IFEval Prompt Accuracy:[/] [bold green]{details.get('prompt_accuracy', 0):.1f}%[/] "
-        f"({details['prompts_passed']}/{total})"
-    )
-    if errs > 0:
-        console.print(
-            f"  [bold yellow]⚠ {errs} errors[/] (counted in accuracy; {answered}/{total} answered)"
-        )
-    _print_truncated(console, details)
-    console.print(
-        f"  [bold]IFEval Instruction Accuracy:[/] [bold cyan]"
-        f"{details.get('instruction_accuracy', 0):.1f}%[/] "
-        f"({details.get('instructions_passed', 0)}/{details.get('instructions_total', 0)})"
-    )
-    console.print(f"  [bold]Rating:[/] {result.rating}")
-    console.print(
-        f"  [dim]Duration: {result.duration_seconds:.1f}s · Tokens: {result.total_tokens:,}[/]"
-    )
-
-    report_lines = plugin.render_report_section(result)
-    _finalize_plugin_run(
-        console,
-        mode="ifeval",
-        title="IFEval",
-        display_name=display_name,
-        result=result,
-        config={
-            "model": model,
-            "base_url": base_url,
-            "mode": "ifeval",
-            "limit": limit,
-            "temperature": args.temperature,
-            "seed": seed,
-            "extra_params": extra_params or None,
-            **_dataset_identity(details),
-        },
-        report_metrics=[
-            f"- **Prompt Accuracy**: **{details.get('prompt_accuracy', 0):.1f}%**",
-            f"- **Instruction Accuracy**: **{details.get('instruction_accuracy', 0):.1f}%**",
-            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
-        ],
-        report_lines=report_lines,
+        model,
+        display_name,
+        base_url,
+        api_key,
+        args,
+        extra_params=extra_params,
         output_dir=output_dir,
-        label=getattr(args, "label", None),
         run_context=run_context,
+        load_dataset_fn=load_dataset_with_progress,
     )
-
-
-# ---------------------------------------------------------------------------
-# Needle in a haystack (--needle / --needle-only)
-# ---------------------------------------------------------------------------
-
-# The prompt scaffolding, the question, and the answer budget all live inside
-# the context window alongside the haystack.  Sizing haystacks against the raw
-# window would push the largest cells past it and score a context overflow as a
-# retrieval failure.
-_NEEDLE_PROMPT_OVERHEAD = 2048
-
-# The shallowest haystack worth probing.  Below this a miss says nothing about
-# long-context retrieval.
-_NEEDLE_MIN_TOKENS = 1024
-
-
-def _needle_context_lengths(context_size: int, steps: int) -> list[int]:
-    """Evenly spaced haystack sizes from ``_NEEDLE_MIN_TOKENS`` to the window."""
-    usable = context_size - _NEEDLE_PROMPT_OVERHEAD
-    if usable <= _NEEDLE_MIN_TOKENS:
-        return [max(1, usable)]
-    if steps < 2:
-        return [usable]
-    span = usable - _NEEDLE_MIN_TOKENS
-    return [int(_NEEDLE_MIN_TOKENS + span * i / (steps - 1)) for i in range(steps)]
-
-
-def _needle_depths(steps: int) -> list[float]:
-    """Evenly spaced depths across the haystack, inclusive of both ends."""
-    if steps < 2:
-        return [0.5]
-    return [round(i / (steps - 1), 4) for i in range(steps)]
-
-
-def _resolve_needle_context_size(
-    console: Console,
-    base_url: str,
-    model: str,
-    api_key: str | None,
-    args: argparse.Namespace,
-    run_context: RunContext | None = None,
-) -> int | None:
-    """Return the effective context window, or ``None`` when it cannot be found."""
-    import asyncio
-
-    from tool_eval_bench.adapters.measurement import HTTPMeasurementClient
-    from tool_eval_bench.runner.context_pressure import (
-        detect_context_size,
-        detect_kv_capacity,
-        reported_context_window,
-    )
-
-    if args.context_size:
-        return int(args.context_size)
-
-    context_size = asyncio.run(
-        detect_context_size(
-            base_url,
-            model,
-            api_key,
-            client_factory=HTTPMeasurementClient,
-            reported_context=reported_context_window(run_context),
-        )
-    )
-    if context_size is None:
-        report_run_failed(
-            console,
-            "\n[bold red]Error:[/] Could not auto-detect the context window. "
-            "Use --context-size to specify it.",
-        )
-        return None
-
-    # Same cap the pressure sweep applies: a server may have allocated far less
-    # KV cache than the model architecture allows, and a haystack it cannot hold
-    # measures the deployment rather than the model.
-    kv_info = asyncio.run(
-        detect_kv_capacity(
-            base_url,
-            api_key,
-            metrics_url=getattr(args, "metrics_url", None),
-            client_factory=HTTPMeasurementClient,
-        )
-    )
-    if kv_info is not None and not kv_info.is_hybrid and kv_info.capacity < context_size:
-        console.print(
-            f"  [dim]⚠ KV cache capacity ({kv_info.capacity:,} tokens) < "
-            f"max_model_len ({context_size:,}) — capping[/]"
-        )
-        context_size = kv_info.capacity
-    return context_size
-
-
-def _run_needle_benchmark(
-    console: Console,
-    model: str,
-    display_name: str,
-    base_url: str,
-    api_key: str | None,
-    args: argparse.Namespace,
-    *,
-    extra_params: dict[str, Any] | None = None,
-    output_dir: str | None = None,
-    run_context: RunContext | None = None,
-) -> None:
-    """Run needle-in-a-haystack retrieval and display the grid."""
-    from rich.panel import Panel
-
-    from tool_eval_bench.adapters.factory import build_adapter
-    from tool_eval_bench.cli.helpers import adapter_options
-    from tool_eval_bench.plugins.needle.haystack import build_cases
-    from tool_eval_bench.plugins.needle.plugin import ESTIMATE_NOTE, NeedlePlugin
-
-    seed = getattr(args, "seed", None)
-
-    context_size = _resolve_needle_context_size(
-        console, base_url, model, api_key, args, run_context=run_context
-    )
-    if context_size is None:
-        if isinstance(console, HeadlessConsole):
-            sys.exit(1)
-        return
-
-    lengths = _needle_context_lengths(context_size, max(1, args.needle_lengths))
-    depths = _needle_depths(max(1, args.needle_depths))
-    cases = build_cases(lengths, depths, seed=seed)
-
-    parallel = args.parallel
-    parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
-
-    console.print()
-    console.print(
-        Panel(
-            f"[bold]{display_name}[/]\n"
-            f"[dim]{len(lengths)} haystack sizes × {len(depths)} depths = "
-            f"{len(cases)} needles · up to ~{lengths[-1]:,} tokens (estimated)"
-            f"{parallel_label}[/]",
-            title="[bold]🪡 Needle in a Haystack — Retrieval[/]",
-            border_style="bright_yellow",
-        )
-    )
-
-    plugin = NeedlePlugin()
-    adapter = build_adapter(base_url, **adapter_options(args))
-    result_holder: list = []
-
-    # A 100K-token prompt takes far longer to prefill than a scenario turn, so
-    # the per-request timeout scales with the largest haystack in the grid.
-    effective_timeout = max(args.timeout, 120.0 + lengths[-1] / 50_000 * 60.0)
-
-    async def run() -> None:
-        with PluginProgressDisplay(console, total=len(cases)) as display:
-
-            async def on_progress(current: int, total: int, item_info: dict) -> None:
-                display.tally.record({**item_info, "correct": item_info.get("found")})
-                display.advance(
-                    current,
-                    total,
-                    stats=tally_line(
-                        display.tally,
-                        rate=display.rate_per_minute(current),
-                        unit="n/min",
-                        accent="yellow",
-                    ),
-                    detail=(
-                        f"  {status_icon(item_info, key='found')} "
-                        f"[bold]{item_info.get('cell_id')}[/]  "
-                        f"[dim italic]{truncate(item_info.get('model_response'))}[/]"
-                    ),
-                )
-
-            try:
-                result = await plugin.run(
-                    adapter,
-                    model=model,
-                    base_url=base_url,
-                    api_key=api_key,
-                    temperature=args.temperature,
-                    timeout_seconds=effective_timeout,
-                    seed=seed,
-                    extra_params=extra_params,
-                    on_progress=on_progress,
-                    cases=cases,
-                    concurrency=parallel,
-                    context_size=context_size,
-                )
-                result_holder.append(result)
-                d = result.details
-                display.finish(
-                    completed=d["total"],
-                    stats=final_tally_line(
-                        correct=d["retrieved"],
-                        wrong=d["total"] - d["retrieved"] - d.get("errors", 0),
-                        errors=d.get("errors", 0),
-                        score=d["accuracy"],
-                        rate=(
-                            d["total"] / result.duration_seconds * 60
-                            if result.duration_seconds > 0
-                            else 0
-                        ),
-                        unit="n/min",
-                        accent="yellow",
-                    ),
-                )
-            finally:
-                if hasattr(adapter, "aclose"):
-                    await adapter.aclose()
-
-    result = _execute_plugin(console, "Needle", run, result_holder)
-    if result is None:
-        return
-    details = result.details
-
-    console.print()
-    _print_needle_grid(console, result)
-    console.print()
-    console.print(
-        f"  [bold]Retrieval Accuracy:[/] [bold green]{details['accuracy']:.1f}%[/] "
-        f"({details['retrieved']}/{details['total']})"
-    )
-    effective = details.get("effective_context")
-    if effective:
-        console.print(
-            f"  [bold]Effective context:[/] [bold cyan]~{effective:,}[/] tokens "
-            f"[dim](estimated; largest haystack retrieved at every depth)[/]"
-        )
-    else:
-        console.print(
-            "  [bold yellow]Effective context:[/] none — every haystack size missed a needle"
-        )
-    console.print(f"  [dim]{ESTIMATE_NOTE}[/]")
-    errs = details.get("errors", 0)
-    if errs > 0:
-        console.print(f"  [bold yellow]⚠ {errs} errors[/] (counted as misses)")
-    _print_truncated(console, details)
-    console.print(f"  [bold]Rating:[/] {result.rating}")
-    console.print(
-        f"  [dim]Duration: {result.duration_seconds:.1f}s · Tokens: {result.total_tokens:,}[/]"
-    )
-
-    _finalize_plugin_run(
-        console,
-        mode="needle",
-        title="Needle in a Haystack",
-        display_name=display_name,
-        result=result,
-        config={
-            "model": model,
-            "base_url": base_url,
-            "mode": "needle",
-            "context_size": context_size,
-            "lengths": lengths,
-            "depths": depths,
-            "temperature": args.temperature,
-            "seed": seed,
-            "extra_params": extra_params or None,
-        },
-        report_metrics=[
-            f"- **Retrieval Accuracy**: **{details['accuracy']:.1f}%**",
-            "- **Effective Context**: "
-            + (f"~{effective:,} tokens (estimated)" if effective else "none"),
-            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
-        ],
-        report_lines=plugin.render_report_section(result),
-        output_dir=output_dir,
-        label=getattr(args, "label", None),
-        run_context=run_context,
-    )
-
-
-def _print_needle_grid(console: Console, result: Any) -> None:
-    """Print the retrieval grid as depth rows against haystack-size columns."""
-    from rich.table import Table
-
-    from tool_eval_bench.plugins.needle.plugin import estimated_size_label
-
-    details = result.details
-    lengths: list[int] = details.get("context_lengths", [])
-    depths: list[float] = details.get("depths", [])
-    if not lengths or not depths:
-        return
-
-    found = {(r["context_tokens"], r["depth_percent"]): r["found"] for r in result.item_results}
-
-    table = Table(title="Retrieval grid", title_style="bold", border_style="bright_yellow")
-    table.add_column("Depth", justify="right", style="dim")
-    for length in lengths:
-        table.add_column(estimated_size_label(length), justify="center")
-    for depth in depths:
-        cells = ["[green]●[/]" if found.get((length, depth)) else "[red]○[/]" for length in lengths]
-        table.add_row(f"{depth:.0%}", *cells)
-    console.print(table)
-
-
-# ---------------------------------------------------------------------------
-# Toolscale sweep (--toolscale / --toolscale-only)
-# ---------------------------------------------------------------------------
-
-
-# OpenAI's Chat Completions API rejects requests with more tools than this.
-_OPENAI_TOOL_CAP = 128
-
-# A catalog tool definition costs about this many prompt tokens. Used only to
-# stretch the request timeout for long tool lists, as the needle runner does
-# for long haystacks.
-_TOKENS_PER_TOOL_ESTIMATE = 135
-
-
-def _toolscale_timeout(requested: float, largest_count: int) -> float:
-    """The per-request timeout, stretched so a long tool list can prefill."""
-    return max(requested, 120.0 + largest_count * _TOKENS_PER_TOOL_ESTIMATE / 50_000 * 60.0)
-
-
-def _toolscale_list(value: str, flag: str) -> list[str]:
-    items = [part.strip() for part in value.split(",") if part.strip()]
-    if not items:
-        raise ValueError(f"{flag} needs at least one value")
-    return items
 
 
 def _run_toolscale_benchmark(
@@ -983,570 +172,19 @@ def _run_toolscale_benchmark(
     output_dir: str | None = None,
     run_context: RunContext | None = None,
 ) -> None:
-    """Run the tool-count x similarity selection sweep and display the grid."""
-    from rich.markup import escape
-    from rich.panel import Panel
-
-    from tool_eval_bench.adapters.factory import build_adapter
-    from tool_eval_bench.cli.helpers import adapter_options
-    from tool_eval_bench.plugins.toolscale.catalog import (
-        CatalogError,
-        lint_catalog,
-        load_builtin_catalog,
-        load_catalog_file,
-    )
-    from tool_eval_bench.plugins.toolscale.grid import GridError, build_items
-    from tool_eval_bench.plugins.toolscale.plugin import ToolscalePlugin
-
-    seed = getattr(args, "seed", None)
-    trials = max(1, getattr(args, "trials", 1) or 1)
-    catalog_path = getattr(args, "toolscale_catalog", None)
-    limit = args.toolscale_limit or None
-    try:
-        counts = [int(c) for c in _toolscale_list(args.toolscale_counts, "--toolscale-counts")]
-        levels = _toolscale_list(args.toolscale_similarity, "--toolscale-similarity")
-        cues = _toolscale_list(args.toolscale_cues, "--toolscale-cues")
-        densities = _toolscale_list(args.toolscale_fillers, "--toolscale-fillers")
-        described = _toolscale_list(args.toolscale_descriptions, "--toolscale-descriptions")
-        catalog = load_catalog_file(catalog_path) if catalog_path else load_builtin_catalog()
-        items = build_items(
-            catalog,
-            counts=counts,
-            similarities=levels,
-            limit=limit,
-            trials=trials,
-            seed=seed if seed is not None else 0,
-            cues=cues,
-            densities=densities,
-            descriptions=described,
-        )
-    except (CatalogError, GridError, ValueError) as exc:
-        report_run_failed(console, f"\n[bold red]Toolscale error:[/] {escape(str(exc))}")
-        sys.exit(1)
-
-    if catalog.is_custom:
-        # A private catalog may break the authoring conventions on purpose, so
-        # problems are warnings. Names stay out of the console for the same
-        # reason the report withholds them.
-        problems = lint_catalog(catalog)
-        if problems:
-            console.print(
-                f"  [yellow]⚠ {len(problems)} catalog lint finding(s): items may be "
-                "ambiguous. Run lint_catalog() on the file to see them.[/]"
-            )
-
-    counts = sorted({item.count for item in items})
-    if counts[-1] > _OPENAI_TOOL_CAP:
-        console.print(
-            f"  [yellow]⚠ N up to {counts[-1]}: some providers cap tools per request "
-            f"(OpenAI: {_OPENAI_TOOL_CAP}). A rejected request is recorded as an error, "
-            "not a wrong pick. Local OpenAI-compatible servers have no tool cap.[/]"
-        )
-    levels = [
-        lvl for lvl in ("near", "related", "distinct") if any(i.similarity == lvl for i in items)
-    ]
-    # Conditions come from the grid items: the N=1 control is always sparse.
-    grid_items = [i for i in items if i.count > 1] or items
-    cues = [cue for cue in ("literal", "implied") if any(i.cue == cue for i in grid_items)]
-    densities = [d for d in ("sparse", "crowded") if any(i.density == d for i in grid_items)]
-    described = [
-        level
-        for level in ("clean", "terse", "bare")
-        if any(i.descriptions == level for i in grid_items)
-    ]
-    if len(described) > 1 and "clean" not in described:
-        console.print(
-            "  [yellow]⚠ Description effects compare against clean descriptions; add clean "
-            "to --toolscale-descriptions to measure them.[/]"
-        )
-    targets = len({item.target_rank for item in items})
-    parallel = args.parallel
-    parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
-    console.print()
-    console.print(
-        Panel(
-            f"[bold]{display_name}[/]\n"
-            f"[dim]N = {', '.join(map(str, counts))} × {', '.join(levels)} × "
-            f"{', '.join(cues)} cue · {', '.join(densities)} fillers · "
-            f"{', '.join(described)} descriptions · {targets} targets · "
-            f"{trials} trial(s) = "
-            f"{len(items)} requests · "
-            f"catalog v{catalog.version} ({catalog.source}){parallel_label}[/]",
-            title="[bold]🧰 Toolscale — Tool Count × Similarity[/]",
-            border_style="bright_blue",
-        )
-    )
-
-    plugin = ToolscalePlugin()
-    adapter = build_adapter(base_url, **adapter_options(args))
-    result_holder: list = []
-
-    async def run() -> None:
-        with PluginProgressDisplay(console, total=len(items)) as display:
-
-            async def on_progress(current: int, total: int, item_info: dict) -> None:
-                display.tally.record(item_info)
-                label = (
-                    f"N{item_info.get('count')}/{item_info.get('similarity')}/"
-                    f"{item_info.get('cue')}/{item_info.get('density')}/"
-                    f"{item_info.get('descriptions')}"
-                    if catalog.is_custom
-                    else item_info.get("item_id")
-                )
-                display.advance(
-                    current,
-                    total,
-                    stats=tally_line(
-                        display.tally,
-                        rate=display.rate_per_minute(current),
-                        unit="req/min",
-                        accent="blue",
-                    ),
-                    detail=(
-                        f"  {status_icon(item_info)} [bold]{escape(str(label))}[/]  "
-                        f"[dim]{item_info.get('outcome')}[/]"
-                    ),
-                )
-
-            try:
-                result = await plugin.run(
-                    adapter,
-                    model=model,
-                    base_url=base_url,
-                    api_key=api_key,
-                    temperature=args.temperature,
-                    timeout_seconds=_toolscale_timeout(args.timeout, counts[-1]),
-                    seed=seed,
-                    extra_params=extra_params,
-                    on_progress=on_progress,
-                    items=items,
-                    catalog=catalog,
-                    concurrency=parallel,
-                )
-                result_holder.append(result)
-                d = result.details
-                # The tally describes the scored items (the grid, or the
-                # control when it ran alone), so its counts agree with the score.
-                display.finish(
-                    completed=d["total"],
-                    stats=final_tally_line(
-                        correct=d["grid_correct"],
-                        wrong=d["grid_items"] - d["grid_correct"] - d["grid_errors"],
-                        errors=d["grid_errors"],
-                        score=d["accuracy"],
-                        rate=(
-                            d["total"] / result.duration_seconds * 60
-                            if result.duration_seconds > 0
-                            else 0
-                        ),
-                        unit="req/min",
-                        accent="blue",
-                    ),
-                )
-            finally:
-                if hasattr(adapter, "aclose"):
-                    await adapter.aclose()
-
-    result = _execute_plugin(console, "Toolscale", run, result_holder)
-    if result is None:
-        return
-    details = result.details
-
-    console.print()
-    _print_toolscale_grid(console, result)
-    console.print()
-    console.print(
-        f"  [bold]Accuracy when called:[/] [bold green]{details['accuracy_when_called']:.1f}%[/] "
-        f"({details['grid_correct']}/{details['grid_called']})  ·  "
-        f"[bold]Call rate:[/] [bold cyan]{details['call_rate']:.1f}%[/] "
-        f"({details['grid_called']}/{details['grid_items']})"
-    )
-    for axis in ("by_cue", "by_density", "by_descriptions"):
-        breakdown = details.get(axis, {})
-        if len(breakdown) > 1:
-            for value, h in breakdown.items():
-                console.print(
-                    f"    [dim]{value}:[/] {h['accuracy_when_called']:.1f}% when called · "
-                    f"{h['call_rate']:.1f}% call rate"
-                )
-    _print_toolscale_effects(console, details)
-    for cue, control in (details.get("control") or {}).items():
-        console.print(
-            f"  [bold]Control (N=1, {cue}):[/] {control['accuracy']:.1f}% "
-            f"({control['correct']}/{control['items']})"
-        )
-    console.print(f"  [dim]Combined accuracy (stored score): {details['accuracy']:.1f}%[/]")
-    errs = details.get("errors", 0)
-    if errs > 0:
-        console.print(f"  [bold yellow]⚠ {errs} errors[/] (counted as misses)")
-    console.print(f"  [bold]Rating:[/] {result.rating}")
-    console.print(
-        f"  [dim]Duration: {result.duration_seconds:.1f}s · Tokens: {result.total_tokens:,}[/]"
-    )
-
-    _finalize_plugin_run(
+    """Run Toolscale, forwarding module-level ``_OPENAI_TOOL_CAP`` for test seams."""
+    _run_toolscale_impl(
         console,
-        mode="toolscale",
-        title="Toolscale",
-        display_name=display_name,
-        result=result,
-        config={
-            "model": model,
-            "base_url": base_url,
-            "mode": "toolscale",
-            # A catalog edit or a different grid must never share a fingerprint
-            # with older runs.
-            "catalog_version": catalog.version,
-            "catalog_source": catalog.source,
-            "catalog_sha256": catalog.sha256,
-            "counts": counts,
-            "similarities": levels,
-            "cues": cues,
-            "densities": densities,
-            "descriptions": described,
-            "targets": targets,
-            "trials": trials,
-            "temperature": args.temperature,
-            "seed": seed,
-            "extra_params": extra_params or None,
-        },
-        report_metrics=[
-            f"- **Accuracy when called**: **{details['accuracy_when_called']:.1f}%**",
-            f"- **Call rate**: **{details['call_rate']:.1f}%**",
-            f"- **Combined accuracy**: {details['accuracy']:.1f}%",
-            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
-        ],
-        report_lines=plugin.render_report_section(result),
+        model,
+        display_name,
+        base_url,
+        api_key,
+        args,
+        extra_params=extra_params,
         output_dir=output_dir,
-        label=getattr(args, "label", None),
         run_context=run_context,
+        openai_tool_cap=_OPENAI_TOOL_CAP,
     )
-
-
-# Console wording for each condition-axis effect: (details key, name, contrast).
-_TOOLSCALE_EFFECTS = (
-    ("cue_effects", "Cue effect", "literal minus implied"),
-    ("density_effects", "Density effect", "sparse minus crowded"),
-    ("description_effects", "Description effect", "clean minus {versus}"),
-)
-
-
-def _print_toolscale_effects(console: Console, details: Mapping[str, Any]) -> None:
-    """One line per condition contrast: near tier, at the largest N it was measured."""
-    present = {
-        "cue": details.get("cues", ["literal"]),
-        "density": details.get("densities", ["sparse"]),
-        "descriptions": details.get("descriptions", ["clean"]),
-    }
-    baseline = {"cue": "literal", "density": "sparse", "descriptions": "clean"}
-    for key, name, contrast in _TOOLSCALE_EFFECTS:
-        effects = [e for e in details.get(key, []) if e["similarity"] == "near"]
-        # The largest N per slice: a sparse slice stops at the sparse maximum
-        # while a crowded one can run further, and both deserve a line.
-        largest: dict[tuple[Any, ...], int] = {}
-        for e in effects:
-            slice_key = tuple(e.get(a) for a in ("cue", "density", "descriptions", "versus"))
-            largest[slice_key] = max(largest.get(slice_key, 0), e["count"])
-        for e in effects:
-            slice_key = tuple(e.get(a) for a in ("cue", "density", "descriptions", "versus"))
-            if e["count"] != largest[slice_key]:
-                continue
-            context = ", ".join(
-                e.get(axis, baseline[axis])
-                for axis in ("cue", "density", "descriptions")
-                if axis in e and len(present[axis]) > 1
-            )
-            where = f"{context}, near" if context else "near"
-            console.print(
-                f"  [bold]{name}[/] ({where}, N={e['count']}): {e['delta']:+.1f} pts "
-                f"[dim]({contrast.format(versus=e['versus'])}; 95% CI "
-                f"{e['ci_low']:+.1f} to {e['ci_high']:+.1f})[/]"
-            )
-
-
-def _print_toolscale_grid(console: Console, result: Any) -> None:
-    """Print accuracy-when-called and call rate per cell, one row per tier and condition."""
-    from rich.table import Table
-
-    details = result.details
-    counts: list[int] = details.get("counts", [])
-    levels: list[str] = details.get("similarities", [])
-    cues: list[str] = details.get("cues", ["literal"])
-    densities: list[str] = details.get("densities", ["sparse"])
-    described: list[str] = details.get("descriptions", ["clean"])
-    if not counts or not levels:
-        return
-    cells = {
-        (
-            c["count"],
-            c["similarity"],
-            c["cue"],
-            c.get("density", "sparse"),
-            c.get("descriptions", "clean"),
-        ): c
-        for c in details.get("cells", [])
-    }
-
-    # Two numbers per cell in an 80-column terminal: keep them bare and say
-    # what they are once, in the title.
-    table = Table(
-        title="Accuracy when called / call rate (%)",
-        title_style="bold",
-        border_style="bright_blue",
-    )
-    table.add_column("Cue", style="dim")
-    if len(densities) > 1:
-        table.add_column("Fill", style="dim")
-    if len(described) > 1:
-        table.add_column("Desc", style="dim")
-    table.add_column("Tier", style="dim")
-    for count in counts:
-        table.add_column(f"N={count}", justify="right")
-    for cue in cues:
-        for density in densities:
-            for level_of_description in described:
-                for level in levels:
-                    labels = [cue]
-                    if len(densities) > 1:
-                        labels.append(density)
-                    if len(described) > 1:
-                        labels.append(level_of_description)
-                    labels.append(level)
-                    row = []
-                    for count in counts:
-                        cell = cells.get((count, level, cue, density, level_of_description))
-                        if cell is None:
-                            row.append("")
-                            continue
-                        acc = cell["accuracy_when_called"]
-                        colour = "green" if acc >= 90 else "yellow" if acc >= 70 else "red"
-                        row.append(f"[{colour}]{acc:.0f}[/][dim]/{cell['call_rate']:.0f}[/]")
-                    table.add_row(*labels, *row)
-    console.print(table)
-
-
-# ---------------------------------------------------------------------------
-# Decision models (--decision-bench / --decision-bench-only)
-# ---------------------------------------------------------------------------
-
-
-def _run_decision_benchmark(
-    console: Console,
-    model: str,
-    display_name: str,
-    base_url: str,
-    api_key: str | None,
-    args: argparse.Namespace,
-    *,
-    extra_params: dict[str, Any] | None = None,
-    output_dir: str | None = None,
-    run_context: RunContext | None = None,
-) -> None:
-    """Score a decision model on the typed-decisions test split and display results."""
-    from rich.markup import escape
-    from rich.panel import Panel
-
-    from tool_eval_bench.adapters.factory import build_decision_adapter
-    from tool_eval_bench.cli.helpers import adapter_options
-    from tool_eval_bench.plugins.decision.plugin import DecisionPlugin
-    from tool_eval_bench.plugins.decision.render import attribution_line, metric_text
-    from tool_eval_bench.plugins.decision.typed_decisions import (
-        DatasetIntegrityError,
-        dataset_info,
-        load_cases,
-    )
-
-    try:
-        info = dataset_info()
-    except DatasetIntegrityError as exc:
-        report_run_failed(console, f"\n[bold red]Decision error:[/] {escape(str(exc))}")
-        sys.exit(1)
-    parallel = args.parallel
-    parallel_label = f" · parallel {parallel}" if parallel > 1 else ""
-
-    console.print()
-    console.print(
-        Panel(
-            f"[bold]{display_name}[/]\n"
-            f"[dim]Typed Decisions {info.split} split · every question of a case in one "
-            f"request · single forward pass{parallel_label}[/]\n"
-            f"[dim]{escape(info.attribution)}[/]",
-            title="[bold]⚖️  Decision Models — /v1/systemone[/]",
-            border_style="bright_cyan",
-        )
-    )
-
-    plugin = DecisionPlugin()
-    adapter = build_decision_adapter(**adapter_options(args))
-    result_holder: list = []
-
-    async def run() -> None:
-        try:
-            cases = load_cases()
-            total = sum(len(c.questions) for c in cases)
-            with PluginProgressDisplay(console, total=total) as display:
-
-                async def on_progress(current: int, total: int, item_info: dict) -> None:
-                    display.tally.record(item_info)
-                    display.advance(
-                        current,
-                        total,
-                        stats=tally_line(
-                            display.tally,
-                            rate=display.rate_per_minute(current),
-                            unit="decisions/min",
-                            accent="cyan",
-                        ),
-                        detail=f"  {status_icon(item_info)} [bold]{item_info.get('id')}[/]",
-                    )
-
-                result = await plugin.run(
-                    adapter,
-                    model=model,
-                    base_url=base_url,
-                    api_key=api_key,
-                    timeout_seconds=args.timeout,
-                    on_progress=on_progress,
-                    cases=cases,
-                    concurrency=parallel,
-                )
-                result_holder.append(result)
-                rows = result.item_results
-                errs = sum(1 for r in rows if r["is_error"])
-                right = sum(1 for r in rows if r["correct"])
-                display.finish(
-                    completed=len(rows),
-                    stats=final_tally_line(
-                        correct=right,
-                        wrong=len(rows) - right - errs,
-                        errors=errs,
-                        score=right / len(rows) * 100 if rows else 0.0,
-                        rate=(
-                            len(rows) / result.duration_seconds * 60
-                            if result.duration_seconds > 0
-                            else 0
-                        ),
-                        unit="decisions/min",
-                        accent="cyan",
-                    ),
-                )
-        finally:
-            if hasattr(adapter, "aclose"):
-                await adapter.aclose()
-
-    result = _execute_plugin(console, "Decision", run, result_holder)
-    if result is None:
-        return
-    details = result.details
-    cal = details["calibration"]
-
-    console.print()
-    _print_decision_tables(console, result)
-    console.print()
-    console.print(
-        f"  [bold]Decision Accuracy:[/] [bold cyan]{result.score:.1f}%[/] "
-        f"({details['correct']}/{details['total']} decisions)"
-    )
-    console.print(
-        f"  [bold]Distance from gold:[/] KL {metric_text(details['kl'])} · "
-        f"Brier {metric_text(details['brier'])} · "
-        f"ECE {cal['ece']:.3f} · {cal['high_confidence_errors']} confident disagreement(s)"
-    )
-    errs = details.get("errors", 0)
-    if errs > 0:
-        console.print(f"  [bold yellow]⚠ {errs} decision errors[/] (counted as misses)")
-    console.print(f"  [bold]Rating:[/] {result.rating}")
-    lat = details["latency_ms"]
-    console.print(
-        f"  [dim]p50 {lat['p50']:.1f} ms · p95 {lat['p95']:.1f} ms per request · "
-        f"Duration: {result.duration_seconds:.1f}s · Input tokens: {result.total_tokens:,}[/]"
-    )
-    console.print(f"  [dim]{escape(attribution_line(details))}[/]")
-
-    _finalize_plugin_run(
-        console,
-        mode="decision",
-        title="Decision Models",
-        display_name=display_name,
-        result=result,
-        config={
-            "model": model,
-            "base_url": base_url,
-            "mode": "decision",
-            # Runs on another item set or revision must not share a fingerprint.
-            "dataset": details["dataset"],
-            "dataset_revision": details["dataset_revision"],
-            "dataset_split": details["dataset_split"],
-            "cases": details["cases"],
-        },
-        report_metrics=[
-            f"- **Accuracy**: **{result.score:.1f}%**",
-            f"- **KL from gold**: {metric_text(details['kl'])}",
-            f"- **Brier**: {metric_text(details['brier'])}",
-            f"- **ECE**: {cal['ece']:.3f}",
-            f"- **Completion**: {details.get('completion_rate', 100.0):.1f}%",
-            f"- **Dataset**: {details['dataset']} ({details['dataset_split']} split, "
-            f"revision `{details['dataset_revision']}`)",
-        ],
-        report_lines=plugin.render_report_section(result),
-        output_dir=output_dir,
-        label=getattr(args, "label", None),
-        run_context=run_context,
-    )
-
-
-def _print_decision_tables(console: Console, result: Any) -> None:
-    """Print accuracy and distance from gold by question type and workflow, then reliability."""
-    from rich.table import Table
-
-    from tool_eval_bench.plugins.decision.render import bar, metric_text
-
-    details = result.details
-
-    for title, label, key in (
-        ("Accuracy by question type", "Type", "by_type"),
-        ("Accuracy by workflow", "Workflow", "by_workflow"),
-    ):
-        table = Table(title=title, title_style="bold", border_style="bright_cyan")
-        table.add_column(label)
-        table.add_column("Correct", justify="right")
-        table.add_column("Accuracy", justify="right")
-        table.add_column("KL", justify="right")
-        table.add_column("Brier", justify="right")
-        table.add_column("")
-        for name, g in details[key].items():
-            table.add_row(
-                name,
-                f"{g['correct']}/{g['total']}",
-                f"{g['accuracy']:.1f}%",
-                metric_text(g["kl"]),
-                metric_text(g["brier"]),
-                bar(g["accuracy"] / 100),
-            )
-        console.print(table)
-
-    bins = details["calibration"]["bins"]
-    if bins:
-        rel = Table(
-            title="Reliability (confidence vs accuracy)",
-            title_style="bold",
-            border_style="bright_cyan",
-        )
-        rel.add_column("Confidence", justify="right", style="dim")
-        rel.add_column("n", justify="right")
-        rel.add_column("Confidence")
-        rel.add_column("Accuracy")
-        for b in bins:
-            rel.add_row(
-                f"{b['low']:.1f}–{b['high']:.1f}",
-                str(b["count"]),
-                f"{bar(b['mean_confidence'])} {b['mean_confidence']:.2f}",
-                f"{bar(b['accuracy'])} {b['accuracy']:.2f}",
-            )
-        console.print(rel)
-
-
-PluginRunner = Callable[..., None]
 
 
 def run_selected_plugins(
@@ -1586,3 +224,23 @@ def run_selected_plugins(
         if getattr(args, f"{stem}_only"):
             return True
     return False
+
+
+__all__ = [
+    "PluginRunner",
+    "_OPENAI_TOOL_CAP",
+    "_finalize_plugin_run",
+    "_needle_context_lengths",
+    "_needle_depths",
+    "_print_toolscale_effects",
+    "_resolve_needle_context_size",
+    "_run_decision_benchmark",
+    "_run_gsm8k_benchmark",
+    "_run_ifeval_benchmark",
+    "_run_mmlu_benchmark",
+    "_run_needle_benchmark",
+    "_run_toolscale_benchmark",
+    "_toolscale_timeout",
+    "load_dataset_with_progress",
+    "run_selected_plugins",
+]

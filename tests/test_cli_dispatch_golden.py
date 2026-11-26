@@ -36,17 +36,34 @@ BASE_URL = "http://gpu.test:8000/v1"
 CONNECTION = ["--model", "m", "--backend", "vllm", "--base-url", BASE_URL]
 
 
+_PROJECT_MODULE_CACHE: tuple[int, tuple[Any, ...]] = (-1, ())
+
+
+def _loaded_project_modules() -> tuple[Any, ...]:
+    """Return cached ``tool_eval_bench.*`` modules, refreshing when ``sys.modules`` grows."""
+    global _PROJECT_MODULE_CACHE
+    current_len = len(sys.modules)
+    cached_len, cached_modules = _PROJECT_MODULE_CACHE
+    if current_len != cached_len:
+        cached_modules = tuple(
+            module
+            for name, module in tuple(sys.modules.items())
+            if module is not None and name.startswith("tool_eval_bench")
+        )
+        _PROJECT_MODULE_CACHE = (current_len, cached_modules)
+    return cached_modules
+
+
 def _patch_everywhere(
     monkeypatch: pytest.MonkeyPatch, module_name: str, attr: str, replacement: Any
 ) -> None:
     """Replace ``module_name.attr`` and every alias of it in loaded project modules."""
-    original = getattr(importlib.import_module(module_name), attr)
-    for name, module in list(sys.modules.items()):
-        if module is None or not name.startswith("tool_eval_bench"):
-            continue
-        for key, value in list(vars(module).items()):
-            if value is original:
-                monkeypatch.setattr(module, key, replacement)
+    target_module = importlib.import_module(module_name)
+    original = getattr(target_module, attr)
+    for module in _loaded_project_modules():
+        matches = [key for key, value in module.__dict__.items() if value is original]
+        for key in matches:
+            monkeypatch.setattr(module, key, replacement)
 
 
 def _callable_name(value: Any) -> str:

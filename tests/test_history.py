@@ -827,3 +827,100 @@ class TestMcNemarSignificance:
 
             output = console.file.getvalue()
             assert "McNemar" in output
+
+    def test_compare_runs_surfaces_comparability_warnings_without_duplicating_config_diff(
+        self,
+    ) -> None:
+        """compare_runs passes run_a/run_b and renders comparability warnings cleanly."""
+        run_a = {
+            "run_id": "run_a_rubric",
+            "config": {
+                "model": "model-a",
+                "backend": "vllm",
+                "config_fingerprint": "fp-a",
+                "temperature": 0.0,
+            },
+            "metadata": {
+                "eval_rubric_version": "1",
+                "locale_version": "2",
+                "noise_version": "1",
+                "git_sha": "abc1234-dirty",
+                "engine_name": "vllm",
+            },
+            "scores": {
+                "final_score": 50,
+                "scenario_results": [
+                    {"scenario_id": "TC-01", "points": 2, "status": "pass"},
+                    {"scenario_id": "TC-02", "points": 0, "status": "fail"},
+                ],
+            },
+        }
+        run_b = {
+            "run_id": "run_b_rubric",
+            "config": {
+                "model": "model-b",
+                "backend": "vllm",
+                "config_fingerprint": "fp-b",
+                "temperature": 0.5,
+            },
+            "metadata": {
+                "eval_rubric_version": "2",
+                "locale_version": "2",
+                "noise_version": "1",
+                "engine_name": "vllm",
+            },
+            "scores": {
+                "final_score": 100,
+                "scenario_results": [
+                    {"scenario_id": "TC-01", "points": 2, "status": "pass"},
+                    {"scenario_id": "TC-02", "points": 2, "status": "pass"},
+                ],
+            },
+        }
+
+        with patch("tool_eval_bench.storage.db.RunRepository") as MockRepo:
+            repo = MagicMock()
+            repo.get.side_effect = lambda rid: run_a if rid == "run_a_rubric" else run_b
+            repo.get_latest.return_value = None
+            MockRepo.return_value = repo
+
+            console = Console(file=StringIO(), width=200, no_color=True)
+            compare_runs(console, "run_a_rubric", "run_b_rubric")
+
+            output = console.file.getvalue()
+            # Existing config diff panel still reports temperature difference once
+            assert "temperature (0.0 vs 0.5)" in output
+            assert output.count("temperature (0.0 vs 0.5)") == 1
+            # Paired comparability warnings surface rubric mismatch and dirty git tree
+            assert "Comparability warnings:" in output
+            assert "Eval rubric version mismatch (1 vs 2)" in output
+            assert "Run A: Run from dirty git working tree (abc1234-dirty)" in output
+
+    def test_retest_diffs_resolves_comparability_warnings(self) -> None:
+        """resolve_discordant_scenarios_for_diff forwards run_a and run_b."""
+        from tool_eval_bench.cli.retest_diffs import resolve_discordant_scenarios_for_diff
+
+        run_a = {
+            "run_id": "r-a",
+            "config": {"model": "m"},
+            "metadata": {"eval_rubric_version": "1", "locale_version": "2", "noise_version": "1"},
+            "scores": {
+                "scenario_results": [{"scenario_id": "TC-01", "points": 0, "status": "fail"}]
+            },
+        }
+        run_b = {
+            "run_id": "r-b",
+            "config": {"model": "m"},
+            "metadata": {"eval_rubric_version": "2", "locale_version": "2", "noise_version": "1"},
+            "scores": {
+                "scenario_results": [{"scenario_id": "TC-01", "points": 2, "status": "pass"}]
+            },
+        }
+
+        with patch("tool_eval_bench.storage.db.RunRepository") as MockRepo:
+            repo = MagicMock()
+            repo.get.side_effect = lambda rid: run_a if rid == "r-a" else run_b
+            MockRepo.return_value = repo
+
+            _, _, _, _, paired = resolve_discordant_scenarios_for_diff("r-a", "r-b")
+            assert "Eval rubric version mismatch (1 vs 2)" in paired["comparability_warnings"]
