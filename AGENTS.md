@@ -73,9 +73,10 @@ treat version bumps as deliberate comparability boundaries.
 ## Testing discipline
 
 - **Test behavior through public seams.** Drive scenarios via `SCENARIO.handle_tool_call` and
-  `SCENARIO.evaluate` (or `tests/scenario_replay.py` with `simulate_results()`), adapters via
-  deterministic `httpx` mock transports, and CLI/web/storage through public entry points. Assert
-  observable verdicts, persisted state, and wire payloads rather than private helper internals.
+  `SCENARIO.evaluate` (or `tests/scenario_replay.py::replay()`, or `simulate_results()` from
+  `tests/conftest.py`), adapters via deterministic `httpx` mock transports, and CLI/web/storage
+  through public entry points. Assert observable verdicts, persisted state, and wire payloads
+  rather than private helper internals.
 - **Own the subsystem's test file.** Put regression tests in the subsystem's existing test module
   (for example `tests/test_orchestrator.py`, `tests/test_evaluators_*.py`,
   `tests/test_adapter.py`). Keep catch-all PR, audit, and coverage-gap files out of `tests/`.

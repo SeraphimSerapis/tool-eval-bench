@@ -75,11 +75,9 @@ def get_run(run_id: str, *, include_traces: bool = True) -> dict[str, Any] | Non
 def get_runs(
     run_ids: Sequence[str],
     *,
-    output_dir: str | None = None,
     include_traces: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Return stored runs matching *run_ids*, keyed by run ID, over one connection."""
-    _ = output_dir
     unique_ids = list(dict.fromkeys(run_ids))
     if not unique_ids:
         return {}

@@ -120,7 +120,7 @@ def run_decision_benchmark(
     )
 
     plugin = DecisionPlugin()
-    adapter = build_decision_adapter(**adapter_options(args))
+    adapter = build_decision_adapter(max_concurrency=parallel, **adapter_options(args))
     cases_holder: list[Any] = []
 
     def _prepare_cases() -> int:

@@ -36,11 +36,18 @@ def build_adapter(
     return OpenAICompatibleAdapter(**kwargs)
 
 
-def build_decision_adapter(*, wire_format: str | None = None, **kwargs: Any) -> SystemOneAdapter:
+def build_decision_adapter(
+    *,
+    wire_format: str | None = None,
+    max_concurrency: int | None = None,
+    **kwargs: Any,
+) -> SystemOneAdapter:
     """Return the adapter for a decision-model endpoint.
 
     Decision models are served by llama.cpp at ``/v1/systemone``.  There is no
     wire-format choice to make, so ``wire_format`` is accepted only so callers
     can pass the same options they pass to :func:`build_adapter`, and is ignored.
     """
+    if max_concurrency is not None:
+        kwargs["max_concurrency"] = max_concurrency
     return SystemOneAdapter(**kwargs)
