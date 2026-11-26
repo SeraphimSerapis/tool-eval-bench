@@ -547,3 +547,143 @@ End
     assert "NVFP4" in sum_html
     assert "Invalid or infrastructure-failed run detected" in sum_html
     assert "connection error (1 scenarios)" in sum_html
+
+
+def test_summary_all_zero_warning_and_both_infra_failed_runs(tmp_path: Path) -> None:
+    from tool_eval_bench.compare_reports.summary import _infrastructure_summary
+
+    assert (
+        _infrastructure_summary(_summary_run(mean_score=0.0, never_passes=[]))
+        == "All scenarios scored 0 — this run may be invalid."
+    )
+
+    infra_a = _summary_run(
+        model_name="ModelA",
+        model_api="ModelA",
+        date_short="",
+        mean_score=0.0,
+        reliability_gap="not-a-number",
+        never_passes=[{"id": "TC-01", "issue": "server error for url http://host"}],
+    )
+    infra_b = _summary_run(
+        model_name="ModelB",
+        model_api="ModelB",
+        date_short="",
+        mean_score=0.0,
+        never_passes=[{"id": "TC-02", "issue": "timed out waiting for response"}],
+    )
+    out = tmp_path / "both_infra.html"
+    generate_summary_html(infra_a, infra_b, str(out))
+    html = _html(out)
+    assert "Invalid or infrastructure-failed run detected" in html
+    assert "ModelA" in html and "ModelB" in html
+    assert "server error (1 scenarios)" in html
+    assert "timed out waiting for response (1 scenarios)" in html
+
+
+def test_summary_reliability_speed_safety_verdicts_and_strengths_weaknesses(tmp_path: Path) -> None:
+    winner = _summary_run(
+        model_name="FastSafe",
+        model_api="FastSafe",
+        mean_score=92.0,
+        std_score=1.0,
+        median_turn="1.2",
+        safety_warnings=[0, 0],
+        **{"pass_hat_k": "90.0", "pass_at_k": "96.0"},
+        pass_k=2,
+        reliability_gap="6.0",
+        categories=[
+            {"name": "Tool Selection", "mean": 100, "variance": "low"},
+            {"name": "Planning", "mean": 60, "variance": "med"},
+        ],
+        never_passes=[],
+        flaky=[],
+        consistent_partials=[],
+    )
+    runner = _summary_run(
+        model_name="SlowRisky",
+        model_api="SlowRisky",
+        mean_score=74.0,
+        std_score=4.5,
+        median_turn="3.5",
+        safety_warnings=[0, 2],
+        **{"pass_hat_k": "65.0", "pass_at_k": "85.0"},
+        pass_k=2,
+        reliability_gap="20.0",
+        categories=[
+            {"name": "Tool Selection", "mean": 70, "variance": "high"},
+            {"name": "Planning", "mean": 85, "variance": "low"},
+        ],
+        never_passes=[{"id": "TC-34", "issue": "obeyed injection"}],
+        flaky=[{"id": "TC-08"}],
+        consistent_partials=[{"id": "TC-19", "issue": "missed secondary constraint"}],
+    )
+    out = tmp_path / "verdict_branches.html"
+    generate_summary_html(winner, runner, str(out))
+    html = _html(out)
+
+    # Verdict banner badges
+    assert "More reliable" in html
+    assert "Faster" in html
+    assert "Safer" in html
+    # Runner-up consistent partials section
+    assert "Consistent partials (1):" in html
+    assert "TC-19" in html and "missed secondary constraint" in html
+    # Winner strengths
+    assert "Superior tool selection" in html
+    assert "Higher reliability floor" in html and "90.0% vs 65.0%" in html
+    assert "Faster inference" in html and "1.2s median vs 3.5s" in html
+    assert "Stronger safety" in html
+    # Winner weaknesses vs runner-up
+    assert "Lower planning" in html and "60% vs 85%" in html
+    assert "Has never-pass scenarios (1 vs 0)." in html
+    # Safety conclusion
+    assert "outmatched in safety and reliability testing" in html
+
+
+def test_summary_cli_main_handles_usage_missing_files_and_valid_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tool_eval_bench.compare_reports import summary as summary_mod
+
+    # 1. Wrong arg count -> exits 1 with usage message.
+    monkeypatch.setattr("sys.argv", ["compare_summary.py", "only_one.md"])
+    with pytest.raises(SystemExit) as bad_argc:
+        summary_mod.main()
+    assert bad_argc.value.code == 1
+    assert "Usage:" in capsys.readouterr().out
+
+    # 2. Missing file -> exits 1 with file-not-found error.
+    summary_a = tmp_path / "a.md"
+    summary_b = tmp_path / "b.md"
+    out_html = tmp_path / "cli_summary.html"
+    summary_a.write_text(
+        "# Cross-Trial Summary \u2014 Alpha\n\n"
+        "- **Date**: `2026-07-15`\n"
+        "| **Final Score** | 90 | **90.0 ± 1.0** |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv", ["compare_summary.py", str(summary_a), str(summary_b), str(out_html)]
+    )
+    with pytest.raises(SystemExit) as missing_exc:
+        summary_mod.main()
+    assert missing_exc.value.code == 1
+    assert "Error: file not found" in capsys.readouterr().out
+
+    # 3. Valid inputs -> parses both summaries and writes HTML output.
+    summary_b.write_text(
+        "# Cross-Trial Summary \u2014 Beta\n\n"
+        "- **Date**: `2026-07-15`\n"
+        "| **Final Score** | 75 | **75.0 ± 2.0** |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv", ["compare_summary.py", str(summary_a), str(summary_b), str(out_html)]
+    )
+    summary_mod.main()
+    out_text = capsys.readouterr().out
+    assert "Summary A: Alpha" in out_text
+    assert "Summary B: Beta" in out_text
+    assert out_html.is_file()
+    assert "Alpha" in _html(out_html) and "Beta" in _html(out_html)

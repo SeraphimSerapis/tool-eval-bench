@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 from pathlib import Path
 
 import pytest
@@ -94,7 +95,8 @@ COMPATIBILITY_IMPORT_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
 )
 
 
-def _internal_imports(path: Path) -> set[str]:
+@functools.lru_cache(maxsize=None)
+def _internal_imports(path: Path) -> frozenset[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     imports: set[str] = set()
     for node in ast.walk(tree):
@@ -105,7 +107,7 @@ def _internal_imports(path: Path) -> set[str]:
             imports.update(
                 alias.name for alias in node.names if alias.name.startswith("tool_eval_bench")
             )
-    return imports
+    return frozenset(imports)
 
 
 @pytest.mark.parametrize("layer", sorted(LAYER_IMPORT_RULES))
@@ -194,16 +196,20 @@ def test_no_test_module_patches_methods_onto_the_httpx_client_class() -> None:
     everywhere with nothing pointing at the cause.
     """
     tests_root = Path(__file__).parent
-    violations = [
-        f"{path.relative_to(tests_root)}:{node.lineno}"
-        for path in sorted(tests_root.rglob("*.py"))
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
-        if isinstance(node, ast.Assign)
-        for target in node.targets
-        if isinstance(target, ast.Attribute)
-        and isinstance(target.value, ast.Attribute)
-        and target.value.attr == "AsyncClient"
-    ]
+    violations: list[str] = []
+    for path in sorted(tests_root.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "AsyncClient" not in text:
+            continue
+        for node in ast.walk(ast.parse(text, filename=str(path))):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Attribute)
+                        and target.value.attr == "AsyncClient"
+                    ):
+                        violations.append(f"{path.relative_to(tests_root)}:{node.lineno}")
 
     assert violations == []
 
@@ -215,14 +221,18 @@ def test_no_module_reaches_for_a_private_argparse_action_class() -> None:
     a focused help parser. `Action.const` is documented and says the same
     thing, so nothing needs the private classes any more.
     """
-    violations = [
-        f"{path.relative_to(PACKAGE_ROOT).as_posix()}:{node.lineno}"
-        for path in sorted(PACKAGE_ROOT.rglob("*.py"))
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
-        if isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "argparse"
-        and node.attr.startswith("_")
-    ]
+    violations: list[str] = []
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "argparse" not in text:
+            continue
+        for node in ast.walk(ast.parse(text, filename=str(path))):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "argparse"
+                and node.attr.startswith("_")
+            ):
+                violations.append(f"{path.relative_to(PACKAGE_ROOT).as_posix()}:{node.lineno}")
 
     assert violations == []

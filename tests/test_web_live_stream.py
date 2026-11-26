@@ -598,3 +598,179 @@ def test_hub_active_sessions_and_unknown_mark_calls() -> None:
     # Unknown IDs are safe no-ops.
     hub.mark_complete("missing", {})
     hub.mark_interrupted("missing")
+
+
+@pytest.mark.asyncio
+async def test_live_hub_callbacks_redact_unregistered_held_out_scenario() -> None:
+    from tool_eval_bench.cli.held_out import HELD_OUT
+
+    hub = LiveRunHub()
+    session = hub.register("run-ho", model="qwen", backend="vllm", total=1)
+    callbacks = hub.make_callbacks(session)
+    unmarked_nonpublic = replace(
+        _make_scenario("CUSTOM-77", held_out=False),
+        title="Secret Held-Out Canary Title",
+    )
+
+    await callbacks["on_scenario_start"](unmarked_nonpublic, 0, 1)
+    start_ev = next(ev for ev in session.history if ev["event"] == "scenario_start")
+    assert start_ev["title"] == HELD_OUT
+    assert start_ev["held_out"] is True
+
+    await callbacks["on_scenario_turn"](
+        unmarked_nonpublic,
+        1,
+        {"content": "secret turn content", "tool_calls": [{"name": "secret_fn"}]},
+    )
+    turn_ev = next(ev for ev in session.history if ev["event"] == "scenario_turn")
+    assert turn_ev["content"] == ""
+    assert turn_ev["tool_calls"] == []
+
+    await callbacks["on_scenario_result"](
+        unmarked_nonpublic,
+        ScenarioResult(
+            scenario_id="CUSTOM-77",
+            status=ScenarioStatus.FAIL,
+            points=0,
+            summary="secret failure summary",
+            raw_log="secret raw log",
+        ),
+        0,
+        1,
+    )
+    await callbacks["on_scenario_audit"](
+        unmarked_nonpublic,
+        ScenarioResult(
+            scenario_id="CUSTOM-77",
+            status=ScenarioStatus.FAIL,
+            points=0,
+            summary="secret",
+            decision_audit={
+                "status": "completed",
+                "request_started": True,
+                "choice": "secret_choice",
+                "probabilities": {"secret_choice": 0.95},
+            },
+        ),
+        "completed",
+    )
+
+    serialized = json.dumps(session.history)
+    assert "secret" not in serialized.lower()
+    audit_ev = next(ev for ev in session.history if ev["event"] == "decision_audit")
+    assert audit_ev["choice"] is None
+    assert audit_ev["probabilities"] is None
+
+
+def test_live_session_publish_evicts_full_subscriber_without_raising() -> None:
+    import asyncio
+
+    from tool_eval_bench.web.live import MAX_SUBSCRIBER_QUEUE
+
+    hub = LiveRunHub()
+    session = hub.register("run-bounded", model="qwen", backend="vllm", total=2000)
+    slow_q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=MAX_SUBSCRIBER_QUEUE)
+    fast_q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=MAX_SUBSCRIBER_QUEUE)
+    session.subscribers.add(slow_q)
+    session.subscribers.add(fast_q)
+
+    for idx in range(MAX_SUBSCRIBER_QUEUE + 10):
+        session.publish({"event": "scenario_turn", "seq": idx})
+        while not fast_q.empty():
+            fast_q.get_nowait()
+
+    assert slow_q not in session.subscribers
+    assert fast_q in session.subscribers
+    drained = []
+    while not slow_q.empty():
+        drained.append(slow_q.get_nowait())
+    assert drained[-1]["event"] == "stream_error"
+    assert "reconnect" in drained[-1]["error"]
+
+
+@pytest.mark.asyncio
+async def test_live_run_hub_offsets_resumed_scenario_indices_and_keeps_zero_base_when_fresh() -> (
+    None
+):
+    import asyncio
+
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
+
+    tc01 = next(s for s in ALL_SCENARIOS if s.id == "TC-01")
+    hub = LiveRunHub()
+
+    # Fresh run: indices start at 0.
+    fresh = hub.register(
+        run_id="fresh-idx-run",
+        model="qwen",
+        backend="vllm",
+        total=2,
+    )
+    fresh_sub: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    fresh.subscribers.add(fresh_sub)
+    fresh_cb = hub.make_callbacks(fresh)
+    await fresh_cb["on_scenario_start"](tc01, 0, 2)
+    await fresh_cb["on_scenario_result"](
+        tc01, ScenarioResult("TC-01", ScenarioStatus.PASS, 2, "ok"), 0, 2
+    )
+    fresh_stream: list[tuple[str, int, int]] = []
+    while not fresh_sub.empty():
+        ev = fresh_sub.get_nowait()
+        if ev["event"] in {"scenario_start", "scenario_result"}:
+            fresh_stream.append((ev["event"], ev["index"], ev["total"]))
+    assert fresh_stream == [
+        ("scenario_start", 0, 2),
+        ("scenario_result", 0, 2),
+    ]
+
+    # Resumed run with k=2 preserved outcomes and 2 remaining scenarios (total=4):
+    # preserved replay emits 0..1, and orchestrator callbacks (idx=0..1) emit 2..3.
+    preserved = [
+        ScenarioResult("TC-01", ScenarioStatus.PASS, 2, "ok").to_dict(),
+        ScenarioResult("TC-02", ScenarioStatus.PARTIAL, 1, "half").to_dict(),
+    ]
+    resumed = hub.register(
+        run_id="resumed-idx-run",
+        model="qwen",
+        backend="vllm",
+        total=4,
+        preserved=preserved,
+    )
+    assert resumed.index_offset == 2
+    resumed_sub: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    resumed.subscribers.add(resumed_sub)
+    resumed_cb = hub.make_callbacks(resumed)
+    tc03 = ALL_SCENARIOS[2]
+    tc04 = ALL_SCENARIOS[3]
+    await resumed_cb["on_scenario_start"](tc03, 0, 2)
+    await resumed_cb["on_scenario_result"](
+        tc03, ScenarioResult(tc03.id, ScenarioStatus.PASS, 2, "ok"), 0, 2
+    )
+    await resumed_cb["on_scenario_start"](tc04, 1, 2)
+    await resumed_cb["on_scenario_result"](
+        tc04, ScenarioResult(tc04.id, ScenarioStatus.FAIL, 0, "no"), 1, 2
+    )
+
+    live_stream: list[tuple[str, str, int, int]] = []
+    while not resumed_sub.empty():
+        ev = resumed_sub.get_nowait()
+        if ev["event"] in {"scenario_start", "scenario_result"}:
+            live_stream.append((ev["event"], ev["scenario_id"], ev["index"], ev["total"]))
+    assert live_stream == [
+        ("scenario_start", tc03.id, 2, 4),
+        ("scenario_result", tc03.id, 2, 4),
+        ("scenario_start", tc04.id, 3, 4),
+        ("scenario_result", tc04.id, 3, 4),
+    ]
+
+    history_results = [
+        (ev["event"], ev["scenario_id"], ev["index"], ev["total"])
+        for ev in resumed.history
+        if ev["event"] == "scenario_result"
+    ]
+    assert history_results == [
+        ("scenario_result", "TC-01", 0, 4),
+        ("scenario_result", "TC-02", 1, 4),
+        ("scenario_result", tc03.id, 2, 4),
+        ("scenario_result", tc04.id, 3, 4),
+    ]

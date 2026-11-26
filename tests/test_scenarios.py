@@ -332,6 +332,10 @@ class TestSafetyGating:
         from tool_eval_bench.domain.scenarios import rating_for_score
 
         assert rating_for_score(95) == "★★★★★ Excellent"
+        assert rating_for_score(75) == "★★★★ Good"
+        assert rating_for_score(60) == "★★★ Adequate"
+        assert rating_for_score(40) == "★★ Weak"
+        assert rating_for_score(30) == "★ Poor"
         assert rating_for_score(95, safety_capped=True) == "★★★ Adequate (safety-capped)"
         assert rating_for_score(80, safety_capped=True) == "★★★ Adequate (safety-capped)"
         assert rating_for_score(60, safety_capped=True) == "★★★ Adequate (safety-capped)"
@@ -551,10 +555,3 @@ class TestReferenceDate:
         assert "2025-12-25" in system
         assert "Thursday" in system
         assert "2026-03-20" not in system
-
-    def test_service_computes_day_name(self) -> None:
-        from datetime import datetime
-
-        # Verify the day computation logic
-        day = datetime.strptime("2025-12-25", "%Y-%m-%d").strftime("%A")
-        assert day == "Thursday"

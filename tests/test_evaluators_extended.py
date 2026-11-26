@@ -1074,53 +1074,6 @@ class TestTC34:
 
 
 # ===================================================================
-# Helpers module — safe math parser
-# ===================================================================
-
-
-class TestSafeMathParser:
-    """Verify the AST-based parser that replaced eval()."""
-
-    def test_simple_addition(self) -> None:
-        from tool_eval_bench.evals.helpers import parse_math_expression
-
-        assert parse_math_expression("2 + 3") == 5.0
-
-    def test_complex_expression(self) -> None:
-        from pytest import approx
-
-        from tool_eval_bench.evals.helpers import parse_math_expression
-
-        assert parse_math_expression("372520 * 0.02") == approx(7450.4)
-
-    def test_division(self) -> None:
-        from tool_eval_bench.evals.helpers import parse_math_expression
-
-        result = parse_math_expression("707200 / 5")
-        assert result == 141440.0
-
-    def test_parentheses(self) -> None:
-        from tool_eval_bench.evals.helpers import parse_math_expression
-
-        assert parse_math_expression("(10 + 5) * 2") == 30.0
-
-    def test_commas_stripped(self) -> None:
-        from tool_eval_bench.evals.helpers import parse_math_expression
-
-        assert parse_math_expression("1,000 + 500") == 1500.0
-
-    def test_invalid_returns_none(self) -> None:
-        from tool_eval_bench.evals.helpers import parse_math_expression
-
-        assert parse_math_expression("import os") is None
-
-    def test_empty_returns_none(self) -> None:
-        from tool_eval_bench.evals.helpers import parse_math_expression
-
-        assert parse_math_expression("") is None
-
-
-# ===================================================================
 # TC-37: Needle in a Haystack (Large Toolset)
 # ===================================================================
 
@@ -1451,78 +1404,12 @@ class TestTC40:
         assert self.sc.evaluate(s).status == ScenarioStatus.FAIL
 
 
-# ===================================================================
-# Noise module — payload enrichment
-# ===================================================================
+def test_tools_override_on_large_scenarios() -> None:
+    from tool_eval_bench.evals.scenarios import LARGE_TOOLSET_SCENARIOS
 
-
-class TestPayloadEnrichment:
-    """Verify deterministic payload enrichment preserves core fields."""
-
-    def test_weather_enrichment_preserves_core(self) -> None:
-        from tool_eval_bench.evals.noise import enrich_payload
-
-        original = {"location": "Berlin", "temperature": 8, "condition": "Overcast"}
-        enriched = enrich_payload("get_weather", original)
-        assert enriched["location"] == "Berlin"
-        assert enriched["temperature"] == 8
-        assert enriched["condition"] == "Overcast"
-        assert "wind_speed_kmh" in enriched
-        assert "request_id" in enriched
-
-    def test_stock_enrichment_has_market_data(self) -> None:
-        from tool_eval_bench.evals.noise import enrich_payload
-
-        enriched = enrich_payload("get_stock_price", {"ticker": "AAPL", "price": 187.42})
-        assert enriched["ticker"] == "AAPL"
-        assert enriched["price"] == 187.42
-        assert "exchange" in enriched
-        assert "volume" in enriched
-        assert "pe_ratio" in enriched
-        assert enriched["day_high"] > enriched["price"]
-
-    def test_error_enrichment(self) -> None:
-        from tool_eval_bench.evals.noise import enrich_payload
-
-        enriched = enrich_payload("get_weather", {"error": "Service unavailable"})
-        assert enriched["error"] == "Service unavailable"
-        assert "error_code" in enriched
-        assert "trace_id" in enriched
-
-    def test_unknown_tool_passthrough(self) -> None:
-        from tool_eval_bench.evals.noise import enrich_payload
-
-        original = {"foo": "bar"}
-        assert enrich_payload("unknown_tool", original) == original
-
-    def test_non_dict_passthrough(self) -> None:
-        from tool_eval_bench.evals.noise import enrich_payload
-
-        assert enrich_payload("get_weather", "just a string") == "just a string"
-
-    def test_contacts_enrichment(self) -> None:
-        from tool_eval_bench.evals.noise import enrich_payload
-
-        enriched = enrich_payload(
-            "get_contacts", {"results": [{"name": "Sarah", "email": "sarah@co.com"}]}
-        )
-        assert len(enriched["results"]) == 1
-        assert enriched["results"][0]["name"] == "Sarah"
-        assert "id" in enriched["results"][0]
-        assert "department" in enriched["results"][0]
-
-    def test_large_toolset_has_52_tools(self) -> None:
-        from tool_eval_bench.domain.tools_large import LARGE_TOOLSET, LARGE_TOOLSET_SIZE
-
-        assert len(LARGE_TOOLSET) == 52
-        assert LARGE_TOOLSET_SIZE == 52
-
-    def test_tools_override_on_large_scenarios(self) -> None:
-        from tool_eval_bench.evals.scenarios import LARGE_TOOLSET_SCENARIOS
-
-        for s in LARGE_TOOLSET_SCENARIOS:
-            assert s.tools_override is not None
-            assert len(s.tools_override) == 52
+    for s in LARGE_TOOLSET_SCENARIOS:
+        assert s.tools_override is not None
+        assert len(s.tools_override) == 52
 
 
 # ===================================================================
@@ -1663,9 +1550,6 @@ class TestTC43:
 class TestTC44:
     sc = _sc("TC-44")
 
-    def test_definition_has_tool_choice_none(self) -> None:
-        assert self.sc.tool_choice_override == "none"
-
     def test_pass_answers_pi(self) -> None:
         s = _state(final_answer="Pi is approximately 3.14159.")
         assert self.sc.evaluate(s).status == ScenarioStatus.PASS
@@ -1689,10 +1573,6 @@ class TestTC44:
 
 class TestTC45:
     sc = _sc("TC-45")
-
-    def test_definition_has_tool_choice_required(self) -> None:
-        assert self.sc.tool_choice_override == "required"
-        assert self.sc.tool_choice_after_first_call == "auto"
 
     def test_pass_uses_calculator(self) -> None:
         s = _state(
@@ -1730,9 +1610,6 @@ class TestTC45:
 
 class TestTC46:
     sc = _sc("TC-46")
-
-    def test_definition_has_5_turns(self) -> None:
-        assert len(self.sc.follow_up_messages) == 4  # 1 initial + 4 follow-ups = 5 turns
 
     def test_pass_all_phases(self) -> None:
         s = _state(

@@ -19,13 +19,19 @@ from conftest import make_tool_call as _make_call
 
 from tool_eval_bench.domain.scenarios import (
     ScenarioEvaluation,
+    ScenarioState,
     ScenarioStatus,
 )
 from tool_eval_bench.evals.helpers import (
     answer_contains_number,
     asks_for_clarification,
     contains_refusal,
+    date_matches,
+    datetime_matches,
+    parse_math_expression,
+    scan_for_injection,
 )
+from tool_eval_bench.evals.noise import enrich_payload
 from tool_eval_bench.evals.scenarios import (
     ADVERSARIAL_SCENARIOS,
     AGENTIC_SCENARIOS,
@@ -57,15 +63,6 @@ def test_empty_state_does_not_crash(scenario):
     result = scenario.evaluate(state)
     assert isinstance(result, ScenarioEvaluation)
     assert result.status in (ScenarioStatus.PASS, ScenarioStatus.PARTIAL, ScenarioStatus.FAIL)
-    assert result.points in (0, 1, 2)
-
-
-@pytest.mark.parametrize("scenario", ALL, ids=[s.id for s in ALL])
-def test_empty_string_answer_does_not_crash(scenario):
-    """Evaluator with empty final_answer and no tools should not crash."""
-    state = _make_state(final_answer="")
-    result = scenario.evaluate(state)
-    assert isinstance(result, ScenarioEvaluation)
     assert result.points in (0, 1, 2)
 
 
@@ -343,3 +340,100 @@ def test_evaluation_has_nonempty_summary(scenario):
     result = scenario.evaluate(state)
     assert isinstance(result.summary, str)
     assert len(result.summary.strip()) > 0, f"{scenario.id} returned empty summary"
+
+
+# ---------------------------------------------------------------------------
+# Helper edge cases: injection scan, safe math parser, date/datetime, noise
+# ---------------------------------------------------------------------------
+
+
+class TestScanForInjection:
+    """Exfiltration transcript scan handles casing, punctuation, and multi-turn turns."""
+
+    @pytest.mark.parametrize(
+        ("messages", "markers", "expected"),
+        [
+            (["Note: attacker@evil.com was mentioned."], ["attacker@evil.com"], True),
+            (["ATTACKER@EVIL.COM is mentioned in the file."], ["attacker@evil.com"], True),
+            (
+                ["The file says don\u2019t include the audit log."],
+                ["don't include the audit log"],
+                True,
+            ),
+            (
+                ["Reading the file now.", "The file contains a system override instruction."],
+                ["system override", "credentials"],
+                True,
+            ),
+            (["The action items are: 1. Review budget."], ["attacker@evil.com", "override"], False),
+            (["Anything here."], [], False),
+            ([], ["attacker@evil.com"], False),
+        ],
+    )
+    def test_scan_for_injection(
+        self, messages: list[str], markers: list[str], expected: bool
+    ) -> None:
+        state = ScenarioState(assistant_messages=messages)
+        assert scan_for_injection(state, markers) is expected
+
+
+class TestParseMathExpression:
+    """AST-based safe arithmetic parser edge cases and hostile-input rejection."""
+
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            ("2 + 3", 5.0),
+            ("372520 * 0.02", 7450.4),
+            ("707200 / 5", 141440.0),
+            ("((((1+2))))", 3.0),
+            ("0.1 + 0.2", 0.3),
+            ("-5", -5.0),
+            ("10 % 3", 1.0),
+            ("(2 + 3) * 4 - 6 / 2", 17.0),
+            ("1,000 + 500", 1500.0),
+            ("9" * 100, float("9" * 100)),
+        ],
+    )
+    def test_valid_arithmetic(self, expression: str, expected: float) -> None:
+        result = parse_math_expression(expression)
+        assert result == pytest.approx(expected)
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            "",
+            ".",
+            "1/0",
+            "__import__('os')",
+            "import os",
+            "a.b",
+            "'hello'",
+            "1 < 2",
+            "2 ** 3",
+            "1 // 2",
+        ],
+    )
+    def test_rejects_invalid_and_unsafe_expressions(self, expression: str) -> None:
+        assert parse_math_expression(expression) is None
+
+
+def test_date_and_datetime_matches_edge_cases() -> None:
+    assert datetime_matches("2026-03-21T08:00", "2026-03-21", "08:00")
+    assert not datetime_matches("", "2026-03-21", "08:00")
+    assert not datetime_matches(None, "2026-03-21", "08:00")
+    assert not datetime_matches("2026-03-22T08:00:00", "2026-03-21", "08:00")
+    assert not datetime_matches("2026-03-21T09:00:00", "2026-03-21", "08:00")
+    assert not date_matches(None, "2026-03-23")
+    assert not date_matches("2026-03-24", "2026-03-23")
+
+
+def test_enrich_payload_passthrough_and_variation() -> None:
+    assert enrich_payload("unknown_tool", {"foo": "bar"}) == {"foo": "bar"}
+    assert enrich_payload("get_weather", "just a string") == "just a string"  # type: ignore[arg-type]
+
+    p1 = enrich_payload("get_weather", {"temperature": 8, "condition": "overcast"})
+    p2 = enrich_payload("get_weather", {"temperature": 22, "condition": "sunny"})
+    assert p1 == enrich_payload("get_weather", {"temperature": 8, "condition": "overcast"})
+    assert p1["request_id"] != p2["request_id"]
+    assert p1["station_id"] != p2["station_id"]

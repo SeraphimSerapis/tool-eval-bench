@@ -294,3 +294,170 @@ async def test_non_http_asgi_scopes_pass_through_security_middlewares() -> None:
     await wrapped({"type": "lifespan"}, _noop_receive, _noop_send)
     await wrapped({"type": "websocket", "path": "/ws"}, _noop_receive, _noop_send)
     assert seen == ["lifespan", "websocket"]
+
+
+@pytest.mark.asyncio
+async def test_session_gate_blocks_dns_rebinding_hosts(empty_db: str) -> None:
+    app = create_app(token=TEST_TOKEN)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://attacker.example:8765"
+    ) as rebound:
+        assert (await rebound.get("/static/styles.css")).status_code == 403
+        assert (await rebound.get("/", params={"token": TEST_TOKEN})).status_code == 403
+        assert (await rebound.get("/api/runs")).status_code == 401
+        authed_rebound = await rebound.get("/api/runs", headers=AUTH_HEADERS)
+        assert authed_rebound.status_code == 403
+        assert "Invalid Host header" in authed_rebound.json()["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "good_base_url",
+    [
+        "http://127.0.0.1:8765",
+        "http://localhost:8765",
+        "http://localhost.:8765",
+        "http://[::1]:8765",
+    ],
+)
+async def test_session_gate_accepts_loopback_hosts(empty_db: str, good_base_url: str) -> None:
+    app = create_app(token=TEST_TOKEN)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url=good_base_url, headers=AUTH_HEADERS
+    ) as client:
+        assert (await client.get("/static/styles.css")).status_code == 200
+        assert (await client.get("/api/runs")).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_host",
+    [
+        "",
+        ".",
+        "..",
+        "127.0.0.1.",
+        "localhost..",
+        "127.0.0.1:0",
+        "127.0.0.1:70000",
+        "127.0.0.1:notaport",
+        "user@127.0.0.1:8765",
+        "[::1",
+        "evil.localhost:8765",
+    ],
+)
+async def test_session_gate_rejects_malformed_or_non_loopback_host_headers(
+    empty_db: str, bad_host: str
+) -> None:
+    app = create_app(token=TEST_TOKEN)
+    async with web_client(app) as client:
+        resp = await client.get("/api/runs", headers={"Host": bad_host})
+        assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_session_gate_rejects_duplicate_host_malformed_origin_and_sets_secure_cookie(
+    empty_db: str,
+) -> None:
+    app = create_app(token=TEST_TOKEN)
+    transport = httpx.ASGITransport(app=app)
+
+    # Duplicate Host headers are rejected as 403 rather than trusting the first.
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8765") as client:
+        dup_resp = await client.get(
+            "/api/runs",
+            headers=[
+                ("Authorization", f"Bearer {TEST_TOKEN}"),
+                ("Host", "127.0.0.1:8765"),
+                ("Host", "attacker.example:8765"),
+            ],
+        )
+        assert dup_resp.status_code == 403
+
+        # Malformed IPv6 Origin returns 403 rather than raising ValueError (500).
+        bad_origin = await client.post(
+            "/api/runs/delete",
+            json={"run_ids": ["r1"]},
+            headers={**AUTH_HEADERS, "Origin": "http://[::1"},
+        )
+        assert bad_origin.status_code == 403
+
+    # HTTPS login sets the Secure attribute on the session cookie.
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://127.0.0.1:8765"
+    ) as https_client:
+        login = await https_client.get("/", params={"token": TEST_TOKEN})
+        assert login.status_code == 303
+        assert "secure" in login.headers["set-cookie"].lower()
+
+
+@pytest.mark.asyncio
+async def test_session_gate_custom_and_wildcard_allowed_hosts(empty_db: str) -> None:
+    lan_app = create_app(token=TEST_TOKEN, allowed_hosts=("127.0.0.1", "192.168.1.50"))
+    transport = httpx.ASGITransport(app=lan_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://192.168.1.50:8765", headers=AUTH_HEADERS
+    ) as lan_client:
+        assert (await lan_client.get("/api/runs")).status_code == 200
+
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://192.168.1.99:8765", headers=AUTH_HEADERS
+    ) as other_client:
+        assert (await other_client.get("/api/runs")).status_code == 403
+
+    wildcard_app = create_app(token=TEST_TOKEN, allowed_hosts=("*",))
+    wildcard_transport = httpx.ASGITransport(app=wildcard_app)
+    async with httpx.AsyncClient(
+        transport=wildcard_transport,
+        base_url="http://bench-box.internal:8765",
+        headers=AUTH_HEADERS,
+    ) as wild_client:
+        assert (await wild_client.get("/api/runs")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_session_gate_rejects_same_site_fetch_metadata_across_ports(
+    empty_db: str,
+) -> None:
+    """Cookies are port-agnostic, so a sibling localhost port sends Sec-Fetch-Site: same-site."""
+    app = create_app(token=TEST_TOKEN)
+    async with web_client(app, authenticated=False) as client:
+        login = await client.get("/", params={"token": TEST_TOKEN})
+        assert login.status_code == 303
+        assert cookie_name(TEST_TOKEN) in client.cookies
+
+        ok_get = await client.get("/api/runs", headers={"Sec-Fetch-Site": "same-origin"})
+        assert ok_get.status_code == 200
+        ok_nav = await client.get("/api/runs", headers={"Sec-Fetch-Site": "none"})
+        assert ok_nav.status_code == 200
+
+        cross_port_get = await client.get("/api/runs", headers={"Sec-Fetch-Site": "same-site"})
+        assert cross_port_get.status_code == 403
+
+        cross_port_post = await client.post(
+            "/api/runs/delete",
+            json={"run_ids": ["r1"]},
+            headers={"Sec-Fetch-Site": "same-site"},
+        )
+        assert cross_port_post.status_code == 403
+
+
+def test_sanitize_mapping_scrubs_secrets_nested_in_lists() -> None:
+    dirty = {
+        "model": "qwen",
+        "providers": [
+            {"name": "primary", "api_key": "sk-secret-1", "max_tokens": 256},
+            [{"Authorization": "Bearer secret-2", "prompt_tokens": 64}],
+        ],
+    }
+    cleaned = sanitize_mapping(dirty)
+    assert cleaned == {
+        "model": "qwen",
+        "providers": [
+            {"name": "primary", "max_tokens": 256},
+            [{"prompt_tokens": 64}],
+        ],
+    }

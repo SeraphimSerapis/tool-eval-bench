@@ -723,3 +723,428 @@ def test_compare_retest_diffs_forwards_all_endpoint_and_pack_options() -> None:
         "--output-dir=out_runs",
         "--redact-url",
     ]
+
+
+# ---------------------------------------------------------------------------
+# CLI range validation, sweep range parsing, held-out safety gate, & runners
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad_sweep", ["0.2-nan", "nan-0.8", "0.2-inf", "-inf-0.8", "nan-nan"])
+def test_parse_sweep_range_rejects_non_finite_floats(bad_sweep: str) -> None:
+    from tool_eval_bench.cli.helpers import parse_sweep_range
+
+    with pytest.raises(ValueError, match="finite"):
+        parse_sweep_range(bad_sweep)
+
+
+def test_parse_sweep_range_accepts_valid_scientific_and_clamps_bounds() -> None:
+    from tool_eval_bench.cli.helpers import parse_sweep_range
+
+    assert parse_sweep_range("0.25-0.75") == (0.25, 0.75)
+    assert parse_sweep_range("1e-2-5e-1") == (0.01, 0.5)
+    assert parse_sweep_range("-0.5-1.5") == (0.0, 1.0)
+
+
+@pytest.mark.parametrize(
+    "bad_argv",
+    [
+        ["--trials", "0"],
+        ["--trials", "-1"],
+        ["--timeout", "0"],
+        ["--timeout", "-1"],
+        ["--timeout", "nan"],
+        ["--timeout", "inf"],
+        ["--temperature", "-0.1"],
+        ["--temperature", "nan"],
+        ["--temperature", "inf"],
+        ["--top-p", "0"],
+        ["--top-p", "1.2"],
+        ["--top-p", "nan"],
+        ["--min-p", "-0.1"],
+        ["--min-p", "1.1"],
+        ["--min-p", "nan"],
+        ["--repeat-penalty", "0"],
+        ["--repeat-penalty", "nan"],
+        ["--baseline-tgs", "0"],
+        ["--baseline-tgs", "nan"],
+        ["--spec-live-interval", "0"],
+        ["--decision-live-interval", "0"],
+        ["--sweep-steps", "1"],
+        ["--spec-runs", "0"],
+        ["--benchy-runs", "0"],
+        ["--pp", "0"],
+        ["--tg", "0"],
+        ["--context-size", "0"],
+        ["--needle-depths", "0"],
+        ["--needle-lengths", "0"],
+        ["--gsm8k-shots", "-1"],
+        ["--gsm8k-shots", "9"],
+        ["--gsm8k-limit", "-1"],
+        ["--mmlu-shots", "-1"],
+        ["--mmlu-shots", "6"],
+        ["--mmlu-limit", "-1"],
+        ["--ifeval-limit", "-1"],
+        ["--toolscale-limit", "-1"],
+        ["--reference-date", "2026-3-5"],
+    ],
+)
+def test_cli_validate_run_ranges_rejects_invalid_values_in_plain_and_json_modes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], bad_argv: list[str]
+) -> None:
+    from io import StringIO
+
+    from tool_eval_bench.cli import dispatch
+    from tool_eval_bench.cli.legacy_parser import make_parser
+
+    parser = make_parser()
+    args = parser.parse_args(bad_argv)
+    with pytest.raises(SystemExit) as plain_exc:
+        dispatch._prepare_args(args, parser, Console(file=StringIO()))
+    assert plain_exc.value.code == 2
+    capsys.readouterr()
+
+    monkeypatch.setattr("sys.argv", ["tool-eval-bench", *bad_argv, "--json"])
+    with pytest.raises(SystemExit) as json_exc:
+        dispatch.main()
+    assert json_exc.value.code == 2
+    err_line = capsys.readouterr().err.strip().splitlines()[-1]
+    payload = json.loads(err_line)
+    assert payload["event"] == "error"
+    assert payload["error"] == "invalid_arguments"
+
+
+def _make_held_out_scenario(scenario_id: str) -> object:
+    from tool_eval_bench.domain.scenarios import (
+        Category,
+        ScenarioDefinition,
+        ScenarioEvaluation,
+        ScenarioStatus,
+    )
+
+    return ScenarioDefinition(
+        id=scenario_id,
+        title="Secret Held-Out Canary Title",
+        category=Category.A,
+        user_message="Confidential canary prompt",
+        description="Confidential expected behavior",
+        handle_tool_call=lambda _state, _call: {"ok": True},
+        evaluate=lambda _state: ScenarioEvaluation(
+            ScenarioStatus.FAIL,
+            0,
+            "Confidential grading summary",
+            safety_violation="confidential violation",
+        ),
+        held_out=True,
+    )
+
+
+def _make_scenario_pack(*scenarios: object, name: str, path: object) -> object:
+    from pathlib import Path
+
+    from tool_eval_bench.evals.packs import ScenarioPack
+
+    return ScenarioPack(
+        name=name,
+        path=path if isinstance(path, Path) else Path("/nonexistent/pack"),
+        scenarios=tuple(scenarios),  # type: ignore[arg-type]
+        content_hash="a" * 64,
+    )
+
+
+def test_safety_gate_failed_redacts_held_out_warnings_in_non_json_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import argparse
+
+    from tool_eval_bench.cli.held_out import HELD_OUT, held_out_ids, redact_warnings
+    from tool_eval_bench.cli.helpers import safety_gate_failed
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
+
+    tc01 = next(s for s in ALL_SCENARIOS if s.id == "TC-01")
+    ho = _make_held_out_scenario("HO-42")
+    resumed_ho = _make_held_out_scenario("HO-43")
+    args = argparse.Namespace(
+        fail_on_safety=True,
+        json=False,
+        include_held_out=False,
+        _resolved_scenario_packs=[_make_scenario_pack(ho, name="secret-pack", path=None)],
+        _resume_scenarios=[tc01, resumed_ho],
+    )
+    assert held_out_ids(args) == frozenset({"HO-42", "HO-43"})
+    assert redact_warnings(["HO-43: titleless secret violation"], held_out_ids(args)) == [
+        f"HO-43: {HELD_OUT}"
+    ]
+
+    result = {
+        "scores": {
+            "safety_warnings": [
+                "HO-42 (Confidential Pack Title): leaked sensitive details",
+                "HO-43: titleless leaked details",
+                "TC-01 (Weather): public warning text",
+            ]
+        }
+    }
+    assert safety_gate_failed(args, result) is True
+    stderr = capsys.readouterr().err
+    assert "Confidential Pack Title" not in stderr
+    assert "leaked" not in stderr
+    assert f"SAFETY GATE: HO-42: {HELD_OUT}" in stderr
+    assert f"SAFETY GATE: HO-43: {HELD_OUT}" in stderr
+    assert "SAFETY GATE: TC-01 (Weather): public warning text" in stderr
+
+    args.include_held_out = True
+    assert safety_gate_failed(args, result) is True
+    unredacted = capsys.readouterr().err
+    assert "Confidential Pack Title" in unredacted
+
+
+def test_multi_trial_summary_reports_receive_throughput_samples_and_resumed_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from io import StringIO
+    from pathlib import Path
+    from typing import Any
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tool_eval_bench.cli import dispatch
+    from tool_eval_bench.cli.legacy_parser import make_parser
+    from tool_eval_bench.domain.scenarios import (
+        ModelScoreSummary,
+        ScenarioResult,
+        ScenarioStatus,
+    )
+    from tool_eval_bench.evals.scenarios import ALL_SCENARIOS
+    from tool_eval_bench.runner.throughput import ThroughputSample
+
+    tc01 = next(s for s in ALL_SCENARIOS if s.id == "TC-01")
+    ho = _make_held_out_scenario("HO-55")
+    samples = [
+        ThroughputSample(
+            pp_tokens=512,
+            tg_tokens=128,
+            depth=0,
+            concurrency=1,
+            pp_tps=1200.0,
+            tg_tps=85.0,
+        )
+    ]
+
+    trial_payload = {
+        "run_id": "trial-run-1",
+        "report_path": str(tmp_path / "trial1.md"),
+        "scores": {
+            "final_score": 50,
+            "rating": "★★★ Adequate",
+            "scenario_results": [
+                ScenarioResult("TC-01", ScenarioStatus.PASS, 2, "ok").to_dict(),
+                ScenarioResult("HO-55", ScenarioStatus.FAIL, 0, "secret").to_dict(),
+            ],
+            "safety_warnings": [],
+        },
+    }
+    service = MagicMock()
+    service.run_benchmark = AsyncMock(return_value=trial_payload)
+
+    captured_calls: list[dict[str, Any]] = []
+
+    def fake_write_summary_report(self: Any, **kwargs: Any) -> Path:
+        captured_calls.append(kwargs)
+        out = tmp_path / f"summary-{len(captured_calls)}.md"
+        out.write_text("# Summary\n", encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(
+        "tool_eval_bench.cli.dispatch.MarkdownReporter.write_summary_report",
+        fake_write_summary_report,
+    )
+
+    args = make_parser().parse_args(
+        ["--trials", "2", "--scenarios", "TC-01", "--output-dir", str(tmp_path)]
+    )
+    args._resume_prior_results = [ScenarioResult("HO-55", ScenarioStatus.FAIL, 0, "secret")]
+    args._resume_remaining_scenarios = [tc01]
+    args._resume_scenarios = [tc01, ho]
+    args._resolved_scenario_packs = [_make_scenario_pack(ho, name="ho-pack", path=tmp_path)]
+
+    console = Console(file=StringIO(), width=120, no_color=True)
+    dispatch._run_plain(
+        service,
+        console,
+        "qwen",
+        "Qwen",
+        "vllm",
+        "http://localhost:8000",
+        None,
+        args,
+        throughput_samples=samples,
+    )
+    dispatch._run_with_live_display(
+        service,
+        console,
+        "qwen",
+        "Qwen",
+        "vllm",
+        "http://localhost:8000",
+        None,
+        args,
+        throughput_samples=samples,
+    )
+
+    assert len(captured_calls) == 2
+    for call_kwargs in captured_calls:
+        assert call_kwargs["throughput_samples"] == samples
+        assert "HO-55" in call_kwargs["scenario_metadata"]
+        assert call_kwargs["scenario_metadata"]["HO-55"].held_out is True
+        assert call_kwargs["scenario_packs"] == [
+            {
+                "name": "ho-pack",
+                "scenario_count": 1,
+                "scenario_ids": ["HO-55"],
+                "content_hash": "a" * 64,
+            }
+        ]
+        summaries: list[ModelScoreSummary] = call_kwargs["summaries"]
+        assert len(summaries) == 2
+
+
+def test_pressure_sweep_records_pack_attestations_and_redacts_held_out_report_end_to_end(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from io import StringIO
+    from typing import Any
+    from unittest.mock import AsyncMock
+
+    from tool_eval_bench.application.run_queries import recent_runs
+    from tool_eval_bench.cli import pressure
+    from tool_eval_bench.cli.legacy_parser import make_parser
+    from tool_eval_bench.domain.adapters import ChatCompletionResult
+    from tool_eval_bench.domain.scenarios import (
+        ModelScoreSummary,
+        ScenarioResult,
+        ScenarioStatus,
+    )
+
+    db_path = str(tmp_path / "benchmarks.sqlite")
+    monkeypatch.setattr("tool_eval_bench.storage.db._default_db_path", lambda: db_path)
+
+    class _NoopAdapter:
+        async def chat_completion(self, **_kwargs: Any) -> ChatCompletionResult:
+            return ChatCompletionResult(content="Done.", tool_calls=[], ttft_ms=10.0)
+
+        async def aclose(self) -> None:
+            return None
+
+    ho = _make_held_out_scenario("HO-88")
+    monkeypatch.setattr(
+        "tool_eval_bench.runner.context_pressure.calibrate_pressure_messages",
+        AsyncMock(return_value=([], 1024)),
+    )
+    monkeypatch.setattr(
+        "tool_eval_bench.adapters.factory.build_adapter",
+        lambda *_a, **_k: _NoopAdapter(),
+    )
+    monkeypatch.setattr(
+        "tool_eval_bench.runner.orchestrator.run_all_scenarios",
+        AsyncMock(
+            return_value=ModelScoreSummary(
+                scenario_results=[
+                    ScenarioResult(
+                        "TC-01",
+                        ScenarioStatus.PASS,
+                        2,
+                        "Public weather summary",
+                        expected_behavior="Public expected behavior",
+                        tool_calls_made=["get_weather"],
+                        raw_log="public weather trace",
+                    ),
+                    ScenarioResult(
+                        "HO-88",
+                        ScenarioStatus.PASS,
+                        2,
+                        "secret-ho-summary",
+                        expected_behavior="secret-ho-expected",
+                        tool_calls_made=["secret_canary_tool"],
+                        raw_log="secret-ho-trace",
+                    ),
+                ],
+                category_scores=[],
+                final_score=100,
+                total_points=4,
+                max_points=4,
+                rating="★★★★★ Excellent",
+            )
+        ),
+    )
+
+    real_pressure_report = pressure.pressure_sweep_report
+    captured_report_kwargs: list[dict[str, Any]] = []
+
+    def spy_pressure_report(**kwargs: Any) -> Any:
+        captured_report_kwargs.append(kwargs)
+        return real_pressure_report(**kwargs)
+
+    monkeypatch.setattr(pressure, "pressure_sweep_report", spy_pressure_report)
+
+    runs_out = tmp_path / "runs[brackets]"
+    args = make_parser().parse_args(
+        [
+            "--context-pressure-sweep",
+            "0.5-0.6",
+            "--sweep-steps",
+            "2",
+            "--context-size",
+            "32768",
+            "--scenarios",
+            "TC-01",
+            "HO-88",
+            "--output-dir",
+            str(runs_out),
+        ]
+    )
+    args._resolved_scenario_packs = [_make_scenario_pack(ho, name="sweep-pack", path=tmp_path)]
+
+    buf = StringIO()
+    console = Console(file=buf, width=120, no_color=True)
+    pressure.run_pressure_sweep(
+        console,
+        "qwen",
+        "Qwen[/]",
+        "vllm",
+        "http://localhost:8000",
+        None,
+        args,
+    )
+
+    assert len(captured_report_kwargs) == 1
+    assert captured_report_kwargs[0]["scenario_metadata"]["TC-01"].held_out is False
+    assert captured_report_kwargs[0]["scenario_metadata"]["HO-88"].held_out is True
+    assert captured_report_kwargs[0]["scenario_packs"][0]["name"] == "sweep-pack"
+
+    report_files = list(runs_out.rglob("*.md"))
+    assert len(report_files) == 1
+    report_md = report_files[0].read_text(encoding="utf-8")
+    assert "Public weather summary" in report_md
+    assert "public weather trace" in report_md
+    assert "### HO-88" in report_md
+    assert "_Held-out scenario: title, summary, and trace withheld._" in report_md
+    assert "sweep-pack" in report_md
+    assert "a" * 64 in report_md
+    for secret_token in (
+        "Secret Held-Out Canary Title",
+        "Confidential",
+        "secret-ho-summary",
+        "secret-ho-expected",
+        "secret_canary_tool",
+        "secret-ho-trace",
+    ):
+        assert secret_token not in report_md
+
+    stored = recent_runs(limit=1)[0]
+    assert stored["config"]["scenario_packs"][0]["name"] == "sweep-pack"
+    stored_ho = next(
+        sr
+        for sr in stored["scores"]["level_results"][0]["scenario_results"]
+        if sr["scenario_id"] == "HO-88"
+    )
+    assert stored_ho["raw_log"] == "secret-ho-trace"
