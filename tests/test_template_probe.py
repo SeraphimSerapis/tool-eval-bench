@@ -485,6 +485,39 @@ async def test_probe_diagnoses_model_or_endpoint_failure_and_handles_errors() ->
 
 
 @pytest.mark.asyncio
+async def test_probe_redacts_url_credentials_in_check_detail_and_error() -> None:
+    adapter = _ScriptedAdapter(
+        [
+            RuntimeError(
+                "Connection failed to https://user:secret@host.internal:8443/v1/chat?api_key=TOPSECRET"
+            ),
+            ChatCompletionResult(content="ALPHA-7942", finish_reason="stop"),
+            ChatCompletionResult(content="COBALT-41 and AMBER-88", finish_reason="stop"),
+            ChatCompletionResult(content="COBALT-41 and AMBER-88", finish_reason="stop"),
+        ]
+    )
+    probe = await probe_chat_template_fidelity(
+        adapter,
+        model="m",
+        base_url="https://user:secret@host.internal:8443/v1?api_key=TOPSECRET",
+        api_key=None,
+    )
+    failed = probe.check_by_name("tool_replay")
+    assert failed is not None
+    assert failed.passed is False
+    assert failed.error is not None
+    for field_text in (failed.detail, failed.error):
+        assert "probe request failed:" in field_text
+        assert "secret" not in field_text
+        assert "TOPSECRET" not in field_text
+        assert "user:" not in field_text
+        assert "host.internal" not in field_text
+    dumped = json.dumps(probe.to_dict())
+    assert "secret" not in dumped
+    assert "TOPSECRET" not in dumped
+
+
+@pytest.mark.asyncio
 async def test_probe_retries_once_on_reasoning_truncation_and_allows_closed_think() -> None:
     adapter = _ScriptedAdapter(
         [

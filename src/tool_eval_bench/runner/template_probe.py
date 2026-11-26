@@ -356,8 +356,9 @@ async def _run_case(
                 stream=False,
             )
         except Exception as exc:  # noqa: BLE001 - a failed probe reports an endpoint failure
-            logger.warning("chat-template probe %s failed: %s", case.name, redact_urls(str(exc)))
-            msg = f"probe request failed: {exc}"
+            redacted = redact_urls(str(exc))
+            logger.warning("chat-template probe %s failed: %s", case.name, redacted)
+            msg = f"probe request failed: {redacted}"
             return TemplateProbeCheck(
                 name=case.name,
                 passed=False,
