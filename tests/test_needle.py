@@ -440,6 +440,104 @@ class TestNeedlePlugin:
         assert "**Truncated**: 1." in report
         assert "*(truncated)*" in report
 
+    async def test_cell_crash_in_gather_is_accounted_as_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tool_eval_bench.plugins.needle import plugin as needle_plugin
+
+        cases = _cases((0.0, 1.0))
+        orig_build = needle_plugin.build_needle_messages
+
+        def flaky_build(case: NeedleCase, *, seed: int | None = None) -> Any:
+            if case.depth_percent == 0.0:
+                raise RuntimeError("haystack builder crashed")
+            return orig_build(case, seed=seed)
+
+        monkeypatch.setattr(needle_plugin, "build_needle_messages", flaky_build)
+
+        result = await NeedlePlugin().run(
+            _StubAdapter(),
+            model="m",
+            base_url="http://x",
+            cases=cases,
+            concurrency=2,
+        )
+        assert result.details["errors"] == 1
+        assert result.details["retrieved"] == 1
+        assert result.details["incomplete"] is True
+        assert result.item_results[0]["is_error"] is True
+        assert result.item_results[0]["found"] is False
+        assert result.details["cells"] == [
+            {"context_tokens": 1024, "depth_percent": 0.0, "found": False, "error": True},
+            {"context_tokens": 1024, "depth_percent": 1.0, "found": True},
+        ]
+
+    async def test_forwards_seed_and_extra_params(self) -> None:
+        cases = _cases((0.0, 1.0))
+        seen_extra: list[dict[str, Any] | None] = []
+
+        class _RecordingAdapter(_StubAdapter):
+            async def chat_completion(self, **kwargs: Any) -> _StubResponse:
+                seen_extra.append(kwargs.get("extra_params"))
+                return await super().chat_completion(**kwargs)
+
+        result = await NeedlePlugin().run(
+            _RecordingAdapter(),
+            model="m",
+            base_url="http://x",
+            cases=cases,
+            seed=42,
+            extra_params={"top_k": 20},
+        )
+        assert result.score == 100.0
+        assert seen_extra == [{"seed": 42, "top_k": 20}, {"seed": 42, "top_k": 20}]
+
+    async def test_haystacks_are_built_lazily_inside_semaphore(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+
+        from tool_eval_bench.plugins.needle import plugin as needle_plugin
+
+        orig_build = needle_plugin.build_needle_messages
+        built_count = 0
+        first_in_flight = asyncio.Event()
+        release_first = asyncio.Event()
+
+        def tracking_build(case: NeedleCase, *, seed: int | None = None) -> Any:
+            nonlocal built_count
+            built_count += 1
+            return orig_build(case, seed=seed)
+
+        monkeypatch.setattr(needle_plugin, "build_needle_messages", tracking_build)
+
+        class _PausingAdapter(_StubAdapter):
+            async def chat_completion(self, **kwargs: Any) -> _StubResponse:
+                if self.calls == 0:
+                    first_in_flight.set()
+                    await release_first.wait()
+                return await super().chat_completion(**kwargs)
+
+        cases = _cases((0.0, 0.5, 1.0))
+        run_task = asyncio.create_task(
+            NeedlePlugin().run(
+                _PausingAdapter(),
+                model="m",
+                base_url="http://x",
+                cases=cases,
+                concurrency=1,
+            )
+        )
+        await first_in_flight.wait()
+        await asyncio.sleep(0)
+        assert built_count == 1, (
+            f"expected 1 haystack built while slot 1 is busy, got {built_count}"
+        )
+        release_first.set()
+        result = await run_task
+        assert result.score == 100.0
+        assert built_count == 3
+
 
 # ---------------------------------------------------------------------------
 # CLI runner

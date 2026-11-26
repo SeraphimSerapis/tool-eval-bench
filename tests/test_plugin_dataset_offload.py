@@ -52,41 +52,45 @@ async def test_the_loader_runs_off_the_event_loop(
 async def test_a_slow_download_does_not_stall_other_tasks(
     module: Any, name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A short task started alongside the download must finish on its own schedule.
+    """A concurrent task must run while the dataset loader is blocked.
 
-    Measured on when the ticker finishes rather than on total wall clock: a
-    blocked loop cannot run the ticker until the download returns, so the two
-    outcomes differ by the whole download rather than by a fraction of it.
-    That margin is what keeps this from flaking on a loaded CI runner.
+    The loader sets ``loader_started`` and waits on ``release_loader``. A
+    blocked event loop could never run ``ticker`` to release it, so the wait
+    would time out rather than completing immediately.
     """
-    import time
-
-    download_seconds = 0.4
-    tick_seconds = 0.05
+    loader_started = threading.Event()
+    release_loader = threading.Event()
+    ticker_ran_while_blocked = False
+    loading_done = False
 
     def slow(*args: object, **kwargs: object) -> list:
-        time.sleep(download_seconds)
+        loader_started.set()
+        if not release_loader.wait(timeout=2.0):
+            raise AssertionError(f"{name} blocked the event loop; ticker never ran")
         raise _Stop
 
     monkeypatch.setattr(module, "load_dataset", slow)
     plugin = module_plugin(module)
-    started = time.monotonic()
-    ticker_finished: list[float] = []
 
     async def loading() -> None:
-        with pytest.raises(_Stop):
-            await plugin.run(_UnusedAdapter(), model="m", base_url="http://localhost:1")
+        nonlocal loading_done
+        try:
+            with pytest.raises(_Stop):
+                await plugin.run(_UnusedAdapter(), model="m", base_url="http://localhost:1")
+        finally:
+            loading_done = True
 
     async def ticker() -> None:
-        await asyncio.sleep(tick_seconds)
-        ticker_finished.append(time.monotonic() - started)
+        nonlocal ticker_ran_while_blocked
+        while not loader_started.is_set() and not loading_done:
+            await asyncio.sleep(0)
+        if loader_started.is_set():
+            ticker_ran_while_blocked = True
+            release_loader.set()
 
     await asyncio.gather(loading(), ticker())
 
-    assert ticker_finished[0] < download_seconds, (
-        f"{name} blocked the loop: a {tick_seconds}s task finished after "
-        f"{ticker_finished[0]:.3f}s, held up by a {download_seconds}s download"
-    )
+    assert ticker_ran_while_blocked, f"{name} blocked the event loop during dataset download"
 
 
 class _Stop(Exception):

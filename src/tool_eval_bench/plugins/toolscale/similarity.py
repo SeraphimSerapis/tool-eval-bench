@@ -75,9 +75,16 @@ class TfidfSpace:
     @staticmethod
     def cosine(a: Mapping[str, float], b: Mapping[str, float]) -> float:
         """Cosine of two unit vectors."""
+        if not a or not b:
+            return 0.0
         if len(a) > len(b):
             a, b = b, a
-        return sum(weight * b.get(word, 0.0) for word, weight in a.items())
+        total = 0.0
+        for word, weight in a.items():
+            other = b.get(word)
+            if other is not None:
+                total += weight * other
+        return total
 
 
 class ToolSimilarity:
@@ -87,6 +94,7 @@ class ToolSimilarity:
         corpus = list(corpus)
         self.space = TfidfSpace(tool_tokens(tool) for tool in corpus)
         self._vectors: dict[str, dict[str, float]] = {}
+        self._pair_cache: dict[tuple[str, str], float] = {}
         for tool in corpus:
             self.vector_of(tool)
 
@@ -100,8 +108,16 @@ class ToolSimilarity:
         return vector
 
     def between(self, a: Mapping[str, Any], b: Mapping[str, Any]) -> float:
-        """Cosine similarity of two tool definitions."""
-        return self.space.cosine(self.vector_of(a), self.vector_of(b))
+        """Cosine similarity of two tool definitions, cached symmetrically by name."""
+        name_a = str(a.get("function", a).get("name", ""))
+        name_b = str(b.get("function", b).get("name", ""))
+        key = (name_a, name_b) if name_a <= name_b else (name_b, name_a)
+        cached = self._pair_cache.get(key)
+        if cached is not None:
+            return cached
+        score = self.space.cosine(self.vector_of(a), self.vector_of(b))
+        self._pair_cache[key] = score
+        return score
 
 
 def nearest_neighbour(

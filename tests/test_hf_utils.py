@@ -383,3 +383,83 @@ def test_items_sha256_depends_on_content_and_order() -> None:
     assert items_sha256([a, b]) == items_sha256([a, b])
     assert items_sha256([a, b]) != items_sha256([b, a])
     assert items_sha256([a, b]) != items_sha256([a, changed])
+
+
+# -- Retry exhaustion, dataset info, and empty-page pagination --
+
+
+def test_fetch_with_retry_exhaustion_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
+    import urllib.error
+    from email.message import Message
+
+    from tool_eval_bench.plugins import hf_utils
+
+    slept: list[float] = []
+    monkeypatch.setattr(hf_utils.time, "sleep", slept.append)
+
+    def always_timeout(url: str, timeout: int | None = None) -> object:
+        raise TimeoutError("connection timed out")
+
+    monkeypatch.setattr(hf_utils.urllib.request, "urlopen", always_timeout)
+    with pytest.raises(TimeoutError, match="connection timed out"):
+        hf_utils._fetch_with_retry("https://example.test/rows", max_retries=2)
+    assert slept == [hf_utils._INITIAL_BACKOFF_S]
+
+    slept.clear()
+
+    def always_503(url: str, timeout: int | None = None) -> object:
+        raise urllib.error.HTTPError(url, 503, "Service Unavailable", Message(), None)
+
+    monkeypatch.setattr(hf_utils.urllib.request, "urlopen", always_503)
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        hf_utils._fetch_with_retry("https://example.test/rows", max_retries=2)
+    assert caught.value.code == 503
+    assert slept == [hf_utils._INITIAL_BACKOFF_S]
+
+    with pytest.raises(RuntimeError, match="after 0 attempts"):
+        hf_utils._fetch_with_retry("https://example.test/rows", max_retries=0)
+
+
+def test_get_dataset_info_fetches_info_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tool_eval_bench.plugins import hf_utils
+
+    seen_urls: list[str] = []
+
+    def fake_fetch(url: str, **kwargs: object) -> dict[str, object]:
+        seen_urls.append(url)
+        return {"dataset_info": {"splits": {"test": {"num_examples": 1319}}}}
+
+    monkeypatch.setattr(hf_utils, "_fetch_with_retry", fake_fetch)
+    info = hf_utils.get_dataset_info("openai/gsm8k", "main")
+    assert seen_urls == [
+        "https://datasets-server.huggingface.co/info?dataset=openai/gsm8k&config=main"
+    ]
+    assert info["dataset_info"]["splits"]["test"]["num_examples"] == 1319
+
+
+def test_download_rows_paginated_breaks_on_empty_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tool_eval_bench.plugins import hf_utils
+
+    monkeypatch.setattr(hf_utils.time, "sleep", lambda _s: None)
+    pages = [
+        {"rows": [{"row_idx": 0, "row": {"q": "a"}}, {"row_idx": 1, "row": {"q": "b"}}]},
+        {"rows": []},
+    ]
+    calls = 0
+
+    def fake_fetch(url: str, *, on_retry: object = None) -> dict[str, object]:
+        nonlocal calls
+        page = pages[calls]
+        calls += 1
+        return page
+
+    monkeypatch.setattr(
+        hf_utils,
+        "get_dataset_info",
+        lambda ds, cfg: {"dataset_info": {"splits": {"test": {"num_examples": 5}}}},
+    )
+    monkeypatch.setattr(hf_utils, "_fetch_with_retry", fake_fetch)
+
+    rows = hf_utils.download_rows_paginated("ds", "cfg", "test", page_size=2)
+    assert rows == [{"q": "a"}, {"q": "b"}]
+    assert calls == 2

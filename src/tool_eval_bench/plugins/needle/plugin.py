@@ -113,14 +113,15 @@ class NeedlePlugin(BenchmarkPlugin):
             # Vary the haystack per cell so two cells never share a prefix the
             # server could serve from cache instead of actually reading.
             case_seed = None if seed is None else seed + idx
-            # Building a 100K-token document is CPU work, not I/O; keep it off
-            # the event loop so concurrent cells still overlap their requests.
-            messages = await asyncio.to_thread(build_needle_messages, case, seed=case_seed)
 
             content = ""
             truncated = False
-            try:
-                async with sem:
+            async with sem:
+                # Building a 100K-token document is CPU work, not I/O; keep it
+                # off the event loop and inside the semaphore so only active
+                # concurrency slots allocate large haystacks at once.
+                messages = await asyncio.to_thread(build_needle_messages, case, seed=case_seed)
+                try:
                     response = await adapter.chat_completion(
                         model=model,
                         messages=messages,
@@ -158,17 +159,17 @@ class NeedlePlugin(BenchmarkPlugin):
                                 response.completion_tokens or 0
                             )
                             answer_text = final_answer_text(response)
-                if answer_text is None:
-                    truncated = True
-                    truncated_count += 1
-                    content = ""
-                else:
-                    content = answer_text
-                is_error = False
-            except Exception as exc:
-                logger.debug("Error on needle cell %s: %s", case.cell_id, exc)
-                is_error = True
-                error_count += 1
+                    if answer_text is None:
+                        truncated = True
+                        truncated_count += 1
+                        content = ""
+                    else:
+                        content = answer_text
+                    is_error = False
+                except Exception as exc:
+                    logger.debug("Error on needle cell %s: %s", case.cell_id, exc)
+                    is_error = True
+                    error_count += 1
 
             found = False if (is_error or truncated) else grade_response(case, content)
             if found:
@@ -193,6 +194,9 @@ class NeedlePlugin(BenchmarkPlugin):
 
         tasks = [eval_one(i, case) for i, case in enumerate(cases)]
         gather_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for outcome in gather_results:
+            if isinstance(outcome, BaseException) and not isinstance(outcome, Exception):
+                raise outcome
         for i, exc in enumerate(gather_results):
             if isinstance(exc, BaseException):
                 logger.error("Needle cell %s crashed: %s", cases[i].cell_id, exc)

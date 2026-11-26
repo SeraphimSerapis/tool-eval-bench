@@ -813,3 +813,106 @@ def test_ifeval_checkers_and_inline_thinking_handling() -> None:
         [{}, {}],
     )
     assert res.prompt_pass is True
+
+
+class TestCheckerGapCoverage:
+    """Non-Latin scripts, relation branches, capital_word_frequency, and paragraph bounds."""
+
+    @pytest.mark.parametrize(
+        ("language", "sample"),
+        [
+            pytest.param("ru", "Привет мир и добро пожаловать", id="cyrillic-ru"),
+            pytest.param("bg", "Здравей свят от България", id="cyrillic-bg"),
+            pytest.param("russian", "Это ответ на русском языке", id="cyrillic-alias"),
+            pytest.param("ar", "مرحبا بالعالم هذا نص عربي", id="arabic-ar"),
+            pytest.param("fa", "سلام دنیا این یک متن فارسی است", id="arabic-fa"),
+            pytest.param("farsi", "سلام دنیا", id="arabic-farsi-alias"),
+            pytest.param("ur", "ہیلو دنیا یہ اردو متن ہے", id="arabic-ur"),
+            pytest.param("hi", "नमस्ते दुनिया यह हिंदी पाठ है", id="devanagari-hi"),
+            pytest.param("mr", "नमस्कार जग हा मराठी मजकूर आहे", id="devanagari-mr"),
+            pytest.param("ne", "नमस्ते संसार यो नेपाली पाठ हो", id="devanagari-ne"),
+            pytest.param("pa", "ਸਤ ਸ੍ਰੀ ਅਕਾਲ ਦੁਨੀਆ", id="gurmukhi-pa"),
+            pytest.param("gu", "નમસ્તે દુનિયા આ ગુજરાતી લખાણ છે", id="gujarati-gu"),
+            pytest.param("bn", "হ্যালো বিশ্ব এটি বাংলা লেখা", id="bengali-bn"),
+            pytest.param("ta", "வணக்கம் உலகம் இது தமிழ் உரை", id="tamil-ta"),
+            pytest.param("te", "నమస్కారం ప్రపంచం ఇది తెలుగు వచనం", id="telugu-te"),
+            pytest.param("kn", "ಕನ್ನಡದಲ್ಲಿ ಉತ್ತರ", id="kannada-kn"),
+            pytest.param("th", "สวัสดีชาวโลกนี่คือภาษาไทย", id="thai-th"),
+            pytest.param("ko", "안녕하세요 세계 한국어 텍스트입니다", id="hangul-ko"),
+            pytest.param("ja", "こんにちは世界これは日本語です", id="kana-or-cjk-ja"),
+            pytest.param("japanese", "こんにちはひらがな", id="kana-only-ja"),
+            pytest.param("zh", "你好世界这是中文回复", id="cjk-zh"),
+            pytest.param("chinese", "中文测试文本", id="cjk-alias"),
+        ],
+    )
+    def test_non_latin_language_scripts(self, language: str, sample: str) -> None:
+        assert check_instruction("language:response_language", sample, {"language": language})
+        assert not check_instruction(
+            "language:response_language",
+            "This is plain English text only.",
+            {"language": language},
+        )
+
+    def test_language_edge_cases(self) -> None:
+        # Kana alone must not satisfy CJK-only Chinese.
+        assert not check_instruction("language:response_language", "こんにちは", {"language": "zh"})
+        # Letterless response fails; omitted language passes.
+        assert not check_instruction("language:response_language", "12345 !!!", {"language": "en"})
+        assert check_instruction("language:response_language", "anything", {})
+        # Non-Latin text fails Latin-marker languages before checking markers.
+        assert not check_instruction("language:response_language", "Привет мир", {"language": "de"})
+
+    @pytest.mark.parametrize(
+        ("relation", "response", "expected"),
+        [
+            ("more than", "one two three four", True),
+            ("more than", "one two three", False),
+            ("greater than", "one two three four", True),
+            ("greater than", "one two three", False),
+            # Unrecognized relation falls back to "at least".
+            ("unknown-relation", "one two three", True),
+            ("unknown-relation", "one two", False),
+        ],
+    )
+    def test_relation_more_than_greater_than_and_default(
+        self, relation: str, response: str, expected: bool
+    ) -> None:
+        assert (
+            check_instruction(
+                "length_constraints:number_words",
+                response,
+                {"num_words": 3, "relation": relation},
+            )
+            is expected
+        )
+
+    @pytest.mark.parametrize(
+        ("response", "kwargs", "expected"),
+        [
+            ("HELLO WORLD today", {"capital_frequency": 2, "capital_relation": "at least"}, True),
+            ("HELLO today", {"capital_frequency": 2, "capital_relation": "at least"}, False),
+            ("ONE TWO THREE", {"capital_frequency": 2, "capital_relation": "more than"}, True),
+            ("ONE TWO", {"capital_frequency": 2, "capital_relation": "at most"}, True),
+            ("ONE TWO THREE", {"capital_frequency": 2, "capital_relation": "at most"}, False),
+            ("no caps here", {}, True),
+        ],
+    )
+    def test_capital_word_frequency(self, response: str, kwargs: dict, expected: bool) -> None:
+        assert check_instruction("change_case:capital_word_frequency", response, kwargs) is expected
+
+    @pytest.mark.parametrize(
+        ("response", "kwargs", "expected"),
+        [
+            ("First.\n\nSecond.", {"nth_paragraph": 0, "first_word": "first"}, False),
+            ("First.\n\nSecond.", {"nth_paragraph": 3, "first_word": "third"}, False),
+            ("\n\nSecond.\n\nThird.", {"nth_paragraph": 1, "first_word": "second"}, False),
+            ("First.\n\nSecond.", {"nth_paragraph": None, "first_word": "first"}, True),
+        ],
+    )
+    def test_nth_paragraph_first_word_bounds(
+        self, response: str, kwargs: dict, expected: bool
+    ) -> None:
+        assert (
+            check_instruction("length_constraints:nth_paragraph_first_word", response, kwargs)
+            is expected
+        )

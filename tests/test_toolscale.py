@@ -658,6 +658,31 @@ class TestSimilarity:
         sim = ToolSimilarity(t.to_openai_tool() for t in _catalog().tools)
         assert sim.between(LARGE_TOOLSET[0], LARGE_TOOLSET[0]) == pytest.approx(1.0)
 
+    def test_between_caches_symmetric_pairs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        tools = [t.to_openai_tool() for t in _catalog().tools[:4]]
+        sim = ToolSimilarity(tools)
+        orig_cosine = sim.space.cosine
+        calls = 0
+
+        def counting_cosine(a: Any, b: Any) -> float:
+            nonlocal calls
+            calls += 1
+            return orig_cosine(a, b)
+
+        monkeypatch.setattr(sim.space, "cosine", counting_cosine)
+        first = sim.between(tools[0], tools[1])
+        second = sim.between(tools[1], tools[0])
+        third = sim.between(tools[0], tools[1])
+        assert first == second == third
+        assert calls == 1
+
+    def test_plugin_module_reexports_aggregate_and_report_symbols(self) -> None:
+        from tool_eval_bench.plugins.toolscale import aggregate, plugin, report
+
+        assert plugin.summarize is aggregate.summarize
+        assert plugin.similarity_check is aggregate.similarity_check
+        assert plugin.render_report is report.render_report
+
 
 # ---------------------------------------------------------------------------
 # Plugin
@@ -721,6 +746,19 @@ async def _run(items: list[ToolscaleItem], adapter: Any, catalog: Catalog) -> An
 
 @pytest.mark.asyncio
 class TestToolscalePlugin:
+    @pytest.fixture(autouse=True)
+    def _fast_bootstrap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep plugin-wiring tests fast; full resample accuracy is covered in TestStats."""
+        import functools
+
+        from tool_eval_bench.plugins.toolscale import aggregate
+
+        monkeypatch.setattr(
+            aggregate,
+            "bootstrap_mean_interval",
+            functools.partial(bootstrap_mean_interval, resamples=50),
+        )
+
     async def test_perfect_selection_scores_100(self) -> None:
         catalog = _catalog()
         result = await _run(_items(catalog), _StubAdapter(), catalog)
@@ -733,7 +771,7 @@ class TestToolscalePlugin:
     async def test_cue_effect_isolates_keyword_reliance(self) -> None:
         """A model that only matches keywords: right on literal, confused on implied."""
         catalog = _catalog()
-        items = _items(catalog, cues=["literal", "implied"], counts=[1, 4, 8])
+        items = _items(catalog, cues=["literal", "implied"], counts=[1, 4, 8], limit=4)
 
         def keyword_matcher(query: str, names: list[str]) -> str:
             target = next(n for n in names if _matches(query, n))
@@ -861,6 +899,7 @@ class TestToolscalePlugin:
             counts=[1, 4, 8],
             cues=["literal", "implied"],
             descriptions=["clean", "terse", "bare"],
+            limit=4,
         )
 
         def needs_descriptions(query: str, names: list[str], tools: list[dict]) -> str:
