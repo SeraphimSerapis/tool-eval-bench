@@ -169,14 +169,41 @@ Because scenario-count determines weight, categories with more scenarios have mo
 
 ### Infrastructure failures are not scored
 
-A timeout, connection error, or persistent 429/5xx measures the serving
-environment, not the model. Those scenarios are dropped from **both** the
-numerator and the denominator rather than counted as 0 points.
+A timeout, connection error (`httpx.NetworkError`, `httpx.ProtocolError`, and
+`httpx.ProxyError` all map to `connection_error`), or persistent 429/5xx
+(`server_error`) measures the serving environment, not the model. Those
+scenarios are dropped from **both** the numerator and the denominator rather
+than counted as 0 points.
 
 The run still reports them in full. `completion_rate` and `excluded_scenarios`
 say how much of the suite was actually graded, and a run graded on 60 of 69
 scenarios is not comparable to one graded on all 69. Always check the completion
 rate before comparing two runs.
+
+When infrastructure failures exclude every scenario in a run (`max_points == 0`),
+the score is **withheld**: `final_score` is `None` (`null` in JSON),
+`weighted_score` is `None`, and `rating` is `"Withheld"`. Withheld runs stay
+persisted for diagnosis and are excluded from leaderboard rankings.
+
+By contrast, model and parser failures stay in the score denominator as 0 points
+so serving misconfigurations cannot inflate scores by shrinking the graded set:
+
+- **`unparsed_tool_call`** (`domain/wire_hygiene.py`): a turn emits raw JSON
+  call envelopes or native tool-call markup in `content` while `tool_calls`
+  stays empty. Detection covers Hermes/Qwen (`<tool_call>`, `<|tool_call|>`),
+  Qwen3-Coder (`<function=...>`), Mistral (`[TOOL_CALLS]`), Llama 3
+  (`<|python_tag|>`), DeepSeek (`<|tool_calls_begin|>`), and Gemma 4 markers
+  (`<|tool_call>`, `<tool_call|>`, `<channel|>`, `<turn|>`, `call:<name>{...}`),
+  and reports the vLLM, SGLang, or llama.cpp parser flags that fix the server.
+- **`degenerate_loop`** (`FailureKind.DEGENERATE_LOOP`, `domain/loop_detection.py`):
+  reasoning or content enters a deterministic repetition loop (a 20-word n-gram
+  repeated at least 3 times, a 120+ character run or 200+ rule/border character
+  run, or a 2 to 4 character pattern repeated 40+ times consecutively). Runs
+  report the affected count in `degenerate_loop_scenarios`.
+- **`answer_in_thinking`**: a reasoning turn emits text in reasoning without
+  visible `content` (or truncates mid-thought with no visible answer). Runs
+  record `answer_in_thinking_turns`, `answer_in_thinking_scenarios`, and an
+  `answer_in_thinking` diagnostic on each affected scenario.
 
 Accuracy plugins use the stricter total-item denominator instead, so a timeout
 cannot turn one correct answer into a perfect run. Plugin results carry
@@ -286,6 +313,7 @@ infer an incident from the old summary's wording or compare old warnings as equi
 | 60–74 | ★★★ Adequate |
 | 40–59 | ★★ Weak |
 | 0–39 | ★ Poor |
+| `None` (`max_points == 0`) | Withheld |
 
 With safety gate active (safety-critical scenarios < 50%):
 | Score | Rating |
@@ -450,7 +478,17 @@ asks for the same tool call. A parsed call confirms that request worked, not tha
 the endpoint enforces the constraint independently of the model. Failed or
 inconclusive probes never skip TC-45; its own request determines the score and
 any infrastructure exclusion. `--no-probe-engine` or `probe_engine=False` skips
-this probe and records `unverified; probe disabled` instead.
+this probe and records `unverified; probe disabled` instead. The probe starts
+with a 256-token budget and retries once at 4096 tokens if it is truncated
+without a tool call. Those budgets are independent of `max_tokens`,
+`max_completion_tokens`, and Gemini's `maxOutputTokens` (top level or in
+`generationConfig`) in backend kwargs. Repeated truncation is reported as
+inconclusive, not non-enforcement. The `tool_choice` diagnostic records each
+attempt's finish reason, completion tokens, and retry outcome.
+
+Scenarios that hit turns with reasoning text and no visible content also record
+an `answer_in_thinking` diagnostic beside the run-level
+`answer_in_thinking_turns` and `answer_in_thinking_scenarios` totals.
 
 Paired `toolset_deltas` report crowded minus small-toolset points for TC-37/TC-01,
 TC-38/TC-07, and TC-39/TC-11 when both were graded. These are within-run controls;
@@ -478,8 +516,10 @@ a control, and held-out YAML packs are never rewritten.
 
 Old fixture identifiers cannot substitute for newly observed identifiers. The variants
 are public controls, not a contamination-proof held-out benchmark. They do not provide
-broad multilingual coverage or a multi-agent protocol. Localization is German-focused,
-and all scenarios still drive one assistant and mock tools.
+a multi-agent protocol: all scenarios still drive one assistant and mock tools. For
+multilingual coverage, Category F tests German and timezone localization directly, while
+opt-in `--locale {de,es,zh,ja}` runs translate user messages and tool descriptions across
+26 language-neutral scenarios (see [locales.md](locales.md)).
 
 Difficulty tiers remain author estimates. Calibrate them with repeated model trials
 under matching serving configurations, then inspect success rates and paired deltas.
@@ -505,21 +545,24 @@ Each evaluator has unit tests covering at minimum:
 | `tests/test_evaluators_extended.py` | Extended/agentic/adversarial scenario evaluators (F–O) |
 | `tests/test_hardmode.py` | Original Hard Mode scenarios and Category P registry integration |
 | `tests/test_hardmode_expanded.py` | Expanded Hard Mode scenarios (Category P, TC-75–TC-84) |
-| `tests/test_hardmode_transactional.py` | Transactional and preserved-reasoning Hard Mode scenarios (Category P, TC-85–TC-89) |
+| `tests/test_hardmode_transactional.py` | Transactional, compensation, and preserved-reasoning Hard Mode scenarios (TC-85 to TC-89, TC-99, TC-100, TC-103) |
+| `tests/test_hardmode_governance.py` | Governance, authorization, policy, and tenancy Hard Mode scenarios (TC-90 to TC-92, TC-98, TC-101, TC-104) |
+| `tests/test_hardmode_documents.py` | Document page-mapping, format-routing, OCR, and redaction Hard Mode scenarios (TC-93 to TC-97, TC-102) |
+| `tests/test_rubric_cohorts.py` | Rubric AST fingerprint gate (`domain/rubric.py`) and rubric-versioned cohort stability |
 | `tests/test_adversarial_pass_traces.py` | Shared side-effect mutation matrix; dangerous mutations must turn every targeted PASS trace into FAIL |
 | `tests/test_evaluator_robustness.py` | Crash-resistance: empty state, 50-call floods, unicode, very long answers |
 
 The contract test layer (`test_evaluator_contract.py`) is the primary guard against
 evaluator regression. It documents the exact phrases, argument patterns, and ordering
-constraints that each evaluator accepts or rejects — including known strictnesses such
+constraints that each evaluator accepts or rejects, including known strictnesses such
 as TC-12 requiring the word "delete" or "available tool" in a refusal response.
 
 #### CLI/schema contract
 
 `tests/test_api.py::TestArgsSchema::test_all_parser_args_in_schema_or_hidden` enforces
 that every public CLI argument is documented in `schema.py`. Adding a new flag to
-`cli/bench.py` without updating `schema.py` causes this test to fail immediately,
-preventing silent API drift.
+`cli/legacy_parser.py` (or a subcommand in `cli/command_registry.py`) without updating
+`schema.py` causes this test to fail immediately, preventing silent API drift.
 
 
 ### Evaluator Reliability Improvements
@@ -680,11 +723,14 @@ This requires `concurrency=1` for accurate isolation.
 
 | Backend | Effective t/s | Acceptance Rate | Method |
 |---|---|---|---|
-| vLLM | ✅ Always | ✅ Per-request response metrics when enabled, else `/metrics` | Response field or Prometheus counters |
-| SGLang | ✅ Always | `spec-live` only | Direct gauges are server state, not request-local counters |
-| llama.cpp | ✅ Always | ✅ Per-request response `timings` | Response timings; the `/metrics` step delta adds τ when no other request drafted |
-| Strata | ✅ Always | ✅ Per-request response `timings`, else `/metrics` | Response timings or Prometheus counters |
-| Other | ✅ Always | ❌ Not available | — |
+| vLLM | Always | Per-request response metrics when enabled, else `/metrics` | Response field or Prometheus counters |
+| SGLang | Always | `spec-live` only | Direct gauges are server state, not request-local counters |
+| llama.cpp | Always | Per-request response `timings` | Response timings; the `/metrics` step delta adds τ when no other request drafted |
+| TensorFold | Always | Per-request MLX/CUDA counts, else `/metrics` | Response counts or `tensorfold:spec_decode_*` counter deltas |
+| Strata | Always | Per-request response `timings`, else `/metrics` | Response timings or Prometheus counters |
+| Flare | Always | Prometheus `/metrics` (`flare_*` counter deltas) | Counter deltas (α, τ, draft window, Steps/s; per-position in `spec-live`) |
+| Splash | Always | Per-request `metrics.speculation` or `timings`, else `/metrics` | Response counts (α, τ, draft window; no Steps/s) or `splash_*` counter deltas |
+| Other | Always | Not available | None |
 
 When acceptance rate metrics are unavailable, the benchmark still reports
 effective t/s (wall-clock based), which captures the user-perceived benefit
@@ -771,7 +817,7 @@ suggestion, `max(⌊1.5 × (τ − 1)⌋, 2)`, is smaller than the current windo
 | Multi-turn | ✓ (10+ scenarios) | Limited | ✓ | ✓ (38 dialogue) |
 | Safety testing | ✓ (Category K) | ✗ | ✗ | ✓ (multiplicative gate) |
 | Throughput | ✓ (integrated) | ✗ | ✗ | ✗ |
-| Self-hosted | ✓ (local only) | Cloud required | Cloud required | Cloud + local |
+| Self-hosted & hosted | ✓ (local self-hosted + hosted Gemini, Anthropic, OpenAI) | Cloud required | Cloud required | Cloud + local |
 | Payload noise | ✓ (deterministic) | ✗ | ✗ | ✗ |
 | Error injection | ✓ (`--error-rate`) | ✗ | ✗ | ✓ (configurable) |
 | Pass@k / Pass^k | ✓ (`--trials`) | ✗ | ✗ | ✓ (k=3) |
@@ -795,9 +841,11 @@ that safety should act as a multiplicative gate rather than an additive term.
 ## Accuracy Benchmarks (Pluggable)
 
 In addition to the tool-calling benchmark, `tool-eval-bench` supports pluggable
-accuracy benchmarks that evaluate model knowledge and instruction-following
-capabilities. These run through the same adapter layer and require chat
-completion support, but do not need `tools`.
+benchmarks that evaluate model knowledge, instruction following, long-context
+retrieval, toolset scale, and decision-model calibration. GSM8K, MMLU, IFEval,
+and Needle need only chat completion support without `tools`; Toolscale requires
+`tools` support; Decision models use llama.cpp's `/v1/systemone` endpoint
+directly.
 
 All accuracy benchmarks use the `BenchmarkPlugin` ABC defined in
 `domain/plugin.py`, which standardizes dataset loading, evaluation, progress
@@ -922,6 +970,16 @@ reports accuracy when a tool was called apart from the call rate, because a
 clarifying question is abstention, not confusion. A TF-IDF similarity check
 confirms the tiers. See [toolscale.md](toolscale.md).
 
+### Decision models
+
+Single-pass evaluation of decision models served on llama.cpp's `/v1/systemone`
+endpoint against the vendored Typed Decisions test split. Each item sends all
+five questions about a state in one request, scores headline accuracy against
+the gold label, and reports KL divergence, Brier score, and expected calibration
+error (ECE) separately rather than folding calibration into accuracy. It
+requires no chat-completion endpoint and downloads nothing. See
+[decision-models.md](decision-models.md).
+
 All the accuracy plugins score against the total selected item count. Request
 errors therefore reduce the displayed score and mark the run `incomplete`; they
 are not removed from the denominator. The result also records answered items and
@@ -943,8 +1001,9 @@ report.
 
 ### Dataset Loading
 
-GSM8K, MMLU, and IFEval download their datasets from HuggingFace on first use
-(the needle benchmark generates its cases and downloads nothing):
+GSM8K, MMLU, and IFEval download their datasets from HuggingFace on first use.
+Needle (generated filler), Toolscale (bundled 272-tool catalog), and Decision
+models (vendored Typed Decisions split) download nothing:
 
 1. **Primary:** `datasets` library (direct git repo download, no rate limits).
    Install the `[hf]` extra (`pip install -e '.[hf]'` in a checkout).

@@ -29,10 +29,10 @@ redacted the same way: the host becomes `***` with the port kept, and userinfo,
 query, and fragment are dropped. That covers report headers, stored configs,
 and HTTP error messages quoted in traces and error fields. `--json` error
 output, meaning the error envelope and the headless `error` events, follows the
-same rule, and so do both `probe_result` events. The `server_discovered` event
-is the exception: it reports the local URL it found unredacted, because a
-consumer needs it to connect. `--redact-url` only changes what the console
-shows.
+same rule, and so do `probe_result`, `tool_call_probe`, and `template_probe`
+events. The `server_discovered` event is the exception: it reports the local URL
+it found unredacted, because a consumer needs it to connect. `--redact-url` only
+changes what the console shows.
 
 ## Run ID
 
@@ -47,29 +47,50 @@ version, because a bare Gemini host means `v1beta`.
 
 ## Config fingerprint
 
-Stored configs also carry a deterministic `config_fingerprint`, so leaderboard
-entries and comparisons only group runs that are actually comparable. The
-fingerprint covers the code identity (version and git SHA) and the discovered
-deployment facts (engine, context window, quantization, GPU count, slot count,
-speculative decoding) as well as the CLI flags, because the scenarios,
-evaluators and measurement loops *are* code: two runs from different commits are
-not comparable even when every flag matches. Scored runs, context-pressure
-sweeps, spec-bench, throughput-only runs and plugins all use this one rule.
+Stored configs carry a deterministic `config_fingerprint` for per-model
+grouping and resume validation. The fingerprint covers the CLI evaluation and
+operational flags, exact code identity (`tool_version` and `git_sha`), and
+discovered deployment facts (engine, context window, quantization, GPU count,
+slot count, speculative decoding). Repeat runs of one model collapse into a
+single leaderboard row only when their full `config_fingerprint` matches.
+Scored runs, context-pressure sweeps, spec-bench, throughput-only runs, and
+plugins all use this rule.
 
-The leaderboard ranks only completed runs at 100% completion. It ranks models
-against each other within a cohort: the same settings and the same
-`tool-eval-bench` version and commit, read from each run's stored metadata.
-Deployment facts are deliberately not part of the cohort, since models on one
-server often differ in quantization or context window. Runs from different
-cohorts stay visible but receive no misleading global rank. `export` restarts
-the CSV `rank` column per cohort. CSV adds `cohort` and `cohort_fingerprint`
-columns; JSON carries the same values as `cohort_label` and `cohort_fingerprint`.
+Cross-model leaderboard ranking uses a separate `cohort_fingerprint` computed
+by `application/leaderboard.py`. The leaderboard ranks only completed runs at
+100% completion (withheld runs with `final_score: null` are excluded). For runs
+that record rubric provenance, cohorts group on the shared evaluation config
+(leaving out model identity, deployment facts, `concurrency`,
+`timeout_seconds`, and `alpha`) plus the three explicit rubric versions from
+`domain/rubric.py`: `eval_rubric_version`, `locale_version`, and
+`noise_version`. Unrelated CLI, web, or documentation commits therefore keep
+existing baselines in the same cohort until the scoring rubric itself changes.
+Legacy rows stored before rubric versioning fall back to `tool_version` plus
+`git_sha` so historical cohort hashes stay stable.
+
+Runs from different cohorts stay visible in `leaderboard` without a misleading
+global rank. `export` restarts the CSV `rank` column per cohort, adding
+`cohort` and `cohort_fingerprint` columns; JSON export carries `cohort_label`
+and `cohort_fingerprint`.
+
+Condition differences that do not split a rubric cohort surface as
+`comparability_warnings` on leaderboard entries, CLI `compare`, and the Web UI
+Compare view. Warnings flag withheld scores, completion rates below 100%, dirty
+git working trees (`-dirty`), subset limits, unprobed serving engines,
+`response_format` fallbacks from `json_schema`, and cross-run rubric or tool
+version mismatches when comparing two runs.
 
 The version is derived from git by setuptools-scm, so a build installed straight
 from a commit reports which commit it came from rather than claiming to be the
 last tagged release. `git_sha` resolves against the installed package's own
 checkout, is `None` for wheel installs, and gains a `-dirty` suffix when the
 working tree has uncommitted changes.
+
+SQLite storage (`data/benchmarks.sqlite`, currently schema version 6) runs in
+WAL mode, stores per-scenario traces in `scenario_traces` so listing queries do
+not deserialize megabytes of logs, and indexes `(session_id)`,
+`(run_type, status, created_at DESC)`, `(created_at DESC)`, and non-null
+`(report_path)` for fast history, leaderboard, and deletion lookups.
 
 ## Labeling runs (`--label`)
 
@@ -130,9 +151,9 @@ API, keeps the stored one.
 Every scenario result is checkpointed to SQLite the moment it finishes, so a
 Ctrl-C or a dropped connection midway through the suite costs you only the
 scenario in flight. Interrupted scored runs appear in `tool-eval-bench history`
-marked `interrupted — resumable`. Throughput, context-pressure, spec-bench, and
-plugin (GSM8K, MMLU, IFEval) runs cannot be resumed, so `history` shows their
-bare status.
+marked as resumable. Throughput, context-pressure, spec-bench, and plugin
+(GSM8K, MMLU, IFEval, needle, toolscale, decision) runs cannot be resumed, so
+`history` shows their bare status.
 
 `tool-eval-bench resume RUN_ID` replays the finished work from the checkpoints
 and runs only the missing, corrupt, or infrastructure-failed scenarios. Pass,

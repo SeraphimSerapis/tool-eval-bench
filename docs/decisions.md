@@ -127,25 +127,72 @@ model shows a count effect on crowded lists that sparse lists would need to dise
 
 ## Operational keys in leaderboard cohorts
 
-Cross-model leaderboard cohorts exclude `concurrency`, `timeout_seconds`, and `alpha`
-through `COHORT_EXCLUDED_KEYS`, alongside model identity and deployment metadata. Different
-models served on one machine routinely need different `--parallel` limits, `--timeout`
-budgets, or `--alpha` deployability weights, such as a dense 70B model at `--parallel 1`
-with a long timeout ranked beside a smaller model at `--parallel 8`. Splitting cohorts on
-those flags put routine runs in separate tables even when scenarios, prompts, temperature,
-turn caps, and error injection matched.
+Cross-model leaderboard cohorts key on the shared evaluation config (excluding `concurrency`,
+`timeout_seconds`, and `alpha` via `COHORT_EXCLUDED_KEYS`, alongside model identity and deployment
+metadata) plus explicit rubric versions (`eval_rubric_version`, `locale_version`, `noise_version`
+from `domain/rubric.py`). Different models served on one machine routinely need different
+`--parallel` limits, `--timeout` budgets, or `--alpha` deployability weights, such as a dense 70B
+model at `--parallel 1` with a long timeout ranked beside a smaller model at `--parallel 8`.
+Splitting cohorts on those flags put routine runs in separate tables even when scenarios, prompts,
+temperature, turn caps, and error injection matched.
 
-Per-model `config_fingerprint` and `--resume` still include all three keys. Two runs of one
-model at different concurrency levels, timeouts, or `alpha` weights keep separate
-leaderboard rows rather than collapsing as retries, and resuming an interrupted run with a
-changed operational flag still stops with a mismatch. Keeping these keys in cohorts splits
-cross-model tables over hardware-driven tuning for the same reason quantization and context
-length would. Dropping them from `config_fingerprint` would merge single-model rows whose
-`median_turn_ms` and `deployability` shifted because `--parallel` or `--alpha` changed.
+Per-model `config_fingerprint` and `--resume` still include all three operational keys, deployment
+facts, and exact code identity (`tool_version`, `git_sha`). Two runs of one model at different
+concurrency levels, timeouts, or `alpha` weights keep separate leaderboard rows rather than
+collapsing as retries, and resuming an interrupted run with a changed operational flag still stops
+with a mismatch. Keeping these keys in cohorts splits cross-model tables over hardware-driven tuning
+for the same reason quantization and context length would. Dropping them from `config_fingerprint`
+would merge single-model rows whose `median_turn_ms` and `deployability` shifted because
+`--parallel` or `--alpha` changed.
 
-Leaderboard cohorts rank on `final_score`, which does not read `alpha`, and show
-`deployability` beside it from each run's own latency and `alpha`. Excluding
-`timeout_seconds` and `concurrency` from cohorts assumes timeouts are generous enough that
-neither model fails scenarios from client cutoffs or server queue saturation. Revisit if
-leaderboard ranking sorts by `deployability`, or if scenario evaluation becomes stateful
-across concurrent workers.
+Leaderboard cohorts rank on `final_score`, which does not read `alpha`, and show `deployability`
+beside it from each run's own latency and `alpha`. Excluding `timeout_seconds` and `concurrency`
+from cohorts assumes timeouts are generous enough that neither model fails scenarios from client
+cutoffs or server queue saturation. Revisit if leaderboard ranking sorts by `deployability`, or if
+scenario evaluation becomes stateful across concurrent workers.
+
+## Rubric-versioned cohorts and AST fingerprint gate
+
+Cross-model leaderboard cohorts previously hashed `tool_version` and `git_sha`, so every unrelated
+CLI, web, or documentation commit started a new cohort and forced operators to re-run baselines.
+Modern runs now record `eval_rubric_version`, `locale_version`, and `noise_version` from
+`domain/rubric.py` in run metadata, and `application/leaderboard.py` keys cross-model cohorts on
+those three rubric versions plus the evaluation config. Older rows without `eval_rubric_version`
+keep the historical `tool_version` plus `git_sha` payload so stored cohort hashes do not shift.
+
+Manual version bumps drift easily, so `tests/test_rubric_cohorts.py` checks a docstring-stripped
+normalized AST hash (`RUBRIC_AST_FINGERPRINT`) across `evals/**/*.py` and
+`runner/orchestrator/**/*.py`. Any code edit in those paths fails CI until the author either bumps
+the relevant rubric version and updates the fingerprint, or refreshes the fingerprint alone for a
+verdict-preserving refactor. Dirty working trees, incomplete runs, unprobed engines, subset limits,
+and `response_format` fallbacks still surface as `comparability_warnings` in leaderboard and
+comparison views instead of silently splitting cohorts. Revisit if scoring logic moves outside
+`evals/` and `runner/orchestrator/`.
+
+## Withheld scores when zero scenarios are gradable
+
+When infrastructure failures (`timeout`, `connection_error`, `server_error`) exclude every scenario
+in a run, `max_points` is 0. Scoring `0 / 0` as `final_score = 0` blamed the model for a dead
+endpoint, and treating it as `100` inflated scores on failed runs. `score_results` now sets
+`final_score = None`, `weighted_score = None`, and `rating = "Withheld"`.
+
+Withheld runs remain persisted and inspectable in `history`, Markdown reports, JSON output, and the
+web inspector, and are excluded from leaderboard rankings. Downstream consumers must guard
+`final_score is None` before numeric comparisons. Revisit only if a partial-run threshold replaces
+strict 100% completion for leaderboard eligibility.
+
+## Turn-by-turn reviewer mode
+
+Reviewer mode (`--reviewer*` and `ReviewerSettings`) pairs the benchmarked model with a second model
+that checks proposed turns in scope (`turns`, `tools`, or `final`) before the harness acts on them,
+allowing up to `max_rounds` revisions per turn. Putting the reviewer in its own module
+(`runner/review.py`) and wiring it through `runner/orchestrator/review_hook.py` keeps the solo
+orchestration path unchanged when no reviewer is configured.
+
+Reviewer settings are folded into `config_fingerprint` and leaderboard cohorts so reviewed runs
+never rank beside solo runs. Held-out scenario packs are rejected when a reviewer is enabled,
+preventing private prompts and traces from being forwarded to a second endpoint. Reviewer transport
+or parse failures fail open on the turn and record an error in `ReviewStats` rather than turning a
+reviewer outage into a model failure, and reports account for reviewer prompt and completion tokens
+separately from the benchmarked model's token efficiency. Revisit if multi-reviewer voting or
+offline transcript review is added later.

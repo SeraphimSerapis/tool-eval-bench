@@ -4,8 +4,9 @@ An adapter translates between the benchmark's internal request shape and one pro
 format. There is exactly one abstract method, so a new adapter is a small file plus two lines of
 wiring.
 
-The benchmark ships three: `OpenAICompatibleAdapter` (vLLM, LiteLLM, llama.cpp, SGLang, and
-Google's OpenAI compatibility layer), `GeminiAdapter` (the native `generateContent` API), and
+The benchmark ships three: `OpenAICompatibleAdapter` (vLLM, LiteLLM, llama.cpp, SGLang, Strata,
+TabbyAPI, NInfer, TandemLLM, TensorFold, Flare, Halogen Flash, Splash, hosted OpenAI, and Google's
+OpenAI compatibility layer), `GeminiAdapter` (the native `generateContent` API), and
 `AnthropicAdapter` (the Messages API, including gateways that front other models with it). Add a
 fourth only when a provider's request or tool-call shape genuinely differs. A provider that speaks
 `POST /v1/chat/completions` needs no adapter at all, only a `--base-url`.
@@ -46,6 +47,6 @@ response-driven parameter retry.
 
 ## What stays out of an adapter
 
-Retries, rate-limit backoff, and connection pooling live in `utils/http_retry.py` and apply to
+Retries, rate-limit backoff, and connection pooling live in `adapters/http_retry.py` and apply to
 every adapter. Do not add per-provider retry logic; a second retry loop underneath the shared one
 multiplies the wait instead of shortening it.
