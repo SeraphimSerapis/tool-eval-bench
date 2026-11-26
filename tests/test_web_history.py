@@ -354,3 +354,101 @@ async def test_json_post_validation_and_bulk_delete_caps(seeded_db: str) -> None
             live.task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await live.task
+
+
+@pytest.mark.asyncio
+async def test_web_redacts_non_public_scenarios_even_without_pack_attestation(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from tool_eval_bench.cli.held_out import HELD_OUT
+
+    db_path = str(tmp_path / "benchmarks.sqlite")
+    out_dir = str(tmp_path / "runs")
+    monkeypatch.setattr("tool_eval_bench.storage.db._default_db_path", lambda: db_path)
+
+    run_id = "2026-11-11T00-00-00.000000Z_nopack01"
+    with RunRepository(db_path=db_path) as repo:
+        repo.upsert_scenario_run(
+            {
+                "run_id": run_id,
+                "run_type": "tool_eval",
+                "status": "interrupted",
+                "config": {
+                    "model": "qwen",
+                    "backend": "vllm",
+                    "base_url": "http://***:8000",
+                    "scenario_ids": ["TC-01", "HO-99"],
+                    # Deliberately omit scenario_packs attestation.
+                },
+                "metadata": {"model": "qwen"},
+                "scores": {
+                    "final_score": 50,
+                    "scenario_results": [
+                        {
+                            "scenario_id": "TC-01",
+                            "status": "pass",
+                            "points": 2,
+                            "summary": "Public summary",
+                            "raw_log": "public trace",
+                        },
+                        {
+                            "scenario_id": "HO-99",
+                            "status": "fail",
+                            "points": 0,
+                            "summary": "Secret held-out summary",
+                            "raw_log": "Secret held-out prompt and trace",
+                        },
+                    ],
+                    "safety_warnings": [
+                        "HO-99 (Secret Title): leaked detail",
+                        "HO-99: leaked titleless detail",
+                    ],
+                },
+            }
+        )
+        repo.checkpoint_scenario_result(
+            run_id,
+            {
+                "scenario_id": "TC-01",
+                "status": "pass",
+                "points": 2,
+                "summary": "Public summary",
+                "raw_log": "public trace",
+                "tool_calls_made": ["get_weather"],
+            },
+        )
+        repo.checkpoint_scenario_result(
+            run_id,
+            {
+                "scenario_id": "HO-99",
+                "status": "fail",
+                "points": 0,
+                "summary": "Secret held-out summary",
+                "raw_log": "Secret held-out prompt and trace",
+                "tool_calls_made": ["secret_tool"],
+                "expected_behavior": "Secret behavior",
+                "note": "Secret note",
+                "decision_audit": {
+                    "status": "completed",
+                    "request_started": True,
+                    "choice": "Secret choice",
+                },
+            },
+        )
+
+    app = create_app(output_dir=out_dir, token=TEST_TOKEN)
+    async with web_client(app) as client:
+        progress = (await client.get(f"/api/runs/{run_id}/progress")).json()
+        by_id = {cp["scenario_id"]: cp for cp in progress["checkpoints"]}
+        assert by_id["TC-01"]["summary"] == "Public summary"
+        assert by_id["HO-99"]["summary"] == HELD_OUT
+        assert "Secret" not in json.dumps(progress)
+
+        detail = (await client.get(f"/api/runs/{run_id}")).json()
+        assert "Secret" not in json.dumps(detail)
+
+        events_text = (await client.get(f"/api/runs/{run_id}/events")).text
+        assert "Secret" not in events_text
+        assert HELD_OUT in events_text

@@ -924,3 +924,46 @@ class TestMcNemarSignificance:
 
             _, _, _, _, paired = resolve_discordant_scenarios_for_diff("r-a", "r-b")
             assert "Eval rubric version mismatch (1 vs 2)" in paired["comparability_warnings"]
+
+
+def test_cli_history_diff_and_compare_tolerate_null_points(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tool_eval_bench.storage.db import RunRepository
+
+    db_path = str(tmp_path / "benchmarks.sqlite")
+    monkeypatch.setattr("tool_eval_bench.storage.db._default_db_path", lambda: db_path)
+
+    with RunRepository(db_path=db_path) as repo:
+        for rid, pts in (("hist-a", None), ("hist-b", 2)):
+            repo.upsert_scenario_run(
+                {
+                    "run_id": rid,
+                    "run_type": "tool_eval",
+                    "status": "completed",
+                    "config": {"model": rid, "backend": "vllm", "base_url": "http://***:8000"},
+                    "metadata": {"model": rid},
+                    "scores": {
+                        "final_score": 0 if pts is None else 100,
+                        "scenario_results": [
+                            {
+                                "scenario_id": "TC-01",
+                                "status": "fail" if pts is None else "pass",
+                                "points": pts,
+                                "duration_seconds": None,
+                            }
+                        ],
+                    },
+                }
+            )
+
+    buf = StringIO()
+    console = Console(file=buf, width=120, no_color=True)
+    compare_runs(console, "hist-a", "hist-b")
+    print_diff(
+        console,
+        [ScenarioResult("TC-01", ScenarioStatus.PASS, 2, "ok", duration_seconds=1.2)],
+        "hist-a",
+    )
+    rendered = buf.getvalue()
+    assert "0" in rendered and "2" in rendered

@@ -8,6 +8,7 @@ invisible at `--parallel 1` and costly above it.  These tests pin the offload.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 import pytest
@@ -38,35 +39,41 @@ async def test_async_checkpoint_round_trips_like_the_sync_one(repo: RunRepositor
 async def test_a_slow_write_overlaps_with_other_work(
     repo: RunRepository, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A short task started alongside the write must finish on its own schedule.
+    """An async task must keep ticking while the offloaded DB write is blocked.
 
-    Measured on when the ticker finishes rather than on total wall clock: a
-    blocked loop cannot run it until the write returns, so the two outcomes
-    differ by the whole write rather than by a fraction of it.
+    Uses a deterministic threading.Event handshake: the write thread signals
+    entry and blocks until the event-loop ticker observes it and releases it.
+    If the write ran on the event loop, the ticker could never run before the
+    wait timed out.
     """
-    write_seconds = 0.4
-    tick_seconds = 0.05
+    write_entered = threading.Event()
+    allow_finish = threading.Event()
+    write_released = False
 
     def slow_write(run_id: str, result: dict) -> None:
-        time.sleep(write_seconds)
+        nonlocal write_released
+        write_entered.set()
+        write_released = allow_finish.wait(timeout=2.0)
 
     monkeypatch.setattr(repo, "checkpoint_scenario_result", slow_write)
-    started = time.monotonic()
-    ticker_finished: list[float] = []
+    ticker_ran_while_blocked = False
 
     async def ticker() -> None:
-        await asyncio.sleep(tick_seconds)
-        ticker_finished.append(time.monotonic() - started)
+        nonlocal ticker_ran_while_blocked
+        deadline = time.monotonic() + 2.0
+        while not write_entered.is_set():
+            assert time.monotonic() < deadline, "offloaded write never started"
+            await asyncio.sleep(0.001)
+        ticker_ran_while_blocked = True
+        allow_finish.set()
 
     await asyncio.gather(
         repo.acheckpoint_scenario_result("R1", {"scenario_id": "TC-01"}),
         ticker(),
     )
 
-    assert ticker_finished[0] < write_seconds, (
-        f"the write blocked the loop: a {tick_seconds}s task finished after "
-        f"{ticker_finished[0]:.3f}s, held up by a {write_seconds}s write"
-    )
+    assert ticker_ran_while_blocked is True
+    assert write_released is True
 
 
 @pytest.mark.asyncio

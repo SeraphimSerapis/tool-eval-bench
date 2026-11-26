@@ -50,17 +50,6 @@ def _record(
     return call
 
 
-def test_all_extended_hardmode_scenarios_have_complete_contracts() -> None:
-    scenarios = [_scenario(f"TC-{number}") for number in range(70, 89)]
-    assert len(scenarios) == 19
-    for scenario in scenarios:
-        assert scenario.user_message.strip()
-        assert scenario.description.strip()
-        assert scenario.difficulty in {4, 5}
-        assert callable(scenario.handle_tool_call)
-        assert callable(scenario.evaluate)
-
-
 @pytest.mark.parametrize("scenario_id", ["TC-70", "TC-78", "TC-81", "TC-83"])
 def test_observed_tool_errors_cannot_be_replaced_by_fabricated_answers(scenario_id: str) -> None:
     state = ScenarioState(

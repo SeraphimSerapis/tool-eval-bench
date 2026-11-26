@@ -515,3 +515,188 @@ async def test_compare_rejects_non_scenario_runs_and_handles_removed_and_regress
         )
         assert fp_only.status_code == 200
         assert fp_only.json()["config_diffs"] == ["config fingerprints differ"]
+
+
+@pytest.mark.asyncio
+async def test_web_compare_handles_null_points_without_500(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = str(tmp_path / "benchmarks.sqlite")
+    out_dir = str(tmp_path / "runs")
+    monkeypatch.setattr("tool_eval_bench.storage.db._default_db_path", lambda: db_path)
+
+    with RunRepository(db_path=db_path) as repo:
+        for idx, pts in (("run-a", None), ("run-b", 2)):
+            repo.upsert_scenario_run(
+                {
+                    "run_id": idx,
+                    "run_type": "tool_eval",
+                    "status": "completed",
+                    "config": {"model": idx, "backend": "vllm", "base_url": "http://***:8000"},
+                    "metadata": {"model": idx},
+                    "scores": {
+                        "final_score": 0 if pts is None else 100,
+                        "scenario_results": [
+                            {
+                                "scenario_id": "TC-01",
+                                "status": "fail" if pts is None else "pass",
+                                "points": pts,
+                            }
+                        ],
+                    },
+                }
+            )
+
+    app = create_app(output_dir=out_dir, token=TEST_TOKEN)
+    async with web_client(app) as client:
+        resp = await client.get("/api/compare", params={"left": "run-a", "right": "run-b"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["summary"]["total_points_a"] == 0
+        assert body["summary"]["total_points_b"] == 2
+        assert body["summary"]["total_delta"] == 2
+
+
+@pytest.mark.asyncio
+async def test_csv_export_neutralizes_formula_injection_in_web_and_cli_without_touching_numbers(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rich.console import Console
+
+    from tests.web_support import AUTH_HEADERS
+    from tool_eval_bench.cli import leaderboard
+    from tool_eval_bench.web.app import _sanitize_csv_cell as _web_sanitize_csv_cell
+
+    db_path = str(tmp_path / "benchmarks.sqlite")
+    out_dir_runs = str(tmp_path / "runs")
+    monkeypatch.setattr("tool_eval_bench.storage.db._default_db_path", lambda: db_path)
+
+    # Unit-level boundary check on helper behavior for numbers, booleans, empty, and prefixes.
+    for fn in (_web_sanitize_csv_cell, leaderboard._sanitize_csv_cell):
+        assert fn("=1+1") == "'=1+1"
+        assert fn("+SUM(A1:A2)") == "'+SUM(A1:A2)"
+        assert fn("-2+3") == "'-2+3"
+        assert fn("@IMP") == "'@IMP"
+        assert fn("\ttabbed") == "'\ttabbed"
+        assert fn("\rcr") == "'\rcr"
+        assert fn("safe-model") == "safe-model"
+        assert fn("") == ""
+        assert fn(-42) == -42
+        assert fn(-0.25) == -0.25
+
+    with RunRepository(db_path=db_path) as repo:
+        repo.upsert_scenario_run(
+            {
+                "run_id": "csv-formula-run",
+                "run_type": "tool_eval",
+                "status": "completed",
+                "config": {
+                    "model": "=CMD|' /C calc'!A0",
+                    "backend": "@gateway",
+                    "base_url": "http://***:8000",
+                    "scenario_count": 1,
+                    "temperature": 0.0,
+                },
+                "metadata": {
+                    "model": "=CMD|' /C calc'!A0",
+                    "engine_name": "+vLLM",
+                    "engine_version": "-0.8.5",
+                    "quantization": "\tAWQ",
+                    "server_model_root": "\r/models/qwen",
+                    "tool_version": "0.1.0",
+                    "max_model_len": 32768,
+                    "temperature": 0.0,
+                },
+                "scores": {
+                    "final_score": 85,
+                    "rating": "★★★★ Good",
+                    "total_points": 17,
+                    "max_points": 20,
+                    "total_tokens": 1024,
+                    "scenario_results": [{"scenario_id": "TC-01", "status": "pass", "points": 2}],
+                    "category_scores": [{"category": "A", "percent": 85.0}],
+                },
+            }
+        )
+        repo.upsert_scenario_run(
+            {
+                "run_id": "csv-clean-run",
+                "run_type": "tool_eval",
+                "status": "completed",
+                "config": {
+                    "model": "qwen2.5-7b",
+                    "backend": "vllm",
+                    "base_url": "http://***:8000",
+                    "scenario_count": 1,
+                    "temperature": 0.2,
+                },
+                "metadata": {
+                    "model": "qwen2.5-7b",
+                    "engine_name": "vLLM",
+                    "engine_version": "0.8.5",
+                    "quantization": "FP8",
+                    "server_model_root": "/models/qwen2.5-7b",
+                    "temperature": 0.2,
+                },
+                "scores": {
+                    "final_score": 90,
+                    "rating": "★★★★★ Excellent",
+                    "total_points": 18,
+                    "max_points": 20,
+                    "total_tokens": 900,
+                    "scenario_results": [{"scenario_id": "TC-01", "status": "pass", "points": 2}],
+                    "category_scores": [{"category": "A", "percent": 90.0}],
+                },
+            }
+        )
+
+    # 1. Web CSV and JSON export.
+    app = create_app(token=TEST_TOKEN, output_dir=out_dir_runs)
+    async with web_client(app) as client:
+        csv_resp = await client.get("/api/export?format=csv", headers=AUTH_HEADERS)
+        assert csv_resp.status_code == 200
+        web_rows = {r["run_id"]: r for r in csv.DictReader(io.StringIO(csv_resp.text))}
+
+        json_resp = await client.get("/api/export?format=json", headers=AUTH_HEADERS)
+        assert json_resp.status_code == 200
+        json_rows = {r["run_id"]: r for r in json_resp.json()}
+
+    formula_row = web_rows["csv-formula-run"]
+    assert formula_row["model"].startswith("'=CMD")
+    assert formula_row["backend"] == "'@gateway"
+    assert formula_row["cohort"].startswith("'@gateway/1")
+    assert formula_row["engine_name"] == "'+vLLM"
+    assert formula_row["engine_version"] == "'-0.8.5"
+    assert formula_row["quantization"] == "'\tAWQ"
+    assert formula_row["server_model_root"] == "'\r/models/qwen"
+    assert formula_row["final_score"] == "85"
+    assert formula_row["temperature"] == "0.0"
+
+    clean_row = web_rows["csv-clean-run"]
+    assert clean_row["model"] == "qwen2.5-7b"
+    assert clean_row["engine_name"] == "vLLM"
+    assert clean_row["final_score"] == "90"
+    assert clean_row["temperature"] == "0.2"
+
+    # JSON export preserves raw strings without spreadsheet quoting.
+    assert json_rows["csv-formula-run"]["model"] == "=CMD|' /C calc'!A0"
+
+    # 2. CLI CSV export + bracketed output path escaping.
+    out_dir = tmp_path / "dir[bold]"
+    out_dir.mkdir(parents=True)
+    out_csv = out_dir / "export[1].csv"
+    cli_buf = io.StringIO()
+    cli_console = Console(file=cli_buf, width=140, no_color=True)
+    leaderboard.export_runs(cli_console, fmt="csv", output=str(out_csv))
+    cli_out = cli_buf.getvalue().replace("\n", "")
+    assert "dir[bold]" in cli_out
+    assert "export[1].csv" in cli_out
+
+    with out_csv.open("r", encoding="utf-8", newline="") as fh:
+        cli_rows = {r["run_id"]: r for r in csv.DictReader(fh)}
+    assert cli_rows["csv-formula-run"]["model"].startswith("'=CMD")
+    assert cli_rows["csv-formula-run"]["engine_name"] == "'+vLLM"
+    assert cli_rows["csv-formula-run"]["engine_version"] == "'-0.8.5"
+    assert cli_rows["csv-formula-run"]["quantization"] == "'\tAWQ"
+    assert cli_rows["csv-clean-run"]["model"] == "qwen2.5-7b"
+    assert cli_rows["csv-clean-run"]["final_score"] == "90"
