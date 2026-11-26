@@ -20,7 +20,7 @@ virtual environment. From a fresh checkout:
 git clone https://github.com/SeraphimSerapis/tool-eval-bench.git
 cd tool-eval-bench
 python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev,perf]'
+.venv/bin/python -m pip install -e '.[dev,perf,card]'
 ```
 
 Install the `[hf]` extra only when working on the GSM8K, MMLU, or IFEval dataset
@@ -172,13 +172,19 @@ registered by existing.
    `--weight-by-difficulty` scoring.
 3. Define a module-level `DISPLAY = ScenarioDisplayDetail(...)` describing the
    success and failure cases. Reports show these next to the score.
-4. Set `max_turns_override` if the scenario needs more than the default 8 turns.
+4. Optionally set `max_turns_override` if the scenario needs more than the default 8 turns.
+5. Update `src/tool_eval_bench/domain/rubric.py`: bump `EVAL_RUBRIC_VERSION` (or
+   `LOCALE_VERSION` / `NOISE_VERSION` when those change) if scoring verdicts change, and refresh
+   `RUBRIC_AST_FINGERPRINT` from `compute_rubric_ast_fingerprint()` so
+   `tests/test_rubric_cohorts.py` passes.
 
-Nothing else registers the scenario. `tests/test_scenario_registry.py` checks
-every file in the tree for all four of these and fails if one is missing.
+Nothing else registers the scenario. `tests/test_scenario_registry.py` validates
+the required exports and registration invariants (`SCENARIO`, `DISPLAY`, valid
+IDs, `difficulty`, and isolation from sibling scenario modules) and fails if
+one is missing or malformed.
 [docs/adding-a-scenario.md](docs/adding-a-scenario.md) walks through a complete
 example, including the optional fields that change how the runner drives the
-conversation.
+conversation and the rubric AST gate.
 
 A helper used by more than one scenario in the group belongs in that group's
 `_shared.py`. Do not import one scenario module from another: helpers with the
@@ -208,9 +214,15 @@ For evaluator changes in particular:
 - Add a test that would have failed before the fix.
 
 The standard score is 0 points for FAIL, 1 for PARTIAL, and 2 for PASS. Scenario
-and category scoring is documented in the README; changes to scoring semantics
-also need a changelog fragment, because they move results a previous run already
-produced.
+and category scoring is documented in [docs/methodology.md](docs/methodology.md).
+Any Python edit under `evals/` or `runner/orchestrator/` must also update
+`RUBRIC_AST_FINGERPRINT` in `src/tool_eval_bench/domain/rubric.py` (and bump
+`EVAL_RUBRIC_VERSION`, `LOCALE_VERSION`, or `NOISE_VERSION` when verdicts,
+translations, or mock noise change), and scoring changes need a changelog
+fragment because they move results a previous run already produced. For
+verdict-preserving refactors in those directories, refresh only
+`RUBRIC_AST_FINGERPRINT` and state why verdicts are unchanged in the PR
+description.
 
 ## Changelog entries
 
@@ -256,9 +268,11 @@ llama.cpp, and other supported endpoints.
 
 ### CLI or API changes
 
-Update the relevant README usage, API/schema snapshots when the interface
-intentionally changes, tests, and a changelog fragment. Verify `--help` output for
-new or changed CLI commands.
+Update `src/tool_eval_bench/schema.py` (including `SCHEMA_VERSION` when public
+flags or commands change), regenerate compatibility snapshots with
+`.venv/bin/python scripts/update_compat_snapshots.py`, update `README.md` and
+[docs/cli-reference.md](docs/cli-reference.md), add tests, and add a changelog
+fragment. Verify `--help` output for new or changed CLI commands.
 
 ### Adapter or orchestration changes
 
@@ -287,8 +301,8 @@ Before submitting a pull request:
 - [ ] `.venv/bin/ruff check .` passes.
 - [ ] `.venv/bin/ruff format --check .` passes.
 - [ ] `.venv/bin/mypy` passes.
-- [ ] The required pytest suite passes.
-- [ ] README is updated when applicable.
+- [ ] The required pytest suite passes (including `tests/test_rubric_cohorts.py`; `domain/rubric.py` updated if `evals/` or `runner/orchestrator/` changed).
+- [ ] README and relevant `docs/` pages are updated when applicable.
 - [ ] A changelog fragment was added or updated under `changelog.d/` when applicable.
 - [ ] No secrets, live endpoints, generated reports, or unrelated changes are
       included.

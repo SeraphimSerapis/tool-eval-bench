@@ -23,6 +23,11 @@ name with `+` and use a short slug instead:
 
 Writing the file by hand works exactly as well as the `create` command.
 
+Editing the text of an existing unreleased fragment already on `main` also
+satisfies the `contributor-policy` check in `scripts/check_contribution.py`
+when a follow-up corrects unreleased work (whitespace-only edits or deletions
+do not count).
+
 ## Types
 
 | Type       | Use for                                                          |

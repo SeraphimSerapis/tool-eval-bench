@@ -54,6 +54,12 @@ How each benchmark extracts and grades answers, how truncated answers and
 rejected requests count, and how dataset revisions are pinned is covered in
 [methodology.md](methodology.md#accuracy-benchmarks-pluggable).
 
+Three additional plugins ship in the same registry and download no external datasets:
+
+- **Needle in a haystack** (`plugin needle`): generated long-context retrieval grid; needs only chat completions. See [needle.md](needle.md).
+- **Toolscale** (`plugin toolscale`): bundled 272-tool catalog sweeping tool count and description similarity; requires `tools` support. See [toolscale.md](toolscale.md).
+- **Decision models** (`plugin decision`): vendored Typed Decisions test split over llama.cpp's `/v1/systemone` endpoint; needs no chat endpoint. See [decision-models.md](decision-models.md).
+
 ## Throughput benchmark
 
 Throughput measurement uses [llama-benchy](https://github.com/eugr/llama-benchy) — a dedicated benchmarking tool that provides multi-run statistics with mean ± std, proper latency estimation, and cache-busting. Install with `uv tool install 'tool-eval-bench[perf] @ git+https://github.com/SeraphimSerapis/tool-eval-bench.git'` (or `pip install -e '.[perf]'` in a checkout) or ensure `uvx` is on PATH. Progress is shown via a live Rich progress bar. For authenticated endpoints, the regular `--api-key` value is forwarded to llama-benchy's supported CLI option and redacted from logs. Because llama-benchy 0.4.x does not support environment-based credentials, the key may still be visible to process inspection by other users on the same host while the benchmark is running.
@@ -115,7 +121,7 @@ tool-eval-bench bench --perf --tokenizer /models/Qwen3.6/tokenizer.json
 | `--benchy-runs` | 3 | Measurement iterations per test point |
 | `--benchy-latency-mode` | `generation` | Latency mode: `api`, `generation`, `none` |
 | `--benchy-args` | — | Pass-through for arbitrary llama-benchy flags |
-| `--tokenizer` | auto | Local tokenizer.json path; overrides HF-cache auto-detection |
+| `--tokenizer` | auto | Local `tokenizer.json` path; overrides HF-cache auto-detection for `--perf` and `probe --check-template` |
 
 ### Presets
 

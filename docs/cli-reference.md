@@ -30,6 +30,29 @@ Auto-discovery probes these ports in order:
 when that is a 404) answers HTTP 200 with a JSON model list wins. A port that
 answers with an HTML page or any other body is skipped.
 
+## Subcommands
+
+`tool-eval-bench` exposes 15 public subcommands (plus the legacy flat-flag form
+when no subcommand is given):
+
+| Subcommand | Purpose |
+|---|---|
+| `run` | Run tool-call scenarios (scored benchmark, `--short`, `--hardmode`, `--locale`, `--variant-seed`, reviewer, answer audits) |
+| `probe` | Check server reachability and optionally verify tool-call parsing (`--check-tools`) and chat templates (`--check-template`) |
+| `bench` | Run throughput (`--perf`), speculative decoding (`--spec-bench`), context-pressure sweeps, or combined suites |
+| `spec-live` | Live terminal dashboard for speculative decoding Prometheus metrics |
+| `decision-live` | Live canary monitor for `/v1/systemone` decision models |
+| `plugin` | Run one external benchmark plugin (`gsm8k`, `mmlu`, `ifeval`, `needle`, `toolscale`, `decision`) |
+| `compare` | Compare two stored runs (paired 3-tier CI, sign test, McNemar's test, comparability warnings, `--retest-diffs`) or Markdown reports (`--report`) |
+| `compare-report` | Alias for `compare --report` (HTML comparison report from two Markdown reports) |
+| `history` | List stored runs from SQLite |
+| `leaderboard` | Display cohort-grouped rankings of completed 100%-completion tool-call runs |
+| `export` | Export stored runs to CSV or JSON (`--export csv\|json`) |
+| `card` | Render a shareable SVG (and optional `--png`) results card for a session or run IDs |
+| `delete` | Delete stored runs, traces, checkpoints, and generated Markdown reports |
+| `resume` | Resume an interrupted tool-call run from its SQLite checkpoints |
+| `serve` | Launch the local browser workbench UI (requires `[web]` extra) |
+
 ## Headless / JSON mode
 
 Always use `--json` for machine-readable output.  In this mode:
@@ -219,20 +242,36 @@ set applies and wins on a name clash, compared case-insensitively;
 | `--check-template` | With `probe` or `--probe`, run paired chat-template replay checks (`tool_replay`, `multi_turn`, plus single-turn twins) and special-token leak detection (uses `--tokenizer` or auto-resolved HF cache when available) |
 | `--dry-run` | List scenarios that would run (no server needed). Reports 0 when the invocation runs no tool-call scenarios, such as `--perf-only` |
 | `--base-url URL` | Server endpoint |
+| `--api-key KEY` | API key for authenticated endpoints (env: `TOOL_EVAL_API_KEY`) |
+| `--format FORMAT` | Request wire format: `auto` (default, detected from URL), `openai`, `gemini`, or `anthropic` |
 | `--redact-url` | Mask the server URL in console output, including `--probe`, pre-flight errors, the auto-discovered localhost URL, and the `spec-live` metrics endpoint, for screenshots and recordings. Reports, stored runs, and `--json` error output are always redacted |
 | `--model NAME` | Model name (auto-detected if omitted) |
 | `--backend NAME` | Backend label for reports: `vllm`, `litellm`, `llamacpp`, `sglang`, `gemini`, `openai`, `anthropic`, `ninfer`, `tensorfold`, `halogen`, `strata`, `tabbyapi`, `tandemllm`, `flare`, `splash`, `unknown`. Auto-detected when omitted; otherwise `unknown`. |
 | `--provider NAME` | Read the endpoint from `TOOL_EVAL_<NAME>_*` env vars |
 | `--header NAME=VALUE` | Extra request header, repeatable (env: `TOOL_EVAL_HEADERS`, `;`-separated) |
 | `--session-header NAME` | Header that carries a per-conversation id, e.g. `x-opencode-session` (env: `TOOL_EVAL_SESSION_HEADER`) |
+| `--tokenizer PATH` | Local `tokenizer.json` file or directory; overrides local HuggingFace cache lookup for `--perf` and `probe --check-template` |
 | `--seed N` | Random seed for reproducibility |
 | `--temperature F` | Sampling temperature (default: 0.0 = greedy) |
+| `--top-p F`, `--top-k N`, `--min-p F`, `--repeat-penalty F` | Optional sampling parameters forwarded to the endpoint |
+| `--backend-kwargs JSON` | Extra JSON object merged into every request payload (for example `'{"max_tokens": 32768}'`) |
 | `--timeout F` | Per-request timeout in seconds (default: 120) |
+| `--parallel N` | Run up to N scenarios or plugin items concurrently (default: 1) |
 | `--no-think` | Disable thinking/reasoning (critical for Qwen3/DeepSeek) |
 | `--no-warmup` | Skip the tool-eval-bench warm-up request. llama-benchy (`--perf`, `--perf-only`) always runs its own warm-up |
+| `--no-preflight` | Skip the pre-flight model-availability request |
+| `--no-probe-engine` | Skip engine identification, metadata probing, and the diagnostic TC-45 `tool_choice="required"` probe |
+| `--no-live` | Disable the Rich live progress table and print plain streaming output |
+| `--reference-date YYYY-MM-DD` | Override the benchmark reference date injected into the system prompt (default: `2026-03-20`) |
+| `--output-dir DIR` | Root directory for generated Markdown reports and cards (default: `./runs`) |
+| `--label TEXT` | Attach a descriptive label to stored metadata, reports, and filenames (does not change `config_fingerprint`) |
 | `--hardmode` | Include 35 Hard Mode scenarios (Category P) |
-| `--categories A B K` | Run only specific categories (A–P). P needs `--hardmode`; a filter that matches no scenario is a usage error (exit 2) |
+| `--categories A B K` | Run only specific categories (A to P). P needs `--hardmode`; a filter that matches no scenario is a usage error (exit 2) |
 | `--scenarios TC-01 TC-07` | Run specific scenario IDs |
+| `--variant-seed N` | Select versioned deterministic fixture variants independently of `--seed` |
+| `--locale CODE` | Translate prompts and tool descriptions (`de`, `es`, `zh`, or `ja`) across the 26 language-neutral scenarios |
+| `--scenario-pack PATH` | Load private held-out YAML scenarios from a file or directory (titles, summaries, and traces withheld from reports) |
+| `--pack-only` | Run only the scenarios from `--scenario-pack` without the public registry |
 | `--perf` | Also run throughput benchmark |
 | `--trials N` | Run N trials for statistical analysis. With `--resume`, trial 1 finishes the resumed run and trials 2..N run the full protocol as new runs |
 | `--max-turns N` | Max turns per scenario (default: 8, minimum 1) |
@@ -379,8 +418,9 @@ invocations that run no tool-call scenarios (`--perf-only`, `--spec-bench` alone
 ## Accuracy benchmarks (pluggable)
 
 In addition to the 69-scenario tool-call benchmark, `tool-eval-bench` supports
-accuracy benchmarks via the same OpenAI-compatible endpoints. These only require
-`/v1/chat/completions` — no `tools` support needed.
+six benchmark plugins. GSM8K, MMLU, IFEval, and needle need only
+`/v1/chat/completions` with no `tools` support; `toolscale` requires `tools`
+support; `decision` calls llama.cpp's `/v1/systemone` endpoint directly.
 
 ```bash
 # GSM8K — math reasoning (1,319 questions, 8-shot)
@@ -414,22 +454,27 @@ tool-eval-bench --gsm8k --mmlu --ifeval --skip-tool-eval
 GSM8K, MMLU, and IFEval datasets are downloaded from HuggingFace on first use
 and cached locally. Install the `[hf]` extra for rate-limit-free downloads
 (`pip install -e '.[hf]'` in a checkout, or the `uv tool install` form in
-[benchmarks.md](benchmarks.md)). The needle and toolscale benchmarks generate their own cases and
-download nothing. Toolscale is the one plugin that sends `tools`.
+[benchmarks.md](benchmarks.md)). Needle (generated filler), toolscale (bundled
+catalog), and decision models (vendored Typed Decisions split) download
+nothing. Toolscale is the one plugin that sends `tools`, and decision models use
+`/v1/systemone`.
 
 | Flag | Purpose |
 |------|---------|
-| `--gsm8k-only` | GSM8K math reasoning |
-| `--mmlu-only` | MMLU multitask knowledge |
-| `--ifeval-only` | IFEval instruction following |
-| `--needle-only` | Needle-in-a-haystack retrieval |
-| `--decision-bench-only` | Decision-model scoring on `/v1/systemone` |
-| `--gsm8k-limit N` | Limit questions (default: 200) |
-| `--mmlu-limit N` | Limit questions, sampled proportionally across subjects (default: 500) |
-| `--ifeval-limit N` | Limit prompts (default: all 541) |
+| `--gsm8k` / `--gsm8k-only` | Run GSM8K math reasoning after tool-call scenarios, or alone |
+| `--gsm8k-shots N` | Few-shot exemplars for GSM8K, 0 to 8 (default: 8) |
+| `--gsm8k-limit N` | Limit GSM8K questions (default: 200; 0 = all 1,319) |
+| `--gsm8k-shuffle` | Shuffle GSM8K question order (seeded by `--seed` or a recorded random seed) |
+| `--mmlu` / `--mmlu-only` | Run MMLU multitask knowledge after tool-call scenarios, or alone |
+| `--mmlu-shots N` | Few-shot exemplars per subject, 0 to 5 (default: 5) |
+| `--mmlu-limit N` | Limit MMLU questions, sampled proportionally across subjects (default: 500; 0 = all 14,042) |
+| `--mmlu-subjects LIST` | Comma-separated MMLU subjects or categories (e.g. `STEM,philosophy`) |
+| `--ifeval` / `--ifeval-only` | Run IFEval instruction following after tool-call scenarios, or alone |
+| `--ifeval-limit N` | Limit IFEval prompts (default: all 541) |
+| `--needle` / `--needle-only` | Run Needle-in-a-Haystack retrieval after tool-call scenarios, or alone |
 | `--needle-lengths N` | Haystack sizes to probe (default: 4) |
 | `--needle-depths N` | Needle depths to probe (default: 5) |
-| `--toolscale-only` | Tool-selection sweep over tool count and description similarity |
+| `--toolscale` / `--toolscale-only` | Run Toolscale tool-selection sweep after tool-call scenarios, or alone |
 | `--toolscale-counts LIST` | Tool counts to sweep, `1` is the control (default: 1,4,8,16,32,64) |
 | `--toolscale-similarity LIST` | Neighbour tiers to sweep (default: near,related,distinct) |
 | `--toolscale-cues LIST` | Query cues: literal names the target, implied only implies it (default: both) |
@@ -437,6 +482,9 @@ download nothing. Toolscale is the one plugin that sends `tools`.
 | `--toolscale-descriptions LIST` | Description quality: clean, terse (one shared line per family), bare (none) (default: clean) |
 | `--toolscale-limit N` | Targets per cell (default: one per catalog family) |
 | `--toolscale-catalog PATH` | Private catalog; the report withholds its items |
+| `--decision-bench` / `--decision-bench-only` | Run decision-model scoring on `/v1/systemone` after tool-call scenarios, or alone |
+| `--decision-live` | Live canary monitor for a decision model (also the `decision-live` subcommand) |
+| `--decision-live-interval S` | Seconds between decision-live canary probes (default: 5.0) |
 
 See [needle.md](needle.md) for the retrieval grid and how to read it,
 [toolscale.md](toolscale.md) for the tool-count sweep, and
@@ -459,22 +507,27 @@ tool-eval-bench serve --serve-port 9090
 | `--output-dir DIR` | Where runs launched from the browser write their Markdown reports |
 | `--redact-url` | Keep the probe from echoing endpoint URLs back to the browser |
 
-The UI shows run history with full traces, cohort leaderboards with CSV and JSON
-export, and two-run comparisons with paired 3-tier confidence intervals, sign
-tests, McNemar's test, and a copyable `--scenarios` selector for discordant
-scenarios. It also launches runs,
-streams them live over Server-Sent Events, and stops or resumes them. CLI runs
-can be watched too: the UI follows their SQLite checkpoints.
+The UI shows run history with full traces (including `Withheld` ratings,
+degenerate-loop counts, and answer-in-thinking counts in the Run Inspector),
+rubric-versioned cohort leaderboards with CSV and JSON export, and two-run
+comparisons with paired 3-tier confidence intervals, sign tests, McNemar's test,
+paired comparability warnings, and a copyable `--scenarios` selector for
+discordant scenarios. Its Launch & Live view includes a Seed field and a
+collapsible Reviewer section, streams runs live over Server-Sent Events, and
+stops or resumes them. CLI runs can be watched too: the UI follows their SQLite
+checkpoints.
 
 **Run types.** One command can store several runs: `--perf --needle
 --spec-bench` stores a tool-call run plus throughput, needle, and
-speculative-decoding runs. The run list labels each with its type and shows its
-main figure in place of a score: decode speed for throughput, effective decode
-speed for spec decode, retrieval for needle, accuracy for GSM8K, MMLU, and
-IFEval, and the fill level a context-pressure sweep holds to. Opening one shows
-its measurements as a table. A **Same session** panel on every run lists the
-other runs its command stored and links to them. Leaderboard and Compare still
-cover tool-call runs only.
+speculative-decoding runs. The run list labels each with its type (`tool_eval`,
+`perf`, `spec-bench`, `context-pressure`, `gsm8k`, `mmlu`, `ifeval`, `needle`,
+`toolscale`, `decision`) and shows its main figure in place of a score: decode
+speed for throughput, effective decode speed for spec decode, retrieval for
+needle, accuracy for GSM8K, MMLU, IFEval, toolscale, and decision models, and
+the fill level a context-pressure sweep holds to. Opening one shows its
+measurements as a table. A **Same session** panel on every run lists the other
+runs its command stored and links to them. Leaderboard and Compare still cover
+tool-call runs only.
 
 **Deleting runs.** **Delete** in a run's header removes that run. **Select**
 above the run list lets you pick several, and **Select all** picks every run
@@ -498,9 +551,9 @@ address and SSH port forwarding (`ssh -L 8765:localhost:8765 host`).
 Ctrl+C in its terminal. It resumes only runs marked `interrupted`, using the
 conditions stored with the run. Because the stored URL is redacted, enter the
 endpoint again (or set `TOOL_EVAL_BASE_URL`); a different endpoint is refused.
-Runs that used context pressure, a decision judge, scenario variants, or a
-held-out pack need options only the CLI has, so resume those with
-`tool-eval-bench resume RUN_ID` and the original flags.
+Runs that used context pressure, a decision judge, scenario variants, a locale
+(`--locale`), or a held-out pack need options only the CLI has, so resume those
+with `tool-eval-bench resume RUN_ID` and the original flags.
 
 ## Comparing runs and targeted discordant re-tests
 
@@ -661,17 +714,22 @@ card shows the newest.
 ```jsonc
 {
   "schema_version": "1",
-  "tool_eval_bench_version": "1.8.0",
-  "final_score": 85,           // 0–100, the headline number
-  "rating": "★★★★ Good",       // star rating with label
+  "tool_eval_bench_version": "3.1.0",
+  "final_score": 85,           // 0 to 100, or null when withheld (max_points == 0)
+  "rating": "★★★★ Good",       // star rating with label, or "Withheld"
   "safety_warnings": [],       // empty = safe; non-empty = failures in safety-critical scenarios (every trial with --trials)
-  "deployability": 78,         // alpha × final_score + (1 − alpha) × responsiveness; null without latency data
-  "responsiveness": 65,        // 0–100 from median turn latency; see methodology.md
+  "deployability": 78,         // alpha * final_score + (1 - alpha) * responsiveness; null without latency data
+  "responsiveness": 65,        // 0 to 100 from median turn latency; see methodology.md
   "total_scenarios": 69,
+  "weighted_score": null,      // 0 to 100 when --weight-by-difficulty is enabled (null when off or withheld)
   "run_id": "2026-05-07T...",
   "config": { ... },
   "scores": {
     "final_score": 85,
+    "weighted_score": null,
+    "degenerate_loop_scenarios": 0,
+    "answer_in_thinking_turns": 0,
+    "answer_in_thinking_scenarios": 0,
     "category_scores": [ ... ],
     "scenario_results": [ ... ]
   }
@@ -760,6 +818,8 @@ else:
 
     if warnings:
         print(f"UNSAFE: {len(warnings)} safety failures")
+    elif score is None:
+        print("WITHHELD: no gradable scenarios (infrastructure failures)")
     elif score >= 75:
         print(f"GOOD: score {score}")
     elif score >= 60:
@@ -777,6 +837,7 @@ else:
 | 60–74 | ★★★ Adequate | Works but has notable gaps |
 | 40–59 | ★★ Weak | Significant tool-calling issues |
 | 0–39 | ★ Poor | Not suitable for agentic use |
+| `null` (`max_points == 0`) | Withheld | Every scenario was excluded by infrastructure failures; excluded from leaderboard |
 
 ## Common pitfalls
 

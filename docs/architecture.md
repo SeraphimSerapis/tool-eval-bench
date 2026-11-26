@@ -91,12 +91,17 @@ external dependencies.
 | Module | Purpose |
 |---|---|
 | `adapters.py` | Backend adapter port and provider-neutral chat result/tool-call types |
-| `scenarios.py` | `ScenarioDefinition`, `ScenarioEvaluation`, `ScenarioState`, `Category` enum, scoring functions, safety gating |
-| `models.py` | `BenchmarkConfig` dataclass |
+| `scenarios.py` | `ScenarioDefinition`, `ScenarioEvaluation`, `ScenarioState`, `Category` enum, `FailureKind`, scoring functions, safety gating |
+| `models.py` | `BenchmarkConfig` dataclass and `ChatMessage` types |
 | `measurement.py` | `MeasurementClient` port and raw streaming response types |
 | `spec_decode.py` | Per-position acceptance arithmetic shared by the spec runner and its report renderer |
 | `engines.py` | One `EngineProfile` per inference engine: backend labels, display names, metrics namespaces and identity precedence, declared identity names, spec-counter rules, and whether the recorded context window is per-request. Probing mechanics stay in `utils/metadata.py` |
-| `plugin.py` | `BenchmarkPlugin` ABC + `BenchmarkResult` dataclass for pluggable benchmarks |
+| `plugin.py` | `BenchmarkPlugin` ABC, `BenchmarkResult` dataclass, and inline `<think>` extraction helpers for pluggable benchmarks |
+| `decision.py` | Domain types, answer-audit judge set constants, and port for `/v1/systemone` decision models |
+| `filler.py` | Filler prose corpus shared by context pressure and needle retrieval |
+| `loop_detection.py` | Deterministic detection of degenerate n-gram and character-run repetition loops in output and reasoning |
+| `rubric.py` | Single source of truth for `EVAL_RUBRIC_VERSION`, `LOCALE_VERSION`, `NOISE_VERSION`, and the `RUBRIC_AST_FINGERPRINT` AST gate |
+| `wire_hygiene.py` | Detection of unparsed tool-call markup (including Gemma 4 markers), special-token leaks, and server parser flag advice |
 | `review.py` | `ReviewerSettings`, the review scopes, and `review_applies`: which turns a reviewer checks and which fields inherit from the run |
 | `tools.py` | Universal tool definitions (12 tools), system prompt |
 | `tools_large.py` | Extended 52-tool definitions for Category L |
@@ -135,8 +140,11 @@ different helpers under the same name.
 | `packs.py` | none | Held-out YAML scenario-pack loading and content attestations |
 | `yaml_loader.py` | none | The declarative scenario format, used by held-out packs |
 | `yaml_scenarios/` | none | Three worked YAML examples: a single call, a chain, and restraint |
-| `helpers.py` | — | Shared evaluator utilities (datetime matching, text scanning, safe math) |
-| `noise.py` | — | Deterministic payload enrichment for realistic API noise |
+| `helpers/` | none | Shared evaluator utilities package (`__init__.py` facade over `_text.py`, `_intent.py`, `_state.py`, `_dates.py`, `_mocks.py`) |
+| `locales/` | none | Opt-in multilingual translation packs (`de.json`, `es.json`, `ja.json`, `zh.json`), anchor enforcement, answer normalization, and language-drift diagnostics (`__init__.py`) |
+| `milestones.py` | none | Milestone and minefield grading for stateful scenarios |
+| `variants.py` | none | Seeded deterministic fixture variants (`--variant-seed`) that preserve public scenario IDs |
+| `noise.py` | none | Deterministic payload enrichment for realistic API noise |
 
 Registries, all built by `evals/scenarios/__init__.py`:
 - `SCENARIOS` — core 15 (used by `--short`)
@@ -175,13 +183,14 @@ difference is what makes Python the right language for an evaluator.
 
 | Module | Purpose |
 |---|---|
-| `orchestrator.py` | Multi-turn tool-call loop, with a default of 8 turns and per-scenario overrides. With a reviewer, `_review_turn` reviews each turn in scope before tools run and lets the model revise a rejected turn |
+| `orchestrator/` | Multi-turn scenario orchestration package: `__init__.py` facade, `loop.py` (core scenario loop and concurrent batch runner), `probes.py` (diagnostic tool-call and `tool_choice="required"` wire probes), `review_hook.py` (turn-review integration and revision validation), `scoring.py` (pure score aggregation, withheld scores, loop/thinking counts), and `wire.py` (argument parsing, error injection, failure classification, trace formatting) |
 | `review.py` | `TurnReviewer`: the reviewer prompt, the transcript it reads (without context-pressure filler), verdict parsing, the revision request, and per-scenario `ReviewStats`. Review errors never fail a scenario |
+| `template_probe.py` | Chat-template replay fidelity (`tool_replay`, `multi_turn`, plus single-turn twins) and special-token leak probe (`probe --check-template`) |
 | `service.py` | Compatibility re-export of the application-owned `BenchmarkService` |
 | `throughput.py` | Built-in streaming pp/tg measurement |
 | `spec_detection.py` | Spec-decode detection, Prometheus counters, and metric scraping; no dependency on benchmark runners |
 | `speculative.py` | Spec-decode / MTP benchmarking (acceptance rate, effective t/s); compatibility exports for detection helpers |
-| `spec_live.py` | Live monitor data layer (Prometheus scraping, delta computation) |
+| `spec_live.py` | Live monitor data layer (single-pass Prometheus scraping, delta computation) |
 | `llama_benchy.py` | External llama-benchy subprocess integration |
 | `context_pressure.py` | Filler generation, calibration, prefix-cache busting |
 | `perf_presets.py` | `--perf-preset` grids and `plan_perf`, which turns a preset plus explicit overrides into one or two llama-benchy passes capped at the context window |
@@ -196,9 +205,10 @@ independent prevents a cyclic import between the two benchmark runners.
 |---|---|
 | `base.py` | Compatibility re-export of the domain-owned `BackendAdapter` port and result types |
 | `measurement.py` | HTTP implementation of the domain-owned measurement port, including raw SSE arrival timing |
-| `openai_compat.py` | `OpenAICompatibleAdapter` — vLLM, LiteLLM, llama.cpp, SGLang, and Google's OpenAI compatibility layer |
-| `gemini.py` | `GeminiAdapter` — the native Gemini `:generateContent` API |
-| `anthropic.py` | `AnthropicAdapter` — the Anthropic Messages API (`/v1/messages`), also spoken by gateways such as OpenCode Zen |
+| `openai_compat.py` | `OpenAICompatibleAdapter` for `/v1/chat/completions` endpoints (vLLM, LiteLLM, llama.cpp, SGLang, Strata, TabbyAPI, NInfer, TandemLLM, TensorFold, Flare, Halogen Flash, Splash, hosted OpenAI, and Google's OpenAI compatibility layer) |
+| `gemini.py` | `GeminiAdapter` for the native Gemini `:generateContent` API |
+| `anthropic.py` | `AnthropicAdapter` for the Anthropic Messages API (`/v1/messages`), also spoken by gateways such as OpenCode Zen |
+| `systemone.py` | `SystemOneAdapter` for decision models served on llama.cpp's `/v1/systemone` endpoint |
 | `http_retry.py` | Shared retry, backoff, and rate-limit pacing for every adapter |
 | `wire_format.py` | Which format an endpoint speaks, detected from its URL |
 | `factory.py` | `build_adapter()` — picks the adapter for a base URL / `--format` |
@@ -212,74 +222,92 @@ endpoint itself, detected from the base URL unless `--format` pins it.
 Each plugin implements `domain.plugin.BenchmarkPlugin` and owns its own
 dataset loading, evaluation, and report rendering.
 
-| Plugin | Dataset | Questions |
+| Plugin | Dataset / Source | Scope |
 |---|---|---|
-| `gsm8k/` | `openai/gsm8k` | 1,319 math reasoning |
-| `mmlu/` | `cais/mmlu` | 14,042 multitask (57 subjects) |
-| `ifeval/` | `google/IFEval` | 541 instruction following |
+| `gsm8k/` | `openai/gsm8k` | 1,319 math reasoning questions (`dataset.py`, `evaluator.py`, `prompts.py`, `plugin.py`) |
+| `mmlu/` | `cais/mmlu` | 14,042 multitask questions across 57 subjects (`dataset.py`, `evaluator.py`, `prompts.py`, `plugin.py`) |
+| `ifeval/` | `google/IFEval` | 541 prompts across 25 programmatic constraints (`dataset.py`, `checkers.py`, `evaluator.py`, `plugin.py`) |
+| `needle/` | Generated (`domain/filler.py`) | Long-context retrieval grid across depths and haystack lengths (`haystack.py`, `plugin.py`) |
+| `toolscale/` | Bundled `catalog/v1.json` (272 tools) | Tool-count by description-similarity sweep requiring `tools` (`plugin.py`, `aggregate.py`, `report.py`, `catalog.py`, `grid.py`, `similarity.py`, `stats.py`) |
+| `decision/` | Vendored Typed Decisions test split | Single-pass decision-model accuracy and calibration over `/v1/systemone` (`plugin.py`, `evaluator.py`, `metrics.py`, `render.py`, `live.py`, `typed_decisions.py`) |
 
 Shared infrastructure:
-- `hf_utils.py` — HuggingFace downloader (retry, resume, throttle, `datasets` library fast-path)
-- `registry.py` — `get_plugin()` / `available_plugins()` lookup
+- `hf_utils.py`: HuggingFace downloader (retry, resume, throttle, `datasets` library fast-path)
+- `registry.py`: `get_plugin()` / `available_plugins()` lookup
+- `_thinking.py`: compatibility re-exports of inline `<think>` helpers owned by `domain.plugin`
 
-### `application/` — Composition
+### `application/` (Composition)
 
 | Module | Purpose |
 |---|---|
-| `service.py` | `BenchmarkService` — composes concrete adapters, scenario orchestration, SQLite persistence, and Markdown reporting |
+| `service.py` | `BenchmarkService`, composing concrete adapters, scenario orchestration, SQLite persistence, and Markdown reporting |
 | `finalization.py` | `finalize_completed_run`: writes the report before persisting, so a failed write never leaves a run marked completed without its artifact |
 | `mode_runs.py` | `finalize_mode_run`, the one finalization path for context-pressure sweeps, spec-bench, throughput-only runs, and plugins. Each mode passes a `ModeRun` (what is stored) and a `ModeReport` (what is rendered); this module fingerprints the config, builds the run ID and metadata, writes the report, then persists |
 | `run_config.py` | `RunSettings` and `RUN_CONFIG_FIELDS`, the one declaration of every persisted config key. Each row says whether the key is written, fingerprinted, compared on `--resume`, and kept in the leaderboard's cross-model cohort. The builder, the resume check, and the cohort exclusions all derive from it. A new run setting needs a row, and `tests/test_run_config_schema.py` fails until it has one |
 | `run_context.py` | Backend detection (`identify_backend`) and `RunContext` collection, shared by the CLI and the Python API |
+| `leaderboard.py` | Rubric-versioned `cohort_fingerprint` (keyed on `eval_rubric_version`, `locale_version`, `noise_version`, with legacy `tool_version` + `git_sha` fallback), `comparability_warnings`, leaderboard ranking, and McNemar's test shared by CLI and web UI |
+| `comparison.py` | Paired 3-tier statistical comparison (percentage-point deltas, deterministic paired bootstrap 95% CI, exact binomial sign test, and paired `comparability_warnings`) shared by CLI and web UI |
+| `decision_audit.py` | Optional `/v1/systemone` answer audits, isolated from benchmark scoring, fingerprints, and credentials |
+| `resume.py` | Shared resume eligibility, checkpoint filtering, and stored-config resume planning for the CLI and web UI |
 | `reviewer.py` | Reviewer validation, inheritance from the run (`resolve_reviewer`), the stored `reviewer` config block with its fingerprint view and resume check, the held-out refusal, and the startup request that `check_reviewer` sends |
 | `run_queries.py` | Read queries against stored runs, each owning the repository's lifetime |
 | `run_summary.py` | What the web UI shows for each run type: `headline` picks the figure a run list shows in place of a score, `detail` lays a run's measurements out as stats and a table, and `session_entry` summarizes a run for the same-session panel. Throughput, needle, and accuracy figures come from the card's readers in `card_data.py` |
 | `run_deletion.py` | `delete_runs` removes runs in one transaction, then their Markdown reports, removing only a path shaped like a report the writers produce. `find_runs` selects runs by status, date, and model for the `delete` command |
 | `card_data.py` | `build_card_data` maps stored runs onto `CardData`, newest completed run of each kind, copying named fields only. `load_card_data` selects the runs by session or run id through `run_queries` |
 
-### `storage/` — Persistence
+### `storage/` (Persistence)
 
 | Module | Purpose |
 |---|---|
-| `db.py` | `RunRepository` — SQLite persistence for run results |
-| `reports/` | `MarkdownReporter` — generates `runs/YYYY/MM/<run_id>.md` reports. A facade over one writer per report type (`scenario`, `summary`, `spec_decode`, `pressure`, `throughput`), with the shared substrate in `_common.py`. `mode.py` holds `ModeReport` and `write_mode_report`, the header skeleton shared by the sweep, spec-bench, throughput, and plugin reports; those modes build a `ModeReport` and let it place the file |
-| `reports/card/` | The results card renderer: `render_card_svg(CardData)` draws the SVG and `svg_to_png` exports PNG through the optional `[card]` extra (`resvg-py`), raising `PngExportUnavailable` without it |
+| `db.py` | `RunRepository`: WAL-mode SQLite persistence (schema version 6, externalized `scenario_traces`, indexed `(session_id)`, `(run_type, status, created_at DESC)`, `(created_at DESC)`, and partial `(report_path)` lookups) |
+| `reports/` | `MarkdownReporter`: generates `runs/YYYY/MM/<run_id>.md` reports. A facade over one writer per report type (`scenario`, `summary`, `spec_decode`, `pressure`, `throughput`), with shared helpers in `_common.py`. `mode.py` holds `ModeReport` and `write_mode_report`, the header skeleton shared by the sweep, spec-bench, throughput, and plugin reports; those modes build a `ModeReport` and let it place the file |
+| `reports/card/` | Shareable results card renderer: `render_card_svg(CardData)` draws the SVG and `svg_to_png` exports PNG through the optional `[card]` extra (`resvg-py`), raising `PngExportUnavailable` without it. Panel builders split across `_panels.py` (facade), `_primitives.py`, `_score_panels.py`, `_perf_panels.py`, and `_needle_panel.py`, with layout/SVG/font helpers in `_layout.py`, `_svg.py`, `_theme.py`, `_data.py`, `_format.py`, and `_fonts.py` |
 
-### `cli/` — Delivery Layer
+### `cli/` (Delivery Layer)
 
 | Module | Purpose |
 |---|---|
 | `bench.py` | Thin CLI entry point and compatibility re-export shell |
-| `command_registry.py` | Discoverable subcommand metadata and translation rules |
+| `command_registry.py` | Discoverable subcommand metadata and translation rules (15 public subcommands) |
 | `parser.py` | Subcommand discovery and translation into the legacy runtime namespace |
 | `legacy_parser.py` | Permanent flat-flag parser used by legacy invocations and translated subcommands |
-| `dispatch.py` | Runtime command routing: `main()` resolves the endpoint and target, then hands off to one function per mode (probe, spec-live, decision-live, throughput, spec-bench, pressure sweep, plugins, scored run) |
-| `scored_run.py` | `ScoredRun`, the one place that turns the flags into `run_benchmark` kwargs (for the live, plain, and `--json` runners) and the `RunSettings` the resume check compares |
+| `dispatch.py` | CLI dispatch router and compatibility surface coordinating mode handlers |
+| `arg_validation.py` | Argument normalization and pre-flight flag validation for CLI runs |
+| `session_setup.py` | Endpoint discovery, target resolution, pre-flight gating, and context-pressure setup |
+| `perf_mode.py` | Throughput benchmark planning, execution, and persistence for `--perf` / `--perf-only` |
+| `resume_mode.py` | Resume validation and checkpoint recovery planning for `--resume` |
+| `scored_runners.py` | Scored tool-call scenario runners (live Rich, headless `--json`, plain text) and trial summary report writing |
+| `scored_run.py` | `ScoredRun`, turning CLI flags into `run_benchmark` kwargs and `RunSettings` for resume checks |
+| `probe.py` | `run_probe_mode` (`probe`, `--check-tools`, `--check-template`), model/server validation, pre-flight checks, and warm-up |
 | `reviewer.py` | The `--reviewer*` flags: activation, environment and provider lookup, validation, and inheritance of sampling and same-server credentials into `ReviewerSettings` |
 | `compare_report.py` | HTML comparison command for Markdown reports |
 | `local_commands.py` | Dry-run and local command rendering |
 | `delete.py` | The `delete` command: selects runs by id or filter through `application.run_deletion`, lists them, confirms, and deletes |
 | `card.py` | The `card` command: loads `CardData` through `application.card_data`, renders it with `storage.reports.card`, and writes the SVG and optional PNG |
 | `model_probe.py` | Model discovery and availability probing |
-| `plugin_runners.py` | Shared persistence/progress lifecycle and plugin-specific execution |
-| `plugin_lifecycle.py` | Shared plugin execution, and the plugin `ModeRun`/`ModeReport` handed to `finalize_mode_run` |
-| `plugin_progress.py` | The live progress layout every accuracy plugin renders: bar, running tally, last finished item |
+| `plugin_runners.py` | Shared plugin dispatch and compatibility facade over the per-plugin CLI runners |
+| `plugin_lifecycle.py` | Shared plugin execution (`run_plugin_session`) and `ModeRun`/`ModeReport` finalization handed to `finalize_mode_run` |
+| `plugin_accuracy.py` | CLI runners for HuggingFace-backed accuracy benchmarks (GSM8K, MMLU, IFEval) |
+| `plugin_needle.py` | CLI runner for the Needle-in-a-Haystack retrieval benchmark |
+| `plugin_toolscale.py` | CLI runner for the Toolscale tool-count by similarity sweep |
+| `plugin_decision.py` | CLI runner for the Decision Models (`/v1/systemone`) benchmark |
+| `plugin_progress.py` | Live progress layout rendered by accuracy plugins (bar, running tally, last finished item) |
 | `plugin_datasets.py` | Load-or-download with a progress spinner, including resuming an interrupted download |
-| `probe.py` | Model/server detection, preflight checks, and warmup |
 | `commands.py` | Scenario resolution (`resolve_scenarios`, `resolve_all_scenarios_for_ids`) |
 | `resolve.py` | Compatibility exports for scenario/sweep resolution helpers |
 | `run_io.py` | Trial aggregation and JSON/progress output helpers |
-| `headless.py` | The `--json` output contract: the quiet console, `run_failed`, `invalid_arguments`, and `run_saved` events, and JSON-lines logging |
+| `headless.py` | The `--json` output contract: quiet console, `run_failed`, `invalid_arguments`, and `run_saved` events, and JSON-lines logging |
 | `helpers.py` | Small CLI helpers: dotenv loading, URL redaction, JSON output, sweep/int parsing, plugin-run persistence, headless errors |
-| `server.py` | Server discovery and backend detection from response headers (`discover_server`, `detect_backend_from_response`) |
+| `server.py` | Server discovery (with `/v1/models` to `/models` 404 fallback) and backend detection from response headers |
 | `perf.py` | Throughput runners: `run_throughput` (built-in), `run_llama_benchy` (external) |
 | `spec_bench.py` | Speculative-decoding / MTP benchmark runner |
 | `pressure.py` | Context-pressure sweep runner |
 | `display.py` | Zero-flicker streaming Rich display for scenario progress |
-| `history.py` | `--history`, `--compare`, `--diff` rendering |
+| `history.py` | `--history`, `--compare`, `--diff` rendering (including paired comparability warnings) |
 | `leaderboard.py` | `--leaderboard`, `--export` rendering |
-| `spec_live_display.py` | Live spec-decode Textual dashboard |
-| `spec_live_rendering.py` | Rich component rendering for spec-live |
+| `spec_live_display.py` | Rich Live terminal dashboard loop for `--spec-live` |
+| `spec_live_dashboard.py` | Pure Rich layout builders for the `--spec-live` dashboard panels |
+| `spec_live_rendering.py` | Shared rendering helpers for the speculative decoding dashboard |
 | `decision_live_display.py` | Live Rich terminal dashboard for `--decision-live` |
 | `held_out.py` | Redacts held-out scenario titles, summaries, and traces from machine-readable output |
 | `modes.py` | Determines which benchmark modes execute from parsed flags and whether scenarios run |
@@ -287,7 +315,7 @@ Shared infrastructure:
 | `retest_diffs.py` | Multi-trial targeted re-testing of discordant scenarios between two stored runs |
 | `timeout_advice.py` | Diagnostic explanations and suggested remediations when infrastructure timeouts occur |
 
-### `web/` - Web Delivery Layer
+### `web/` (Web Delivery Layer)
 
 | Module | Purpose |
 |---|---|
@@ -297,8 +325,9 @@ Shared infrastructure:
 | `live.py` | In-memory live run SSE hub and cross-process SQLite checkpoint tailing |
 | `sanitize.py` | Held-out scenario redaction, URL masking, and summary enrichment for web responses |
 | `security.py` | Bearer token and `HttpOnly` cookie session gate, Host/Origin checks, and CSP headers |
+| `static/` | Native ES module frontend (`app.js` router/boot, `dom.js` safe DOM builders and icons, `state.js` shared state and API client, `components.js` shared widgets, `history.js` runs rail and inspector, `leaderboard.js` cohort leaderboard, `compare.js` head-to-head comparison and comparability warnings, `live.js` launcher form and SSE observer, plus `index.html` and `styles.css`) |
 
-### `compare_reports/` Report comparisons
+### `compare_reports/` (Report comparisons)
 
 | Module | Purpose |
 |---|---|
@@ -306,15 +335,17 @@ Shared infrastructure:
 | `tool_eval.py` | Compare tool-evaluation reports and scenario traces |
 | `_common.py` | Formatting helpers both comparison reports share (rounding, escaping, signed deltas, percentage classes) |
 
-### `utils/` — Shared Helpers
+### `utils/` (Shared Helpers)
 
 | Module | Purpose |
 |---|---|
 | `ids.py` | Unique run IDs and deterministic configuration fingerprints |
-| `fingerprint.py` | `comparison_fingerprint`, the one payload (config, deployment facts, tool version, git SHA) every run type fingerprints, and `with_config_fingerprint`, which redacts the endpoint in a mode-run config and adds that fingerprint |
-| `metadata.py` | System/backend metadata collection (engine probing) |
+| `fingerprint.py` | `comparison_fingerprint`, the payload (config, deployment facts, tool version, git SHA) every run type fingerprints, and `with_config_fingerprint`, which redacts the endpoint in a mode-run config and adds that fingerprint |
+| `headers.py` | Extra request headers attached to requests and CLI/env header parsing |
+| `metadata.py` | System/backend metadata collection (engine probing and rubric provenance) |
 | `openai_compat.py` | OpenAI-compatible request and response helpers |
-| `tokenizers.py` | Local tokenizer discovery for throughput prompts |
+| `system_prompt.py` | Validation and normalization for user-supplied `--system-prompt` / `--system-prompt-file` overrides |
+| `tokenizers.py` | Offline local HuggingFace tokenizer discovery for `--perf` throughput prompts and `probe --check-template` special-token leak detection |
 | `urls.py` | URL construction and header helpers; re-exports the domain redaction functions |
 
 ---
@@ -393,9 +424,9 @@ plugin runs from Python but not from `tool-eval-bench plugin <name>`. Full steps
 
 ### Adding a backend
 An OpenAI-compatible endpoint needs no code: point `--base-url` at it. Add a port to auto-discovery
-in `cli/server.py` and a backend label in `application/service.py` to have it detected by name. A
-native wire format needs an adapter, registered through `adapters/wire_format.py` and
-`adapters/factory.py`: [adding-an-adapter.md](adding-an-adapter.md).
+in `cli/server.py` and an `EngineProfile` entry in `domain/engines.py` (`ENGINE_PROFILES`) to have
+it detected by name. A native wire format needs an adapter, registered through
+`adapters/wire_format.py` and `adapters/factory.py`: [adding-an-adapter.md](adding-an-adapter.md).
 
 ---
 
@@ -412,7 +443,7 @@ native wire format needs an adapter, registered through `adapters/wire_format.py
 | CLI | `test_display.py`, `test_leaderboard_display.py`, `test_e2e.py` | Display rendering, E2E flows |
 | API | `test_api.py`, `test_plugin_interface.py` | Programmatic API, schema drift |
 | Adapter | `test_adapter.py` | SSE streaming, normalize, parse, error handling (httpx mocks) |
-| Invariants | `test_architecture_boundaries.py`, `test_scenario_registry.py`, `test_documented_counts.py`, `test_documentation_examples.py` | Layer imports, that every scenario file registers itself, that prose counts match the registries, and that the guide's examples run |
+| Invariants | `test_architecture_boundaries.py`, `test_scenario_registry.py`, `test_rubric_cohorts.py`, `test_documented_counts.py`, `test_documentation_examples.py` | Layer imports, self-registering scenarios, rubric AST fingerprint gate and rubric-versioned cohorts, prose registry counts, and executable documentation examples |
 | Resource lifetime | `test_repository_lifecycle.py`, `test_checkpoint_offload.py`, `test_plugin_dataset_offload.py`, `test_probe_session.py` | No leaked connections, and nothing blocking the event loop |
 
 This is a map, not an index: most test files are not listed. The authoritative test count and branch-coverage result come from the current

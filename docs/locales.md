@@ -28,8 +28,10 @@ The Python API takes `locale="de"` on `run_benchmark`.
 
 A locale run includes only scenarios whose grading does not depend on English prose. Everything
 else is skipped, so locale scores cover a smaller set than English runs and are not comparable with
-them. The locale and pack version are part of the scenario variant metadata, so each locale gets
-its own `config_fingerprint` cohort, and resume rejects a different locale.
+them. The locale and pack version are part of the scenario variant metadata and rubric provenance
+(`LOCALE_VERSION`, currently `"2"` in `domain/rubric.py` and re-exported as integer `2` in
+`evals/locales/__init__.py` for backwards-compatible `variant_metadata`), so each locale gets its
+own leaderboard cohort and `config_fingerprint`, and resume rejects a different locale.
 
 A scenario is left out when:
 
@@ -75,5 +77,13 @@ are stripped. Short or mixed replies come back as `unknown` rather than a guess.
 
 The packs were drafted by a model and need a native-speaker review before their results carry
 weight. When an English prompt or tool description changes, the pack test fails with the missing or
-stale string; update all four packs in the same change and bump `LOCALE_VERSION` when a translation's
-meaning changes, so old and new runs do not share a cohort.
+stale string; update all four packs in the same change.
+
+`LOCALE_VERSION` has a single source of truth in `src/tool_eval_bench/domain/rubric.py` (currently
+`"2"`, re-exported as `int` in `evals/locales/__init__.py`). Bump `LOCALE_VERSION` in
+`domain/rubric.py` whenever a translation's meaning or normalization changes so old and new runs do
+not share a leaderboard cohort. Because `evals/locales/__init__.py` sits under `evals/`, editing
+its Python code also changes the normalized AST checked by
+`tests/test_rubric_cohorts.py::test_rubric_ast_fingerprint_matches_source`; refresh
+`RUBRIC_AST_FINGERPRINT` in `domain/rubric.py` from `compute_rubric_ast_fingerprint()` in the same
+change.

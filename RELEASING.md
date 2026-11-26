@@ -23,31 +23,39 @@ Checklist for publishing a new release.
    An empty `changelog.d/` means nothing user-visible changed since the last
    release, which is a reason to question whether the release is needed.
 
-3. **Lint, format, and run the required randomized suite**:
+3. **Lint, format, type-check, and run the required randomized suite**:
    ```bash
-   ruff check .
-   ruff format --check .
+   .venv/bin/ruff check .
+   .venv/bin/ruff format --check .
+   .venv/bin/mypy
    for seed in 104729 130363 155921; do
-     .venv/bin/python -m pytest tests/ \
+     env -u FORCE_COLOR .venv/bin/python -m pytest tests/ \
        --ignore=tests/test_llama_benchy.py -m "not live" \
        --randomly-seed="$seed"
    done
    ```
 
-4. **Run coverage and the optional performance integration**:
+4. **Run coverage, per-module floors, and the optional performance integration**:
    ```bash
-   .venv/bin/python -m pytest tests/ \
+   .venv/bin/python -m pip install -e '.[dev,perf,card]'
+
+   env -u FORCE_COLOR .venv/bin/python -m pytest tests/ \
      --ignore=tests/test_llama_benchy.py -m "not live" \
      --randomly-seed=104729 --cov=tool_eval_bench \
-     --cov-report=term-missing --cov-fail-under=80
+     --cov-report=term-missing --cov-report=json --cov-fail-under=80
+   .venv/bin/python scripts/check_module_coverage.py coverage.json
 
-   .venv/bin/python -m pip install -e '.[dev,perf]'
-   .venv/bin/python -m pytest tests/test_llama_benchy.py \
-     --randomly-seed=181081
+   COVERAGE_FILE=.coverage.perf env -u FORCE_COLOR .venv/bin/python -m pytest \
+     tests/test_llama_benchy.py tests/test_llama_benchy_redaction.py \
+     -m "not live" --randomly-seed=181081 \
+     --cov=tool_eval_bench.runner.llama_benchy \
+     --cov-config=.coveragerc.perf --cov-report=term-missing --cov-fail-under=95
    ```
 
-   The release gate is 80% branch coverage. Record any notable module-level
-   gaps in the release notes even when the aggregate gate passes.
+   The release gate is 80% total branch coverage, every per-module floor in
+   `scripts/check_module_coverage.py`, and 95% branch coverage on
+   `runner/llama_benchy.py`. Record any notable module-level gaps in the release
+   notes even when the aggregate gate passes.
 
 5. **Build and smoke-test the installed wheel in isolation**:
    ```bash
@@ -59,12 +67,18 @@ Checklist for publishing a new release.
    /tmp/tool-eval-wheel-smoke/bin/python -m pip check
    /tmp/tool-eval-wheel-smoke/bin/tool-eval-bench --version
    /tmp/tool-eval-wheel-smoke/bin/tool-eval-bench --help
-   /tmp/tool-eval-wheel-smoke/bin/tool-eval-bench run --help
-   /tmp/tool-eval-wheel-smoke/bin/tool-eval-bench plugin --help
+   for command in run probe bench spec-live decision-live plugin compare compare-report history leaderboard export resume delete serve card; do
+     /tmp/tool-eval-wheel-smoke/bin/tool-eval-bench "$command" --help >/dev/null
+   done
    ```
 
-   Also verify that `tool_eval_bench.evals.yaml_scenarios/weather.yaml` is
-   available through `importlib.resources` in the clean environment.
+   Also verify through `importlib.resources` in the clean environment that
+   `tool_eval_bench.evals.yaml_scenarios/weather.yaml` loads and that all
+   bundled card fonts and license files (`Inter-OFL.txt`, `JetBrainsMono-OFL.txt`,
+   `SOURCES.txt`, plus every font declared by
+   `storage.reports.card._fonts.font_file_names()`) are present under
+   `tool_eval_bench.storage.reports.card/fonts` (matching the packaging job in
+   `.github/workflows/ci.yml`).
    The isolated PEP 517 build must honor the `setuptools>=77` minimum required
    for the project's SPDX license expression.
 
