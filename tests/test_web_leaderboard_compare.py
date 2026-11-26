@@ -219,3 +219,299 @@ async def test_compare_endpoint_computes_deltas_mcnemar_and_redacts_held_out(
                 "/api/compare", params={"left": "unknown", "right": "20261014T100000Z_qwen"}
             )
         ).status_code == 404
+        assert (
+            await client.get(
+                "/api/compare", params={"left": "20261014T100000Z_qwen", "right": "unknown"}
+            )
+        ).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_and_export_filter_before_window_so_non_tool_runs_do_not_evict_scores(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = str(tmp_path / "benchmarks.sqlite")
+    with RunRepository(db_path=db_path) as repo:
+        repo.upsert_scenario_run(
+            _make_completed_run(
+                "20261014T090000Z_target",
+                model="Qwen/Qwen3-32B",
+                final_score=91,
+                fingerprint="fp-target",
+            )
+        )
+        # Insert more newer non-eligible rows (perf, plugin, interrupted) than the window.
+        for idx in range(4):
+            repo.upsert_scenario_run(
+                {
+                    "run_id": f"20261014T10000{idx}Z_perf{idx}",
+                    "status": "completed",
+                    "run_type": "perf",
+                    "model": "Qwen/Qwen3-32B",
+                    "config": {"model": "Qwen/Qwen3-32B", "backend": "vllm"},
+                    "metadata": {},
+                    "scores": {"samples": 2, "results": []},
+                }
+            )
+        for idx in range(3):
+            repo.upsert_scenario_run(
+                {
+                    "run_id": f"20261014T11000{idx}Z_gsm{idx}",
+                    "status": "completed",
+                    "run_type": "gsm8k",
+                    "model": "Qwen/Qwen3-32B",
+                    "config": {"model": "Qwen/Qwen3-32B", "backend": "vllm"},
+                    "metadata": {},
+                    "scores": {"accuracy": 85.0},
+                }
+            )
+        for idx in range(3):
+            interrupted = _make_completed_run(
+                f"20261014T12000{idx}Z_int{idx}",
+                model="Qwen/Qwen3-32B",
+                final_score=0,
+                fingerprint="fp-target",
+            )
+            interrupted["status"] = "interrupted"
+            repo.upsert_scenario_run(interrupted)
+
+    monkeypatch.setattr(
+        "tool_eval_bench.application.run_queries._repository",
+        lambda: RunRepository(db_path=db_path),
+    )
+    monkeypatch.setattr("tool_eval_bench.web.app._LEADERBOARD_WINDOW", 5)
+
+    app = create_app(token=TEST_TOKEN)
+    async with web_client(app) as client:
+        lb = await client.get("/api/leaderboard")
+        assert lb.status_code == 200
+        assert [r["run_id"] for r in lb.json()["rows"]] == ["20261014T090000Z_target"]
+
+        exp_json = await client.get("/api/export", params={"format": "json"})
+        assert exp_json.status_code == 200
+        assert [r["run_id"] for r in exp_json.json()] == ["20261014T090000Z_target"]
+
+        exp_csv = await client.get("/api/export", params={"format": "csv"})
+        assert exp_csv.status_code == 200
+        csv_rows = list(csv.DictReader(io.StringIO(exp_csv.text)))
+        assert [r["run_id"] for r in csv_rows] == ["20261014T090000Z_target"]
+
+
+@pytest.mark.asyncio
+async def test_compare_surfaces_comparability_warnings_when_rubric_locale_dirty_or_incomplete(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pathlib import Path
+
+    db_path = str(tmp_path / "benchmarks.sqlite")
+    run_a = _make_completed_run(
+        "20261014T100000Z_a",
+        model="Qwen/Qwen3-8B",
+        final_score=100,
+        fingerprint="fp-shared",
+    )
+    run_a["metadata"].update(
+        {
+            "eval_rubric_version": "rubric-v1",
+            "locale_version": "en-v1",
+            "git_sha": "abc1234-dirty",
+        }
+    )
+
+    run_b = _make_completed_run(
+        "20261014T110000Z_b",
+        model="Qwen/Qwen3-8B",
+        final_score=50,
+        fingerprint="fp-shared",
+    )
+    run_b["status"] = "interrupted"
+    run_b["scores"]["completion_rate"] = 50.0
+    run_b["metadata"].update(
+        {
+            "eval_rubric_version": "rubric-v2",
+            "locale_version": "de-v2",
+            "git_sha": "def5678",
+        }
+    )
+
+    with RunRepository(db_path=db_path) as repo:
+        repo.upsert_scenario_run(run_a)
+        repo.upsert_scenario_run(run_b)
+
+    monkeypatch.setattr(
+        "tool_eval_bench.application.run_queries._repository",
+        lambda: RunRepository(db_path=db_path),
+    )
+
+    app = create_app(token=TEST_TOKEN)
+    async with web_client(app) as client:
+        resp = await client.get(
+            "/api/compare",
+            params={"left": "20261014T100000Z_a", "right": "20261014T110000Z_b"},
+        )
+        assert resp.status_code == 200
+        warnings = resp.json()["paired_stats"]["comparability_warnings"]
+
+    assert any("dirty git working tree" in w for w in warnings), warnings
+    assert any("Incomplete run" in w for w in warnings), warnings
+    assert any("Eval rubric version mismatch" in w for w in warnings), warnings
+    assert any("Locale version mismatch" in w for w in warnings), warnings
+
+    compare_js = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "tool_eval_bench"
+        / "web"
+        / "static"
+        / "compare.js"
+    ).read_text(encoding="utf-8")
+    assert "comparability_warnings" in compare_js
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_invalid_limit_and_backend_filter(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = str(tmp_path / "benchmarks.sqlite")
+    with RunRepository(db_path=db_path) as repo:
+        repo.upsert_scenario_run(
+            _make_completed_run(
+                "20261014T100000Z_vllm",
+                model="Qwen/Qwen3-8B",
+                final_score=90,
+                backend="vllm",
+                fingerprint="fp-vllm",
+            )
+        )
+        repo.upsert_scenario_run(
+            _make_completed_run(
+                "20261014T110000Z_sglang",
+                model="Qwen/Qwen3-8B",
+                final_score=85,
+                backend="sglang",
+                fingerprint="fp-sglang",
+            )
+        )
+    monkeypatch.setattr(
+        "tool_eval_bench.application.run_queries._repository",
+        lambda: RunRepository(db_path=db_path),
+    )
+    app = create_app(token=TEST_TOKEN)
+    async with web_client(app) as client:
+        assert (await client.get("/api/leaderboard", params={"limit": "nope"})).status_code == 400
+        sg = await client.get("/api/leaderboard", params={"backend": "SGLANG"})
+        assert sg.status_code == 200
+        assert [r["run_id"] for r in sg.json()["rows"]] == ["20261014T110000Z_sglang"]
+
+
+@pytest.mark.asyncio
+async def test_compare_rejects_non_scenario_runs_and_handles_removed_and_regressed_deltas(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = str(tmp_path / "benchmarks.sqlite")
+    with RunRepository(db_path=db_path) as repo:
+        repo.upsert_scenario_run(
+            _make_completed_run(
+                "20261014T100000Z_left",
+                model="Qwen/Qwen3-8B",
+                final_score=100,
+                fingerprint="fp-left",
+                results=[
+                    {
+                        "scenario_id": "TC-01",
+                        "status": "pass",
+                        "points": 2,
+                        "duration_seconds": 1.0,
+                    },
+                    {
+                        "scenario_id": "TC-02",
+                        "status": "pass",
+                        "points": 2,
+                        "duration_seconds": 1.0,
+                    },
+                ],
+            )
+        )
+        repo.upsert_scenario_run(
+            _make_completed_run(
+                "20261014T110000Z_right",
+                model="Qwen/Qwen3-8B",
+                final_score=0,
+                fingerprint="fp-right",
+                results=[
+                    {
+                        "scenario_id": "TC-01",
+                        "status": "fail",
+                        "points": 0,
+                        "duration_seconds": 1.5,
+                    },
+                ],
+            )
+        )
+        repo.upsert_scenario_run(
+            {
+                "run_id": "20261014T120000Z_perf",
+                "status": "completed",
+                "run_type": "perf",
+                "model": "Qwen/Qwen3-8B",
+                "config": {"model": "Qwen/Qwen3-8B", "backend": "vllm"},
+                "metadata": {},
+                "scores": {"samples": 1, "results": []},
+            }
+        )
+        # Same standard config keys but different fingerprints -> generic diff fallback.
+        repo.upsert_scenario_run(
+            _make_completed_run(
+                "20261014T130000Z_fp_only",
+                model="Qwen/Qwen3-8B",
+                final_score=100,
+                fingerprint="fp-other",
+                results=[
+                    {
+                        "scenario_id": "TC-01",
+                        "status": "pass",
+                        "points": 2,
+                        "duration_seconds": 1.0,
+                    },
+                    {
+                        "scenario_id": "TC-02",
+                        "status": "pass",
+                        "points": 2,
+                        "duration_seconds": 1.0,
+                    },
+                ],
+            )
+        )
+    monkeypatch.setattr(
+        "tool_eval_bench.application.run_queries._repository",
+        lambda: RunRepository(db_path=db_path),
+    )
+
+    app = create_app(token=TEST_TOKEN)
+    async with web_client(app) as client:
+        non_sc = await client.get(
+            "/api/compare",
+            params={"left": "20261014T100000Z_left", "right": "20261014T120000Z_perf"},
+        )
+        assert non_sc.status_code == 400
+        assert "scenario results" in non_sc.json()["error"]
+
+        one_sided = await client.get(
+            "/api/compare",
+            params={"left": "20261014T100000Z_left", "right": "20261014T110000Z_right"},
+        )
+        assert one_sided.status_code == 200
+        payload = one_sided.json()
+        assert payload["summary"]["regressed"] == 1
+        by_id = {d["scenario_id"]: d for d in payload["deltas"]}
+        assert by_id["TC-01"]["outcome"] == "regressed"
+        assert by_id["TC-01"]["points_delta"] == -2
+        assert by_id["TC-02"]["outcome"] == "removed"
+        assert by_id["TC-02"]["b"] is None
+
+        fp_only = await client.get(
+            "/api/compare",
+            params={"left": "20261014T100000Z_left", "right": "20261014T130000Z_fp_only"},
+        )
+        assert fp_only.status_code == 200
+        assert fp_only.json()["config_diffs"] == ["config fingerprints differ"]

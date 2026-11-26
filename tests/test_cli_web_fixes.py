@@ -765,21 +765,16 @@ async def test_web_compare_handles_null_points_without_500(isolated_env: dict[st
 
 
 def test_app_js_numeric_validation_and_live_state_cleanup_guards() -> None:
-    app_js = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "tool_eval_bench"
-        / "web"
-        / "static"
-        / "app.js"
-    ).read_text(encoding="utf-8")
+    static_dir = Path(__file__).resolve().parents[1] / "src" / "tool_eval_bench" / "web" / "static"
+    live_js = (static_dir / "live.js").read_text(encoding="utf-8")
+    history_js = (static_dir / "history.js").read_text(encoding="utf-8")
 
-    assert "function readNumericField(" in app_js
-    assert "el.validity?.badInput" in app_js
-    assert "Number.isFinite(num)" in app_js
-    assert "gone.has(state.liveRunId)" in app_js
-    assert "Could not resume the run:" in app_js
-    submit_block = app_js.split("async function submitLaunch(", maxsplit=1)[1].split(
+    assert "function readNumericField(" in live_js
+    assert "el.validity?.badInput" in live_js
+    assert "Number.isFinite(num)" in live_js
+    assert "gone.has(state.liveRunId)" in history_js
+    assert "Could not resume the run:" in live_js
+    submit_block = live_js.split("async function submitLaunch(", maxsplit=1)[1].split(
         "function turnRow(", maxsplit=1
     )[0]
     assert "runId" not in submit_block

@@ -164,15 +164,20 @@ def test_auth_headers_match_token() -> None:
 
 @pytest.mark.asyncio
 async def test_every_response_carries_the_hardening_headers(empty_db: str) -> None:
+    from tool_eval_bench.web.app import _STATIC_MIME_TYPES
     from tool_eval_bench.web.security import CONTENT_SECURITY_POLICY
+
+    js_assets = [name for name in _STATIC_MIME_TYPES if name.endswith(".js")]
+    assert js_assets
 
     app = create_app(token=TEST_TOKEN)
     async with web_client(app) as client:
-        responses = {
+        responses: dict[str, httpx.Response] = {
             "index": await client.get("/"),
             "api": await client.get("/api/runs"),
-            "static": await client.get("/static/app.js"),
         }
+        for name in js_assets:
+            responses[f"static:{name}"] = await client.get(f"/static/{name}")
     async with web_client(app, authenticated=False) as anonymous:
         responses["denied_api"] = await anonymous.get("/api/runs")
         responses["signin"] = await anonymous.get("/")
@@ -185,7 +190,8 @@ async def test_every_response_carries_the_hardening_headers(empty_db: str) -> No
         assert headers["referrer-policy"] == "no-referrer", name
     assert responses["api"].headers["cache-control"] == "no-store"
     assert responses["denied_api"].headers["cache-control"] == "no-store"
-    assert "cache-control" not in responses["static"].headers
+    for name in js_assets:
+        assert "cache-control" not in responses[f"static:{name}"].headers, name
 
 
 def test_policy_forbids_inline_code_and_framing() -> None:
@@ -201,10 +207,19 @@ def test_policy_forbids_inline_code_and_framing() -> None:
 @pytest.mark.asyncio
 async def test_ui_assets_need_no_inline_code(empty_db: str) -> None:
     """The CSP forbids inline scripts and styles, so the shipped pages must not use them."""
+    from tool_eval_bench.web.app import _STATIC_MIME_TYPES
+
+    js_assets = [name for name in _STATIC_MIME_TYPES if name.endswith(".js")]
+    assert js_assets
+
     app = create_app(token=TEST_TOKEN)
+    scripts: dict[str, str] = {}
     async with web_client(app) as client:
         index = (await client.get("/")).text
-        script = (await client.get("/static/app.js")).text
+        for name in js_assets:
+            resp = await client.get(f"/static/{name}")
+            assert resp.status_code == 200, name
+            scripts[name] = resp.text
     async with web_client(app, authenticated=False) as anonymous:
         signin = (await anonymous.get("/")).text
     for page in (index, signin):
@@ -213,5 +228,69 @@ async def test_ui_assets_need_no_inline_code(empty_db: str) -> None:
         assert " on" + "click=" not in page
     assert '<link rel="stylesheet" href="/static/styles.css">' in signin
     # The frontend builds DOM nodes; it never parses HTML strings.
-    for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
-        assert sink not in script, sink
+    for name, script in scripts.items():
+        for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+            assert sink not in script, f"{name}: {sink}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_origin",
+    [
+        "null",
+        f"{BASE_URL}/extra-path",
+        f"{BASE_URL}?query=1",
+        f"{BASE_URL}#fragment",
+        "http://user@127.0.0.1:8765",
+        "http://127.0.0.1:notaport",
+        "http://127.0.0.1:99999",
+        "http://",
+        "https://127.0.0.1:8765",
+    ],
+)
+async def test_origin_check_rejects_null_components_and_invalid_ports(
+    empty_db: str, bad_origin: str
+) -> None:
+    app = create_app(token=TEST_TOKEN)
+    async with web_client(app) as client:
+        resp = await client.post("/api/runs", json={}, headers={"Origin": bad_origin})
+    assert resp.status_code == 403
+    assert resp.json() == {"error": "Cross-origin request refused"}
+
+
+def test_same_origin_rejects_duplicate_and_invalid_host_headers() -> None:
+    from starlette.datastructures import Headers
+
+    from tool_eval_bench.web.security import _same_origin
+
+    scope: dict[str, Any] = {"type": "http", "scheme": "http"}
+    duplicate_host = Headers(raw=[(b"host", b"127.0.0.1:8765"), (b"host", b"127.0.0.1:8765")])
+    assert _same_origin(BASE_URL, scope, duplicate_host) is False
+
+    disallowed_host = Headers(raw=[(b"host", b"evil.example:8765")])
+    assert _same_origin("http://evil.example:8765", scope, disallowed_host) is False
+
+    invalid_port_host = Headers(raw=[(b"host", b"127.0.0.1:notaport")])
+    assert _same_origin(BASE_URL, scope, invalid_port_host) is False
+
+
+@pytest.mark.asyncio
+async def test_non_http_asgi_scopes_pass_through_security_middlewares() -> None:
+    from tool_eval_bench.web.security import SecurityHeaders
+
+    seen: list[str] = []
+
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        seen.append(scope["type"])
+
+    wrapped = SecurityHeaders(SessionGate(inner, token=TEST_TOKEN))
+
+    async def _noop_receive() -> dict[str, Any]:
+        return {}
+
+    async def _noop_send(message: Any) -> None:
+        return None
+
+    await wrapped({"type": "lifespan"}, _noop_receive, _noop_send)
+    await wrapped({"type": "websocket", "path": "/ws"}, _noop_receive, _noop_send)
+    assert seen == ["lifespan", "websocket"]

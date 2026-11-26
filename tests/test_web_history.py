@@ -149,23 +149,50 @@ def seeded_db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> str:
 
 @pytest.mark.asyncio
 async def test_index_and_static_assets_serve_cleanly(seeded_db: str) -> None:
+    from tool_eval_bench.web.app import _STATIC_MIME_TYPES
+
     app = create_app(token=TEST_TOKEN)
     async with web_client(app) as client:
         index_resp = await client.get("/")
         assert index_resp.status_code == 200
         assert "text/html" in index_resp.headers["content-type"]
         assert "tool-eval-bench" in index_resp.text
+        assert '<script type="module" src="/static/app.js"></script>' in index_resp.text
 
         css_resp = await client.get("/static/styles.css")
         assert css_resp.status_code == 200
         assert "text/css" in css_resp.headers["content-type"]
 
-        js_resp = await client.get("/static/app.js")
-        assert js_resp.status_code == 200
-        assert "javascript" in js_resp.headers["content-type"]
+        js_assets = [name for name in _STATIC_MIME_TYPES if name.endswith(".js")]
+        assert len(js_assets) >= 8
+        for name in js_assets:
+            js_resp = await client.get(f"/static/{name}")
+            assert js_resp.status_code == 200, name
+            assert "application/javascript" in js_resp.headers["content-type"], name
 
+        assert (await client.get("/static/__init__.py")).status_code == 404
         missing_resp = await client.get("/static/../../pyproject.toml")
         assert missing_resp.status_code == 404
+
+
+def test_every_relative_es_module_import_is_allowlisted() -> None:
+    import re
+    from pathlib import Path
+
+    from tool_eval_bench.web.app import _STATIC_MIME_TYPES
+
+    static_dir = Path(__file__).resolve().parents[1] / "src" / "tool_eval_bench" / "web" / "static"
+    js_files = sorted(static_dir.glob("*.js"))
+    assert js_files
+
+    import_pattern = re.compile(r"""(?:from|import)\s+["']\./([^"']+\.js)["']""")
+    for js_file in js_files:
+        assert js_file.name in _STATIC_MIME_TYPES, js_file.name
+        assert _STATIC_MIME_TYPES[js_file.name].startswith("application/javascript")
+        source = js_file.read_text(encoding="utf-8")
+        for imported in import_pattern.findall(source):
+            assert imported in _STATIC_MIME_TYPES, f"{js_file.name} imports {imported}"
+            assert (static_dir / imported).is_file(), f"{js_file.name} missing {imported}"
 
 
 @pytest.mark.asyncio
@@ -276,3 +303,54 @@ async def test_search_finds_runs_older_than_the_limit(seeded_db: str) -> None:
 
         literal = await client.get("/api/runs", params={"q": "%"})
         assert literal.json()["runs"] == []
+
+
+@pytest.mark.asyncio
+async def test_json_post_validation_and_bulk_delete_caps(seeded_db: str) -> None:
+    import asyncio
+
+    from tool_eval_bench.web.app import _MAX_DELETE_IDS
+
+    app = create_app(token=TEST_TOKEN)
+    json_ct = {"Content-Type": "application/json"}
+    async with web_client(app) as client:
+        # Required JSON endpoints reject empty, malformed, and non-object bodies.
+        for endpoint in ("/api/runs", "/api/runs/delete"):
+            assert (await client.post(endpoint, content=b"", headers=json_ct)).status_code == 400
+            assert (
+                await client.post(endpoint, content=b"{bad", headers=json_ct)
+            ).status_code == 400
+            assert (
+                await client.post(endpoint, content=b"[1, 2]", headers=json_ct)
+            ).status_code == 400
+
+        # Optional JSON body endpoint rejects malformed/non-object JSON too.
+        assert (
+            await client.post("/api/probe", content=b"{bad", headers=json_ct)
+        ).status_code == 400
+        assert (await client.post("/api/probe", content=b"[]", headers=json_ct)).status_code == 400
+
+        # Bulk delete validates run_ids shape and enforces _MAX_DELETE_IDS.
+        assert (await client.post("/api/runs/delete", json={"run_ids": []})).status_code == 400
+        assert (await client.post("/api/runs/delete", json={"run_ids": "run1"})).status_code == 400
+        too_many = await client.post(
+            "/api/runs/delete",
+            json={"run_ids": [f"run-{i}" for i in range(_MAX_DELETE_IDS + 1)]},
+        )
+        assert too_many.status_code == 400
+        assert f"at most {_MAX_DELETE_IDS}" in too_many.json()["error"]
+
+        # Progress returns 404 for unknown run IDs.
+        assert (await client.get("/api/runs/no-such-run/progress")).status_code == 404
+
+        # Deleting a run that is still live in this server returns 409.
+        live = app.state.live_hub.register("live-run", model="m", backend="vllm", total=1)
+        live.task = asyncio.create_task(asyncio.sleep(10))
+        try:
+            conflict = await client.post("/api/runs/delete", json={"run_ids": ["live-run"]})
+            assert conflict.status_code == 409
+            assert "Stop the run before deleting it" in conflict.json()["error"]
+        finally:
+            live.task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await live.task

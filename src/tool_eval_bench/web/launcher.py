@@ -8,7 +8,7 @@ import contextlib
 import logging
 import math
 import os
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -27,7 +27,11 @@ from tool_eval_bench.application.reviewer import (
 from tool_eval_bench.application.run_config import RunSettings, build_run_config
 from tool_eval_bench.application.run_context import build_run_context, identify_backend
 from tool_eval_bench.application.run_queries import get_run, resume_state
-from tool_eval_bench.application.service import open_benchmark_service, validate_run_parameters
+from tool_eval_bench.application.service import (
+    BenchmarkService,
+    open_benchmark_service,
+    validate_run_parameters,
+)
 from tool_eval_bench.cli.commands import resolve_scenarios
 from tool_eval_bench.cli.model_probe import _models_request
 from tool_eval_bench.cli.server import _discover_async
@@ -71,6 +75,8 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_TURNS = 8
 _DEFAULT_ALPHA = 0.7
+# Matches the Launch & Live form's upper bound so web clients cannot spawn unbounded tasks.
+_MAX_CONCURRENCY = 32
 
 
 class RunConflict(Exception):
@@ -155,6 +161,7 @@ def _number(
     *,
     minimum: float | None = None,
     exclusive_minimum: bool = False,
+    maximum: float | None = None,
 ) -> float:
     """Read a finite number from the request, raising ValueError with the field name."""
     raw = payload.get(key)
@@ -173,14 +180,21 @@ def _number(
     if minimum is not None and (value <= minimum if exclusive_minimum else value < minimum):
         relation = "greater than" if exclusive_minimum else "at least"
         raise ValueError(f"{key} must be {relation} {minimum:g}, got {value:g}")
+    if maximum is not None and value > maximum:
+        raise ValueError(f"{key} must be at most {maximum:g}, got {value:g}")
     return value
 
 
 def _integer(
-    payload: Mapping[str, Any], key: str, default: int, *, minimum: int | None = None
+    payload: Mapping[str, Any],
+    key: str,
+    default: int,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
 ) -> int:
     """Read a whole number from the request, raising ValueError with the field name."""
-    value = _number(payload, key, default, minimum=minimum)
+    value = _number(payload, key, default, minimum=minimum, maximum=maximum)
     if not value.is_integer():
         raise ValueError(f"{key} must be a whole number, got {value:g}")
     return int(value)
@@ -459,6 +473,30 @@ def _resolve_launcher_scenarios(
     return resolved, None, frozenset()
 
 
+@contextlib.asynccontextmanager
+async def _open_service_async(output_dir: str | None) -> AsyncIterator[BenchmarkService]:
+    """Open and close ``BenchmarkService`` off the event loop.
+
+    ``RunRepository`` opens SQLite with ``check_same_thread=False`` and guards
+    access with an internal lock and single-thread writer pool, so running WAL
+    setup and connection close in a worker thread is safe and avoids stalling
+    uvicorn's event loop.
+    """
+    cm = open_benchmark_service(output_dir=output_dir)
+    enter_task = asyncio.create_task(asyncio.to_thread(cm.__enter__))
+    try:
+        service = await asyncio.shield(enter_task)
+    except BaseException:
+        with contextlib.suppress(BaseException):
+            await enter_task
+            await asyncio.to_thread(cm.__exit__, None, None, None)
+        raise
+    try:
+        yield service
+    finally:
+        await asyncio.to_thread(cm.__exit__, None, None, None)
+
+
 def _start_task(
     hub: LiveRunHub,
     session: LiveRunSession,
@@ -471,7 +509,7 @@ def _start_task(
 
     async def _execute() -> None:
         try:
-            with open_benchmark_service(output_dir=output_dir) as service:
+            async with _open_service_async(output_dir) as service:
                 run_data = await service.run_benchmark(**run_kwargs, **callbacks)
         except asyncio.CancelledError:
             hub.mark_interrupted(run_id, "stopped by user")
@@ -527,7 +565,7 @@ async def launch_web_run(
         exclusive_minimum=True,
     )
     max_turns = _integer(payload, "max_turns", _DEFAULT_MAX_TURNS, minimum=1)
-    concurrency = _integer(payload, "concurrency", 1, minimum=1)
+    concurrency = _integer(payload, "concurrency", 1, minimum=1, maximum=_MAX_CONCURRENCY)
     error_rate = _number(payload, "error_rate", 0.0)
     alpha = _number(payload, "alpha", _DEFAULT_ALPHA)
     seed_raw = payload.get("seed")

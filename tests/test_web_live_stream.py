@@ -547,3 +547,54 @@ async def test_resumed_session_reports_the_whole_run_total() -> None:
     )
     totals = [e["total"] for e in session.history if "total" in e]
     assert totals == [4, 4, 4]
+
+
+@pytest.mark.asyncio
+async def test_tail_stored_run_emits_idle_heartbeat_frames_and_respects_max_polls(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = str(tmp_path / "benchmarks.sqlite")
+    _store(db_path, "cli-running-hb", "running", [])
+    monkeypatch.setattr(
+        "tool_eval_bench.application.run_queries._repository",
+        lambda: RunRepository(db_path=db_path),
+    )
+    frames = [
+        frame
+        async for frame in stream_run_events(
+            LiveRunHub(),
+            "cli-running-hb",
+            poll_interval=0.0,
+            heartbeat_seconds=0.0,
+            idle_timeout=60.0,
+            max_polls=2,
+        )
+    ]
+    assert frames[0].startswith("event: run_started")
+    assert frames[1:] == [": keep-alive\n\n", ": keep-alive\n\n"]
+
+
+@pytest.mark.asyncio
+async def test_idle_session_stream_continues_after_heartbeat_until_complete() -> None:
+    hub = LiveRunHub()
+    hub.register("r-hb", model="m", backend="vllm", total=1)
+    stream = stream_run_events(hub, "r-hb", heartbeat_seconds=0.01)
+    first = await stream.__anext__()
+    assert first.startswith("event: run_started")
+    heartbeat = await stream.__anext__()
+    assert heartbeat == ": keep-alive\n\n"
+    hub.mark_complete("r-hb", {"run_id": "r-hb", "status": "completed", "scores": {}})
+    rest = [frame async for frame in stream]
+    assert len(rest) == 1
+    assert rest[0].startswith("event: run_complete")
+
+
+def test_hub_active_sessions_and_unknown_mark_calls() -> None:
+    hub = LiveRunHub()
+    hub.register("a", model="m", backend="vllm", total=1)
+    hub.register("b", model="m", backend="vllm", total=1)
+    hub.mark_interrupted("b")
+    assert [s.run_id for s in hub.active_sessions()] == ["a"]
+    # Unknown IDs are safe no-ops.
+    hub.mark_complete("missing", {})
+    hub.mark_interrupted("missing")
