@@ -8,11 +8,11 @@ from datetime import date
 from typing import Any
 
 from tool_eval_bench.adapters.wire_format import WIRE_FORMATS
-from tool_eval_bench.application.decision_audit import (
+from tool_eval_bench.cli.command_registry import COMMAND_SPECS
+from tool_eval_bench.domain.decision import (
     DECISION_JUDGE_SETS,
     DEFAULT_DECISION_JUDGE_SET,
 )
-from tool_eval_bench.cli.command_registry import COMMAND_SPECS
 from tool_eval_bench.domain.models import DEFAULT_REQUEST_TIMEOUT_SECONDS
 from tool_eval_bench.domain.review import (
     DEFAULT_REVIEW_MAX_ROUNDS,

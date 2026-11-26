@@ -97,7 +97,7 @@ def test_fresh_database_has_the_session_column_and_index(tmp_path: Path) -> None
     columns, indexes, version = _columns_and_indexes(db_path)
     assert "session_id" in columns
     assert "idx_scenario_runs_session_id" in indexes
-    assert version == _SCHEMA_VERSION == 5
+    assert version == _SCHEMA_VERSION == 6
 
 
 def test_v4_database_migrates_and_keeps_old_rows_untagged(tmp_path: Path) -> None:
@@ -131,7 +131,7 @@ def test_v4_database_migrates_and_keeps_old_rows_untagged(tmp_path: Path) -> Non
     columns, indexes, version = _columns_and_indexes(db_path)
     assert "session_id" in columns
     assert "idx_scenario_runs_session_id" in indexes
-    assert version == 5
+    assert version == 6
     assert repo.latest_session_id() is None
     assert repo.get("old") is not None
 

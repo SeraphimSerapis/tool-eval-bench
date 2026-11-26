@@ -98,7 +98,7 @@ def run_gsm8k_benchmark(
     if dataset_items is None:
         sys.exit(1)
 
-    adapter = build_adapter(base_url, **adapter_options(args))
+    adapter = build_adapter(base_url, max_concurrency=parallel, **adapter_options(args))
     eval_total = min(limit, len(dataset_items)) if limit > 0 else len(dataset_items)
 
     def _format_progress(
@@ -294,7 +294,7 @@ def run_mmlu_benchmark(
         if dev_items is None:
             sys.exit(1)
 
-    adapter = build_adapter(base_url, **adapter_options(args))
+    adapter = build_adapter(base_url, max_concurrency=parallel, **adapter_options(args))
     preloaded = {"test": test_items, "dev": dev_items}
     # The plugin makes the same selection; this only sizes the progress bar.
     eval_total = len(select_items(test_items, subjects_list, limit))
@@ -455,7 +455,7 @@ def run_ifeval_benchmark(
     if dataset_items is None:
         sys.exit(1)
 
-    adapter = build_adapter(base_url, **adapter_options(args))
+    adapter = build_adapter(base_url, max_concurrency=parallel, **adapter_options(args))
     eval_total = min(limit, len(dataset_items)) if limit > 0 else len(dataset_items)
     instructions_passed = 0
     instructions_total = 0

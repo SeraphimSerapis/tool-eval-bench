@@ -183,7 +183,7 @@ def run_needle_benchmark(
     )
 
     plugin = NeedlePlugin()
-    adapter = build_adapter(base_url, **adapter_options(args))
+    adapter = build_adapter(base_url, max_concurrency=parallel, **adapter_options(args))
     # A 100K-token prompt takes far longer to prefill than a scenario turn, so
     # the per-request timeout scales with the largest haystack in the grid.
     effective_timeout = max(args.timeout, 120.0 + lengths[-1] / 50_000 * 60.0)

@@ -252,7 +252,7 @@ def run_toolscale_benchmark(
     )
 
     plugin = ToolscalePlugin()
-    adapter = build_adapter(base_url, **adapter_options(args))
+    adapter = build_adapter(base_url, max_concurrency=parallel, **adapter_options(args))
 
     def _format_progress(
         display: PluginProgressDisplay, current: int, item_info: dict[str, Any]
