@@ -259,17 +259,11 @@ def test_plugin_only_lifecycle_stops_before_tool_scenarios() -> None:
     ],
 )
 def test_subprocess_help_is_command_specific(command: str, included: str, excluded: str) -> None:
-    completed = subprocess.run(  # noqa: S603 - fixed local module invocation
-        [sys.executable, "-m", "tool_eval_bench.cli.bench", command, "--help"],
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        env=utf8_subprocess_env(),
-    )
-    assert completed.returncode == 0, completed.stderr
-    assert included in completed.stdout
-    assert excluded not in completed.stdout
+    from tool_eval_bench.cli.parser import _command_help
+
+    help_text = _command_help(command).format_help()
+    assert included in help_text
+    assert excluded not in help_text
     # Focused help must stay well short of the flat parser's (270+ lines);
     # ``bench`` carries every connection and sampling flag and sits nearest.
     # The shared run-control group's --system-prompt/--system-prompt-file pair
@@ -281,7 +275,7 @@ def test_subprocess_help_is_command_specific(command: str, included: str, exclud
     # which sits with the pack flags, to 231. --perf-preset brought it to 232,
     # and --context-fill-tokens to 236. The nine --toolscale* flags brought it to
     # 262, still far short of the flat parser's 382.
-    assert len(completed.stdout.splitlines()) < 264
+    assert len(help_text.splitlines()) < 264
 
 
 def test_module_execution_version_path() -> None:
@@ -297,26 +291,38 @@ def test_module_execution_version_path() -> None:
     assert completed.stdout.startswith("tool-eval-bench ")
 
 
-def test_subprocess_run_and_legacy_dry_run_are_equivalent() -> None:
-    base = [sys.executable, "-m", "tool_eval_bench.cli.bench"]
-    legacy = subprocess.run(  # noqa: S603 - fixed local module invocation
-        [*base, "--dry-run", "--short", "--json"],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        env=utf8_subprocess_env(),
-    )
+def test_subprocess_run_and_legacy_dry_run_are_equivalent(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tool_eval_bench.cli import dispatch
+
+    # Subprocess entry-point smoke test for the subcommand form.
     command = subprocess.run(  # noqa: S603 - fixed local module invocation
-        [*base, "run", "--dry-run", "--short", "--json"],
+        [
+            sys.executable,
+            "-m",
+            "tool_eval_bench.cli.bench",
+            "run",
+            "--dry-run",
+            "--short",
+            "--json",
+        ],
         check=True,
         capture_output=True,
         text=True,
         encoding="utf-8",
         env=utf8_subprocess_env(),
     )
-    assert json.loads(command.stdout) == json.loads(legacy.stdout)
-    assert json.loads(command.stdout)["total_scenarios"] == 15
+    command_payload = json.loads(command.stdout)
+    assert command_payload["total_scenarios"] == 15
+
+    # Verify legacy dry-run produces the exact same JSON payload in-process.
+    monkeypatch.setattr(dispatch, "_load_dotenv", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["tool-eval-bench", "--dry-run", "--short", "--json"])
+    with pytest.raises(SystemExit) as exc:
+        dispatch.main()
+    assert exc.value.code == 0
+    assert json.loads(capsys.readouterr().out) == command_payload
 
 
 @pytest.mark.parametrize(
@@ -592,3 +598,128 @@ def test_serve_port_defaults_to_none_and_accepts_zero() -> None:
     # None lets the server pick its default port or the next free one.
     assert make_parser().parse_args(["--serve"]).serve_port is None
     assert make_parser().parse_args(["--serve", "--serve-port", "0"]).serve_port == 0
+
+
+# ---------------------------------------------------------------------------
+# Per-plugin flag validation and compare flag forwarding/validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected_error"),
+    [
+        (["plugin", "ifeval", "--shots", "2"], "--shots is not supported by the IFEval plugin"),
+        (["plugin", "needle", "--shots", "2"], "--shots is not supported by the needle plugin"),
+        (["plugin", "decision", "--shots", "2"], "--shots is not supported by the decision plugin"),
+        (
+            ["plugin", "toolscale", "--shots", "2"],
+            "--shots is not supported by the toolscale plugin",
+        ),
+        (
+            ["plugin", "needle", "--limit", "5"],
+            "--limit is not supported by the needle plugin; use --lengths/--depths",
+        ),
+        (
+            ["plugin", "decision", "--limit", "5"],
+            "--limit is not supported by the decision plugin",
+        ),
+        (["plugin", "mmlu", "--shuffle"], "--shuffle is only supported by the GSM8K plugin"),
+        (
+            ["plugin", "gsm8k", "--subjects", "stem"],
+            "--subjects is only supported by the MMLU plugin",
+        ),
+        (["plugin", "gsm8k", "--depths", "3"], "--depths is only supported by the needle plugin"),
+        (["plugin", "mmlu", "--lengths", "4"], "--lengths is only supported by the needle plugin"),
+        (
+            ["plugin", "gsm8k", "--counts", "4,8"],
+            "--counts is only supported by the toolscale plugin",
+        ),
+        (
+            ["plugin", "ifeval", "--catalog", "cat.yaml"],
+            "--catalog is only supported by the toolscale plugin",
+        ),
+    ],
+)
+def test_plugin_subcommand_rejects_unsupported_per_plugin_flags(
+    capsys: pytest.CaptureFixture[str], argv: list[str], expected_error: str
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        parse_cli_args(_make_parser, argv)
+    assert exc.value.code == 2
+    assert expected_error in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected_error"),
+    [
+        (
+            ["compare", "a", "b", "--report", "--retest-diffs", "-o", "out.html"],
+            "--retest-diffs cannot be combined with --report",
+        ),
+        (["compare", "a", "b", "--output", "out.html"], "--output requires --report"),
+        (["compare", "a", "b", "--kind", "summary"], "--kind requires --report"),
+        (["compare", "a", "b", "--report"], "--output is required with --report"),
+        (["compare", "a", "b", "--trials", "3"], "--trials requires --retest-diffs"),
+        (["compare", "a", "b", "--base-url", "http://x"], "--base-url requires --retest-diffs"),
+        (["compare", "a", "b", "--redact-url"], "--redact-url requires --retest-diffs"),
+    ],
+)
+def test_compare_subcommand_rejects_invalid_flag_combinations(
+    capsys: pytest.CaptureFixture[str], argv: list[str], expected_error: str
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        parse_cli_args(_make_parser, argv)
+    assert exc.value.code == 2
+    assert expected_error in capsys.readouterr().err
+
+
+def test_compare_retest_diffs_forwards_all_endpoint_and_pack_options() -> None:
+    translated = translate_argv(
+        [
+            "compare",
+            "run-a",
+            "run-b",
+            "--retest-diffs",
+            "--trials",
+            "3",
+            "--base-url",
+            "http://shared/v1",
+            "--base-url-a",
+            "http://a/v1",
+            "--base-url-b",
+            "http://b/v1",
+            "--api-key",
+            "k-shared",
+            "--api-key-a",
+            "k-a",
+            "--api-key-b",
+            "k-b",
+            "--backend",
+            "vllm",
+            "--scenario-pack",
+            "pack1",
+            "--scenario-pack",
+            "pack2",
+            "--output-dir",
+            "out_runs",
+            "--redact-url",
+        ]
+    )
+    assert translated == [
+        "--compare",
+        "run-a",
+        "run-b",
+        "--retest-diffs",
+        "--trials=3",
+        "--base-url=http://shared/v1",
+        "--base-url-a=http://a/v1",
+        "--base-url-b=http://b/v1",
+        "--api-key=k-shared",
+        "--api-key-a=k-a",
+        "--api-key-b=k-b",
+        "--backend=vllm",
+        "--scenario-pack=pack1",
+        "--scenario-pack=pack2",
+        "--output-dir=out_runs",
+        "--redact-url",
+    ]

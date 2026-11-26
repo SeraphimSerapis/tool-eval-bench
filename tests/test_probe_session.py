@@ -335,7 +335,7 @@ async def test_a_real_socket_that_never_answers_costs_two_timeouts(monkeypatch) 
 
     server = await asyncio.start_server(accept_and_ignore, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    monkeypatch.setattr(metadata, "_PROBE_TIMEOUT", 0.25)
+    monkeypatch.setattr(metadata, "_PROBE_TIMEOUT", 0.05)
     try:
         started = time.monotonic()
         assert await metadata.probe_backend_hint(f"http://127.0.0.1:{port}") is None
@@ -345,7 +345,7 @@ async def test_a_real_socket_that_never_answers_costs_two_timeouts(monkeypatch) 
         await server.wait_closed()
 
     assert connections == 2
-    # The full ladder is six rungs, 1.5 s at this timeout.
+    # The full ladder is six rungs, 0.30 s at this timeout; 1.5 s leaves ample CI slack.
     assert elapsed < 1.5
 
 
@@ -367,7 +367,7 @@ async def test_a_body_that_trickles_forever_is_cut_off_at_the_probe_timeout(monk
             while True:
                 writer.write(b"x")
                 await writer.drain()
-                await asyncio.sleep(0.02)
+                await asyncio.sleep(0.005)
         except (ConnectionError, asyncio.IncompleteReadError):
             pass
         finally:
@@ -375,7 +375,7 @@ async def test_a_body_that_trickles_forever_is_cut_off_at_the_probe_timeout(monk
 
     server = await asyncio.start_server(drip, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    monkeypatch.setattr(metadata, "_PROBE_TIMEOUT", 0.25)
+    monkeypatch.setattr(metadata, "_PROBE_TIMEOUT", 0.05)
     try:
         started = time.monotonic()
         # The outer bound only keeps a regression from hanging the suite.

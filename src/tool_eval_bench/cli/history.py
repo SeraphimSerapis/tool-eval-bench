@@ -542,7 +542,7 @@ def compare_runs(console: Console, run_id_a: str, run_id_b: str) -> None:
 
     console.print(Panel(summary, border_style="bright_cyan", padding=(0, 2)))
 
-    _print_paired_stats(console, id_a, id_b, map_a, map_b, all_ids)
+    _print_paired_stats(console, id_a, id_b, map_a, map_b, all_ids, run_a=run_a, run_b=run_b)
     _print_mcnemar(console, map_a, map_b, all_ids)
 
     console.print()
@@ -560,9 +560,12 @@ def _print_paired_stats(
     map_a: dict[str, dict],
     map_b: dict[str, dict],
     all_ids: list[str],
+    *,
+    run_a: Mapping[str, Any] | None = None,
+    run_b: Mapping[str, Any] | None = None,
 ) -> None:
     """Display 3-tier paired statistical analysis and targeted re-test hints."""
-    paired = compute_paired_comparison(map_a, map_b, all_ids)
+    paired = compute_paired_comparison(map_a, map_b, all_ids, run_a=run_a, run_b=run_b)
     shared_count = paired["shared_count"]
     infra_ids = paired["infra_excluded_ids"]
     discordant_ids = paired["discordant_scenario_ids"]
@@ -600,6 +603,12 @@ def _print_paired_stats(
         lines.append(
             f"  [bold]Discordant scenario IDs:[/] {len(discordant_ids)} total: {escaped_disc}"
         )
+
+    warnings = paired.get("comparability_warnings") or []
+    if warnings:
+        lines.append("  [bold yellow]Comparability warnings:[/]")
+        for warning in warnings:
+            lines.append(f"    [yellow]⚠ {escape(str(warning))}[/]")
 
     if verdict == "no_shared_scenarios":
         lines.append(
